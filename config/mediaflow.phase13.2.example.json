@@ -1,0 +1,486 @@
+{
+  "version": 1,
+  "historyPath": ".mediaflow/history.jsonl",
+  "storages": [
+    {
+      "id": "HDD_2",
+      "name": "HDD 2",
+      "type": "local",
+      "rootPath": "/mnt/HDD_2",
+      "readOnly": false
+    }
+  ],
+  "resourceLibraries": [
+    {
+      "id": "source",
+      "name": "统一媒体源库",
+      "storageId": "HDD_2",
+      "storagePath": "Media",
+      "displayRootPath": "/mnt/HDD_2/Media",
+      "enabled": true,
+      "extensions": ["mkv", "mp4", "avi", "mov", "m2ts", "ts", "iso"],
+      "maxDepth": null
+    }
+  ],
+  "mediaLibraries": [
+    {
+      "id": "Media",
+      "name": "整理目标",
+      "storageId": "HDD_2",
+      "rootPath": "Downloads",
+      "enabled": true
+    }
+  ],
+  "recognitionTypes": [
+    {"id": "Movie", "name": "电影"},
+    {"id": "TV", "name": "电视剧"}
+  ],
+  "recognitionRules": [
+    {
+      "id": "movie-resource-library",
+      "name": "电影资源库",
+      "priority": 100,
+      "score": 100,
+      "stopOnMatch": true,
+      "condition": {
+        "operator": "and",
+        "children": [
+          {"field": "resource_library_id", "operator": "equals", "value": "source"},
+          {"field": "path", "operator": "contains", "value": "/电影/"},
+          {"field": "extension", "operator": "in", "value": ["mkv", "mp4"]}
+        ]
+      },
+      "outputRecognitionType": "Movie"
+    },
+    {
+      "id": "tv-resource-library",
+      "name": "电视剧资源库",
+      "priority": 100,
+      "score": 100,
+      "stopOnMatch": true,
+      "condition": {
+        "operator": "and",
+        "children": [
+          {"field": "resource_library_id", "operator": "equals", "value": "source"},
+          {"field": "path", "operator": "contains", "value": "/电视剧/"},
+          {"field": "extension", "operator": "in", "value": ["mkv", "mp4"]}
+        ]
+      },
+      "outputRecognitionType": "TV"
+    }
+  ],
+  "metadataPolicies": [
+    {
+      "id": "Movie",
+      "providerId": "tmdb",
+      "mediaType": "movie",
+      "language": "zh-CN",
+      "region": "CN",
+      "automaticThreshold": 90,
+      "confirmationThreshold": 70,
+      "minimumScoreGap": 5,
+      "maxProviderRequests": 6,
+      "maxCandidateEnrichments": 2
+    },
+    {
+      "id": "TV",
+      "providerId": "tmdb",
+      "mediaType": "tv",
+      "language": "zh-CN",
+      "region": "CN",
+      "automaticThreshold": 90,
+      "confirmationThreshold": 70,
+      "minimumScoreGap": 5,
+      "maxProviderRequests": 6,
+      "maxCandidateEnrichments": 2
+    }
+  ],
+  "namingPolicies": [
+    {
+      "id": "Movie",
+      "name": "电影命名",
+      "mediaTypeMode": "movie",
+      "directoryTemplate": "{title} ({year}) [tmdbid-{provider_id}]",
+      "filenameTemplate": "{title} ({year}).{ext}",
+      "missingVariableStrategy": "omit_token"
+    },
+    {
+      "id": "TV",
+      "name": "电视剧命名",
+      "mediaTypeMode": "tv",
+      "seriesDirectoryTemplate": "{title} ({year}) [tmdbid-{provider_id}]",
+      "seasonDirectoryTemplate": "Season {season:02}",
+      "episodeFilenameTemplate": "{title} - S{season:02}E{episode:02} - {episode_title}.{ext}",
+      "multiEpisodeFileTemplate": "{title} - S{season:02}{episodes}.{ext}",
+      "missingVariableStrategy": "omit_token"
+    }
+  ],
+  "classificationPolicies": [
+    {
+      "id": "Movie",
+      "name": "电影分类",
+      "rules": [
+        {
+          "id": "japanese-animation",
+          "name": "日本动画电影",
+          "priority": 200,
+          "conditions": {
+            "mediaType": ["movie"],
+            "genres": ["Animation"],
+            "countries": ["JP", "Japan"]
+          },
+          "result": {
+            "mediaLibraryId": "Media",
+            "library": "Movies",
+            "path": ["Anime"]
+          }
+        },
+        {
+          "id": "animation-movie",
+          "name": "动画电影",
+          "priority": 150,
+          "conditions": {
+            "mediaType": ["movie"],
+            "genres": ["Animation"]
+          },
+          "result": {
+            "mediaLibraryId": "Media",
+            "library": "Movies",
+            "path": ["Animation"]
+          }
+        },
+        {
+          "id": "action-movie",
+          "name": "动作电影",
+          "priority": 100,
+          "conditions": {
+            "mediaType": ["movie"],
+            "genres": ["Action"]
+          },
+          "result": {
+            "mediaLibraryId": "Media",
+            "library": "Movies",
+            "path": ["Action"]
+          }
+        },
+        {
+          "id": "foreign-movie",
+          "name": "外语电影",
+          "priority": 50,
+          "conditions": {
+            "mediaType": ["movie"],
+            "countries": ["US", "GB", "FR", "DE", "IT", "ES", "JP", "KR", "IN", "CA", "AU", "RU", "TH"]
+          },
+          "result": {
+            "mediaLibraryId": "Media",
+            "library": "Movies",
+            "path": ["外语电影"]
+          }
+        },
+        {
+          "id": "other-movie",
+          "name": "其他电影",
+          "priority": 1,
+          "conditions": {
+            "mediaType": ["movie"]
+          },
+          "result": {
+            "mediaLibraryId": "Media",
+            "library": "Movies",
+            "path": ["其他电影"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "TV",
+      "name": "电视剧分类",
+      "rules": [
+        {
+          "id": "tv-series",
+          "name": "电视剧",
+          "priority": 100,
+          "conditions": {
+            "mediaType": ["tv"]
+          },
+          "result": {
+            "mediaLibraryId": "Media",
+            "library": "TV Shows",
+            "path": ["电视剧"]
+          }
+        }
+      ]
+    }
+  ],
+  "organizePolicies": [
+    {
+      "id": "MOVE",
+      "operation": "MOVE",
+      "overwrite": false
+    }
+  ],
+  "recognitionTypePolicies": [
+    {
+      "id": "Movie",
+      "recognitionType": "Movie",
+      "metadataPolicy": "Movie",
+      "namingPolicy": "Movie",
+      "classificationPolicy": "Movie",
+      "organizePolicy": "MOVE"
+    },
+    {
+      "id": "TV",
+      "recognitionType": "TV",
+      "metadataPolicy": "TV",
+      "namingPolicy": "TV",
+      "classificationPolicy": "TV",
+      "organizePolicy": "MOVE"
+    }
+  ],
+  "_examples": {
+    "notice": "This section is documentation only. Runtime ignores unknown top-level _examples.",
+    "environment": {
+      "MEDIAFLOW_CONFIG": "/path/to/mediaflow.json",
+      "TMDB_ACCESS_TOKEN": "environment-secret-not-json",
+      "OPENLIST_TOKEN": "environment-secret-not-json"
+    },
+    "pathSemantics": {
+      "storageRootPath": "Adapter-owned root; Local may be absolute and OpenList is an API path",
+      "resourceStoragePath": "Scan path relative to Storage.rootPath",
+      "resourceDisplayRootPath": "Optional host-visible binding; legacy rootPath is accepted",
+      "mediaRootPath": "Destination path relative to Storage.rootPath",
+      "plan": "Source and destination each retain storageId plus a Storage-relative path"
+    },
+    "storages": {
+      "local": {
+        "id": "local-storage",
+        "name": "Local Storage",
+        "type": "local",
+        "rootPath": "/mnt/media",
+        "readOnly": false
+      },
+      "openlist": {
+        "id": "openlist-storage",
+        "name": "OpenList Storage",
+        "type": "openlist",
+        "baseUrl": "https://openlist.example.com",
+        "tokenEnv": "OPENLIST_TOKEN",
+        "rootPath": "/Media",
+        "readOnly": false,
+        "connectTimeout": 10,
+        "requestTimeout": 60,
+        "maxConcurrency": 4,
+        "maxRetries": 2,
+        "pageSize": 100
+      },
+      "externalAdapters": {
+        "notice": "SMB, S3 and R2 adapters exist but current JSON runtime requires external adapter injection.",
+        "types": ["smb", "s3", "r2"]
+      }
+    },
+    "crossStorage": {
+      "resourceLibrary": {
+        "id": "remote-source",
+        "storageId": "openlist-a",
+        "storagePath": "b",
+        "displayRootPath": "/mnt/openlist-a/b"
+      },
+      "mediaLibrary": {
+        "id": "remote-target",
+        "storageId": "openlist-c",
+        "rootPath": "分类/Movies"
+      },
+      "planExample": {
+        "source": "openlist-a:b/movie.mkv",
+        "destination": "openlist-c:分类/Movies/movie/movie.mkv"
+      }
+    },
+    "openlistMoveSemantics": {
+      "sameStorageSameName": "native server-side Move",
+      "sameStorageRenameOnly": "native server-side Rename",
+      "sameStorageMoveAndRename": "native Move then Rename; best-effort rollback on rename failure",
+      "crossStorageMove": "stream Copy, verify target size, then Delete source",
+      "overwrite": false
+    },
+    "resourceLibrary": {
+      "id": "source",
+      "name": "Source Library",
+      "storageId": "local-storage",
+      "storagePath": "Media",
+      "displayRootPath": "/mnt/media/Media",
+      "enabled": true,
+      "extensions": ["mkv", "mp4", "avi", "mov", "wmv", "ts", "m2ts", "webm", "iso"],
+      "maxDepth": null,
+      "maxDepthExamples": {
+        "rootFilesOnly": 0,
+        "oneChildLevel": 1,
+        "unlimited": null
+      }
+    },
+    "mediaLibrary": {
+      "id": "Media",
+      "name": "Destination Library",
+      "storageId": "local-storage",
+      "rootPath": "Downloads/Media",
+      "enabled": true,
+      "notice": "rootPath must be relative to Storage.rootPath"
+    },
+    "recognitionRule": {
+      "completeRule": {
+        "id": "movie-rule",
+        "name": "Movie rule",
+        "enabled": true,
+        "priority": 100,
+        "score": 100,
+        "stopOnMatch": true,
+        "description": "Recognize movie files below the configured source library",
+        "condition": {
+          "operator": "and",
+          "children": [
+            {"field": "resource_library_id", "operator": "equals", "value": "source"},
+            {"field": "path", "operator": "contains", "value": "/电影/"},
+            {"field": "extension", "operator": "in", "value": ["mkv", "mp4"]},
+            {
+              "operator": "not",
+              "children": [
+                {"field": "filename", "operator": "contains", "value": "sample"}
+              ]
+            }
+          ]
+        },
+        "outputRecognitionType": "Movie"
+      },
+      "logicalOperators": ["and", "or", "not", "always"],
+      "stringFields": [
+        "filename", "path", "extension", "title_candidate", "resolution_tag", "source_tag",
+        "video_codec_tag", "audio_codec_tag", "audio_channels_tag", "release_group",
+        "resource_library_id"
+      ],
+      "numericFields": ["year", "season", "episode"],
+      "collectionFields": ["directory", "hdr_tag", "version_tag", "language_tag"],
+      "stringOperators": [
+        "equals", "not_equals", "contains", "not_contains", "starts_with", "ends_with",
+        "in", "not_in", "regex"
+      ],
+      "numericOperators": [
+        "equals", "not_equals", "greater_than", "greater_than_or_equal", "less_than",
+        "less_than_or_equal", "between", "in"
+      ],
+      "collectionOperators": ["contains", "not_contains", "contains_any", "contains_all"],
+      "conditionExamples": {
+        "caseSensitive": {
+          "field": "filename",
+          "operator": "contains",
+          "value": "IMAX",
+          "caseSensitive": true
+        },
+        "yearRange": {"field": "year", "operator": "between", "value": [2000, 2026]},
+        "safeRegex": {"field": "filename", "operator": "regex", "value": "S[0-9]{2}E[0-9]{2}"},
+        "explicitDefault": {"operator": "always", "children": []}
+      }
+    },
+    "metadataPolicy": {
+      "id": "Movie",
+      "name": "TMDB movie metadata",
+      "providerId": "tmdb",
+      "mediaType": "movie",
+      "mediaQueryType": "movie",
+      "language": "zh-CN",
+      "region": "CN",
+      "automaticThreshold": 90,
+      "confirmationThreshold": 70,
+      "minimumScoreGap": 5,
+      "timeout": 10,
+      "retryCount": 2,
+      "maxCandidates": 20,
+      "maxSearchPages": 2,
+      "maxProviderRequests": 6,
+      "maxCandidateEnrichments": 2,
+      "enabled": true,
+      "mediaTypes": ["movie", "tv"],
+      "queryTypes": ["movie", "tv", "auto", "none"]
+    },
+    "namingPolicy": {
+      "id": "Naming",
+      "name": "Complete naming example",
+      "description": "All currently configurable templates",
+      "enabled": true,
+      "mediaTypeMode": "auto",
+      "directoryTemplate": "{title} ({year}) [tmdbid-{provider_id}]",
+      "filenameTemplate": "{title} ({year}).{ext}",
+      "seriesDirectoryTemplate": "{title} ({year})",
+      "seasonDirectoryTemplate": "Season {season:02}",
+      "episodeFilenameTemplate": "{title} - S{season:02}E{episode:02} - {episode_title}.{ext}",
+      "multiEpisodeFileTemplate": "{title} - S{season:02}{episodes}.{ext}",
+      "missingVariableStrategy": "omit_token",
+      "maxComponentLength": 200,
+      "mediaTypeModes": ["auto", "movie", "tv"],
+      "missingVariableStrategies": ["error", "empty", "omit_token"],
+      "variables": [
+        "title", "original_title", "year", "season", "episode", "episodes", "episode_range",
+        "episode_title", "provider", "provider_id", "resolution", "source", "video_codec",
+        "audio", "audio_codec", "audio_channels", "hdr", "version", "release_group", "ext"
+      ]
+    },
+    "classificationPolicy": {
+      "id": "Classification",
+      "name": "Complete classification example",
+      "description": "Higher priority wins",
+      "enabled": true,
+      "priority": 0,
+      "rules": [
+        {
+          "id": "example-rule",
+          "name": "Example classification",
+          "enabled": true,
+          "priority": 100,
+          "confidence": 100,
+          "description": "All supported condition fields",
+          "conditions": {
+            "mediaType": ["movie"],
+            "genres": ["Animation"],
+            "countries": ["JP"],
+            "languages": ["ja"],
+            "yearMin": 2000,
+            "yearMax": 2026,
+            "keywords": ["anime"]
+          },
+          "result": {
+            "mediaLibraryId": "Media",
+            "library": "Movies",
+            "path": ["Anime"],
+            "category": "Anime",
+            "subcategory": "Feature"
+          }
+        }
+      ],
+      "canonicalYearAlternative": {
+        "conditions": {"canonicalYear": 2001}
+      }
+    },
+    "organizePolicies": [
+      {"id": "move", "operation": "MOVE", "overwrite": false},
+      {"id": "copy", "operation": "COPY", "overwrite": false},
+      {"id": "hardlink", "operation": "HARDLINK", "overwrite": false},
+      {"id": "symlink", "operation": "SYMLINK", "overwrite": false}
+    ],
+    "recognitionTypePolicy": {
+      "id": "type-C",
+      "name": "C reuses A downstream policies",
+      "recognitionType": "C",
+      "metadataPolicy": "C",
+      "namingPolicy": "A",
+      "classificationPolicy": "A",
+      "organizePolicy": "move",
+      "enabled": true,
+      "priority": 0
+    },
+    "commands": [
+      "mediaflow config validate",
+      "mediaflow scan --limit 20",
+      "mediaflow preview --limit 20",
+      "mediaflow organize --limit 20",
+      "mediaflow organize --execute --limit 20"
+    ]
+  }
+}

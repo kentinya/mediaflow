@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "name": "spirited-away-anime",
+      "path": "/A/千与千寻.2001.mkv",
+      "candidates": [{"providerId": "129", "title": "千与千寻", "year": 2001, "genres": ["Animation"], "countries": ["JP"]}],
+      "expect": {"recognitionType": "A", "providerId": "129"}
+    },
+    {
+      "name": "hamnet-unicode",
+      "path": "/A/哈姆奈特.2025.mkv",
+      "candidates": [{"providerId": "858024", "title": "哈姆奈特", "year": 2025}],
+      "expect": {"recognitionType": "A", "providerId": "858024"}
+    },
+    {
+      "name": "matrix-movie",
+      "path": "/A/The.Matrix.1999.mkv",
+      "candidates": [{"providerId": "603", "title": "The Matrix", "year": 1999}],
+      "expect": {"recognitionType": "A", "providerId": "603"}
+    },
+    {
+      "name": "tv-episode",
+      "path": "/B/Show.2024.S01E01.mkv",
+      "candidates": [{"providerId": "100", "title": "Show", "year": 2024, "mediaType": "tv"}],
+      "episodes": [1],
+      "expect": {"recognitionType": "B", "season": 1, "episode": 1}
+    },
+    {
+      "name": "anime-category-input",
+      "path": "/A/Anime.Movie.2020.mkv",
+      "candidates": [{"providerId": "200", "title": "Anime Movie", "year": 2020, "genres": ["Animation"], "countries": ["JP"]}],
+      "expect": {"recognitionType": "A"}
+    },
+    {
+      "name": "unknown",
+      "path": "/unknown/Unmatched.File.mkv",
+      "expect": {"recognitionType": null}
+    },
+    {
+      "name": "ambiguous-conflict-input",
+      "path": "/A/Same.Title.2024.mkv",
+      "candidates": [
+        {"providerId": "1", "title": "Same Title", "year": 2024},
+        {"providerId": "2", "title": "Same Title", "year": 2024}
+      ],
+      "expect": {"matchStatus": "ambiguous"}
+    }
+  ]
+}

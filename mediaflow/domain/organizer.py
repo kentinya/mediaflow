@@ -1,0 +1,151 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mediaflow.domain.classification import ClassificationResult
+    from mediaflow.domain.metadata import MediaIdentity
+    from mediaflow.domain.naming import NamingResult
+
+
+class OrganizeOperationType(StrEnum):
+    CREATE_DIRECTORY = "create_directory"
+    MOVE = "move"
+    COPY = "copy"
+    HARD_LINK = "hard_link"
+    SOFT_LINK = "soft_link"
+    DELETE = "delete"
+
+
+class PlanOperation(StrEnum):
+    MOVE = "MOVE"
+    COPY = "COPY"
+    LINK = "LINK"
+    NOOP = "NOOP"
+    SKIP = "SKIP"
+
+
+class PlanStatus(StrEnum):
+    READY = "ready"
+    CONFLICT = "conflict"
+    NOOP = "noop"
+    INVALID = "invalid"
+
+
+class ExecutionStatus(StrEnum):
+    SUCCESS = "SUCCESS"
+    DRY_RUN = "DRY_RUN"
+    FAILED = "FAILED"
+    PARTIAL = "PARTIAL"
+    SKIPPED = "SKIPPED"
+
+
+class ConflictType(StrEnum):
+    DESTINATION_EXISTS = "DESTINATION_EXISTS"
+    TARGET_COLLISION = "TARGET_COLLISION"
+    DUPLICATE_MEDIA = "DUPLICATE_MEDIA"
+    INVALID_DESTINATION = "INVALID_DESTINATION"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class Conflict:
+    type: ConflictType
+    source: str
+    destination: str
+    details: str
+
+
+class ConflictStrategy(StrEnum):
+    SKIP = "skip"
+    OVERWRITE = "overwrite"
+    RENAME = "rename"
+    MANUAL = "manual"
+
+
+@dataclass(frozen=True)
+class OrganizePolicy:
+    policy_id: str
+    operation: OrganizeOperationType
+    conflict_strategy: ConflictStrategy = ConflictStrategy.MANUAL
+
+
+@dataclass(frozen=True)
+class OrganizeOperation:
+    operation_type: OrganizeOperationType
+    source: str | None
+    target: str
+    overwrite: bool = False
+
+
+@dataclass(frozen=True)
+class StorageLocation:
+    """A portable path inside one configured Storage."""
+
+    storage_id: str
+    path: str
+
+    def __post_init__(self) -> None:
+        if not self.storage_id.strip() or not self.path.strip():
+            raise ValueError("storage location ID and path are required")
+        if self.path.startswith(("/", "\\")) or "\\" in self.path or "\x00" in self.path:
+            raise ValueError("storage location path must be relative")
+        if any(part in {"", ".", ".."} for part in self.path.split("/")):
+            raise ValueError("storage location path contains an invalid component")
+
+
+@dataclass(frozen=True)
+class OrganizePlan:
+    source_storage_id: str
+    target_storage_id: str
+    source: str
+    target: str
+    recognition_type_id: str
+    naming_policy_id: str
+    classification_policy_id: str
+    organize_policy_id: str
+    operations: tuple[OrganizeOperation, ...] = field(default_factory=tuple)
+    operation: PlanOperation = PlanOperation.MOVE
+    media_identity: MediaIdentity | None = None
+    naming_result: NamingResult | None = None
+    classification_result: ClassificationResult | None = None
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+    conflicts: tuple[Conflict, ...] = field(default_factory=tuple)
+    status: PlanStatus = PlanStatus.READY
+    plan_id: str = ""
+    link_operation: OrganizeOperationType | None = None
+    media_library_root: str = ""
+    relative_destination: str = ""
+    source_location: StorageLocation | None = None
+    destination_location: StorageLocation | None = None
+
+    @property
+    def destination(self) -> str:
+        return self.target
+
+
+@dataclass(frozen=True)
+class ExecutionResult:
+    status: ExecutionStatus
+    operation: PlanOperation
+    source: str
+    destination: str
+    created_directories: tuple[str, ...] = field(default_factory=tuple)
+    completed_operations: tuple[str, ...] = field(default_factory=tuple)
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+    errors: tuple[str, ...] = field(default_factory=tuple)
+    duration: float = 0
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    plan_id: str = ""
+    resolved_destination: str = ""
+
+    @property
+    def createdDirectories(self) -> tuple[str, ...]:
+        return self.created_directories
+
+    @property
+    def completedOperations(self) -> tuple[str, ...]:
+        return self.completed_operations

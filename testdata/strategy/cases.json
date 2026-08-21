@@ -1,0 +1,154 @@
+{
+  "cases": [
+    {
+      "name": "recognition-a",
+      "path": "/A/The.Matrix.1999.mkv",
+      "expect": {"recognitionType": "A", "metadataPolicy": "A", "namingPolicy": "A"}
+    },
+    {
+      "name": "recognition-b",
+      "path": "/B/Show.2020.S01E01.mkv",
+      "expect": {"recognitionType": "B", "metadataPolicy": "B", "classificationPolicy": "B"}
+    },
+    {
+      "name": "recognition-c-policy-reuse",
+      "path": "/C/The.Matrix.1999.mkv",
+      "expect": {
+        "recognitionType": "C",
+        "metadataPolicy": "C",
+        "namingPolicy": "A",
+        "classificationPolicy": "A",
+        "organizePolicy": "A",
+        "recognitionTypePreserved": true
+      }
+    },
+    {
+      "name": "movie-exact-metadata",
+      "path": "/A/The.Matrix.1999.mkv",
+      "candidates": [{"providerId": "603", "title": "The Matrix", "year": 1999}],
+      "expect": {
+        "matchStatus": "matched",
+        "selectedProviderId": "603",
+        "naming": {
+          "directory": "The Matrix (1999)",
+          "directorySegments": ["The Matrix (1999)"],
+          "filename": "The Matrix (1999).mkv"
+        }
+      }
+    },
+    {
+      "name": "wrong-first-correct-later",
+      "path": "/A/The.Matrix.1999.mkv",
+      "candidates": [
+        {"providerId": "1", "title": "The Matrix Resurrections", "year": 2021},
+        {"providerId": "603", "title": "The Matrix", "year": 1999}
+      ],
+      "expect": {"matchStatus": "matched", "selectedProviderId": "603"}
+    },
+    {
+      "name": "low-confidence",
+      "path": "/A/The.Matrix.1999.mkv",
+      "candidates": [{"providerId": "9", "title": "Completely Different", "year": 1970}],
+      "expect": {"matchStatus": "not_found", "selectedProviderId": null}
+    },
+    {
+      "name": "ambiguous",
+      "path": "/A/Example.2024.mkv",
+      "candidates": [
+        {"providerId": "10", "title": "Example", "year": 2024},
+        {"providerId": "20", "title": "Example", "year": 2024}
+      ],
+      "expect": {"matchStatus": "ambiguous", "selectedProviderId": null}
+    },
+    {
+      "name": "no-metadata-result",
+      "path": "/A/Missing.2024.mkv",
+      "candidates": [],
+      "expect": {"matchStatus": "not_found", "selectedProviderId": null}
+    },
+    {
+      "name": "tv-single-episode",
+      "path": "/B/Show.2020.S01E01.mkv",
+      "mediaType": "tv",
+      "availableEpisodes": [1],
+      "candidates": [{"providerId": "100", "title": "Show", "year": 2020}],
+      "expect": {
+        "matchStatus": "matched",
+        "season": 1,
+        "episode": 1,
+        "episodes": [1],
+        "naming": {
+          "directory": "Show (2020)",
+          "directorySegments": ["Show (2020)", "Season 01"],
+          "filename": "Show - S01E01 - Episode 1.mkv"
+        }
+      }
+    },
+    {
+      "name": "tv-multi-episode",
+      "path": "/B/Show.2020.S01E01E02.mkv",
+      "mediaType": "tv",
+      "availableEpisodes": [1, 2],
+      "candidates": [{"providerId": "100", "title": "Show", "year": 2020}],
+      "expect": {
+        "matchStatus": "matched",
+        "episodes": [1, 2],
+        "naming": {
+          "directory": "Show (2020)",
+          "directorySegments": ["Show (2020)", "Season 01"],
+          "filename": "Show - S01E01-E02.mkv"
+        }
+      }
+    },
+    {
+      "name": "unicode-chinese-title",
+      "path": "/A/十二怒汉.1957.mkv",
+      "candidates": [{"providerId": "389", "title": "十二怒汉", "year": 1957}],
+      "expect": {
+        "title": "十二怒汉",
+        "matchStatus": "matched",
+        "selectedProviderId": "389",
+        "naming": {
+          "directory": "十二怒汉 (1957)",
+          "directorySegments": ["十二怒汉 (1957)"],
+          "filename": "十二怒汉 (1957).mkv"
+        }
+      }
+    },
+    {
+      "name": "real-world-provider-id",
+      "path": "/A/哈姆奈特 (2025) [tmdbid-858024]/哈姆奈特 (2025).mkv",
+      "candidates": [{"providerId": "858024", "title": "哈姆奈特", "year": 2025}],
+      "expect": {
+        "title": "哈姆奈特",
+        "year": 2025,
+        "provider": "tmdb",
+        "providerId": "858024",
+        "naming": {
+          "directory": "哈姆奈特 (2025)",
+          "directorySegments": ["哈姆奈特 (2025)"],
+          "filename": "哈姆奈特 (2025).mkv"
+        }
+      }
+    },
+    {
+      "name": "filename-directory-conflict",
+      "path": "/C/Other.Movie.2020/The.Matrix.1999.mkv",
+      "expect": {"recognitionType": "C", "title": "The Matrix", "year": 1999}
+    },
+    {
+      "name": "c-live-preservation",
+      "path": "/C/The.Matrix.1999.mkv",
+      "candidates": [{"providerId": "603", "title": "The Matrix", "year": 1999}],
+      "expect": {
+        "recognitionType": "C",
+        "metadataPolicy": "C",
+        "namingPolicy": "A",
+        "classificationPolicy": "A",
+        "organizePolicy": "A",
+        "matchStatus": "matched",
+        "recognitionTypePreserved": true
+      }
+    }
+  ]
+}

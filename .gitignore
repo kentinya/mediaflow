@@ -1,0 +1,23 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Packaging and coverage artifacts
+*.egg-info/
+build/
+dist/
+.coverage
+htmlcov/
+
+# Local environments and editor settings
+.venv/
+venv/
+.env
+.mediaflow/
+config/strategy.json
+sesion.sh
+.idea/
+.vscode/

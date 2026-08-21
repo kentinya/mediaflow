@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "historyPath": ".mediaflow/history.jsonl",
+  "storages": [
+    {"id": "source-storage", "name": "Source", "type": "local", "rootPath": "/mnt/HDD_2"},
+    {"id": "media-target", "type": "local", "rootPath": "/mnt/HDD_2/Organized"}
+  ],
+  "mediaLibraries": [
+    {"id": "movies", "name": "Movies", "storageId": "media-target", "rootPath": "Movies"},
+    {"id": "tv", "name": "TV Shows", "storageId": "media-target", "rootPath": "TV Shows"}
+  ],
+  "resourceLibraries": [
+    {
+      "id": "source",
+      "name": "Unified media source",
+      "storageId": "source-storage",
+      "storagePath": "Media",
+      "displayRootPath": "/mnt/HDD_2/Media",
+      "enabled": true,
+      "extensions": ["mkv", "mp4", "avi", "mov", "wmv", "ts", "m2ts", "webm", "iso"],
+      "maxDepth": null
+    }
+  ],
+  "metadataPolicies": [
+    {"id": "A", "providerId": "tmdb", "mediaType": "movie", "language": "zh-CN", "region": "CN", "maxCandidateEnrichments": 2},
+    {"id": "B", "providerId": "tmdb", "mediaType": "tv", "language": "zh-CN", "region": "CN", "maxCandidateEnrichments": 2},
+    {"id": "C", "providerId": "tmdb", "mediaType": "movie", "language": "zh-CN", "region": "CN", "maxCandidateEnrichments": 2}
+  ],
+  "namingPolicies": [
+    {
+      "id": "A",
+      "name": "Movie naming",
+      "mediaTypeMode": "movie",
+      "directoryTemplate": "{title} ({year}) [tmdbid-{provider_id}]",
+      "filenameTemplate": "{title} ({year}).{ext}",
+      "missingVariableStrategy": "omit_token"
+    },
+    {
+      "id": "B",
+      "name": "TV naming",
+      "mediaTypeMode": "tv",
+      "seriesDirectoryTemplate": "{title} ({year})",
+      "seasonDirectoryTemplate": "Season {season:02}",
+      "episodeFilenameTemplate": "{title} - S{season:02}E{episode:02} - {episode_title}.{ext}",
+      "multiEpisodeFileTemplate": "{title} - S{season:02}{episodes}.{ext}",
+      "missingVariableStrategy": "omit_token"
+    }
+  ],
+  "classificationPolicies": [
+    {
+      "id": "A",
+      "name": "Movie classification",
+      "rules": [
+        {"id": "japanese-animation", "priority": 200, "conditions": {"mediaType": ["movie"], "genres": ["Animation"], "countries": ["Japan", "JP"]}, "result": {"mediaLibraryId": "movies", "library": "Movies", "path": ["Anime"]}},
+        {"id": "animation-movie", "priority": 100, "conditions": {"mediaType": ["movie"], "genres": ["Animation"]}, "result": {"mediaLibraryId": "movies", "library": "Movies", "path": ["Animation"]}},
+        {"id": "action-movie", "priority": 90, "conditions": {"mediaType": ["movie"], "genres": ["Action"]}, "result": {"mediaLibraryId": "movies", "library": "Movies", "path": ["Action"]}},
+        {"id": "foreign-movie", "priority": 50, "conditions": {"mediaType": ["movie"], "countries": ["US", "GB", "FR", "DE", "IT", "ES", "JP", "KR", "IN", "CA", "AU", "RU", "TH"]}, "result": {"mediaLibraryId": "movies", "library": "Movies", "path": ["外语电影"]}},
+        {"id": "other-movie", "priority": 1, "conditions": {"mediaType": ["movie"]}, "result": {"mediaLibraryId": "movies", "library": "Movies", "path": ["其他电影"]}}
+      ]
+    },
+    {
+      "id": "B",
+      "name": "TV classification",
+      "rules": [
+        {"id": "tv-series", "priority": 100, "conditions": {"mediaType": ["tv"]}, "result": {"mediaLibraryId": "tv", "library": "TV Shows", "path": ["Series"]}}
+      ]
+    }
+  ],
+  "organizePolicies": [
+    {"id": "A", "operation": "MOVE", "overwrite": false},
+    {"id": "B", "operation": "MOVE", "overwrite": false}
+  ],
+  "recognitionTypes": [
+    {"id": "A", "name": "Normal Movie", "description": "Standard movie library"},
+    {"id": "B", "name": "TV", "description": "Television library"},
+    {"id": "C", "name": "Special", "description": "Separately configured special type"}
+  ],
+  "recognitionRules": [
+    {
+      "id": "movie-library",
+      "name": "Movie resource library",
+      "priority": 100,
+      "score": 100,
+      "stopOnMatch": true,
+      "condition": {
+        "operator": "and",
+        "children": [
+          {"field": "resource_library_id", "operator": "equals", "value": "source"},
+          {"field": "path", "operator": "contains", "value": "/电影/"},
+          {"field": "extension", "operator": "in", "value": ["mkv", "mp4"]}
+        ]
+      },
+      "outputRecognitionType": "A"
+    },
+    {
+      "id": "tv-library",
+      "name": "TV resource library",
+      "priority": 100,
+      "score": 100,
+      "stopOnMatch": true,
+      "condition": {
+        "operator": "and",
+        "children": [
+          {"field": "resource_library_id", "operator": "equals", "value": "source"},
+          {"field": "path", "operator": "contains", "value": "/电视剧/"},
+          {"field": "extension", "operator": "in", "value": ["mkv", "mp4"]}
+        ]
+      },
+      "outputRecognitionType": "B"
+    },
+    {
+      "id": "special-library",
+      "name": "Special resource library",
+      "priority": 100,
+      "score": 100,
+      "stopOnMatch": true,
+      "condition": {
+        "operator": "and",
+        "children": [
+          {"field": "resource_library_id", "operator": "equals", "value": "source"},
+          {"field": "path", "operator": "contains", "value": "/C/"},
+          {"field": "extension", "operator": "in", "value": ["mkv", "mp4"]}
+        ]
+      },
+      "outputRecognitionType": "C"
+    }
+  ],
+  "recognitionTypePolicies": [
+    {
+      "id": "type-A",
+      "recognitionType": "A",
+      "metadataPolicy": "A",
+      "namingPolicy": "A",
+      "classificationPolicy": "A",
+      "organizePolicy": "A"
+    },
+    {
+      "id": "type-B",
+      "recognitionType": "B",
+      "metadataPolicy": "B",
+      "namingPolicy": "B",
+      "classificationPolicy": "B",
+      "organizePolicy": "B"
+    },
+    {
+      "id": "type-C",
+      "recognitionType": "C",
+      "metadataPolicy": "C",
+      "namingPolicy": "A",
+      "classificationPolicy": "A",
+      "organizePolicy": "A"
+    }
+  ]
+}
