@@ -55,7 +55,9 @@ The developer strategy inspector remains available as `strategy-test`.
 
 - [Runtime configuration](docs/configuration.md)
 - [Architecture](docs/architecture.md)
-- [Requirements](docs/requirements.md)
+- [Product requirements](影视媒体资源自动整理系统需求规格说明书.md)
+- [Engineering requirements](docs/requirements.md)
+- [Roadmap and current milestone](docs/roadmap.md)
 - [Progress and validation](docs/progress.md)
 
 Operation history is appended as JSON Lines at the configured `historyPath`.
@@ -69,3 +71,11 @@ For OpenList, install the optional dependency and keep its token outside JSON:
 .venv/bin/pip install -e '.[openlist,tmdb]'
 export OPENLIST_TOKEN='<token>'
 ```
+
+## Current milestone
+
+The core configuration-driven CLI pipeline is complete. Production persistence and resumable task
+execution are the next milestone; interactive conflict handling, attachments, scheduling, API, and
+Web UI remain planned. See the [roadmap](docs/roadmap.md) for the capability matrix and acceptance
+order. Until persistent task recovery is complete, unattended scheduled `organize --execute` is
+not recommended.

@@ -66,6 +66,19 @@ The final CLI commands `scan`, `preview`, and `organize` require no path. They p
 configured ResourceLibraries; legacy explicit-path forms remain compatible. Scan and preview are
 read-only, organize remains DryRun unless `--execute` is present, and each file failure is isolated.
 
+## Current production-readiness boundary
+
+The core execution chain is complete, but the current production CLI constructs an in-memory
+FileIndex for each process. SQLite FileIndex infrastructure exists but is not yet the configured
+runtime default. Task models and cancellation exist, while a durable queue, restart recovery,
+pause/resume, failed-item retry, and cross-process file locks do not. JSON Lines execution history
+is durable but is not yet a unified task/result database.
+
+Consequently, the next architectural milestone is persistence and resumable task orchestration.
+It must wrap existing application services rather than moving business logic into the task runner.
+Interactive conflict resolution, attachments, scheduling, API, and UI follow that foundation; see
+[`docs/roadmap.md`](roadmap.md).
+
 ## Important interfaces
 
 - `Storage` exposes read/write concepts and explicit capabilities. Business logic targets this

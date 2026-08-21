@@ -39,10 +39,13 @@
 ## Current
 
 - Phase 13.3 Storage identity audit and OpenList native Move→Rename completion: PASS
+- Product status: core CLI vertical slice complete; production persistence/resumable tasks are next
 
 ## Planned
 
-- Interactive conflict resolution/confirmation, attachment organization, API, and UI
+- Phase 14: persistent FileIndex wiring, durable Task/TaskItem/Result repositories, restart-safe
+  resume/retry, and `StorageID + Path` operation locking
+- Later: conflict/manual confirmation, attachments, runtime SMB/S3 config, scheduler/API, and UI
 
 ## Known Issues
 
@@ -650,3 +653,12 @@ Documentation and examples synchronization (2026-08-21): PASS
   native Move→Rename semantics; example JSON and both runtime examples validate successfully
 - ResourceLibrary `displayRootPath` is optional; legacy `rootPath` remains a compatibility alias,
   while no-path discovery depends only on `storageId` plus `storagePath`
+
+Requirements baseline and roadmap review (2026-08-21): PASS
+
+- Promoted the product specification to V1.1 with explicit completed/partial/unstarted status,
+  current path/Storage identity semantics, and a verified implementation baseline
+- Added `docs/roadmap.md` with the current-node analysis, capability matrix, Phases 14–19, Phase 14
+  acceptance direction, and continuous safety baseline
+- Identified persistent FileIndex/task/result state and restart-safe recovery as the next blocking
+  production-readiness milestone; no strategy engine redesign is planned
