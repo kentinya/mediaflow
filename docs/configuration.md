@@ -333,3 +333,29 @@ Without a positional path, every enabled ResourceLibrary is scanned. Production 
 source and destination Storage IDs from configuration and supports configured batches. Only
 `organize --execute` grants mutation authority; overwrite, implicit operation fallback, and silent
 delete remain prohibited.
+
+## Persistence and recovery
+
+```json
+"persistence": {
+  "databasePath": ".mediaflow/mediaflow.sqlite3"
+}
+```
+
+Relative paths use the process working directory. Runtime processing creates the database parent;
+`mediaflow config validate` validates the value without creating a file or directory.
+
+The versioned SQLite database contains persistent FileIndex, Task, TaskItem, ResultRecord, and
+`StorageID + normalized source path` locks. JSONL `historyPath` remains separate and compatible.
+
+```bash
+mediaflow tasks list
+mediaflow tasks show TASK_ID
+mediaflow tasks resume TASK_ID
+mediaflow tasks retry-failed TASK_ID
+```
+
+Resume considers interrupted/pending/failed/partial items; retry-failed selects failed/partial
+items. Successful, skipped, and DryRun results are excluded. Retry without `--execute` creates a new
+DryRun task. Execute is accepted only if the original task was execute-authorized and the retry
+command supplies a fresh `--execute` flag.

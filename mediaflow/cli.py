@@ -46,7 +46,8 @@ def main(
     runner_factory: Callable[[bool], StrategyTestRunner] | None = None,
 ) -> int:
     effective_argv = list(sys.argv[1:] if argv is None else argv)
-    if {"analyze", "scan", "preview", "organize", "config"}.intersection(effective_argv):
+    production_commands = {"analyze", "scan", "preview", "organize", "config", "tasks"}
+    if Path(sys.argv[0]).name == "mediaflow" or production_commands.intersection(effective_argv):
         from mediaflow.final_cli import final_main
 
         return final_main(effective_argv, stdout=stdout, stderr=stderr)

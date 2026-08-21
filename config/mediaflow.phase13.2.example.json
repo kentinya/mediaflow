@@ -1,6 +1,9 @@
 {
   "version": 1,
   "historyPath": ".mediaflow/history.jsonl",
+  "persistence": {
+    "databasePath": ".mediaflow/mediaflow.sqlite3"
+  },
   "storages": [
     {
       "id": "HDD_2",
@@ -244,6 +247,10 @@
       "TMDB_ACCESS_TOKEN": "environment-secret-not-json",
       "OPENLIST_TOKEN": "environment-secret-not-json"
     },
+    "persistence": {
+      "databasePath": ".mediaflow/mediaflow.sqlite3",
+      "notice": "Config validation does not create it; runtime scan/preview/organize/tasks do"
+    },
     "pathSemantics": {
       "storageRootPath": "Adapter-owned root; Local may be absolute and OpenList is an API path",
       "resourceStoragePath": "Scan path relative to Storage.rootPath",
@@ -480,7 +487,11 @@
       "mediaflow scan --limit 20",
       "mediaflow preview --limit 20",
       "mediaflow organize --limit 20",
-      "mediaflow organize --execute --limit 20"
+      "mediaflow organize --execute --limit 20",
+      "mediaflow tasks list",
+      "mediaflow tasks show TASK_ID",
+      "mediaflow tasks resume TASK_ID",
+      "mediaflow tasks retry-failed TASK_ID --execute"
     ]
   }
 }

@@ -13,14 +13,17 @@ from mediaflow.application.strategy_test import (
     SyntheticMetadataProvider,
     strategy_runner_from_configuration,
 )
+from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.cli import main
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.organizer import ExecutionStatus
+from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 
 
@@ -108,6 +111,9 @@ class FinalIntegrationTests(unittest.TestCase):
             )
             history = JsonLinesOperationHistoryRepository(Path(source_root, "history.jsonl"))
             library = ResourceLibrary("movies", "Movies", "source", "")
+            task_repository = SQLiteTaskRepository(Path(source_root, "runtime.sqlite3"))
+            coordinator = PersistentTaskCoordinator(task_repository, task_repository)
+            task = coordinator.create("organize", execute_authorized=True)
             service = MediaOrganizerService(
                 strategy_runner_from_configuration(
                     configuration, MetadataProviderRegistry((provider,))
@@ -118,6 +124,8 @@ class FinalIntegrationTests(unittest.TestCase):
                 configuration.recognition_type_policies,
                 history,
                 source_display_roots={"movies": source_root},
+                task_coordinator=coordinator,
+                task_id=task.task_id,
             )
 
             preview = service.process_file(
@@ -147,6 +155,13 @@ class FinalIntegrationTests(unittest.TestCase):
             self.assertTrue(unknown_path.exists())
             self.assertEqual(3, len(history.list()))
             self.assertEqual("129", history.list()[1].provider_id)
+            persisted = coordinator.finish(task.task_id, batch)
+            self.assertEqual(persisted.status, PersistentTaskStatus.PARTIAL_SUCCESS)
+            self.assertEqual(
+                {item.status for item in task_repository.list_items(task.task_id)},
+                {TaskItemStatus.SUCCESS, TaskItemStatus.FAILED},
+            )
+            task_repository.close()
 
     def test_history_persists_unicode_and_errors(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

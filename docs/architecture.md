@@ -66,18 +66,24 @@ The final CLI commands `scan`, `preview`, and `organize` require no path. They p
 configured ResourceLibraries; legacy explicit-path forms remain compatible. Scan and preview are
 read-only, organize remains DryRun unless `--execute` is present, and each file failure is isolated.
 
-## Current production-readiness boundary
+## Persistent runtime boundary
 
-The core execution chain is complete, but the current production CLI constructs an in-memory
-FileIndex for each process. SQLite FileIndex infrastructure exists but is not yet the configured
-runtime default. Task models and cancellation exist, while a durable queue, restart recovery,
-pause/resume, failed-item retry, and cross-process file locks do not. JSON Lines execution history
-is durable but is not yet a unified task/result database.
+Phase 14 wires production CLI scanning to `SQLiteFileIndexRepository` and adds a versioned
+`SQLiteTaskRepository` for Task, TaskItem, normalized ResultRecord, and file-operation locks. Both
+adapters share the configured database but own separate tables and ports. Config validation never
+opens the database; developer `strategy-test` retains an isolated in-memory index.
 
-Consequently, the next architectural milestone is persistence and resumable task orchestration.
-It must wrap existing application services rather than moving business logic into the task runner.
-Interactive conflict resolution, attachments, scheduling, API, and UI follow that foundation; see
-[`docs/roadmap.md`](roadmap.md).
+`PersistentTaskCoordinator` surrounds `MediaOrganizerService` and owns no parsing, recognition,
+metadata, naming, classification, planning, or execution decisions. Results are persisted before
+terminal item state. Recovery also excludes items with a persisted successful, DryRun, or skipped
+result if a crash left their item row active.
+
+Locks are atomically keyed by `StorageID + normalized Storage-relative source path`. Completion
+releases them. Explicit resume/retry reclaims only locks owned by the selected stale task and then
+creates a new auditable task. Execution requires prior authorization plus a fresh `--execute`.
+
+This is a recoverable-task foundation, not a background worker. Live pause/control, scheduler,
+distributed leases, and automatic crash replay remain deferred. See [`docs/roadmap.md`](roadmap.md).
 
 ## Important interfaces
 

@@ -39,13 +39,13 @@
 ## Current
 
 - Phase 13.3 Storage identity audit and OpenList native Move→Rename completion: PASS
-- Product status: core CLI vertical slice complete; production persistence/resumable tasks are next
+- Phase 14 persistent FileIndex and recoverable task foundation: implementation complete,
+  validation pending
 
 ## Planned
 
-- Phase 14: persistent FileIndex wiring, durable Task/TaskItem/Result repositories, restart-safe
-  resume/retry, and `StorageID + Path` operation locking
-- Later: conflict/manual confirmation, attachments, runtime SMB/S3 config, scheduler/API, and UI
+- Phase 15: conflict/manual confirmation and explicit safe resolution
+- Later: attachments, runtime SMB/S3 config, scheduler/API, and UI
 
 ## Known Issues
 
@@ -662,3 +662,19 @@ Requirements baseline and roadmap review (2026-08-21): PASS
   acceptance direction, and continuous safety baseline
 - Identified persistent FileIndex/task/result state and restart-safe recovery as the next blocking
   production-readiness milestone; no strategy engine redesign is planned
+
+Phase 14 persistent FileIndex and recoverable task foundation (2026-08-21): PASS
+
+- Production `mediaflow scan`, `preview`, and `organize` now share the configured SQLite FileIndex;
+  cross-process New/Unchanged and stability evidence persist while Scanner semantics remain intact
+- Added versioned SQLite Task, TaskItem, ResultRecord, and file-lock persistence behind domain ports
+- Added `mediaflow tasks list|show|resume|retry-failed`; retries create a new auditable task and
+  require both original execute authorization and a fresh `--execute` for mutation
+- Result-before-terminal persistence plus successful-result filtering prevents a crash window from
+  blindly repeating an already successful Storage operation
+- Atomic `StorageID + normalized relative path` locks reject concurrent source processing; explicit
+  stale-task recovery and cancellation reclaim only the selected task's locks
+- Existing JSONL history remains compatible and is never silently migrated or deleted
+- Full suite: 268 tests, 265 passed, 0 failed, 3 optional integrations skipped
+- Ruff lint/format, compileall, dependency check, wheel build, config validation,
+  FFmpeg/FFprobe audit, and diff check passed

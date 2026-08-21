@@ -11,13 +11,16 @@ from mediaflow.application.media_organizer import MediaOrganizerBatchResult, Med
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
+from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.cli import render_strategy_result
+from mediaflow.domain.task_persistence import PersistentTask, PersistentTaskItem
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     load_runtime_configuration,
 )
+from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.tmdb import TMDBClient, TMDBConfig, TMDBProvider
 
 
@@ -40,6 +43,16 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
     organize.add_argument("path", nargs="?")
     organize.add_argument("--limit", type=int)
     organize.add_argument("--execute", action="store_true")
+    tasks = commands.add_parser("tasks", help="persistent task operations")
+    task_commands = tasks.add_subparsers(dest="task_command", required=True)
+    task_list = task_commands.add_parser("list")
+    task_list.add_argument("--limit", type=int, default=20)
+    task_show = task_commands.add_parser("show")
+    task_show.add_argument("task_id")
+    for name in ("resume", "retry-failed"):
+        task_retry = task_commands.add_parser(name)
+        task_retry.add_argument("task_id")
+        task_retry.add_argument("--execute", action="store_true")
     arguments = parser.parse_args(argv)
     try:
         configuration = _configuration(arguments.config)
@@ -55,23 +68,49 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
                 f"Organize policies: {len(strategy.organize_policies)}\n"
             )
             return 0
+        if arguments.command == "tasks" and arguments.task_command in {"list", "show"}:
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                if arguments.task_command == "list":
+                    stdout.write(render_tasks(repository.list_tasks(limit=arguments.limit)))
+                else:
+                    task = repository.get_task(arguments.task_id)
+                    if task is None:
+                        raise LookupError(f"task {arguments.task_id!r} was not found")
+                    stdout.write(render_task(task, repository.list_items(task.task_id)))
+            return 0
+
         storages = configuration.create_storages()
         if arguments.command == "scan":
-            discovered = []
-            batch = ResourceLibraryScanner(
-                StorageScanner(storages, InMemoryFileIndexRepository()),
-                configuration.resource_libraries,
-                storages,
-            ).scan_all(
-                limit=arguments.limit,
-                on_discovered=lambda library, file: discovered.append(
-                    (library.library_id, file.storage_id, file.path)
-                ),
-            )
-            stdout.write(render_scan(batch.results, discovered))
-            return 1 if any(result.errors for result in batch.results) else 0
+            with (
+                SQLiteTaskRepository(configuration.database_path) as repository,
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+            ):
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                task = coordinator.create("scan", execute_authorized=False)
+                discovered = []
+
+                def on_discovered(library, file) -> None:
+                    discovered.append((library.library_id, file.storage_id, file.path))
+                    coordinator.record_discovered(
+                        task.task_id,
+                        file.storage_id,
+                        library.library_id,
+                        file.path,
+                        f"{file.storage_id}:{file.path}",
+                    )
+
+                batch = ResourceLibraryScanner(
+                    StorageScanner(storages, file_index),
+                    configuration.resource_libraries,
+                    storages,
+                ).scan_all(limit=arguments.limit, on_discovered=on_discovered)
+                errors = tuple(error for result in batch.results for error in result.errors)
+                coordinator.finish(task.task_id, MediaOrganizerBatchResult((), errors))
+                stdout.write(f"Task ID: {task.task_id}\n")
+                stdout.write(render_scan(batch.results, discovered))
+                return 1 if errors else 0
         library = display_root = None
-        if arguments.path:
+        if getattr(arguments, "path", None):
             library, display_root = _resource_library(configuration, arguments.path)
         token = os.environ.get("TMDB_ACCESS_TOKEN") or os.environ.get("TMDB_TOKEN")
         providers = None
@@ -90,31 +129,64 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
             )
             stdout.write(render_strategy_result(result))
             return 0
-        service = MediaOrganizerService(
-            strategy,
-            StorageScanner(storages, InMemoryFileIndexRepository()),
-            storages,
-            {item.library_id: item for item in configuration.media_libraries},
-            configuration.strategy.recognition_type_policies,
-            JsonLinesOperationHistoryRepository(configuration.history_path),
-            source_display_roots=dict(configuration.resource_display_roots),
-        )
-        execute = arguments.command == "organize" and arguments.execute
-        if arguments.path is None:
-            summary = service.process_all_libraries(
-                configuration.resource_libraries,
-                execute=execute,
-                limit=arguments.limit,
-                progress=lambda done, total, source: stdout.write(
-                    f"PROGRESS {done}/{total or '?'} {source}\n"
-                ),
+        with (
+            SQLiteTaskRepository(configuration.database_path) as repository,
+            SQLiteFileIndexRepository(configuration.database_path) as file_index,
+        ):
+            coordinator = PersistentTaskCoordinator(repository, repository)
+            retry_items: tuple[PersistentTaskItem, ...] | None = None
+            if arguments.command == "tasks":
+                original = coordinator.require(arguments.task_id)
+                if arguments.execute and not original.execute_authorized:
+                    raise ValueError(
+                        "original task was not execute-authorized; retry cannot enable execute"
+                    )
+                retry_items = coordinator.retryable_items(
+                    original.task_id,
+                    failed_only=arguments.task_command == "retry-failed",
+                )
+                repository.reclaim_task_locks(original.task_id)
+                execute = bool(arguments.execute and original.execute_authorized)
+                task = coordinator.create(
+                    f"{arguments.task_command}:{original.task_id}",
+                    execute_authorized=execute,
+                )
+            else:
+                execute = arguments.command == "organize" and arguments.execute
+                task = coordinator.create(arguments.command, execute_authorized=execute)
+            service = MediaOrganizerService(
+                strategy,
+                StorageScanner(storages, file_index),
+                storages,
+                {item.library_id: item for item in configuration.media_libraries},
+                configuration.strategy.recognition_type_policies,
+                JsonLinesOperationHistoryRepository(configuration.history_path),
+                source_display_roots=dict(configuration.resource_display_roots),
+                task_coordinator=coordinator,
+                task_id=task.task_id,
             )
-        else:
-            assert library is not None and display_root is not None
-            path = Path(arguments.path).resolve(strict=False)
-            if path.is_dir():
-                summary = service.process_library(
-                    library,
+            if retry_items is not None:
+                libraries = {item.library_id: item for item in configuration.resource_libraries}
+                retried = []
+                for stored in retry_items:
+                    resource = libraries.get(stored.resource_library_id)
+                    if resource is None:
+                        raise ValueError(
+                            f"task item references missing ResourceLibrary "
+                            f"{stored.resource_library_id!r}"
+                        )
+                    retried.append(
+                        service.process_file(
+                            stored.source_display,
+                            resource_library=resource,
+                            storage_path=stored.source_path,
+                            execute=execute,
+                        )
+                    )
+                summary = MediaOrganizerBatchResult(tuple(retried))
+            elif arguments.path is None:
+                summary = service.process_all_libraries(
+                    configuration.resource_libraries,
                     execute=execute,
                     limit=arguments.limit,
                     progress=lambda done, total, source: stdout.write(
@@ -122,17 +194,33 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
                     ),
                 )
             else:
-                storage_path = path.relative_to(Path(display_root).resolve(strict=False)).as_posix()
-                storage_path = _storage_path(library.root_path, storage_path)
-                item = service.process_file(
-                    path.as_posix(),
-                    resource_library=library,
-                    storage_path=storage_path,
-                    execute=execute,
-                )
-                summary = MediaOrganizerBatchResult((item,))
-        stdout.write(render_summary(summary, execute=execute))
-        return 1 if summary.failed else 0
+                assert library is not None and display_root is not None
+                path = Path(arguments.path).resolve(strict=False)
+                if path.is_dir():
+                    summary = service.process_library(
+                        library,
+                        execute=execute,
+                        limit=arguments.limit,
+                        progress=lambda done, total, source: stdout.write(
+                            f"PROGRESS {done}/{total or '?'} {source}\n"
+                        ),
+                    )
+                else:
+                    storage_path = path.relative_to(
+                        Path(display_root).resolve(strict=False)
+                    ).as_posix()
+                    storage_path = _storage_path(library.root_path, storage_path)
+                    item = service.process_file(
+                        path.as_posix(),
+                        resource_library=library,
+                        storage_path=storage_path,
+                        execute=execute,
+                    )
+                    summary = MediaOrganizerBatchResult((item,))
+            coordinator.finish(task.task_id, summary)
+            stdout.write(f"Task ID: {task.task_id}\n")
+            stdout.write(render_summary(summary, execute=execute))
+            return 1 if summary.failed else 0
     except (OSError, ValueError, LookupError, RuntimeError) as error:
         stderr.write(f"mediaflow error: {error}\n")
         return 2
@@ -178,6 +266,41 @@ def render_scan(results, discovered) -> str:
     lines.append(f"Total: {len(discovered)}")
     lines.extend(f"{storage_id}:{path}" for _, storage_id, path in discovered)
     lines.append("")
+    return "\n".join(lines)
+
+
+def render_tasks(tasks: tuple[PersistentTask, ...]) -> str:
+    lines = ["", "TASKS", ""]
+    for task in tasks:
+        lines.append(
+            f"{task.task_id} | {task.command} | {task.status.value} | "
+            f"total={task.total_items} completed={task.completed_items} failed={task.failed_items}"
+        )
+    lines.extend(("", f"Total: {len(tasks)}", ""))
+    return "\n".join(lines)
+
+
+def render_task(task: PersistentTask, items: tuple[PersistentTaskItem, ...]) -> str:
+    lines = [
+        "",
+        "TASK",
+        "",
+        f"ID: {task.task_id}",
+        f"Command: {task.command}",
+        f"Status: {task.status.value}",
+        f"Execute authorized: {'YES' if task.execute_authorized else 'NO'}",
+        f"Created: {task.created_at.isoformat()}",
+        "",
+        "ITEMS",
+        "",
+    ]
+    for item in items:
+        detail = item.error or item.destination_path or ""
+        lines.append(
+            f"{item.status.value} | {item.storage_id}:{item.source_path} | "
+            f"attempts={item.attempts} | {detail}"
+        )
+    lines.extend(("", f"Total: {len(items)}", ""))
     return "\n".join(lines)
 
 

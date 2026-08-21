@@ -34,6 +34,7 @@ class RuntimeConfiguration:
     resource_display_roots: tuple[tuple[str, str], ...]
     media_libraries: tuple[MediaLibrary, ...]
     history_path: str
+    database_path: str
 
     def create_storages(self, external: dict[str, Storage] | None = None) -> dict[str, Storage]:
         storages = dict(external or {})
@@ -127,6 +128,12 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     strategy_runner_from_configuration(loaded.strategy)
     _validate_strategy_references(loaded.strategy)
     history_path = str(document.get("historyPath", ".mediaflow/history.jsonl"))
+    persistence = document.get("persistence", {})
+    if not isinstance(persistence, dict):
+        raise ValueError("runtime configuration 'persistence' must be an object")
+    database_path = persistence.get("databasePath", ".mediaflow/mediaflow.sqlite3")
+    if not isinstance(database_path, str) or not database_path.strip() or "\x00" in database_path:
+        raise ValueError("persistence databasePath must be a non-empty path string")
     return RuntimeConfiguration(
         loaded.strategy,
         storage_definitions,
@@ -134,6 +141,7 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         tuple(display_roots),
         media_libraries,
         history_path,
+        database_path,
     )
 
 

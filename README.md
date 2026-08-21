@@ -33,6 +33,10 @@ mediaflow scan --limit 20
 mediaflow preview --limit 20
 mediaflow organize --limit 20
 mediaflow organize --execute --limit 20
+mediaflow tasks list
+mediaflow tasks show TASK_ID
+mediaflow tasks resume TASK_ID
+mediaflow tasks retry-failed TASK_ID --execute
 ```
 
 `preview` and `organize` without `--execute` produce DryRun results. Only `organize --execute`
@@ -72,10 +76,21 @@ For OpenList, install the optional dependency and keep its token outside JSON:
 export OPENLIST_TOKEN='<token>'
 ```
 
+## Persistent runtime state
+
+Production scan/preview/organize use the configured SQLite database:
+
+```json
+"persistence": {"databasePath": ".mediaflow/mediaflow.sqlite3"}
+```
+
+It stores FileIndex state, tasks, task items, normalized results, and active source locks. Config
+validation does not create the database. Resume/retry creates a separately auditable task; real
+mutation requires both original execute authorization and a fresh `--execute`. Existing JSONL
+operation history remains compatible.
+
 ## Current milestone
 
-The core configuration-driven CLI pipeline is complete. Production persistence and resumable task
-execution are the next milestone; interactive conflict handling, attachments, scheduling, API, and
-Web UI remain planned. See the [roadmap](docs/roadmap.md) for the capability matrix and acceptance
-order. Until persistent task recovery is complete, unattended scheduled `organize --execute` is
-not recommended.
+The core CLI pipeline and Phase 14 persistence foundation are complete. Interactive conflict
+handling is next; attachments, scheduling, API, and Web UI remain planned. A scheduler is not yet
+implemented, so unattended execution remains outside the supported workflow.

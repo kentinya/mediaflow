@@ -27,19 +27,19 @@ Runtime Configuration
 | 领域 | 状态 | 当前能力 | 主要缺口 |
 |---|---|---|---|
 | Storage | 已完成 | Local、SMB、OpenList、S3/R2 Adapter | SMB/S3/R2 JSON Runtime 装配、更多实机验证 |
-| Scanner/FileIndex | 部分完成 | 扫描、稳定性、全量/增量、SQLite Adapter | CLI 接通持久 FileIndex、跨进程增量状态 |
+| Scanner/FileIndex | 已完成 | 扫描、稳定性、全量/增量、生产 SQLite FileIndex | 后续管理/清理工具 |
 | Parser | 已完成 | 文件名/路径、电影/剧集、多集、标签 | NFO Parser |
 | Recognition | 已完成 | 配置规则、优先级、证据、C 身份保持 | 人工修正流程 |
 | Metadata | 部分完成 | TMDB、缓存、候选评分、本地化标题、年份语义 | 人工候选确认、持久共享缓存管理 |
 | Naming | 已完成 | 安全模板、Unicode、多集、预览 | 用户界面配置体验 |
 | Classification | 已完成 | 确定性规则和媒体库选择 | 人工分类确认 |
 | Planner/Executor | 部分完成 | 计划、冲突保护、DryRun、真实执行、跨存储 | 完整冲突策略、附件、Rollback |
-| Task/History | 部分完成 | 状态模型、取消、JSONL 执行历史 | 持久队列、暂停/恢复、失败项重试、锁 |
+| Task/History | 部分完成 | 持久 Task/Item/Result、恢复重试、锁、JSONL 历史 | 后台队列、实时暂停/控制 |
 | API/UI/Scheduler | 未开始 | 需求和模块边界 | API、Web UI、调度、权限、通知 |
 
 ## 总体阶段计划
 
-### Phase 14：持久化与可恢复任务基础（下一步）
+### Phase 14：持久化与可恢复任务基础（已完成）
 
 - 将 CLI Scanner 从 InMemoryFileIndexRepository 切换到配置化 SQLite FileIndex。
 - 定义持久 Task、TaskItem、ResultRecord 仓储和数据库版本迁移。
@@ -48,10 +48,10 @@ Runtime Configuration
 - 支持取消、恢复中断任务、仅重试失败项；重启后不得重复成功的变更操作。
 - 保持 Scanner/Parser/Recognition/Metadata/Naming/Classification/Planner 零变更边界。
 
-验收门槛：进程重启后增量扫描状态仍存在；失败批次可安全恢复；DryRun 仍零 mutation；
-执行操作具有幂等保护和可审计结果。
+验收结果：生产 CLI 已接入持久 FileIndex；Task/TaskItem/Result/Lock 使用版本化 SQLite；
+显式 resume/retry 排除成功终态并重新要求执行授权；DryRun 仍零 mutation。
 
-### Phase 15：冲突与人工确认
+### Phase 15：冲突与人工确认（下一步）
 
 - 完整实现 Skip、Rename、Manual；Overwrite 仅在显式高风险策略和确认后允许。
 - 建立 NeedConfirm 队列，支持元数据候选、分类、目标冲突的人工选择。
@@ -84,16 +84,15 @@ Runtime Configuration
 
 ## 下一步实施建议
 
-下一任务应限定为 Phase 14，不同时启动附件、API 或 UI。优先顺序：
+下一任务应限定为 Phase 15，不同时启动附件、API 或 UI。优先顺序：
 
-1. 设计 SQLite schema/version 和 Repository ports。
-2. 将生产 CLI 的 FileIndex 从内存实现切换为配置化持久实现。
-3. 建立 Task/TaskItem/ResultRecord 状态机与恢复规则。
-4. 增加单文件互斥、重复执行保护和仅重试失败项。
-5. 添加崩溃恢复、取消、部分成功、跨进程增量扫描和零 mutation 回归。
-6. 更新配置模板，提供数据库路径、保留期和迁移命令。
+1. 固化 Skip、Rename、Manual 的领域决策与确认记录。
+2. 设计 NeedConfirm 项的持久状态和显式用户决策输入。
+3. 保持 Overwrite 默认关闭，并定义独立高风险授权边界。
+4. 扩充 Provider/季集/可选 Hash 重复检测证据。
+5. 增加冲突决策恢复、审计和零隐式 mutation 回归。
 
-在 Phase 14 验收前，不建议开启无人值守定时 `organize --execute`。
+Scheduler 尚未实现；当前不支持无人值守定时 `organize --execute`。
 
 ## 持续安全基线
 

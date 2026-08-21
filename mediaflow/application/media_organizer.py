@@ -3,6 +3,7 @@ from __future__ import annotations
 import posixpath
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from mediaflow.application.library_pipeline import MediaLibraryResolver, ResourceLibraryScanner
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
@@ -14,6 +15,10 @@ from mediaflow.domain.organizer import ExecutionResult, ExecutionStatus, Organiz
 from mediaflow.domain.recognition import RecognitionTypePolicy
 from mediaflow.domain.scanner import CancellationToken, FileScanStatus, ScanError, Scanner
 from mediaflow.domain.storage import Storage
+
+if TYPE_CHECKING:
+    from mediaflow.application.task_runtime import PersistentTaskCoordinator
+    from mediaflow.domain.task_persistence import PersistentTaskItem
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,8 @@ class MediaOrganizerService:
         executor: OrganizerExecutor | None = None,
         source_display_roots: dict[str, str] | None = None,
         logger: Logger | None = None,
+        task_coordinator: PersistentTaskCoordinator | None = None,
+        task_id: str | None = None,
     ) -> None:
         self._strategy = strategy
         self._scanner = scanner
@@ -100,6 +107,8 @@ class MediaOrganizerService:
         self._executor = executor or OrganizerExecutor()
         self._source_display_roots = source_display_roots or {}
         self._logger = logger
+        self._task_coordinator = task_coordinator
+        self._task_id = task_id
 
     def process_file(
         self,
@@ -109,7 +118,16 @@ class MediaOrganizerService:
         storage_path: str,
         execute: bool = False,
     ) -> MediaOrganizerItemResult:
+        tracked_item: PersistentTaskItem | None = None
         try:
+            if self._task_coordinator and self._task_id:
+                tracked_item = self._task_coordinator.begin_item(
+                    self._task_id,
+                    resource_library.storage_id,
+                    resource_library.library_id,
+                    storage_path,
+                    source,
+                )
             strategy = self._strategy.run_path(
                 source,
                 live_metadata=True,
@@ -126,12 +144,19 @@ class MediaOrganizerService:
                 recognition_type=strategy.recognition.recognition_type_id,
             )
             if not strategy.metadata or not strategy.metadata.identity:
-                return self._failed(source, strategy, "metadata identity is unavailable")
+                return self._failed(
+                    source, strategy, "metadata identity is unavailable", tracked_item
+                )
             if not strategy.naming:
-                return self._failed(source, strategy, strategy.naming_error or "naming failed")
+                return self._failed(
+                    source, strategy, strategy.naming_error or "naming failed", tracked_item
+                )
             if not strategy.classification or not strategy.classification.media_library_id:
                 return self._failed(
-                    source, strategy, strategy.classification_error or "classification failed"
+                    source,
+                    strategy,
+                    strategy.classification_error or "classification failed",
+                    tracked_item,
                 )
             resolved_library = self._media_library_resolver.resolve(strategy.classification)
             media_library = resolved_library.media_library
@@ -175,10 +200,9 @@ class MediaOrganizerService:
                 execution_status=execution.status.value,
             )
             item = MediaOrganizerItemResult(source, strategy, plan, execution)
-            self._record(item)
-            return item
+            return self._complete(item, tracked_item)
         except Exception as error:
-            return self._failed(source, None, str(error))
+            return self._failed(source, None, str(error), tracked_item)
 
     def process_library(
         self,
@@ -262,10 +286,20 @@ class MediaOrganizerService:
         source: str,
         strategy: StrategyTestResult | None,
         error: str,
+        tracked_item: PersistentTaskItem | None = None,
     ) -> MediaOrganizerItemResult:
         item = MediaOrganizerItemResult(source, strategy, error=error)
         self._log(LogLevel.ERROR, "media workflow failed", source=source, error=error)
+        return self._complete(item, tracked_item)
+
+    def _complete(
+        self,
+        item: MediaOrganizerItemResult,
+        tracked_item: PersistentTaskItem | None,
+    ) -> MediaOrganizerItemResult:
         self._record(item)
+        if self._task_coordinator and tracked_item:
+            self._task_coordinator.complete_item(tracked_item, item)
         return item
 
     def _log(self, level: LogLevel, message: str, **context: object) -> None:
