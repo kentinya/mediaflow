@@ -19,7 +19,12 @@ from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.task_persistence import ConfirmationStatus
 from mediaflow.interfaces.operator_ui import ASSETS as OPERATOR_UI_ASSETS
-from mediaflow.interfaces.pagination import decode_cursor, encode_cursor
+from mediaflow.interfaces.pagination import (
+    CursorDirection,
+    DecodedCursor,
+    decode_directional_cursor,
+    encode_cursor,
+)
 
 
 class ApiPermissionDenied(RuntimeError):
@@ -249,20 +254,19 @@ class MediaFlowApi:
             self._require(principal, ApiPermission.READ)
         if parts == ["api", "v1", "tasks"] and method == "GET":
             limit, cursor = self._collection_page(environ, "tasks")
-            values = (
-                self._repository.list_tasks(limit=limit + 1, after=cursor)
-                if cursor
-                else self._repository.list_tasks(limit=limit + 1)
-            )
-            page = values[:limit]
+            values = self._list_page(self._repository.list_tasks, limit, cursor)
+            page, has_previous, has_next = self._page_window(values, limit, cursor)
             return self._response(
                 start_response,
                 200,
                 {
                     "items": [self._value(item) for item in page],
                     "limit": limit,
-                    "truncated": len(values) > limit,
-                    "next_cursor": self._next_cursor("tasks", page, len(values) > limit),
+                    "truncated": has_next,
+                    "previous_cursor": self._page_cursor(
+                        "tasks", page, has_previous, CursorDirection.PREVIOUS
+                    ),
+                    "next_cursor": self._page_cursor("tasks", page, has_next, CursorDirection.NEXT),
                 },
             )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "tasks"] and method == "GET":
@@ -270,20 +274,22 @@ class MediaFlowApi:
             task = self._repository.get_task(parts[3])
             if task is None:
                 raise LookupError(f"task {parts[3]!r} was not found")
-            items = (
-                self._repository.list_items(task.task_id, limit=item_limit + 1, after=item_cursor)
-                if item_cursor
-                else self._repository.list_items(task.task_id, limit=item_limit + 1)
+            items = self._list_page(
+                lambda **kwargs: self._repository.list_items(task.task_id, **kwargs),
+                item_limit,
+                item_cursor,
             )
-            results = (
-                self._repository.list_results(
-                    task.task_id, limit=result_limit + 1, after=result_cursor
-                )
-                if result_cursor
-                else self._repository.list_results(task.task_id, limit=result_limit + 1)
+            results = self._list_page(
+                lambda **kwargs: self._repository.list_results(task.task_id, **kwargs),
+                result_limit,
+                result_cursor,
             )
-            item_page = items[:item_limit]
-            result_page = results[:result_limit]
+            item_page, has_previous_items, has_next_items = self._page_window(
+                items, item_limit, item_cursor
+            )
+            result_page, has_previous_results, has_next_results = self._page_window(
+                results, result_limit, result_cursor
+            )
             return self._response(
                 start_response,
                 200,
@@ -293,13 +299,22 @@ class MediaFlowApi:
                     "results": [self._value(item) for item in result_page],
                     "item_limit": item_limit,
                     "result_limit": result_limit,
-                    "items_truncated": len(items) > item_limit,
-                    "results_truncated": len(results) > result_limit,
-                    "next_item_cursor": self._next_cursor(
-                        "task_items", item_page, len(items) > item_limit
+                    "items_truncated": has_next_items,
+                    "results_truncated": has_next_results,
+                    "previous_item_cursor": self._page_cursor(
+                        "task_items", item_page, has_previous_items, CursorDirection.PREVIOUS
                     ),
-                    "next_result_cursor": self._next_cursor(
-                        "task_results", result_page, len(results) > result_limit
+                    "previous_result_cursor": self._page_cursor(
+                        "task_results",
+                        result_page,
+                        has_previous_results,
+                        CursorDirection.PREVIOUS,
+                    ),
+                    "next_item_cursor": self._page_cursor(
+                        "task_items", item_page, has_next_items, CursorDirection.NEXT
+                    ),
+                    "next_result_cursor": self._page_cursor(
+                        "task_results", result_page, has_next_results, CursorDirection.NEXT
                     ),
                 },
             )
@@ -427,20 +442,21 @@ class MediaFlowApi:
         if parts == ["api", "v1", "jobs"]:
             if method == "GET":
                 limit, cursor = self._collection_page(environ, "jobs")
-                values = (
-                    self._repository.list_jobs(limit=limit + 1, after=cursor)
-                    if cursor
-                    else self._repository.list_jobs(limit=limit + 1)
-                )
-                page = values[:limit]
+                values = self._list_page(self._repository.list_jobs, limit, cursor)
+                page, has_previous, has_next = self._page_window(values, limit, cursor)
                 return self._response(
                     start_response,
                     200,
                     {
                         "items": [self._value(item) for item in page],
                         "limit": limit,
-                        "truncated": len(values) > limit,
-                        "next_cursor": self._next_cursor("jobs", page, len(values) > limit),
+                        "truncated": has_next,
+                        "previous_cursor": self._page_cursor(
+                            "jobs", page, has_previous, CursorDirection.PREVIOUS
+                        ),
+                        "next_cursor": self._page_cursor(
+                            "jobs", page, has_next, CursorDirection.NEXT
+                        ),
                     },
                 )
             if method == "POST":
@@ -699,7 +715,7 @@ class MediaFlowApi:
         return limit
 
     @staticmethod
-    def _collection_page(environ: dict, resource: str) -> tuple[int, tuple[datetime, str] | None]:
+    def _collection_page(environ: dict, resource: str) -> tuple[int, DecodedCursor | None]:
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
         if set(values).difference({"limit", "cursor"}) or any(
             len(value) != 1 for value in values.values()
@@ -709,12 +725,12 @@ class MediaFlowApi:
             values.get("limit", ["100"])[0], resource.rstrip("s")
         )
         raw_cursor = values.get("cursor")
-        return limit, decode_cursor(raw_cursor[0], resource) if raw_cursor else None
+        return limit, decode_directional_cursor(raw_cursor[0], resource) if raw_cursor else None
 
     @staticmethod
     def _task_detail_page(
         environ: dict,
-    ) -> tuple[int, int, tuple[datetime, str] | None, tuple[datetime, str] | None]:
+    ) -> tuple[int, int, DecodedCursor | None, DecodedCursor | None]:
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
         allowed = {"itemLimit", "resultLimit", "itemCursor", "resultCursor"}
         if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
@@ -724,23 +740,48 @@ class MediaFlowApi:
         return (
             MediaFlowApi._parse_bounded_limit(values.get("itemLimit", ["100"])[0], "task item"),
             MediaFlowApi._parse_bounded_limit(values.get("resultLimit", ["100"])[0], "task result"),
-            decode_cursor(raw_item_cursor[0], "task_items") if raw_item_cursor else None,
-            decode_cursor(raw_result_cursor[0], "task_results") if raw_result_cursor else None,
+            decode_directional_cursor(raw_item_cursor[0], "task_items")
+            if raw_item_cursor
+            else None,
+            decode_directional_cursor(raw_result_cursor[0], "task_results")
+            if raw_result_cursor
+            else None,
         )
 
     @staticmethod
-    def _next_cursor(kind: str, page: tuple | list, truncated: bool) -> str | None:
-        if not truncated or not page:
+    def _list_page(list_values: Callable, limit: int, cursor: DecodedCursor | None):
+        if cursor is None:
+            return list_values(limit=limit + 1)
+        boundary = (
+            {"after": cursor.position}
+            if cursor.direction is CursorDirection.NEXT
+            else {"before": cursor.position}
+        )
+        return list_values(limit=limit + 1, **boundary)
+
+    @staticmethod
+    def _page_window(values, limit: int, cursor: DecodedCursor | None):
+        if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
+            page = values[-limit:]
+            return page, len(values) > limit, bool(page)
+        page = values[:limit]
+        return page, bool(cursor and page), len(values) > limit
+
+    @staticmethod
+    def _page_cursor(
+        kind: str, page: tuple | list, available: bool, direction: CursorDirection
+    ) -> str | None:
+        if not available or not page:
             return None
-        last = page[-1]
+        record = page[0] if direction is CursorDirection.PREVIOUS else page[-1]
         attribute = {
             "tasks": "task_id",
             "jobs": "job_id",
             "task_items": "item_id",
             "task_results": "result_id",
         }[kind]
-        identifier = getattr(last, attribute)
-        return encode_cursor(kind, last.created_at, identifier)
+        identifier = getattr(record, attribute)
+        return encode_cursor(kind, record.created_at, identifier, direction)
 
     @staticmethod
     def _parse_bounded_limit(raw: str, resource: str) -> int:

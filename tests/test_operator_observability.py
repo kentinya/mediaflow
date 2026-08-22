@@ -21,7 +21,12 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.operator_ui import APP_JS, INDEX_HTML
-from mediaflow.interfaces.pagination import decode_cursor, encode_cursor
+from mediaflow.interfaces.pagination import (
+    CursorDirection,
+    decode_cursor,
+    decode_directional_cursor,
+    encode_cursor,
+)
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
@@ -126,8 +131,9 @@ class OperatorObservabilityTests(unittest.TestCase):
         self.assertIn("Results truncated", script)
         self.assertIn("Open linked task", script)
         self.assertIn("Next ${noun}", script)
-        self.assertIn("Next items", script)
-        self.assertIn("Next results", script)
+        self.assertIn("Previous ${noun}", script)
+        self.assertIn("data.previous_item_cursor", script)
+        self.assertIn("data.previous_result_cursor", script)
         self.assertIn("textContent", script)
         self.assertNotIn("/api/v1/tasks/${encodeURIComponent(id)}/resume", script)
         self.assertNotIn("/api/v1/jobs/${encodeURIComponent(id)}/cancel", script)
@@ -218,6 +224,20 @@ class OperatorObservabilityTests(unittest.TestCase):
     def test_cursor_validation_rejects_malformed_cross_kind_and_injected_values(self) -> None:
         valid = encode_cursor("tasks", NOW, "task-1")
         self.assertEqual(decode_cursor(valid, "tasks"), (NOW, "task-1"))
+        decoded = decode_directional_cursor(valid, "tasks")
+        self.assertEqual(decoded.direction, CursorDirection.NEXT)
+        previous = encode_cursor("tasks", NOW, "task-1", CursorDirection.PREVIOUS)
+        self.assertEqual(
+            decode_directional_cursor(previous, "tasks").direction,
+            CursorDirection.PREVIOUS,
+        )
+        v1_document = {"at": NOW.isoformat(), "id": "task-1", "kind": "tasks", "version": 1}
+        v1 = (
+            base64.urlsafe_b64encode(json.dumps(v1_document, separators=(",", ":")).encode())
+            .rstrip(b"=")
+            .decode()
+        )
+        self.assertEqual(decode_directional_cursor(v1, "tasks").direction, CursorDirection.NEXT)
         invalid_documents = (
             {"at": NOW.isoformat(), "id": "task-1", "kind": "tasks"},
             {"at": "not-a-time", "id": "task-1", "kind": "tasks", "version": 1},
@@ -229,6 +249,21 @@ class OperatorObservabilityTests(unittest.TestCase):
             },
             {"at": NOW.isoformat(), "id": "../task", "kind": "tasks", "version": 1},
             {"at": NOW.isoformat(), "id": "task-1", "kind": "tasks", "version": True},
+            {
+                "at": NOW.isoformat(),
+                "direction": "sideways",
+                "id": "task-1",
+                "kind": "tasks",
+                "version": 2,
+            },
+            {
+                "at": NOW.isoformat(),
+                "direction": "next",
+                "extra": "field",
+                "id": "task-1",
+                "kind": "tasks",
+                "version": 2,
+            },
         )
         for document in invalid_documents:
             raw = json.dumps(document, separators=(",", ":")).encode()
@@ -282,6 +317,128 @@ class OperatorObservabilityTests(unittest.TestCase):
                 combined = [item["task_id"] for item in first["items"] + second["items"]]
                 self.assertEqual(combined, ["task-3", "task-2", "task-1", "task-0"])
                 self.assertNotIn("task-9", combined)
+
+    def test_deleted_anchor_and_page_size_one_keep_keyset_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                for rank in range(3):
+                    repository.create_task(
+                        replace(self._task(rank), created_at=NOW, updated_at=NOW)
+                    )
+                api = self._api(repository)
+                _, first = request(api, "/api/v1/tasks", query="limit=1")
+                self.assertEqual([item["task_id"] for item in first["items"]], ["task-2"])
+                with repository._lock, repository._connection:  # exercise deletion at cursor edge
+                    repository._connection.execute("DELETE FROM tasks WHERE task_id=?", ("task-2",))
+                _, second = request(
+                    api,
+                    "/api/v1/tasks",
+                    query=f"limit=1&cursor={first['next_cursor']}",
+                )
+                self.assertEqual([item["task_id"] for item in second["items"]], ["task-1"])
+                _, back = request(
+                    api,
+                    "/api/v1/tasks",
+                    query=f"limit=1&cursor={second['previous_cursor']}",
+                )
+                self.assertEqual(back["items"], [])
+                with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+                    repository.list_tasks(limit=1, after=(NOW, "task-1"), before=(NOW, "task-1"))
+
+    def test_task_and_job_pages_traverse_forward_and_backward(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                for rank in range(5):
+                    repository.create_task(
+                        replace(self._task(rank), created_at=NOW, updated_at=NOW)
+                    )
+                    repository.create_job(replace(self._job(rank), created_at=NOW, updated_at=NOW))
+                api = self._api(repository)
+                for endpoint, key in (("tasks", "task_id"), ("jobs", "job_id")):
+                    with self.subTest(endpoint=endpoint):
+                        _, first = request(api, f"/api/v1/{endpoint}", query="limit=2")
+                        _, middle = request(
+                            api,
+                            f"/api/v1/{endpoint}",
+                            query=f"limit=2&cursor={first['next_cursor']}",
+                        )
+                        _, last = request(
+                            api,
+                            f"/api/v1/{endpoint}",
+                            query=f"limit=2&cursor={middle['next_cursor']}",
+                        )
+                        self.assertIsNone(first["previous_cursor"])
+                        self.assertIsNotNone(middle["previous_cursor"])
+                        self.assertIsNotNone(middle["next_cursor"])
+                        self.assertIsNone(last["next_cursor"])
+                        _, back_middle = request(
+                            api,
+                            f"/api/v1/{endpoint}",
+                            query=f"limit=2&cursor={last['previous_cursor']}",
+                        )
+                        _, back_first = request(
+                            api,
+                            f"/api/v1/{endpoint}",
+                            query=f"limit=2&cursor={back_middle['previous_cursor']}",
+                        )
+                        self.assertEqual(back_middle["items"], middle["items"])
+                        self.assertEqual(back_first["items"], first["items"])
+                        self.assertIsNone(back_first["previous_cursor"])
+                        expected = [f"{endpoint[:-1]}-{rank}" for rank in (4, 3)]
+                        self.assertEqual([item[key] for item in back_first["items"]], expected)
+
+    def test_item_and_result_previous_pages_are_independent_and_keyset_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                repository.create_task(self._task(0))
+                for rank in range(5):
+                    repository.upsert_item(
+                        replace(self._item(rank), created_at=NOW, updated_at=NOW)
+                    )
+                    repository.append_result(replace(self._result(rank), created_at=NOW))
+                api = self._api(repository)
+                _, first = request(api, "/api/v1/tasks/task-0", query="itemLimit=2&resultLimit=2")
+                _, middle = request(
+                    api,
+                    "/api/v1/tasks/task-0",
+                    query=(
+                        "itemLimit=2&resultLimit=2"
+                        f"&itemCursor={first['next_item_cursor']}"
+                        f"&resultCursor={first['next_result_cursor']}"
+                    ),
+                )
+                _, last = request(
+                    api,
+                    "/api/v1/tasks/task-0",
+                    query=(
+                        "itemLimit=2&resultLimit=2"
+                        f"&itemCursor={middle['next_item_cursor']}"
+                        f"&resultCursor={middle['next_result_cursor']}"
+                    ),
+                )
+                item_before = decode_cursor(last["previous_item_cursor"], "task_items")
+                result_before = decode_cursor(last["previous_result_cursor"], "task_results")
+                with (
+                    patch.object(repository, "list_items", wraps=repository.list_items) as items,
+                    patch.object(
+                        repository, "list_results", wraps=repository.list_results
+                    ) as results,
+                ):
+                    _, back = request(
+                        api,
+                        "/api/v1/tasks/task-0",
+                        query=(
+                            "itemLimit=2&resultLimit=2"
+                            f"&itemCursor={last['previous_item_cursor']}"
+                            f"&resultCursor={last['previous_result_cursor']}"
+                        ),
+                    )
+                self.assertEqual(back["items"], middle["items"])
+                self.assertEqual(back["results"], middle["results"])
+                items.assert_called_once_with("task-0", limit=3, before=item_before)
+                results.assert_called_once_with("task-0", limit=3, before=result_before)
+                self.assertIsNotNone(back["previous_item_cursor"])
+                self.assertIsNotNone(back["next_result_cursor"])
 
     @staticmethod
     def _api(repository) -> MediaFlowApi:

@@ -927,3 +927,15 @@ Phase 19.4 stable cursor pagination for operational history (2026-08-22): PASS
 - Full suite: 411 tests, 408 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated-free wheel build, both example validations,
   FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 19.5 bidirectional stable cursor pagination (2026-08-22): PASS
+
+- Added strict directional v2 cursors while retaining Phase 19.4 v1 forward compatibility
+- Added reverse keyset queries for Task, Job, TaskItem, and Result with canonical ordering restored
+  after bounded `limit + 1` reads; no OFFSET, total query, or prior-row enumeration is used
+- Added Previous/Next collection controls and independent Previous/Next TaskItem/Result controls
+- Verified same-timestamp first/middle/last round trips, independent detail cursors, malformed cursor
+  rejection, read-only UI boundaries, and existing operational regressions
+- Full suite: 414 tests, 411 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated wheel build, both example validations, FFmpeg/FFprobe
+  runtime audit, and diff check passed

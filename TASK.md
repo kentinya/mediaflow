@@ -1,80 +1,81 @@
-# Phase 19.4 — Stable Cursor Pagination for Operational History
+# Phase 19.5 — Bidirectional Stable Cursor Pagination
 
 ## Goal
 
-Remove the Phase 19.3 large-history limitation by adding deterministic, bounded keyset cursor
-pagination for Tasks, Jobs, TaskItems, and ResultRecords. Extend the read-only operator UI to move
-through pages without adding any workflow control.
+Close the Phase 19.4 forward-only navigation risk by adding stable Previous cursors for Tasks, Jobs,
+TaskItems, and ResultRecords. Preserve keyset memory safety, deterministic ordering, v1 cursor
+compatibility, and the strictly read-only operator UI.
 
-## 1. Cursor model
+## 1. Versioned directional cursors
 
-- Define a provider-neutral opaque URL-safe cursor containing only resource kind, ordering timestamp,
-  and stable record ID.
-- Strictly validate encoding, schema, kind, timestamp, ID, and total length. Reject cross-resource,
-  malformed, duplicate, oversized, or injected cursors.
-- Do not include paths, titles, errors, credentials, policy/provider values, or secret-derived data.
-- Cursor decoding is transport/application logic, not a domain strategy concern.
+- Add a v2 opaque cursor with strict `next` or `previous` direction plus existing resource kind,
+  UTC timestamp, and stable ID fields.
+- Continue accepting valid Phase 19.4 v1 cursors as `next` cursors; emit only v2 cursors.
+- Preserve length, Base64, schema, kind, UTC, ID, and query-duplication validation.
+- Direction tampering, unknown versions/fields, and cross-resource use must fail clearly.
+- Cursors contain no media values, errors, credentials, provider/policy data, or secret derivatives.
 
-## 2. Keyset persistence queries
+## 2. Reverse keyset queries
 
-- Use stable composite ordering `(created_at, stable_id)` for Tasks, Jobs, TaskItems, and Results.
-- Task/Job history orders newest first; TaskItem/Result detail preserves oldest-first processing order.
-- Add optional keyset boundaries to repository reads and execute `limit+1` in SQLite.
-- Do not use OFFSET and do not enumerate preceding/all rows.
-- Preserve existing no-cursor response compatibility while adding `nextCursor` when another page
-  exists. End pages return no cursor and `truncated=false`.
+- Add mutually exclusive forward/previous repository boundaries for all four record types.
+- Query the nearest previous page by reversing SQL ordering at the boundary, applying limit+1, then
+  restore canonical display order before returning.
+- Never use OFFSET, total-count queries, or full/prior-row enumeration.
+- Task/Job canonical order remains newest-first; TaskItem/Result remains oldest-first.
+- Concurrent inserts must not create duplicates inside an established forward/back navigation path.
 
-## 3. API and operator UI
+## 3. API and UI
 
-- Task/Job collections accept one optional `cursor` with existing `limit`.
-- Task detail accepts independent `itemCursor` and `resultCursor` with existing limits.
-- UI provides explicit Next controls for each collection and independently for TaskItems/Results.
-- Navigation replaces the displayed page, clearly identifies paged data, and supports returning to
-  the first page via Refresh. No automatic polling, infinite scroll, or background prefetch.
-- Continue safe text rendering and memory-only bearer credentials.
+- Existing cursor parameters accept either direction without adding a separate direction field.
+- Responses add `previous_cursor`, `previous_item_cursor`, and `previous_result_cursor` alongside
+  existing Next fields.
+- First pages expose no Previous; middle pages expose both; terminal pages expose no Next.
+- UI adds Previous controls for Task/Job lists and independently for TaskItems/Results.
+- First-page refresh remains available by reselecting a navigation tab; no automatic polling.
 
-## 4. Safety
+## 4. Safety and compatibility
 
-- Pagination is read-only and constructs no Storage, MetadataProvider, Task/Job service, or executor.
-- Do not add submit/cancel/resume/retry/authorize/execute/overwrite/delete controls.
-- Preserve RBAC, normalized audit routes, review workflows, strategy engines, and execution safety.
-- Cursor values must never be logged in security audit because query strings remain excluded.
+- Keep existing no-cursor and v1-next clients working.
+- Pagination constructs no Storage, MetadataProvider, workflow service, or executor and performs no
+  media/persistent business mutation beyond existing redacted API security audit.
+- Do not add Task/Job submit, cancel, resume, retry, authorize, execute, overwrite, or delete controls.
+- Query strings/cursors remain absent from audit records and error responses.
 
 ## Required tests
 
-- Multi-page Task/Job newest-first traversal with identical timestamps and no duplicate/missing rows.
-- Independent TaskItem/Result oldest-first traversal and SQL-level keyset/limit verification.
-- End-page semantics, empty pages, cursor kind mismatch, malformed/base64/JSON/time/ID/oversize,
-  duplicate parameters, and query-field injection.
-- Concurrent insertion before/after a cursor does not shift already established page boundaries.
-- UI Next controls, independent detail cursors, first-page refresh, safe encoding, and no write calls.
-- Viewer/RBAC/audit compatibility and zero Storage/provider/media mutation.
-- Existing API, credentials, Dashboard, reviews, Task persistence, Worker, UI, and full regressions.
-- Full formatter, lint, compile, dependency/build/configuration and FFprobe audits.
+- v1 forward compatibility and strict v2 direction validation.
+- Task/Job first→middle→last→middle→first traversal with same-timestamp rows, no duplicates, and
+  canonical order on every page.
+- Independent TaskItem/Result backward traversal and SQL-level reverse keyset/limit verification.
+- First/middle/last cursor presence, empty datasets, deletion/insertion boundaries, and page size one.
+- Malformed direction/version/schema/kind/time/ID/oversize/duplicate/injected queries.
+- UI Previous/Next controls, independent detail state, first-page refresh, and absence of writes.
+- Viewer/RBAC/audit, credentials, Dashboard/reviews, Task persistence, Worker, and full regressions.
+- Formatter, lint, compile, dependency/build/configuration, FFprobe/FFmpeg, and diff checks.
 
 ## Documentation
 
-Update README, requirements status, configuration, architecture, progress, and roadmap with cursor
-semantics, ordering, limits, and consistency boundaries.
+Update README, requirements status, configuration, architecture, progress, and roadmap with v1/v2,
+direction, ordering, consistency, and remaining no-jump/no-total limitations.
 
 ## Out of scope
 
-Backward/previous cursors, arbitrary page jumps, total-count scans, search/filtering, live polling,
-SSE/WebSocket, Task/Job controls, history export, log UI, Scheduler/notification UI, OIDC, and TLS.
+Arbitrary page jumps, page numbers, total-count scans, search/filtering, live polling/SSE/WebSocket,
+Task/Job controls, history export, log/Scheduler/notification UI, OIDC, Secret Store, and TLS.
 
 ## Final report
 
-## Phase 19.4 Result
+## Phase 19.5 Result
 
 PASS / FAIL
 
-## Cursor Pagination
+## Bidirectional Cursors
 
-## Stable Ordering
+## Reverse Keyset Queries
 
 ## Operator UI
 
-## Safety
+## Safety and Compatibility
 
 ## Regression
 

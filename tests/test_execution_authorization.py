@@ -184,7 +184,9 @@ class ExecutionAuthorizationTests(unittest.TestCase):
     def test_api_requires_feature_bearer_separate_header_and_execute_true(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                issued = service(repository).issue(ttl_seconds=60, max_items=2)
+                issued = service(repository, clock=lambda: datetime.now(UTC)).issue(
+                    ttl_seconds=60, max_items=2
+                )
                 disabled = MediaFlowApi(repository, "api-secret")
                 self.assertEqual(
                     request(
@@ -248,7 +250,9 @@ class ExecutionAuthorizationTests(unittest.TestCase):
             (root / "source.mkv").write_bytes(b"media")
             storage = LocalStorage("local", root)
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
-                issued = service(repository).issue(ttl_seconds=60, max_items=1)
+                issued = service(repository, clock=lambda: datetime.now(UTC)).issue(
+                    ttl_seconds=60, max_items=1
+                )
                 api = MediaFlowApi(repository, "api-secret", remote_execution_enabled=True)
                 status, submitted = request(
                     api,

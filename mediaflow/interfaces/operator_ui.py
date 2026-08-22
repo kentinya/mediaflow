@@ -142,11 +142,12 @@ APP_JS = b"""(() => {
     content.append(table(['ID', 'Status', 'Type', 'Updated'], rows,
       index => showDetail(kind, itemId(kind, items[index]))));
   }
-  function truncation(data, noun, next) {
-    if (!data.truncated) return;
-    content.append(text('p', `Showing the first ${data.limit} ${noun}. Refresh to reload.`,
+  function pageNavigation(target, noun, previousCursor, nextCursor, previous, next) {
+    if (!previousCursor && !nextCursor) return;
+    target.append(text('p', `Showing one page of ${noun}. Reselect the tab to refresh from first.`,
       'warning'));
-    if (data.next_cursor && next) content.append(actionButton(`Next ${noun}`, next));
+    if (previousCursor) target.append(actionButton(`Previous ${noun}`, previous));
+    if (nextCursor) target.append(actionButton(`Next ${noun}`, next));
   }
   async function renderObservability(kind, cursor = null) {
     const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
@@ -158,14 +159,18 @@ APP_JS = b"""(() => {
         item.failed_items, item.updated_at]);
       content.append(table(['ID', 'Command', 'Status', 'Authority', 'Done', 'Failed', 'Updated'], rows,
         index => showTask(items[index].task_id)));
-      truncation(data, 'tasks', () => renderObservability(kind, data.next_cursor));
+      pageNavigation(content, 'tasks', data.previous_cursor, data.next_cursor,
+        () => renderObservability(kind, data.previous_cursor),
+        () => renderObservability(kind, data.next_cursor));
     } else {
       const rows = items.map(item => [item.job_id, item.command, item.status,
         item.execute_authorized ? 'MUTATION_AUTHORIZED' : 'DRY_RUN', item.task_id || '-',
         item.updated_at]);
       content.append(table(['ID', 'Command', 'Status', 'Authority', 'Task', 'Updated'], rows,
         index => showJob(items[index].job_id)));
-      truncation(data, 'jobs', () => renderObservability(kind, data.next_cursor));
+      pageNavigation(content, 'jobs', data.previous_cursor, data.next_cursor,
+        () => renderObservability(kind, data.previous_cursor),
+        () => renderObservability(kind, data.next_cursor));
     }
   }
   function scalarDetails(data, excluded = []) {
@@ -190,8 +195,9 @@ APP_JS = b"""(() => {
         ['ID', 'Status', 'Stage', 'Source storage', 'Source', 'Target storage', 'Target'], items));
       if (data.items_truncated) detailContent.append(text('p',
         `Items truncated at ${data.item_limit}.`, 'warning'));
-      if (data.next_item_cursor) detailContent.append(actionButton('Next items',
-        () => showTask(id, data.next_item_cursor, resultCursor)));
+      pageNavigation(detailContent, 'items', data.previous_item_cursor, data.next_item_cursor,
+        () => showTask(id, data.previous_item_cursor, resultCursor),
+        () => showTask(id, data.next_item_cursor, resultCursor));
       const results = (data.results || []).map(item => [item.result_id, item.status,
         item.recognition_type || '-', item.title || '-', item.operation || '-',
         item.destination_path || '-', item.created_at]);
@@ -199,8 +205,10 @@ APP_JS = b"""(() => {
         ['ID', 'Status', 'Type', 'Title', 'Operation', 'Destination', 'Created'], results));
       if (data.results_truncated) detailContent.append(text('p',
         `Results truncated at ${data.result_limit}.`, 'warning'));
-      if (data.next_result_cursor) detailContent.append(actionButton('Next results',
-        () => showTask(id, itemCursor, data.next_result_cursor)));
+      pageNavigation(detailContent, 'results', data.previous_result_cursor,
+        data.next_result_cursor,
+        () => showTask(id, itemCursor, data.previous_result_cursor),
+        () => showTask(id, itemCursor, data.next_result_cursor));
       detail.hidden = false;
     } catch (error) { message(error.message, true); }
   }

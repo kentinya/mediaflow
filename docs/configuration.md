@@ -531,10 +531,13 @@ GET /api/v1/jobs/{id}
 Collection and detail limits are 1–100. Responses include truncation metadata. These UI views never
 submit, cancel, resume, retry, authorize, or execute work.
 
-When `truncated` is true, use the returned `next_cursor`, `next_item_cursor`, or
-`next_result_cursor` unchanged in the matching endpoint. Cursors are URL-safe, resource-specific,
-and forward-only. They contain only an ordering timestamp and stable record ID—never media paths,
-titles, errors, provider data, or secrets. Do not reuse one resource's cursor with another endpoint.
+Use returned `previous_cursor`/`next_cursor`, `previous_item_cursor`/`next_item_cursor`, or
+`previous_result_cursor`/`next_result_cursor` unchanged in the matching endpoint. Emitted v2 cursors
+carry a strict direction; valid Phase 19.4 v1 cursors remain accepted as forward cursors. Cursors are
+URL-safe and resource-specific. They contain only a UTC ordering timestamp and stable record ID—never
+media paths, titles, errors, provider data, or secrets. Do not reuse a cursor across resources.
+Task/Job pages remain newest-first; TaskItem/Result pages remain oldest-first. Pagination uses
+keyset boundaries, not page numbers, total scans, or OFFSET, so arbitrary jumps are intentionally absent.
 
 Wildcard, LAN, and public binds require `--allow-insecure-remote-http`. The flag only acknowledges
 unencrypted transport; it does not enable TLS. Prefer loopback behind a trusted HTTPS reverse proxy,

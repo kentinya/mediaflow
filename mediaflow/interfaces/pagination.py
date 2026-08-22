@@ -4,7 +4,9 @@ import base64
 import binascii
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 
 _CURSOR_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 _ENCODED_CURSOR = re.compile(r"[A-Za-z0-9_-]+")
@@ -12,16 +14,51 @@ _KINDS = frozenset({"tasks", "jobs", "task_items", "task_results"})
 MAX_CURSOR_LENGTH = 512
 
 
-def encode_cursor(kind: str, created_at: datetime, record_id: str) -> str:
+class CursorDirection(StrEnum):
+    NEXT = "next"
+    PREVIOUS = "previous"
+
+
+@dataclass(frozen=True)
+class DecodedCursor:
+    created_at: datetime
+    record_id: str
+    direction: CursorDirection
+
+    @property
+    def position(self) -> tuple[datetime, str]:
+        return self.created_at, self.record_id
+
+
+def encode_cursor(
+    kind: str,
+    created_at: datetime,
+    record_id: str,
+    direction: CursorDirection | str = CursorDirection.NEXT,
+) -> str:
     if kind not in _KINDS:
         raise ValueError("unsupported cursor kind")
     _validate_position(created_at, record_id)
-    document = {"at": created_at.isoformat(), "id": record_id, "kind": kind, "version": 1}
+    try:
+        resolved_direction = CursorDirection(direction)
+    except ValueError as error:
+        raise ValueError("unsupported cursor direction") from error
+    document = {
+        "at": created_at.isoformat(),
+        "direction": resolved_direction.value,
+        "id": record_id,
+        "kind": kind,
+        "version": 2,
+    }
     raw = json.dumps(document, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
 def decode_cursor(value: str, expected_kind: str) -> tuple[datetime, str]:
+    return decode_directional_cursor(value, expected_kind).position
+
+
+def decode_directional_cursor(value: str, expected_kind: str) -> DecodedCursor:
     if expected_kind not in _KINDS:
         raise ValueError("unsupported cursor kind")
     if (
@@ -37,10 +74,15 @@ def decode_cursor(value: str, expected_kind: str) -> tuple[datetime, str]:
         document = json.loads(raw.decode("utf-8"))
     except (binascii.Error, UnicodeError, json.JSONDecodeError) as error:
         raise ValueError("cursor is malformed") from error
-    if not isinstance(document, dict) or set(document) != {"at", "id", "kind", "version"}:
+    if not isinstance(document, dict):
         raise ValueError("cursor has an invalid schema")
-    if type(document["version"]) is not int or document["version"] != 1:
+    version = document.get("version")
+    v1_fields = {"at", "id", "kind", "version"}
+    v2_fields = v1_fields | {"direction"}
+    if type(version) is not int or version not in {1, 2}:
         raise ValueError("cursor does not match this resource")
+    if set(document) != (v1_fields if version == 1 else v2_fields):
+        raise ValueError("cursor has an invalid schema")
     if not isinstance(document["kind"], str) or document["kind"] != expected_kind:
         raise ValueError("cursor does not match this resource")
     if not isinstance(document["at"], str) or not isinstance(document["id"], str):
@@ -50,7 +92,14 @@ def decode_cursor(value: str, expected_kind: str) -> tuple[datetime, str]:
     except ValueError as error:
         raise ValueError("cursor timestamp is invalid") from error
     _validate_position(created_at, document["id"])
-    return created_at, document["id"]
+    if version == 1:
+        direction = CursorDirection.NEXT
+    else:
+        try:
+            direction = CursorDirection(document["direction"])
+        except (TypeError, ValueError) as error:
+            raise ValueError("cursor direction is invalid") from error
+    return DecodedCursor(created_at, document["id"], direction)
 
 
 def _validate_position(created_at: datetime, record_id: str) -> None:

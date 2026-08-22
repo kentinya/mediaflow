@@ -895,16 +895,21 @@ the only write remains the existing normalized security-audit record for an auth
 
 ## Stable operational-history cursors
 
-Phase 19.4 replaces the Phase 19.3 first-page-only limitation with forward keyset pagination.
+Phase 19.4 replaced the Phase 19.3 first-page-only limitation with forward keyset pagination;
+Phase 19.5 adds bounded reverse keyset queries and Previous navigation.
 Tasks/Jobs use newest-first `(created_at, ID)` ordering; TaskItems/Results retain oldest-first
 processing order. SQLite applies the composite boundary before `LIMIT`, never OFFSET or prior-row
 enumeration. The established cursor boundary therefore remains stable when newer records arrive.
 
-The opaque URL-safe cursor has a version, resource kind, timezone-aware ordering timestamp, and
+The opaque URL-safe v2 cursor has a strict next/previous direction, version, resource kind,
+timezone-aware ordering timestamp, and
 stable record ID. Decoding strictly bounds length and validates Base64, JSON schema, version, kind,
 timestamp, and ID. It contains no media or secret fields and query strings remain excluded from
-security audit. TaskItem and Result cursors advance independently. The UI exposes explicit Next and
-first-page refresh only; backward navigation, totals, and live polling remain deferred.
+security audit. Valid v1 cursors decode as next cursors for compatibility, while only v2 is emitted.
+Reverse queries invert SQL ordering around the boundary, take `limit + 1`, then restore canonical
+order; they never enumerate prior rows or use OFFSET. TaskItem and Result cursors advance
+independently. The UI exposes explicit Previous/Next and first-page refresh; arbitrary jumps, totals,
+and live polling remain deferred.
 
 ## Runtime strategy catalogs
 

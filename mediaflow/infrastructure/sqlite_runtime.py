@@ -118,21 +118,37 @@ class SQLiteTaskRepository:
         return self._task(row) if row else None
 
     def list_tasks(
-        self, *, limit: int | None = None, after: tuple[datetime, str] | None = None
+        self,
+        *,
+        limit: int | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> tuple[PersistentTask, ...]:
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
         query = "SELECT * FROM tasks"
         parameters: tuple[object, ...] = ()
+        reverse = before is not None
         if after is not None:
             timestamp = after[0].isoformat()
             query += " WHERE (created_at < ? OR (created_at = ? AND task_id < ?))"
             parameters = (timestamp, timestamp, after[1])
-        query += " ORDER BY created_at DESC, task_id DESC"
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            query += " WHERE (created_at > ? OR (created_at = ? AND task_id > ?))"
+            parameters = (timestamp, timestamp, before[1])
+        query += (
+            " ORDER BY created_at ASC, task_id ASC"
+            if reverse
+            else " ORDER BY created_at DESC, task_id DESC"
+        )
         if limit is not None:
             query += " LIMIT ?"
             parameters += (limit,)
         with self._lock:
             rows = self._connection.execute(query, parameters).fetchall()
-        return tuple(self._task(row) for row in rows)
+        values = tuple(self._task(row) for row in rows)
+        return tuple(reversed(values)) if reverse else values
 
     def load_dashboard_state(self, *, recent_limit: int) -> DashboardPersistentState:
         if isinstance(recent_limit, bool) or not isinstance(recent_limit, int):
@@ -253,20 +269,33 @@ class SQLiteTaskRepository:
         *,
         limit: int | None = None,
         after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> tuple[PersistentTaskItem, ...]:
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
         query = "SELECT * FROM task_items WHERE task_id = ?"
         parameters: tuple[object, ...] = (task_id,)
+        reverse = before is not None
         if after is not None:
             timestamp = after[0].isoformat()
             query += " AND (created_at > ? OR (created_at = ? AND item_id > ?))"
             parameters += (timestamp, timestamp, after[1])
-        query += " ORDER BY created_at, item_id"
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            query += " AND (created_at < ? OR (created_at = ? AND item_id < ?))"
+            parameters += (timestamp, timestamp, before[1])
+        query += (
+            " ORDER BY created_at DESC, item_id DESC"
+            if reverse
+            else " ORDER BY created_at, item_id"
+        )
         if limit is not None:
             query += " LIMIT ?"
             parameters += (limit,)
         with self._lock:
             rows = self._connection.execute(query, parameters).fetchall()
-        return tuple(self._item(row) for row in rows)
+        values = tuple(self._item(row) for row in rows)
+        return tuple(reversed(values)) if reverse else values
 
     def append_result(self, result: PersistentResultRecord) -> None:
         with self._lock, self._connection:
@@ -311,20 +340,33 @@ class SQLiteTaskRepository:
         *,
         limit: int | None = None,
         after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> tuple[PersistentResultRecord, ...]:
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
         query = "SELECT * FROM task_results WHERE task_id = ?"
         parameters: tuple[object, ...] = (task_id,)
+        reverse = before is not None
         if after is not None:
             timestamp = after[0].isoformat()
             query += " AND (created_at > ? OR (created_at = ? AND result_id > ?))"
             parameters += (timestamp, timestamp, after[1])
-        query += " ORDER BY created_at, result_id"
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            query += " AND (created_at < ? OR (created_at = ? AND result_id < ?))"
+            parameters += (timestamp, timestamp, before[1])
+        query += (
+            " ORDER BY created_at DESC, result_id DESC"
+            if reverse
+            else " ORDER BY created_at, result_id"
+        )
         if limit is not None:
             query += " LIMIT ?"
             parameters += (limit,)
         with self._lock:
             rows = self._connection.execute(query, parameters).fetchall()
-        return tuple(self._result(row) for row in rows)
+        values = tuple(self._result(row) for row in rows)
+        return tuple(reversed(values)) if reverse else values
 
     def create_confirmation(self, confirmation: ConflictConfirmation) -> None:
         with self._lock, self._connection:
@@ -814,21 +856,37 @@ class SQLiteTaskRepository:
         return self._job(row) if row else None
 
     def list_jobs(
-        self, *, limit: int | None = None, after: tuple[datetime, str] | None = None
+        self,
+        *,
+        limit: int | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> tuple[AutomationJob, ...]:
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
         query = "SELECT * FROM automation_jobs"
         parameters: tuple[object, ...] = ()
+        reverse = before is not None
         if after is not None:
             timestamp = after[0].isoformat()
             query += " WHERE (created_at < ? OR (created_at = ? AND job_id < ?))"
             parameters = (timestamp, timestamp, after[1])
-        query += " ORDER BY created_at DESC, job_id DESC"
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            query += " WHERE (created_at > ? OR (created_at = ? AND job_id > ?))"
+            parameters = (timestamp, timestamp, before[1])
+        query += (
+            " ORDER BY created_at ASC, job_id ASC"
+            if reverse
+            else " ORDER BY created_at DESC, job_id DESC"
+        )
         if limit is not None:
             query += " LIMIT ?"
             parameters += (limit,)
         with self._lock:
             rows = self._connection.execute(query, parameters).fetchall()
-        return tuple(self._job(row) for row in rows)
+        values = tuple(self._job(row) for row in rows)
+        return tuple(reversed(values)) if reverse else values
 
     def claim_next_job(self, now: datetime) -> AutomationJob | None:
         with self._lock, self._connection:
