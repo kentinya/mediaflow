@@ -67,6 +67,16 @@ class ConflictStrategy(StrEnum):
 
 
 @dataclass(frozen=True)
+class AttachmentPolicy:
+    enabled: bool = False
+    subtitles: bool = True
+    nfo: bool = True
+    artwork: bool = True
+    trailers: bool = True
+    other_same_stem: bool = False
+
+
+@dataclass(frozen=True)
 class DuplicateIdentity:
     provider: str
     provider_id: str
@@ -93,6 +103,7 @@ class OrganizePolicy:
     policy_id: str
     operation: OrganizeOperationType
     conflict_strategy: ConflictStrategy = ConflictStrategy.MANUAL
+    attachments: AttachmentPolicy = field(default_factory=AttachmentPolicy)
 
 
 @dataclass(frozen=True)
@@ -117,6 +128,41 @@ class StorageLocation:
             raise ValueError("storage location path must be relative")
         if any(part in {"", ".", ".."} for part in self.path.split("/")):
             raise ValueError("storage location path contains an invalid component")
+
+
+class AttachmentType(StrEnum):
+    SUBTITLE = "subtitle"
+    NFO = "nfo"
+    POSTER = "poster"
+    FANART = "fanart"
+    TRAILER = "trailer"
+    IMAGE = "image"
+    OTHER = "other"
+
+
+@dataclass(frozen=True)
+class MediaAttachment:
+    source: StorageLocation
+    attachment_type: AttachmentType
+    suffix: str = ""
+    language: str | None = None
+    flags: tuple[str, ...] = ()
+    size: int = 0
+
+
+@dataclass(frozen=True)
+class MediaFileSet:
+    primary: StorageLocation
+    attachments: tuple[MediaAttachment, ...] = ()
+
+
+@dataclass(frozen=True)
+class AttachmentPlan:
+    source: StorageLocation
+    destination: StorageLocation
+    attachment_type: AttachmentType
+    operation: PlanOperation
+    suffix: str = ""
 
 
 @dataclass(frozen=True)
@@ -144,6 +190,7 @@ class OrganizePlan:
     source_location: StorageLocation | None = None
     destination_location: StorageLocation | None = None
     overwrite_authorized: bool = False
+    attachment_plans: tuple[AttachmentPlan, ...] = ()
 
     @property
     def destination(self) -> str:

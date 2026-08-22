@@ -220,7 +220,15 @@
       "id": "MOVE",
       "operation": "MOVE",
       "conflictStrategy": "manual",
-      "overwrite": false
+      "overwrite": false,
+      "attachments": {
+        "enabled": true,
+        "subtitles": true,
+        "nfo": true,
+        "artwork": true,
+        "trailers": true,
+        "otherSameStem": false
+      }
     }
   ],
   "recognitionTypePolicies": [
@@ -309,7 +317,10 @@
       "sameStorageMoveAndRename": "native Move then Rename; best-effort rollback on rename failure",
       "crossStorageMove": "stream Copy, verify target size, then Delete source",
       "conflictStrategy": "manual",
-      "overwrite": false
+      "overwrite": false,
+      "attachments": {
+        "enabled": false
+      }
     },
     "resourceLibrary": {
       "id": "source",

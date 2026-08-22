@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from datetime import datetime
@@ -16,7 +17,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class SQLiteTaskRepository:
@@ -121,8 +122,13 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             self._connection.execute(
                 """
-                INSERT OR REPLACE INTO task_results VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO task_results (
+                    result_id, task_id, item_id, source_storage_id, source_path,
+                    destination_storage_id, destination_path, recognition_type, provider,
+                    provider_id, metadata_policy_id, naming_policy_id, classification_policy_id,
+                    organize_policy_id, operation, status, created_at, title, error,
+                    completed_operations, attachment_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     result.result_id,
@@ -144,6 +150,8 @@ class SQLiteTaskRepository:
                     result.created_at.isoformat(),
                     result.title,
                     result.error,
+                    json.dumps(result.completed_operations, ensure_ascii=False),
+                    result.attachment_count,
                 ),
             )
 
@@ -304,6 +312,8 @@ class SQLiteTaskRepository:
                     naming_policy_id TEXT, classification_policy_id TEXT,
                     organize_policy_id TEXT, operation TEXT, status TEXT NOT NULL,
                     created_at TEXT NOT NULL, title TEXT, error TEXT,
+                    completed_operations TEXT NOT NULL DEFAULT '[]',
+                    attachment_count INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
                     FOREIGN KEY(item_id) REFERENCES task_items(item_id)
                 );
@@ -340,6 +350,20 @@ class SQLiteTaskRepository:
                 "INSERT OR REPLACE INTO schema_version VALUES ('runtime', ?)",
                 (SCHEMA_VERSION,),
             )
+            columns = {
+                row["name"]
+                for row in self._connection.execute("PRAGMA table_info(task_results)").fetchall()
+            }
+            if "completed_operations" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE task_results ADD COLUMN "
+                    "completed_operations TEXT NOT NULL DEFAULT '[]'"
+                )
+            if "attachment_count" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE task_results ADD COLUMN "
+                    "attachment_count INTEGER NOT NULL DEFAULT 0"
+                )
 
     @staticmethod
     def _lock_path(path: str) -> str:
@@ -452,6 +476,8 @@ class SQLiteTaskRepository:
             datetime.fromisoformat(row["created_at"]),
             row["title"],
             row["error"],
+            tuple(json.loads(row["completed_operations"])),
+            row["attachment_count"],
         )
 
     @staticmethod

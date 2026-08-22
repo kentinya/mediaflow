@@ -88,6 +88,8 @@ class PersistentResultRecord:
     created_at: datetime
     title: str | None = None
     error: str | None = None
+    completed_operations: tuple[str, ...] = ()
+    attachment_count: int = 0
 
 
 class ConfirmationStatus(StrEnum):

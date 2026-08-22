@@ -693,3 +693,18 @@ Phase 15 conflict decisions and persistent NeedConfirm (2026-08-22): IMPLEMENTED
 - Full suite: 277 tests, 274 passed, 0 failed, 3 optional external integrations skipped
 - Ruff lint/format, compileall, dependency check, isolated wheel build, configuration validation,
   FFmpeg/FFprobe runtime audit, and diff checks passed
+
+Phase 16 attachments and atomic media file sets (2026-08-22): PASS
+
+- Added opt-in AttachmentPolicy plus immutable MediaFileSet, MediaAttachment, and AttachmentPlan
+  models without changing Parser, Recognition, Metadata, Naming, or Classification semantics
+- Added one-directory, Storage-only discovery for subtitles, NFO, poster/fanart, related images,
+  trailers, and explicitly enabled other same-stem files; unknown files remain untouched
+- Attachment planning derives safe named destinations, preserves subtitle language/Forced/SDH/HI
+  suffixes, detects destination conflicts, and remains read-only
+- OrganizerExecutor preflights the complete file set, executes attachments before the primary, and
+  records exact completed steps on PARTIAL outcomes with no operation fallback
+- Runtime SQLite schema v3 persists completed operations and attachment count for recovery evidence
+- Full suite: 287 tests, 284 passed, 0 failed, 3 optional external integrations skipped
+- Ruff lint/format, compileall, dependency check, isolated wheel build, configuration validation,
+  FFmpeg/FFprobe runtime audit, and diff checks passed

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from mediaflow.domain.organizer import (
+    AttachmentType,
     ConflictStrategy,
     ConflictType,
     OrganizePlan,
@@ -56,7 +57,10 @@ class ConflictResolver:
         for number in range(1, 1001):
             relative = posixpath.join(directory, f"{stem} ({number}){extension}")
             target = posixpath.join(plan.media_library_root, relative)
-            if not target_storage.exists(target):
+            attachments = self._retarget_attachments(plan, target)
+            if not target_storage.exists(target) and not any(
+                target_storage.exists(item.destination.path) for item in attachments
+            ):
                 plan_id = hashlib.sha256(
                     "\x00".join(
                         (plan.source_storage_id, plan.source, plan.target_storage_id, target)
@@ -70,8 +74,38 @@ class ConflictResolver:
                     conflicts=(),
                     status=PlanStatus.READY,
                     plan_id=plan_id,
+                    attachment_plans=attachments,
                 )
         raise ConflictResolutionError("no available rename destination within 1000 attempts")
+
+    @staticmethod
+    def _retarget_attachments(plan: OrganizePlan, target: str):
+        parent = posixpath.dirname(target)
+        named_stem = posixpath.splitext(posixpath.basename(target))[0]
+        values = []
+        for attachment in plan.attachment_plans:
+            extension = posixpath.splitext(attachment.source.path)[1].casefold()
+            if attachment.attachment_type is AttachmentType.SUBTITLE:
+                filename = f"{named_stem}{attachment.suffix}{extension}"
+            elif attachment.attachment_type is AttachmentType.NFO:
+                filename = f"{named_stem}.nfo"
+            elif attachment.attachment_type is AttachmentType.POSTER:
+                filename = f"poster{extension}"
+            elif attachment.attachment_type is AttachmentType.FANART:
+                filename = f"fanart{extension}"
+            elif attachment.attachment_type is AttachmentType.TRAILER:
+                filename = f"{named_stem}-trailer{extension}"
+            else:
+                filename = f"{named_stem}{attachment.suffix}{extension}"
+            values.append(
+                replace(
+                    attachment,
+                    destination=StorageLocation(
+                        plan.target_storage_id, posixpath.join(parent, filename)
+                    ),
+                )
+            )
+        return tuple(values)
 
     @staticmethod
     def overwrite(plan: OrganizePlan, policy: OrganizePolicy, *, confirmed: bool) -> OrganizePlan:

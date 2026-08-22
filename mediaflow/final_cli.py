@@ -312,9 +312,14 @@ def render_summary(summary: MediaOrganizerBatchResult, *, execute: bool) -> str:
             if item.plan and item.plan.conflicts
             else "SKIPPED"
         )
-        detail = item.error or (
-            "; ".join(item.execution.errors) if item.execution and item.execution.errors else ""
-        )
+        details = []
+        if item.plan and item.plan.attachment_plans:
+            details.append(f"attachments={len(item.plan.attachment_plans)}")
+        if item.error:
+            details.append(item.error)
+        elif item.execution and item.execution.errors:
+            details.append("; ".join(item.execution.errors))
+        detail = " | ".join(details)
         lines.append(f"{status} | {item.source} | {detail}")
     lines.extend(
         (

@@ -215,7 +215,7 @@ class ConflictResolutionTests(unittest.TestCase):
             connection.commit()
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 2)
+                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
                 self.assertEqual(repository.list_confirmations(), ())
 
     def test_duplicate_identity_includes_tv_episode_scope(self) -> None:

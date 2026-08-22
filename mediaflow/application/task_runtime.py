@@ -316,4 +316,6 @@ class PersistentTaskCoordinator:
             timestamp,
             identity.title if identity else None,
             item.error,
+            execution.completed_operations if execution else (),
+            len(plan.attachment_plans) if plan else 0,
         )

@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+from mediaflow.application.attachments import AttachmentDiscovery, AttachmentPlanner
 from mediaflow.application.conflict_resolution import ConflictResolver
 from mediaflow.application.library_pipeline import MediaLibraryResolver, ResourceLibraryScanner
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
@@ -191,6 +192,14 @@ class MediaOrganizerService:
                 media_identity=strategy.metadata.identity,
                 target_storage=resolved_library.storage,
             )
+            attachment_policy = type_policy.organize_policy.attachments
+            if attachment_policy.enabled and plan.source_location is not None:
+                file_set = AttachmentDiscovery().discover(
+                    self._storages[resource_library.storage_id],
+                    plan.source_location,
+                    attachment_policy,
+                )
+                plan = AttachmentPlanner().plan(plan, file_set, resolved_library.storage)
             resolver = ConflictResolver()
             decision = self._conflict_decisions.get((resource_library.storage_id, storage_path))
             replacement = None

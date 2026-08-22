@@ -1,109 +1,117 @@
-# Phase 15 — Conflict Decisions + Persistent NeedConfirm
+# Phase 16 — Attachments + Atomic Media File Sets
 
 ## Goal
 
-Complete conflict decision handling without redesigning accepted Parser, Recognition, Metadata,
-Naming, Classification, Planner, Executor, Scanner, or Storage behavior. Persist every decision so
-that process restarts never turn an unresolved conflict into an implicit mutation.
+Discover safe sidecar files through Storage, group them with one already-identified primary media
+file, plan their destinations, and execute the group only through OrganizerExecutor. Do not parse
+or generate NFO content and do not redesign accepted strategy engines.
 
-## Required implementation
+## 1. Domain model
 
-### 1. Domain decisions
+Add provider-neutral immutable models for:
 
-- Define persistent confirmation records and statuses for organize-plan conflicts.
-- Support explicit `skip`, `rename`, `manual`, and `overwrite` decisions.
-- `manual` remains unresolved until a later concrete decision.
-- Invalid destinations are never overridable.
-- Rename generates a deterministic, traversal-safe destination without mutating Storage.
-- Overwrite requires both an overwrite-enabled OrganizePolicy and fresh high-risk authorization.
+- AttachmentType: subtitle, nfo, poster, fanart, trailer, image, other.
+- MediaAttachment: source StorageLocation, type, suffix/language/flags, size.
+- MediaFileSet: primary StorageLocation plus ordered attachments.
+- AttachmentPlan: source/destination StorageLocation, type, operation and status/error evidence.
 
-### 2. Runtime configuration
+`OrganizePlan` may contain an ordered attachment-plan tuple while retaining backward compatibility.
 
-- `organizePolicies[].conflictStrategy` accepts `skip`, `rename`, `manual`, or `overwrite`.
-- Preserve legacy `overwrite: true` compatibility, but reject contradictory settings.
-- Default remains `manual`; no hidden Move, Skip, Rename, or Overwrite fallback.
-- Validate values before scanning and produce zero Storage mutations.
+## 2. Configuration
 
-### 3. Persistent NeedConfirm queue
+Add an optional attachment policy under each OrganizePolicy:
 
-- Persist conflict type, plan/source/destination identity, proposed decision, timestamps, actor,
-  note, and overwrite authorization.
-- Upgrade the SQLite runtime schema through an explicit forward migration.
-- Conflicted task items become `waiting_confirm`, not ordinary media failures.
-- Waiting-confirm items are not retried until explicitly resolved.
-- Preserve an append-only decision audit trail.
-
-### 4. Application resolution
-
-- Keep conflict logic outside Naming, Classification, Storage adapters, and strategy engines.
-- Apply configured automatic `skip` or `rename` deterministically.
-- Queue `manual` and `overwrite` decisions when confirmation is required.
-- A resolved decision creates a safe replacement plan; it does not mutate Storage itself.
-- OrganizerExecutor remains the sole mutation boundary.
-
-### 5. CLI
-
-Add read/decision commands:
-
-```text
-mediaflow confirmations list
-mediaflow confirmations show CONFIRMATION_ID
-mediaflow confirmations resolve CONFIRMATION_ID --strategy skip|rename|manual|overwrite
-  [--confirm-overwrite] [--actor NAME] [--note TEXT]
+```json
+"attachments": {
+  "enabled": true,
+  "subtitles": true,
+  "nfo": true,
+  "artwork": true,
+  "trailers": true,
+  "otherSameStem": false
+}
 ```
 
-- Listing/showing/resolving records performs zero Storage mutation.
-- Overwrite resolution without `--confirm-overwrite` fails clearly.
-- Commands never print secrets.
+- Default is disabled for backward compatibility.
+- Validate types at startup without accessing Storage.
+- Unknown files and disabled attachment kinds are never included or deleted.
 
-### 6. Duplicate evidence
+## 3. Read-only discovery
 
-- Keep provider ID as provider-neutral duplicate evidence.
-- Include media type, season, and episode set in duplicate identity so distinct TV episodes do not
-  collide solely because they share a series provider ID.
-- Hash evidence remains optional and must not trigger file reads unless explicitly configured.
+- Use only `Storage.list`/read-only metadata; never direct filesystem APIs.
+- Inspect only the primary file's containing directory; do not add another recursive scanner.
+- Recognize subtitle extensions: srt, ass, ssa, vtt, sub, sup.
+- Recognize same-stem NFO, conventional poster/fanart artwork, and same-stem trailer files.
+- Preserve subtitle language and Forced/SDH/HI suffix evidence.
+- Deterministic ordering and case-insensitive extension matching.
+- Do not read file contents, call metadata providers, or mutate Storage.
+
+## 4. Planning
+
+- Main destination remains Classification path + Naming directory/file.
+- Attachment destinations remain in the same named media directory.
+- Subtitle output uses the named primary stem plus its preserved safe suffix and original extension.
+- NFO uses the named primary stem; poster/fanart keep conventional safe names; trailer identity is
+  preserved.
+- Reject traversal, absolute, duplicate, or colliding attachment destinations.
+- A file set with a conflict is not implicitly partially executed.
+
+## 5. Execution and recovery evidence
+
+- Default remains DryRun with zero mutations for main and attachments.
+- Explicit execution processes only the immutable plan through OrganizerExecutor.
+- Use the existing operation semantics for every file; no fallback and no overwrite by default.
+- Record each completed attachment operation. If a later operation fails, return PARTIAL with exact
+  completed/pending evidence so explicit task retry can recover safely.
+- Never delete unknown files or recursively clean the source directory.
+
+## 6. CLI output
+
+Preview/organize summaries expose attachment count and, in detailed plan output where available,
+the source/type/destination list. No separate attachment scanner command is required.
 
 ## Safety
 
-- Default behavior remains DryRun.
-- No silent overwrite or delete.
-- Configuration validation and confirmation commands make zero Storage mutations.
-- RecognitionType C remains C while reusing A downstream policies.
-- Phase 15 must not implement attachments, NFO parsing, API, Web UI, Scheduler, or Phase 16 work.
+- Scanner through attachment planning remain read-only.
+- Only OrganizerExecutor mutates Storage.
+- DryRun, configuration validation, and discovery have zero mutation calls.
+- RecognitionType C remains C.
+- Do not implement NFO parsing/generation, image downloading, rollback, API, UI, scheduler, or
+  Phase 17 work.
 
 ## Required tests
 
-- Configured Skip, Rename, Manual, and Overwrite behavior.
-- Rename collision sequence and traversal/absolute-path rejection.
-- Explicit overwrite authorization and default denial.
-- SQLite schema v1→v2 migration, confirmation persistence, reopen, and audit history.
-- Waiting-confirm task status, retry exclusion, explicit resolution.
-- Duplicate identity distinguishes TV season/episode sets.
-- CLI list/show/resolve, malformed IDs/options, and zero mutation.
-- Parser, Recognition/C, Metadata, Naming, Classification, Planner, Executor, Strategy CLI,
-  Scanner/FileIndex, Storage adapters, Task recovery, and DryRun regressions.
+- Subtitle extension/language/forced/SDH preservation.
+- NFO, poster, fanart, trailer and disabled/unknown files.
+- Same-stem boundaries, Unicode and case-insensitive extensions.
+- Deterministic ordering and no content reads.
+- Safe target naming and collision/traversal rejection.
+- DryRun zero mutation for the complete file set.
+- Local MOVE/COPY/LINK attachment execution.
+- Cross-storage attachment COPY/MOVE using existing Storage behavior.
+- Partial execution records completed attachment steps and preserves unknown files.
+- Configuration validation/default-disabled behavior.
+- RecognitionType C and all existing Phase 15 regressions.
 
 ## Documentation
 
-Update README, configuration, architecture, progress, roadmap, and example configuration. Document
-decision lifecycle, overwrite authorization, CLI use, migration, and limitations.
+Update README, configuration examples, architecture, progress, and roadmap. Document supported
+attachment forms, opt-in behavior, execution ordering, partial recovery, and limitations.
 
 ## Validation
 
-Run all tests, formatter, linter, compile check, dependency check, build, configuration validation,
-FFprobe/FFmpeg audit, and diff check. Fix every Phase 15 failure before reporting PASS.
+Run all tests, formatter, linter, compile check, dependency check, wheel build, configuration
+validation, FFprobe/FFmpeg audit, and diff check. Fix every Phase 16 failure before PASS.
 
 ## Final report
 
-## Phase 15 Result
+## Phase 16 Result
 
 PASS / FAIL
 
-## Conflict Decisions
+## Attachment Discovery
 
-## NeedConfirm Persistence
-
-## CLI
+## Planning and Execution
 
 ## Safety
 

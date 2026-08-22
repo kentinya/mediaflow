@@ -48,6 +48,11 @@ decision flow. Overwrite is rejected unless the OrganizePolicy enables it and th
 fresh `--confirm-overwrite` decision; unresolved conflicts remain non-mutating.
 Silent deletion is not enabled.
 
+Attachment handling is opt-in per OrganizePolicy. When enabled, MediaFlow lists only the primary
+file's directory through Storage and groups matching subtitles, NFO, artwork, images, and trailers
+into the same plan. Preview reports `attachments=N`; only explicit execution mutates them. Unknown
+files are never included or cleaned up.
+
 With no path argument, `scan`, `preview`, and `organize` iterate every enabled configured
 ResourceLibrary. The former path-taking preview/organize forms remain available for compatibility.
 
@@ -96,6 +101,6 @@ operation history remains compatible.
 
 ## Current milestone
 
-The core CLI pipeline, Phase 14 persistence foundation, and Phase 15 persistent conflict decision
-handling are complete; attachments, scheduling, API, and Web UI remain planned. A scheduler is not yet
-implemented, so unattended execution remains outside the supported workflow.
+The core CLI pipeline, persistent recovery/conflict decisions, and opt-in attachment file sets are
+complete; scheduling, API, and Web UI remain planned. A scheduler is not yet implemented, so
+unattended execution remains outside the supported workflow.

@@ -68,8 +68,8 @@
     }
   ],
   "organizePolicies": [
-    {"id": "A", "operation": "MOVE", "conflictStrategy": "manual", "overwrite": false},
-    {"id": "B", "operation": "MOVE", "conflictStrategy": "manual", "overwrite": false}
+    {"id": "A", "operation": "MOVE", "conflictStrategy": "manual", "overwrite": false, "attachments": {"enabled": false, "subtitles": true, "nfo": true, "artwork": true, "trailers": true, "otherSameStem": false}},
+    {"id": "B", "operation": "MOVE", "conflictStrategy": "manual", "overwrite": false, "attachments": {"enabled": false, "subtitles": true, "nfo": true, "artwork": true, "trailers": true, "otherSameStem": false}}
   ],
   "recognitionTypes": [
     {"id": "A", "name": "Normal Movie", "description": "Standard movie library"},

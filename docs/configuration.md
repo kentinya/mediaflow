@@ -378,3 +378,23 @@ An organize policy also controls conflict behavior:
 Legacy `overwrite: true` maps to `overwrite`, but contradictory values fail validation. Overwrite
 still requires a persistent explicit decision made with `--confirm-overwrite`; configuration alone
 never authorizes mutation. `mediaflow config validate` only validates and never accesses Storage.
+
+Attachment discovery is separately opt-in on each OrganizePolicy:
+
+```json
+"attachments": {
+  "enabled": true,
+  "subtitles": true,
+  "nfo": true,
+  "artwork": true,
+  "trailers": true,
+  "otherSameStem": false
+}
+```
+
+The omitted/default policy is disabled. Discovery performs one read-only `Storage.list` on the
+primary media directory. Supported subtitles are `srt`, `ass`, `ssa`, `vtt`, `sub`, and `sup`;
+language plus `forced`, `sdh`, and `hi` suffixes are preserved. Same-stem NFO, conventional
+poster/fanart, related images, and same-stem `-trailer`/`.trailer` videos are supported. Enabling
+`otherSameStem` deliberately broadens matching but still requires a safe same-stem boundary.
+Unknown and disabled files are never deleted.

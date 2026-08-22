@@ -18,7 +18,12 @@ from mediaflow.domain.naming import (
     NamingMediaTypeMode,
     NamingPolicy,
 )
-from mediaflow.domain.organizer import ConflictStrategy, OrganizeOperationType, OrganizePolicy
+from mediaflow.domain.organizer import (
+    AttachmentPolicy,
+    ConflictStrategy,
+    OrganizeOperationType,
+    OrganizePolicy,
+)
 from mediaflow.domain.recognition import (
     AtomicCondition,
     ConditionField,
@@ -339,7 +344,32 @@ def _organize_policy(item: Mapping[str, Any]) -> OrganizePolicy:
         if legacy_overwrite and strategy is not ConflictStrategy.OVERWRITE:
             raise ValueError("overwrite=true conflicts with the configured conflictStrategy")
     return OrganizePolicy(
-        _string(item, "id"), _organize_operation(_string(item, "operation")), strategy
+        _string(item, "id"),
+        _organize_operation(_string(item, "operation")),
+        strategy,
+        _attachment_policy(item.get("attachments")),
+    )
+
+
+def _attachment_policy(value: Any) -> AttachmentPolicy:
+    if value is None:
+        return AttachmentPolicy()
+    if not isinstance(value, Mapping):
+        raise ValueError("organize policy attachments must be an object")
+    allowed = {"enabled", "subtitles", "nfo", "artwork", "trailers", "otherSameStem"}
+    unknown = set(value) - allowed
+    if unknown:
+        raise ValueError(f"unknown attachment policy field: {sorted(unknown)[0]}")
+    for key in value:
+        if not isinstance(value[key], bool):
+            raise ValueError(f"attachment policy {key} must be boolean")
+    return AttachmentPolicy(
+        enabled=value.get("enabled", False),
+        subtitles=value.get("subtitles", True),
+        nfo=value.get("nfo", True),
+        artwork=value.get("artwork", True),
+        trailers=value.get("trailers", True),
+        other_same_stem=value.get("otherSameStem", False),
     )
 
 

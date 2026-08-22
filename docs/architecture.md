@@ -85,6 +85,25 @@ creates a new auditable task. Execution requires prior authorization plus a fres
 This is a recoverable-task foundation, not a background worker. Live pause/control, scheduler,
 distributed leases, and automatic crash replay remain deferred. See [`docs/roadmap.md`](roadmap.md).
 
+## Attachment file sets
+
+Phase 16 adds `AttachmentDiscovery` as a read-only application service after the primary media has
+completed strategy resolution. It lists only the primary file's containing directory through the
+source Storage port; Scanner traversal, Parser, Naming, and metadata behavior remain unchanged.
+The result is an immutable `MediaFileSet` containing typed `MediaAttachment` records.
+
+`AttachmentPlanner` derives safe Storage-relative destinations from the already-produced
+NamingResult and appends immutable `AttachmentPlan` entries to OrganizePlan. Subtitle locale and
+Forced/SDH/HI suffixes are retained; NFO follows the named primary stem; poster/fanart keep
+conventional names; related images and trailers remain in the named media directory. All targets
+are preflighted for collisions before execution.
+
+OrganizerExecutor executes attachment plans before the primary media and records every completed
+step. This ordering normally leaves the primary at source if a sidecar fails. Runtime failures can
+still produce PARTIAL; SQLite ResultRecord schema v3 persists completed-operation evidence and the
+attachment count for explicit recovery. There is no recursive cleanup, content read, NFO parsing,
+image download, fallback, or implicit overwrite.
+
 ## Important interfaces
 
 - `Storage` exposes read/write concepts and explicit capabilities. Business logic targets this

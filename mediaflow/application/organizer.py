@@ -392,10 +392,72 @@ class OrganizerExecutor:
                     errors=("destination already exists",),
                     resolved_destination=display_destination,
                 )
+            attachment_sizes: dict[str, int] = {}
+            for attachment in plan.attachment_plans:
+                attachment_source = storages[attachment.source.storage_id]
+                attachment_target = storages[attachment.destination.storage_id]
+                if not attachment_source.exists(attachment.source.path):
+                    return self._result(
+                        plan,
+                        ExecutionStatus.FAILED,
+                        started,
+                        plan_id,
+                        errors=(f"attachment source does not exist: {attachment.source.path}",),
+                        resolved_destination=display_destination,
+                    )
+                if (
+                    attachment_target.exists(attachment.destination.path)
+                    and not plan.overwrite_authorized
+                ):
+                    return self._result(
+                        plan,
+                        ExecutionStatus.FAILED,
+                        started,
+                        plan_id,
+                        errors=(
+                            f"attachment destination already exists: {attachment.destination.path}",
+                        ),
+                        resolved_destination=display_destination,
+                    )
+                attachment_sizes[attachment.source.path] = attachment_source.stat(
+                    attachment.source.path
+                ).size
             if parent and not target_storage.exists(parent):
                 target_storage.create_directory(parent)
                 created.append(parent)
                 completed.append("CREATE_DIRECTORY")
+            for attachment in plan.attachment_plans:
+                attachment_source = storages[attachment.source.storage_id]
+                attachment_target = storages[attachment.destination.storage_id]
+                marker = f"ATTACHMENT:{attachment.attachment_type.value}:{attachment.source.path}"
+                try:
+                    self._mutate(
+                        plan,
+                        attachment_source,
+                        attachment_target,
+                        attachment.source.path,
+                        attachment.destination.path,
+                    )
+                except PartialExecutionError as error:
+                    raise PartialExecutionError(
+                        str(error), tuple(f"{marker}:{step}" for step in error.completed)
+                    ) from error
+                completed.append(marker)
+                if not attachment_target.exists(attachment.destination.path):
+                    raise RuntimeError(f"attachment verification failed: {attachment.source.path}")
+                if (
+                    attachment_target.stat(attachment.destination.path).size
+                    != attachment_sizes[attachment.source.path]
+                ):
+                    raise RuntimeError(
+                        f"attachment verification failed: size mismatch: {attachment.source.path}"
+                    )
+                if plan.operation is PlanOperation.MOVE and attachment_source.exists(
+                    attachment.source.path
+                ):
+                    raise RuntimeError(
+                        f"attachment move verification failed: {attachment.source.path}"
+                    )
             self._mutate(plan, source_storage, target_storage, storage_source, storage_target)
             completed.append(plan.operation.value)
             if not target_storage.exists(storage_target):
@@ -532,6 +594,26 @@ def _plan_validation_error(plan: OrganizePlan) -> str | None:
         or any(part in {"", ".", ".."} for part in plan.target.lstrip("/").split("/"))
     ):
         return "invalid destination"
+    attachment_destinations: set[tuple[str, str]] = set()
+    for attachment in plan.attachment_plans:
+        if attachment.operation is not plan.operation:
+            return "attachment operation does not match the primary operation"
+        if attachment.source.storage_id != plan.source_storage_id:
+            return "attachment references a different source Storage"
+        if attachment.destination.storage_id != plan.target_storage_id:
+            return "attachment references a different destination Storage"
+        primary_source = plan.source_location.path if plan.source_location else plan.source
+        primary_target = (
+            plan.destination_location.path if plan.destination_location else plan.target
+        )
+        if posixpath.dirname(attachment.source.path) != posixpath.dirname(primary_source):
+            return "attachment source must share the primary source directory"
+        if posixpath.dirname(attachment.destination.path) != posixpath.dirname(primary_target):
+            return "attachment destination must share the primary destination directory"
+        identity = (attachment.destination.storage_id, attachment.destination.path.casefold())
+        if identity in attachment_destinations:
+            return "attachment destinations collide"
+        attachment_destinations.add(identity)
     return None
 
 
@@ -548,4 +630,10 @@ def _resolved_execution_target(plan: OrganizePlan) -> str | None:
 def _storage_validation_error(plan: OrganizePlan, storages: Mapping[str, Storage]) -> str | None:
     if plan.source_storage_id not in storages or plan.target_storage_id not in storages:
         return "plan references an unavailable Storage"
+    if any(
+        attachment.source.storage_id not in storages
+        or attachment.destination.storage_id not in storages
+        for attachment in plan.attachment_plans
+    ):
+        return "attachment plan references an unavailable Storage"
     return None
