@@ -11,6 +11,7 @@ from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationJob,
     AutomationJobStatus,
+    AutomationQueueFull,
     ScheduleAuditRecord,
     ScheduleState,
 )
@@ -849,6 +850,30 @@ class SQLiteTaskRepository:
                 self._job_values(job),
             )
 
+    def admit_job(self, job: AutomationJob, maximum_active_jobs: int) -> bool:
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._has_job_capacity(maximum_active_jobs):
+                    self._connection.rollback()
+                    return False
+                self._connection.execute(
+                    "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    self._job_values(job),
+                )
+                self._connection.commit()
+                return True
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def _has_job_capacity(self, maximum_active_jobs: int) -> bool:
+        row = self._connection.execute(
+            "SELECT COUNT(*) AS count FROM automation_jobs WHERE status IN (?, ?)",
+            (AutomationJobStatus.PENDING.value, AutomationJobStatus.RUNNING.value),
+        ).fetchone()
+        return int(row["count"]) < maximum_active_jobs
+
     def get_job(self, job_id: str) -> AutomationJob | None:
         with self._lock:
             row = self._connection.execute(
@@ -1023,39 +1048,50 @@ class SQLiteTaskRepository:
         occurrence_at: datetime,
         next_run_at: datetime,
         now: datetime,
+        maximum_active_jobs: int,
     ) -> bool:
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                "UPDATE automation_schedules SET next_run_at=?, updated_at=?, last_job_id=? "
-                "WHERE schedule_id=? AND next_run_at=? AND next_run_at<=?",
-                (
-                    next_run_at.isoformat(),
-                    now.isoformat(),
-                    job.job_id,
-                    schedule_id,
-                    occurrence_at.isoformat(),
-                    now.isoformat(),
-                ),
-            )
-            if cursor.rowcount != 1:
-                return False
-            self._connection.execute(
-                "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                self._job_values(job),
-            )
-            self._connection.execute(
-                "INSERT INTO schedule_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    f"{schedule_id}:{job.job_id}",
-                    schedule_id,
-                    occurrence_at.isoformat(),
-                    now.isoformat(),
-                    job.job_id,
-                    job.command.value,
-                    next_run_at.isoformat(),
-                ),
-            )
-        return True
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._has_job_capacity(maximum_active_jobs):
+                    self._connection.rollback()
+                    return False
+                cursor = self._connection.execute(
+                    "UPDATE automation_schedules SET next_run_at=?, updated_at=?, last_job_id=? "
+                    "WHERE schedule_id=? AND next_run_at=? AND next_run_at<=?",
+                    (
+                        next_run_at.isoformat(),
+                        now.isoformat(),
+                        job.job_id,
+                        schedule_id,
+                        occurrence_at.isoformat(),
+                        now.isoformat(),
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    self._connection.rollback()
+                    return False
+                self._connection.execute(
+                    "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    self._job_values(job),
+                )
+                self._connection.execute(
+                    "INSERT INTO schedule_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        f"{schedule_id}:{job.job_id}",
+                        schedule_id,
+                        occurrence_at.isoformat(),
+                        now.isoformat(),
+                        job.job_id,
+                        job.command.value,
+                        next_run_at.isoformat(),
+                    ),
+                )
+                self._connection.commit()
+                return True
+            except Exception:
+                self._connection.rollback()
+                raise
 
     def list_schedule_states(self) -> tuple[ScheduleState, ...]:
         with self._lock:
@@ -1160,50 +1196,63 @@ class SQLiteTaskRepository:
         job: AutomationJob,
         now: datetime,
         audit: ExecutionAuthorizationAudit,
+        maximum_active_jobs: int,
     ) -> ExecutionAuthorization:
         expired = False
-        with self._lock, self._connection:
-            row = self._connection.execute(
-                "SELECT * FROM execution_authorizations WHERE token_digest=?", (token_digest,)
-            ).fetchone()
-            if row is None:
-                raise ValueError("execution authorization is invalid")
-            value = self._execution_authorization(row)
-            if value.status is not ExecutionAuthorizationStatus.ACTIVE:
-                raise ValueError(f"execution authorization is {value.status.value}")
-            if value.expires_at <= now:
-                self._connection.execute(
-                    "UPDATE execution_authorizations SET status=? WHERE authorization_id=?",
-                    (ExecutionAuthorizationStatus.EXPIRED.value, value.authorization_id),
-                )
-                expired = True
-            elif job.limit is None or job.limit > value.max_items:
-                raise ValueError("remote organize limit exceeds execution authorization")
-            else:
-                cursor = self._connection.execute(
-                    "UPDATE execution_authorizations SET status=?, consumed_at=?, "
-                    "consumed_job_id=? WHERE authorization_id=? AND status=?",
-                    (
-                        ExecutionAuthorizationStatus.CONSUMED.value,
-                        now.isoformat(),
-                        job.job_id,
-                        value.authorization_id,
-                        ExecutionAuthorizationStatus.ACTIVE.value,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError("execution authorization was already consumed")
-                self._connection.execute(
-                    "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    self._job_values(job),
-                )
-                self._insert_execution_authorization_audit(
-                    replace(audit, authorization_id=value.authorization_id)
-                )
-                updated = self._connection.execute(
-                    "SELECT * FROM execution_authorizations WHERE authorization_id=?",
-                    (value.authorization_id,),
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    "SELECT * FROM execution_authorizations WHERE token_digest=?", (token_digest,)
                 ).fetchone()
+                if row is None:
+                    raise ValueError("execution authorization is invalid")
+                value = self._execution_authorization(row)
+                if value.status is not ExecutionAuthorizationStatus.ACTIVE:
+                    raise ValueError(f"execution authorization is {value.status.value}")
+                if value.expires_at <= now:
+                    self._connection.execute(
+                        "UPDATE execution_authorizations SET status=? WHERE authorization_id=?",
+                        (ExecutionAuthorizationStatus.EXPIRED.value, value.authorization_id),
+                    )
+                    expired = True
+                elif job.limit is None or job.limit > value.max_items:
+                    raise ValueError("remote organize limit exceeds execution authorization")
+                elif not self._has_job_capacity(maximum_active_jobs):
+                    raise AutomationQueueFull(
+                        "automation queue reached configured active Job limit "
+                        f"{maximum_active_jobs}"
+                    )
+                else:
+                    cursor = self._connection.execute(
+                        "UPDATE execution_authorizations SET status=?, consumed_at=?, "
+                        "consumed_job_id=? WHERE authorization_id=? AND status=?",
+                        (
+                            ExecutionAuthorizationStatus.CONSUMED.value,
+                            now.isoformat(),
+                            job.job_id,
+                            value.authorization_id,
+                            ExecutionAuthorizationStatus.ACTIVE.value,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ValueError("execution authorization was already consumed")
+                    self._connection.execute(
+                        "INSERT INTO automation_jobs VALUES "
+                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        self._job_values(job),
+                    )
+                    self._insert_execution_authorization_audit(
+                        replace(audit, authorization_id=value.authorization_id)
+                    )
+                    updated = self._connection.execute(
+                        "SELECT * FROM execution_authorizations WHERE authorization_id=?",
+                        (value.authorization_id,),
+                    ).fetchone()
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
         if expired:
             raise ValueError("execution authorization is expired")
         return self._execution_authorization(updated)

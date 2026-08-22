@@ -488,6 +488,7 @@ def final_main(
                 service = ExecutionAuthorizationService(
                     repository,
                     maximum_ttl_seconds=configuration.remote_execution_maximum_ttl_seconds,
+                    maximum_active_jobs=configuration.automation_maximum_active_jobs,
                 )
                 if arguments.execution_authorization_command == "issue":
                     issued = service.issue(
@@ -605,7 +606,10 @@ def final_main(
             return 1 if failures else 0
         if arguments.command == "jobs":
             with SQLiteTaskRepository(configuration.database_path) as repository:
-                service = AutomationJobService(repository)
+                service = AutomationJobService(
+                    repository,
+                    maximum_active_jobs=configuration.automation_maximum_active_jobs,
+                )
                 if arguments.job_command == "list":
                     stdout.write(render_jobs(repository.list_jobs(limit=arguments.limit)))
                 elif arguments.job_command == "show":
@@ -657,6 +661,7 @@ def final_main(
                     repository,
                     configuration.automation_schedules,
                     NotificationPublisher(repository, configuration.webhooks),
+                    maximum_active_jobs=configuration.automation_maximum_active_jobs,
                 )
                 if arguments.scheduler_command == "list":
                     stdout.write(
@@ -731,6 +736,7 @@ def final_main(
                     remote_execution_maximum_ttl_seconds=(
                         configuration.remote_execution_maximum_ttl_seconds
                     ),
+                    maximum_active_jobs=configuration.automation_maximum_active_jobs,
                     system_status=build_configuration_snapshot(configuration),
                 )
                 stdout.write(f"MediaFlow API listening on {arguments.host}:{arguments.port}\n")

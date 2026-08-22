@@ -10,6 +10,7 @@
     "remoteExecution": {"enabled": false, "maximumTtlSeconds": 900}
   },
   "automation": {
+    "maximumActiveJobs": 100,
     "workerPollSeconds": 2,
     "schedulerPollSeconds": 5,
     "schedules": [

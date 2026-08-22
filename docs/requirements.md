@@ -27,6 +27,8 @@
 > 与“确认取消”两个独立动作；取消不授予执行权限、不回滚已完成媒体操作，也不控制 Task。
 > 操作台提交 Automation Job 只能选择 scan/preview，并经过打开、审核、确认三个阶段；请求只能
 > 包含 command 和可选有界 limit，必须明确显示 DRY_RUN，不能携带 organize/execute 权限。
+> Pending/Running Automation Job 总量必须由配置的持久原子准入上限约束；手工提交、Scheduler
+> 和受保护 organize 共用容量，队列满不得消费执行票据、推进调度状态或删除现有 Job。
 
 ---
 
@@ -3954,6 +3956,16 @@ Query 及 path、Task、actor、policy、Storage、Scheduler、overwrite、delet
 Viewer/Auditor 保持只读，Operator/Executor/Admin 继续使用 `submit_dry_run` 权限。入队本身只
 写持久 Job 与安全审计，不得构造 Storage、Provider、Scanner 或 Executor；后续 Worker 仍按
 既有边界处理，并且 preview 永远不获得媒体变更权限。
+
+## 109.4 Automation Job 持久准入容量
+
+`automation.maximumActiveJobs` 必须为 1–10000 的整数，默认 100。容量只统计 Pending 和
+Running；Completed、Failed、Cancelled 保留历史但释放容量。所有生产入队来源必须共享该
+上限，禁止按 API、CLI、Scheduler 或 organize 建立不一致的隐藏容量。
+
+SQLite 必须在一个写事务内完成活动数量判断和插入，跨进程并发不得超额。满队列返回稳定冲突，
+不创建 Job、不删除/取消旧 Job。Scheduler 不推进 occurrence 或写发出审计；一次性执行授权不
+消费也不撤销。准入只操作持久状态，不得构造 Storage、Provider、Scanner 或 Executor。
 
 # 110. 最终核心原则
 

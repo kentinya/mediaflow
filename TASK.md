@@ -1,81 +1,88 @@
-# Phase 19.18 — Explicit DryRun Automation Job Submission UI
+# Phase 19.19 — Durable Active Automation Job Admission Control
 
 ## Goal
 
-Expose the existing `scan` and `preview` AutomationJob submission boundary through the authenticated
-operator UI with review-before-submit. Preserve DryRun and do not expose organize, execute authority,
-Scheduler changes, Task control, or Storage mutation.
+Prevent authorized clients or schedules from building an unbounded Pending/Running AutomationJob
+backlog. Enforce one configuration-driven active-Job capacity atomically in persistence without
+starting workflows, changing media behavior, or weakening execution authorization.
 
-## 1. Existing submission boundary
+## 1. Runtime policy
 
-- Reuse `POST /api/v1/jobs`, `AutomationJobService.submit`, `SUBMIT_DRY_RUN`, durable queueing, Worker,
-  security audit, and existing Job list/detail/cancellation UI.
-- Do not duplicate command/limit validation or workflow behavior in the UI.
-- Only `scan` and `preview` are valid; both remain non-executing workflows.
+- Add `automation.maximumActiveJobs`, default 100, valid integer range 1–10000.
+- Count only Pending and Running Jobs as active; Completed, Failed, and Cancelled release capacity.
+- Apply the same capacity to manual scan/preview submission, Scheduler emission, and remote organize
+  submission. Do not create separate hidden limits by command or transport.
+- Configuration validation must construct no Storage/provider/workflow and must reject booleans,
+  strings, zero, negatives, overflow, and unknown automation fields according to existing rules.
 
-## 2. Strict DryRun transport
+## 2. Atomic persistence admission
 
-- For scan/preview, accept exactly `command` and optional `limit`; reject queries, unknown fields,
-  booleans/non-integers, zero/negative/out-of-range limits, execute/organize/overwrite/delete/path/task/
-  actor/schedule fields, and malformed JSON before queue creation.
-- Define and enforce a conservative maximum UI/API limit consistent with batch safety.
-- Preserve the separately gated remote-organize branch without exposing it in this UI.
-- A failed security-audit write or repository insert must create no partial Job.
+- Add an AutomationJobRepository admission operation that counts active rows and inserts the Job in one
+  SQLite write transaction. Concurrent processes must never admit more than the configured capacity.
+- Keep direct `create_job` only for migrations/tests/internal fixtures; every production submission path
+  must use admission control.
+- Queue-full failure creates no Job and returns a stable domain/application error without exposing Job
+  IDs, commands, paths, credentials, database details, or counts beyond the configured capacity.
+- Repository/audit failure creates no partial admitted Job beyond the existing audit-before-action rule.
 
-## 3. Operator UI
+## 3. Scheduler and remote execution
 
-- Add `Queue DryRun job` to the Jobs view for authenticated users; API RBAC remains authoritative.
-- Provide only command choices `scan` and `preview`, plus an optional bounded positive integer limit.
-- Require three explicit steps: open form, review an immutable summary, confirm queueing; Back/Keep
-  performs no request.
-- Display `DRY_RUN`, no media mutation, no execution authorization, and that scan/preview may read
-  configured Storage/provider resources.
-- After a successful 202 response, reload the first Jobs page and open the created Job detail.
-- Use DOM text nodes and event listeners only; no inline handlers, native implicit confirm, polling,
-  token persistence, optimistic Job IDs/status, or arbitrary request fields.
+- Scheduler capacity failure must not advance occurrence state or append emission audit; a later tick may
+  retry after capacity is released, preserving existing no-backfill semantics.
+- Remote organize capacity failure must not consume/revoke the one-time execution authorization and must
+  not create an execute-authorized Job.
+- Preserve atomic one-time ticket consumption once capacity is available.
 
-## 4. Authorization and safety
+## 4. API/UI behavior
 
-- Viewer/Auditor may view the form but receive 403 if they attempt submission; Operator/Executor/Admin
-  retain existing `SUBMIT_DRY_RUN` authority.
-- UI must never send `execute`, an execution token/header, `organize`, overwrite/delete, path, Task,
-  actor, policy, Storage, or Scheduler fields.
-- Submission itself constructs no Storage/provider/workflow/Executor; only a later Worker processes the
-  durable Job under existing boundaries.
-- Preserve RecognitionType C, conflict rules, one-time remote execution authorization, and zero mutation
-  for DryRun.
+- Return HTTP 409 `queue_full` for capacity rejection; preserve 401/403/400 ordering and normalized audit.
+- DryRun submission UI displays a clear bounded-queue error and does not optimistically add a Job.
+- Add configured maximum active Jobs to the existing safe System snapshot as a numeric operational limit;
+  do not expose current Job counts there or add polling.
+- Add no queue purge, priority, force-admit, execute, retry, Scheduler, or Task controls.
+
+## 5. Safety boundaries
+
+- Admission performs SQLite state checks/writes only; construct no Storage, provider, Scanner, workflow,
+  Planner, OrganizerExecutor, Notification worker, backup/restore, or migration service.
+- Do not cancel or delete existing Jobs to make room.
+- Preserve DryRun, one-time execute authorization, RecognitionType C, conflicts, and zero media mutation.
 
 ## Required tests
 
-- Scan and preview submission with omitted and bounded limit.
-- Three-step UI flow; Back/Keep performs no request; success refreshes first page and opens Job detail.
-- Viewer 403 and Operator success; audit route contains no body/query/command/limit.
-- Unknown fields/query, malformed JSON, invalid limits, organize, execute, path, Task, actor, policy,
-  Storage, Scheduler, overwrite, and delete inputs create zero Jobs.
-- Remote organize API behavior remains separately gated and unchanged.
-- UI contains only scan/preview choices and never emits execute authority/header or organization controls.
-- Submission API constructs no Storage/provider/Scanner/workflow/Planner/Executor and performs zero
-  media mutations before Worker processing.
-- Existing cancellation, API/UI, automation/worker/security/runtime/media regressions and quality gates pass.
+- Configuration default/custom/boundaries/invalid values and no Storage construction.
+- Pending and Running consume capacity; Completed/Failed/Cancelled release it.
+- Concurrent repository/service submissions never exceed capacity.
+- Manual scan/preview queue-full returns 409 and creates no Job.
+- Scheduler full leaves state/audit unchanged, then emits once after capacity release.
+- Remote organize full preserves active ticket; later admission consumes it exactly once.
+- Audit failure and repository failure preserve existing atomic behavior.
+- System snapshot exposes only the configured numeric maximum and no Job records/counts/secrets.
+- UI retains three-step DryRun flow, displays API error, and adds no bypass/force/purge controls.
+- Existing submission/cancellation/API/UI/automation/scheduler/execution authorization/runtime/media
+  regressions and all quality gates pass.
 
 ## Documentation
 
-Update README, requirements, architecture, progress, roadmap, and operator/API documentation.
+Update example configurations, README, requirements, architecture, progress, roadmap, and configuration/API
+documentation.
 
 ## Out of scope
 
-Organize/execute UI, Task submission/control/resume/retry, Scheduler/Notification controls,
-configuration editing, live progress/polling, forced cancellation, rollback, OIDC, and TLS.
+Per-principal quotas, rate limiting, Job priority, queue purge, automatic cancellation, Scheduler UI,
+Task controls, distributed databases, organize UI, rollback, OIDC, TLS, and media workflow changes.
 
 ## Final report
 
-## Phase 19.18 Result
+## Phase 19.19 Result
 
 PASS / FAIL
 
-## Submission Flow
+## Admission Policy
 
-## Authorization and Validation
+## Atomicity and Authorization
+
+## API and UI
 
 ## Safety
 

@@ -67,6 +67,7 @@ class RuntimeConfiguration:
     operational_logging_minimum_level: LogLevel = LogLevel.INFO
     operational_logging_retention_days: int = 30
     operational_logging_maximum_records: int = 10_000
+    automation_maximum_active_jobs: int = 100
 
     def create_storages(
         self,
@@ -326,6 +327,22 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     automation = document.get("automation", {})
     if not isinstance(automation, dict):
         raise ValueError("runtime configuration 'automation' must be an object")
+    allowed_automation = {
+        "workerPollSeconds",
+        "schedulerPollSeconds",
+        "maximumActiveJobs",
+        "schedules",
+    }
+    if unknown := set(automation).difference(allowed_automation):
+        raise ValueError(f"unknown automation field {sorted(unknown)[0]!r}")
+    maximum_active_jobs = automation.get("maximumActiveJobs", 100)
+    if (
+        isinstance(maximum_active_jobs, bool)
+        or not isinstance(maximum_active_jobs, int)
+        or maximum_active_jobs < 1
+        or maximum_active_jobs > 10_000
+    ):
+        raise ValueError("automation maximumActiveJobs must be between 1 and 10000")
     worker_poll = _positive_number(automation.get("workerPollSeconds", 2), "workerPollSeconds")
     scheduler_poll = _positive_number(
         automation.get("schedulerPollSeconds", 5), "schedulerPollSeconds"
@@ -401,6 +418,7 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         logging_level,
         retention_days,
         maximum_records,
+        maximum_active_jobs,
     )
 
 

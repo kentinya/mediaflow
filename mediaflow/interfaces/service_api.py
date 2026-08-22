@@ -15,6 +15,7 @@ from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.metadata_review import MetadataReviewService
+from mediaflow.domain.automation import AutomationQueueFull
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
@@ -47,6 +48,7 @@ class MediaFlowApi:
         dashboard_media_library_count: int = 0,
         remote_execution_enabled: bool = False,
         remote_execution_maximum_ttl_seconds: int = 900,
+        maximum_active_jobs: int = 100,
         system_status=None,
     ) -> None:
         if bearer_token and principals:
@@ -59,9 +61,11 @@ class MediaFlowApi:
             raise ValueError("at least one API principal must be configured")
         self._repository = repository
         self._principals = principals
-        self._jobs = AutomationJobService(repository)
+        self._jobs = AutomationJobService(repository, maximum_active_jobs=maximum_active_jobs)
         self._execution_authorizations = ExecutionAuthorizationService(
-            repository, maximum_ttl_seconds=remote_execution_maximum_ttl_seconds
+            repository,
+            maximum_ttl_seconds=remote_execution_maximum_ttl_seconds,
+            maximum_active_jobs=maximum_active_jobs,
         )
         self._remote_execution_enabled = remote_execution_enabled
         self._system_status = system_status
@@ -122,6 +126,18 @@ class MediaFlowApi:
                 403,
             )
             return self._error(start_response, 403, "forbidden", str(error))
+        except AutomationQueueFull as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "request",
+                "denied",
+                409,
+            )
+            return self._error(start_response, 409, "queue_full", str(error))
         except LookupError as error:
             self._safe_audit(
                 environ,
@@ -1082,6 +1098,7 @@ class MediaFlowApi:
             403: "Forbidden",
             404: "Not Found",
             405: "Method Not Allowed",
+            409: "Conflict",
             500: "Internal Server Error",
             503: "Service Unavailable",
         }

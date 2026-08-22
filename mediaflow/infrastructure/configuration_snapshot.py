@@ -38,6 +38,7 @@ def build_configuration_snapshot(configuration: RuntimeConfiguration) -> Configu
                 "posix_shared_exclusive" if os.name == "posix" else "shared_only"
             ),
             "configuration_valid": True,
+            "maximum_active_jobs": configuration.automation_maximum_active_jobs,
         },
         "storages": _section(
             configuration.storage_definitions,

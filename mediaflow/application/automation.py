@@ -12,6 +12,7 @@ from mediaflow.domain.automation import (
     AutomationJob,
     AutomationJobRepository,
     AutomationJobStatus,
+    AutomationQueueFull,
     CronSchedule,
     IntervalSchedule,
     ScheduleDefinition,
@@ -31,8 +32,18 @@ class AutomationCancelled(RuntimeError):
 class AutomationJobService:
     """Queues only the mutation-free workflows admitted by the service boundary."""
 
-    def __init__(self, repository: AutomationJobRepository) -> None:
+    def __init__(
+        self, repository: AutomationJobRepository, *, maximum_active_jobs: int = 100
+    ) -> None:
+        if (
+            isinstance(maximum_active_jobs, bool)
+            or not isinstance(maximum_active_jobs, int)
+            or maximum_active_jobs < 1
+            or maximum_active_jobs > 10_000
+        ):
+            raise ValueError("maximum active Jobs must be between 1 and 10000")
         self._repository = repository
+        self._maximum_active_jobs = maximum_active_jobs
 
     def submit(self, command: str, *, limit: int | None = None) -> AutomationJob:
         try:
@@ -54,7 +65,10 @@ class AutomationJobService:
         job = AutomationJob(
             str(uuid4()), parsed, AutomationJobStatus.PENDING, now, now, limit=limit
         )
-        self._repository.create_job(job)
+        if not self._repository.admit_job(job, self._maximum_active_jobs):
+            raise AutomationQueueFull(
+                f"automation queue reached configured active Job limit {self._maximum_active_jobs}"
+            )
         return job
 
     def cancel(self, job_id: str) -> AutomationJob:
@@ -181,10 +195,20 @@ class IntervalScheduler:
         repository: AutomationJobRepository,
         schedules: tuple[ScheduleDefinition, ...],
         notifications: NotificationPublisher | None = None,
+        *,
+        maximum_active_jobs: int = 100,
     ) -> None:
+        if (
+            isinstance(maximum_active_jobs, bool)
+            or not isinstance(maximum_active_jobs, int)
+            or maximum_active_jobs < 1
+            or maximum_active_jobs > 10_000
+        ):
+            raise ValueError("maximum active Jobs must be between 1 and 10000")
         self._repository = repository
         self._schedules = schedules
         self._notifications = notifications
+        self._maximum_active_jobs = maximum_active_jobs
         self._cron = {
             item.schedule_id: CronExpression.parse(item.expression)
             for item in schedules
@@ -221,6 +245,7 @@ class IntervalScheduler:
                 state.next_run_at,
                 next_run,
                 current,
+                self._maximum_active_jobs,
             ):
                 queued.append(job)
                 if self._notifications:

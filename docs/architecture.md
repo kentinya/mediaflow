@@ -162,6 +162,17 @@ the separately authorized remote-organize branch remains inaccessible from the U
 only the durable Job and security audit. Storage/provider/scanner/workflow construction happens only
 if a later Worker claims the Job, under the existing DryRun and cancellation boundaries.
 
+Phase 19.19 adds one durable active-Job admission rule shared by manual DryRun, Scheduler, and protected
+remote organize. `maximumActiveJobs` counts Pending/Running only. SQLite uses `BEGIN IMMEDIATE` to
+serialize count-plus-insert across repository connections; terminal rows remain historical but no
+longer consume capacity. The ordinary `create_job` method remains only for migrations/test fixtures,
+while every production submission path calls an admission-aware transaction.
+
+Scheduler checks capacity in the same transaction as conditional state advance, Job insert, and audit;
+full capacity rolls back all three. Execution authorization checks capacity before its atomic token
+consume/Job/audit transaction, so queue-full cannot burn a ticket. API maps the stable domain rejection
+to audited HTTP 409. None of these admission paths constructs or calls a media service.
+
 ## Phase 18.3 Cron and schedule audit
 
 CronExpression is a bounded pure-domain parser/evaluator for five numeric fields. It accepts only

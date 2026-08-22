@@ -55,6 +55,7 @@ class ExecutionAuthorizationRepository(Protocol):
         job: AutomationJob,
         now: datetime,
         audit: ExecutionAuthorizationAudit,
+        maximum_active_jobs: int,
     ) -> ExecutionAuthorization: ...
     def revoke_execution_authorization(
         self, authorization_id: str, now: datetime, audit: ExecutionAuthorizationAudit

@@ -28,13 +28,22 @@ class ExecutionAuthorizationService:
         repository: ExecutionAuthorizationRepository,
         *,
         maximum_ttl_seconds: int = 900,
+        maximum_active_jobs: int = 100,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         token_factory: Callable[[], str] = lambda: secrets.token_urlsafe(32),
     ) -> None:
         if maximum_ttl_seconds < 1:
             raise ValueError("maximum execution authorization TTL must be positive")
+        if (
+            isinstance(maximum_active_jobs, bool)
+            or not isinstance(maximum_active_jobs, int)
+            or maximum_active_jobs < 1
+            or maximum_active_jobs > 10_000
+        ):
+            raise ValueError("maximum active Jobs must be between 1 and 10000")
         self._repository = repository
         self._maximum_ttl_seconds = maximum_ttl_seconds
+        self._maximum_active_jobs = maximum_active_jobs
         self._clock = clock
         self._token_factory = token_factory
 
@@ -99,6 +108,7 @@ class ExecutionAuthorizationService:
             ExecutionAuthorizationAudit(
                 str(uuid4()), "resolved-by-digest", "consumed", now, job_id=job.job_id
             ),
+            self._maximum_active_jobs,
         )
         return job
 

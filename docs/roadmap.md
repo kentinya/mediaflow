@@ -193,6 +193,10 @@ Phase 19.18 已将既有 scan/preview DryRun Job 提交接入操作台：表单�
 command/可选有界 limit 的请求，Operator/Executor/Admin 仍由 `submit_dry_run` 权限约束。
 入队不构造工作流或 Storage，UI 不提供 organize、execute、Scheduler 或 Task 控制。
 
+Phase 19.19 已加入持久活动 Job 准入：配置化上限原子约束 Pending+Running，手工 DryRun、
+Scheduler 和受保护 organize 共用容量。满队列不创建 Job、不推进调度状态/审计、不消费一次性
+票据，也不清理现有队列；API 返回受审计的 409，System 页只显示配置上限。
+
 ## 下一步实施建议
 
 后续任务仍应保持小步推进。优先顺序：

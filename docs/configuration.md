@@ -695,6 +695,7 @@ rule before continuing.
 
 ```json
 "automation": {
+  "maximumActiveJobs": 100,
   "workerPollSeconds": 2,
   "schedulerPollSeconds": 5,
   "schedules": [
@@ -705,6 +706,13 @@ rule before continuing.
   ]
 }
 ```
+
+`maximumActiveJobs` is an integer from 1 through 10000 and defaults to 100. It counts Pending plus
+Running Jobs across manual scan/preview, Scheduler emission, and protected remote organize. Admission
+is one SQLite transaction, so concurrent API/CLI processes cannot exceed the limit. Completed,
+Failed, and Cancelled release capacity. A full Scheduler leaves its occurrence/state unchanged for a
+later tick; a full remote-organize queue leaves its one-time authorization active and unconsumed.
+MediaFlow never purges or cancels existing Jobs to make room.
 
 IDs are unique; command is only `scan` or `preview`; intervals and limits are positive. The first
 enabled tick emits one job and persists its next-run time. Missed periods do not create a backlog.

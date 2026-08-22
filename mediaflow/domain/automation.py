@@ -20,6 +20,10 @@ class AutomationJobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class AutomationQueueFull(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class AutomationJob:
     job_id: str
@@ -113,6 +117,7 @@ class ScheduleAuditRecord:
 
 class AutomationJobRepository(Protocol):
     def create_job(self, job: AutomationJob) -> None: ...
+    def admit_job(self, job: AutomationJob, maximum_active_jobs: int) -> bool: ...
     def get_job(self, job_id: str) -> AutomationJob | None: ...
     def list_jobs(
         self,
@@ -138,6 +143,7 @@ class AutomationJobRepository(Protocol):
         occurrence_at: datetime,
         next_run_at: datetime,
         now: datetime,
+        maximum_active_jobs: int,
     ) -> bool: ...
     def list_schedule_states(self) -> tuple[ScheduleState, ...]: ...
     def list_schedule_audit(

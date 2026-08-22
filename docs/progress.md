@@ -49,6 +49,7 @@
 - Phase 19.16 read-only configuration and system status API/UI: PASS
 - Phase 19.17 explicit Automation Job cancellation UI: PASS
 - Phase 19.18 explicit DryRun Automation Job submission UI: PASS
+- Phase 19.19 durable active Automation Job admission control: PASS
 
 ## Planned
 
@@ -1122,4 +1123,19 @@ Phase 19.18 explicit DryRun Automation Job submission UI (2026-08-22): PASS
 - Remote organize remains separately gated and absent from UI; queueing constructs no media services,
   performs no Storage mutation, and grants no execute authority
 - Full suite: 460 tests, 457 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
+  dependency, both example-configuration, forbidden-runtime-dependency, and wheel build gates passed
+
+Phase 19.19 durable active Automation Job admission control (2026-08-22): PASS
+
+- Added validated `automation.maximumActiveJobs` (default 100, range 1–10000) and exposed only that
+  configured numeric operational limit through the immutable System snapshot
+- Added SQLite `BEGIN IMMEDIATE` active count plus insert admission shared by manual scan/preview,
+  Scheduler emission, and protected remote organize; concurrent connections cannot exceed capacity
+- Pending/Running consume capacity while terminal history releases it; no old Job is cancelled, deleted,
+  reprioritized, or silently purged
+- Full Scheduler admission rolls back occurrence advance/Job/audit, and full protected organize leaves
+  its one-time execution authorization active for a later atomic consume
+- API returns audited 409 `queue_full`; submission UI shows the existing safe error path and has no force,
+  purge, bypass, retry, Scheduler, execute, or Task control
+- Full suite: 466 tests, 463 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
   dependency, both example-configuration, forbidden-runtime-dependency, and wheel build gates passed

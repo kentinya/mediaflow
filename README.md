@@ -160,7 +160,10 @@ delete, and conflict resolution remain rejected. This standard-library server is
 loopback development use, not direct Internet exposure.
 
 Phase 18.2 adds a resident Worker and opt-in interval schedules. Example schedules are disabled by
-default. Run Scheduler and Worker separately. `jobs cancel JOB_ID` cancels pending work immediately
+default. `automation.maximumActiveJobs` defaults to 100 and atomically limits the combined Pending
+and Running backlog across manual DryRun submissions, schedules, and protected remote organize.
+Completed, failed, and cancelled Jobs release capacity. Run Scheduler and Worker separately.
+`jobs cancel JOB_ID` cancels pending work immediately
 or requests cooperative cancellation of running work before another media item starts; an in-flight
 read may finish. Stale crash leftovers are never retried automatically: inspect with
 `jobs stale --age-seconds N` and explicitly use `jobs requeue JOB_ID --age-seconds N`.

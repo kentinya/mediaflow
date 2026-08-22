@@ -128,6 +128,7 @@ APP_JS = b"""(() => {
       ['Application', system.application_version], ['Python', system.python_version],
       ['Python supported', system.python_supported], ['Runtime schema', system.runtime_schema_version],
       ['Platform', system.platform], ['Configuration valid', system.configuration_valid]
+      , ['Maximum active jobs', system.maximum_active_jobs]
     ]));
     content.append(actionButton('Refresh system status', renderSystem));
     const sections = [
