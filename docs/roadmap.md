@@ -79,11 +79,14 @@ Runtime Configuration
 验收范围：SMB/S3/R2 JSON Runtime 装配、环境变量密钥、配置校验和只读 Storage 预检已
 完成。持久缓存管理和文件日志轮转将在相应持久后端引入时实现，不提供空操作命令。
 
-### Phase 18：服务化与自动化（下一步）
+### Phase 18：服务化与自动化（进行中）
 
 - REST API、Task Worker、Scheduler、Cron、Webhook 和通知。
 - API 复用 Application Service，不复制策略引擎或绕过 OrganizerExecutor。
 - 先提供只读查询和 DryRun API，再开放受保护的执行 API。
+
+Phase 18.1 已完成持久 scan/preview 队列、单作业原子领取 Worker、只读 Task/Job/
+Confirmation REST 查询，以及只允许 DryRun 工作的受鉴权提交接口。远程真实执行未开放。
 
 ### Phase 19：Web UI 与生产发布
 
@@ -95,9 +98,9 @@ Runtime Configuration
 
 下一任务应限定为 Phase 18，不同时启动 Web UI。优先顺序：
 
-1. 定义只复用 Application Service 的只读 REST 查询边界。
-2. 引入后台 Task Worker 和受控的调度/取消机制。
-3. 先开放 scan/analyze/preview，再开放受保护的 organize execute。
+1. 为 Worker 增加运行中取消检查和受控常驻循环。
+2. 引入 Scheduler/Cron，但默认只调度 scan/preview。
+3. 设计独立、可审计的远程 organize execute 授权，不复用普通 API Token。
 4. 增加权限、审计、Webhook 和通知边界。
 5. 保持 Storage 预检、附件、冲突确认和显式执行授权不变。
 

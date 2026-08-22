@@ -396,6 +396,34 @@ Resume considers interrupted/pending/failed/partial items; retry-failed selects 
 items. Successful, skipped, and DryRun results are excluded. Retry without `--execute` creates a new
 DryRun task. Execute is accepted only if the original task was execute-authorized and the retry
 command supplies a fresh `--execute` flag.
+
+## Development API and background DryRun jobs
+
+```json
+"api": {
+  "tokenEnv": "MEDIAFLOW_API_TOKEN"
+}
+```
+
+`tokenEnv` names an environment variable and never contains the token. `config validate` checks
+the name without requiring the secret; API startup requires its value.
+
+```bash
+export MEDIAFLOW_API_TOKEN='<long-random-development-token>'
+mediaflow jobs submit scan --limit 20
+mediaflow jobs submit preview --limit 20
+mediaflow jobs list
+mediaflow jobs show JOB_ID
+mediaflow jobs cancel JOB_ID
+mediaflow worker run-next
+mediaflow api serve --host 127.0.0.1 --port 8787
+```
+
+The Worker claims one oldest pending job atomically and delegates it to the existing production
+scan/preview workflow. Preview is always DryRun. `/api/v1` requires the bearer token and supports
+read-only Task/Job/Confirmation queries plus scan/preview submission and pending cancellation.
+Remote organize/execute is rejected. The server is a loopback development adapter, not a hardened
+Internet-facing deployment.
 An organize policy also controls conflict behavior:
 
 ```json

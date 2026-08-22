@@ -2,6 +2,7 @@
   "version": 1,
   "historyPath": ".mediaflow/history.jsonl",
   "persistence": {"databasePath": ".mediaflow/mediaflow.sqlite3"},
+  "api": {"tokenEnv": "MEDIAFLOW_API_TOKEN"},
   "storages": [
     {"id": "source-storage", "name": "Source", "type": "local", "rootPath": "/mnt/HDD_2"},
     {"id": "media-target", "type": "local", "rootPath": "/mnt/HDD_2/Organized"}

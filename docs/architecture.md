@@ -116,6 +116,20 @@ does not contact Storage.
 construction. `storage check` constructs only selected adapters and invokes existing health checks
 or a root listing. Failures are isolated, and no write probe is permitted.
 
+## Phase 18.1 service boundary
+
+The first service adapter is a versioned WSGI API over application/repository ports. It reads
+persistent Task, Result, Confirmation, and AutomationJob state without constructing Storage. A
+bearer token is resolved from a configured environment-variable name at server startup and compared
+with a timing-safe operation; authorization data never enters responses or persisted errors.
+
+AutomationJob is a durable request to start an existing `scan` or `preview` workflow, separate from
+the media Task lifecycle. SQLite schema v4 atomically claims the oldest pending job. The Worker owns
+no Scanner, strategy, planner, or executor logic: its injected production handler invokes the
+existing workflow entry point, which creates normal Task and Result records. Cancellation is
+pending-only. The service accepts no organize/execute job, so preview preserves DryRun's zero-
+mutation boundary. Scheduler, Webhook, notifications, remote execute, and Web UI remain future work.
+
 - `Storage` exposes read/write concepts and explicit capabilities. Business logic targets this
   protocol rather than filesystem APIs.
 - `Scanner` and `Parser` are read-only/local-information boundaries.

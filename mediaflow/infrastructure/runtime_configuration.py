@@ -38,6 +38,7 @@ class RuntimeConfiguration:
     media_libraries: tuple[MediaLibrary, ...]
     history_path: str
     database_path: str
+    api_token_env: str | None = None
 
     def create_storages(
         self,
@@ -200,6 +201,14 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     database_path = persistence.get("databasePath", ".mediaflow/mediaflow.sqlite3")
     if not isinstance(database_path, str) or not database_path.strip() or "\x00" in database_path:
         raise ValueError("persistence databasePath must be a non-empty path string")
+    api = document.get("api", {})
+    if not isinstance(api, dict):
+        raise ValueError("runtime configuration 'api' must be an object")
+    api_token_env = api.get("tokenEnv")
+    if api_token_env is not None and (
+        not isinstance(api_token_env, str) or not _ENV_NAME.fullmatch(api_token_env)
+    ):
+        raise ValueError("API tokenEnv must be a valid environment variable name")
     return RuntimeConfiguration(
         loaded.strategy,
         storage_definitions,
@@ -208,6 +217,7 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         media_libraries,
         history_path,
         database_path,
+        api_token_env,
     )
 
 

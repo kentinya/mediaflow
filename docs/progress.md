@@ -728,3 +728,15 @@ Phase 17 runtime Storage adapters and read-only preflight (2026-08-22): PASS
 - Full suite: 295 tests, 292 passed, 0 failed, 3 optional real integrations skipped
 - Ruff lint/format, compileall, dependency check, isolated wheel build, configuration validation,
   FFmpeg/FFprobe runtime audit, and diff checks passed
+
+Phase 18.1 read-only REST API and persistent DryRun worker (2026-08-22): PASS
+
+- Added durable scan/preview AutomationJobs and atomic oldest-first SQLite schema-v4 claiming
+- Added pending-only cancellation and a one-job Worker that delegates to the existing production
+  workflows rather than duplicating Scanner, strategy, planning, or DryRun behavior
+- Added authenticated Task/Job/Confirmation queries and scan/preview submission plus public health;
+  unsupported commands and every remote execute-related field are rejected
+- API validation needs no secret value, startup resolves its bearer token from the named environment
+  variable, persisted failures are redacted, and API queries construct no Storage adapters
+- Added `mediaflow jobs ...`, `mediaflow worker run-next`, and loopback development API commands
+- Full suite: 307 tests, 304 passed, 0 failed, 3 optional real integrations skipped

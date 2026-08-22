@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 from pathlib import Path
 from typing import TextIO
 
+from mediaflow.application.automation import AutomationJobService, AutomationWorker
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
@@ -79,6 +81,25 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
     storage_commands.add_parser("list", help="list configured Storages without connecting")
     storage_check = storage_commands.add_parser("check", help="run read-only Storage preflight")
     storage_check.add_argument("storage_id", nargs="?")
+    jobs = commands.add_parser("jobs", help="persistent DryRun background jobs")
+    job_commands = jobs.add_subparsers(dest="job_command", required=True)
+    job_list = job_commands.add_parser("list")
+    job_list.add_argument("--limit", type=int, default=20)
+    job_show = job_commands.add_parser("show")
+    job_show.add_argument("job_id")
+    job_submit = job_commands.add_parser("submit")
+    job_submit.add_argument("workflow", choices=("scan", "preview"))
+    job_submit.add_argument("--limit", type=int)
+    job_cancel = job_commands.add_parser("cancel")
+    job_cancel.add_argument("job_id")
+    worker = commands.add_parser("worker", help="run persistent DryRun jobs")
+    worker_commands = worker.add_subparsers(dest="worker_command", required=True)
+    worker_commands.add_parser("run-next")
+    api = commands.add_parser("api", help="development REST API")
+    api_commands = api.add_subparsers(dest="api_command", required=True)
+    api_serve = api_commands.add_parser("serve")
+    api_serve.add_argument("--host", default="127.0.0.1")
+    api_serve.add_argument("--port", type=int, default=8787)
     arguments = parser.parse_args(argv)
     try:
         configuration = _configuration(arguments.config)
@@ -185,6 +206,53 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
             lines.extend(("", f"Total: {len(selected)}", f"Failed: {failures}", ""))
             stdout.write("\n".join(lines))
             return 1 if failures else 0
+        if arguments.command == "jobs":
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                service = AutomationJobService(repository)
+                if arguments.job_command == "list":
+                    stdout.write(render_jobs(repository.list_jobs(limit=arguments.limit)))
+                elif arguments.job_command == "show":
+                    job = repository.get_job(arguments.job_id)
+                    if job is None:
+                        raise LookupError(f"automation job {arguments.job_id!r} was not found")
+                    stdout.write(render_job(job))
+                elif arguments.job_command == "submit":
+                    job = service.submit(arguments.workflow, limit=arguments.limit)
+                    stdout.write(render_job(job))
+                else:
+                    stdout.write(render_job(service.cancel(arguments.job_id)))
+            return 0
+        if arguments.command == "worker":
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                worker_service = AutomationWorker(
+                    repository,
+                    lambda job: _run_queued_workflow(job, arguments.config),
+                )
+                job = worker_service.run_next()
+                if job is None:
+                    stdout.write("No pending automation jobs\n")
+                    return 0
+                stdout.write(render_job(job))
+                return 0 if job.status.value == "completed" else 1
+        if arguments.command == "api":
+            if not configuration.api_token_env:
+                raise ValueError("API tokenEnv is not configured")
+            token = os.environ.get(configuration.api_token_env)
+            if not token:
+                raise ValueError(f"API requires environment variable {configuration.api_token_env}")
+            if not 1 <= arguments.port <= 65535:
+                raise ValueError("API port must be between 1 and 65535")
+            from wsgiref.simple_server import make_server
+
+            from mediaflow.interfaces.service_api import MediaFlowApi
+
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                app = MediaFlowApi(repository, token)
+                stdout.write(f"MediaFlow API listening on {arguments.host}:{arguments.port}\n")
+                stdout.flush()
+                with make_server(arguments.host, arguments.port, app) as server:
+                    server.serve_forever()
+            return 0
 
         storages = configuration.create_storages()
         if arguments.command == "scan":
@@ -475,6 +543,52 @@ def render_storage_definitions(definitions) -> str:
         )
     lines.extend(("", f"Total: {len(definitions)}", ""))
     return "\n".join(lines)
+
+
+def render_jobs(values) -> str:
+    lines = ["", "AUTOMATION JOBS", ""]
+    for value in values:
+        lines.append(
+            f"{value.job_id} | {value.command.value} | {value.status.value} | "
+            f"limit={value.limit or '-'} | task={value.task_id or '-'}"
+        )
+    lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_job(value) -> str:
+    return "\n".join(
+        (
+            "",
+            "AUTOMATION JOB",
+            "",
+            f"ID: {value.job_id}",
+            f"Command: {value.command.value}",
+            f"Status: {value.status.value}",
+            f"Limit: {value.limit or '-'}",
+            f"Task ID: {value.task_id or '-'}",
+            f"Error: {value.error or '-'}",
+            "",
+        )
+    )
+
+
+def _run_queued_workflow(job, configured_path: str | None) -> str | None:
+    args = []
+    resolved = configured_path or os.environ.get("MEDIAFLOW_CONFIG")
+    if resolved:
+        args.extend(("--config", resolved))
+    args.append(job.command.value)
+    if job.limit is not None:
+        args.extend(("--limit", str(job.limit)))
+    output, errors = io.StringIO(), io.StringIO()
+    code = final_main(args, stdout=output, stderr=errors)
+    if code:
+        raise RuntimeError("queued workflow returned a failure status")
+    for line in output.getvalue().splitlines():
+        if line.startswith("Task ID: "):
+            return line.removeprefix("Task ID: ").strip()
+    return None
 
 
 def _declared_capabilities(storage_type: str, read_only: bool) -> str:

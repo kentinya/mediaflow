@@ -6,6 +6,11 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from mediaflow.domain.automation import (
+    AutomationCommand,
+    AutomationJob,
+    AutomationJobStatus,
+)
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     ConflictConfirmation,
@@ -17,7 +22,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class SQLiteTaskRepository:
@@ -248,6 +253,90 @@ class SQLiteTaskRepository:
             for row in rows
         )
 
+    def create_job(self, job: AutomationJob) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                self._job_values(job),
+            )
+
+    def get_job(self, job_id: str) -> AutomationJob | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+        return self._job(row) if row else None
+
+    def list_jobs(self, *, limit: int | None = None) -> tuple[AutomationJob, ...]:
+        query = "SELECT * FROM automation_jobs ORDER BY created_at DESC, job_id DESC"
+        parameters: tuple[object, ...] = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters = (limit,)
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return tuple(self._job(row) for row in rows)
+
+    def claim_next_job(self, now: datetime) -> AutomationJob | None:
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT job_id FROM automation_jobs WHERE status=? "
+                "ORDER BY created_at, job_id LIMIT 1",
+                (AutomationJobStatus.PENDING.value,),
+            ).fetchone()
+            if row is None:
+                return None
+            cursor = self._connection.execute(
+                "UPDATE automation_jobs SET status=?, updated_at=?, started_at=? "
+                "WHERE job_id=? AND status=?",
+                (
+                    AutomationJobStatus.RUNNING.value,
+                    now.isoformat(),
+                    now.isoformat(),
+                    row["job_id"],
+                    AutomationJobStatus.PENDING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            claimed = self._connection.execute(
+                "SELECT * FROM automation_jobs WHERE job_id=?", (row["job_id"],)
+            ).fetchone()
+        return self._job(claimed)
+
+    def update_job(self, job: AutomationJob) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE automation_jobs SET command=?, status=?, created_at=?, updated_at=?, "
+                "limit_value=?, started_at=?, completed_at=?, task_id=?, error=? WHERE job_id=?",
+                (*self._job_values(job)[1:], job.job_id),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"automation job {job.job_id!r} was not found")
+
+    def cancel_pending_job(self, job_id: str, now: datetime) -> AutomationJob:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE automation_jobs SET status=?, updated_at=?, completed_at=? "
+                "WHERE job_id=? AND status=?",
+                (
+                    AutomationJobStatus.CANCELLED.value,
+                    now.isoformat(),
+                    now.isoformat(),
+                    job_id,
+                    AutomationJobStatus.PENDING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                existing = self.get_job(job_id)
+                if existing is None:
+                    raise LookupError(f"automation job {job_id!r} was not found")
+                raise ValueError("only a pending automation job can be cancelled")
+            row = self._connection.execute(
+                "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+        return self._job(row)
+
     def acquire(self, storage_id: str, path: str, task_id: str, acquired_at: datetime) -> bool:
         normalized = self._lock_path(path)
         try:
@@ -344,6 +433,13 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS confirmations_status
                     ON conflict_confirmations(status, created_at);
+                CREATE TABLE IF NOT EXISTS automation_jobs (
+                    job_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, limit_value INTEGER,
+                    started_at TEXT, completed_at TEXT, task_id TEXT, error TEXT
+                );
+                CREATE INDEX IF NOT EXISTS automation_jobs_status_created
+                    ON automation_jobs(status, created_at, job_id);
                 """
             )
             self._connection.execute(
@@ -524,4 +620,34 @@ class SQLiteTaskRepository:
             bool(row["overwrite_authorized"]),
             row["actor"],
             row["note"],
+        )
+
+    @staticmethod
+    def _job_values(job: AutomationJob) -> tuple[object, ...]:
+        return (
+            job.job_id,
+            job.command.value,
+            job.status.value,
+            job.created_at.isoformat(),
+            job.updated_at.isoformat(),
+            job.limit,
+            job.started_at.isoformat() if job.started_at else None,
+            job.completed_at.isoformat() if job.completed_at else None,
+            job.task_id,
+            job.error,
+        )
+
+    @staticmethod
+    def _job(row: sqlite3.Row) -> AutomationJob:
+        return AutomationJob(
+            row["job_id"],
+            AutomationCommand(row["command"]),
+            AutomationJobStatus(row["status"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["limit_value"],
+            datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
+            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+            row["task_id"],
+            row["error"],
         )

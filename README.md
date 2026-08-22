@@ -21,6 +21,7 @@ Provider secrets remain environment variables:
 ```bash
 export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
 export TMDB_ACCESS_TOKEN="<token>"
+export MEDIAFLOW_API_TOKEN="<long-random-development-token>"
 ```
 
 ## CLI
@@ -43,6 +44,11 @@ mediaflow storage check STORAGE_ID
 mediaflow tasks show TASK_ID
 mediaflow tasks resume TASK_ID
 mediaflow tasks retry-failed TASK_ID --execute
+mediaflow jobs submit scan --limit 20
+mediaflow jobs submit preview --limit 20
+mediaflow jobs list
+mediaflow worker run-next
+mediaflow api serve --host 127.0.0.1 --port 8787
 ```
 
 `preview` and `organize` without `--execute` produce DryRun results. Only `organize --execute`
@@ -104,6 +110,22 @@ mediaflow storage check
 `storage list` never constructs adapters. `storage check` performs only health/list operations and
 never writes to Storage.
 
+## Development API and DryRun worker
+
+Phase 18.1 adds a local development WSGI API and a persistent background queue. Configure only the
+environment-variable name in JSON:
+
+```json
+"api": {"tokenEnv": "MEDIAFLOW_API_TOKEN"}
+```
+
+`GET /health` is public. Every `/api/v1` request requires
+`Authorization: Bearer $MEDIAFLOW_API_TOKEN`. The API can query tasks, jobs, and pending
+confirmations, and it can queue only `scan` or `preview`. Run one queued item with
+`mediaflow worker run-next`; preview is always DryRun. Remote organize/execute, overwrite, delete,
+and conflict resolution are rejected. This standard-library server is for trusted loopback
+development use, not direct Internet exposure.
+
 ## Persistent runtime state
 
 Production scan/preview/organize use the configured SQLite database:
@@ -119,6 +141,6 @@ operation history remains compatible.
 
 ## Current milestone
 
-The core CLI pipeline, persistent recovery/conflict decisions, and opt-in attachment file sets are
-complete; scheduling, API, and Web UI remain planned. A scheduler is not yet implemented, so
-unattended execution remains outside the supported workflow.
+The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries, and
+persistent scan/preview jobs are complete. Scheduler/Cron, notifications, protected remote execute,
+and Web UI remain planned; unattended real organization is not supported.

@@ -4,6 +4,9 @@
   "persistence": {
     "databasePath": ".mediaflow/mediaflow.sqlite3"
   },
+  "api": {
+    "tokenEnv": "MEDIAFLOW_API_TOKEN"
+  },
   "storages": [
     {
       "id": "HDD_2",
