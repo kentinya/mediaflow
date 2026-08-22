@@ -166,6 +166,35 @@ class MediaFlowApi:
                 200,
                 self._value(self._dashboard.snapshot(recent_limit=self._dashboard_limit(environ))),
             )
+        if parts == ["api", "v1", "metadata-reviews"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            limit = self._metadata_review_limit(environ)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [
+                        self._value(item)
+                        for item in self._repository.list_metadata_reviews(limit=limit)
+                    ]
+                },
+            )
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "metadata-reviews"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            review = self._repository.get_metadata_review(parts[3])
+            if review is None:
+                raise LookupError(f"metadata review {parts[3]!r} was not found")
+            return self._response(
+                start_response,
+                200,
+                {
+                    **self._value(review),
+                    "candidates": [
+                        self._value(item)
+                        for item in self._repository.list_metadata_review_candidates(parts[3])
+                    ],
+                },
+            )
         if method == "GET":
             self._require(principal, ApiPermission.READ)
         if parts == ["api", "v1", "tasks"] and method == "GET":
@@ -401,6 +430,7 @@ class MediaFlowApi:
             ("api", "v1", "jobs"),
             ("api", "v1", "security-audit"),
             ("api", "v1", "dashboard"),
+            ("api", "v1", "metadata-reviews"),
         }
         key = tuple(parts)
         if key in exact:
@@ -416,6 +446,8 @@ class MediaFlowApi:
             return "/api/v1/schedules/{id}/audit"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "confirmations"]:
             return "/api/v1/confirmations/{id}"
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "metadata-reviews"]:
+            return "/api/v1/metadata-reviews/{id}"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "confirmations"]
@@ -467,6 +499,19 @@ class MediaFlowApi:
         if limit < 1 or limit > 100:
             raise ValueError("confirmation limit must be between 1 and 100")
         return status, limit
+
+    @staticmethod
+    def _metadata_review_limit(environ: dict) -> int:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("metadata review query accepts one limit field")
+        try:
+            limit = int(values.get("limit", ["100"])[0])
+        except ValueError as error:
+            raise ValueError("metadata review limit must be an integer") from error
+        if limit < 1 or limit > 100:
+            raise ValueError("metadata review limit must be between 1 and 100")
+        return limit
 
     @classmethod
     def _confirmation_value(cls, value) -> dict:

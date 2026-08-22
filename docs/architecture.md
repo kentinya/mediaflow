@@ -676,6 +676,21 @@ Manual, Overwrite, execute authority, and client-supplied audit identity are rej
 confirmation never constructs Storage, queues a Job, resumes a Task, or executes a plan. A later
 explicit retry/resume re-enters the normal Planner/ConflictResolver/OrganizerExecutor boundaries.
 
+## Persistent metadata review queue
+
+Phase 18.9 adds immutable provider-neutral MetadataReview snapshots for production
+NeedConfirm/Ambiguous outcomes. MetadataReviewService bounds candidates and score components,
+persists them with the TaskItem transition to `waiting_metadata` in one SQLite transaction, then
+the Task coordinator releases the source lock. A unique TaskItem constraint prevents duplicate
+review records, and waiting metadata is excluded from blind failed-item retry.
+
+The queue preserves RecognitionType (including C) and captures only identifiers, query context,
+titles/years, matched-title evidence, and bounded scores. It deliberately excludes provider DTOs,
+alternative-title collections, overview/images, HTTP/cache data, credentials, and raw exceptions.
+CLI and authenticated API list/show paths are read-only repository operations: they do not
+construct Storage or provider adapters, create Jobs, resolve candidates, resume Tasks, or execute
+Organizer operations. Candidate selection and recovery remain a future explicit workflow.
+
 ## Classification policies and engine
 
 Classification is the pure “where does this identified media belong?” stage after Naming. The

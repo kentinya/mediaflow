@@ -1,65 +1,68 @@
-# Phase 18.8 — Conflict Confirmation Service API
+# Phase 18.9 — Persistent Metadata Review Queue
 
 ## Goal
 
-Expose the existing persistent target-conflict confirmation workflow through a least-privilege,
-audited service API for future UI clients. Keep resolution as a database decision only: it must
-never execute media operations, and remote Overwrite remains forbidden.
+Capture Metadata NeedConfirm/Ambiguous outcomes as durable, bounded, provider-neutral review records
+for CLI/API and a future UI. This phase is review-queue creation and visibility only: it must not
+select a candidate, fetch more metadata, resume a Task, or execute media operations.
 
-## 1. Authorization
+## 1. Review domain and persistence
 
-- Add an explicit `resolve_confirmation` API permission.
-- operator, executor, and admin may resolve ordinary confirmations; viewer and auditor remain
-  read-only.
-- Existing read permission continues to protect confirmation list/show/audit routes.
-- Authentication and authorization failures remain stable 401/403 and use the redacted security
-  audit.
+- Add immutable MetadataReview and MetadataReviewCandidate snapshot models plus a repository port.
+- Persist review ID, Task/TaskItem identity, source Storage/path, RecognitionType, MetadataPolicy,
+  query, reason/status, timestamps, and bounded candidate snapshots.
+- Candidate snapshots may contain provider/provider ID, media type, title/original title, canonical
+  and regional year, total score, matched provider title/source, and bounded score components.
+- Do not persist provider DTOs, overview/images, alternative-title collections, HTTP data, cache
+  internals, credentials, headers, cookies, tokens, or raw exceptions.
+- Add a compatible SQLite v10 migration, deterministic ordering, bounded list methods, and a unique
+  review per TaskItem.
 
-## 2. Read API
+## 2. Workflow integration
 
-- Keep `GET /api/v1/confirmations`, but add bounded `status=pending|resolved|all` and `limit`
-  query parameters with deterministic ordering.
-- Add `GET /api/v1/confirmations/{id}`.
-- Add `GET /api/v1/confirmations/{id}/audit`.
-- Return normalized confirmation/decision records only. Never return Task error text, credentials,
-  headers, cookies, execution tokens, or unrelated media state.
-- Unknown query fields, invalid values, and unknown IDs fail clearly.
+- When production Metadata returns NeedConfirm or Ambiguous with candidates, atomically persist the
+  review/candidates and transition the TaskItem to `waiting_metadata`.
+- Release the source lock after durable waiting state.
+- Treat waiting metadata like waiting conflict for Task partial-success accounting and exclude it
+  from blind retry.
+- NotFound, provider errors, and malformed outcomes keep their current failure behavior.
+- Do not change CandidateMatcher thresholds, ordering, score semantics, MetadataProvider behavior,
+  RecognitionType, Naming, Classification, Planner, or Executor.
 
-## 3. Resolution API and atomic state transition
+## 3. Read-only CLI and API
 
-- Add `POST /api/v1/confirmations/{id}/resolve`.
-- Accept only `skip` and `rename` remotely. `manual` is not a decision and `overwrite` remains
-  local CLI-only even for admin.
-- Derive the actor from the authenticated principal. Reject client-supplied actor, overwrite flags,
-  proposed destination paths, execute fields, tokens, and unsupported fields.
-- Atomically persist confirmation resolution, immutable decision audit, and the related TaskItem
-  transition: Skip -> skipped; Rename -> pending for explicit retry/resume.
-- Concurrent resolution attempts may succeed once only.
-- Resolution never automatically retries/resumes a Task, queues a Job, or executes a plan.
+- Add `mediaflow metadata-reviews list [--limit N]` and `show REVIEW_ID`.
+- Add authenticated read-only `GET /api/v1/metadata-reviews?limit=N` and
+  `GET /api/v1/metadata-reviews/{id}`.
+- Viewer/operator/executor/auditor/admin may read through the existing read permission.
+- API routes use normalized Phase 18.6 security audit records.
+- CLI/API output is bounded, deterministic, secret-free, and constructs no Storage/provider/network
+  adapter.
 
-## 4. CLI compatibility and safety
+## 4. Dashboard and safety
 
-- Preserve existing local `mediaflow confirmations` behavior, including explicit high-risk
-  overwrite confirmation.
-- Move the existing CLI TaskItem transition into the shared atomic application/persistence path so
-  CLI and API cannot diverge.
-- Do not construct Storage, MetadataProvider, Scanner, Planner, OrganizerExecutor, or network
-  clients for any confirmation API operation.
-- Preserve one-time remote execution authorization, no-overwrite defaults, DryRun, and all strategy
-  semantics.
+- Add pending metadata-review count to the existing Dashboard snapshot.
+- A review does not authorize a candidate, change RecognitionType, create a Job, resume/retry a
+  Task, or perform Storage mutation.
+- Preserve conflict confirmation, one-time execute authorization, no-overwrite/delete, Scheduler,
+  DryRun, and OrganizerExecutor boundaries.
 
 ## Required tests
 
-- Viewer/auditor read access; operator/executor/admin resolve access; 401/403 matrix.
-- Bounded pending/resolved/all list, deterministic ordering, show, audit, invalid query and 404.
-- Remote Skip and Rename update confirmation, audit, and TaskItem atomically.
-- Remote Manual/Overwrite and injected actor/path/execute/token fields are rejected for every role.
-- Concurrent double resolution produces exactly one decision.
-- Persistence failure rolls back confirmation, audit, and TaskItem together.
-- Existing local overwrite flow remains explicit and compatible.
-- Confirmation API security-audit routes are normalized and contain no body/query/token values.
-- Zero Storage mutation/construction and no automatic retry/Job creation.
-- All API/RBAC, Dashboard, conflict, Task, DryRun, strategy, notification, and Storage regressions.
+- NeedConfirm and Ambiguous create durable reviews with correct bounded candidate/evidence snapshots.
+- Matched/NotFound/provider-error outcomes do not create a review.
+- Review creation, candidates, and TaskItem waiting transition are atomic; injected failure rolls
+  back all state.
+- One review per TaskItem and deterministic bounded candidate/list ordering.
+- Restart persistence and SQLite v9-to-v10 migration.
+- Task finish/retry semantics for waiting metadata and source-lock release.
+- CLI/API list/show, limit validation, RBAC read matrix, 404, redaction, normalized security audit.
+- Dashboard pending-review count.
+- Zero Storage mutation/construction, zero provider/network calls during review reads, and no Job or
+  execution creation.
+- RecognitionType C remains C in stored review context.
+- All Metadata/CandidateMatcher, API/RBAC, Dashboard, conflict, Task, DryRun, strategy,
+  notification, Scanner/FileIndex, and Storage regressions.
 
 ## Documentation and validation
 
@@ -69,21 +72,23 @@ diff checks.
 
 ## Out of scope
 
-- Remote Overwrite/Delete approval, automatic retry/resume, metadata candidate confirmation,
-  classification correction, arbitrary destination editing, Web UI, database users/OIDC, scheduled
-  execute, Rollback, and OrganizerExecutor changes.
+- Candidate selection/resolution, provider details fetch on selection, automatic resume/retry,
+  classification correction, Web UI, remote Overwrite, database users/OIDC, scheduled execute,
+  Rollback, and changes to CandidateMatcher thresholds or TMDB behavior.
 
 ## Final report
 
-## Phase 18.8 Result
+## Phase 18.9 Result
 
 PASS / FAIL
 
-## Confirmation API
+## Metadata Review Queue
 
-## Atomic Decisions
+## Workflow Integration
 
-## Authorization and Safety
+## CLI and API
+
+## Privacy and Safety
 
 ## Regression
 

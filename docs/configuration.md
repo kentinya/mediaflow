@@ -526,6 +526,19 @@ principal ID when known, method, normalized route, action/outcome/status, reques
 source address. They deliberately omit query strings, headers, bodies, cookies, credentials,
 media values, and error text. Local audit listing constructs no Storage adapter.
 
+Metadata-review visibility needs no additional configuration. NeedConfirm/Ambiguous results are
+persisted in `persistence.databasePath` and can be inspected with:
+
+```bash
+mediaflow metadata-reviews list --limit 100
+mediaflow metadata-reviews show REVIEW_ID
+```
+
+The API equivalents are `GET /api/v1/metadata-reviews?limit=N` and
+`GET /api/v1/metadata-reviews/{id}`; `N` must be between 1 and 100. These reads use ordinary read
+permission and never construct Storage or MetadataProvider adapters. They expose bounded scoring
+evidence only, not credentials, provider payloads, overview/images, headers, or raw errors.
+
 ### Resident Worker, interval schedules, and Cron
 
 ```json

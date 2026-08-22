@@ -225,16 +225,22 @@ class PersistentTaskCoordinator:
         )
         self.locks.release(item.storage_id, item.source_path, item.task_id)
 
+    def wait_for_metadata(self, item, identification, metadata_policy_id: str) -> None:
+        from mediaflow.application.metadata_review import MetadataReviewService
+
+        MetadataReviewService(self.repository).create(item, identification, metadata_policy_id)
+        self.locks.release(item.storage_id, item.source_path, item.task_id)
+
     def finish(self, task_id: str, batch: MediaOrganizerBatchResult) -> PersistentTask:
         task = self.require(task_id)
         items = self.repository.list_items(task_id)
         failed = sum(
             item.status in {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL} for item in items
         )
-        waiting = sum(item.status is TaskItemStatus.WAITING_CONFIRM for item in items)
+        waiting_statuses = {TaskItemStatus.WAITING_CONFIRM, TaskItemStatus.WAITING_METADATA}
+        waiting = sum(item.status in waiting_statuses for item in items)
         completed = sum(
-            not item.status.retryable and item.status is not TaskItemStatus.WAITING_CONFIRM
-            for item in items
+            not item.status.retryable and item.status not in waiting_statuses for item in items
         )
         status = (
             PersistentTaskStatus.PARTIAL_SUCCESS

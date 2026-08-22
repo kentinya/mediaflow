@@ -25,6 +25,7 @@ class TaskItemStatus(StrEnum):
     SKIPPED = "skipped"
     CANCELLED = "cancelled"
     WAITING_CONFIRM = "waiting_confirm"
+    WAITING_METADATA = "waiting_metadata"
 
     @property
     def retryable(self) -> bool:

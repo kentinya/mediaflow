@@ -112,6 +112,10 @@ Phase 18.7 已完成面向 CLI/API/未来 Web UI 的只读运营 Dashboard Read 
 Phase 18.8 已完成受 RBAC 保护的冲突确认列表/详情/审计和 Skip/Rename 决策 API。确认、审计
 与 TaskItem 转换原子提交；远程 Overwrite 和自动重试/执行仍被禁止。
 
+Phase 18.9 已完成持久元数据复核队列：NeedConfirm/Ambiguous 候选以受限、Provider-neutral
+快照持久化，TaskItem 原子进入 `waiting_metadata` 并释放源锁；CLI/API/Dashboard 只提供
+脱敏可见性，不选择候选、不访问 Provider、不自动恢复或执行。
+
 ### Phase 19：Web UI 与生产发布
 
 - Dashboard、Storage/Library/Policy 管理、候选确认、冲突处理、任务和历史页面。
@@ -122,7 +126,7 @@ Phase 18.8 已完成受 RBAC 保护的冲突确认列表/详情/审计和 Skip/R
 
 下一任务应限定为 Phase 18，不同时启动 Web UI。优先顺序：
 
-1. 在现有 Dashboard/确认 API 上建立最小 Web UI 壳和元数据候选确认设计。
+1. 设计显式元数据候选选择、按需 Provider 详情补全及可审计恢复流程，不自动执行媒体操作。
 2. 评估数据库用户/OIDC、凭证轮换和 TLS 部署边界。
 3. 评估节假日日历等高级调度需求，避免扩大 Cron 核心。
 4. 保持 Storage 预检、附件、冲突确认和一次性执行授权不变。

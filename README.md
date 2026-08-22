@@ -32,6 +32,8 @@ mediaflow analyze "/path/to/movie.mkv"
 mediaflow analyze --offline "/path/to/movie.mkv"
 mediaflow config validate
 mediaflow dashboard --recent-limit 10
+mediaflow metadata-reviews list --limit 100
+mediaflow metadata-reviews show REVIEW_ID
 mediaflow scan --limit 20
 mediaflow preview --limit 20
 mediaflow organize --limit 20
@@ -246,6 +248,20 @@ Operators, executors, and admins may record remote `skip` or `rename` decisions.
 roles remain read-only. Remote `manual`, `overwrite`, actor injection, destination editing, and
 execute fields are rejected. A decision never resumes a Task or executes media automatically;
 local explicit retry/resume remains a separate action. High-risk overwrite stays local CLI-only.
+
+Metadata outcomes that need operator review are captured as bounded, provider-neutral snapshots:
+
+```bash
+mediaflow metadata-reviews list --limit 100
+mediaflow metadata-reviews show REVIEW_ID
+curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
+  'http://127.0.0.1:8787/api/v1/metadata-reviews?limit=20'
+```
+
+NeedConfirm/Ambiguous items enter `waiting_metadata` and release their source lock. The queue is
+visibility-only: it does not select a candidate, contact a provider, resume a Task, create a Job,
+or mutate Storage. Candidate snapshots are capped at 20 and exclude overview, images, provider
+DTOs, credentials, and raw HTTP/error data.
 
 ## Persistent runtime state
 

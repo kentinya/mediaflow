@@ -178,6 +178,16 @@ def final_main(
     security_audit_list.add_argument("--limit", type=int, default=100)
     dashboard = commands.add_parser("dashboard", help="read-only operational summary")
     dashboard.add_argument("--recent-limit", type=int, default=10)
+    metadata_reviews = commands.add_parser(
+        "metadata-reviews", help="persistent metadata candidate review queue"
+    )
+    metadata_review_commands = metadata_reviews.add_subparsers(
+        dest="metadata_review_command", required=True
+    )
+    metadata_review_list = metadata_review_commands.add_parser("list")
+    metadata_review_list.add_argument("--limit", type=int, default=100)
+    metadata_review_show = metadata_review_commands.add_parser("show")
+    metadata_review_show.add_argument("review_id")
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_serve = api_commands.add_parser("serve")
@@ -209,6 +219,25 @@ def final_main(
                     media_library_count=sum(item.enabled for item in configuration.media_libraries),
                 ).snapshot(recent_limit=arguments.recent_limit)
                 stdout.write(render_dashboard(snapshot))
+            return 0
+        if arguments.command == "metadata-reviews":
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                if arguments.metadata_review_command == "list":
+                    stdout.write(
+                        render_metadata_reviews(
+                            repository.list_metadata_reviews(limit=arguments.limit)
+                        )
+                    )
+                else:
+                    review = repository.get_metadata_review(arguments.review_id)
+                    if review is None:
+                        raise LookupError(f"metadata review {arguments.review_id!r} was not found")
+                    stdout.write(
+                        render_metadata_review(
+                            review,
+                            repository.list_metadata_review_candidates(review.review_id),
+                        )
+                    )
             return 0
         if arguments.command == "notifications":
             if arguments.notification_command in {"list", "stale"} and arguments.limit < 1:
@@ -942,6 +971,7 @@ def render_dashboard(value) -> str:
         f"Jobs: {value.jobs.total} (pending={value.jobs.pending}, running={value.jobs.running}, "
         f"failed={value.jobs.failed})",
         f"Pending confirmations: {value.pending_confirmations}",
+        f"Pending metadata reviews: {value.pending_metadata_reviews}",
         f"Dead-letter notifications: {value.dead_letter_notifications}",
         "",
         "RECENT FAILURES",
@@ -954,6 +984,42 @@ def render_dashboard(value) -> str:
     )
     if not value.recent_failures:
         lines.append("None")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_metadata_reviews(values) -> str:
+    lines = ["", "METADATA REVIEWS", ""]
+    lines.extend(
+        f"{item.review_id} | {item.status.value} | {item.outcome} | "
+        f"{item.source_storage_id}:{item.source_path} | {item.query}"
+        for item in values
+    )
+    lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_metadata_review(review, candidates) -> str:
+    lines = [
+        "",
+        "METADATA REVIEW",
+        "",
+        f"ID: {review.review_id}",
+        f"Status: {review.status.value}",
+        f"Outcome: {review.outcome}",
+        f"Source: {review.source_storage_id}:{review.source_path}",
+        f"RecognitionType: {review.recognition_type}",
+        f"MetadataPolicy: {review.metadata_policy_id}",
+        f"Query: {review.query}",
+        "",
+        "CANDIDATES",
+        "",
+    ]
+    lines.extend(
+        f"{item.rank} | {item.provider}:{item.provider_id} | {item.title} | "
+        f"year={item.canonical_year or '-'} | score={item.total_score}"
+        for item in candidates
+    )
     lines.append("")
     return "\n".join(lines)
 

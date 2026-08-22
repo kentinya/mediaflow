@@ -26,6 +26,12 @@ from mediaflow.domain.execution_authorization import (
     ExecutionAuthorizationAudit,
     ExecutionAuthorizationStatus,
 )
+from mediaflow.domain.metadata_review import (
+    MetadataReview,
+    MetadataReviewCandidate,
+    MetadataReviewScoreComponent,
+    MetadataReviewStatus,
+)
 from mediaflow.domain.notification import (
     NotificationDelivery,
     NotificationDeliveryStatus,
@@ -43,7 +49,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 class SQLiteTaskRepository:
@@ -127,6 +133,7 @@ class SQLiteTaskRepository:
             task_counts = self._status_counts("tasks", "status")
             job_counts = self._status_counts("automation_jobs", "status")
             pending_confirmations = self._count_where("conflict_confirmations", "status", "pending")
+            pending_metadata_reviews = self._count_where("metadata_reviews", "status", "pending")
             dead_letters = self._count_where("notification_deliveries", "status", "dead-letter")
             failures = self._recent_operational_failures(recent_limit)
         return DashboardPersistentState(
@@ -155,6 +162,7 @@ class SQLiteTaskRepository:
                 cancelled=job_counts.get("cancelled", 0),
             ),
             pending_confirmations=pending_confirmations,
+            pending_metadata_reviews=pending_metadata_reviews,
             dead_letter_notifications=dead_letters,
             recent_failures=failures,
         )
@@ -281,6 +289,105 @@ class SQLiteTaskRepository:
                 (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 self._confirmation_values(confirmation),
             )
+
+    def create_metadata_review(
+        self,
+        review: MetadataReview,
+        candidates: tuple[MetadataReviewCandidate, ...],
+        item: PersistentTaskItem,
+    ) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO metadata_reviews VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    review.review_id,
+                    review.task_id,
+                    review.item_id,
+                    review.source_storage_id,
+                    review.source_path,
+                    review.recognition_type,
+                    review.metadata_policy_id,
+                    review.query,
+                    review.outcome,
+                    review.status.value,
+                    review.created_at.isoformat(),
+                    review.updated_at.isoformat(),
+                ),
+            )
+            self._connection.executemany(
+                """INSERT INTO metadata_review_candidates VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    (
+                        value.review_id,
+                        value.rank,
+                        value.provider,
+                        value.provider_id,
+                        value.media_type,
+                        value.title,
+                        value.original_title,
+                        value.canonical_year,
+                        value.regional_year,
+                        value.total_score,
+                        value.matched_provider_title,
+                        value.matched_title_source,
+                        json.dumps(
+                            [
+                                {
+                                    "name": component.name,
+                                    "score": component.score,
+                                    "reason": component.reason,
+                                }
+                                for component in value.score_components
+                            ],
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                    )
+                    for value in candidates
+                ),
+            )
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    TaskItemStatus.PROCESSING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("metadata review TaskItem is not processing")
+
+    def get_metadata_review(self, review_id: str) -> MetadataReview | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM metadata_reviews WHERE review_id=?", (review_id,)
+            ).fetchone()
+        return self._metadata_review(row) if row else None
+
+    def list_metadata_reviews(self, *, limit: int = 100) -> tuple[MetadataReview, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 1000:
+            raise ValueError("metadata review limit must be between 1 and 1000")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM metadata_reviews ORDER BY created_at DESC, review_id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple(self._metadata_review(row) for row in rows)
+
+    def list_metadata_review_candidates(
+        self, review_id: str
+    ) -> tuple[MetadataReviewCandidate, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM metadata_review_candidates WHERE review_id=? ORDER BY rank",
+                (review_id,),
+            ).fetchall()
+        return tuple(self._metadata_review_candidate(row) for row in rows)
 
     def get_confirmation(self, confirmation_id: str) -> ConflictConfirmation | None:
         with self._lock:
@@ -1022,6 +1129,28 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS confirmations_status
                     ON conflict_confirmations(status, created_at);
+                CREATE TABLE IF NOT EXISTS metadata_reviews (
+                    review_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL UNIQUE, source_storage_id TEXT NOT NULL,
+                    source_path TEXT NOT NULL, recognition_type TEXT NOT NULL,
+                    metadata_policy_id TEXT NOT NULL, query TEXT NOT NULL,
+                    outcome TEXT NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(item_id) REFERENCES task_items(item_id)
+                );
+                CREATE TABLE IF NOT EXISTS metadata_review_candidates (
+                    review_id TEXT NOT NULL, rank INTEGER NOT NULL,
+                    provider TEXT NOT NULL, provider_id TEXT NOT NULL,
+                    media_type TEXT NOT NULL, title TEXT NOT NULL,
+                    original_title TEXT, canonical_year INTEGER, regional_year INTEGER,
+                    total_score REAL NOT NULL, matched_provider_title TEXT,
+                    matched_title_source TEXT, score_components TEXT NOT NULL,
+                    PRIMARY KEY(review_id, rank),
+                    FOREIGN KEY(review_id) REFERENCES metadata_reviews(review_id)
+                );
+                CREATE INDEX IF NOT EXISTS metadata_reviews_status_created
+                    ON metadata_reviews(status, created_at, review_id);
                 CREATE TABLE IF NOT EXISTS automation_jobs (
                     job_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, limit_value INTEGER,
@@ -1271,6 +1400,49 @@ class SQLiteTaskRepository:
             bool(row["overwrite_authorized"]),
             row["actor"],
             row["note"],
+        )
+
+    @staticmethod
+    def _metadata_review(row: sqlite3.Row) -> MetadataReview:
+        return MetadataReview(
+            row["review_id"],
+            row["task_id"],
+            row["item_id"],
+            row["source_storage_id"],
+            row["source_path"],
+            row["recognition_type"],
+            row["metadata_policy_id"],
+            row["query"],
+            row["outcome"],
+            MetadataReviewStatus(row["status"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _metadata_review_candidate(row: sqlite3.Row) -> MetadataReviewCandidate:
+        components = json.loads(row["score_components"])
+        return MetadataReviewCandidate(
+            row["review_id"],
+            row["rank"],
+            row["provider"],
+            row["provider_id"],
+            row["media_type"],
+            row["title"],
+            row["original_title"],
+            row["canonical_year"],
+            row["regional_year"],
+            row["total_score"],
+            row["matched_provider_title"],
+            row["matched_title_source"],
+            tuple(
+                MetadataReviewScoreComponent(
+                    str(component["name"]),
+                    float(component["score"]),
+                    str(component["reason"]),
+                )
+                for component in components
+            ),
         )
 
     @staticmethod

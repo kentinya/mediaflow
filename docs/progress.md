@@ -39,6 +39,7 @@
 ## Current
 
 - Phase 18.8 RBAC-protected conflict confirmation service API: PASS
+- Phase 18.9 persistent metadata review queue: PASS
 
 ## Planned
 
@@ -839,3 +840,15 @@ Phase 18.8 conflict confirmation service API (2026-08-22): PASS
 - Full suite: 371 tests, 368 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated-free wheel build, example validation, FFmpeg/FFprobe
   runtime audit, and diff check passed
+
+Phase 18.9 persistent metadata review queue (2026-08-22): PASS
+
+- Added bounded provider-neutral NeedConfirm/Ambiguous snapshots with one durable review per
+  TaskItem and preserved RecognitionType context
+- Added SQLite v10 atomic review/candidate creation plus `waiting_metadata` TaskItem transition;
+  waiting items release their source lock and are excluded from blind retry
+- Added zero-Storage/provider CLI and authenticated API list/show visibility plus Dashboard pending
+  count; no candidate selection, Job creation, automatic resume, or execution is permitted
+- Full suite: 377 tests, 374 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated-free wheel build, both example validations,
+  FFmpeg/FFprobe runtime audit, and diff check passed

@@ -13,6 +13,7 @@ from mediaflow.application.strategy_test import StrategyTestResult, StrategyTest
 from mediaflow.domain.history import OperationHistoryRecord, OperationHistoryRepository
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.logging import Logger, LogLevel
+from mediaflow.domain.metadata import MetadataIdentificationStatus
 from mediaflow.domain.organizer import (
     ConflictStrategy,
     ExecutionResult,
@@ -156,6 +157,24 @@ class MediaOrganizerService:
                 recognition_type=strategy.recognition.recognition_type_id,
             )
             if not strategy.metadata or not strategy.metadata.identity:
+                if (
+                    strategy.metadata
+                    and strategy.metadata.status
+                    in {
+                        MetadataIdentificationStatus.NEED_CONFIRM,
+                        MetadataIdentificationStatus.AMBIGUOUS,
+                    }
+                    and self._task_coordinator
+                    and tracked_item
+                ):
+                    item = MediaOrganizerItemResult(source, strategy)
+                    self._record(item)
+                    self._task_coordinator.wait_for_metadata(
+                        tracked_item,
+                        strategy.metadata,
+                        strategy.policy.metadata_policy_id,
+                    )
+                    return item
                 return self._failed(
                     source, strategy, "metadata identity is unavailable", tracked_item
                 )
@@ -378,6 +397,14 @@ class MediaOrganizerService:
                 (
                     execution.status.value
                     if execution
+                    else "WAITING_METADATA"
+                    if item.strategy
+                    and item.strategy.metadata
+                    and item.strategy.metadata.status
+                    in {
+                        MetadataIdentificationStatus.NEED_CONFIRM,
+                        MetadataIdentificationStatus.AMBIGUOUS,
+                    }
                     else "WAITING_CONFIRM"
                     if item.plan and item.plan.conflicts and not item.error
                     else "FAILED"
