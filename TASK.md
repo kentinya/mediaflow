@@ -1,67 +1,85 @@
-# Phase 19.23.3 — OpenList v4 Empty-Directory DTO Repair and Rerun
+# Phase 19.24 — Isolated Samba and MinIO S3 Acceptance Matrices
 
 ## Goal
 
-Repair only the real OpenList v4.2.2 empty-directory response incompatibility
-found in Phase 19.23.2, then redeploy the isolated official service and rerun the
-complete production-adapter matrix.
+Deploy operator-authorized isolated Samba and MinIO services and execute
+production SMBStorage/S3Storage plus OrganizerExecutor lifecycle and transfer
+matrices. Retain honest, non-secret evidence and destroy all temporary services,
+credentials, shares, buckets, prefixes, and generated objects afterward.
 
 ## Scope
 
-### 1. Strict DTO compatibility
+### 1. Fail-closed real-test gates
 
-- Normalize `content: null` to an empty sequence only when `total == 0`.
-- Preserve normal non-empty list mapping.
-- Reject `content: null` with non-zero/negative/bool/missing total.
-- Reject non-list, non-null content and malformed entry DTOs.
-- Keep all OpenList HTTP DTO behavior inside the infrastructure adapter.
+- Replace the unsafe optional S3/R2 integration defaults with explicit URL or
+  host/port, dedicated credentials, share/bucket, no-default acceptance root or
+  prefix, exact destructive confirmation, and a new absolute JSON report path.
+- Samba root and S3 prefix final component must start with
+  `mediaflow-acceptance-` and be proven empty before mutation.
+- Missing/partial prerequisites are BLOCKED/NOT RUN, never PASS.
+- Never use runtime/user configuration or `config/alist.json`.
 
-### 2. Regression tests
+### 2. Isolated deployments
 
-- Add the exact v4.2.2 empty response regression.
-- Add inconsistent-null, malformed-content, and invalid-total cases.
-- Preserve authentication, error mapping, pagination, no-overwrite, retry, and
-  secret-redaction behavior.
+- Pin a Samba image/version and a MinIO release image/digest.
+- Bind services only to host loopback or an isolated Docker network.
+- Generate new run-scoped credentials and temporary host data.
+- Samba exposes one dedicated share; MinIO exposes one dedicated bucket/prefix.
+- Do not mount repository or media-library paths.
 
-### 3. Real isolated rerun
+### 3. Production matrices
 
-- Reuse the Phase 19.23.2 loopback-only, pinned official container pattern with
-  new temporary credentials/data and an empty `mediaflow-acceptance-*` root.
-- Execute the full adapter lifecycle and Local↔OpenList/OpenList↔OpenList matrix.
-- Retain a new non-secret JSON report and destroy container/secrets/backend.
-- If another production defect appears, record FAIL and do not repair it in the
-  same acceptance run.
+Using production adapters and OrganizerExecutor, cover:
 
-### 4. Status
+- health/connect, list, stat, read, write, no-overwrite, copy, move, delete
+- Local → SMB COPY/MOVE and SMB → Local COPY/MOVE
+- SMB → SMB Organizer COPY/MOVE
+- Local → S3 COPY/MOVE and S3 → Local COPY/MOVE
+- S3 → S3 Organizer COPY/MOVE
+- content, size, destination and MOVE source-state verification
+- safe allowlisted cleanup with no unknown-object deletion
 
-- Mark OpenList self-hosted acceptance PASS only if every matrix and cleanup
-  assertion passes.
-- Self-hosted Local-driver evidence does not certify third-party cloud drivers.
-- Do not begin Samba/MinIO until this OpenList repair/rerun concludes.
+Cross-provider SMB↔S3 is not required unless existing Organizer behavior makes
+it a small reuse-only extension.
+
+### 4. Evidence
+
+- Produce separate bounded, secret-free Samba and MinIO JSON records.
+- Record pinned image/version, UTC time, planned/completed operations, empty-root
+  preflight, result, cleanup, and normalized error category.
+- A discovered production defect is FAIL and belongs to a separate repair task;
+  do not mix adapter repair into the acceptance commit.
+- MinIO certifies generic S3-compatible behavior, not AWS or Cloudflare service.
+
+### 5. Cleanup and status
+
+- Stop/remove containers and delete generated credentials/data after inspection.
+- Retain only non-secret reports outside Git and normalized documentation.
+- Phase 19.24 PASS requires both Samba and MinIO full matrices plus cleanup PASS.
 
 ## Boundaries
 
 Do not change Parser, Scanner, Recognition, Metadata, Naming, Classification,
-Planner, Organizer policy semantics, UI, API, or user configuration. Do not use
-`config/alist.json`. Do not broadly loosen response validation or thresholds.
+Planner/Organizer policy semantics, UI, API, or user configuration. Do not start
+long-duration/large-object Phase 19.25 work.
 
 ## Validation
 
-Run focused OpenList contract/storage/Organizer tests, full offline tests,
-formatter, lint, compile, dependency/configuration checks, FFmpeg/FFprobe audit,
-isolated wheel smoke, and the explicit real OpenList matrix.
+Run focused SMB/S3/Organizer/Storage tests, full offline tests, formatter, lint,
+compile, dependency/configuration and FFmpeg/FFprobe checks, isolated wheel
+smoke, and both explicitly gated real matrices.
 
 ## Completion Report
 
 Finish with:
 
-## Phase 19.23.3 Result
+## Phase 19.24 Result
 
-PASS / FAIL
+PASS / BLOCKED / FAIL
 
-## DTO Repair
+## Samba Matrix
 
-## Real Matrix
+## MinIO Matrix
 
 ## Evidence
 

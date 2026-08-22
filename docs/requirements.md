@@ -4014,6 +4014,11 @@ OpenList v4 对空目录允许返回 `content: null, total: 0`，基础设施 DT
 归一化为空列表；`null` 配合非零/负数/布尔/缺失 total 或其他非列表 content 必须继续拒绝，
 不得把不一致响应伪装为空目录。
 
+SMB 与 S3/R2 实机验收必须与 OpenList 使用同等级别的 fail-closed 门禁：显式端点/端口、专用
+凭证、Share/Bucket、无默认验收根或 Prefix、固定破坏性确认和新建本地 JSON 报告。旧式仅凭
+Endpoint 即启用且默认 `mediaflow-test` 的测试不得保留。验收根必须为空，清理只能处理白名单
+生成对象；fake/mock 仍只计 UNIT PASS。
+
 # 110. 最终核心原则
 
 系统的实际执行链必须始终为：

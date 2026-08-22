@@ -18,9 +18,9 @@ real isolated evidence.
 | Adapter | Read/list/stat | Write/copy/move | Fault injection | Atomic publication | Real acceptance |
 |---|---|---|---|---|---|
 | Local | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS for write/copy target visibility | ISOLATED PASS on temporary host filesystem |
-| SMB | UNIT PASS | UNIT PASS | UNIT PASS | Not certified | BLOCKED: no isolated real share |
+| SMB | ISOLATED FAIL | Real mutation matrix incomplete | UNIT PASS | Not certified | FAIL: EEXIST maps to io_error and cleanup failed |
 | OpenList | ISOLATED PASS | ISOLATED PASS | UNIT PASS | Not certified | ISOLATED PASS: self-hosted v4.2.2 with Local driver |
-| S3/R2 | UNIT PASS | UNIT PASS | UNIT PASS | Not certified | BLOCKED: no isolated bucket/prefix |
+| S3/R2 | ISOLATED PASS for MinIO | ISOLATED PASS for MinIO | UNIT PASS | Not certified | MinIO PASS; AWS/R2 BLOCKED |
 
 Local `write` and `copy` stage in the target directory and publish atomically. A reader sees the old
 complete target or the new complete target, not the operation-owned stage. This does not certify
@@ -31,11 +31,11 @@ power-loss durability, multi-file transactions, or source+target atomicity.
 | Source → destination | COPY | MOVE | Current evidence |
 |---|---|---|---|
 | Local → Local | ISOLATED PASS | ISOLATED PASS | Temporary real filesystem |
-| Local → SMB/OpenList/S3-R2 | UNIT PASS | UNIT PASS | OpenList ISOLATED PASS; others BLOCKED |
-| SMB/OpenList/S3-R2 → Local | UNIT PASS | UNIT PASS | OpenList ISOLATED PASS; others BLOCKED |
-| SMB → SMB | UNIT PASS | UNIT PASS | BLOCKED real share |
+| Local → SMB/OpenList/S3-R2 | UNIT PASS | UNIT PASS | OpenList/MinIO PASS; SMB NOT RUN after lifecycle FAIL |
+| SMB/OpenList/S3-R2 → Local | UNIT PASS | UNIT PASS | OpenList/MinIO PASS; SMB NOT RUN after lifecycle FAIL |
+| SMB → SMB | UNIT PASS | UNIT PASS | NOT RUN after isolated lifecycle FAIL |
 | OpenList → OpenList | ISOLATED PASS | ISOLATED PASS | Self-hosted v4.2.2 with Local driver |
-| S3/R2 → S3/R2 | UNIT PASS | UNIT PASS | BLOCKED real bucket/prefix |
+| S3/R2 → S3/R2 | ISOLATED PASS | ISOLATED PASS | MinIO S3-compatible only; AWS/R2 BLOCKED |
 | Any cross-storage LINK | NOT APPLICABLE | NOT APPLICABLE | Explicitly rejected |
 
 Cross-storage MOVE is streamed copy, verified by size, then source delete. A write or size failure
@@ -104,6 +104,32 @@ Result: `ISOLATED PASS` for the self-hosted OpenList service using its Local dri
 credential, token, and temporary backend were removed. The non-secret PASS record is retained outside
 Git at `/tmp/mediaflow-openlist-v4.2.2-acceptance-pass-20260822.json`. This does not certify individual
 third-party OpenList drivers or remote atomic publication semantics.
+
+### Samba and MinIO Phase 19.24 command contract
+
+Real suites use `TEST_REAL_SMB_*` and `TEST_REAL_S3_*` variables. Each requires explicit endpoint,
+credentials, Share/Bucket, a relative `mediaflow-acceptance-*` root, the exact destructive confirmation
+`DELETE_ONLY_GENERATED_MEDIAFLOW_ACCEPTANCE_DATA`, and a new absolute `.json` report path. Partial
+configuration fails closed; no configured media library is consulted. The former Endpoint-only S3/R2
+test with a default `mediaflow-test` prefix has been removed.
+
+### Phase 19.24 isolated result
+
+On 2026-08-22, pinned `servercontainers/samba:smbd-only-a3.21.3-s4.20.6-r1` and official
+`quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z` containers were bound to host loopback with
+generated credentials and temporary data.
+
+MinIO passed lifecycle/no-overwrite, Local↔S3 COPY/MOVE, S3↔S3 Organizer COPY/MOVE, content/size/source
+assertions, and allowlisted cleanup. This is `ISOLATED PASS` for generic S3-compatible behavior, not
+AWS S3 or Cloudflare R2 service acceptance. Its report is retained outside Git at
+`/tmp/mediaflow-minio-2025-07-23-acceptance-pass-20260822.json`.
+
+Samba passed connection, empty-root preflight, write/read/stat, then failed no-overwrite error
+classification: real `SMBOSError` carried `errno=EEXIST (17)` but `SmbProtocolClient._convert_error`
+mapped it to `IO_ERROR`, not `ALREADY_EXISTS`. The fail-fast matrix did not run SMB transfers, and
+adapter cleanup also failed, so the temporary backend was removed only with the isolated deployment.
+Result is `FAIL`; report: `/tmp/mediaflow-samba-4.20.6-acceptance-fail-20260822.json`. A separate repair
+and complete rerun are required before Phase 19.24 can pass.
 
 ## Remaining blocking gates
 

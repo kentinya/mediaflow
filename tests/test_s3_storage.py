@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import io
-import os
 import unittest
-import uuid
 from datetime import UTC, datetime
 
 from mediaflow.domain.storage import StorageEntryType, StorageError, StorageErrorCode
@@ -447,55 +445,3 @@ class S3ErrorMapperTests(unittest.TestCase):
                 self.assertEqual(
                     expected, Boto3S3Client._map_error(ErrorResponse(code, status)).kind
                 )
-
-
-def integration_config(prefix: str) -> S3StorageConfig:
-    default_provider = S3Provider.CLOUDFLARE_R2 if prefix == "R2" else S3Provider.S3_COMPATIBLE
-    provider = S3Provider(os.environ.get(f"TEST_{prefix}_PROVIDER", default_provider))
-    return S3StorageConfig(
-        prefix.lower(),
-        f"{prefix} integration",
-        provider,
-        os.environ[f"TEST_{prefix}_BUCKET"],
-        os.environ[f"TEST_{prefix}_ACCESS_KEY"],
-        os.environ[f"TEST_{prefix}_SECRET_KEY"],
-        endpoint=os.environ[f"TEST_{prefix}_ENDPOINT"],
-        region=os.getenv(f"TEST_{prefix}_REGION"),
-        root_prefix=os.getenv(f"TEST_{prefix}_ROOT", "mediaflow-test"),
-        force_path_style=os.getenv(f"TEST_{prefix}_PATH_STYLE") == "1",
-    )
-
-
-class IntegrationLifecycleMixin:
-    prefix = "S3"
-
-    def test_dedicated_prefix_lifecycle(self) -> None:
-        directory = f"run-{uuid.uuid4().hex}"
-        with S3Storage(integration_config(self.prefix)) as storage:
-            storage.create_directory(directory)
-            try:
-                storage.write(f"{directory}/source.txt", b"mediaflow-s3-test")
-                with storage.read(f"{directory}/source.txt") as stream:
-                    self.assertEqual(b"mediaflow-s3-test", stream.read())
-                storage.copy(f"{directory}/source.txt", f"{directory}/copy.txt")
-                storage.move(f"{directory}/copy.txt", f"{directory}/moved.txt")
-                self.assertEqual(2, len(storage.list(directory)))
-                storage.delete(f"{directory}/moved.txt")
-                storage.delete(f"{directory}/source.txt")
-            finally:
-                if storage.exists(directory):
-                    for entry in storage.list(directory):
-                        storage.delete(entry.path)
-                    storage.delete(directory)
-
-
-@unittest.skipUnless(
-    os.getenv("TEST_S3_ENDPOINT"), "MinIO/S3 integration environment not configured"
-)
-class RealS3IntegrationTests(IntegrationLifecycleMixin, unittest.TestCase):
-    prefix = "S3"
-
-
-@unittest.skipUnless(os.getenv("TEST_R2_ENDPOINT"), "R2 integration environment not configured")
-class RealR2IntegrationTests(IntegrationLifecycleMixin, unittest.TestCase):
-    prefix = "R2"

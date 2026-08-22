@@ -1249,3 +1249,17 @@ Phase 19.23.3 OpenList v4 empty-directory DTO repair and rerun (2026-08-22): PAS
   remote atomic publication remain uncertified, while Phase 19 overall remains BLOCKED on SMB/S3-R2
 - Full suite: 490 tests, 487 passed, 0 failed, 3 real integrations skipped; Ruff, compile, dependency,
   both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed
+
+Phase 19.24 isolated Samba and MinIO S3 acceptance matrices (2026-08-22): FAIL
+
+- Replaced the unsafe Endpoint-only S3/R2 integration with explicit Samba/S3 gates requiring dedicated
+  credentials, Share/Bucket, no-default `mediaflow-acceptance-*` scope, confirmation, and new report
+- Deployed pinned Samba 4.20.6 and official MinIO RELEASE.2025-07-23 on loopback with temporary data
+- MinIO passed the complete lifecycle, no-overwrite, Local↔S3, S3↔S3 Organizer, verification, and
+  cleanup matrix; this certifies isolated generic S3 compatibility, not AWS or Cloudflare R2 services
+- Samba reached the real share and passed empty-root/write/read/stat, but real `SMBOSError errno=17`
+  mapped to IO_ERROR instead of ALREADY_EXISTS; fail-fast stopped transfers and adapter cleanup failed
+- Both containers, credentials, Share/Bucket data were destroyed; secret-free PASS/FAIL reports remain
+  under `/tmp`; Phase 19.24 is FAIL pending a separate SMB mapper/cleanup repair and complete rerun
+- Full offline suite: 491 tests, 488 passed, 0 failed, 3 real integrations skipped; Ruff, compile,
+  dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed

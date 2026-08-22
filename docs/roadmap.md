@@ -227,6 +227,11 @@ OpenList 生命周期、Local↔OpenList、OpenList↔OpenList COPY/MOVE、内�
 全部实机通过。自建 Local driver 范围记为 ISOLATED PASS，不代表第三方云盘驱动或远端原子发布
 认证。OpenList 硬门已关闭，下一任务可进入 Phase 19.24 的隔离 Samba 与 MinIO/S3-R2 矩阵。
 
+Phase 19.24 已部署回环隔离 Samba 4.20.6 与 MinIO RELEASE.2025-07-23。MinIO 完整矩阵及清理
+ISOLATED PASS；Samba 在真实 EEXIST 错误映射阶段失败并且适配器清理未完成，传输行按 fail-fast
+未执行。Phase 19.24 当前 FAIL，下一任务只能单独修复 SMB EEXIST/清理语义并完整重跑 Samba，
+不得提前进入 Phase 19.25。
+
 ## 规格差距评估（2026-08-22，基于 Phase 19.22 后状态）
 
 对照《影视媒体资源自动整理系统需求规格说明书》V1.1 全量章节逐项评估：
