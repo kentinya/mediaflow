@@ -4,12 +4,18 @@ import hmac
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
+from uuid import uuid4
 
 from mediaflow.application.automation import AutomationJobService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.task_persistence import ConfirmationStatus
+
+
+class ApiPermissionDenied(RuntimeError):
+    pass
 
 
 class MediaFlowApi:
@@ -18,16 +24,23 @@ class MediaFlowApi:
     def __init__(
         self,
         repository,
-        bearer_token: str,
+        bearer_token: str | None,
         schedules=(),
         *,
+        principals: tuple[ResolvedApiPrincipal, ...] = (),
         remote_execution_enabled: bool = False,
         remote_execution_maximum_ttl_seconds: int = 900,
     ) -> None:
-        if not bearer_token:
-            raise ValueError("API bearer token must be configured")
+        if bearer_token and principals:
+            raise ValueError("legacy bearer token cannot be combined with API principals")
+        if bearer_token:
+            principals = (
+                ResolvedApiPrincipal("legacy-admin", bearer_token, frozenset(ApiPermission)),
+            )
+        if not principals:
+            raise ValueError("at least one API principal must be configured")
         self._repository = repository
-        self._token = bearer_token
+        self._principals = principals
         self._jobs = AutomationJobService(repository)
         self._execution_authorizations = ExecutionAuthorizationService(
             repository, maximum_ttl_seconds=remote_execution_maximum_ttl_seconds
@@ -38,25 +51,105 @@ class MediaFlowApi:
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
         method = str(environ.get("REQUEST_METHOD", "GET")).upper()
         path = str(environ.get("PATH_INFO", "/"))
+        request_id = str(uuid4())
         try:
             if path == "/health" and method == "GET":
                 return self._response(start_response, 200, {"status": "ok"})
             if not path.startswith("/api/v1"):
                 return self._error(start_response, 404, "not_found", "route was not found")
-            if not self._authorized(environ):
+            principal = self._authenticate(environ)
+            if principal is None:
+                self._audit(environ, request_id, None, method, path, "authenticate", "denied", 401)
                 return self._error(start_response, 401, "unauthorized", "bearer token required")
-            return self._dispatch(method, path, environ, start_response)
+            self._audit(environ, request_id, principal, method, path, "request", "started", 0)
+            statuses = []
+
+            def capture(status, headers):
+                statuses.append(int(status.split()[0]))
+                return start_response(status, headers)
+
+            result = self._dispatch(method, path, environ, capture, principal)
+            status = statuses[0] if statuses else 500
+            self._safe_audit(
+                environ,
+                request_id,
+                principal,
+                method,
+                path,
+                "request",
+                "allowed" if status < 400 else "denied",
+                status,
+            )
+            return result
+        except ApiPermissionDenied as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "permission",
+                "denied",
+                403,
+            )
+            return self._error(start_response, 403, "forbidden", str(error))
         except LookupError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "request",
+                "error",
+                404,
+            )
             return self._error(start_response, 404, "not_found", str(error))
         except (ValueError, json.JSONDecodeError) as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "request",
+                "denied",
+                400,
+            )
             return self._error(start_response, 400, "invalid_request", str(error))
         except Exception:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "request",
+                "error",
+                500,
+            )
             return self._error(
                 start_response, 500, "internal_error", "request failed (details redacted)"
             )
 
-    def _dispatch(self, method: str, path: str, environ: dict, start_response: Callable):
+    def _dispatch(
+        self,
+        method: str,
+        path: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
         parts = [part for part in path.split("/") if part]
+        if parts == ["api", "v1", "security-audit"] and method == "GET":
+            self._require(principal, ApiPermission.READ_SECURITY_AUDIT)
+            return self._response(
+                start_response,
+                200,
+                {"items": [self._value(item) for item in self._repository.list_security_audit()]},
+            )
+        if method == "GET":
+            self._require(principal, ApiPermission.READ)
         if parts == ["api", "v1", "tasks"] and method == "GET":
             return self._response(
                 start_response,
@@ -158,6 +251,7 @@ class MediaFlowApi:
                     raise ValueError(f"unsupported service field {sorted(forbidden)[0]!r}")
                 command = document.get("command", "")
                 if command == "organize":
+                    self._require(principal, ApiPermission.REMOTE_EXECUTE)
                     if not self._remote_execution_enabled:
                         raise ValueError("remote execution is disabled")
                     if document.get("execute") is not True:
@@ -167,6 +261,7 @@ class MediaFlowApi:
                         token, limit=document.get("limit")
                     )
                 else:
+                    self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
                     if "execute" in document:
                         raise ValueError("scan/preview cannot request execute authority")
                     job = self._jobs.submit(command, limit=document.get("limit"))
@@ -182,13 +277,83 @@ class MediaFlowApi:
             and parts[4] == "cancel"
             and method == "POST"
         ):
+            self._require(principal, ApiPermission.CANCEL_JOB)
             return self._response(start_response, 200, self._value(self._jobs.cancel(parts[3])))
         return self._error(start_response, 404, "not_found", "route was not found")
 
-    def _authorized(self, environ: dict) -> bool:
+    def _authenticate(self, environ: dict) -> ResolvedApiPrincipal | None:
         header = str(environ.get("HTTP_AUTHORIZATION", ""))
         prefix = "Bearer "
-        return header.startswith(prefix) and hmac.compare_digest(header[len(prefix) :], self._token)
+        presented = header[len(prefix) :] if header.startswith(prefix) else ""
+        matched = None
+        for principal in self._principals:
+            if hmac.compare_digest(presented, principal.token):
+                matched = principal
+        return matched
+
+    @staticmethod
+    def _require(principal: ResolvedApiPrincipal, permission: ApiPermission) -> None:
+        if permission not in principal.permissions:
+            raise ApiPermissionDenied(f"principal lacks {permission.value} permission")
+
+    def _audit(
+        self,
+        environ,
+        request_id,
+        principal,
+        method,
+        path,
+        action,
+        outcome,
+        status,
+    ) -> None:
+        source_parts = str(environ.get("REMOTE_ADDR", "")).split()
+        source = source_parts[0][:128] if source_parts else None
+        self._repository.append_security_audit(
+            SecurityAuditRecord(
+                str(uuid4()),
+                datetime.now(UTC),
+                principal.principal_id if principal else None,
+                method[:16],
+                self._audit_route(path),
+                action,
+                outcome,
+                status,
+                request_id,
+                source,
+            )
+        )
+
+    @staticmethod
+    def _audit_route(path: str) -> str:
+        parts = [part for part in path.split("/") if part]
+        exact = {
+            ("api", "v1", "tasks"),
+            ("api", "v1", "confirmations"),
+            ("api", "v1", "schedules"),
+            ("api", "v1", "notifications"),
+            ("api", "v1", "jobs"),
+            ("api", "v1", "security-audit"),
+        }
+        key = tuple(parts)
+        if key in exact:
+            return "/" + "/".join(parts)
+        if len(parts) == 4 and parts[:3] in (
+            ["api", "v1", "tasks"],
+            ["api", "v1", "jobs"],
+        ):
+            return f"/api/v1/{parts[2]}/{{id}}"
+        if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
+            return "/api/v1/jobs/{id}/cancel"
+        if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":
+            return "/api/v1/schedules/{id}/audit"
+        return "/api/v1/<unmatched>"
+
+    def _safe_audit(self, *args) -> None:
+        try:
+            self._audit(*args)
+        except Exception:
+            pass
 
     @staticmethod
     def _document(environ: dict) -> dict:
@@ -227,6 +392,7 @@ class MediaFlowApi:
             202: "Accepted",
             400: "Bad Request",
             401: "Unauthorized",
+            403: "Forbidden",
             404: "Not Found",
             500: "Internal Server Error",
         }

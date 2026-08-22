@@ -3,7 +3,9 @@
   "historyPath": ".mediaflow/history.jsonl",
   "persistence": {"databasePath": ".mediaflow/mediaflow.sqlite3"},
   "api": {
-    "tokenEnv": "MEDIAFLOW_API_TOKEN",
+    "principals": [
+      {"id": "local-admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": true}
+    ],
     "remoteExecution": {"enabled": false, "maximumTtlSeconds": 900}
   },
   "automation": {

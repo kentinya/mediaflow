@@ -65,6 +65,7 @@ mediaflow execution-authorizations issue --ttl-seconds 300 --max-items 20
 mediaflow execution-authorizations list
 mediaflow execution-authorizations show AUTHORIZATION_ID
 mediaflow execution-authorizations revoke AUTHORIZATION_ID
+mediaflow security-audit list --limit 100
 mediaflow api serve --host 127.0.0.1 --port 8787
 ```
 
@@ -129,16 +130,23 @@ never writes to Storage.
 
 ## Development API and DryRun worker
 
-Phase 18.1 adds a local development WSGI API and a persistent background queue. Configure only the
-environment-variable name in JSON:
+The local development WSGI API uses configuration-driven principals. Credentials remain in the
+environment; JSON contains only their environment-variable names and least-privilege roles:
 
 ```json
-"api": {"tokenEnv": "MEDIAFLOW_API_TOKEN"}
+"api": {
+  "principals": [
+    {"id": "local-admin", "tokenEnv": "MEDIAFLOW_API_TOKEN",
+     "roles": ["admin"], "enabled": true}
+  ]
+}
 ```
 
 `GET /health` is public. Every `/api/v1` request requires
-`Authorization: Bearer $MEDIAFLOW_API_TOKEN`. The API can query tasks, jobs, and pending
-confirmations, and it queues `scan` or `preview` by default. Run one queued item with
+`Authorization: Bearer $MEDIAFLOW_API_TOKEN`. Roles are `viewer`, `operator`, `executor`,
+`auditor`, and `admin`; executor permission is necessary but not sufficient for real organization.
+The API can query tasks, jobs, and pending confirmations, and it queues `scan` or `preview` by
+default. Run one queued item with
 `mediaflow worker run-next`; preview is always DryRun. Remote organize is accepted only through the
 later disabled-by-default one-time authorization boundary documented below. Remote overwrite,
 delete, and conflict resolution remain rejected. This standard-library server is for trusted
@@ -179,7 +187,10 @@ sufficient mutation authority. Enable it explicitly:
 
 ```json
 "api": {
-  "tokenEnv": "MEDIAFLOW_API_TOKEN",
+  "principals": [
+    {"id": "automation-executor", "tokenEnv": "MEDIAFLOW_API_TOKEN",
+     "roles": ["executor"], "enabled": true}
+  ],
   "remoteExecution": {"enabled": true, "maximumTtlSeconds": 900}
 }
 ```
@@ -200,6 +211,12 @@ The raw authorization token is displayed once and only its SHA-256 digest is per
 and Job creation are atomic. Scheduler configurations remain scan/preview-only, and all existing
 conflict/no-overwrite/OrganizerExecutor checks still apply.
 
+Every authenticated or denied API request is recorded in a redacted SQLite security audit. Inspect
+it locally with `mediaflow security-audit list --limit 100`, or through auditor/admin-only
+`GET /api/v1/security-audit`. Audit records contain normalized routes and never contain headers,
+request bodies, query strings, tokens, cookies, or exception text. The legacy single `api.tokenEnv`
+form is accepted as one admin principal for compatibility, but cannot be mixed with `principals`.
+
 ## Persistent runtime state
 
 Production scan/preview/organize use the configured SQLite database:
@@ -218,5 +235,6 @@ operation history remains compatible.
 The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries,
 persistent scan/preview jobs, Cron schedules, and signed Webhook notifications are complete.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
-Reusable service execution authority, scheduled execute, user/role controls, and Web UI remain
-planned; unattended scheduled real organization is not supported.
+Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
+Database-managed users/login, token rotation, scheduled execute, and Web UI remain planned;
+unattended scheduled real organization is not supported.

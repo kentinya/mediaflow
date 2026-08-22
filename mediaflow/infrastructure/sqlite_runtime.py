@@ -24,6 +24,7 @@ from mediaflow.domain.notification import (
     NotificationDeliveryStatus,
     NotificationEventType,
 )
+from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     ConflictConfirmation,
@@ -35,7 +36,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 class SQLiteTaskRepository:
@@ -633,6 +634,48 @@ class SQLiteTaskRepository:
             for row in rows
         )
 
+    def append_security_audit(self, value: SecurityAuditRecord) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO security_audit VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    value.audit_id,
+                    value.occurred_at.isoformat(),
+                    value.principal_id,
+                    value.method,
+                    value.route,
+                    value.action,
+                    value.outcome,
+                    value.http_status,
+                    value.request_id,
+                    value.source_address,
+                ),
+            )
+
+    def list_security_audit(self, *, limit: int = 100) -> tuple[SecurityAuditRecord, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 1000:
+            raise ValueError("security audit limit must be between 1 and 1000")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM security_audit ORDER BY occurred_at DESC, audit_id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple(
+            SecurityAuditRecord(
+                row["audit_id"],
+                datetime.fromisoformat(row["occurred_at"]),
+                row["principal_id"],
+                row["method"],
+                row["route"],
+                row["action"],
+                row["outcome"],
+                row["http_status"],
+                row["request_id"],
+                row["source_address"],
+            )
+            for row in rows
+        )
+
     def create_delivery(self, delivery: NotificationDelivery) -> bool:
         with self._lock, self._connection:
             cursor = self._connection.execute(
@@ -908,6 +951,14 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS execution_authorizations_status_expiry
                     ON execution_authorizations(status, expires_at);
+                CREATE TABLE IF NOT EXISTS security_audit (
+                    audit_id TEXT PRIMARY KEY, occurred_at TEXT NOT NULL, principal_id TEXT,
+                    method TEXT NOT NULL, route TEXT NOT NULL, action TEXT NOT NULL,
+                    outcome TEXT NOT NULL, http_status INTEGER NOT NULL,
+                    request_id TEXT NOT NULL, source_address TEXT
+                );
+                CREATE INDEX IF NOT EXISTS security_audit_occurred
+                    ON security_audit(occurred_at, audit_id);
                 """
             )
             self._connection.execute(

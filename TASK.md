@@ -1,65 +1,65 @@
-# Phase 18.5 — One-time Remote Execute Authorization + Audit
+# Phase 18.6 — API Principals, RBAC + Security Audit
 
 ## Goal
 
-Allow the existing authenticated API to queue a real `organize --execute` job only when a local
-operator has issued a short-lived, single-use authorization. Do not reuse the ordinary API bearer
-token as mutation authority. Preserve OrganizerExecutor as the only Storage mutation boundary.
+Replace the single all-powerful API identity with configuration-driven principals and least-
+privilege roles, and persist a redacted security audit for API access. Keep the Phase 18.5 one-time
+execution authorization as an additional mandatory gate for real organization.
 
-## 1. Authorization model
+## 1. Principals and roles
 
-- Local CLI issues a cryptographically random one-time token with ID, expiry, maximum item limit,
-  created timestamp, status, and optional non-secret actor/note.
-- Persist only a SHA-256 token digest; display the raw token exactly once at issuance.
-- Statuses: active, consumed, revoked, expired. Expiry is evaluated against UTC.
-- Token consumption and execute-authorized Job creation must be one SQLite transaction.
-- Concurrent/replayed requests using one token may create exactly one Job.
+- Configure unique API principals with ID, environment-owned Bearer `tokenEnv`, enabled flag, and
+  roles selected from viewer, operator, executor, auditor, and admin.
+- Normalize roles into explicit permissions: read, submit DryRun, cancel Job, remote execute, and
+  read security audit.
+- Resolve token values only at API startup. Reject literal tokens, duplicate IDs/tokenEnv names,
+  unknown roles, empty roles, invalid environment names, and missing enabled-principal secrets.
+- Keep legacy `api.tokenEnv` compatibility as one admin principal, but reject mixing legacy and new
+  principal configuration. Examples must use the new principal form.
 
-## 2. API execution boundary
+## 2. Authorization boundary
 
-- Keep ordinary Bearer authentication for all `/api/v1` routes.
-- `POST /api/v1/jobs` accepts `command=organize` and `execute=true` only with a separate
-  `X-MediaFlow-Execution-Token` header and an enabled runtime feature gate.
-- Require an explicit positive `limit` not exceeding the authorization maximum.
-- Reject missing/invalid/expired/revoked/consumed tokens, body-carried tokens, overwrite/delete,
-  and organize without `execute=true`.
-- scan/preview remain DryRun and must reject execute authority.
-- API cannot issue, list, revoke, or renew execution tokens.
+- All `/api/v1` endpoints require an authenticated principal and route-specific permission.
+- viewer is read-only; operator may submit scan/preview and cancel; executor may additionally submit
+  organize only with the existing valid one-time token; auditor may read security audit; admin has
+  all permissions.
+- Return stable 401 for authentication failure and 403 for insufficient permission.
+- Compare presented tokens safely and never expose token values or environment names in API output.
+- API still cannot issue/revoke execution authorizations or resolve conflicts.
 
-## 3. Worker and persistence
+## 3. Persistent security audit
 
-- Persist `executeAuthorized` on AutomationJob with a compatible SQLite v7-to-v8 migration.
-- Worker delegates an authorized organize Job to the existing production CLI with `--execute`.
-- Worker never infers execute authority from command, configuration, schedule, or API bearer token.
-- Scheduler remains restricted to scan/preview and cannot reference authorization tokens.
-- Stale execute Job requeue preserves its original authorization but remains explicit and audited.
+- Upgrade SQLite compatibly to v9 and append API request audit records with ID, UTC timestamp,
+  principal ID when known, method, normalized route, action, outcome, HTTP status, request ID, and
+  bounded source address.
+- Audit successful and denied `/api/v1` access, including authentication and permission failures.
+- Never persist headers, bearer/execution tokens, request bodies, query strings, cookies, secrets,
+  media payloads, or exception text.
+- Audit persistence failure must fail closed for mutation requests and must not leak details.
 
-## 4. Local operator CLI and audit
+## 4. Visibility and CLI
 
-- Add `mediaflow execution-authorizations issue --ttl-seconds N --max-items N`.
-- Add `list`, `show`, and `revoke`; these commands only access SQLite.
-- Audit issue/consume/revoke with timestamps and job identity; never persist or print raw tokens
-  after issuance.
-- Job CLI/API visibility includes execute authorization status but never the token/digest.
+- Add admin/auditor-only `GET /api/v1/security-audit` with bounded results.
+- Add local `mediaflow security-audit list [--limit N]` without constructing Storage.
+- API responses may identify the authenticated principal but never return credential configuration.
 
-## 5. Configuration and safety
+## 5. Safety and compatibility
 
-- Add `api.remoteExecution.enabled` and bounded maximum TTL; default disabled.
-- Config validation needs no API token, execution token, Storage construction, or network access.
-- Remote execute keeps all existing conflict, overwrite, delete, attachment, cancellation, task,
-  history, and Storage capability checks.
-- Notification, strategy, Storage adapters, Planner, and OrganizerExecutor semantics remain intact.
+- Default configuration remains loopback-oriented and remote execution remains disabled.
+- RBAC never bypasses one-time execution authorization, conflicts, overwrite/delete protection,
+  Task execute authority, Storage capabilities, or OrganizerExecutor.
+- Scheduler stays scan/preview-only. No strategy, Storage, Planner, or execution semantic changes.
 
 ## Required tests
 
-- Disabled feature, missing separate token, invalid/expired/revoked/consumed/replayed token.
-- Token digest-only persistence, one-time display, TTL/max-items validation, list/show redaction.
-- Atomic concurrent consumption creates exactly one execute-authorized organize Job.
-- scan/preview execute rejection; Scheduler organize rejection remains.
-- Worker passes `--execute` only for an authorized organize Job and never for other Jobs.
-- End-to-end API → Job → Worker real LocalStorage execution with explicit token and limit.
-- Existing conflict/no-overwrite safety, cancellation, stale recovery, notifications, DryRun, all
-  strategy/Storage regressions, and zero mutation during authorization/config validation.
+- Role/permission matrix for every read/write/execute/audit route.
+- Invalid/missing/disabled principals, unknown roles, duplicates, legacy compatibility and mixing.
+- 401 vs 403 behavior and constant-time credential comparison boundary.
+- Successful/denied audit records, redaction, ordering/limit and v8-to-v9 migration.
+- Security-audit API permission and local CLI zero-Storage behavior.
+- Executor role still requires and atomically consumes a Phase 18.5 one-time token.
+- Audit write failure fails closed before mutation Job creation.
+- All automation, notification, execution authorization, DryRun, strategy and Storage regressions.
 
 ## Documentation and validation
 
@@ -69,20 +69,18 @@ checks.
 
 ## Out of scope
 
-- Scheduled/unattended execute, reusable service execution keys, token renewal, Web UI, users/roles,
-  TLS termination, inbound Webhooks, and OrganizerExecutor redesign.
+- Database-managed users/passwords, login/session/cookies, token rotation endpoints, OIDC/OAuth,
+  TLS termination, Web UI, scheduled execute, and OrganizerExecutor redesign.
 
 ## Final report
 
-## Phase 18.5 Result
+## Phase 18.6 Result
 
 PASS / FAIL
 
-## Authorization Model
+## Principals and RBAC
 
-## Remote Execute
-
-## Audit
+## Security Audit
 
 ## Security and Safety
 

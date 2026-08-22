@@ -338,7 +338,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
             )
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 8)
+                self.assertEqual(repository.schema_version, 9)
                 job = AutomationJobService(repository).submit("scan")
                 self.assertFalse(job.execute_authorized)
 

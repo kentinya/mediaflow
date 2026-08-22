@@ -62,6 +62,7 @@ def main(
         "notifications",
         "notification-worker",
         "execution-authorizations",
+        "security-audit",
     }
     if Path(sys.argv[0]).name == "mediaflow" or production_commands.intersection(effective_argv):
         from mediaflow.final_cli import final_main

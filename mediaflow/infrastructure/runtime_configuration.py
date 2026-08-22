@@ -19,6 +19,7 @@ from mediaflow.domain.automation import (
 )
 from mediaflow.domain.library import DEFAULT_MEDIA_EXTENSIONS, MediaLibrary, ResourceLibrary
 from mediaflow.domain.notification import NotificationEventType, WebhookDefinition
+from mediaflow.domain.security import ApiPrincipalDefinition, ApiRole, ResolvedApiPrincipal
 from mediaflow.domain.storage import Storage
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.openlist_storage import OpenListStorage, OpenListStorageConfig
@@ -55,6 +56,7 @@ class RuntimeConfiguration:
     notification_delivery_lease_seconds: float = 300.0
     remote_execution_enabled: bool = False
     remote_execution_maximum_ttl_seconds: int = 900
+    api_principals: tuple[ApiPrincipalDefinition, ...] = ()
 
     def create_storages(
         self,
@@ -175,6 +177,29 @@ class RuntimeConfiguration:
             targets[definition.webhook_id] = (definition, secret)
         return targets
 
+    def resolve_api_principals(self) -> tuple[ResolvedApiPrincipal, ...]:
+        definitions = self.api_principals
+        if not definitions and self.api_token_env:
+            definitions = (
+                ApiPrincipalDefinition("legacy-admin", self.api_token_env, (ApiRole.ADMIN,)),
+            )
+        resolved = []
+        for definition in definitions:
+            if not definition.enabled:
+                continue
+            token = os.environ.get(definition.token_env)
+            if not token:
+                raise ValueError(
+                    f"API principal {definition.principal_id!r} requires environment variable "
+                    f"{definition.token_env}"
+                )
+            resolved.append(
+                ResolvedApiPrincipal(definition.principal_id, token, definition.permissions)
+            )
+        if not resolved:
+            raise ValueError("API requires at least one enabled configured principal")
+        return tuple(resolved)
+
 
 def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     if not isinstance(document, dict):
@@ -239,6 +264,22 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         not isinstance(api_token_env, str) or not _ENV_NAME.fullmatch(api_token_env)
     ):
         raise ValueError("API tokenEnv must be a valid environment variable name")
+    raw_principals = api.get("principals", [])
+    if not isinstance(raw_principals, list) or not all(
+        isinstance(item, dict) for item in raw_principals
+    ):
+        raise ValueError("API principals must be an array of objects")
+    if api_token_env is not None and raw_principals:
+        raise ValueError("API tokenEnv cannot be combined with principals")
+    api_principals = tuple(_api_principal(item) for item in raw_principals)
+    if len(api_principals) > 64:
+        raise ValueError("API supports at most 64 principals")
+    principal_ids = [item.principal_id for item in api_principals]
+    token_envs = [item.token_env for item in api_principals]
+    if len(principal_ids) != len(set(principal_ids)):
+        raise ValueError("API principal IDs must be unique")
+    if len(token_envs) != len(set(token_envs)):
+        raise ValueError("API principal tokenEnv names must be unique")
     remote_execution = api.get("remoteExecution", {})
     if not isinstance(remote_execution, dict):
         raise ValueError("API remoteExecution must be an object")
@@ -307,7 +348,31 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         notification_lease,
         remote_execution_enabled,
         maximum_ttl,
+        api_principals,
     )
+
+
+def _api_principal(value: dict) -> ApiPrincipalDefinition:
+    principal_id = _required(value, "id")
+    token_env = _required(value, "tokenEnv")
+    if not _ENV_NAME.fullmatch(token_env):
+        raise ValueError("API principal tokenEnv must be a valid environment variable name")
+    forbidden = {"token", "secret", "password", "authorization"}.intersection(value)
+    if forbidden:
+        raise ValueError(f"API principal field {sorted(forbidden)[0]!r} is forbidden")
+    raw_roles = value.get("roles")
+    if not isinstance(raw_roles, list) or not raw_roles:
+        raise ValueError("API principal roles must be a non-empty array")
+    try:
+        roles = tuple(ApiRole(item) for item in raw_roles)
+    except (TypeError, ValueError) as error:
+        raise ValueError("API principal contains an unknown role") from error
+    if len(roles) != len(set(roles)):
+        raise ValueError("API principal roles must be unique")
+    enabled = value.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("API principal enabled must be boolean")
+    return ApiPrincipalDefinition(principal_id, token_env, roles, enabled)
 
 
 def _storage(value: dict) -> StorageDefinition:

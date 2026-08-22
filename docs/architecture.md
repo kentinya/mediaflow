@@ -627,6 +627,25 @@ true; inconsistent Jobs fail closed. Scheduler remains scan/preview-only. This b
 overwrite/delete bypass: the existing Task, conflict, Storage capability, plan validation, and sole
 OrganizerExecutor mutation boundary remain authoritative.
 
+## API principals, RBAC, and security audit
+
+The API transport resolves environment-owned bearer credentials into provider-neutral principals
+at startup. Configuration roles normalize to explicit permissions before requests enter the route
+dispatcher; authentication failure is 401 and authenticated insufficient authority is 403. Engines,
+Storage adapters, Task execution, and strategy policies know nothing about API roles.
+
+SQLite v9 adds append-only redacted API security audit records. A request receives a random request
+ID and stores only principal ID when known, method, a normalized route template, action, outcome,
+status, timestamp, and bounded source address. Headers, bodies, query strings, tokens, cookies,
+exception text, and media payloads are never persisted. A pre-dispatch audit write occurs before a
+mutation request can create a Job; persistence failure therefore fails closed. Audit reads are
+available locally without Storage construction and remotely only to auditor/admin principals.
+
+Remote organization remains the intersection of two independent capabilities: the principal must
+have `remote_execute`, and Phase 18.5 must atomically consume a valid one-time authorization. RBAC
+does not widen Scheduler commands or bypass conflict, overwrite/delete, Task authority, or
+OrganizerExecutor safeguards.
+
 ## Classification policies and engine
 
 Classification is the pure “where does this identified media belong?” stage after Naming. The

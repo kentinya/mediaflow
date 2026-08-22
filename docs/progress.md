@@ -38,14 +38,12 @@
 
 ## Current
 
-- Phase 13.3 Storage identity audit and OpenList native Move→Rename completion: PASS
-- Phase 14 persistent FileIndex and recoverable task foundation: implementation complete,
-  validation pending
+- Phase 18.6 configuration-driven API principals, RBAC, and redacted SQLite security audit: PASS
 
 ## Planned
 
-- Phase 15: conflict/manual confirmation and explicit safe resolution
-- Later: attachments, runtime SMB/S3 config, scheduler/API, and UI
+- Phase 19: Web UI and production release hardening
+- Later: database-managed identities/OIDC, credential rotation, and optional scheduled execution
 
 ## Known Issues
 
@@ -803,3 +801,17 @@ Phase 18.5 one-time remote execute authorization and audit (2026-08-22): PASS
 - Full suite: 353 tests, 350 passed, 0 failed, 3 optional real integrations skipped
 - Ruff format/lint, compileall, dependency check, isolated-free wheel build, both example config
   validations, FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 18.6 API principals, RBAC, and security audit (2026-08-22): PASS
+
+- Replaced the single runtime API identity with configuration-driven principals and fixed
+  least-privilege viewer/operator/executor/auditor/admin roles; legacy `api.tokenEnv` remains a
+  non-mixable admin compatibility form
+- Added route-level 401/403 authorization while preserving the independent Phase 18.5 one-time
+  authorization requirement for every remote real organize Job
+- Upgraded runtime SQLite to v9 with redacted normalized API security audit records and fail-closed
+  pre-dispatch persistence before Job mutation
+- Added auditor/admin API visibility and a local zero-Storage `security-audit list` command
+- Full suite: 361 tests, 358 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated-free wheel build, example validation, FFmpeg/FFprobe
+  runtime audit, and diff check passed

@@ -170,6 +170,12 @@ def final_main(
     execution_authorization_revoke = execution_authorization_commands.add_parser("revoke")
     execution_authorization_revoke.add_argument("authorization_id")
     execution_authorization_revoke.add_argument("--actor")
+    security_audit = commands.add_parser("security-audit", help="local API security audit")
+    security_audit_commands = security_audit.add_subparsers(
+        dest="security_audit_command", required=True
+    )
+    security_audit_list = security_audit_commands.add_parser("list")
+    security_audit_list.add_argument("--limit", type=int, default=100)
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_serve = api_commands.add_parser("serve")
@@ -284,6 +290,14 @@ def final_main(
                             ),
                         )
                     )
+            return 0
+        if arguments.command == "security-audit":
+            if arguments.limit < 1 or arguments.limit > 1000:
+                raise ValueError("security audit limit must be between 1 and 1000")
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                stdout.write(
+                    render_security_audit(repository.list_security_audit(limit=arguments.limit))
+                )
             return 0
         if arguments.command == "tasks" and arguments.task_command in {"list", "show"}:
             with SQLiteTaskRepository(configuration.database_path) as repository:
@@ -466,11 +480,7 @@ def final_main(
                 stdout.write(f"Scheduler stopped; emitted={emitted}\n")
                 return 0
         if arguments.command == "api":
-            if not configuration.api_token_env:
-                raise ValueError("API tokenEnv is not configured")
-            token = os.environ.get(configuration.api_token_env)
-            if not token:
-                raise ValueError(f"API requires environment variable {configuration.api_token_env}")
+            principals = configuration.resolve_api_principals()
             if not 1 <= arguments.port <= 65535:
                 raise ValueError("API port must be between 1 and 65535")
             from wsgiref.simple_server import make_server
@@ -480,8 +490,9 @@ def final_main(
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 app = MediaFlowApi(
                     repository,
-                    token,
+                    None,
                     configuration.automation_schedules,
+                    principals=principals,
                     remote_execution_enabled=configuration.remote_execution_enabled,
                     remote_execution_maximum_ttl_seconds=(
                         configuration.remote_execution_maximum_ttl_seconds
@@ -896,6 +907,18 @@ def render_execution_authorization(value, audit) -> str:
         for item in audit
     )
     lines.append("")
+    return "\n".join(lines)
+
+
+def render_security_audit(values) -> str:
+    lines = ["", "SECURITY AUDIT", ""]
+    lines.extend(
+        f"{item.occurred_at.isoformat()} | {item.principal_id or '-'} | "
+        f"{item.method} {item.route} | {item.action} | {item.outcome} | "
+        f"status={item.http_status} | request={item.request_id}"
+        for item in values
+    )
+    lines.extend(("", f"Total: {len(values)}", ""))
     return "\n".join(lines)
 
 

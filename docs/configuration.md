@@ -91,9 +91,10 @@ using the stable `X-MediaFlow-Delivery` header. Inspect expired leases without c
 Remote real execution is disabled unless explicitly enabled under `api.remoteExecution`:
 
 ```json
-{"api":{"tokenEnv":"MEDIAFLOW_API_TOKEN","remoteExecution":{
-  "enabled":true,"maximumTtlSeconds":900
-}}}
+{"api":{"principals":[{
+  "id":"automation-executor","tokenEnv":"MEDIAFLOW_API_TOKEN",
+  "roles":["executor"],"enabled":true
+}],"remoteExecution":{"enabled":true,"maximumTtlSeconds":900}}}
 ```
 
 The local `execution-authorizations issue` command accepts a TTL no greater than the configured
@@ -445,15 +446,41 @@ command supplies a fresh `--execute` flag.
 
 ```json
 "api": {
-  "tokenEnv": "MEDIAFLOW_API_TOKEN"
+  "principals": [
+    {"id": "read-only", "tokenEnv": "MEDIAFLOW_VIEWER_TOKEN",
+     "roles": ["viewer"], "enabled": true},
+    {"id": "automation", "tokenEnv": "MEDIAFLOW_OPERATOR_TOKEN",
+     "roles": ["operator"], "enabled": true},
+    {"id": "audit", "tokenEnv": "MEDIAFLOW_AUDITOR_TOKEN",
+     "roles": ["auditor"], "enabled": true}
+  ]
 }
 ```
 
-`tokenEnv` names an environment variable and never contains the token. `config validate` checks
-the name without requiring the secret; API startup requires its value.
+Each principal has a unique ID, unique `tokenEnv`, one or more roles, and an optional `enabled`
+flag. `tokenEnv` names an environment variable and never contains the token. `config validate`
+checks names and references without requiring secret values; API startup requires every enabled
+principal's environment value. Literal secrets, duplicate IDs/environment names, unknown/empty
+roles, and mixing `principals` with legacy `api.tokenEnv` are rejected. Legacy `tokenEnv` alone is
+still interpreted as one admin principal for backward compatibility.
+
+Role permissions are fixed and additive:
+
+| Role | Read | Submit scan/preview | Cancel Job | Remote execute | Read security audit |
+|---|---:|---:|---:|---:|---:|
+| `viewer` | yes | no | no | no | no |
+| `operator` | yes | yes | yes | no | no |
+| `executor` | yes | yes | yes | yes | no |
+| `auditor` | yes | no | no | no | yes |
+| `admin` | yes | yes | yes | yes | yes |
+
+Remote execute also requires the Phase 18.5 feature flag and a separate valid one-time execution
+token. An executor role never bypasses that second gate or conflict/overwrite protections.
 
 ```bash
-export MEDIAFLOW_API_TOKEN='<long-random-development-token>'
+export MEDIAFLOW_VIEWER_TOKEN='<long-random-viewer-token>'
+export MEDIAFLOW_OPERATOR_TOKEN='<independent-random-operator-token>'
+export MEDIAFLOW_AUDITOR_TOKEN='<independent-random-auditor-token>'
 mediaflow jobs submit scan --limit 20
 mediaflow jobs submit preview --limit 20
 mediaflow jobs list
@@ -461,6 +488,7 @@ mediaflow jobs show JOB_ID
 mediaflow jobs cancel JOB_ID
 mediaflow worker run-next
 mediaflow api serve --host 127.0.0.1 --port 8787
+mediaflow security-audit list --limit 100
 ```
 
 The Worker claims one oldest pending job atomically and delegates it to the existing production
@@ -469,6 +497,11 @@ Task/Job/Confirmation queries plus scan/preview submission and pending cancellat
 organize is rejected unless the separately documented one-time execution feature is enabled and a
 valid ticket is atomically consumed. The server is a loopback development adapter, not a hardened
 Internet-facing deployment.
+
+`GET /api/v1/security-audit` is restricted to auditor/admin. SQLite audit rows record timestamp,
+principal ID when known, method, normalized route, action/outcome/status, request ID, and a bounded
+source address. They deliberately omit query strings, headers, bodies, cookies, credentials,
+media values, and error text. Local audit listing constructs no Storage adapter.
 
 ### Resident Worker, interval schedules, and Cron
 
