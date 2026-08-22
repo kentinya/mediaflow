@@ -29,6 +29,7 @@ from mediaflow.domain.execution_authorization import (
 from mediaflow.domain.metadata_review import (
     MetadataReview,
     MetadataReviewCandidate,
+    MetadataReviewDecisionAudit,
     MetadataReviewScoreComponent,
     MetadataReviewStatus,
 )
@@ -49,7 +50,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 class SQLiteTaskRepository:
@@ -298,7 +299,9 @@ class SQLiteTaskRepository:
     ) -> None:
         with self._lock, self._connection:
             self._connection.execute(
-                """INSERT INTO metadata_reviews VALUES
+                """INSERT INTO metadata_reviews
+                (review_id, task_id, item_id, source_storage_id, source_path, recognition_type,
+                metadata_policy_id, query, outcome, status, created_at, updated_at) VALUES
                 (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     review.review_id,
@@ -369,6 +372,13 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._metadata_review(row) if row else None
 
+    def get_metadata_review_for_item(self, item_id: str) -> MetadataReview | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM metadata_reviews WHERE item_id=?", (item_id,)
+            ).fetchone()
+        return self._metadata_review(row) if row else None
+
     def list_metadata_reviews(self, *, limit: int = 100) -> tuple[MetadataReview, ...]:
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 1000:
             raise ValueError("metadata review limit must be between 1 and 1000")
@@ -388,6 +398,84 @@ class SQLiteTaskRepository:
                 (review_id,),
             ).fetchall()
         return tuple(self._metadata_review_candidate(row) for row in rows)
+
+    def resolve_metadata_review(
+        self,
+        review: MetadataReview,
+        audit: MetadataReviewDecisionAudit,
+        item: PersistentTaskItem,
+    ) -> None:
+        if review.status is not MetadataReviewStatus.RESOLVED:
+            raise ValueError("resolved metadata review status is required")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE metadata_reviews SET status=?, updated_at=?, selected_rank=?,
+                selected_provider=?, selected_provider_id=?, selected_media_type=?, decided_at=?,
+                actor=? WHERE review_id=? AND status=?""",
+                (
+                    review.status.value,
+                    review.updated_at.isoformat(),
+                    review.selected_rank,
+                    review.selected_provider,
+                    review.selected_provider_id,
+                    review.selected_media_type,
+                    review.decided_at.isoformat() if review.decided_at else None,
+                    review.actor,
+                    review.review_id,
+                    MetadataReviewStatus.PENDING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("metadata review is not pending")
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    TaskItemStatus.WAITING_METADATA.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("metadata review TaskItem is not waiting for metadata")
+            self._connection.execute(
+                "INSERT INTO metadata_review_decision_audit VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    audit.audit_id,
+                    audit.review_id,
+                    audit.selected_rank,
+                    audit.provider,
+                    audit.provider_id,
+                    audit.media_type,
+                    audit.decided_at.isoformat(),
+                    audit.actor,
+                    audit.note,
+                ),
+            )
+
+    def list_metadata_review_audit(self, review_id: str) -> tuple[MetadataReviewDecisionAudit, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM metadata_review_decision_audit WHERE review_id=?
+                ORDER BY decided_at, audit_id""",
+                (review_id,),
+            ).fetchall()
+        return tuple(
+            MetadataReviewDecisionAudit(
+                row["audit_id"],
+                row["review_id"],
+                row["selected_rank"],
+                row["provider"],
+                row["provider_id"],
+                row["media_type"],
+                datetime.fromisoformat(row["decided_at"]),
+                row["actor"],
+                row["note"],
+            )
+            for row in rows
+        )
 
     def get_confirmation(self, confirmation_id: str) -> ConflictConfirmation | None:
         with self._lock:
@@ -1136,6 +1224,9 @@ class SQLiteTaskRepository:
                     metadata_policy_id TEXT NOT NULL, query TEXT NOT NULL,
                     outcome TEXT NOT NULL, status TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    selected_rank INTEGER, selected_provider TEXT,
+                    selected_provider_id TEXT, selected_media_type TEXT,
+                    decided_at TEXT, actor TEXT,
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
                     FOREIGN KEY(item_id) REFERENCES task_items(item_id)
                 );
@@ -1151,6 +1242,13 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS metadata_reviews_status_created
                     ON metadata_reviews(status, created_at, review_id);
+                CREATE TABLE IF NOT EXISTS metadata_review_decision_audit (
+                    audit_id TEXT PRIMARY KEY, review_id TEXT NOT NULL,
+                    selected_rank INTEGER NOT NULL, provider TEXT NOT NULL,
+                    provider_id TEXT NOT NULL, media_type TEXT NOT NULL,
+                    decided_at TEXT NOT NULL, actor TEXT, note TEXT,
+                    FOREIGN KEY(review_id) REFERENCES metadata_reviews(review_id)
+                );
                 CREATE TABLE IF NOT EXISTS automation_jobs (
                     job_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, limit_value INTEGER,
@@ -1240,6 +1338,24 @@ class SQLiteTaskRepository:
                     "ALTER TABLE automation_jobs ADD COLUMN "
                     "execute_authorized INTEGER NOT NULL DEFAULT 0"
                 )
+            review_columns = {
+                row["name"]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(metadata_reviews)"
+                ).fetchall()
+            }
+            for name, declaration in (
+                ("selected_rank", "INTEGER"),
+                ("selected_provider", "TEXT"),
+                ("selected_provider_id", "TEXT"),
+                ("selected_media_type", "TEXT"),
+                ("decided_at", "TEXT"),
+                ("actor", "TEXT"),
+            ):
+                if name not in review_columns:
+                    self._connection.execute(
+                        f"ALTER TABLE metadata_reviews ADD COLUMN {name} {declaration}"
+                    )
 
     @staticmethod
     def _lock_path(path: str) -> str:
@@ -1417,6 +1533,12 @@ class SQLiteTaskRepository:
             MetadataReviewStatus(row["status"]),
             datetime.fromisoformat(row["created_at"]),
             datetime.fromisoformat(row["updated_at"]),
+            row["selected_rank"],
+            row["selected_provider"],
+            row["selected_provider_id"],
+            row["selected_media_type"],
+            datetime.fromisoformat(row["decided_at"]) if row["decided_at"] else None,
+            row["actor"],
         )
 
     @staticmethod

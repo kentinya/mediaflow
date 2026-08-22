@@ -13,6 +13,7 @@ from mediaflow.application.automation import AutomationJobService
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.task_persistence import ConfirmationStatus
@@ -193,6 +194,10 @@ class MediaFlowApi:
                         self._value(item)
                         for item in self._repository.list_metadata_review_candidates(parts[3])
                     ],
+                    "audit": [
+                        self._metadata_review_audit_value(item)
+                        for item in self._repository.list_metadata_review_audit(parts[3])
+                    ],
                 },
             )
         if method == "GET":
@@ -233,6 +238,23 @@ class MediaFlowApi:
             if value is None:
                 raise LookupError(f"confirmation {parts[3]!r} was not found")
             return self._response(start_response, 200, self._confirmation_value(value))
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "metadata-reviews"]
+            and parts[4] == "resolve"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.RESOLVE_METADATA_REVIEW)
+            document = self._document(environ)
+            if set(document) != {"candidateRank"}:
+                raise ValueError("metadata review resolution requires only candidateRank")
+            candidate_rank = document["candidateRank"]
+            if isinstance(candidate_rank, bool) or not isinstance(candidate_rank, int):
+                raise ValueError("candidateRank must be an integer")
+            value = MetadataReviewService(self._repository).resolve(
+                parts[3], candidate_rank, actor=principal.principal_id
+            )
+            return self._response(start_response, 200, self._value(value))
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "confirmations"]
@@ -450,6 +472,12 @@ class MediaFlowApi:
             return "/api/v1/metadata-reviews/{id}"
         if (
             len(parts) == 5
+            and parts[:3] == ["api", "v1", "metadata-reviews"]
+            and parts[4] == "resolve"
+        ):
+            return "/api/v1/metadata-reviews/{id}/resolve"
+        if (
+            len(parts) == 5
             and parts[:3] == ["api", "v1", "confirmations"]
             and parts[4]
             in {
@@ -521,6 +549,12 @@ class MediaFlowApi:
 
     @classmethod
     def _confirmation_audit_value(cls, value) -> dict:
+        document = cls._value(value)
+        document.pop("note", None)
+        return document
+
+    @classmethod
+    def _metadata_review_audit_value(cls, value) -> dict:
         document = cls._value(value)
         document.pop("note", None)
         return document

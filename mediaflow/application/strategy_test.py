@@ -30,11 +30,13 @@ from mediaflow.domain.metadata import (
     EpisodeIdentity,
     MediaCandidate,
     MediaIdentity,
+    MediaQueryType,
     MediaType,
     MetadataIdentificationResult,
     MetadataPolicy,
     ProviderCapabilities,
 )
+from mediaflow.domain.metadata_review import MetadataSelection
 from mediaflow.domain.naming import NamingContext, NamingError, NamingPolicy, NamingResult
 from mediaflow.domain.organizer import ExecutionResult, OrganizePlan, OrganizePolicy
 from mediaflow.domain.parser import FileContext, ParseResult
@@ -432,6 +434,7 @@ class StrategyTestRunner:
         show_plan: bool = False,
         resource_library_id: str = "strategy-test",
         storage_id: str = "strategy-test",
+        metadata_selection: MetadataSelection | None = None,
     ) -> StrategyTestResult:
         self.validate_configuration(
             live_metadata=live_metadata,
@@ -461,14 +464,53 @@ class StrategyTestRunner:
                     f"MetadataPolicy {resolved.metadata_policy_id!r} referenced by "
                     f"RecognitionTypePolicy {resolved.type_policy_id!r} is not configured."
                 ) from error
+        if metadata_selection is not None and not live_metadata:
+            raise StrategyConfigurationError("metadata selection requires live metadata mode")
         if live_metadata and resolved is not None:
             if self._providers is None:
                 raise StrategyConfigurationError(
                     "live metadata mode requires a configured MetadataProvider registry"
                 )
-            metadata = MetadataIdentificationService(self._providers, self._matcher).identify(
-                recognition, parsed, metadata_policy
-            )
+            identification = MetadataIdentificationService(self._providers, self._matcher)
+            if metadata_selection is not None:
+                if metadata_selection.recognition_type != recognition.recognition_type_id:
+                    raise StrategyConfigurationError(
+                        "resolved metadata selection RecognitionType no longer matches"
+                    )
+                if metadata_selection.metadata_policy_id != resolved.metadata_policy_id:
+                    raise StrategyConfigurationError(
+                        "resolved metadata selection MetadataPolicy no longer matches"
+                    )
+                if metadata_selection.provider != metadata_policy.provider_id:
+                    raise StrategyConfigurationError(
+                        "resolved metadata selection provider no longer matches"
+                    )
+                try:
+                    selected_type = MediaType(metadata_selection.media_type)
+                except ValueError as error:
+                    raise StrategyConfigurationError(
+                        "resolved metadata selection media type is invalid"
+                    ) from error
+                if metadata_policy.query_type is MediaQueryType.NONE:
+                    raise StrategyConfigurationError(
+                        "resolved metadata selection MetadataPolicy no longer permits lookup"
+                    )
+                expected_type = {
+                    MediaQueryType.MOVIE: MediaType.MOVIE,
+                    MediaQueryType.TV: MediaType.TV,
+                }.get(metadata_policy.query_type)
+                if expected_type is not None and selected_type is not expected_type:
+                    raise StrategyConfigurationError(
+                        "resolved metadata selection media type no longer matches"
+                    )
+                metadata = identification.identify_by_provider_id(
+                    recognition,
+                    metadata_selection.provider_id,
+                    selected_type,
+                    metadata_policy,
+                )
+            else:
+                metadata = identification.identify(recognition, parsed, metadata_policy)
         naming = None
         naming_error = None
         if (show_naming or show_plan) and resolved and metadata and metadata.identity:

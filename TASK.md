@@ -1,68 +1,73 @@
-# Phase 18.9 — Persistent Metadata Review Queue
+# Phase 18.10 — Explicit Metadata Review Resolution and Recovery
 
 ## Goal
 
-Capture Metadata NeedConfirm/Ambiguous outcomes as durable, bounded, provider-neutral review records
-for CLI/API and a future UI. This phase is review-queue creation and visibility only: it must not
-select a candidate, fetch more metadata, resume a Task, or execute media operations.
+Allow an authorized operator to explicitly select one candidate already captured by Phase 18.9,
+record an immutable decision audit, and make the waiting TaskItem eligible for a later explicit
+resume. Selection itself must remain persistence-only: no provider/network request, Job creation,
+Task resume, Storage mutation, planning, or execution.
 
-## 1. Review domain and persistence
+## 1. Resolution domain and persistence
 
-- Add immutable MetadataReview and MetadataReviewCandidate snapshot models plus a repository port.
-- Persist review ID, Task/TaskItem identity, source Storage/path, RecognitionType, MetadataPolicy,
-  query, reason/status, timestamps, and bounded candidate snapshots.
-- Candidate snapshots may contain provider/provider ID, media type, title/original title, canonical
-  and regional year, total score, matched provider title/source, and bounded score components.
-- Do not persist provider DTOs, overview/images, alternative-title collections, HTTP data, cache
-  internals, credentials, headers, cookies, tokens, or raw exceptions.
-- Add a compatible SQLite v10 migration, deterministic ordering, bounded list methods, and a unique
-  review per TaskItem.
+- Extend MetadataReview with resolved status, selected candidate identity, decision time, and actor.
+- Add immutable MetadataReviewDecisionAudit records and repository operations.
+- Selection accepts only a candidate rank/provider identity present in the persisted review.
+- Atomically resolve one pending review, append its audit, and transition its TaskItem from
+  `waiting_metadata` to `pending`.
+- Concurrent or repeated resolution must allow exactly one commit; failed audit/item persistence
+  must roll back the whole decision.
+- Add a compatible SQLite v11 migration and restart-safe deterministic reads.
 
-## 2. Workflow integration
+## 2. Explicit recovery integration
 
-- When production Metadata returns NeedConfirm or Ambiguous with candidates, atomically persist the
-  review/candidates and transition the TaskItem to `waiting_metadata`.
-- Release the source lock after durable waiting state.
-- Treat waiting metadata like waiting conflict for Task partial-success accounting and exclude it
-  from blind retry.
-- NotFound, provider errors, and malformed outcomes keep their current failure behavior.
-- Do not change CandidateMatcher thresholds, ordering, score semantics, MetadataProvider behavior,
-  RecognitionType, Naming, Classification, Planner, or Executor.
+- `tasks resume TASK_ID` may include an explicitly resolved metadata item because it is pending.
+- During only that explicit retry, map the stored selection by source Storage/path into the existing
+  production strategy pipeline.
+- Re-run Parser, Recognition, and RecognitionTypePolicy normally, then verify the current
+  RecognitionType, MetadataPolicy, provider, and media type remain compatible with the decision.
+- Fetch canonical identity through the existing MetadataIdentificationService
+  `identify_by_provider_id`; do not reconstruct MediaIdentity from the review snapshot.
+- Continue through unchanged Naming, Classification, Planner, and DryRun/explicit-execute boundaries.
+- A resolution never grants execute authority. A DryRun origin cannot be upgraded to execute.
+- RecognitionType C must remain C.
 
-## 3. Read-only CLI and API
+## 3. CLI and API
 
-- Add `mediaflow metadata-reviews list [--limit N]` and `show REVIEW_ID`.
-- Add authenticated read-only `GET /api/v1/metadata-reviews?limit=N` and
-  `GET /api/v1/metadata-reviews/{id}`.
-- Viewer/operator/executor/auditor/admin may read through the existing read permission.
-- API routes use normalized Phase 18.6 security audit records.
-- CLI/API output is bounded, deterministic, secret-free, and constructs no Storage/provider/network
-  adapter.
+- Add `mediaflow metadata-reviews resolve REVIEW_ID --candidate-rank N [--actor ID] [--note TEXT]`.
+- Show selected candidate and bounded immutable decision audit in review detail output.
+- Add `POST /api/v1/metadata-reviews/{id}/resolve` accepting exactly `candidateRank`.
+- Add a dedicated `resolve_metadata_review` permission for operator/executor/admin; viewer/auditor
+  remain read-only. API actor is always the authenticated principal.
+- Resolution endpoints use normalized Phase 18.6 security audit records and return stable errors
+  without leaking internals.
 
-## 4. Dashboard and safety
+## 4. Safety and privacy
 
-- Add pending metadata-review count to the existing Dashboard snapshot.
-- A review does not authorize a candidate, change RecognitionType, create a Job, resume/retry a
-  Task, or perform Storage mutation.
-- Preserve conflict confirmation, one-time execute authorization, no-overwrite/delete, Scheduler,
-  DryRun, and OrganizerExecutor boundaries.
+- Resolution performs zero Storage construction/mutation and zero provider/network calls.
+- It creates no Task, Job, execution authorization, plan, or execution result and never resumes
+  automatically.
+- Provider detail lookup occurs only after a separate explicit Task resume and remains bounded by
+  the configured provider policy/cache/timeout behavior.
+- Never accept arbitrary provider IDs, titles, paths, policy IDs, RecognitionTypes, execute flags,
+  or actor identity from API clients.
+- Preserve conflict confirmation, no-overwrite/delete, Scheduler, DryRun, and OrganizerExecutor
+  boundaries.
 
 ## Required tests
 
-- NeedConfirm and Ambiguous create durable reviews with correct bounded candidate/evidence snapshots.
-- Matched/NotFound/provider-error outcomes do not create a review.
-- Review creation, candidates, and TaskItem waiting transition are atomic; injected failure rolls
-  back all state.
-- One review per TaskItem and deterministic bounded candidate/list ordering.
-- Restart persistence and SQLite v9-to-v10 migration.
-- Task finish/retry semantics for waiting metadata and source-lock release.
-- CLI/API list/show, limit validation, RBAC read matrix, 404, redaction, normalized security audit.
-- Dashboard pending-review count.
-- Zero Storage mutation/construction, zero provider/network calls during review reads, and no Job or
-  execution creation.
-- RecognitionType C remains C in stored review context.
-- All Metadata/CandidateMatcher, API/RBAC, Dashboard, conflict, Task, DryRun, strategy,
-  notification, Scanner/FileIndex, and Storage regressions.
+- Resolve by valid persisted rank; selected provider/media type and C identity are preserved.
+- Invalid rank, missing review/candidate, already resolved, and non-waiting item fail safely.
+- Decision, audit, and TaskItem transition are atomic; injected failure rolls back all state.
+- Concurrent resolution commits once and restart preserves decision/audit.
+- Explicit retry uses existing provider detail lookup and continues the real pipeline.
+- Changed RecognitionType/MetadataPolicy/provider/media type rejects stale incompatible selection.
+- Provider failure during retry remains a normal item failure and does not alter the decision.
+- CLI/API resolution, permission matrix, input-field rejection, actor protection, redaction, and
+  normalized security audit.
+- Resolution itself has zero Storage/provider/network calls and creates no Job/Task/execution.
+- Resumed DryRun has zero Storage mutation; execute authority rules remain unchanged.
+- All Metadata, strategy, Naming, Classification, Planner/Executor, Task, API/RBAC, Dashboard,
+  conflict, notification, Scanner/FileIndex, Storage, and DryRun regressions.
 
 ## Documentation and validation
 
@@ -72,19 +77,19 @@ diff checks.
 
 ## Out of scope
 
-- Candidate selection/resolution, provider details fetch on selection, automatic resume/retry,
+- Automatic resume/retry or Job creation, candidate search/edit, arbitrary provider-ID entry,
   classification correction, Web UI, remote Overwrite, database users/OIDC, scheduled execute,
-  Rollback, and changes to CandidateMatcher thresholds or TMDB behavior.
+  Rollback, and changes to matcher thresholds/provider semantics.
 
 ## Final report
 
-## Phase 18.9 Result
+## Phase 18.10 Result
 
 PASS / FAIL
 
-## Metadata Review Queue
+## Metadata Resolution
 
-## Workflow Integration
+## Explicit Recovery
 
 ## CLI and API
 

@@ -466,20 +466,20 @@ still interpreted as one admin principal for backward compatibility.
 
 Role permissions are fixed and additive:
 
-| Role | Read | Submit scan/preview | Cancel Job | Resolve confirmation | Remote execute | Read security audit |
-|---|---:|---:|---:|---:|---:|---:|
-| `viewer` | yes | no | no | no | no | no |
-| `operator` | yes | yes | yes | yes | no | no |
-| `executor` | yes | yes | yes | yes | yes | no |
-| `auditor` | yes | no | no | no | no | yes |
-| `admin` | yes | yes | yes | yes | yes | yes |
+| Role | Read | Submit scan/preview | Cancel Job | Resolve conflict | Resolve metadata | Remote execute | Security audit |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `viewer` | yes | no | no | no | no | no | no |
+| `operator` | yes | yes | yes | yes | yes | no | no |
+| `executor` | yes | yes | yes | yes | yes | yes | no |
+| `auditor` | yes | no | no | no | no | no | yes |
+| `admin` | yes | yes | yes | yes | yes | yes | yes |
 
 Remote execute also requires the Phase 18.5 feature flag and a separate valid one-time execution
 token. An executor role never bypasses that second gate or conflict/overwrite protections.
 
-Operator, executor, and admin roles additionally have `resolve_confirmation`; this records only
-remote `skip`/`rename` decisions. Viewer and auditor do not have it. Remote overwrite is forbidden
-for every role and remains available only through the explicit local CLI confirmation flow.
+Operator, executor, and admin roles additionally have `resolve_confirmation` and
+`resolve_metadata_review`. Viewer and auditor remain read-only. Remote overwrite is forbidden for
+every role and remains available only through the explicit local CLI confirmation flow.
 
 ```bash
 export MEDIAFLOW_VIEWER_TOKEN='<long-random-viewer-token>'
@@ -538,6 +538,12 @@ The API equivalents are `GET /api/v1/metadata-reviews?limit=N` and
 `GET /api/v1/metadata-reviews/{id}`; `N` must be between 1 and 100. These reads use ordinary read
 permission and never construct Storage or MetadataProvider adapters. They expose bounded scoring
 evidence only, not credentials, provider payloads, overview/images, headers, or raw errors.
+
+An operator/executor/admin may resolve exactly one persisted candidate rank with
+`POST /api/v1/metadata-reviews/{id}/resolve` and body `{"candidateRank":1}`. Provider IDs, actor,
+paths, policies, and execute fields cannot be supplied. Resolution only records the decision and
+makes the original item pending; `mediaflow tasks resume TASK_ID` is a separate explicit action and
+requires `TMDB_ACCESS_TOKEN` for canonical provider details.
 
 ### Resident Worker, interval schedules, and Cron
 

@@ -116,6 +116,10 @@ Phase 18.9 已完成持久元数据复核队列：NeedConfirm/Ambiguous 候选�
 快照持久化，TaskItem 原子进入 `waiting_metadata` 并释放源锁；CLI/API/Dashboard 只提供
 脱敏可见性，不选择候选、不访问 Provider、不自动恢复或执行。
 
+Phase 18.10 已完成显式元数据候选选择与恢复接线：仅允许选择持久快照 rank，决策/审计/
+TaskItem 状态原子提交；选择本身零网络、零 Storage、零 Job，只有后续显式 `tasks resume`
+才校验策略并通过现有 Provider-ID 详情流程继续处理。
+
 ### Phase 19：Web UI 与生产发布
 
 - Dashboard、Storage/Library/Policy 管理、候选确认、冲突处理、任务和历史页面。
@@ -126,7 +130,7 @@ Phase 18.9 已完成持久元数据复核队列：NeedConfirm/Ambiguous 候选�
 
 下一任务应限定为 Phase 18，不同时启动 Web UI。优先顺序：
 
-1. 设计显式元数据候选选择、按需 Provider 详情补全及可审计恢复流程，不自动执行媒体操作。
+1. 设计分类人工修正或最小 Web UI 壳，不扩大 Organizer 执行权限。
 2. 评估数据库用户/OIDC、凭证轮换和 TLS 部署边界。
 3. 评估节假日日历等高级调度需求，避免扩大 Cron 核心。
 4. 保持 Storage 预检、附件、冲突确认和一次性执行授权不变。

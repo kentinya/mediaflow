@@ -687,9 +687,18 @@ review records, and waiting metadata is excluded from blind failed-item retry.
 The queue preserves RecognitionType (including C) and captures only identifiers, query context,
 titles/years, matched-title evidence, and bounded scores. It deliberately excludes provider DTOs,
 alternative-title collections, overview/images, HTTP/cache data, credentials, and raw exceptions.
-CLI and authenticated API list/show paths are read-only repository operations: they do not
-construct Storage or provider adapters, create Jobs, resolve candidates, resume Tasks, or execute
-Organizer operations. Candidate selection and recovery remain a future explicit workflow.
+CLI and authenticated API list/show paths are read-only repository operations. Phase 18.10 adds an
+explicit rank-only resolution command and least-privilege API action. SQLite atomically changes the
+review to resolved, appends immutable decision audit, and transitions its TaskItem from
+`waiting_metadata` to `pending`; concurrent decisions commit once. Resolution constructs no
+Storage/provider, creates no Job/Task, and never resumes automatically.
+
+A later explicit `tasks resume` re-runs Parser, Recognition, and policy resolution. The saved
+RecognitionType, MetadataPolicy, provider, and media type must still match; stale decisions fail
+closed. Only then does the existing MetadataIdentificationService provider-ID details path obtain a
+canonical MediaIdentity before unchanged Naming/Classification/Planner/Executor stages. The review
+snapshot is never promoted directly into MediaIdentity, C remains C, and original execution
+authority cannot be widened.
 
 ## Classification policies and engine
 

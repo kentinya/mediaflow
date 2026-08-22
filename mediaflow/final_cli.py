@@ -25,12 +25,14 @@ from mediaflow.application.execution_authorization import ExecutionAuthorization
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.cli import render_strategy_result
 from mediaflow.domain.automation import AutomationCommand, CronSchedule
+from mediaflow.domain.metadata_review import MetadataReviewStatus, MetadataSelection
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.task_persistence import (
@@ -188,6 +190,11 @@ def final_main(
     metadata_review_list.add_argument("--limit", type=int, default=100)
     metadata_review_show = metadata_review_commands.add_parser("show")
     metadata_review_show.add_argument("review_id")
+    metadata_review_resolve = metadata_review_commands.add_parser("resolve")
+    metadata_review_resolve.add_argument("review_id")
+    metadata_review_resolve.add_argument("--candidate-rank", required=True, type=int)
+    metadata_review_resolve.add_argument("--actor")
+    metadata_review_resolve.add_argument("--note")
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_serve = api_commands.add_parser("serve")
@@ -228,7 +235,7 @@ def final_main(
                             repository.list_metadata_reviews(limit=arguments.limit)
                         )
                     )
-                else:
+                elif arguments.metadata_review_command == "show":
                     review = repository.get_metadata_review(arguments.review_id)
                     if review is None:
                         raise LookupError(f"metadata review {arguments.review_id!r} was not found")
@@ -236,6 +243,21 @@ def final_main(
                         render_metadata_review(
                             review,
                             repository.list_metadata_review_candidates(review.review_id),
+                            repository.list_metadata_review_audit(review.review_id),
+                        )
+                    )
+                else:
+                    review = MetadataReviewService(repository).resolve(
+                        arguments.review_id,
+                        arguments.candidate_rank,
+                        actor=arguments.actor,
+                        note=arguments.note,
+                    )
+                    stdout.write(
+                        render_metadata_review(
+                            review,
+                            repository.list_metadata_review_candidates(review.review_id),
+                            repository.list_metadata_review_audit(review.review_id),
                         )
                     )
             return 0
@@ -635,6 +657,21 @@ def final_main(
                 }
                 if retry_items is not None
                 else {},
+                metadata_selections={
+                    (stored.storage_id, stored.source_path): MetadataSelection(
+                        review.recognition_type,
+                        review.metadata_policy_id,
+                        review.selected_provider,
+                        review.selected_provider_id,
+                        review.selected_media_type,
+                    )
+                    for stored in (retry_items or ())
+                    if (review := repository.get_metadata_review_for_item(stored.item_id))
+                    and review.status is MetadataReviewStatus.RESOLVED
+                    and review.selected_provider is not None
+                    and review.selected_provider_id is not None
+                    and review.selected_media_type is not None
+                },
             )
             if retry_items is not None:
                 libraries = {item.library_id: item for item in configuration.resource_libraries}
@@ -999,7 +1036,7 @@ def render_metadata_reviews(values) -> str:
     return "\n".join(lines)
 
 
-def render_metadata_review(review, candidates) -> str:
+def render_metadata_review(review, candidates, audit=()) -> str:
     lines = [
         "",
         "METADATA REVIEW",
@@ -1011,6 +1048,10 @@ def render_metadata_review(review, candidates) -> str:
         f"RecognitionType: {review.recognition_type}",
         f"MetadataPolicy: {review.metadata_policy_id}",
         f"Query: {review.query}",
+        f"Selected rank: {review.selected_rank or '-'}",
+        f"Selected candidate: {review.selected_provider}:{review.selected_provider_id}"
+        if review.selected_provider_id
+        else "Selected candidate: -",
         "",
         "CANDIDATES",
         "",
@@ -1020,6 +1061,14 @@ def render_metadata_review(review, candidates) -> str:
         f"year={item.canonical_year or '-'} | score={item.total_score}"
         for item in candidates
     )
+    lines.extend(("", "DECISION AUDIT", ""))
+    lines.extend(
+        f"{item.decided_at.isoformat()} | rank={item.selected_rank} | "
+        f"{item.provider}:{item.provider_id} | {item.actor or '-'}"
+        for item in audit
+    )
+    if not audit:
+        lines.append("None")
     lines.append("")
     return "\n".join(lines)
 

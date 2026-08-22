@@ -40,6 +40,7 @@
 
 - Phase 18.8 RBAC-protected conflict confirmation service API: PASS
 - Phase 18.9 persistent metadata review queue: PASS
+- Phase 18.10 explicit metadata review resolution and recovery: PASS
 
 ## Planned
 
@@ -850,5 +851,17 @@ Phase 18.9 persistent metadata review queue (2026-08-22): PASS
 - Added zero-Storage/provider CLI and authenticated API list/show visibility plus Dashboard pending
   count; no candidate selection, Job creation, automatic resume, or execution is permitted
 - Full suite: 377 tests, 374 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated-free wheel build, both example validations,
+  FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 18.10 explicit metadata review resolution and recovery (2026-08-22): PASS
+
+- Added rank-only metadata candidate decisions, immutable audit, and atomic resolved-review plus
+  waiting-to-pending TaskItem transition in SQLite v11
+- Added operator/executor/admin CLI/API resolution while viewer/auditor remain read-only; selection
+  performs zero Storage/provider calls and never creates or resumes a Task/Job
+- Explicit Task resume validates RecognitionType/policy/provider/media type and uses the existing
+  provider-ID details flow; C remains C and execution authority cannot be widened
+- Full suite: 385 tests, 382 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated-free wheel build, both example validations,
   FFmpeg/FFprobe runtime audit, and diff check passed

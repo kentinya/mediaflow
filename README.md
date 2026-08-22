@@ -34,6 +34,7 @@ mediaflow config validate
 mediaflow dashboard --recent-limit 10
 mediaflow metadata-reviews list --limit 100
 mediaflow metadata-reviews show REVIEW_ID
+mediaflow metadata-reviews resolve REVIEW_ID --candidate-rank 1
 mediaflow scan --limit 20
 mediaflow preview --limit 20
 mediaflow organize --limit 20
@@ -258,10 +259,19 @@ curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
   'http://127.0.0.1:8787/api/v1/metadata-reviews?limit=20'
 ```
 
-NeedConfirm/Ambiguous items enter `waiting_metadata` and release their source lock. The queue is
-visibility-only: it does not select a candidate, contact a provider, resume a Task, create a Job,
-or mutate Storage. Candidate snapshots are capped at 20 and exclude overview, images, provider
-DTOs, credentials, and raw HTTP/error data.
+NeedConfirm/Ambiguous items enter `waiting_metadata` and release their source lock. Candidate
+snapshots are capped at 20 and exclude overview, images, provider DTOs, credentials, and raw
+HTTP/error data. Resolve only a displayed rank, then resume explicitly:
+
+```bash
+mediaflow metadata-reviews resolve REVIEW_ID --candidate-rank 1 --actor local-operator
+mediaflow tasks resume TASK_ID
+```
+
+Resolution is persistence-only: it records an immutable decision and changes the waiting item to
+pending, but does not contact a provider, resume a Task, create a Job, or mutate Storage. The later
+explicit resume re-runs recognition/policy checks and uses the existing provider-ID details flow;
+it cannot upgrade a DryRun task to execute.
 
 ## Persistent runtime state
 
@@ -282,6 +292,7 @@ The core pipeline, persistent recovery/conflict decisions, attachments, read-onl
 persistent scan/preview jobs, Cron schedules, and signed Webhook notifications are complete.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
 Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
-The operational Dashboard read model is available to CLI/API without a Web UI. Database-managed
+The operational Dashboard and explicit metadata-review resolution are available without a Web UI.
+Database-managed
 users/login, token rotation, scheduled execute, and Web UI remain planned;
 unattended scheduled real organization is not supported.

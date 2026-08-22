@@ -14,6 +14,7 @@ from mediaflow.domain.history import OperationHistoryRecord, OperationHistoryRep
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.logging import Logger, LogLevel
 from mediaflow.domain.metadata import MetadataIdentificationStatus
+from mediaflow.domain.metadata_review import MetadataSelection
 from mediaflow.domain.organizer import (
     ConflictStrategy,
     ExecutionResult,
@@ -106,6 +107,7 @@ class MediaOrganizerService:
         task_coordinator: PersistentTaskCoordinator | None = None,
         task_id: str | None = None,
         conflict_decisions: dict[tuple[str, str], ConflictConfirmation] | None = None,
+        metadata_selections: dict[tuple[str, str], MetadataSelection] | None = None,
     ) -> None:
         self._strategy = strategy
         self._scanner = scanner
@@ -122,6 +124,7 @@ class MediaOrganizerService:
         self._task_coordinator = task_coordinator
         self._task_id = task_id
         self._conflict_decisions = conflict_decisions or {}
+        self._metadata_selections = metadata_selections or {}
 
     def process_file(
         self,
@@ -148,6 +151,9 @@ class MediaOrganizerService:
                 show_classification=True,
                 resource_library_id=resource_library.library_id,
                 storage_id=resource_library.storage_id,
+                metadata_selection=self._metadata_selections.get(
+                    (resource_library.storage_id, storage_path)
+                ),
             )
             self._log(
                 LogLevel.DEBUG,

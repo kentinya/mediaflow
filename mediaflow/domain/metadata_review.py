@@ -10,6 +10,7 @@ from mediaflow.domain.task_persistence import PersistentTaskItem
 
 class MetadataReviewStatus(StrEnum):
     PENDING = "pending"
+    RESOLVED = "resolved"
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,34 @@ class MetadataReview:
     status: MetadataReviewStatus
     created_at: datetime
     updated_at: datetime
+    selected_rank: int | None = None
+    selected_provider: str | None = None
+    selected_provider_id: str | None = None
+    selected_media_type: str | None = None
+    decided_at: datetime | None = None
+    actor: str | None = None
+
+
+@dataclass(frozen=True)
+class MetadataReviewDecisionAudit:
+    audit_id: str
+    review_id: str
+    selected_rank: int
+    provider: str
+    provider_id: str
+    media_type: str
+    decided_at: datetime
+    actor: str | None = None
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class MetadataSelection:
+    recognition_type: str
+    metadata_policy_id: str
+    provider: str
+    provider_id: str
+    media_type: str
 
 
 class MetadataReviewRepository(Protocol):
@@ -61,7 +90,17 @@ class MetadataReviewRepository(Protocol):
     ) -> None: ...
 
     def get_metadata_review(self, review_id: str) -> MetadataReview | None: ...
+    def get_metadata_review_for_item(self, item_id: str) -> MetadataReview | None: ...
     def list_metadata_reviews(self, *, limit: int = 100) -> tuple[MetadataReview, ...]: ...
     def list_metadata_review_candidates(
         self, review_id: str
     ) -> tuple[MetadataReviewCandidate, ...]: ...
+    def resolve_metadata_review(
+        self,
+        review: MetadataReview,
+        audit: MetadataReviewDecisionAudit,
+        item: PersistentTaskItem,
+    ) -> None: ...
+    def list_metadata_review_audit(
+        self, review_id: str
+    ) -> tuple[MetadataReviewDecisionAudit, ...]: ...
