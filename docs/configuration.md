@@ -425,7 +425,7 @@ read-only Task/Job/Confirmation queries plus scan/preview submission and pending
 Remote organize/execute is rejected. The server is a loopback development adapter, not a hardened
 Internet-facing deployment.
 
-### Resident Worker and interval schedules
+### Resident Worker, interval schedules, and Cron
 
 ```json
 "automation": {
@@ -433,7 +433,9 @@ Internet-facing deployment.
   "schedulerPollSeconds": 5,
   "schedules": [
     {"id": "hourly-scan", "command": "scan", "intervalSeconds": 3600,
-     "limit": 20, "enabled": false}
+     "limit": 20, "enabled": false},
+    {"id": "cn-morning-preview", "command": "preview", "cron": "0 8 * * *",
+     "timezone": "Asia/Shanghai", "limit": 20, "enabled": false}
   ]
 }
 ```
@@ -445,6 +447,8 @@ enabled tick emits one job and persists its next-run time. Missed periods do not
 mediaflow scheduler list
 mediaflow scheduler tick
 mediaflow scheduler run
+mediaflow scheduler audit
+mediaflow scheduler audit cn-morning-preview --limit 100
 mediaflow worker run
 mediaflow jobs cancel JOB_ID
 mediaflow jobs stale --age-seconds 3600
@@ -453,6 +457,13 @@ mediaflow jobs requeue JOB_ID --age-seconds 3600
 
 Worker/Scheduler stop gracefully on SIGINT/SIGTERM. Running cancellation is cooperative between
 items. Stale jobs require an explicit age-guarded requeue because prior external work is uncertain.
+
+A schedule configures exactly one of `intervalSeconds` or `cron`. Cron has five numeric fields:
+minute, hour, day-of-month, month, and day-of-week (Sunday is 0). It supports `*`, comma lists,
+inclusive ranges, and positive steps on `*` or a range. Restricted day-of-month/day-of-week use OR
+semantics. Names, macros, seconds, reversed ranges, and shell content are rejected. IANA `timezone`
+is mandatory. UTC instants are persisted and CLI displays UTC/local values. Nonexistent DST wall
+times are skipped; ambiguous times use fold 0 and emit once. Each emission creates immutable audit.
 An organize policy also controls conflict behavior:
 
 ```json

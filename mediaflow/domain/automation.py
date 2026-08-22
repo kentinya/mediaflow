@@ -55,11 +55,54 @@ class IntervalSchedule:
 
 
 @dataclass(frozen=True)
+class CronSchedule:
+    schedule_id: str
+    command: AutomationCommand
+    expression: str
+    timezone: str
+    limit: int | None = None
+    enabled: bool = True
+
+    def __post_init__(self) -> None:
+        from datetime import UTC, datetime
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        from mediaflow.domain.cron import CronExpression
+
+        if not self.schedule_id:
+            raise ValueError("schedule ID must be non-empty")
+        if not isinstance(self.command, AutomationCommand):
+            object.__setattr__(self, "command", AutomationCommand(self.command))
+        expression = CronExpression.parse(self.expression)
+        try:
+            timezone = ZoneInfo(self.timezone)
+        except (ZoneInfoNotFoundError, ValueError) as error:
+            raise ValueError(f"unknown schedule timezone {self.timezone!r}") from error
+        expression.next_after(datetime.now(UTC), timezone)
+        if self.limit is not None and self.limit < 1:
+            raise ValueError("schedule limit must be positive")
+
+
+ScheduleDefinition = IntervalSchedule | CronSchedule
+
+
+@dataclass(frozen=True)
 class ScheduleState:
     schedule_id: str
     next_run_at: datetime
     updated_at: datetime
     last_job_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ScheduleAuditRecord:
+    audit_id: str
+    schedule_id: str
+    occurrence_at: datetime
+    emitted_at: datetime
+    job_id: str
+    command: AutomationCommand
+    next_run_at: datetime
 
 
 class AutomationJobRepository(Protocol):
@@ -72,7 +115,19 @@ class AutomationJobRepository(Protocol):
     def job_cancellation_requested(self, job_id: str) -> bool: ...
     def list_stale_running_jobs(self, before: datetime) -> tuple[AutomationJob, ...]: ...
     def requeue_stale_job(self, job_id: str, before: datetime, now: datetime) -> AutomationJob: ...
+    def get_schedule_state(self, schedule_id: str) -> ScheduleState | None: ...
+    def initialize_schedule_state(
+        self, schedule_id: str, next_run_at: datetime, now: datetime
+    ) -> ScheduleState: ...
     def enqueue_due_schedule(
-        self, schedule: IntervalSchedule, job: AutomationJob, now: datetime
+        self,
+        schedule_id: str,
+        job: AutomationJob,
+        occurrence_at: datetime,
+        next_run_at: datetime,
+        now: datetime,
     ) -> bool: ...
     def list_schedule_states(self) -> tuple[ScheduleState, ...]: ...
+    def list_schedule_audit(
+        self, schedule_id: str | None = None, *, limit: int | None = None
+    ) -> tuple[ScheduleAuditRecord, ...]: ...

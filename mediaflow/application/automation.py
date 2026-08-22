@@ -2,16 +2,20 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationJob,
     AutomationJobRepository,
     AutomationJobStatus,
+    CronSchedule,
     IntervalSchedule,
+    ScheduleDefinition,
 )
+from mediaflow.domain.cron import CronExpression
 
 
 class AutomationCancelled(RuntimeError):
@@ -139,16 +143,29 @@ class IntervalScheduler:
     def __init__(
         self,
         repository: AutomationJobRepository,
-        schedules: tuple[IntervalSchedule, ...],
+        schedules: tuple[ScheduleDefinition, ...],
     ) -> None:
         self._repository = repository
         self._schedules = schedules
+        self._cron = {
+            item.schedule_id: CronExpression.parse(item.expression)
+            for item in schedules
+            if isinstance(item, CronSchedule)
+        }
 
     def tick(self, now: datetime | None = None) -> tuple[AutomationJob, ...]:
         current = now or datetime.now(UTC)
         queued = []
         for schedule in self._schedules:
             if not schedule.enabled:
+                continue
+            state = self._repository.get_schedule_state(schedule.schedule_id)
+            if state is None:
+                initial = self._initial_run(schedule, current)
+                state = self._repository.initialize_schedule_state(
+                    schedule.schedule_id, initial, current
+                )
+            if state.next_run_at > current:
                 continue
             job = AutomationJob(
                 str(uuid4()),
@@ -159,9 +176,29 @@ class IntervalScheduler:
                 limit=schedule.limit,
                 schedule_id=schedule.schedule_id,
             )
-            if self._repository.enqueue_due_schedule(schedule, job, current):
+            next_run = self._next_run(schedule, current)
+            if self._repository.enqueue_due_schedule(
+                schedule.schedule_id,
+                job,
+                state.next_run_at,
+                next_run,
+                current,
+            ):
                 queued.append(job)
         return tuple(queued)
+
+    def _initial_run(self, schedule: ScheduleDefinition, now: datetime) -> datetime:
+        if isinstance(schedule, IntervalSchedule):
+            return now
+        minute = now.astimezone(UTC).replace(second=0, microsecond=0)
+        return self._cron[schedule.schedule_id].next_at_or_after(
+            minute, ZoneInfo(schedule.timezone)
+        )
+
+    def _next_run(self, schedule: ScheduleDefinition, now: datetime) -> datetime:
+        if isinstance(schedule, IntervalSchedule):
+            return now + timedelta(seconds=schedule.interval_seconds)
+        return self._cron[schedule.schedule_id].next_after(now, ZoneInfo(schedule.timezone))
 
     def run(
         self,

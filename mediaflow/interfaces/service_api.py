@@ -87,6 +87,19 @@ class MediaFlowApi:
                     ]
                 },
             )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "schedules"]
+            and parts[4] == "audit"
+            and method == "GET"
+        ):
+            known = {item.schedule_id for item in self._schedules}
+            if parts[3] not in known:
+                raise LookupError(f"schedule {parts[3]!r} was not found")
+            values = self._repository.list_schedule_audit(parts[3], limit=100)
+            return self._response(
+                start_response, 200, {"items": [self._value(item) for item in values]}
+            )
         if parts == ["api", "v1", "jobs"]:
             if method == "GET":
                 values = self._repository.list_jobs(limit=100)

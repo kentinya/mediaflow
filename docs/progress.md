@@ -753,3 +753,16 @@ Phase 18.2 resident Worker, cooperative cancellation, and interval Scheduler (20
 - Added configuration-driven scan/preview interval schedules, CLI controls, and authenticated
   read-only schedule API output; organize/execute schedule configuration is rejected
 - Full suite: 318 tests, 315 passed, 0 failed, 3 optional real integrations skipped
+
+Phase 18.3 Cron/time-zone Scheduler and immutable schedule audit (2026-08-22): PASS
+
+- Added a bounded five-field numeric Cron parser with wildcard/list/range/step validation and
+  explicit day-of-month/day-of-week OR semantics
+- Added IANA zoneinfo evaluation, UTC persistence, leap/month/year handling, nonexistent DST-time
+  skipping, and deterministic single emission for ambiguous wall times
+- Generalized Runtime schedules to exactly one interval or Cron timing mode while preserving
+  interval configuration and state compatibility
+- Upgraded SQLite runtime schema to v6 with append-only schedule occurrence audit; conditional state
+  advancement prevents duplicate concurrent/restart emission and missed occurrences coalesce
+- Added CLI/API schedule audit and UTC/local schedule visibility with zero Storage/provider access
+- Full suite: 329 tests, 326 passed, 0 failed, 3 optional real integrations skipped

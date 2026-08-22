@@ -52,6 +52,8 @@ mediaflow worker run
 mediaflow scheduler list
 mediaflow scheduler tick
 mediaflow scheduler run
+mediaflow scheduler audit
+mediaflow scheduler audit SCHEDULE_ID --limit 100
 mediaflow api serve --host 127.0.0.1 --port 8787
 ```
 
@@ -135,6 +137,17 @@ default. Run Scheduler and Worker separately. `jobs cancel JOB_ID` cancels pendi
 or requests cooperative cancellation of running work before another media item starts; an in-flight
 read may finish. Stale crash leftovers are never retried automatically: inspect with
 `jobs stale --age-seconds N` and explicitly use `jobs requeue JOB_ID --age-seconds N`.
+
+Phase 18.3 supports a validated five-field Cron subset with an explicit IANA time zone:
+
+```json
+{"id": "cn-morning-preview", "command": "preview", "cron": "0 8 * * *",
+ "timezone": "Asia/Shanghai", "limit": 20, "enabled": false}
+```
+
+Cron supports numeric `*`, lists, inclusive ranges, and positive steps. It has no seconds, names,
+macros, shell commands, or catch-up backlog. Nonexistent DST wall times are skipped and an ambiguous
+wall time fires once. Every emission is appended to SQLite schedule audit.
 
 ## Persistent runtime state
 

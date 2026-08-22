@@ -1,91 +1,84 @@
-# Phase 18.2 — Resident Worker + Cooperative Cancellation + Interval Scheduler
+# Phase 18.3 — Cron/Timezone Scheduler + Persistent Schedule Audit
 
 ## Goal
 
-Complete the safe automation loop for scan and preview: add a controlled resident Worker,
-cooperative cancellation at batch/scan boundaries, and persistent interval schedules. Reuse the
-Phase 18.1 queue and existing Application Services. Do not expose real organization execution.
+Extend the accepted Scheduler with deterministic five-field Cron schedules, IANA time zones, and
+persistent immutable emission audit. Preserve interval schedules and the scan/preview-only queue.
+Do not expose real organization execution or add notification delivery.
 
-## 1. Cooperative job cancellation
+## 1. Cron expression model
 
-- A pending job is cancelled immediately.
-- A running job records `cancellationRequested` durably and the Worker observes it through a
-  cancellation probe.
-- Pass the probe into existing scan/batch orchestration so discovery stops before starting another
-  file. Do not move cancellation logic into Parser, strategy engines, or Storage adapters.
-- Cancellation is cooperative: an in-flight provider or Storage read may finish, but no new item is
-  started afterward.
-- A cancelled workflow ends as `cancelled`, not `failed`, and retains its related Task audit.
+- Support exactly five fields: minute, hour, day-of-month, month, day-of-week.
+- Support `*`, comma lists, inclusive ranges, and positive `/step` syntax.
+- Validate bounds and reject names, macros, seconds fields, empty fields, reversed ranges, zero
+  steps, and pathological expressions.
+- Define day-of-month/day-of-week combination semantics explicitly and test them.
+- Parsing/evaluation must be deterministic, bounded, and use no shell or external cron process.
 
-## 2. Resident Worker
+## 2. Time zones and calendar behavior
 
-- Add `mediaflow worker run` with configurable bounded polling and graceful SIGINT/SIGTERM stop.
-- Keep `worker run-next` for deterministic operations and tests.
-- Only one job is processed at a time per Worker; SQLite atomic claiming still prevents duplicate
-  work across multiple processes.
-- Add explicit stale-running-job inspection/requeue. Never silently requeue a possibly completed
-  job. Requeue requires an age threshold and operator command.
-- Worker errors remain isolated and redacted; one failed job does not terminate resident mode.
+- Configure an IANA time-zone ID per Cron schedule and validate it with standard-library zoneinfo.
+- Persist schedule instants in UTC; render both UTC and configured local schedule information.
+- Skip nonexistent local wall times during DST transitions.
+- Emit an ambiguous repeated local wall time once, with documented deterministic fold behavior.
+- Next-run calculation must be bounded and correctly cross month/year/leap-day boundaries.
 
-## 3. Persistent interval schedules
+## 3. Scheduler integration and persistence
 
-- Load schedules from RuntimeConfiguration.
-- A schedule has unique ID, `scan` or `preview`, positive `intervalSeconds`, optional positive limit,
-  enabled flag, and a persisted next-run timestamp.
-- `mediaflow scheduler tick` evaluates due schedules once and queues jobs idempotently.
-- `mediaflow scheduler run` performs bounded polling and graceful shutdown.
-- Restart must not duplicate an already emitted occurrence.
-- Scheduling always creates DryRun-safe commands; organize/execute is invalid configuration.
+- Runtime configuration accepts either `intervalSeconds` or `cron` plus `timezone`, never both.
+- Preserve existing interval behavior and persisted state compatibility.
+- First Cron evaluation queues the current matching minute once or persists the next future match.
+- Atomic tick/restart behavior must prevent duplicate jobs across multiple Scheduler processes.
+- Missed Cron occurrences are coalesced into one current job; do not create unbounded backlog.
+- Upgrade SQLite compatibly and retain existing jobs/schedule states.
 
-## 4. CLI and API
+## 4. Immutable schedule audit
 
-- Existing `jobs cancel` and `POST /api/v1/jobs/{id}/cancel` request cancellation for pending or
-  running jobs.
-- Add job cancellation state to API/CLI output.
-- Add read-only `GET /api/v1/schedules`.
-- Scheduling configuration validation and listing never construct Storage or require TMDB secrets.
+- Persist every emitted occurrence with audit ID, schedule ID, occurrence UTC, emitted timestamp,
+  job ID, command, and next-run UTC.
+- Audit records are append-only and contain no secrets or Storage access details.
+- Add `mediaflow scheduler audit [SCHEDULE_ID] [--limit N]`.
+- Add authenticated read-only `GET /api/v1/schedules/{id}/audit`.
+- Unknown schedule IDs fail clearly; listing/audit never constructs Storage.
 
-## 5. Safety
+## 5. Safety and compatibility
 
-- Only scan and preview may be queued or scheduled.
-- Preview remains DryRun; zero Storage mutations under normal, cancelled, failed, and stale-requeue
-  paths.
+- Cron schedules may queue only scan and preview; organize/execute remains invalid.
+- Scheduler and audit perform zero Storage mutations and no provider/network calls.
+- Preview remains DryRun under interval and Cron scheduling.
 - No implicit overwrite/delete and no remote OrganizerExecutor execute mode.
-- RecognitionType C and all accepted pipeline behavior remain unchanged.
+- Existing Worker cancellation/stale recovery and RecognitionType C behavior remain unchanged.
 
 ## Required tests
 
-- SQLite migration for cancellation and schedules.
-- Pending cancellation, running cancellation request, cooperative stop between items, and cancelled
-  terminal state.
-- Resident Worker idle polling, multiple jobs, failure isolation, graceful stop, and no busy loop.
-- Schedule validation, due/not-due/disabled evaluation, restart idempotency, and multiple schedules.
-- Stale inspection and explicit safe requeue; non-stale/unknown/completed rejection.
-- API cancellation and read-only schedule output.
-- Zero mutation for Worker/Scheduler/API and complete existing regressions.
+- Cron parser valid/invalid matrix, bounds, lists, ranges, and steps.
+- UTC and non-UTC time zones, day-field semantics, month/year/leap-day transitions.
+- DST nonexistent and ambiguous wall-time behavior.
+- Current-minute, future, missed occurrence coalescing, disabled, restart, and concurrent tick cases.
+- Interval compatibility and SQLite v5-to-v6 migration.
+- Immutable audit ordering/filter/limit, CLI/API serialization, unknown IDs, and zero mutation.
+- All Phase 18.1/18.2 and complete existing regressions.
 
 ## Documentation and validation
 
 Update README, example/catalog configuration, architecture, progress, roadmap, and product status.
-Run all tests, formatter, linter, compile, dependency, wheel, configuration, FFprobe/FFmpeg, and
-diff checks.
+Run all tests and all configured quality/build/security checks.
 
 ## Out of scope
 
-- Cron expressions and calendar/time-zone schedules.
 - Remote organize/execute, Webhooks/notifications, Web UI, user/role/TLS work.
-- Forced interruption of an in-flight network request or process killing.
+- Cron names/macros/seconds, holiday calendars, catch-up backlogs, and notification delivery.
 - Strategy, Storage, Planner, or OrganizerExecutor redesign.
 
 ## Final report
 
-## Phase 18.2 Result
+## Phase 18.3 Result
 
 PASS / FAIL
 
-## Cancellation
+## Cron and Time Zones
 
-## Worker
+## Schedule Audit
 
 ## Scheduler
 

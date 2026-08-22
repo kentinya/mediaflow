@@ -10,7 +10,7 @@ from mediaflow.application.strategy_test import (
     StrategyTestConfiguration,
     strategy_runner_from_configuration,
 )
-from mediaflow.domain.automation import AutomationCommand, IntervalSchedule
+from mediaflow.domain.automation import AutomationCommand, CronSchedule, IntervalSchedule
 from mediaflow.domain.library import DEFAULT_MEDIA_EXTENSIONS, MediaLibrary, ResourceLibrary
 from mediaflow.domain.storage import Storage
 from mediaflow.infrastructure.local_storage import LocalStorage
@@ -225,7 +225,7 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         isinstance(item, dict) for item in raw_schedules
     ):
         raise ValueError("automation schedules must be an array of objects")
-    schedules = tuple(_interval_schedule(item) for item in raw_schedules)
+    schedules = tuple(_schedule(item) for item in raw_schedules)
     schedule_ids = [item.schedule_id for item in schedules]
     if len(schedule_ids) != len(set(schedule_ids)):
         raise ValueError("automation schedule IDs must be unique")
@@ -428,7 +428,7 @@ def _positive_number(value: object, label: str) -> float:
     return float(value)
 
 
-def _interval_schedule(value: dict) -> IntervalSchedule:
+def _schedule(value: dict) -> IntervalSchedule | CronSchedule:
     command_value = _required(value, "command")
     try:
         command = AutomationCommand(command_value)
@@ -440,10 +440,25 @@ def _interval_schedule(value: dict) -> IntervalSchedule:
     enabled = value.get("enabled", True)
     if not isinstance(enabled, bool):
         raise ValueError("automation schedule enabled must be boolean")
-    return IntervalSchedule(
+    has_interval = "intervalSeconds" in value
+    has_cron = "cron" in value
+    if has_interval == has_cron:
+        raise ValueError("automation schedule requires exactly one of intervalSeconds or cron")
+    if has_interval:
+        if "timezone" in value:
+            raise ValueError("interval schedule must not configure timezone")
+        return IntervalSchedule(
+            _required(value, "id"),
+            command,
+            _positive_number(value.get("intervalSeconds"), "schedule intervalSeconds"),
+            limit,
+            enabled,
+        )
+    return CronSchedule(
         _required(value, "id"),
         command,
-        _positive_number(value.get("intervalSeconds"), "schedule intervalSeconds"),
+        _required(value, "cron"),
+        _required(value, "timezone"),
         limit,
         enabled,
     )

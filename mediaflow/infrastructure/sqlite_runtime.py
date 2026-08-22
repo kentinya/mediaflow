@@ -10,7 +10,7 @@ from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationJob,
     AutomationJobStatus,
-    IntervalSchedule,
+    ScheduleAuditRecord,
     ScheduleState,
 )
 from mediaflow.domain.task_persistence import (
@@ -24,7 +24,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class SQLiteTaskRepository:
@@ -385,28 +385,65 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._job(row)
 
-    def enqueue_due_schedule(
-        self, schedule: IntervalSchedule, job: AutomationJob, now: datetime
-    ) -> bool:
-        from datetime import timedelta
-
-        with self._lock, self._connection:
-            state = self._connection.execute(
-                "SELECT * FROM automation_schedules WHERE schedule_id=?",
-                (schedule.schedule_id,),
+    def get_schedule_state(self, schedule_id: str) -> ScheduleState | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM automation_schedules WHERE schedule_id=?", (schedule_id,)
             ).fetchone()
-            if state is not None and datetime.fromisoformat(state["next_run_at"]) > now:
+        return self._schedule_state(row) if row else None
+
+    def initialize_schedule_state(
+        self, schedule_id: str, next_run_at: datetime, now: datetime
+    ) -> ScheduleState:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT OR IGNORE INTO automation_schedules VALUES (?, ?, ?, NULL)",
+                (schedule_id, next_run_at.isoformat(), now.isoformat()),
+            )
+            row = self._connection.execute(
+                "SELECT * FROM automation_schedules WHERE schedule_id=?",
+                (schedule_id,),
+            ).fetchone()
+        return self._schedule_state(row)
+
+    def enqueue_due_schedule(
+        self,
+        schedule_id: str,
+        job: AutomationJob,
+        occurrence_at: datetime,
+        next_run_at: datetime,
+        now: datetime,
+    ) -> bool:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE automation_schedules SET next_run_at=?, updated_at=?, last_job_id=? "
+                "WHERE schedule_id=? AND next_run_at=? AND next_run_at<=?",
+                (
+                    next_run_at.isoformat(),
+                    now.isoformat(),
+                    job.job_id,
+                    schedule_id,
+                    occurrence_at.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
                 return False
             self._connection.execute(
                 "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._job_values(job),
             )
-            next_run = now + timedelta(seconds=schedule.interval_seconds)
             self._connection.execute(
-                "INSERT INTO automation_schedules VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(schedule_id) DO UPDATE SET next_run_at=excluded.next_run_at, "
-                "updated_at=excluded.updated_at, last_job_id=excluded.last_job_id",
-                (schedule.schedule_id, next_run.isoformat(), now.isoformat(), job.job_id),
+                "INSERT INTO schedule_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    f"{schedule_id}:{job.job_id}",
+                    schedule_id,
+                    occurrence_at.isoformat(),
+                    now.isoformat(),
+                    job.job_id,
+                    job.command.value,
+                    next_run_at.isoformat(),
+                ),
             )
         return True
 
@@ -415,12 +452,33 @@ class SQLiteTaskRepository:
             rows = self._connection.execute(
                 "SELECT * FROM automation_schedules ORDER BY schedule_id"
             ).fetchall()
+        return tuple(self._schedule_state(row) for row in rows)
+
+    def list_schedule_audit(
+        self, schedule_id: str | None = None, *, limit: int | None = None
+    ) -> tuple[ScheduleAuditRecord, ...]:
+        if limit is not None and limit < 1:
+            raise ValueError("schedule audit limit must be positive")
+        query = "SELECT * FROM schedule_audit"
+        parameters: list[object] = []
+        if schedule_id is not None:
+            query += " WHERE schedule_id=?"
+            parameters.append(schedule_id)
+        query += " ORDER BY emitted_at DESC, audit_id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters.append(limit)
+        with self._lock:
+            rows = self._connection.execute(query, tuple(parameters)).fetchall()
         return tuple(
-            ScheduleState(
+            ScheduleAuditRecord(
+                row["audit_id"],
                 row["schedule_id"],
+                datetime.fromisoformat(row["occurrence_at"]),
+                datetime.fromisoformat(row["emitted_at"]),
+                row["job_id"],
+                AutomationCommand(row["command"]),
                 datetime.fromisoformat(row["next_run_at"]),
-                datetime.fromisoformat(row["updated_at"]),
-                row["last_job_id"],
             )
             for row in rows
         )
@@ -533,6 +591,14 @@ class SQLiteTaskRepository:
                     schedule_id TEXT PRIMARY KEY, next_run_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL, last_job_id TEXT
                 );
+                CREATE TABLE IF NOT EXISTS schedule_audit (
+                    audit_id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL,
+                    occurrence_at TEXT NOT NULL, emitted_at TEXT NOT NULL,
+                    job_id TEXT NOT NULL UNIQUE, command TEXT NOT NULL,
+                    next_run_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS schedule_audit_schedule_time
+                    ON schedule_audit(schedule_id, emitted_at, audit_id);
                 """
             )
             self._connection.execute(
@@ -758,4 +824,13 @@ class SQLiteTaskRepository:
             row["error"],
             bool(row["cancellation_requested"]),
             row["schedule_id"],
+        )
+
+    @staticmethod
+    def _schedule_state(row: sqlite3.Row) -> ScheduleState:
+        return ScheduleState(
+            row["schedule_id"],
+            datetime.fromisoformat(row["next_run_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["last_job_id"],
         )

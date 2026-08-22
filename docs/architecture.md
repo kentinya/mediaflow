@@ -146,6 +146,19 @@ IntervalScheduler atomically persists each scan/preview occurrence and next-run 
 or repeated ticks cannot duplicate an occurrence; missed intervals are coalesced, not backfilled.
 Scheduler creates queue records only and never calls Scanner, Storage, Metadata, or Executor.
 
+## Phase 18.3 Cron and schedule audit
+
+CronExpression is a bounded pure-domain parser/evaluator for five numeric fields. It accepts only
+wildcards, lists, ranges, and steps and never invokes a shell or external cron daemon. Calendar
+evaluation uses standard-library `zoneinfo`, persists UTC instants, skips nonexistent DST wall
+times, and selects fold 0 once for an ambiguous wall time. Restricted day-of-month and day-of-week
+use OR semantics.
+
+Runtime schedules are a validated union: exactly one of intervalSeconds or cron/timezone. Conditional
+SQLite state advancement prevents concurrent duplicate emission and missed occurrences coalesce.
+Schema v6 adds append-only schedule audit with occurrence, emission, Job, command, and next-run
+identity. CLI/API audit reads construct no Storage or provider adapters.
+
 - `Storage` exposes read/write concepts and explicit capabilities. Business logic targets this
   protocol rather than filesystem APIs.
 - `Scanner` and `Parser` are read-only/local-information boundaries.

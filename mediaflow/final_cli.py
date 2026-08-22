@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
+from zoneinfo import ZoneInfo
 
 from mediaflow.application.automation import (
     AutomationCancelled,
@@ -25,6 +26,7 @@ from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.cli import render_strategy_result
+from mediaflow.domain.automation import CronSchedule
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
@@ -121,6 +123,9 @@ def final_main(
     scheduler_commands = scheduler.add_subparsers(dest="scheduler_command", required=True)
     scheduler_commands.add_parser("list")
     scheduler_commands.add_parser("tick")
+    scheduler_audit = scheduler_commands.add_parser("audit")
+    scheduler_audit.add_argument("schedule_id", nargs="?")
+    scheduler_audit.add_argument("--limit", type=int, default=100)
     scheduler_run = scheduler_commands.add_parser("run")
     scheduler_run.add_argument("--poll-seconds", type=float)
     api = commands.add_parser("api", help="development REST API")
@@ -297,6 +302,21 @@ def final_main(
                 if arguments.scheduler_command == "tick":
                     queued = scheduler_service.tick()
                     stdout.write(render_jobs(queued))
+                    return 0
+                if arguments.scheduler_command == "audit":
+                    known = {item.schedule_id for item in configuration.automation_schedules}
+                    if arguments.schedule_id and arguments.schedule_id not in known:
+                        raise LookupError(f"schedule {arguments.schedule_id!r} was not found")
+                    if arguments.limit < 1:
+                        raise ValueError("schedule audit limit must be positive")
+                    stdout.write(
+                        render_schedule_audit(
+                            repository.list_schedule_audit(
+                                arguments.schedule_id, limit=arguments.limit
+                            ),
+                            configuration.automation_schedules,
+                        )
+                    )
                     return 0
                 poll = arguments.poll_seconds or configuration.scheduler_poll_seconds
                 emitted = _run_resident(
@@ -691,12 +711,43 @@ def render_schedules(definitions, states) -> str:
     lines = ["", "INTERVAL SCHEDULES", ""]
     for value in definitions:
         state = state_by_id.get(value.schedule_id)
+        timing = (
+            f"cron={value.expression} | timezone={value.timezone}"
+            if isinstance(value, CronSchedule)
+            else f"interval={value.interval_seconds:g}s"
+        )
+        local_next = (
+            state.next_run_at.astimezone(ZoneInfo(value.timezone)).isoformat()
+            if state and isinstance(value, CronSchedule)
+            else "-"
+        )
         lines.append(
             f"{value.schedule_id} | {value.command.value} | "
-            f"enabled={'YES' if value.enabled else 'NO'} | interval={value.interval_seconds:g}s | "
-            f"limit={value.limit or '-'} | next={state.next_run_at.isoformat() if state else '-'}"
+            f"enabled={'YES' if value.enabled else 'NO'} | {timing} | "
+            f"limit={value.limit or '-'} | nextUtc="
+            f"{state.next_run_at.isoformat() if state else '-'} | nextLocal={local_next}"
         )
     lines.extend(("", f"Total: {len(definitions)}", ""))
+    return "\n".join(lines)
+
+
+def render_schedule_audit(values, definitions=()) -> str:
+    definitions_by_id = {item.schedule_id: item for item in definitions}
+    lines = ["", "SCHEDULE AUDIT", ""]
+    for value in values:
+        definition = definitions_by_id.get(value.schedule_id)
+        local = (
+            value.occurrence_at.astimezone(ZoneInfo(definition.timezone)).isoformat()
+            if isinstance(definition, CronSchedule)
+            else "-"
+        )
+        lines.append(
+            f"{value.emitted_at.isoformat()} | {value.schedule_id} | "
+            f"occurrenceUtc={value.occurrence_at.isoformat()} | occurrenceLocal={local} | "
+            f"job={value.job_id} | "
+            f"command={value.command.value} | next={value.next_run_at.isoformat()}"
+        )
+    lines.extend(("", f"Total: {len(values)}", ""))
     return "\n".join(lines)
 
 

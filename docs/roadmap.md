@@ -91,6 +91,9 @@ Confirmation REST 查询，以及只允许 DryRun 工作的受鉴权提交接口
 Phase 18.2 已完成常驻 Worker、跨扫描/批处理边界的协作取消、显式陈旧作业恢复和持久
 interval 调度。调度仅允许 scan/preview；Cron 日历表达式与远程真实执行仍未开放。
 
+Phase 18.3 已完成五字段 Cron、IANA 时区、DST 确定性语义和不可变调度发出审计。Cron 与
+interval 都只允许 scan/preview；远程真实执行仍未开放。
+
 ### Phase 19：Web UI 与生产发布
 
 - Dashboard、Storage/Library/Policy 管理、候选确认、冲突处理、任务和历史页面。
@@ -101,13 +104,13 @@ interval 调度。调度仅允许 scan/preview；Cron 日历表达式与远程�
 
 下一任务应限定为 Phase 18，不同时启动 Web UI。优先顺序：
 
-1. 增加 Cron/时区日历调度与调度审计，不改变 scan/preview-only 默认边界。
-2. 增加 Webhook/通知投递和失败重试，不泄露配置密钥。
-3. 设计独立、可审计的远程 organize execute 授权，不复用普通 API Token。
-4. 增加用户、权限和更完整的审计边界。
+1. 增加 Webhook/通知投递、签名和失败重试，不泄露配置密钥。
+2. 设计独立、可审计的远程 organize execute 授权，不复用普通 API Token。
+3. 增加用户、权限和更完整的审计边界。
+4. 评估节假日日历等高级调度需求，避免扩大 Cron 核心。
 5. 保持 Storage 预检、附件、冲突确认和显式执行授权不变。
 
-Interval Scheduler 已实现但只允许 scan/preview；仍不支持无人值守定时
+Interval/Cron Scheduler 已实现但只允许 scan/preview；仍不支持无人值守定时
 `organize --execute`。
 
 ## 持续安全基线
