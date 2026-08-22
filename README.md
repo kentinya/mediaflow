@@ -296,7 +296,8 @@ constructs no Storage/provider and never creates or resumes a Task or Job automa
 Start the existing loopback API process and open `http://127.0.0.1:8787/ui/`. The dependency-free
 operator page shows the Dashboard and the conflict, metadata, and classification review queues.
 It also provides read-only Task, Automation Job, Scheduler, and Notification delivery views.
-Schedule occurrence audit and notification delivery reads are bounded to 1–100 rows and expose no
+Schedule occurrence audit and notification delivery pages are bounded to 1–100 rows, support stable
+Previous/Next navigation, and expose no
 webhook URL, body, signature, header, or secret. Task detail shows bounded TaskItems and
 ResultRecords; Job detail can navigate to its linked Task. Paged lists expose explicit Previous/Next
 controls backed by stable keyset cursors, while selecting the navigation tab again returns to the

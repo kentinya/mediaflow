@@ -528,7 +528,9 @@ GET /api/v1/jobs?limit=100&cursor=OPAQUE_CURSOR
 GET /api/v1/jobs/{id}
 GET /api/v1/schedules
 GET /api/v1/schedules/{id}/audit?limit=100
+GET /api/v1/schedules/{id}/audit?limit=100&cursor=OPAQUE_CURSOR
 GET /api/v1/notifications?limit=100&status=all
+GET /api/v1/notifications?limit=100&status=dead-letter&cursor=OPAQUE_CURSOR
 ```
 
 Collection and detail limits are 1–100. Responses include truncation metadata. These UI views never
@@ -543,9 +545,11 @@ Task/Job pages remain newest-first; TaskItem/Result pages remain oldest-first. P
 keyset boundaries, not page numbers, total scans, or OFFSET, so arbitrary jumps are intentionally absent.
 
 The Schedules UI combines safe configuration fields with persisted next-run/last-job state. Its
-occurrence audit is newest-first and bounded to 1–100 rows. Notifications accept `all`, `pending`,
+occurrence audit is newest-first and paged in bounded 1–100-row reads. Notifications accept `all`, `pending`,
 `delivering`, `retry`, `delivered`, or `dead-letter`; the UI provides an explicit status selector and
-refresh button but never polls automatically. Delivery output excludes webhook URLs, payload bodies,
+refresh and scoped Previous/Next controls but never polls automatically. Notification cursors bind
+the selected status; schedule-audit cursors bind the schedule ID, so cross-filter or cross-schedule
+reuse fails. Delivery output excludes webhook URLs, payload bodies,
 signatures, headers, response bodies, and secrets. Neither view exposes schedule ticking/editing or
 notification delivery/requeue controls.
 

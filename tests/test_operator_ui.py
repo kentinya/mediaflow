@@ -94,6 +94,11 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("/audit?limit=100", script)
         self.assertIn("/api/v1/notifications?limit=100&status=", script)
         self.assertIn("Refresh notifications", script)
+        self.assertIn("showScheduleAudit(id, data.previous_cursor)", script)
+        self.assertIn("showScheduleAudit(id, data.next_cursor)", script)
+        self.assertIn("renderNotifications(status, data.previous_cursor)", script)
+        self.assertIn("renderNotifications(status, data.next_cursor)", script)
+        self.assertIn("renderNotifications(selector.value)", script)
         self.assertIn(
             "['all', 'pending', 'delivering', 'retry', 'delivered', 'dead-letter']", script
         )

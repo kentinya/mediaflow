@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import hmac
 import json
 import re
 from dataclasses import dataclass
@@ -10,7 +12,10 @@ from enum import StrEnum
 
 _CURSOR_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 _ENCODED_CURSOR = re.compile(r"[A-Za-z0-9_-]+")
-_KINDS = frozenset({"tasks", "jobs", "task_items", "task_results"})
+_KINDS = frozenset(
+    {"tasks", "jobs", "task_items", "task_results", "notification_deliveries", "schedule_audit"}
+)
+_SCOPED_KINDS = frozenset({"notification_deliveries", "schedule_audit"})
 MAX_CURSOR_LENGTH = 512
 
 
@@ -24,6 +29,7 @@ class DecodedCursor:
     created_at: datetime
     record_id: str
     direction: CursorDirection
+    scope: str | None = None
 
     @property
     def position(self) -> tuple[datetime, str]:
@@ -35,6 +41,8 @@ def encode_cursor(
     created_at: datetime,
     record_id: str,
     direction: CursorDirection | str = CursorDirection.NEXT,
+    *,
+    scope: str | None = None,
 ) -> str:
     if kind not in _KINDS:
         raise ValueError("unsupported cursor kind")
@@ -50,15 +58,25 @@ def encode_cursor(
         "kind": kind,
         "version": 2,
     }
+    if kind in _SCOPED_KINDS:
+        if not scope:
+            raise ValueError("cursor scope is required")
+        document["scope"] = _scope_digest(kind, scope)
+    elif scope is not None:
+        raise ValueError("cursor scope is unsupported")
     raw = json.dumps(document, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def decode_cursor(value: str, expected_kind: str) -> tuple[datetime, str]:
-    return decode_directional_cursor(value, expected_kind).position
+def decode_cursor(
+    value: str, expected_kind: str, *, expected_scope: str | None = None
+) -> tuple[datetime, str]:
+    return decode_directional_cursor(value, expected_kind, expected_scope=expected_scope).position
 
 
-def decode_directional_cursor(value: str, expected_kind: str) -> DecodedCursor:
+def decode_directional_cursor(
+    value: str, expected_kind: str, *, expected_scope: str | None = None
+) -> DecodedCursor:
     if expected_kind not in _KINDS:
         raise ValueError("unsupported cursor kind")
     if (
@@ -79,6 +97,8 @@ def decode_directional_cursor(value: str, expected_kind: str) -> DecodedCursor:
     version = document.get("version")
     v1_fields = {"at", "id", "kind", "version"}
     v2_fields = v1_fields | {"direction"}
+    if expected_kind in _SCOPED_KINDS:
+        v2_fields.add("scope")
     if type(version) is not int or version not in {1, 2}:
         raise ValueError("cursor does not match this resource")
     if set(document) != (v1_fields if version == 1 else v2_fields):
@@ -92,6 +112,19 @@ def decode_directional_cursor(value: str, expected_kind: str) -> DecodedCursor:
     except ValueError as error:
         raise ValueError("cursor timestamp is invalid") from error
     _validate_position(created_at, document["id"])
+    if expected_kind in _SCOPED_KINDS:
+        if version == 1 or not expected_scope:
+            raise ValueError("cursor scope is required")
+        expected_digest = _scope_digest(expected_kind, expected_scope)
+        if not isinstance(document["scope"], str) or not hmac.compare_digest(
+            document["scope"], expected_digest
+        ):
+            raise ValueError("cursor does not match this resource scope")
+        scope = document["scope"]
+    else:
+        if expected_scope is not None:
+            raise ValueError("cursor scope is unsupported")
+        scope = None
     if version == 1:
         direction = CursorDirection.NEXT
     else:
@@ -99,7 +132,11 @@ def decode_directional_cursor(value: str, expected_kind: str) -> DecodedCursor:
             direction = CursorDirection(document["direction"])
         except (TypeError, ValueError) as error:
             raise ValueError("cursor direction is invalid") from error
-    return DecodedCursor(created_at, document["id"], direction)
+    return DecodedCursor(created_at, document["id"], direction, scope)
+
+
+def _scope_digest(kind: str, scope: str) -> str:
+    return hashlib.sha256(f"{kind}\0{scope}".encode()).hexdigest()
 
 
 def _validate_position(created_at: datetime, record_id: str) -> None:

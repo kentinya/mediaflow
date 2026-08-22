@@ -141,5 +141,10 @@ class AutomationJobRepository(Protocol):
     ) -> bool: ...
     def list_schedule_states(self) -> tuple[ScheduleState, ...]: ...
     def list_schedule_audit(
-        self, schedule_id: str | None = None, *, limit: int | None = None
+        self,
+        schedule_id: str | None = None,
+        *,
+        limit: int | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> tuple[ScheduleAuditRecord, ...]: ...

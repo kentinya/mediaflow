@@ -402,14 +402,34 @@ class MediaFlowApi:
                 },
             )
         if parts == ["api", "v1", "notifications"] and method == "GET":
-            limit, delivery_status = self._notification_query(environ)
-            values = self._repository.list_deliveries(status=delivery_status, limit=limit)
+            limit, delivery_status, cursor = self._notification_query(environ)
+            scope = delivery_status.value if delivery_status else "all"
+            values = self._list_page(
+                lambda **kwargs: self._repository.list_deliveries(status=delivery_status, **kwargs),
+                limit,
+                cursor,
+            )
+            page, has_previous, has_next = self._page_window(values, limit, cursor)
             return self._response(
                 start_response,
                 200,
                 {
                     "limit": limit,
                     "status": delivery_status.value if delivery_status else None,
+                    "previous_cursor": self._page_cursor(
+                        "notification_deliveries",
+                        page,
+                        has_previous,
+                        CursorDirection.PREVIOUS,
+                        scope=scope,
+                    ),
+                    "next_cursor": self._page_cursor(
+                        "notification_deliveries",
+                        page,
+                        has_next,
+                        CursorDirection.NEXT,
+                        scope=scope,
+                    ),
                     "items": [
                         {
                             "deliveryId": item.delivery_id,
@@ -427,7 +447,7 @@ class MediaFlowApi:
                             "failureCategory": item.failure_category,
                             "responseStatus": item.response_status,
                         }
-                        for item in values
+                        for item in page
                     ],
                 },
             )
@@ -440,12 +460,36 @@ class MediaFlowApi:
             known = {item.schedule_id for item in self._schedules}
             if parts[3] not in known:
                 raise LookupError(f"schedule {parts[3]!r} was not found")
-            limit = self._single_limit_query(environ, "schedule audit")
-            values = self._repository.list_schedule_audit(parts[3], limit=limit)
+            limit, cursor = self._scoped_page_query(
+                environ, "schedule_audit", parts[3], "schedule audit"
+            )
+            values = self._list_page(
+                lambda **kwargs: self._repository.list_schedule_audit(parts[3], **kwargs),
+                limit,
+                cursor,
+            )
+            page, has_previous, has_next = self._page_window(values, limit, cursor)
             return self._response(
                 start_response,
                 200,
-                {"items": [self._value(item) for item in values], "limit": limit},
+                {
+                    "items": [self._value(item) for item in page],
+                    "limit": limit,
+                    "previous_cursor": self._page_cursor(
+                        "schedule_audit",
+                        page,
+                        has_previous,
+                        CursorDirection.PREVIOUS,
+                        scope=parts[3],
+                    ),
+                    "next_cursor": self._page_cursor(
+                        "schedule_audit",
+                        page,
+                        has_next,
+                        CursorDirection.NEXT,
+                        scope=parts[3],
+                    ),
+                },
             )
         if parts == ["api", "v1", "jobs"]:
             if method == "GET":
@@ -728,29 +772,52 @@ class MediaFlowApi:
             raise ValueError(f"{resource} query does not accept fields")
 
     @staticmethod
-    def _single_limit_query(environ: dict, resource: str) -> int:
+    def _scoped_page_query(
+        environ: dict, kind: str, scope: str, resource: str
+    ) -> tuple[int, DecodedCursor | None]:
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
-            raise ValueError(f"{resource} query accepts limit once")
-        return MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], resource)
+        if set(values).difference({"limit", "cursor"}) or any(
+            len(value) != 1 for value in values.values()
+        ):
+            raise ValueError(f"{resource} query accepts limit and cursor once")
+        limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], resource)
+        raw_cursor = values.get("cursor")
+        cursor = (
+            decode_directional_cursor(raw_cursor[0], kind, expected_scope=scope)
+            if raw_cursor
+            else None
+        )
+        return limit, cursor
 
     @staticmethod
     def _notification_query(
         environ: dict,
-    ) -> tuple[int, NotificationDeliveryStatus | None]:
+    ) -> tuple[int, NotificationDeliveryStatus | None, DecodedCursor | None]:
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        if set(values).difference({"limit", "status"}) or any(
+        if set(values).difference({"limit", "status", "cursor"}) or any(
             len(value) != 1 for value in values.values()
         ):
-            raise ValueError("notification query accepts limit and status once")
+            raise ValueError("notification query accepts limit, status, and cursor once")
         limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], "notification")
         raw_status = values.get("status")
         if raw_status is None or raw_status[0] == "all":
-            return limit, None
-        try:
-            return limit, NotificationDeliveryStatus(raw_status[0])
-        except ValueError as error:
-            raise ValueError("notification status is invalid") from error
+            status = None
+        else:
+            try:
+                status = NotificationDeliveryStatus(raw_status[0])
+            except ValueError as error:
+                raise ValueError("notification status is invalid") from error
+        raw_cursor = values.get("cursor")
+        cursor = (
+            decode_directional_cursor(
+                raw_cursor[0],
+                "notification_deliveries",
+                expected_scope=status.value if status else "all",
+            )
+            if raw_cursor
+            else None
+        )
+        return limit, status, cursor
 
     @staticmethod
     def _collection_page(environ: dict, resource: str) -> tuple[int, DecodedCursor | None]:
@@ -807,7 +874,12 @@ class MediaFlowApi:
 
     @staticmethod
     def _page_cursor(
-        kind: str, page: tuple | list, available: bool, direction: CursorDirection
+        kind: str,
+        page: tuple | list,
+        available: bool,
+        direction: CursorDirection,
+        *,
+        scope: str | None = None,
     ) -> str | None:
         if not available or not page:
             return None
@@ -817,9 +889,12 @@ class MediaFlowApi:
             "jobs": "job_id",
             "task_items": "item_id",
             "task_results": "result_id",
+            "notification_deliveries": "delivery_id",
+            "schedule_audit": "audit_id",
         }[kind]
         identifier = getattr(record, attribute)
-        return encode_cursor(kind, record.created_at, identifier, direction)
+        timestamp = record.emitted_at if kind == "schedule_audit" else record.created_at
+        return encode_cursor(kind, timestamp, identifier, direction, scope=scope)
 
     @staticmethod
     def _parse_bounded_limit(raw: str, resource: str) -> int:

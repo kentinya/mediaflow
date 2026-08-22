@@ -167,7 +167,7 @@ class OperatorObservabilityTests(unittest.TestCase):
                 self.assertEqual(document["status"], "dead-letter")
                 self.assertEqual(len(document["items"]), 1)
                 deliveries.assert_called_once_with(
-                    status=NotificationDeliveryStatus.DEAD_LETTER, limit=2
+                    status=NotificationDeliveryStatus.DEAD_LETTER, limit=3
                 )
                 encoded = json.dumps(document)
                 self.assertNotIn("secret-body", encoded)
@@ -218,7 +218,7 @@ class OperatorObservabilityTests(unittest.TestCase):
                     )
                 self.assertEqual(status, 200)
                 self.assertEqual(document["limit"], 1)
-                audit.assert_called_once_with("nightly", limit=1)
+                audit.assert_called_once_with("nightly", limit=2)
                 self.assertEqual(request(api, "/api/v1/schedules/missing/audit")[0], 404)
                 for path, query in (
                     ("/api/v1/schedules", "limit=1"),
@@ -228,6 +228,161 @@ class OperatorObservabilityTests(unittest.TestCase):
                 ):
                     with self.subTest(path=path, query=query):
                         self.assertEqual(request(api, path, query=query)[0], 400)
+
+    def test_notification_pages_traverse_both_directions_and_bind_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                for rank in range(5):
+                    repository.create_delivery(
+                        replace(
+                            self._delivery(rank, NotificationDeliveryStatus.DELIVERED),
+                            created_at=NOW,
+                            updated_at=NOW,
+                        )
+                    )
+                api = self._api(repository)
+                _, first = request(api, "/api/v1/notifications", query="limit=2&status=delivered")
+                _, middle = request(
+                    api,
+                    "/api/v1/notifications",
+                    query=f"limit=2&status=delivered&cursor={first['next_cursor']}",
+                )
+                _, last = request(
+                    api,
+                    "/api/v1/notifications",
+                    query=f"limit=2&status=delivered&cursor={middle['next_cursor']}",
+                )
+                self.assertIsNone(first["previous_cursor"])
+                self.assertIsNotNone(middle["previous_cursor"])
+                self.assertIsNone(last["next_cursor"])
+                position = decode_cursor(
+                    last["previous_cursor"],
+                    "notification_deliveries",
+                    expected_scope="delivered",
+                )
+                with patch.object(
+                    repository, "list_deliveries", wraps=repository.list_deliveries
+                ) as deliveries:
+                    _, back = request(
+                        api,
+                        "/api/v1/notifications",
+                        query=f"limit=2&status=delivered&cursor={last['previous_cursor']}",
+                    )
+                deliveries.assert_called_once_with(
+                    status=NotificationDeliveryStatus.DELIVERED,
+                    limit=3,
+                    before=position,
+                )
+                self.assertEqual(back["items"], middle["items"])
+                _, beginning = request(
+                    api,
+                    "/api/v1/notifications",
+                    query=f"limit=2&status=delivered&cursor={back['previous_cursor']}",
+                )
+                self.assertEqual(beginning["items"], first["items"])
+                self.assertIsNone(beginning["previous_cursor"])
+                _, one = request(api, "/api/v1/notifications", query="limit=1&status=delivered")
+                self.assertEqual(len(one["items"]), 1)
+                self.assertIsNotNone(one["next_cursor"])
+                self.assertEqual(
+                    request(
+                        api,
+                        "/api/v1/notifications",
+                        query=f"limit=2&status=all&cursor={first['next_cursor']}",
+                    )[0],
+                    400,
+                )
+
+    def test_schedule_audit_pages_are_bidirectional_and_schedule_scoped(self) -> None:
+        schedules = (
+            CronSchedule("one", "scan", "* * * * *", "UTC"),
+            CronSchedule("two", "preview", "* * * * *", "UTC"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                with repository._lock, repository._connection:
+                    for schedule in schedules:
+                        for rank in range(5):
+                            repository._connection.execute(
+                                "INSERT INTO schedule_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                (
+                                    f"audit-{schedule.schedule_id}-{rank}",
+                                    schedule.schedule_id,
+                                    NOW.isoformat(),
+                                    NOW.isoformat(),
+                                    f"job-{schedule.schedule_id}-{rank}",
+                                    schedule.command.value,
+                                    NOW.isoformat(),
+                                ),
+                            )
+                api = MediaFlowApi(repository, "viewer-token", schedules)
+                _, first = request(api, "/api/v1/schedules/one/audit", query="limit=2")
+                _, middle = request(
+                    api,
+                    "/api/v1/schedules/one/audit",
+                    query=f"limit=2&cursor={first['next_cursor']}",
+                )
+                _, last = request(
+                    api,
+                    "/api/v1/schedules/one/audit",
+                    query=f"limit=2&cursor={middle['next_cursor']}",
+                )
+                self.assertIsNone(first["previous_cursor"])
+                self.assertIsNone(last["next_cursor"])
+                position = decode_cursor(
+                    last["previous_cursor"], "schedule_audit", expected_scope="one"
+                )
+                with patch.object(
+                    repository, "list_schedule_audit", wraps=repository.list_schedule_audit
+                ) as audit:
+                    _, back = request(
+                        api,
+                        "/api/v1/schedules/one/audit",
+                        query=f"limit=2&cursor={last['previous_cursor']}",
+                    )
+                audit.assert_called_once_with("one", limit=3, before=position)
+                self.assertEqual(back["items"], middle["items"])
+                self.assertEqual(
+                    request(
+                        api,
+                        "/api/v1/schedules/two/audit",
+                        query=f"limit=2&cursor={first['next_cursor']}",
+                    )[0],
+                    400,
+                )
+
+    def test_notification_cursor_survives_newer_insert_and_deleted_anchor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                for rank in range(3):
+                    repository.create_delivery(
+                        replace(
+                            self._delivery(rank, NotificationDeliveryStatus.PENDING),
+                            created_at=NOW,
+                            updated_at=NOW,
+                        )
+                    )
+                api = self._api(repository)
+                _, first = request(api, "/api/v1/notifications", query="limit=1&status=pending")
+                repository.create_delivery(
+                    replace(
+                        self._delivery(9, NotificationDeliveryStatus.PENDING),
+                        created_at=NOW + timedelta(minutes=1),
+                        updated_at=NOW + timedelta(minutes=1),
+                    )
+                )
+                with repository._lock, repository._connection:
+                    repository._connection.execute(
+                        "DELETE FROM notification_deliveries WHERE delivery_id=?",
+                        (first["items"][0]["deliveryId"],),
+                    )
+                _, second = request(
+                    api,
+                    "/api/v1/notifications",
+                    query=f"limit=1&status=pending&cursor={first['next_cursor']}",
+                )
+                self.assertEqual(second["items"][0]["deliveryId"], "delivery-1")
+                self.assertNotEqual(second["items"][0]["deliveryId"], "delivery-9")
 
     def test_task_and_job_cursor_pages_are_stable_with_identical_timestamps(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -328,6 +483,20 @@ class OperatorObservabilityTests(unittest.TestCase):
             .decode()
         )
         self.assertEqual(decode_directional_cursor(v1, "tasks").direction, CursorDirection.NEXT)
+        scoped = encode_cursor("notification_deliveries", NOW, "delivery-1", scope="delivered")
+        self.assertEqual(
+            decode_cursor(scoped, "notification_deliveries", expected_scope="delivered"),
+            (NOW, "delivery-1"),
+        )
+        for expected_scope in (None, "pending"):
+            with self.subTest(expected_scope=expected_scope), self.assertRaises(ValueError):
+                decode_directional_cursor(
+                    scoped,
+                    "notification_deliveries",
+                    expected_scope=expected_scope,
+                )
+        with self.assertRaises(ValueError):
+            encode_cursor("schedule_audit", NOW, "audit-1")
         invalid_documents = (
             {"at": NOW.isoformat(), "id": "task-1", "kind": "tasks"},
             {"at": "not-a-time", "id": "task-1", "kind": "tasks", "version": 1},

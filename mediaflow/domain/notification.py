@@ -67,6 +67,8 @@ class NotificationRepository(Protocol):
         *,
         status: NotificationDeliveryStatus | None = None,
         limit: int | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> tuple[NotificationDelivery, ...]: ...
     def claim_next_delivery(
         self, now: datetime, stale_before: datetime

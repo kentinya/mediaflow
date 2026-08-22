@@ -1064,22 +1064,45 @@ class SQLiteTaskRepository:
         return tuple(self._schedule_state(row) for row in rows)
 
     def list_schedule_audit(
-        self, schedule_id: str | None = None, *, limit: int | None = None
+        self,
+        schedule_id: str | None = None,
+        *,
+        limit: int | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> tuple[ScheduleAuditRecord, ...]:
         if limit is not None and limit < 1:
             raise ValueError("schedule audit limit must be positive")
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
         query = "SELECT * FROM schedule_audit"
         parameters: list[object] = []
+        predicates: list[str] = []
+        reverse = before is not None
         if schedule_id is not None:
-            query += " WHERE schedule_id=?"
+            predicates.append("schedule_id=?")
             parameters.append(schedule_id)
-        query += " ORDER BY emitted_at DESC, audit_id DESC"
+        if after is not None:
+            timestamp = after[0].isoformat()
+            predicates.append("(emitted_at < ? OR (emitted_at = ? AND audit_id < ?))")
+            parameters.extend((timestamp, timestamp, after[1]))
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            predicates.append("(emitted_at > ? OR (emitted_at = ? AND audit_id > ?))")
+            parameters.extend((timestamp, timestamp, before[1]))
+        if predicates:
+            query += " WHERE " + " AND ".join(predicates)
+        query += (
+            " ORDER BY emitted_at ASC, audit_id ASC"
+            if reverse
+            else " ORDER BY emitted_at DESC, audit_id DESC"
+        )
         if limit is not None:
             query += " LIMIT ?"
             parameters.append(limit)
         with self._lock:
             rows = self._connection.execute(query, tuple(parameters)).fetchall()
-        return tuple(
+        values = tuple(
             ScheduleAuditRecord(
                 row["audit_id"],
                 row["schedule_id"],
@@ -1091,6 +1114,7 @@ class SQLiteTaskRepository:
             )
             for row in rows
         )
+        return tuple(reversed(values)) if reverse else values
 
     def create_execution_authorization(
         self, value: ExecutionAuthorization, audit: ExecutionAuthorizationAudit
@@ -1294,21 +1318,42 @@ class SQLiteTaskRepository:
         *,
         status: NotificationDeliveryStatus | None = None,
         limit: int | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> tuple[NotificationDelivery, ...]:
         if limit is not None and limit < 1:
             raise ValueError("notification limit must be positive")
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
         query = "SELECT * FROM notification_deliveries"
         parameters: list[object] = []
+        predicates: list[str] = []
+        reverse = before is not None
         if status is not None:
-            query += " WHERE status=?"
+            predicates.append("status=?")
             parameters.append(status.value)
-        query += " ORDER BY created_at DESC, delivery_id DESC"
+        if after is not None:
+            timestamp = after[0].isoformat()
+            predicates.append("(created_at < ? OR (created_at = ? AND delivery_id < ?))")
+            parameters.extend((timestamp, timestamp, after[1]))
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            predicates.append("(created_at > ? OR (created_at = ? AND delivery_id > ?))")
+            parameters.extend((timestamp, timestamp, before[1]))
+        if predicates:
+            query += " WHERE " + " AND ".join(predicates)
+        query += (
+            " ORDER BY created_at ASC, delivery_id ASC"
+            if reverse
+            else " ORDER BY created_at DESC, delivery_id DESC"
+        )
         if limit is not None:
             query += " LIMIT ?"
             parameters.append(limit)
         with self._lock:
             rows = self._connection.execute(query, tuple(parameters)).fetchall()
-        return tuple(self._delivery(row) for row in rows)
+        values = tuple(self._delivery(row) for row in rows)
+        return tuple(reversed(values)) if reverse else values
 
     def claim_next_delivery(
         self, now: datetime, stale_before: datetime

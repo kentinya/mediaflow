@@ -952,3 +952,16 @@ Phase 19.6 read-only Scheduler and Notification operations UI (2026-08-22): PASS
 - Full suite: 417 tests, 414 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated wheel build, both example validations, FFmpeg/FFprobe
   runtime audit, and diff check passed
+
+Phase 19.7 bidirectional Notification and Schedule Audit pagination (2026-08-22): PASS
+
+- Extended strict v2 directional cursors to NotificationDelivery and per-schedule ScheduleAudit
+- Bound opaque cursor scope to notification status (including `all`) or schedule ID, preventing safe
+  cursor reuse across filters/schedules without exposing those configured values
+- Added newest-first forward/reverse composite-key SQLite queries with bounded `limit + 1`, canonical
+  order restoration, and no OFFSET, total scan, or prior-row enumeration
+- Added Previous/Next UI navigation that preserves notification status and schedule detail context;
+  explicit refresh/status changes reset to the first page and no polling or controls were added
+- Full suite: 420 tests, 417 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated wheel build, both example validations, FFmpeg/FFprobe
+  runtime audit, and diff check passed

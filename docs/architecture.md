@@ -926,6 +926,13 @@ transport. The UI uses text nodes, explicit refresh, and no polling. These route
 Storage, Provider, workflow service, Scheduler tick, delivery worker, or OrganizerExecutor; the only
 persistent side effect is the existing normalized authenticated security audit.
 
+Phase 19.7 extends the v2 directional cursor boundary to both histories. NotificationDelivery uses
+newest-first `(created_at, delivery_id)` and ScheduleAudit uses newest-first `(emitted_at, audit_id)`.
+Forward/reverse SQLite predicates apply before `limit + 1`; reverse results are restored to canonical
+display order without OFFSET, totals, or prior-row enumeration. An opaque SHA-256 scope binds each
+notification cursor to its status filter (`all` included) and each audit cursor to its schedule ID.
+The scope reveals neither the configured identifier nor media/secret data and prevents cross-scope use.
+
 ## Runtime strategy catalogs
 
 The Phase 13 runtime boundary loads all strategy content from one JSON document selected by

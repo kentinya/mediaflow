@@ -185,17 +185,22 @@ APP_JS = b"""(() => {
     content.append(table(['ID', 'Command', 'Timing', 'Timezone', 'Enabled', 'Next run', 'Last job'],
       rows, index => showScheduleAudit(items[index].schedule_id)));
   }
-  async function showScheduleAudit(id) {
+  async function showScheduleAudit(id, cursor = null) {
     try {
-      const data = await api(`/api/v1/schedules/${encodeURIComponent(id)}/audit?limit=100`);
+      const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+      const data = await api(`/api/v1/schedules/${encodeURIComponent(id)}/audit?limit=100${suffix}`);
       clear(detailContent); detailContent.append(text('h2', 'Schedule occurrence audit'));
       const rows = (data.items || []).map(item => [item.audit_id, item.occurrence_at,
         item.emitted_at, item.command, item.job_id, item.next_run_at]);
       detailContent.append(table(['Audit ID', 'Occurrence', 'Emitted', 'Command', 'Job', 'Next run'],
-        rows)); detail.hidden = false;
+        rows));
+      pageNavigation(detailContent, 'schedule records', data.previous_cursor, data.next_cursor,
+        () => showScheduleAudit(id, data.previous_cursor),
+        () => showScheduleAudit(id, data.next_cursor));
+      detail.hidden = false;
     } catch (error) { message(error.message, true); }
   }
-  async function renderNotifications(status = 'all') {
+  async function renderNotifications(status = 'all', cursor = null) {
     const selector = document.createElement('select'); selector.setAttribute('aria-label',
       'Notification status');
     ['all', 'pending', 'delivering', 'retry', 'delivered', 'dead-letter'].forEach(value => {
@@ -203,13 +208,18 @@ APP_JS = b"""(() => {
       selector.append(option);
     });
     const refresh = actionButton('Refresh notifications', () => renderNotifications(selector.value));
-    const data = await api(`/api/v1/notifications?limit=100&status=${encodeURIComponent(status)}`);
+    const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const data = await api(`/api/v1/notifications?limit=100&status=${encodeURIComponent(status)}` +
+      suffix);
     clear(content); content.append(text('h2', 'Notification deliveries'), selector, refresh);
     const rows = (data.items || []).map(item => [item.deliveryId, item.webhookId, item.eventType,
       item.status, item.attempts, item.nextAttemptAt, item.updatedAt, item.failureCategory || '-',
       item.responseStatus || '-']);
     content.append(table(['Delivery', 'Webhook', 'Event', 'Status', 'Attempts', 'Next attempt',
       'Updated', 'Failure category', 'HTTP status'], rows));
+    pageNavigation(content, 'notifications', data.previous_cursor, data.next_cursor,
+      () => renderNotifications(status, data.previous_cursor),
+      () => renderNotifications(status, data.next_cursor));
   }
   function scalarDetails(data, excluded = []) {
     const list = document.createElement('dl');
