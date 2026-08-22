@@ -208,8 +208,8 @@ class IntervalSchedulerTests(unittest.TestCase):
                 for command in ("organize", "execute", "delete"):
                     with self.assertRaisesRegex(ValueError, "scan or preview"):
                         service.submit(command)
-                for limit in (0, -1, True, "2"):
-                    with self.assertRaisesRegex(ValueError, "positive integer"):
+                for limit in (0, -1, 10_001, True, "2"):
+                    with self.assertRaisesRegex(ValueError, "between 1 and 10000"):
                         service.submit("scan", limit=limit)
 
 

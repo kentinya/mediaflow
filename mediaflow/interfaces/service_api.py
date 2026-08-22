@@ -568,6 +568,7 @@ class MediaFlowApi:
                     },
                 )
             if method == "POST":
+                self._require_empty_query(environ, "job submission")
                 document = self._document(environ)
                 forbidden = {
                     "overwrite",
@@ -590,8 +591,9 @@ class MediaFlowApi:
                     )
                 else:
                     self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-                    if "execute" in document:
-                        raise ValueError("scan/preview cannot request execute authority")
+                    unsupported = set(document).difference({"command", "limit"})
+                    if unsupported:
+                        raise ValueError(f"unsupported DryRun job field {sorted(unsupported)[0]!r}")
                     job = self._jobs.submit(command, limit=document.get("limit"))
                 return self._response(start_response, 202, self._value(job))
         if len(parts) == 4 and parts[:3] == ["api", "v1", "jobs"] and method == "GET":

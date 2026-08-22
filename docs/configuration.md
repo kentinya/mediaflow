@@ -623,6 +623,18 @@ separate Confirm/Keep actions; only Confirm sends the empty POST. Viewer/auditor
 read-only, while operator/executor/admin roles use the existing `cancel_job` permission. Cancellation
 does not grant execute authority, roll back completed work, or create/resume/retry a Task.
 
+The Jobs page also exposes the existing DryRun submission boundary. It offers only `scan` and
+`preview`, with an optional integer limit from 1 through 10000. Open, Review, and Confirm are distinct
+steps; Back/Keep is local-only. The final request body contains exactly `command` and optional `limit`:
+
+```json
+{"command": "preview", "limit": 20}
+```
+
+The endpoint rejects query parameters and all other fields. Operator/executor/admin roles use
+`submit_dry_run`; viewer/auditor remain read-only. Queueing persists a Job only—it does not construct
+Storage/provider/workflow services, execute the Worker, or grant organization authority.
+
 `dashboard` needs no additional configuration. It counts enabled libraries from this runtime
 document and persisted state from `persistence.databasePath`; it does not resolve Storage/provider
 secrets or test connections. The API equivalent is `GET /api/v1/dashboard?recentLimit=10` and uses

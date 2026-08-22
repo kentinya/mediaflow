@@ -1,54 +1,62 @@
-# Phase 19.17 — Explicit Automation Job Cancellation UI
+# Phase 19.18 — Explicit DryRun Automation Job Submission UI
 
 ## Goal
 
-Expose the already-implemented cooperative AutomationJob cancellation through the authenticated
-operator UI with an explicit two-step confirmation. Do not add job submission, Task control,
-resume/retry, remote execution, or media mutation behavior.
+Expose the existing `scan` and `preview` AutomationJob submission boundary through the authenticated
+operator UI with review-before-submit. Preserve DryRun and do not expose organize, execute authority,
+Scheduler changes, Task control, or Storage mutation.
 
-## 1. Existing cancellation boundary
+## 1. Existing submission boundary
 
-- Reuse `POST /api/v1/jobs/{id}/cancel`, `AutomationJobService.cancel`, existing
-  `CANCEL_JOB` permission, persistence transitions, worker cancellation observation, and security audit.
-- Do not duplicate cancellation semantics in JavaScript or add a second endpoint.
-- Pending jobs become cancelled; running jobs record a cooperative cancellation request; terminal jobs
-  remain rejected by the existing application service.
+- Reuse `POST /api/v1/jobs`, `AutomationJobService.submit`, `SUBMIT_DRY_RUN`, durable queueing, Worker,
+  security audit, and existing Job list/detail/cancellation UI.
+- Do not duplicate command/limit validation or workflow behavior in the UI.
+- Only `scan` and `preview` are valid; both remain non-executing workflows.
 
-## 2. Operator UI control
+## 2. Strict DryRun transport
 
-- Show cancellation only in AutomationJob detail for `pending` or `running` jobs.
-- Use two distinct user actions: `Request cancellation`, then `Confirm cancellation` or `Keep job`.
-- Explain that running cancellation is cooperative, an in-flight operation may finish, completed work is
-  not rolled back, and no new media execution authority is granted.
-- After success, reload the job detail and Jobs list; render errors through existing text-node-only UI.
-- Do not use browser-native implicit confirmation, automatic requests, polling, or optimistic status.
+- For scan/preview, accept exactly `command` and optional `limit`; reject queries, unknown fields,
+  booleans/non-integers, zero/negative/out-of-range limits, execute/organize/overwrite/delete/path/task/
+  actor/schedule fields, and malformed JSON before queue creation.
+- Define and enforce a conservative maximum UI/API limit consistent with batch safety.
+- Preserve the separately gated remote-organize branch without exposing it in this UI.
+- A failed security-audit write or repository insert must create no partial Job.
 
-## 3. Authorization and transport safety
+## 3. Operator UI
 
-- Viewer/Auditor READ-only credentials may inspect jobs but cancellation remains forbidden by API RBAC.
-- Operator/Executor/Admin permissions retain existing cancellation authority.
-- Send an empty POST body with no actor, status, command, task, path, execute flag, or arbitrary fields.
-- Normalize audit routes as already implemented and never expose tokens, source paths, errors, or secrets.
+- Add `Queue DryRun job` to the Jobs view for authenticated users; API RBAC remains authoritative.
+- Provide only command choices `scan` and `preview`, plus an optional bounded positive integer limit.
+- Require three explicit steps: open form, review an immutable summary, confirm queueing; Back/Keep
+  performs no request.
+- Display `DRY_RUN`, no media mutation, no execution authorization, and that scan/preview may read
+  configured Storage/provider resources.
+- After a successful 202 response, reload the first Jobs page and open the created Job detail.
+- Use DOM text nodes and event listeners only; no inline handlers, native implicit confirm, polling,
+  token persistence, optimistic Job IDs/status, or arbitrary request fields.
 
-## 4. Safety boundaries
+## 4. Authorization and safety
 
-- Construct no Storage, MetadataProvider, Scanner, strategy pipeline, Planner, OrganizerExecutor,
-  Scheduler, Notification worker, backup/restore, preflight, or migration service for UI/API cancellation.
-- Cancellation never grants execute authority, never resumes/retries a Task, and never rolls back or deletes
-  completed media operations.
-- Preserve default DryRun, explicit execution authorization, conflict protection, and RecognitionType C.
+- Viewer/Auditor may view the form but receive 403 if they attempt submission; Operator/Executor/Admin
+  retain existing `SUBMIT_DRY_RUN` authority.
+- UI must never send `execute`, an execution token/header, `organize`, overwrite/delete, path, Task,
+  actor, policy, Storage, or Scheduler fields.
+- Submission itself constructs no Storage/provider/workflow/Executor; only a later Worker processes the
+  durable Job under existing boundaries.
+- Preserve RecognitionType C, conflict rules, one-time remote execution authorization, and zero mutation
+  for DryRun.
 
 ## Required tests
 
-- Pending Job two-step UI control and successful cancellation refresh.
-- Running Job cooperative cancellation request and explanatory warning.
-- Completed/failed/cancelled jobs expose no cancellation control.
-- `Keep job` performs no request and restores the detail state.
-- Viewer gets 403; Operator succeeds; malformed method/path/query/body cannot bypass the existing endpoint.
-- One click cannot cancel; rendering remains text-node-only with no inline handlers or token persistence.
-- No submit/resume/retry/execute/overwrite controls are introduced.
-- API/UI cancellation constructs no media services and performs zero Storage mutations.
-- Existing API/UI/automation/worker/security/runtime/media regressions and all quality gates pass.
+- Scan and preview submission with omitted and bounded limit.
+- Three-step UI flow; Back/Keep performs no request; success refreshes first page and opens Job detail.
+- Viewer 403 and Operator success; audit route contains no body/query/command/limit.
+- Unknown fields/query, malformed JSON, invalid limits, organize, execute, path, Task, actor, policy,
+  Storage, Scheduler, overwrite, and delete inputs create zero Jobs.
+- Remote organize API behavior remains separately gated and unchanged.
+- UI contains only scan/preview choices and never emits execute authority/header or organization controls.
+- Submission API constructs no Storage/provider/Scanner/workflow/Planner/Executor and performs zero
+  media mutations before Worker processing.
+- Existing cancellation, API/UI, automation/worker/security/runtime/media regressions and quality gates pass.
 
 ## Documentation
 
@@ -56,18 +64,18 @@ Update README, requirements, architecture, progress, roadmap, and operator/API d
 
 ## Out of scope
 
-Job submission UI, Task pause/resume/retry/cancel, forced interruption, rollback, Scheduler controls,
-notification controls, remote execute UI, configuration editing, OIDC, TLS, and media organization changes.
+Organize/execute UI, Task submission/control/resume/retry, Scheduler/Notification controls,
+configuration editing, live progress/polling, forced cancellation, rollback, OIDC, and TLS.
 
 ## Final report
 
-## Phase 19.17 Result
+## Phase 19.18 Result
 
 PASS / FAIL
 
-## Cancellation Flow
+## Submission Flow
 
-## Authorization and Audit
+## Authorization and Validation
 
 ## Safety
 

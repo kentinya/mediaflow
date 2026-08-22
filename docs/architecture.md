@@ -155,6 +155,13 @@ security audit. JavaScript does not infer or persist a new status, and terminal 
 reloaded from the API. This UI boundary constructs no media service and adds no submission, Task
 control, retry/resume, execute authority, rollback, or Storage mutation.
 
+Phase 19.18 exposes the existing `AutomationJobService.submit` boundary without adding a workflow.
+The operator UI constructs an immutable allowlisted payload only after Open, Review, and Confirm;
+Back/Keep sends nothing. The API accepts exactly scan/preview plus an optional 1–10000 limit, while
+the separately authorized remote-organize branch remains inaccessible from the UI. Queueing writes
+only the durable Job and security audit. Storage/provider/scanner/workflow construction happens only
+if a later Worker claims the Job, under the existing DryRun and cancellation boundaries.
+
 ## Phase 18.3 Cron and schedule audit
 
 CronExpression is a bounded pure-domain parser/evaluator for five numeric fields. It accepts only

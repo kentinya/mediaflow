@@ -189,6 +189,10 @@ Phase 19.17 已将既有 Automation Job 协作取消安全接入操作台：Pend
 与确认两步，Operator/Executor/Admin 继续由 `cancel_job` RBAC 和审计约束。取消不提交新 Job、
 不控制 Task、不授予执行权限、不回滚已完成操作，也不构造任何媒体或 Storage 服务。
 
+Phase 19.18 已将既有 scan/preview DryRun Job 提交接入操作台：表单、审核、确认三步生成仅含
+command/可选有界 limit 的请求，Operator/Executor/Admin 仍由 `submit_dry_run` 权限约束。
+入队不构造工作流或 Storage，UI 不提供 organize、execute、Scheduler 或 Task 控制。
+
 ## 下一步实施建议
 
 后续任务仍应保持小步推进。优先顺序：

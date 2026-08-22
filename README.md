@@ -311,7 +311,9 @@ immediately; running cancellation is cooperative between items, so an in-flight 
 and completed work is not rolled back. Operator/executor/admin tokens may also record the same
 restricted decisions already supported by the API: conflict Skip/Rename, a persisted metadata
 candidate rank, or a persisted classification choice rank. The UI cannot Overwrite, edit paths or
-IDs, resume/retry/cancel a Task, submit a Job, or execute organization. Decisions never resume work
+IDs, resume/retry/cancel a Task, or execute organization. The Jobs view can queue only `scan` or
+`preview` after a separate review step, with an optional 1–10000 item limit; these jobs are visibly
+marked DRY_RUN and contain no execute authority. Decisions never resume work
 automatically. The standard-library server has no TLS or production identity provider; keep it on
 trusted loopback or place it behind a correctly configured HTTPS reverse proxy.
 

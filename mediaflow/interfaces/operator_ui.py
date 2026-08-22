@@ -188,6 +188,7 @@ APP_JS = b"""(() => {
     const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
     const data = await api(`/api/v1/${kind}?limit=100${suffix}`); const items = data.items || [];
     clear(content); content.append(text('h2', kind === 'tasks' ? 'Tasks' : 'Automation jobs'));
+    if (kind === 'jobs') content.append(actionButton('Queue DryRun job', showDryRunJobForm));
     if (kind === 'tasks') {
       const rows = items.map(item => [item.task_id, item.command, item.status,
         item.execute_authorized ? 'MUTATION_AUTHORIZED' : 'DRY_RUN', item.completed_items,
@@ -207,6 +208,37 @@ APP_JS = b"""(() => {
         () => renderObservability(kind, data.previous_cursor),
         () => renderObservability(kind, data.next_cursor));
     }
+  }
+  function showDryRunJobForm() {
+    clear(detailContent); detailContent.append(text('h2', 'Queue DryRun automation job'));
+    const command = document.createElement('select'); command.setAttribute('aria-label', 'DryRun command');
+    ['scan', 'preview'].forEach(value => { const option = text('option', value); option.value = value;
+      command.append(option); });
+    const limit = document.createElement('input'); limit.type = 'number'; limit.min = '1';
+    limit.max = '10000'; limit.step = '1'; limit.placeholder = 'Optional limit';
+    limit.setAttribute('aria-label', 'Optional item limit');
+    const controls = text('div', '', 'choices'); controls.append(command, limit,
+      actionButton('Review DryRun job', () => {
+        if (limit.value && !limit.reportValidity()) return;
+        reviewDryRunJob(command.value, limit.value ? Number(limit.value) : null);
+      }), actionButton('Keep jobs unchanged', () => { detail.hidden = true; }));
+    detailContent.append(text('p', 'This queues scan or preview only. It grants no execution authority.'),
+      controls); detail.hidden = false;
+  }
+  function reviewDryRunJob(command, limit) {
+    const payload = Object.freeze(limit === null ? {command} : {command, limit});
+    clear(detailContent); detailContent.append(text('h2', 'Review DryRun job'), cards([
+      ['Command', payload.command], ['Limit', payload.limit || 'No explicit limit'],
+      ['Authority', 'DRY_RUN'], ['Storage mutation', 'NONE']
+    ]), text('p', 'A Worker may read configured Storage and metadata providers. No organization is executed.',
+      'warning'), actionButton('Confirm queueing', () => submitDryRunJob(payload)),
+      actionButton('Back without queueing', showDryRunJobForm)); detail.hidden = false;
+  }
+  async function submitDryRunJob(payload) {
+    try {
+      const created = await api('/api/v1/jobs', {method: 'POST', body: JSON.stringify(payload)});
+      await renderObservability('jobs'); await showJob(created.job_id); message('DryRun job queued.');
+    } catch (error) { message(error.message, true); }
   }
   async function renderSchedules() {
     const data = await api('/api/v1/schedules'); const items = data.items || [];

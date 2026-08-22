@@ -25,6 +25,8 @@
 > 策略引用，不显示路径、规则值、模板、端点、环境变量、凭证或任意适配器选项，也不提供编辑。
 > 操作台对 Automation Job 的取消必须复用既有权限、审计和协作取消语义，并经过“请求取消”
 > 与“确认取消”两个独立动作；取消不授予执行权限、不回滚已完成媒体操作，也不控制 Task。
+> 操作台提交 Automation Job 只能选择 scan/preview，并经过打开、审核、确认三个阶段；请求只能
+> 包含 command 和可选有界 limit，必须明确显示 DRY_RUN，不能携带 organize/execute 权限。
 
 ---
 
@@ -3941,6 +3943,17 @@ Python/Schema 兼容性、Storage/资源库/媒体库标识及 A/B/C 下游策�
 
 Pending 取消立即终止；Running 取消只在批次协作边界生效，正在进行的读取或单项操作可能完成。
 系统不得将取消描述为回滚，不得删除或逆转已完成媒体操作，也不得因此获得新的执行权限。
+
+## 109.3 DryRun Automation Job 提交界面
+
+操作台只能提交 `scan` 或 `preview`，可选 limit 必须为 1–10000 的整数。必须依次经过打开表单、
+审核不可变摘要和确认入队；返回或保留操作不产生请求。最终 JSON 只允许 command 和 limit，
+Query 及 path、Task、actor、policy、Storage、Scheduler、overwrite、delete、organize、execute 等
+字段必须在创建 Job 前拒绝。
+
+Viewer/Auditor 保持只读，Operator/Executor/Admin 继续使用 `submit_dry_run` 权限。入队本身只
+写持久 Job 与安全审计，不得构造 Storage、Provider、Scanner 或 Executor；后续 Worker 仍按
+既有边界处理，并且 preview 永远不获得媒体变更权限。
 
 # 110. 最终核心原则
 

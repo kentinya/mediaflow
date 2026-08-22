@@ -19,6 +19,8 @@ from mediaflow.domain.automation import (
 from mediaflow.domain.cron import CronExpression
 from mediaflow.domain.notification import NotificationEvent, NotificationEventType
 
+MAX_AUTOMATION_JOB_LIMIT = 10_000
+
 
 class AutomationCancelled(RuntimeError):
     def __init__(self, task_id: str | None = None) -> None:
@@ -40,9 +42,14 @@ class AutomationJobService:
         if parsed not in {AutomationCommand.SCAN, AutomationCommand.PREVIEW}:
             raise ValueError("automation command must be scan or preview")
         if limit is not None and (
-            isinstance(limit, bool) or not isinstance(limit, int) or limit < 1
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or limit < 1
+            or limit > MAX_AUTOMATION_JOB_LIMIT
         ):
-            raise ValueError("automation job limit must be a positive integer")
+            raise ValueError(
+                f"automation job limit must be an integer between 1 and {MAX_AUTOMATION_JOB_LIMIT}"
+            )
         now = datetime.now(UTC)
         job = AutomationJob(
             str(uuid4()), parsed, AutomationJobStatus.PENDING, now, now, limit=limit

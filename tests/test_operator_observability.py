@@ -156,7 +156,8 @@ class OperatorObservabilityTests(unittest.TestCase):
         self.assertIn("{method: 'POST'}", script)
         self.assertIn("await renderObservability('jobs'); await showJob(id)", script)
         self.assertNotIn("window.confirm", script)
-        self.assertNotIn("/api/v1/jobs', {method: 'POST'", script)
+        self.assertIn("Queue DryRun job", script)
+        self.assertIn("'/api/v1/jobs', {method: 'POST'", script)
 
     def test_notifications_are_bounded_filtered_and_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

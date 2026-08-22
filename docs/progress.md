@@ -48,6 +48,7 @@
 - Phase 19.15 isolated runtime schema migration rehearsal: PASS
 - Phase 19.16 read-only configuration and system status API/UI: PASS
 - Phase 19.17 explicit Automation Job cancellation UI: PASS
+- Phase 19.18 explicit DryRun Automation Job submission UI: PASS
 
 ## Planned
 
@@ -1108,4 +1109,17 @@ Phase 19.17 explicit Automation Job cancellation UI (2026-08-22): PASS
 - Added no Job submission, Task control, retry/resume, remote execution, rollback, media workflow, or
   Storage mutation behavior; running cancellation remains explicitly cooperative between items
 - Full suite: 457 tests, 454 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
+  dependency, both example-configuration, forbidden-runtime-dependency, and wheel build gates passed
+
+Phase 19.18 explicit DryRun Automation Job submission UI (2026-08-22): PASS
+
+- Reused the existing durable Job service, `submit_dry_run` RBAC, Worker boundary, cancellation flow,
+  and normalized audit; no alternate workflow or execution path was added
+- Added an Open → Review → Confirm Jobs UI limited to scan/preview and an optional 1–10000 item limit;
+  Back/Keep sends no request and successful queueing reloads API state
+- Tightened DryRun POST to exact command/optional-limit documents with no query; malformed/unknown or
+  authority/path/Task/policy/Storage/Scheduler/overwrite/delete fields create no Job
+- Remote organize remains separately gated and absent from UI; queueing constructs no media services,
+  performs no Storage mutation, and grants no execute authority
+- Full suite: 460 tests, 457 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
   dependency, both example-configuration, forbidden-runtime-dependency, and wheel build gates passed
