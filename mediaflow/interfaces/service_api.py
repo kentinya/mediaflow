@@ -6,9 +6,11 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from enum import Enum
+from urllib.parse import parse_qs
 from uuid import uuid4
 
 from mediaflow.application.automation import AutomationJobService
+from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.task_persistence import ConfirmationStatus
@@ -28,6 +30,8 @@ class MediaFlowApi:
         schedules=(),
         *,
         principals: tuple[ResolvedApiPrincipal, ...] = (),
+        dashboard_resource_library_count: int = 0,
+        dashboard_media_library_count: int = 0,
         remote_execution_enabled: bool = False,
         remote_execution_maximum_ttl_seconds: int = 900,
     ) -> None:
@@ -47,6 +51,11 @@ class MediaFlowApi:
         )
         self._remote_execution_enabled = remote_execution_enabled
         self._schedules = tuple(schedules)
+        self._dashboard = DashboardService(
+            repository,
+            resource_library_count=dashboard_resource_library_count,
+            media_library_count=dashboard_media_library_count,
+        )
 
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
         method = str(environ.get("REQUEST_METHOD", "GET")).upper()
@@ -147,6 +156,13 @@ class MediaFlowApi:
                 start_response,
                 200,
                 {"items": [self._value(item) for item in self._repository.list_security_audit()]},
+            )
+        if parts == ["api", "v1", "dashboard"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            return self._response(
+                start_response,
+                200,
+                self._value(self._dashboard.snapshot(recent_limit=self._dashboard_limit(environ))),
             )
         if method == "GET":
             self._require(principal, ApiPermission.READ)
@@ -334,6 +350,7 @@ class MediaFlowApi:
             ("api", "v1", "notifications"),
             ("api", "v1", "jobs"),
             ("api", "v1", "security-audit"),
+            ("api", "v1", "dashboard"),
         }
         key = tuple(parts)
         if key in exact:
@@ -348,6 +365,20 @@ class MediaFlowApi:
         if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":
             return "/api/v1/schedules/{id}/audit"
         return "/api/v1/<unmatched>"
+
+    @staticmethod
+    def _dashboard_limit(environ: dict) -> int:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        unknown = set(values).difference({"recentLimit"})
+        if unknown:
+            raise ValueError("dashboard query contains an unsupported field")
+        raw = values.get("recentLimit", ["10"])
+        if len(raw) != 1:
+            raise ValueError("dashboard recentLimit must be specified once")
+        try:
+            return int(raw[0])
+        except ValueError as error:
+            raise ValueError("dashboard recentLimit must be an integer") from error
 
     def _safe_audit(self, *args) -> None:
         try:

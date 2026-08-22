@@ -1,88 +1,84 @@
-# Phase 18.6 — API Principals, RBAC + Security Audit
+# Phase 18.7 — Operational Dashboard Read Model
 
 ## Goal
 
-Replace the single all-powerful API identity with configuration-driven principals and least-
-privilege roles, and persist a redacted security audit for API access. Keep the Phase 18.5 one-time
-execution authorization as an additional mandatory gate for real organization.
+Provide a bounded, read-only operational snapshot for CLI, API, and a future Web UI by aggregating
+existing persistent FileIndex, Task, Job, Confirmation, and Notification state. Do not implement a
+Web UI and do not move workflow logic into the dashboard.
 
-## 1. Principals and roles
+## 1. Dashboard model and query service
 
-- Configure unique API principals with ID, environment-owned Bearer `tokenEnv`, enabled flag, and
-  roles selected from viewer, operator, executor, auditor, and admin.
-- Normalize roles into explicit permissions: read, submit DryRun, cancel Job, remote execute, and
-  read security audit.
-- Resolve token values only at API startup. Reject literal tokens, duplicate IDs/tokenEnv names,
-  unknown roles, empty roles, invalid environment names, and missing enabled-principal secrets.
-- Keep legacy `api.tokenEnv` compatibility as one admin principal, but reject mixing legacy and new
-  principal configuration. Examples must use the new principal form.
+- Add provider-neutral immutable dashboard summary and recent-failure models.
+- Count configured/enabled ResourceLibraries and MediaLibraries from normalized runtime
+  configuration.
+- Aggregate indexed media by scan status, Tasks and AutomationJobs by status, pending conflict
+  confirmations, and notification dead letters from SQLite.
+- Include only bounded recent failure identifiers, kind, status/category, and timestamp. Do not
+  expose raw exception text, media paths, notification bodies, destination paths, or secrets.
+- Generate one UTC `asOf` value and deterministic output.
 
-## 2. Authorization boundary
+## 2. Persistence read boundary
 
-- All `/api/v1` endpoints require an authenticated principal and route-specific permission.
-- viewer is read-only; operator may submit scan/preview and cancel; executor may additionally submit
-  organize only with the existing valid one-time token; auditor may read security audit; admin has
-  all permissions.
-- Return stable 401 for authentication failure and 403 for insufficient permission.
-- Compare presented tokens safely and never expose token values or environment names in API output.
-- API still cannot issue/revoke execution authorizations or resolve conflicts.
+- Add an explicit dashboard read port and a SQLite implementation using aggregate SQL rather than
+  loading entire large-library tables into memory.
+- Treat a not-yet-created FileIndex table as an empty index without creating or mutating it during
+  the query.
+- Dashboard queries must not mutate database state and must not construct or call Storage,
+  MetadataProvider, Scanner, strategy engines, Planner, OrganizerExecutor, notification transport,
+  or network clients.
+- Do not change schema version unless persistent schema actually changes.
 
-## 3. Persistent security audit
+## 3. CLI and API
 
-- Upgrade SQLite compatibly to v9 and append API request audit records with ID, UTC timestamp,
-  principal ID when known, method, normalized route, action, outcome, HTTP status, request ID, and
-  bounded source address.
-- Audit successful and denied `/api/v1` access, including authentication and permission failures.
-- Never persist headers, bearer/execution tokens, request bodies, query strings, cookies, secrets,
-  media payloads, or exception text.
-- Audit persistence failure must fail closed for mutation requests and must not leak details.
+- Add local `mediaflow dashboard [--recent-limit N]`.
+- Add authenticated `GET /api/v1/dashboard` under existing read permission.
+- Keep `GET /health` minimal and public; do not leak dashboard state through health.
+- Validate recent limits with a small bound and return stable JSON through the existing API
+  serialization boundary.
+- All API dashboard access remains covered by the Phase 18.6 redacted security audit.
 
-## 4. Visibility and CLI
+## 4. Safety and compatibility
 
-- Add admin/auditor-only `GET /api/v1/security-audit` with bounded results.
-- Add local `mediaflow security-audit list [--limit N]` without constructing Storage.
-- API responses may identify the authenticated principal but never return credential configuration.
-
-## 5. Safety and compatibility
-
-- Default configuration remains loopback-oriented and remote execution remains disabled.
-- RBAC never bypasses one-time execution authorization, conflicts, overwrite/delete protection,
-  Task execute authority, Storage capabilities, or OrganizerExecutor.
-- Scheduler stays scan/preview-only. No strategy, Storage, Planner, or execution semantic changes.
+- Preserve every Parser, Recognition, Metadata, Naming, Classification, Planner, Executor, Storage,
+  Task, Scheduler, notification, RBAC, and one-time execution authorization behavior.
+- Dashboard must remain useful when tables are empty and after restart.
+- RecognitionType C invariants and DryRun zero-mutation guarantees remain unchanged.
 
 ## Required tests
 
-- Role/permission matrix for every read/write/execute/audit route.
-- Invalid/missing/disabled principals, unknown roles, duplicates, legacy compatibility and mixing.
-- 401 vs 403 behavior and constant-time credential comparison boundary.
-- Successful/denied audit records, redaction, ordering/limit and v8-to-v9 migration.
-- Security-audit API permission and local CLI zero-Storage behavior.
-- Executor role still requires and atomically consumes a Phase 18.5 one-time token.
-- Audit write failure fails closed before mutation Job creation.
-- All automation, notification, execution authorization, DryRun, strategy and Storage regressions.
+- Empty database/config snapshot.
+- Accurate indexed Ready/Missing and Task/Job/Confirmation/notification counts.
+- Bounded deterministic recent failures with no raw errors, paths, bodies, credentials, or secrets.
+- Large-library aggregation proves the service does not enumerate FileIndex records.
+- Missing FileIndex table is read as zero without creating it.
+- CLI rendering and API JSON; viewer can read, unauthenticated is 401, auditor/admin can read.
+- Dashboard CLI/API construct no Storage and perform zero Storage mutations/network calls.
+- API dashboard request produces a normalized redacted security audit record.
+- Existing API/RBAC, Task, Scanner/FileIndex, notification, DryRun, strategy and Storage regressions.
 
 ## Documentation and validation
 
-Update README, examples, configuration, architecture, progress, roadmap, and product status. Run
-all tests plus formatter, lint, compile, dependency, build, configuration, FFprobe/FFmpeg, and diff
-checks.
+Update README, architecture, configuration where relevant, progress, roadmap, and product status.
+Run all tests plus formatter, lint, compile, dependency, build, configuration, FFprobe/FFmpeg, and
+diff checks.
 
 ## Out of scope
 
-- Database-managed users/passwords, login/session/cookies, token rotation endpoints, OIDC/OAuth,
-  TLS termination, Web UI, scheduled execute, and OrganizerExecutor redesign.
+- HTML/JavaScript/Web UI, charts, live push/WebSocket/SSE, Storage health probing, database users,
+  OIDC/OAuth, metric time-series retention, log search, policy editing, confirmation mutation,
+  automatic remediation, and scheduled execute.
 
 ## Final report
 
-## Phase 18.6 Result
+## Phase 18.7 Result
 
 PASS / FAIL
 
-## Principals and RBAC
+## Dashboard Model
 
-## Security Audit
+## CLI and API
 
-## Security and Safety
+## Privacy and Safety
 
 ## Regression
 

@@ -487,6 +487,7 @@ mediaflow jobs list
 mediaflow jobs show JOB_ID
 mediaflow jobs cancel JOB_ID
 mediaflow worker run-next
+mediaflow dashboard --recent-limit 10
 mediaflow api serve --host 127.0.0.1 --port 8787
 mediaflow security-audit list --limit 100
 ```
@@ -497,6 +498,11 @@ Task/Job/Confirmation queries plus scan/preview submission and pending cancellat
 organize is rejected unless the separately documented one-time execution feature is enabled and a
 valid ticket is atomically consumed. The server is a loopback development adapter, not a hardened
 Internet-facing deployment.
+
+`dashboard` needs no additional configuration. It counts enabled libraries from this runtime
+document and persisted state from `persistence.databasePath`; it does not resolve Storage/provider
+secrets or test connections. The API equivalent is `GET /api/v1/dashboard?recentLimit=10` and uses
+the ordinary read permission. `recentLimit` must be between 1 and 50.
 
 `GET /api/v1/security-audit` is restricted to auditor/admin. SQLite audit rows record timestamp,
 principal ID when known, method, normalized route, action/outcome/status, request ID, and a bounded

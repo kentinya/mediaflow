@@ -646,6 +646,21 @@ have `remote_execute`, and Phase 18.5 must atomically consume a valid one-time a
 does not widen Scheduler commands or bypass conflict, overwrite/delete, Task authority, or
 OrganizerExecutor safeguards.
 
+## Operational dashboard read model
+
+Phase 18.7 adds a provider-neutral immutable DashboardSnapshot assembled by a small application
+query service. Runtime configuration supplies enabled ResourceLibrary/MediaLibrary counts; a
+DashboardRepository supplies aggregate FileIndex, Task, AutomationJob, pending confirmation, and
+notification dead-letter counts. The SQLite implementation uses grouped/count SQL and never loads
+the large FileIndex into memory. If FileIndex has not been initialized, it reports an empty index
+without creating that table.
+
+Recent failures contain only kind, persistent identifier, categorical status/category, and time.
+Raw Task/Job errors, media paths, notification bodies, headers, destinations, query strings, and
+credentials do not enter the read model. `mediaflow dashboard` and authenticated
+`GET /api/v1/dashboard` reuse this service. Dashboard reads construct no Storage adapter, perform no
+health probe or network request, and remain covered by the normalized Phase 18.6 security audit.
+
 ## Classification policies and engine
 
 Classification is the pure “where does this identified media belong?” stage after Naming. The

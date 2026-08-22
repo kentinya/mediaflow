@@ -31,6 +31,7 @@ export MEDIAFLOW_WEBHOOK_SECRET="<independent-random-webhook-secret>"
 mediaflow analyze "/path/to/movie.mkv"
 mediaflow analyze --offline "/path/to/movie.mkv"
 mediaflow config validate
+mediaflow dashboard --recent-limit 10
 mediaflow scan --limit 20
 mediaflow preview --limit 20
 mediaflow organize --limit 20
@@ -217,6 +218,19 @@ it locally with `mediaflow security-audit list --limit 100`, or through auditor/
 request bodies, query strings, tokens, cookies, or exception text. The legacy single `api.tokenEnv`
 form is accepted as one admin principal for compatibility, but cannot be mixed with `principals`.
 
+The read-only operational dashboard summarizes configured libraries plus persisted FileIndex,
+Task, Job, confirmation, and notification state:
+
+```bash
+mediaflow dashboard --recent-limit 10
+curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
+  'http://127.0.0.1:8787/api/v1/dashboard?recentLimit=10'
+```
+
+It uses aggregate SQLite queries, performs no Storage health probe or provider/network request, and
+redacts recent failures to identifiers, categorical status, and timestamps. Storage connectivity
+remains an explicit `mediaflow storage check` operation.
+
 ## Persistent runtime state
 
 Production scan/preview/organize use the configured SQLite database:
@@ -236,5 +250,6 @@ The core pipeline, persistent recovery/conflict decisions, attachments, read-onl
 persistent scan/preview jobs, Cron schedules, and signed Webhook notifications are complete.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
 Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
-Database-managed users/login, token rotation, scheduled execute, and Web UI remain planned;
+The operational Dashboard read model is available to CLI/API without a Web UI. Database-managed
+users/login, token rotation, scheduled execute, and Web UI remain planned;
 unattended scheduled real organization is not supported.

@@ -35,7 +35,7 @@ Runtime Configuration
 | Classification | 已完成 | 确定性规则和媒体库选择 | 人工分类确认 |
 | Planner/Executor | 部分完成 | 计划、冲突保护、DryRun、真实执行、跨存储 | 完整冲突策略、附件、Rollback |
 | Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、协作取消、锁、JSONL 历史 | 强制中断、自动恢复 |
-| API/UI/Scheduler | 部分完成 | API 主体/RBAC/审计、interval/Cron、签名通知、一次性授权执行 | Web UI、登录/外部身份源 |
+| API/UI/Scheduler | 部分完成 | API 主体/RBAC/审计、运营 Dashboard、Cron、通知、一次性授权执行 | Web UI、登录/外部身份源 |
 
 ## 总体阶段计划
 
@@ -106,6 +106,9 @@ Phase 18.5 已完成默认关闭的本机一次性远程执行票据、摘要持
 Phase 18.6 已完成配置化 API Principal、最小权限角色、401/403 路由授权和 SQLite v9 脱敏
 安全审计。Executor 角色仍必须另外消费 Phase 18.5 一次性票据。
 
+Phase 18.7 已完成面向 CLI/API/未来 Web UI 的只读运营 Dashboard Read Model；通过 SQLite
+聚合 FileIndex、Task、Job、待确认和通知状态，不访问 Storage 或网络，也不暴露原始错误路径。
+
 ### Phase 19：Web UI 与生产发布
 
 - Dashboard、Storage/Library/Policy 管理、候选确认、冲突处理、任务和历史页面。
@@ -116,7 +119,7 @@ Phase 18.6 已完成配置化 API Principal、最小权限角色、401/403 路�
 
 下一任务应限定为 Phase 18，不同时启动 Web UI。优先顺序：
 
-1. 为 Web UI 建立只读 Dashboard 和人工确认工作流。
+1. 在现有只读 Dashboard API 上建立最小 Web UI 壳和人工确认工作流设计。
 2. 评估数据库用户/OIDC、凭证轮换和 TLS 部署边界。
 3. 评估节假日日历等高级调度需求，避免扩大 Cron 核心。
 4. 保持 Storage 预检、附件、冲突确认和一次性执行授权不变。

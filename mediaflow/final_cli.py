@@ -20,6 +20,7 @@ from mediaflow.application.automation import (
     IntervalScheduler,
 )
 from mediaflow.application.conflict_resolution import ConfirmationService
+from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
@@ -176,6 +177,8 @@ def final_main(
     )
     security_audit_list = security_audit_commands.add_parser("list")
     security_audit_list.add_argument("--limit", type=int, default=100)
+    dashboard = commands.add_parser("dashboard", help="read-only operational summary")
+    dashboard.add_argument("--recent-limit", type=int, default=10)
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_serve = api_commands.add_parser("serve")
@@ -196,6 +199,17 @@ def final_main(
                 f"Organize policies: {len(strategy.organize_policies)}\n"
                 f"Webhooks: {len(configuration.webhooks)}\n"
             )
+            return 0
+        if arguments.command == "dashboard":
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                snapshot = DashboardService(
+                    repository,
+                    resource_library_count=sum(
+                        item.enabled for item in configuration.resource_libraries
+                    ),
+                    media_library_count=sum(item.enabled for item in configuration.media_libraries),
+                ).snapshot(recent_limit=arguments.recent_limit)
+                stdout.write(render_dashboard(snapshot))
             return 0
         if arguments.command == "notifications":
             if arguments.notification_command in {"list", "stale"} and arguments.limit < 1:
@@ -493,6 +507,12 @@ def final_main(
                     None,
                     configuration.automation_schedules,
                     principals=principals,
+                    dashboard_resource_library_count=sum(
+                        item.enabled for item in configuration.resource_libraries
+                    ),
+                    dashboard_media_library_count=sum(
+                        item.enabled for item in configuration.media_libraries
+                    ),
                     remote_execution_enabled=configuration.remote_execution_enabled,
                     remote_execution_maximum_ttl_seconds=(
                         configuration.remote_execution_maximum_ttl_seconds
@@ -919,6 +939,39 @@ def render_security_audit(values) -> str:
         for item in values
     )
     lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_dashboard(value) -> str:
+    lines = [
+        "",
+        "DASHBOARD",
+        "",
+        f"As of: {value.as_of.isoformat()}",
+        f"Resource libraries: {value.resource_libraries}",
+        f"Media libraries: {value.media_libraries}",
+        f"Indexed files: {value.files.total}",
+        f"Ready: {value.files.ready}",
+        f"Unstable: {value.files.unstable}",
+        f"Missing: {value.files.missing}",
+        f"File errors: {value.files.errors}",
+        f"Tasks: {value.tasks.total} (running={value.tasks.running}, failed={value.tasks.failed})",
+        f"Jobs: {value.jobs.total} (pending={value.jobs.pending}, running={value.jobs.running}, "
+        f"failed={value.jobs.failed})",
+        f"Pending confirmations: {value.pending_confirmations}",
+        f"Dead-letter notifications: {value.dead_letter_notifications}",
+        "",
+        "RECENT FAILURES",
+        "",
+    ]
+    lines.extend(
+        f"{item.occurred_at.isoformat()} | {item.kind} | {item.identifier} | "
+        f"{item.status} | {item.category}"
+        for item in value.recent_failures
+    )
+    if not value.recent_failures:
+        lines.append("None")
+    lines.append("")
     return "\n".join(lines)
 
 

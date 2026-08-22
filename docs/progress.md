@@ -38,7 +38,7 @@
 
 ## Current
 
-- Phase 18.6 configuration-driven API principals, RBAC, and redacted SQLite security audit: PASS
+- Phase 18.7 operational Dashboard read model for CLI/API: PASS
 
 ## Planned
 
@@ -813,5 +813,16 @@ Phase 18.6 API principals, RBAC, and security audit (2026-08-22): PASS
   pre-dispatch persistence before Job mutation
 - Added auditor/admin API visibility and a local zero-Storage `security-audit list` command
 - Full suite: 361 tests, 358 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated-free wheel build, example validation, FFmpeg/FFprobe
+  runtime audit, and diff check passed
+
+Phase 18.7 operational Dashboard read model (2026-08-22): PASS
+
+- Added immutable provider-neutral dashboard counts and bounded categorical recent-failure records
+- Added aggregate SQLite reads for FileIndex, Tasks, Jobs, pending confirmations, and notification
+  dead letters without enumerating large libraries or creating a missing FileIndex table
+- Added zero-Storage `mediaflow dashboard` and viewer-readable `/api/v1/dashboard`; API access is
+  included in the existing normalized security audit
+- Full suite: 365 tests, 362 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated-free wheel build, example validation, FFmpeg/FFprobe
   runtime audit, and diff check passed
