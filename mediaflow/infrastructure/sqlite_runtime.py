@@ -987,12 +987,16 @@ class SQLiteTaskRepository:
             ).fetchone()
         return bool(row and row["cancellation_requested"])
 
-    def list_stale_running_jobs(self, before: datetime) -> tuple[AutomationJob, ...]:
+    def list_stale_running_jobs(
+        self, before: datetime, *, limit: int = 100
+    ) -> tuple[AutomationJob, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 100:
+            raise ValueError("stale job limit must be between 1 and 100")
         with self._lock:
             rows = self._connection.execute(
                 "SELECT * FROM automation_jobs WHERE status=? AND updated_at<? "
-                "ORDER BY updated_at, job_id",
-                (AutomationJobStatus.RUNNING.value, before.isoformat()),
+                "ORDER BY updated_at, job_id LIMIT ?",
+                (AutomationJobStatus.RUNNING.value, before.isoformat(), limit),
             ).fetchall()
         return tuple(self._job(row) for row in rows)
 

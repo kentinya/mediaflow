@@ -163,6 +163,10 @@ Phase 18.2 adds a resident Worker and opt-in interval schedules. Example schedul
 default. `automation.maximumActiveJobs` defaults to 100 and atomically limits the combined Pending
 and Running backlog across manual DryRun submissions, schedules, and protected remote organize.
 Completed, failed, and cancelled Jobs release capacity. Run Scheduler and Worker separately.
+`automation.staleJobAgeSeconds` defaults to 3600 (allowed range 60–604800). The authenticated Jobs
+page can explicitly list at most 100 Running Jobs older than this threshold. This is read-only
+diagnostic evidence, not proof that a worker died; execute-authorized organize Jobs require manual
+investigation and are never automatically recovered.
 `jobs cancel JOB_ID` cancels pending work immediately
 or requests cooperative cancellation of running work before another media item starts; an in-flight
 read may finish. Stale crash leftovers are never retried automatically: inspect with

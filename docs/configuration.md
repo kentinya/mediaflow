@@ -696,6 +696,7 @@ rule before continuing.
 ```json
 "automation": {
   "maximumActiveJobs": 100,
+  "staleJobAgeSeconds": 3600,
   "workerPollSeconds": 2,
   "schedulerPollSeconds": 5,
   "schedules": [
@@ -713,6 +714,12 @@ is one SQLite transaction, so concurrent API/CLI processes cannot exceed the lim
 Failed, and Cancelled release capacity. A full Scheduler leaves its occurrence/state unchanged for a
 later tick; a full remote-organize queue leaves its one-time authorization active and unconsumed.
 MediaFlow never purges or cancels existing Jobs to make room.
+
+`staleJobAgeSeconds` is an integer from 60 through 604800 and defaults to 3600. The operator UI and
+`GET /api/v1/jobs/stale?limit=100` use this configured threshold; the endpoint accepts only a 1–100
+limit and returns an allowlist without job input, paths, or errors. It performs no recovery. In
+particular, an old execute-authorized organize Job may have an uncertain mutation outcome and must
+be investigated locally before using the existing local recovery commands.
 
 IDs are unique; command is only `scan` or `preview`; intervals and limits are positive. The first
 enabled tick emits one job and persists its next-run time. Missed periods do not create a backlog.

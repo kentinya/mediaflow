@@ -1139,3 +1139,16 @@ Phase 19.19 durable active Automation Job admission control (2026-08-22): PASS
   purge, bypass, retry, Scheduler, execute, or Task control
 - Full suite: 466 tests, 463 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
   dependency, both example-configuration, forbidden-runtime-dependency, and wheel build gates passed
+
+Phase 19.20 read-only stale Running Automation Job visibility (2026-08-22): PASS
+
+- Added validated `automation.staleJobAgeSeconds` (default 3600, range 60–604800) and exposed only
+  its numeric value in the redacted System snapshot
+- Added deterministic SQLite-bounded stale Running query and authenticated
+  `GET /api/v1/jobs/stale?limit=100` with strict query parsing and an explicit safe-field allowlist
+- Added an explicitly loaded Jobs UI view explaining that age is not liveness proof and marking
+  execute-authorized organize Jobs as manual-recovery-only
+- Added no recovery, retry, requeue, force-cancel, Worker, workflow, provider, or Storage operation;
+  existing security-audit persistence remains the only API-side write
+- Full suite: 471 tests, 468 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
+  dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed

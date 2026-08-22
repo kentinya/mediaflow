@@ -49,6 +49,7 @@ class MediaFlowApi:
         remote_execution_enabled: bool = False,
         remote_execution_maximum_ttl_seconds: int = 900,
         maximum_active_jobs: int = 100,
+        stale_job_age_seconds: int = 3600,
         system_status=None,
     ) -> None:
         if bearer_token and principals:
@@ -68,6 +69,14 @@ class MediaFlowApi:
             maximum_active_jobs=maximum_active_jobs,
         )
         self._remote_execution_enabled = remote_execution_enabled
+        if (
+            isinstance(stale_job_age_seconds, bool)
+            or not isinstance(stale_job_age_seconds, int)
+            or stale_job_age_seconds < 60
+            or stale_job_age_seconds > 604_800
+        ):
+            raise ValueError("stale Job age must be between 60 and 604800 seconds")
+        self._stale_job_age_seconds = stale_job_age_seconds
         self._system_status = system_status
         self._schedules = tuple(schedules)
         self._dashboard = DashboardService(
@@ -563,6 +572,24 @@ class MediaFlowApi:
                     ),
                 },
             )
+        if parts == ["api", "v1", "jobs", "stale"]:
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            self._require(principal, ApiPermission.READ)
+            limit = self._stale_job_limit(environ)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "threshold_seconds": self._stale_job_age_seconds,
+                    "items": [
+                        self._stale_job_value(item)
+                        for item in self._jobs.stale(
+                            age_seconds=self._stale_job_age_seconds, limit=limit
+                        )
+                    ],
+                },
+            )
         if parts == ["api", "v1", "jobs"]:
             if method == "GET":
                 limit, cursor = self._collection_page(environ, "jobs")
@@ -727,6 +754,7 @@ class MediaFlowApi:
             ("api", "v1", "notifications"),
             ("api", "v1", "logs"),
             ("api", "v1", "jobs"),
+            ("api", "v1", "jobs", "stale"),
             ("api", "v1", "security-audit"),
             ("api", "v1", "dashboard"),
             ("api", "v1", "system", "status"),
@@ -840,6 +868,28 @@ class MediaFlowApi:
         if limit < 1 or limit > 100:
             raise ValueError("classification review limit must be between 1 and 100")
         return limit
+
+    @staticmethod
+    def _stale_job_limit(environ: dict) -> int:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("stale job query accepts one limit field")
+        return MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], "stale job")
+
+    @staticmethod
+    def _stale_job_value(value) -> dict:
+        return {
+            "job_id": value.job_id,
+            "command": value.command.value,
+            "status": value.status.value,
+            "created_at": value.created_at.isoformat(),
+            "updated_at": value.updated_at.isoformat(),
+            "started_at": value.started_at.isoformat() if value.started_at else None,
+            "task_id": value.task_id,
+            "cancellation_requested": value.cancellation_requested,
+            "schedule_id": value.schedule_id,
+            "execute_authorized": value.execute_authorized,
+        }
 
     @staticmethod
     def _require_empty_query(environ: dict, resource: str) -> None:

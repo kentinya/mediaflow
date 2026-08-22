@@ -737,6 +737,7 @@ def final_main(
                         configuration.remote_execution_maximum_ttl_seconds
                     ),
                     maximum_active_jobs=configuration.automation_maximum_active_jobs,
+                    stale_job_age_seconds=configuration.automation_stale_job_age_seconds,
                     system_status=build_configuration_snapshot(configuration),
                 )
                 stdout.write(f"MediaFlow API listening on {arguments.host}:{arguments.port}\n")

@@ -74,20 +74,19 @@ class AutomationJobService:
     def cancel(self, job_id: str) -> AutomationJob:
         return self._repository.request_job_cancellation(job_id, datetime.now(UTC))
 
-    def stale(self, *, age_seconds: float) -> tuple[AutomationJob, ...]:
+    def stale(self, *, age_seconds: float, limit: int = 100) -> tuple[AutomationJob, ...]:
         if age_seconds <= 0:
             raise ValueError("stale age must be positive")
-        from datetime import timedelta
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 100:
+            raise ValueError("stale job limit must be between 1 and 100")
 
         return self._repository.list_stale_running_jobs(
-            datetime.now(UTC) - timedelta(seconds=age_seconds)
+            datetime.now(UTC) - timedelta(seconds=age_seconds), limit=limit
         )
 
     def requeue_stale(self, job_id: str, *, age_seconds: float) -> AutomationJob:
         if age_seconds <= 0:
             raise ValueError("stale age must be positive")
-        from datetime import timedelta
-
         now = datetime.now(UTC)
         return self._repository.requeue_stale_job(job_id, now - timedelta(seconds=age_seconds), now)
 

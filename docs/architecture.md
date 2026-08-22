@@ -168,6 +168,12 @@ serialize count-plus-insert across repository connections; terminal rows remain 
 longer consume capacity. The ordinary `create_job` method remains only for migrations/test fixtures,
 while every production submission path calls an admission-aware transaction.
 
+Phase 19.20 adds a separate read-only stale observation path. SQLite filters Running rows by the
+configured age cutoff, orders by `(updated_at, job_id)`, and applies the 1–100 limit in SQL. The API
+returns only safe job identity/state fields; the UI loads it explicitly and offers no recovery
+action. Staleness is deliberately not a lease or liveness proof. Execute-authorized organize Jobs
+are highlighted because replay after an uncertain mutation can be unsafe.
+
 Scheduler checks capacity in the same transaction as conditional state advance, Job insert, and audit;
 full capacity rolls back all three. Execution authorization checks capacity before its atomic token
 consume/Job/audit transaction, so queue-full cannot burn a ticket. API maps the stable domain rejection

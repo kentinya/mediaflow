@@ -129,6 +129,7 @@ APP_JS = b"""(() => {
       ['Python supported', system.python_supported], ['Runtime schema', system.runtime_schema_version],
       ['Platform', system.platform], ['Configuration valid', system.configuration_valid]
       , ['Maximum active jobs', system.maximum_active_jobs]
+      , ['Stale job age (seconds)', system.stale_job_age_seconds]
     ]));
     content.append(actionButton('Refresh system status', renderSystem));
     const sections = [
@@ -189,7 +190,10 @@ APP_JS = b"""(() => {
     const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
     const data = await api(`/api/v1/${kind}?limit=100${suffix}`); const items = data.items || [];
     clear(content); content.append(text('h2', kind === 'tasks' ? 'Tasks' : 'Automation jobs'));
-    if (kind === 'jobs') content.append(actionButton('Queue DryRun job', showDryRunJobForm));
+    if (kind === 'jobs') {
+      content.append(actionButton('Queue DryRun job', showDryRunJobForm));
+      content.append(actionButton('Show stale running jobs', renderStaleJobs));
+    }
     if (kind === 'tasks') {
       const rows = items.map(item => [item.task_id, item.command, item.status,
         item.execute_authorized ? 'MUTATION_AUTHORIZED' : 'DRY_RUN', item.completed_items,
@@ -209,6 +213,19 @@ APP_JS = b"""(() => {
         () => renderObservability(kind, data.previous_cursor),
         () => renderObservability(kind, data.next_cursor));
     }
+  }
+  async function renderStaleJobs() {
+    const data = await api('/api/v1/jobs/stale?limit=100'); const items = data.items || [];
+    clear(content); content.append(text('h2', 'Stale running automation jobs'));
+    content.append(text('p', `Running jobs not updated for ${data.threshold_seconds} seconds. ` +
+      'Age is an observation, not proof that a worker died. Inspect locally before recovery; ' +
+      'automatic requeue is intentionally unavailable.', 'warning'));
+    const rows = items.map(item => [item.job_id, item.command, item.status,
+      item.execute_authorized ? 'MUTATION_AUTHORIZED \\u2014 MANUAL RECOVERY ONLY' : 'DRY_RUN',
+      item.task_id || '-', item.updated_at]);
+    content.append(table(['ID', 'Command', 'Status', 'Authority', 'Task', 'Updated'], rows,
+      index => showJob(items[index].job_id)));
+    content.append(actionButton('Back to automation jobs', () => renderObservability('jobs')));
   }
   function showDryRunJobForm() {
     clear(detailContent); detailContent.append(text('h2', 'Queue DryRun automation job'));
