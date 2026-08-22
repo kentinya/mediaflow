@@ -23,6 +23,7 @@ def inspect_wheel(wheel: Path) -> None:
         "mediaflow/cli.py",
         "mediaflow/final_cli.py",
         "mediaflow/infrastructure/sqlite_backup.py",
+        "mediaflow/infrastructure/upgrade_preflight.py",
     }
     missing = sorted(required - names)
     if missing:
@@ -94,6 +95,19 @@ def smoke(wheel: Path, project: Path) -> None:
                 "database",
                 "backup",
                 "--output",
+                str(backup),
+            ],
+            cwd=root,
+            environment=environment,
+        )
+        run(
+            [
+                str(mediaflow),
+                "--config",
+                str(configurations[0]),
+                "upgrade",
+                "check",
+                "--backup",
                 str(backup),
             ],
             cwd=root,

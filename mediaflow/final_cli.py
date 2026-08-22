@@ -60,6 +60,7 @@ from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.tmdb import TMDBClient, TMDBConfig, TMDBProvider
+from mediaflow.infrastructure.upgrade_preflight import UpgradePreflightService
 
 
 def final_main(
@@ -202,6 +203,11 @@ def final_main(
     database_backup.add_argument("--output", required=True)
     database_verify = database_commands.add_parser("verify")
     database_verify.add_argument("path")
+    upgrade = commands.add_parser("upgrade", help="read-only upgrade readiness")
+    upgrade_commands = upgrade.add_subparsers(dest="upgrade_command", required=True)
+    upgrade_check = upgrade_commands.add_parser("check")
+    upgrade_check.add_argument("--backup", required=True)
+    upgrade_check.add_argument("--max-backup-age-hours", type=float, default=24)
     dashboard = commands.add_parser("dashboard", help="read-only operational summary")
     dashboard.add_argument("--recent-limit", type=int, default=10)
     metadata_reviews = commands.add_parser(
@@ -313,6 +319,13 @@ def final_main(
                 else service.verify(arguments.path)
             )
             stdout.write(render_database_backup(result, arguments.database_command))
+            return 0
+        if arguments.command == "upgrade":
+            result = UpgradePreflightService(configuration.database_path).check(
+                arguments.backup,
+                maximum_backup_age_hours=arguments.max_backup_age_hours,
+            )
+            stdout.write(render_upgrade_preflight(result))
             return 0
         if arguments.command == "metadata-reviews":
             with SQLiteTaskRepository(configuration.database_path) as repository:
@@ -1118,6 +1131,30 @@ def render_database_backup(value, operation: str) -> str:
             f"Size: {value.size_bytes}",
             f"SHA-256: {value.sha256}",
             f"Checked: {value.created_at.isoformat()}",
+            "",
+        )
+    )
+
+
+def render_upgrade_preflight(value) -> str:
+    return "\n".join(
+        (
+            "",
+            "UPGRADE PREFLIGHT",
+            "",
+            f"Status: {value.status.upper()}",
+            f"Application: {value.application_version}",
+            f"Python: {value.python_version} "
+            f"(supported: {'YES' if value.python_supported else 'NO'})",
+            f"Supported schema: {value.supported_schema}",
+            f"Runtime schema: {value.runtime_schema}",
+            f"Backup schema: {value.backup_schema}",
+            f"Migration required: {'YES' if value.migration_required else 'NO'}",
+            f"Backup age hours: {value.backup_age_hours:.3f}",
+            f"Maximum backup age hours: {value.maximum_backup_age_hours:g}",
+            f"Backup size: {value.backup_size_bytes}",
+            f"Backup SHA-256: {value.backup_sha256}",
+            f"Checked: {value.checked_at.isoformat()}",
             "",
         )
     )

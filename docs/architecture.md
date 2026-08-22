@@ -976,6 +976,18 @@ The artifact smoke path validates the console entry point, both canonical config
 SQLite backup boundary using only temporary local state. Live TMDB/SMB/OpenList/S3/R2 access,
 credentials, media Storage, publishing, deployment, restore, and signing remain outside CI.
 
+## Upgrade preflight boundary
+
+Phase 19.12 adds a local read-only compatibility service. It reuses `SQLiteBackupService.verify` for
+both the configured runtime database and an explicit operator backup, so integrity, schema-marker,
+and newer-version behavior have one implementation. It compares schemas and reports whether the next
+normal repository open would require migration without constructing `SQLiteTaskRepository`.
+
+Backup freshness is an explicit bounded operational check over filesystem UTC modification time; it
+is not identity evidence. The service also validates the declared Python support range and reports
+installed package/schema versions. It never constructs Storage/provider/workflow/API/Executor,
+migrates, creates a backup, replaces a database, detects service shutdown, or performs restore.
+
 ## Runtime strategy catalogs
 
 The Phase 13 runtime boundary loads all strategy content from one JSON document selected by

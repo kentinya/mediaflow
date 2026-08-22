@@ -1,76 +1,84 @@
-# Phase 19.11 — Reproducible Release Validation and CI Baseline
+# Phase 19.12 — Read-only Upgrade Preflight and Compatibility Report
 
 ## Goal
 
-Turn the existing local acceptance procedure into a deterministic GitHub Actions quality gate and
-validate the installable wheel in an isolated environment. This phase changes no media behavior and
-does not publish a release.
+Provide a local, fail-fast pre-upgrade check that proves the configured runtime database and an
+operator-supplied backup are readable and compatible before any application upgrade. The command is
+strictly observational: it must not migrate, restore, replace, or mutate any database or media Storage.
 
-## 1. Continuous integration
+## 1. Upgrade preflight service
 
-- Add a least-privilege GitHub Actions workflow for pushes and pull requests.
-- Test every supported Python version declared by the project.
-- Install only declared development dependencies; use dependency caching without caching credentials.
-- Run formatter check, lint, full offline unit suite, compile check, dependency check, both canonical
-  configuration validations, and the FFprobe/FFmpeg runtime audit.
-- Unit CI must not require TMDB, SMB, OpenList, S3/R2, API tokens, or other production secrets.
-- Set explicit job timeouts and read-only repository permissions.
+- Add an infrastructure/application boundary that inspects the configured runtime database and one
+  explicit backup through read-only SQLite connections.
+- Reuse the Phase 19.10 verification rules rather than duplicating SQLite integrity/schema semantics.
+- Report application version, running Python version/support, current supported schema, runtime schema,
+  backup schema, backup age, size, SHA-256, and readiness status.
+- Require runtime and backup schema versions to agree and be supported; older supported schemas may be
+  reported as migration-required but must not be migrated during preflight.
+- Require a configurable positive maximum backup age and use filesystem UTC modification time only as
+  operational freshness evidence, not database identity proof.
 
-## 2. Isolated wheel smoke test
+## 2. CLI
 
-- Build the wheel with the declared build backend and no undeclared build dependency assumptions.
-- Install that wheel into a fresh isolated virtual environment, not editable source.
-- Verify the installed `mediaflow` entry point, help output, both example configurations, and a local
-  runtime database backup/verify round trip.
-- Ensure the smoke test imports the installed artifact rather than the repository checkout.
+- Add `mediaflow upgrade check --backup /safe/backups/runtime.sqlite3`.
+- Add optional `--max-backup-age-hours` with a safe 24-hour default and bounded positive value.
+- Resolve the runtime database only from configured `persistence.databasePath`.
+- Return success only when Python, runtime database, backup integrity/schema, schema agreement, and
+  backup freshness all pass. Fail with a clear local configuration/compatibility error otherwise.
+- Output only local compatibility facts; never print configuration content, tokens, passwords, URLs,
+  media paths, task errors, titles, or provider data.
 
-## 3. Release metadata and operator documentation
+## 3. Read-only guarantees
 
-- Audit `pyproject.toml` supported Python metadata, package discovery, console entry point, and wheel
-  contents; make only corrections required for a valid distributable artifact.
-- Document the exact local release-validation commands and CI boundary.
-- Add a release checklist covering clean worktree, tests, wheel smoke test, configuration validation,
-  changelog/version review, database backup, and explicit no-automatic-publish behavior.
+- Do not instantiate SQLiteTaskRepository or any adapter that can run migrations.
+- Hash/mtime/size of runtime and backup must remain unchanged and no `-wal`/`-shm` sidecars may be
+  created by preflight.
+- Construct no Storage, MetadataProvider, Scanner, workflow, Scheduler, Notification worker, API, or
+  OrganizerExecutor.
+- Do not create a backup automatically; the operator must explicitly create and identify it.
 
-## 4. Safety and scope
+## 4. Documentation and release integration
 
-- CI and wheel smoke tests use temporary local paths and perform zero production media Storage access.
-- Never inject, print, or require secrets; optional live integration tests remain skipped.
-- Do not add release publishing, GitHub tokens beyond the automatic read-only token, container images,
-  signing, attestations, deployment, database restore, policy/engine changes, or dependency upgrades.
-- Preserve RecognitionType C, DryRun defaults, no-overwrite behavior, and the OrganizerExecutor boundary.
+- Add the preflight command to the release checklist after backup creation and before upgrade.
+- Document that PASS is compatibility evidence only, not service shutdown, restore, rollback, or live
+  Storage/provider validation.
+- Exercise preflight in the isolated installed-wheel smoke test using temporary local databases.
 
 ## Required tests
 
-- Workflow syntax and command coverage are asserted without network-backed production integrations.
-- Wheel contains required Python modules and excludes runtime databases, user configuration, caches,
-  tests, local secrets, and media files.
-- Fresh-environment console entry point and example configuration validation pass.
-- Installed-artifact database backup/verify round trip passes using temporary local files.
-- Existing Parser, Recognition, Metadata, Naming, Classification, Planner, Executor, Storage, Task,
-  API/UI, operational log, and database backup regressions pass.
-- Formatter, lint, compile, dependency, wheel, FFprobe/FFmpeg, config, and diff checks pass.
+- Ready current-schema source plus verified fresh backup.
+- Older matching schema reports migration-required without changing either file.
+- Runtime/backup schema mismatch, newer schema, missing/malformed/empty backup, stale/future-dated
+  backup, missing runtime, same source/backup, and invalid age bounds fail clearly.
+- Python support and installed/development version reporting are deterministic and secret-free.
+- Hash, mtime, size, and sidecar absence prove read-only behavior on success and failure.
+- CLI exits correctly and creates no Storage/provider/workflow objects.
+- Installed-wheel smoke test includes a successful upgrade preflight.
+- Full existing regression and quality gates pass.
 
 ## Documentation
 
-Update README, requirements, architecture, progress, and roadmap. Add a concise release checklist.
+Update README, requirements, architecture, progress, roadmap, and release checklist.
 
 ## Out of scope
 
-Artifact publishing, semantic-release automation, Docker/container publication, signing/SBOM,
-deployment, OIDC/Secret Store, TLS termination, database restore, and live provider/storage CI.
+Database migration execution, restore/replacement, rollback, automatic backup, service-stop detection,
+retention, remote upload, encryption, API/UI exposure, release publishing, deployment, and live
+provider/storage tests.
 
 ## Final report
 
-## Phase 19.11 Result
+## Phase 19.12 Result
 
 PASS / FAIL
 
-## CI
+## Preflight
 
-## Wheel Validation
+## Compatibility
 
-## Safety
+## CLI
+
+## Read-only Safety
 
 ## Regression
 

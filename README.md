@@ -322,6 +322,7 @@ mediaflow logs list --limit 100 --level WARN
 mediaflow logs prune
 mediaflow database backup --output /safe/backups/mediaflow.sqlite3
 mediaflow database verify /safe/backups/mediaflow.sqlite3
+mediaflow upgrade check --backup /safe/backups/mediaflow.sqlite3
 ```
 
 The generator uses the operating-system cryptographic random source and prints the token once.
@@ -337,6 +338,19 @@ Runtime database backup uses SQLite's online backup API, validates the snapshot,
 publishes a new non-existing local file. It never overwrites. Verification opens the candidate
 read-only and checks SQLite integrity plus the supported MediaFlow schema marker. Stop services and
 take an additional backup before any future manual restore; automatic restore is intentionally absent.
+
+Before installing a new MediaFlow artifact, run `upgrade check` against the configured runtime
+database and a fresh explicit backup. The read-only report checks Python support, application/schema
+versions, backup integrity, schema agreement, and a 24-hour freshness limit. Override that bounded
+operational limit explicitly when required:
+
+```bash
+mediaflow upgrade check \
+  --backup /safe/backups/mediaflow.sqlite3 \
+  --max-backup-age-hours 48
+```
+
+Preflight does not migrate, stop services, restore, replace, or prove live Storage connectivity.
 
 ## Release validation
 

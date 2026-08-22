@@ -40,6 +40,13 @@ backup/verify round trip. It never reads configured production Storage or creden
 - Confirm all GitHub Actions matrix jobs and the isolated wheel job passed.
 - Validate production configuration with the target version before deployment.
 - Create and verify a new runtime database backup before upgrading a running deployment.
+- Run the installed target artifact's read-only compatibility check before starting it:
+
+  ```bash
+  mediaflow --config /path/to/strategy.json upgrade check \
+    --backup /safe/backups/mediaflow-before-upgrade.sqlite3
+  ```
+
 - Review schema compatibility and retain the previous application artifact and database backup.
 - Publish/tag only through a separate explicit maintainer action. This repository has no automatic
   upload, deployment, restore, migration rollback, signing, or container publication workflow.
@@ -50,3 +57,7 @@ The GitHub workflow receives read-only repository permission, has explicit timeo
 production secrets. Network storage and TMDB tests remain optional/skipped. CI validates software and
 example configuration only; it is not evidence that a particular SMB/OpenList/S3/TMDB deployment is
 reachable or correctly authorized.
+
+Upgrade preflight accepts only a configured runtime database and explicit local backup. It reports
+`READY` for the current schema or `MIGRATION_REQUIRED` for an older mutually matching supported
+schema, but performs no migration. A PASS does not stop running services or authorize restore.

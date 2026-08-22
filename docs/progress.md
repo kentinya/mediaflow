@@ -42,6 +42,7 @@
 - Phase 19.9 read-only operational log API and UI: PASS
 - Phase 19.10 safe runtime database backup and verification: PASS
 - Phase 19.11 reproducible release validation and CI baseline: PASS
+- Phase 19.12 read-only upgrade preflight and compatibility report: PASS
 
 ## Planned
 
@@ -1018,5 +1019,19 @@ Phase 19.11 reproducible release validation and CI baseline (2026-08-22): PASS
 - Added an explicit maintainer release checklist; artifact upload, tagging, deployment, restore,
   signing, containers, and live provider/storage CI remain absent
 - Full suite: 432 tests, 429 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated installed-wheel validation, both example validations,
+  FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 19.12 read-only upgrade preflight and compatibility report (2026-08-22): PASS
+
+- Added a local preflight service that reuses the database backup verifier for configured runtime and
+  explicit backup integrity/schema checks without constructing a migration-capable repository
+- Added Python/application/schema compatibility, matching older-schema migration-required reporting,
+  bounded backup freshness, size, SHA-256, and deterministic READY/MIGRATION_REQUIRED results
+- Added `upgrade check --backup ...` with a bounded age override; mismatched/newer/malformed/stale/
+  future/same-file inputs fail closed and output contains no configuration or media/provider data
+- Proved source and backup hash/mtime/size and sidecar state remain unchanged; no Storage/provider/
+  workflow construction occurs, and the isolated installed-wheel smoke test exercises preflight
+- Full suite: 436 tests, 433 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated installed-wheel validation, both example validations,
   FFmpeg/FFprobe runtime audit, and diff check passed
