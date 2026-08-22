@@ -1217,3 +1217,20 @@ Phase 19.23.1 OpenList empty-root preflight and evidence record (2026-08-22): BL
   19.23.1, Phase 19.23, and Phase 19 overall remain BLOCKED
 - Full offline suite: 488 tests, 485 passed, 0 failed, 3 real integrations skipped; Ruff, compile,
   dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed
+
+Phase 19.23.2 self-hosted isolated OpenList evidence run (2026-08-22): FAIL
+
+- Deployed the official pinned `openlistteam/openlist:v4.2.2` image on a host-loopback-only ephemeral
+  port with a generated credential, temporary container data, and a Local driver isolated from all
+  repository configuration and media paths
+- Production OpenListStorage health and root stat reached the real service, but v4.2.2 represented an
+  empty directory as `content: null, total: 0`; the current mapper requires list content and raised
+  `INVALID_RESPONSE` / `io_error`
+- Fail-closed empty-root preflight stopped before creating any remote object, so adapter mutation and
+  Local↔OpenList/OpenList↔OpenList rows are NOT RUN rather than PASS
+- A non-secret FAIL report was retained at `/tmp/mediaflow-openlist-v4.2.2-acceptance-20260822.json`;
+  the container, temporary administrator credential, API token, and backend data were removed
+- Phase 19.23 is now FAIL rather than BLOCKED; production adapter repair and a complete isolated rerun
+  are required in a separate task before Phase 19.24
+- Post-run offline suite: 488 tests, 485 passed, 0 failed, 3 real integrations skipped; Ruff, compile,
+  dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed

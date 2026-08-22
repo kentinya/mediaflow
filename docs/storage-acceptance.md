@@ -19,7 +19,7 @@ real isolated evidence.
 |---|---|---|---|---|---|
 | Local | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS for write/copy target visibility | ISOLATED PASS on temporary host filesystem |
 | SMB | UNIT PASS | UNIT PASS | UNIT PASS | Not certified | BLOCKED: no isolated real share |
-| OpenList | UNIT PASS | UNIT PASS | UNIT PASS | Not certified | BLOCKED: isolated matrix implemented but prerequisites absent |
+| OpenList | UNIT PASS; ISOLATED FAIL | UNIT PASS; real rows NOT RUN | UNIT PASS | Not certified | FAIL: v4.2.2 empty-directory DTO rejected by production adapter |
 | S3/R2 | UNIT PASS | UNIT PASS | UNIT PASS | Not certified | BLOCKED: no isolated bucket/prefix |
 
 Local `write` and `copy` stage in the target directory and publish atomically. A reader sees the old
@@ -31,10 +31,10 @@ power-loss durability, multi-file transactions, or source+target atomicity.
 | Source → destination | COPY | MOVE | Current evidence |
 |---|---|---|---|
 | Local → Local | ISOLATED PASS | ISOLATED PASS | Temporary real filesystem |
-| Local → SMB/OpenList/S3-R2 | UNIT PASS | UNIT PASS | BLOCKED real endpoint |
-| SMB/OpenList/S3-R2 → Local | UNIT PASS | UNIT PASS | BLOCKED real endpoint |
+| Local → SMB/OpenList/S3-R2 | UNIT PASS | UNIT PASS | OpenList NOT RUN after preflight FAIL; others BLOCKED |
+| SMB/OpenList/S3-R2 → Local | UNIT PASS | UNIT PASS | OpenList NOT RUN after preflight FAIL; others BLOCKED |
 | SMB → SMB | UNIT PASS | UNIT PASS | BLOCKED real share |
-| OpenList → OpenList | UNIT PASS | UNIT PASS | BLOCKED real endpoint/root |
+| OpenList → OpenList | UNIT PASS | UNIT PASS | NOT RUN after isolated preflight FAIL |
 | S3/R2 → S3/R2 | UNIT PASS | UNIT PASS | BLOCKED real bucket/prefix |
 | Any cross-storage LINK | NOT APPLICABLE | NOT APPLICABLE | Explicitly rejected |
 
@@ -75,8 +75,21 @@ with zero listed items. It then creates one random `run-*` child, rejects pre-ex
 its allowlisted generated names, and fails cleanup if any unknown object appears. The report target
 must be a new absolute local `.json` path in an existing directory; publication never overwrites and
 contains no endpoint or credential. The matrix covers production-adapter lifecycle plus
-Local→OpenList, OpenList→Local, and OpenList→OpenList COPY/MOVE. As of 2026-08-22 the current environment
-has none of these dedicated variables, so the real matrix is `BLOCKED / NOT RUN`.
+Local→OpenList, OpenList→Local, and OpenList→OpenList COPY/MOVE.
+
+### OpenList Phase 19.23.2 isolated result
+
+On 2026-08-22 the suite was run against a loopback-only official
+`openlistteam/openlist:v4.2.2` container with a generated credential and a Local driver rooted in a
+new temporary directory. Health and root stat succeeded. The empty-root list returned the real v4.2.2
+shape `data.content = null` with `data.total = 0`; production `HttpOpenListClient.list_page` requires
+`content` to be a list and therefore reported `INVALID_RESPONSE` / `StorageErrorCode.IO_ERROR`.
+
+Result: `FAIL`. The fail-closed preflight created no remote object, cleanup required no remote deletion,
+and Local↔OpenList/OpenList↔OpenList mutation rows were not run. The container, credential, token, and
+temporary backend were removed. The non-secret report remains outside Git at
+`/tmp/mediaflow-openlist-v4.2.2-acceptance-20260822.json`. This failure must be repaired in a separate
+task and the complete matrix rerun; it is not OpenList acceptance.
 
 ## Remaining blocking gates
 
