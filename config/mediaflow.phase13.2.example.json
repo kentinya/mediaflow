@@ -479,10 +479,62 @@
       }
     },
     "organizePolicies": [
-      {"id": "move", "operation": "MOVE", "conflictStrategy": "manual", "overwrite": false},
-      {"id": "copy", "operation": "COPY", "conflictStrategy": "skip", "overwrite": false},
-      {"id": "hardlink", "operation": "HARDLINK", "conflictStrategy": "rename", "overwrite": false},
-      {"id": "symlink", "operation": "SYMLINK", "conflictStrategy": "manual", "overwrite": false}
+      {
+        "id": "move",
+        "operation": "MOVE",
+        "conflictStrategy": "manual",
+        "overwrite": false,
+        "attachments": {
+          "enabled": true,
+          "subtitles": true,
+          "nfo": true,
+          "artwork": true,
+          "trailers": true,
+          "otherSameStem": false
+        }
+      },
+      {
+        "id": "copy",
+        "operation": "COPY",
+        "conflictStrategy": "skip",
+        "overwrite": false,
+        "attachments": {
+          "enabled": true,
+          "subtitles": true,
+          "nfo": true,
+          "artwork": true,
+          "trailers": true,
+          "otherSameStem": false
+        }
+      },
+      {
+        "id": "hardlink",
+        "operation": "HARDLINK",
+        "conflictStrategy": "rename",
+        "overwrite": false,
+        "attachments": {
+          "enabled": true,
+          "subtitles": true,
+          "nfo": true,
+          "artwork": true,
+          "trailers": true,
+          "otherSameStem": false
+        }
+      },
+      {
+        "id": "symlink",
+        "operation": "SYMLINK",
+        "conflictStrategy": "manual",
+        "overwrite": false,
+        "attachments": {
+          "enabled": false,
+          "subtitles": true,
+          "nfo": true,
+          "artwork": true,
+          "trailers": true,
+          "otherSameStem": false
+        }
+      }
     ],
     "recognitionTypePolicy": {
       "id": "type-C",

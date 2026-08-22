@@ -398,3 +398,9 @@ language plus `forced`, `sdh`, and `hi` suffixes are preserved. Same-stem NFO, c
 poster/fanart, related images, and same-stem `-trailer`/`.trailer` videos are supported. Enabling
 `otherSameStem` deliberately broadens matching but still requires a safe same-stem boundary.
 Unknown and disabled files are never deleted.
+
+The canonical safe starter is [`config/strategy.example.json`](../config/strategy.example.json),
+where attachment processing is explicitly disabled. The exhaustive field and operation catalog is
+[`config/mediaflow.phase13.2.example.json`](../config/mediaflow.phase13.2.example.json); its main
+MOVE policy demonstrates enabled attachment handling, while the embedded catalog shows attachment
+settings for MOVE, COPY, HARDLINK, and SYMLINK.

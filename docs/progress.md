@@ -708,3 +708,10 @@ Phase 16 attachments and atomic media file sets (2026-08-22): PASS
 - Full suite: 287 tests, 284 passed, 0 failed, 3 optional external integrations skipped
 - Ruff lint/format, compileall, dependency check, isolated wheel build, configuration validation,
   FFmpeg/FFprobe runtime audit, and diff checks passed
+
+Phase 16 example configuration synchronization (2026-08-22): PASS
+
+- Reformatted the safe starter OrganizePolicies so every attachment field is directly editable
+- Expanded the exhaustive MOVE/COPY/HARDLINK/SYMLINK catalog with current attachment controls
+- Kept starter attachment execution disabled by default and documented which example is safe versus
+  exhaustive
