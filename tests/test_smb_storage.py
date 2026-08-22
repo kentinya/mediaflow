@@ -1,3 +1,4 @@
+import errno
 import io
 import threading
 import unittest
@@ -9,6 +10,7 @@ from mediaflow.infrastructure.smb_storage import (
     SMBClientEntry,
     SMBClientError,
     SMBClientErrorKind,
+    SmbProtocolClient,
     SMBStorage,
     SMBStorageConfig,
 )
@@ -360,6 +362,53 @@ class SMBStorageTest(unittest.TestCase):
                 storage = SMBStorage(self.config, client)
                 expected = StorageErrorCode(kind.value)
                 self.assert_error(expected, storage.stat, "file")
+
+    def test_smbprotocol_client_maps_structured_errno_values(self) -> None:
+        cases = (
+            (errno.ENOENT, SMBClientErrorKind.NOT_FOUND),
+            (errno.EEXIST, SMBClientErrorKind.ALREADY_EXISTS),
+            (errno.EACCES, SMBClientErrorKind.PERMISSION_DENIED),
+            (errno.EPERM, SMBClientErrorKind.PERMISSION_DENIED),
+            (errno.ETIMEDOUT, SMBClientErrorKind.TIMEOUT),
+            (errno.ECONNRESET, SMBClientErrorKind.CONNECTION_LOST),
+            (errno.ECONNREFUSED, SMBClientErrorKind.CONNECTION_FAILED),
+        )
+        for error_number, expected in cases:
+            with self.subTest(error_number=error_number):
+                converted = SmbProtocolClient._convert_error(OSError(error_number, "synthetic"))
+                self.assertEqual(expected, converted.kind)
+                self.assertNotIn("synthetic", str(converted))
+
+        unknown = SmbProtocolClient._convert_error(OSError(errno.EINVAL, "synthetic"))
+        self.assertEqual(SMBClientErrorKind.IO_ERROR, unknown.kind)
+
+    def test_smbprotocol_list_entry_uses_scandir_metadata_without_stat(self) -> None:
+        modified = datetime(2026, 8, 22, 12, 30, tzinfo=UTC)
+
+        class Info:
+            end_of_file = 42
+            last_write_time = modified
+
+        class Entry:
+            name = "movie.mkv"
+            smb_info = Info()
+
+            @staticmethod
+            def is_symlink() -> bool:
+                return False
+
+            @staticmethod
+            def is_dir() -> bool:
+                return False
+
+            @staticmethod
+            def stat() -> object:
+                raise AssertionError("scandir metadata must avoid a second SMB stat request")
+
+        converted = SmbProtocolClient._entry("folder", Entry())
+        self.assertEqual("folder/movie.mkv", converted.path)
+        self.assertEqual(42, converted.size)
+        self.assertEqual(modified, converted.modified_at)
 
     def test_client_error_message_cannot_leak_password(self) -> None:
         self.storage.connect()

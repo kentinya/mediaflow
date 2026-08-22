@@ -583,7 +583,6 @@ class SmbProtocolClient:
 
     @staticmethod
     def _entry(parent: str, entry: object) -> SMBClientEntry:
-        stat = entry.stat()  # type: ignore[attr-defined]
         if entry.is_symlink():  # type: ignore[attr-defined]
             entry_type = StorageEntryType.SYMLINK
         elif entry.is_dir():  # type: ignore[attr-defined]
@@ -592,6 +591,16 @@ class SmbProtocolClient:
             entry_type = StorageEntryType.FILE
         name = entry.name  # type: ignore[attr-defined]
         path = str(PurePosixPath(parent) / name) if parent else name
+        smb_info = getattr(entry, "smb_info", None)
+        if smb_info is not None:
+            return SMBClientEntry(
+                name,
+                path,
+                entry_type,
+                smb_info.end_of_file,
+                smb_info.last_write_time.astimezone(UTC),
+            )
+        stat = entry.stat()  # type: ignore[attr-defined]
         return SMBClientEntry(
             name, path, entry_type, stat.st_size, datetime.fromtimestamp(stat.st_mtime, UTC)
         )
@@ -605,6 +614,27 @@ class SmbProtocolClient:
             kind = SMBClientErrorKind.PERMISSION_DENIED
         elif isinstance(error, FileExistsError):
             kind = SMBClientErrorKind.ALREADY_EXISTS
+        elif isinstance(error, OSError) and error.errno == errno.ENOENT:
+            kind = SMBClientErrorKind.NOT_FOUND
+        elif isinstance(error, OSError) and error.errno == errno.EEXIST:
+            kind = SMBClientErrorKind.ALREADY_EXISTS
+        elif isinstance(error, OSError) and error.errno in (errno.EACCES, errno.EPERM):
+            kind = SMBClientErrorKind.PERMISSION_DENIED
+        elif isinstance(error, OSError) and error.errno == errno.ETIMEDOUT:
+            kind = SMBClientErrorKind.TIMEOUT
+        elif isinstance(error, OSError) and error.errno in (
+            errno.ECONNABORTED,
+            errno.ECONNRESET,
+            errno.ENOTCONN,
+            errno.EPIPE,
+        ):
+            kind = SMBClientErrorKind.CONNECTION_LOST
+        elif isinstance(error, OSError) and error.errno in (
+            errno.ECONNREFUSED,
+            errno.EHOSTUNREACH,
+            errno.ENETUNREACH,
+        ):
+            kind = SMBClientErrorKind.CONNECTION_FAILED
         elif isinstance(error, TimeoutError) or "timeout" in name:
             kind = SMBClientErrorKind.TIMEOUT
         elif "password" in name or "logon" in name or "authentication" in name:
@@ -613,8 +643,6 @@ class SmbProtocolClient:
             kind = SMBClientErrorKind.CONNECTION_LOST
         elif connecting or isinstance(error, ConnectionError):
             kind = SMBClientErrorKind.CONNECTION_FAILED
-        elif isinstance(error, OSError) and error.errno in (errno.EACCES, errno.EPERM):
-            kind = SMBClientErrorKind.PERMISSION_DENIED
         elif isinstance(error, OSError):
             kind = SMBClientErrorKind.IO_ERROR
         else:

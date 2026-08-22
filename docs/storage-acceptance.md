@@ -18,7 +18,7 @@ real isolated evidence.
 | Adapter | Read/list/stat | Write/copy/move | Fault injection | Atomic publication | Real acceptance |
 |---|---|---|---|---|---|
 | Local | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS for write/copy target visibility | ISOLATED PASS on temporary host filesystem |
-| SMB | ISOLATED FAIL | Real mutation matrix incomplete | UNIT PASS | Not certified | FAIL: EEXIST maps to io_error and cleanup failed |
+| SMB | ISOLATED PASS | ISOLATED PASS | UNIT PASS | Not certified | Samba 4.20.6 full matrix PASS |
 | OpenList | ISOLATED PASS | ISOLATED PASS | UNIT PASS | Not certified | ISOLATED PASS: self-hosted v4.2.2 with Local driver |
 | S3/R2 | ISOLATED PASS for MinIO | ISOLATED PASS for MinIO | UNIT PASS | Not certified | MinIO PASS; AWS/R2 BLOCKED |
 
@@ -31,9 +31,9 @@ power-loss durability, multi-file transactions, or source+target atomicity.
 | Source → destination | COPY | MOVE | Current evidence |
 |---|---|---|---|
 | Local → Local | ISOLATED PASS | ISOLATED PASS | Temporary real filesystem |
-| Local → SMB/OpenList/S3-R2 | UNIT PASS | UNIT PASS | OpenList/MinIO PASS; SMB NOT RUN after lifecycle FAIL |
-| SMB/OpenList/S3-R2 → Local | UNIT PASS | UNIT PASS | OpenList/MinIO PASS; SMB NOT RUN after lifecycle FAIL |
-| SMB → SMB | UNIT PASS | UNIT PASS | NOT RUN after isolated lifecycle FAIL |
+| Local → SMB/OpenList/S3-R2 | ISOLATED PASS | ISOLATED PASS | Samba/OpenList/MinIO isolated matrices |
+| SMB/OpenList/S3-R2 → Local | ISOLATED PASS | ISOLATED PASS | Samba/OpenList/MinIO isolated matrices |
+| SMB → SMB | ISOLATED PASS | ISOLATED PASS | Samba 4.20.6 production adapter + OrganizerExecutor |
 | OpenList → OpenList | ISOLATED PASS | ISOLATED PASS | Self-hosted v4.2.2 with Local driver |
 | S3/R2 → S3/R2 | ISOLATED PASS | ISOLATED PASS | MinIO S3-compatible only; AWS/R2 BLOCKED |
 | Any cross-storage LINK | NOT APPLICABLE | NOT APPLICABLE | Explicitly rejected |
@@ -131,10 +131,24 @@ adapter cleanup also failed, so the temporary backend was removed only with the 
 Result is `FAIL`; report: `/tmp/mediaflow-samba-4.20.6-acceptance-fail-20260822.json`. A separate repair
 and complete rerun are required before Phase 19.24 can pass.
 
+### Phase 19.24.1 Samba repair and rerun
+
+The SMB client now maps standard errno values structurally, including real Samba `EEXIST` as
+`ALREADY_EXISTS`. Directory enumeration consumes metadata already returned by `scandir` instead of
+issuing an implicit follow-up stat on default port 445. This keeps loopback/non-default-port
+deployments on the configured endpoint and avoids an extra request per directory entry.
+
+A fresh empty root on the pinned Samba 4.20.6 container passed empty-root preflight,
+lifecycle/no-overwrite, Local↔SMB COPY/MOVE, SMB↔SMB Organizer COPY/MOVE, content/size/source
+verification, and allowlisted cleanup. Result: `ISOLATED PASS`. The non-secret report is retained at
+`/tmp/mediaflow-samba-4.20.6-acceptance-pass-phase-19.24.1-20260822.json`; the container, generated
+objects, temporary share, and credential were destroyed. Together with the retained MinIO PASS,
+Phase 19.24 is PASS for self-hosted Samba and generic S3-compatible MinIO. AWS S3, Cloudflare R2,
+provider-specific fault injection, and remote atomic publication are not certified by this result.
+
 ## Remaining blocking gates
 
-- Real SMB, OpenList, and S3/R2 adapter matrices.
-- Cross-provider transfer matrix using isolated endpoints.
+- AWS S3 and Cloudflare R2 provider-specific real-service matrices (MinIO generic S3 is accepted).
 - Provider-specific interrupted upload/copy/move and reconnect/rate-limit injection.
 - Long-duration and large-object testing.
 - Power-loss durability and content-hash verification policy.

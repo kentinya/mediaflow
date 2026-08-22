@@ -1263,3 +1263,21 @@ Phase 19.24 isolated Samba and MinIO S3 acceptance matrices (2026-08-22): FAIL
   under `/tmp`; Phase 19.24 is FAIL pending a separate SMB mapper/cleanup repair and complete rerun
 - Full offline suite: 491 tests, 488 passed, 0 failed, 3 real integrations skipped; Ruff, compile,
   dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed
+
+Phase 19.24.1 SMB errno mapping, cleanup repair, and rerun (2026-08-22): PASS
+
+- Added structured `OSError`/`SMBOSError` mappings for missing, conflict, permission, timeout, and
+  connection errno families; public errors remain normalized and exclude raw server text
+- Removed the implicit per-entry SMB stat from directory listing by consuming metadata already
+  returned by `scandir`, preserving configured non-default ports and avoiding an N+1 request pattern
+- Redeployed pinned Samba 4.20.6 on loopback with a new credential, temporary share, and fresh empty
+  acceptance root; lifecycle/no-overwrite, Local↔SMB, SMB↔SMB Organizer, verification, and allowlisted
+  cleanup all passed through production adapters
+- Retained the secret-free PASS report at
+  `/tmp/mediaflow-samba-4.20.6-acceptance-pass-phase-19.24.1-20260822.json`; the container, generated
+  objects, temporary share, and credentials were destroyed
+- Together with the retained MinIO PASS, Phase 19.24 is PASS for self-hosted Samba and generic
+  S3-compatible MinIO; AWS/R2 service semantics and remote atomic publication remain uncertified
+- Full offline suite: 493 tests, 490 passed, 0 failed, 3 real integrations skipped; explicit isolated
+  Samba matrix: 1 passed; Ruff, format, compile, dependency, both example-configuration,
+  FFmpeg/FFprobe, diff, and isolated wheel gates passed

@@ -270,14 +270,18 @@ only read-only/idempotent operations reconnect once; mutating operations are nev
 retried. Timeout abort attempts close the cached client connection and return a unified timeout
 error.
 
-List/stat results are converted to domain `StorageEntry` objects. Read, write, and same-share copy
-are streamed in one MiB chunks. Move uses native SMB rename/replace and never falls back to copy
-plus delete. Delete handles files and empty directories but is not recursive. HardLink and SoftLink
-are deliberately unsupported, report false capabilities, and never fall back to another operation.
+List results are converted to domain `StorageEntry` objects from metadata already returned by SMB
+`scandir`; this avoids an unbounded second stat request and preserves configured non-default ports.
+Explicit stat, read, write, and same-share copy use the configured port and the latter three stream
+in one MiB chunks. Move uses native SMB rename/replace and never falls back to copy plus delete.
+Delete handles files and empty directories but is not recursive. HardLink and SoftLink are
+deliberately unsupported, report false capabilities, and never fall back to another operation.
 
 SMB client failures map to domain Storage error codes for missing paths, permissions, conflicts,
 connection failure/loss, authentication, timeout, I/O, and unknown errors. Public messages contain
-only the operation and error category, not credentials or arbitrary SDK exception text.
+only the operation and error category, not credentials or arbitrary SDK exception text. Standard
+`OSError`/`SMBOSError` errno values are classified structurally (`ENOENT`, `EEXIST`, `EACCES`/`EPERM`,
+timeout, and connection errno families); message parsing is not used.
 
 ## OpenListStorage adapter
 

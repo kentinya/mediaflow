@@ -1,85 +1,68 @@
-# Phase 19.24 — Isolated Samba and MinIO S3 Acceptance Matrices
+# Phase 19.24.1 — SMB errno Mapping, Cleanup Repair, and Rerun
 
 ## Goal
 
-Deploy operator-authorized isolated Samba and MinIO services and execute
-production SMBStorage/S3Storage plus OrganizerExecutor lifecycle and transfer
-matrices. Retain honest, non-secret evidence and destroy all temporary services,
-credentials, shares, buckets, prefixes, and generated objects afterward.
+Repair the real Samba failure recorded in Phase 19.24 by mapping standard
+SMBOSError/OSError errno values to stable SMB domain categories, then redeploy
+the pinned isolated Samba service and complete the full production matrix and
+allowlisted cleanup.
 
 ## Scope
 
-### 1. Fail-closed real-test gates
+### 1. Structured errno mapping
 
-- Replace the unsafe optional S3/R2 integration defaults with explicit URL or
-  host/port, dedicated credentials, share/bucket, no-default acceptance root or
-  prefix, exact destructive confirmation, and a new absolute JSON report path.
-- Samba root and S3 prefix final component must start with
-  `mediaflow-acceptance-` and be proven empty before mutation.
-- Missing/partial prerequisites are BLOCKED/NOT RUN, never PASS.
-- Never use runtime/user configuration or `config/alist.json`.
+- Map `EEXIST` to `ALREADY_EXISTS` for no-overwrite safety.
+- Map `ENOENT` to `NOT_FOUND`; `EACCES`/`EPERM` to `PERMISSION_DENIED`.
+- Map standard timeout and connection errno values to the existing timeout,
+  connection-lost, or connection-failed categories without parsing messages.
+- Preserve subclass and smbprotocol type-name fallbacks where errno is absent.
+- Public errors remain normalized and secret-free.
 
-### 2. Isolated deployments
+### 2. Cleanup diagnosis
 
-- Pin a Samba image/version and a MinIO release image/digest.
-- Bind services only to host loopback or an isolated Docker network.
-- Generate new run-scoped credentials and temporary host data.
-- Samba exposes one dedicated share; MinIO exposes one dedicated bucket/prefix.
-- Do not mount repository or media-library paths.
+- Add deterministic unit coverage for errno mapping and delete failures.
+- Rerun the existing allowlisted real cleanup after the no-overwrite assertion.
+- Do not recursively delete or hide unknown objects.
+- If cleanup still fails, record the exact normalized category and stop.
 
-### 3. Production matrices
+### 3. Real Samba rerun
 
-Using production adapters and OrganizerExecutor, cover:
+- Reuse pinned Samba 4.20.6, loopback-only port, new credentials, temporary
+  Share, and new empty `mediaflow-acceptance-*` root/report.
+- Execute lifecycle/no-overwrite, Local↔SMB COPY/MOVE, SMB↔SMB Organizer
+  COPY/MOVE, content/size/source verification, and allowlisted cleanup.
+- Retain a new non-secret report and destroy container/credentials/backend.
 
-- health/connect, list, stat, read, write, no-overwrite, copy, move, delete
-- Local → SMB COPY/MOVE and SMB → Local COPY/MOVE
-- SMB → SMB Organizer COPY/MOVE
-- Local → S3 COPY/MOVE and S3 → Local COPY/MOVE
-- S3 → S3 Organizer COPY/MOVE
-- content, size, destination and MOVE source-state verification
-- safe allowlisted cleanup with no unknown-object deletion
+### 4. Status
 
-Cross-provider SMB↔S3 is not required unless existing Organizer behavior makes
-it a small reuse-only extension.
-
-### 4. Evidence
-
-- Produce separate bounded, secret-free Samba and MinIO JSON records.
-- Record pinned image/version, UTC time, planned/completed operations, empty-root
-  preflight, result, cleanup, and normalized error category.
-- A discovered production defect is FAIL and belongs to a separate repair task;
-  do not mix adapter repair into the acceptance commit.
-- MinIO certifies generic S3-compatible behavior, not AWS or Cloudflare service.
-
-### 5. Cleanup and status
-
-- Stop/remove containers and delete generated credentials/data after inspection.
-- Retain only non-secret reports outside Git and normalized documentation.
-- Phase 19.24 PASS requires both Samba and MinIO full matrices plus cleanup PASS.
+- Phase 19.24 becomes PASS only when the Samba rerun and prior MinIO evidence are
+  both PASS.
+- Do not rerun or alter MinIO production behavior unnecessarily.
+- Do not begin Phase 19.25 until Samba is closed.
 
 ## Boundaries
 
 Do not change Parser, Scanner, Recognition, Metadata, Naming, Classification,
-Planner/Organizer policy semantics, UI, API, or user configuration. Do not start
-long-duration/large-object Phase 19.25 work.
+Planner/Organizer policy semantics, S3/OpenList behavior, UI, API, or user
+configuration. Do not use `config/alist.json`.
 
 ## Validation
 
-Run focused SMB/S3/Organizer/Storage tests, full offline tests, formatter, lint,
-compile, dependency/configuration and FFmpeg/FFprobe checks, isolated wheel
-smoke, and both explicitly gated real matrices.
+Run focused SMB real/unit/Organizer/Storage tests, full offline tests, formatter,
+lint, compile, dependency/config checks, FFmpeg/FFprobe audit, isolated wheel
+smoke, and the explicit real Samba matrix.
 
 ## Completion Report
 
 Finish with:
 
-## Phase 19.24 Result
+## Phase 19.24.1 Result
 
-PASS / BLOCKED / FAIL
+PASS / FAIL
+
+## Errno Mapping
 
 ## Samba Matrix
-
-## MinIO Matrix
 
 ## Evidence
 

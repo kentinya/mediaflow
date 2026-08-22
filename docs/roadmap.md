@@ -232,6 +232,12 @@ ISOLATED PASS；Samba 在真实 EEXIST 错误映射阶段失败并且适配器�
 未执行。Phase 19.24 当前 FAIL，下一任务只能单独修复 SMB EEXIST/清理语义并完整重跑 Samba，
 不得提前进入 Phase 19.25。
 
+Phase 19.24.1 已按结构化 errno 修复 Samba `EEXIST` 等错误分类，并消除目录枚举在非默认端口上
+隐式回退 445 的二次 stat。新空根完整通过生命周期、Local↔SMB、SMB↔SMB、内容/源状态验证和
+白名单清理。结合 19.24 的 MinIO PASS，Phase 19.24 在自建 Samba 与通用 S3-compatible MinIO
+范围内关闭；AWS/R2 服务特性与远端原子发布仍未认证。下一任务进入 Phase 19.25 长时间批处理、
+大文件、中断恢复与一致性验证，Phase 19 总体仍为 BLOCKED。
+
 ## 规格差距评估（2026-08-22，基于 Phase 19.22 后状态）
 
 对照《影视媒体资源自动整理系统需求规格说明书》V1.1 全量章节逐项评估：
@@ -309,9 +315,9 @@ ISOLATED PASS；Samba 在真实 EEXIST 错误映射阶段失败并且适配器�
 
 后续任务仍应保持小步推进。优先顺序：
 
-1. 完成隔离真实 OpenList 矩阵与 Local↔OpenList/OpenList↔OpenList 故障注入。
-2. 完成隔离真实 SMB 与 S3/R2 矩阵，并形成可复现验收报告。
-3. 完成长时间批处理、大文件、中断恢复与一致性验证；在此之前 Phase 19 不得整体 PASS。
+1. 完成长时间批处理、大文件、中断恢复与一致性验证；在此之前 Phase 19 不得整体 PASS。
+2. 补充 OpenList/SMB/S3-compatible 的中断、连接失败和服务端故障注入证据。
+3. AWS S3/Cloudflare R2 仍需专用真实服务凭证与空测试 Prefix 才可获得服务特定认证。
 4. 上述硬门完成后再继续 recovery UI、OIDC/Secret Store 或高级调度。
 
 Interval/Cron Scheduler 已实现但只允许 scan/preview；仍不支持无人值守定时
