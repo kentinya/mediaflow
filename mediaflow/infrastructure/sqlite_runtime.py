@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import sqlite3
 import threading
 from dataclasses import replace
@@ -8,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from mediaflow.domain.automation import (
+    AutomationClaimLost,
     AutomationCommand,
     AutomationJob,
     AutomationJobStatus,
@@ -58,7 +60,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 class SQLiteTaskRepository:
@@ -846,7 +848,7 @@ class SQLiteTaskRepository:
     def create_job(self, job: AutomationJob) -> None:
         with self._lock, self._connection:
             self._connection.execute(
-                "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._job_values(job),
             )
 
@@ -858,7 +860,7 @@ class SQLiteTaskRepository:
                     self._connection.rollback()
                     return False
                 self._connection.execute(
-                    "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     self._job_values(job),
                 )
                 self._connection.commit()
@@ -915,6 +917,7 @@ class SQLiteTaskRepository:
         return tuple(reversed(values)) if reverse else values
 
     def claim_next_job(self, now: datetime) -> AutomationJob | None:
+        claim_token = secrets.token_urlsafe(32)
         with self._lock, self._connection:
             row = self._connection.execute(
                 "SELECT job_id FROM automation_jobs WHERE status=? "
@@ -924,12 +927,13 @@ class SQLiteTaskRepository:
             if row is None:
                 return None
             cursor = self._connection.execute(
-                "UPDATE automation_jobs SET status=?, updated_at=?, started_at=? "
+                "UPDATE automation_jobs SET status=?, updated_at=?, started_at=?, claim_token=? "
                 "WHERE job_id=? AND status=?",
                 (
                     AutomationJobStatus.RUNNING.value,
                     now.isoformat(),
                     now.isoformat(),
+                    claim_token,
                     row["job_id"],
                     AutomationJobStatus.PENDING.value,
                 ),
@@ -946,7 +950,8 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE automation_jobs SET command=?, status=?, created_at=?, updated_at=?, "
                 "limit_value=?, started_at=?, completed_at=?, task_id=?, error=?, "
-                "cancellation_requested=?, schedule_id=?, execute_authorized=? WHERE job_id=?",
+                "cancellation_requested=?, schedule_id=?, execute_authorized=?, claim_token=? "
+                "WHERE job_id=?",
                 (*self._job_values(job)[1:], job.job_id),
             )
             if cursor.rowcount != 1:
@@ -987,6 +992,46 @@ class SQLiteTaskRepository:
             ).fetchone()
         return bool(row and row["cancellation_requested"])
 
+    def heartbeat_job(self, job_id: str, claim_token: str, now: datetime) -> bool:
+        if not claim_token:
+            raise AutomationClaimLost("automation Job claim ownership was lost")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE automation_jobs SET updated_at=? WHERE job_id=? AND status=? "
+                "AND claim_token=?",
+                (
+                    now.isoformat(),
+                    job_id,
+                    AutomationJobStatus.RUNNING.value,
+                    claim_token,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AutomationClaimLost("automation Job claim ownership was lost")
+            row = self._connection.execute(
+                "SELECT cancellation_requested FROM automation_jobs WHERE job_id=?",
+                (job_id,),
+            ).fetchone()
+        return bool(row["cancellation_requested"])
+
+    def complete_claimed_job(self, job: AutomationJob) -> bool:
+        if not job.claim_token:
+            raise AutomationClaimLost("automation Job claim ownership was lost")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE automation_jobs SET command=?, status=?, created_at=?, updated_at=?, "
+                "limit_value=?, started_at=?, completed_at=?, task_id=?, error=?, "
+                "cancellation_requested=?, schedule_id=?, execute_authorized=?, claim_token=NULL "
+                "WHERE job_id=? AND status=? AND claim_token=?",
+                (
+                    *self._job_values(job)[1:-1],
+                    job.job_id,
+                    AutomationJobStatus.RUNNING.value,
+                    job.claim_token,
+                ),
+            )
+        return cursor.rowcount == 1
+
     def list_stale_running_jobs(
         self, before: datetime, *, limit: int = 100
     ) -> tuple[AutomationJob, ...]:
@@ -1005,7 +1050,8 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE automation_jobs SET status=?, updated_at=?, started_at=NULL, "
                 "completed_at=NULL, task_id=NULL, error='explicitly requeued stale job', "
-                "cancellation_requested=0 WHERE job_id=? AND status=? AND updated_at<?",
+                "cancellation_requested=0, claim_token=NULL "
+                "WHERE job_id=? AND status=? AND updated_at<?",
                 (
                     AutomationJobStatus.PENDING.value,
                     now.isoformat(),
@@ -1076,7 +1122,7 @@ class SQLiteTaskRepository:
                     self._connection.rollback()
                     return False
                 self._connection.execute(
-                    "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     self._job_values(job),
                 )
                 self._connection.execute(
@@ -1243,7 +1289,7 @@ class SQLiteTaskRepository:
                         raise ValueError("execution authorization was already consumed")
                     self._connection.execute(
                         "INSERT INTO automation_jobs VALUES "
-                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         self._job_values(job),
                     )
                     self._insert_execution_authorization_audit(
@@ -1754,7 +1800,7 @@ class SQLiteTaskRepository:
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, limit_value INTEGER,
                     started_at TEXT, completed_at TEXT, task_id TEXT, error TEXT,
                     cancellation_requested INTEGER NOT NULL DEFAULT 0, schedule_id TEXT,
-                    execute_authorized INTEGER NOT NULL DEFAULT 0
+                    execute_authorized INTEGER NOT NULL DEFAULT 0, claim_token TEXT
                 );
                 CREATE INDEX IF NOT EXISTS automation_jobs_status_created
                     ON automation_jobs(status, created_at, job_id);
@@ -1845,6 +1891,8 @@ class SQLiteTaskRepository:
                     "ALTER TABLE automation_jobs ADD COLUMN "
                     "execute_authorized INTEGER NOT NULL DEFAULT 0"
                 )
+            if "claim_token" not in job_columns:
+                self._connection.execute("ALTER TABLE automation_jobs ADD COLUMN claim_token TEXT")
             review_columns = {
                 row["name"]
                 for row in self._connection.execute(
@@ -2129,6 +2177,7 @@ class SQLiteTaskRepository:
             int(job.cancellation_requested),
             job.schedule_id,
             int(job.execute_authorized),
+            job.claim_token,
         )
 
     @staticmethod
@@ -2147,6 +2196,7 @@ class SQLiteTaskRepository:
             bool(row["cancellation_requested"]),
             row["schedule_id"],
             bool(row["execute_authorized"]),
+            row["claim_token"],
         )
 
     @staticmethod

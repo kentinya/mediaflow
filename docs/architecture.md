@@ -174,6 +174,14 @@ returns only safe job identity/state fields; the UI loads it explicitly and offe
 action. Staleness is deliberately not a lease or liveness proof. Execute-authorized organize Jobs
 are highlighted because replay after an uncertain mutation can be unsafe.
 
+Phase 19.21 adds repository-enforced claim ownership. Each Pending → Running transition receives a
+new opaque random token; heartbeat and terminal writes require both Running status and that token.
+Requeue clears ownership, so an old Worker cannot refresh or complete over a later claim and cannot
+publish that claim's terminal notification. Tokens are structurally excluded from transports and
+operator output. The Worker invokes heartbeat through the existing cooperative cancellation callback
+before/between items and after handler return; it deliberately has no background thread. Blocking
+external calls can therefore still outlive the observation threshold, and recovery UI remains blocked.
+
 Scheduler checks capacity in the same transaction as conditional state advance, Job insert, and audit;
 full capacity rolls back all three. Execution authorization checks capacity before its atomic token
 consume/Job/audit transaction, so queue-full cannot burn a ticket. API maps the stable domain rejection

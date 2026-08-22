@@ -315,7 +315,7 @@ class MetadataResolutionTests(unittest.TestCase):
                 )
                 repository._connection.commit()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 13)
+                self.assertEqual(repository.schema_version, 14)
                 columns = {
                     row["name"]
                     for row in repository._connection.execute("PRAGMA table_info(metadata_reviews)")

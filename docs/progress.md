@@ -1152,3 +1152,24 @@ Phase 19.20 read-only stale Running Automation Job visibility (2026-08-22): PASS
   existing security-audit persistence remains the only API-side write
 - Full suite: 471 tests, 468 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
   dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed
+
+Production-readiness assessment recorded after Phase 19.20:
+
+- The complete media pipeline and read-only stale visibility are accepted; UI recovery remains closed.
+- The highest-priority runtime risk was unfenced Job ownership: a stale Worker could race a manual
+  requeue and long workflows did not refresh Job age. This selected Phase 19.21 below; remote and
+  automatic recovery remain excluded after fencing.
+- OIDC/Secret Store, advanced scheduling, live progress, and recovery UI remain later work.
+
+Phase 19.21 fenced cooperative Automation Job heartbeats (2026-08-22): PASS
+
+- Migrated Runtime schema to v14 with an internal opaque claim token; every claim receives a new
+  cryptographically random token and stale requeue atomically clears ownership
+- Added repository-fenced heartbeat and terminal commit using Running status plus token; old Workers
+  cannot update a later claim or publish its terminal notification
+- Worker heartbeats reuse the existing cancellation callback before/between workflow items and after
+  handler return, with no background thread and no change to media or Storage behavior
+- Claim tokens are absent from API/UI/CLI/log/notification/configuration output; stale observation
+  remains conservative during blocking external calls and no recovery control was added
+- Full suite: 477 tests, 474 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
+  dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed

@@ -171,6 +171,11 @@ investigation and are never automatically recovered.
 or requests cooperative cancellation of running work before another media item starts; an in-flight
 read may finish. Stale crash leftovers are never retried automatically: inspect with
 `jobs stale --age-seconds N` and explicitly use `jobs requeue JOB_ID --age-seconds N`.
+Running Workers now hold an opaque persisted fenced claim and refresh `updated_at` at cooperative
+workflow boundaries. Requeue clears that claim, and an old Worker cannot heartbeat or commit over a
+later claim. The signal remains conservative during a blocking external call, so operators must
+still stop and inspect the owning Worker and Storage outcome before local requeue. Automatic and
+remote recovery remain unavailable.
 
 Phase 18.3 supports a validated five-field Cron subset with an explicit IANA time zone:
 

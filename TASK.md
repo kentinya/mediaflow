@@ -1,136 +1,116 @@
-# Phase 19.20 — Read-only Stale Running Automation Job Visibility
+# Phase 19.21 — Fenced Cooperative Automation Job Heartbeats
 
 ## Goal
 
-Expose bounded, configuration-driven visibility into automation jobs that have
-remained `Running` beyond an operator-defined age. This phase is diagnostic
-only: it must not requeue, cancel, retry, recover, or execute a job.
+Prevent an old Worker from refreshing or completing a Job after that Job has
+been explicitly requeued and claimed again. Add bounded cooperative heartbeats
+so stale visibility reflects recent workflow item boundaries without claiming
+to interrupt in-flight external calls.
 
 ## Scope
 
-### 1. Runtime configuration
+### 1. Persisted opaque claim fencing
 
-Add `automation.staleJobAgeSeconds`:
+- Migrate the Runtime schema forward by one version.
+- Add a nullable opaque cryptographically random claim token to AutomationJob
+  persistence.
+- Every successful Pending → Running claim creates a new token.
+- Requeue clears the old token; a later claim receives a different token.
+- Terminal Worker writes require both Running status and the matching token.
+- A stale Worker with an obsolete token must fail closed and must not change the
+  Job owned by another Worker.
+- Tokens are internal authority: never expose them through CLI, API, UI, logs,
+  notifications, configuration snapshots, errors, or audit records.
 
-- default: `3600`
-- minimum: `60`
-- maximum: `604800`
-- reject booleans, non-integers, and out-of-range values
-- expose only the numeric threshold in the redacted system configuration
-  snapshot
+### 2. Cooperative heartbeat
 
-Update canonical example configuration and configuration documentation.
+- Add one repository operation that atomically verifies Job ID, Running status,
+  and claim token, refreshes `updated_at`, and returns cancellation state.
+- The Worker invokes it through its existing cooperative callback before/between
+  workflow items and once after the handler returns before terminal commit.
+- Do not create a background heartbeat thread.
+- Do not claim that heartbeat remains fresh during a blocking Metadata/Storage
+  call; stale age remains an observation.
 
-### 2. Bounded stale-job query
+### 3. Fenced terminal completion
 
-Extend the automation job repository/application service with a bounded,
-deterministically ordered read query for jobs where:
+- Replace the Worker's unconditional terminal update with a conditional fenced
+  completion operation.
+- Completed, Failed, and Cancelled behavior and notification semantics otherwise
+  remain unchanged.
+- If ownership is lost, the old Worker must not publish a terminal notification
+  for the newer claim and must return the currently persisted Job state.
 
-- status is `Running`
-- `updated_at` is older than the configured threshold
+### 4. Explicit stale requeue compatibility
 
-Requirements:
+- Keep requeue local-only and explicitly age-guarded.
+- Requeue must atomically clear claim ownership.
+- No API or UI requeue/retry/recovery control is added.
+- No automatic requeue or timeout cancellation is added.
 
-- accept a limit from `1` to `100`
-- enforce the bound in the persistence query, not only after loading rows
-- perform no job, task, history, or storage mutation
-- preserve existing local CLI compatibility
+### 5. Safety and redaction
 
-### 3. Read-only API
+This phase must not change Parser, Recognition, Metadata, Naming,
+Classification, Planner, OrganizerExecutor, or Storage behavior.
 
-Add:
-
-`GET /api/v1/jobs/stale?limit=100`
-
-Requirements:
-
-- require existing API read permission
-- reject unsupported methods and unknown/duplicate query parameters
-- use `automation.staleJobAgeSeconds`; callers cannot supply an arbitrary age
-- return the threshold and a strict allowlist of safe job fields
-- do not expose request input, paths, errors, secrets, credentials, tokens, or
-  authorization headers
-- normalize the route in security audit records
-- distinguish this route from the existing `/api/v1/jobs/{id}` route
-
-### 4. Operator UI
-
-Extend the existing Jobs view with an explicit `Show stale running jobs`
-action.
-
-Requirements:
-
-- fetch only when the operator requests it; do not poll
-- display a compact bounded table
-- clearly mark execute-authorized organize jobs as
-  `MUTATION_AUTHORIZED — MANUAL RECOVERY ONLY`
-- explain that age is only an observation and is not proof the worker died
-- provide no requeue, retry, force-cancel, delete, or execute controls
-- display the configured stale threshold in System information
-
-### 5. Safety
-
-This phase must not call:
-
-- Scanner or the media processing pipeline
-- Metadata providers or network media services
-- Naming, Classification, Planner, or OrganizerExecutor
-- Storage read or mutation methods
-- job requeue/cancel/retry methods
-
-Existing security-audit persistence for authenticated API requests is allowed.
+Claim tokens must be structurally excluded from all operator-facing
+serialization. Existing DryRun and explicit execute boundaries remain intact.
 
 ## Tests
 
-Add focused automated tests covering:
+Add focused tests covering:
 
-- configuration default, accepted value, type/range rejection, and snapshot
-- repository SQL limit and deterministic stale ordering
-- non-stale and non-running jobs are excluded
-- API authentication/authorization, method handling, strict query parsing,
-  limit bounds, and audit-route normalization
-- response allowlisting and secret/error/path redaction
-- execute-authorized organize-job warning visibility
-- UI explicit loading, threshold visibility, explanatory warning, and absence
-  of recovery action controls
-- zero Storage and workflow-service calls
-- existing automation, API, task, CLI, and safety regressions
+- schema migration from the current version and fresh-database creation
+- each claim receives a non-empty unique opaque token
+- cooperative heartbeat refreshes only the matching Running claim
+- heartbeat observes cancellation atomically
+- wrong/old token cannot heartbeat or complete
+- requeue clears ownership and a second claim gets a different token
+- old Worker cannot overwrite the second Worker's state or publish its terminal
+  notification
+- successful/failing/cancelled Worker terminal behavior remains compatible
+- API, UI, CLI, logs, notifications, snapshots, and errors never expose token
+- stale query responds to heartbeat age while retaining its configured bound
+- no Storage or media workflow semantic changes
+- all existing automation, task, API/UI, persistence, and safety regressions
 
-Run all tests plus configured formatter, linter, and type checker.
+Run all tests plus configured formatter, linter, compile, dependency,
+configuration, forbidden-dependency, and isolated wheel gates.
 
 ## Documentation
 
 Update:
 
 - `README.md`
-- `docs/configuration.md`
+- `docs/requirements.md`
 - `docs/architecture.md`
 - `docs/progress.md`
 - `docs/roadmap.md`
-- canonical example configuration files
+- `docs/release.md` if operator guidance changes
 
 ## Out of Scope
 
-- API/UI requeue, retry, cancellation, deletion, or forced recovery
-- automatic stale-job recovery
-- worker heartbeats, leases, fencing tokens, or distributed liveness
-- changing active-job admission semantics
-- media pipeline or Storage behavior changes
-- UI redesign
+- automatic stale recovery or lease expiry
+- background heartbeat threads
+- API/UI requeue, retry, force-cancel, or recovery
+- distributed leader election or Worker registry
+- rollback or exactly-once external Storage guarantees
+- Task heartbeat redesign
+- OIDC, Secret Store, TLS, or UI redesign
 
 ## Completion Report
 
 Finish with:
 
-## Phase 19.20 Result
+## Phase 19.21 Result
 
 PASS / FAIL
 
-## Stale Detection
+## Claim Fencing
 
-## API and UI
+## Cooperative Heartbeat
 
-## Authorization and Redaction
+## Redaction
 
 ## Safety
 

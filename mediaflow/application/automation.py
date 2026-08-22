@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from mediaflow.application.notification import NotificationPublisher
 from mediaflow.domain.automation import (
+    AutomationClaimLost,
     AutomationCommand,
     AutomationJob,
     AutomationJobRepository,
@@ -109,10 +110,16 @@ class AutomationWorker:
         if job is None:
             return None
         try:
+            if not job.claim_token:
+                raise AutomationClaimLost("claimed automation Job has no ownership token")
 
             def cancelled() -> bool:
-                return self._repository.job_cancellation_requested(job.job_id)
+                return self._repository.heartbeat_job(
+                    job.job_id, job.claim_token or "", datetime.now(UTC)
+                )
 
+            if cancelled():
+                raise AutomationCancelled()
             task_id = self._handler(job, cancelled)
             if cancelled():
                 raise AutomationCancelled(task_id)
@@ -144,7 +151,17 @@ class AutomationWorker:
                 task_id=task_id,
                 error=None,
             )
-        self._repository.update_job(finished)
+        if not self._repository.complete_claimed_job(finished):
+            current = self._repository.get_job(job.job_id)
+            if current is None:
+                raise AutomationClaimLost(
+                    "automation Job disappeared after claim ownership was lost"
+                )
+            return current
+        persisted = self._repository.get_job(job.job_id)
+        if persisted is None:
+            raise AutomationClaimLost("automation Job disappeared after terminal commit")
+        finished = persisted
         if self._notifications:
             event_type = {
                 AutomationJobStatus.COMPLETED: NotificationEventType.JOB_COMPLETED,

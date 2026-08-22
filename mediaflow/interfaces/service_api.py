@@ -1126,7 +1126,9 @@ class MediaFlowApi:
     @classmethod
     def _value(cls, value):
         if hasattr(value, "__dataclass_fields__"):
-            return {key: cls._value(item) for key, item in asdict(value).items()}
+            return {
+                key: cls._value(item) for key, item in asdict(value).items() if key != "claim_token"
+            }
         if isinstance(value, datetime):
             return value.isoformat()
         if isinstance(value, Enum):

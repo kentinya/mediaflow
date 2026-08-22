@@ -24,6 +24,10 @@ class AutomationQueueFull(RuntimeError):
     pass
 
 
+class AutomationClaimLost(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class AutomationJob:
     job_id: str
@@ -39,6 +43,7 @@ class AutomationJob:
     cancellation_requested: bool = False
     schedule_id: str | None = None
     execute_authorized: bool = False
+    claim_token: str | None = None
 
 
 @dataclass(frozen=True)
@@ -130,6 +135,8 @@ class AutomationJobRepository(Protocol):
     def update_job(self, job: AutomationJob) -> None: ...
     def request_job_cancellation(self, job_id: str, now: datetime) -> AutomationJob: ...
     def job_cancellation_requested(self, job_id: str) -> bool: ...
+    def heartbeat_job(self, job_id: str, claim_token: str, now: datetime) -> bool: ...
+    def complete_claimed_job(self, job: AutomationJob) -> bool: ...
     def list_stale_running_jobs(
         self, before: datetime, *, limit: int = 100
     ) -> tuple[AutomationJob, ...]: ...

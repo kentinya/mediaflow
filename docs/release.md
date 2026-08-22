@@ -84,6 +84,11 @@ Restore is recovery-only and never overwrites:
 The command refuses any occupied destination or sidecar and does not detect process liveness. Never
 use it as an in-place replacement mechanism.
 
+Automation Job claims are fenced in Runtime schema v14 and cooperative workflow boundaries refresh
+their age. This prevents an old Worker from committing over a requeued/later claim, but it does not
+prove that an in-flight provider or Storage operation stopped. Before `jobs requeue`, stop and inspect
+the Worker, Job/Task history, source, and destination. Never infer safe replay solely from stale age.
+
 On POSIX, every production runtime command holds a shared kernel advisory lease for its lifetime and
 restore requires the exclusive lease. Contention is evidence that a cooperating MediaFlow process is
 still active and restore fails before staging. This is an additional guard, not permission to skip the
