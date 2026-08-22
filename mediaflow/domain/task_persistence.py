@@ -24,6 +24,7 @@ class TaskItemStatus(StrEnum):
     FAILED = "failed"
     SKIPPED = "skipped"
     CANCELLED = "cancelled"
+    WAITING_CONFIRM = "waiting_confirm"
 
     @property
     def retryable(self) -> bool:
@@ -89,6 +90,44 @@ class PersistentResultRecord:
     error: str | None = None
 
 
+class ConfirmationStatus(StrEnum):
+    PENDING = "pending"
+    RESOLVED = "resolved"
+
+
+@dataclass(frozen=True)
+class ConflictConfirmation:
+    confirmation_id: str
+    task_id: str
+    item_id: str
+    plan_id: str
+    conflict_type: str
+    source_storage_id: str
+    source_path: str
+    destination_storage_id: str
+    destination_path: str
+    configured_strategy: str
+    status: ConfirmationStatus
+    created_at: datetime
+    updated_at: datetime
+    selected_strategy: str | None = None
+    proposed_destination_path: str | None = None
+    overwrite_authorized: bool = False
+    actor: str | None = None
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class ConflictDecisionAudit:
+    audit_id: str
+    confirmation_id: str
+    strategy: str
+    decided_at: datetime
+    overwrite_authorized: bool
+    actor: str | None = None
+    note: str | None = None
+
+
 class PersistentTaskRepository(Protocol):
     def create_task(self, task: PersistentTask) -> None: ...
     def update_task(self, task: PersistentTask) -> None: ...
@@ -99,6 +138,17 @@ class PersistentTaskRepository(Protocol):
     def list_items(self, task_id: str) -> tuple[PersistentTaskItem, ...]: ...
     def append_result(self, result: PersistentResultRecord) -> None: ...
     def list_results(self, task_id: str) -> tuple[PersistentResultRecord, ...]: ...
+    def create_confirmation(self, confirmation: ConflictConfirmation) -> None: ...
+    def get_confirmation(self, confirmation_id: str) -> ConflictConfirmation | None: ...
+    def list_confirmations(
+        self, *, status: ConfirmationStatus | None = None
+    ) -> tuple[ConflictConfirmation, ...]: ...
+    def resolve_confirmation(
+        self, confirmation: ConflictConfirmation, audit: ConflictDecisionAudit
+    ) -> None: ...
+    def list_confirmation_audit(
+        self, confirmation_id: str
+    ) -> tuple[ConflictDecisionAudit, ...]: ...
 
 
 class FileOperationLockRepository(Protocol):

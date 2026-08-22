@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import TextIO
 
+from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata import MetadataProviderRegistry
@@ -13,7 +14,13 @@ from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.cli import render_strategy_result
-from mediaflow.domain.task_persistence import PersistentTask, PersistentTaskItem
+from mediaflow.domain.organizer import ConflictStrategy
+from mediaflow.domain.task_persistence import (
+    ConfirmationStatus,
+    PersistentTask,
+    PersistentTaskItem,
+    TaskItemStatus,
+)
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
@@ -53,6 +60,20 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
         task_retry = task_commands.add_parser(name)
         task_retry.add_argument("task_id")
         task_retry.add_argument("--execute", action="store_true")
+    confirmations = commands.add_parser("confirmations", help="persistent conflict decisions")
+    confirmation_commands = confirmations.add_subparsers(dest="confirmation_command", required=True)
+    confirmation_list = confirmation_commands.add_parser("list")
+    confirmation_list.add_argument("--all", action="store_true")
+    confirmation_show = confirmation_commands.add_parser("show")
+    confirmation_show.add_argument("confirmation_id")
+    confirmation_resolve = confirmation_commands.add_parser("resolve")
+    confirmation_resolve.add_argument("confirmation_id")
+    confirmation_resolve.add_argument(
+        "--strategy", required=True, choices=[item.value for item in ConflictStrategy]
+    )
+    confirmation_resolve.add_argument("--confirm-overwrite", action="store_true")
+    confirmation_resolve.add_argument("--actor")
+    confirmation_resolve.add_argument("--note")
     arguments = parser.parse_args(argv)
     try:
         configuration = _configuration(arguments.config)
@@ -77,6 +98,53 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
                     if task is None:
                         raise LookupError(f"task {arguments.task_id!r} was not found")
                     stdout.write(render_task(task, repository.list_items(task.task_id)))
+            return 0
+        if arguments.command == "confirmations":
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                service = ConfirmationService(repository)
+                if arguments.confirmation_command == "list":
+                    values = repository.list_confirmations(
+                        status=None if arguments.all else ConfirmationStatus.PENDING
+                    )
+                    stdout.write(render_confirmations(values))
+                elif arguments.confirmation_command == "show":
+                    value = repository.get_confirmation(arguments.confirmation_id)
+                    if value is None:
+                        raise LookupError(
+                            f"confirmation {arguments.confirmation_id!r} was not found"
+                        )
+                    stdout.write(
+                        render_confirmation(
+                            value,
+                            repository.list_confirmation_audit(value.confirmation_id),
+                        )
+                    )
+                else:
+                    value = service.resolve(
+                        arguments.confirmation_id,
+                        ConflictStrategy(arguments.strategy),
+                        confirm_overwrite=arguments.confirm_overwrite,
+                        actor=arguments.actor,
+                        note=arguments.note,
+                    )
+                    item = repository.get_item(value.item_id)
+                    if item is not None:
+                        from dataclasses import replace
+                        from datetime import UTC, datetime
+
+                        repository.upsert_item(
+                            replace(
+                                item,
+                                status=(
+                                    TaskItemStatus.SKIPPED
+                                    if value.selected_strategy == ConflictStrategy.SKIP.value
+                                    else TaskItemStatus.PENDING
+                                ),
+                                stage="conflict_resolved",
+                                updated_at=datetime.now(UTC),
+                            )
+                        )
+                    stdout.write(render_confirmation(value, ()))
             return 0
 
         storages = configuration.create_storages()
@@ -164,6 +232,12 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
                 source_display_roots=dict(configuration.resource_display_roots),
                 task_coordinator=coordinator,
                 task_id=task.task_id,
+                conflict_decisions={
+                    (value.source_storage_id, value.source_path): value
+                    for value in repository.list_confirmations(status=ConfirmationStatus.RESOLVED)
+                }
+                if retry_items is not None
+                else {},
             )
             if retry_items is not None:
                 libraries = {item.library_id: item for item in configuration.resource_libraries}
@@ -230,7 +304,13 @@ def render_summary(summary: MediaOrganizerBatchResult, *, execute: bool) -> str:
     lines = ["", "SUMMARY", "", f"Mode: {'EXECUTE' if execute else 'DRY_RUN'}"]
     for item in summary.items:
         status = (
-            item.execution.status.value if item.execution else "FAILED" if item.error else "SKIPPED"
+            item.execution.status.value
+            if item.execution
+            else "FAILED"
+            if item.error
+            else "NEED_CONFIRM"
+            if item.plan and item.plan.conflicts
+            else "SKIPPED"
         )
         detail = item.error or (
             "; ".join(item.execution.errors) if item.execution and item.execution.errors else ""
@@ -301,6 +381,43 @@ def render_task(task: PersistentTask, items: tuple[PersistentTaskItem, ...]) -> 
             f"attempts={item.attempts} | {detail}"
         )
     lines.extend(("", f"Total: {len(items)}", ""))
+    return "\n".join(lines)
+
+
+def render_confirmations(values) -> str:
+    lines = ["", "CONFIRMATIONS", ""]
+    for value in values:
+        lines.append(
+            f"{value.confirmation_id} | {value.status.value} | {value.conflict_type} | "
+            f"{value.source_storage_id}:{value.source_path} -> "
+            f"{value.destination_storage_id}:{value.destination_path}"
+        )
+    lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_confirmation(value, audit) -> str:
+    lines = [
+        "",
+        "CONFIRMATION",
+        "",
+        f"ID: {value.confirmation_id}",
+        f"Status: {value.status.value}",
+        f"Conflict: {value.conflict_type}",
+        f"Configured strategy: {value.configured_strategy}",
+        f"Selected strategy: {value.selected_strategy or '-'}",
+        f"Source: {value.source_storage_id}:{value.source_path}",
+        f"Destination: {value.destination_storage_id}:{value.destination_path}",
+        f"Overwrite authorized: {'YES' if value.overwrite_authorized else 'NO'}",
+        "",
+        "AUDIT",
+        "",
+    ]
+    lines.extend(
+        f"{entry.decided_at.isoformat()} | {entry.strategy} | {entry.actor or '-'}"
+        for entry in audit
+    )
+    lines.append("")
     return "\n".join(lines)
 
 

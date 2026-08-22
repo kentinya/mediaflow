@@ -68,8 +68,8 @@
     }
   ],
   "organizePolicies": [
-    {"id": "A", "operation": "MOVE", "overwrite": false},
-    {"id": "B", "operation": "MOVE", "overwrite": false}
+    {"id": "A", "operation": "MOVE", "conflictStrategy": "manual", "overwrite": false},
+    {"id": "B", "operation": "MOVE", "conflictStrategy": "manual", "overwrite": false}
   ],
   "recognitionTypes": [
     {"id": "A", "name": "Normal Movie", "description": "Standard movie library"},

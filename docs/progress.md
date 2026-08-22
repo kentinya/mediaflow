@@ -678,3 +678,18 @@ Phase 14 persistent FileIndex and recoverable task foundation (2026-08-21): PASS
 - Full suite: 268 tests, 265 passed, 0 failed, 3 optional integrations skipped
 - Ruff lint/format, compileall, dependency check, wheel build, config validation,
   FFmpeg/FFprobe audit, and diff check passed
+
+Phase 15 conflict decisions and persistent NeedConfirm (2026-08-22): IMPLEMENTED
+
+- Added configuration-driven Skip/Rename/Manual/Overwrite conflict strategies; default remains
+  Manual and legacy overwrite configuration is validated for contradictions
+- Added a mutation-free ConflictResolver with bounded deterministic Rename and explicit high-risk
+  Overwrite authorization; invalid destinations remain non-overridable
+- Upgraded runtime SQLite schema to v2 with persistent confirmation records and append-only decision
+  audits; conflicted task items now enter `waiting_confirm` and are excluded from blind retry
+- Added `mediaflow confirmations list|show|resolve` commands; all confirmation operations are
+  persistence-only and never access media Storage
+- Duplicate identity now includes provider, media type, season, and normalized episode set
+- Full suite: 277 tests, 274 passed, 0 failed, 3 optional external integrations skipped
+- Ruff lint/format, compileall, dependency check, isolated wheel build, configuration validation,
+  FFmpeg/FFprobe runtime audit, and diff checks passed

@@ -219,6 +219,7 @@
     {
       "id": "MOVE",
       "operation": "MOVE",
+      "conflictStrategy": "manual",
       "overwrite": false
     }
   ],
@@ -307,6 +308,7 @@
       "sameStorageRenameOnly": "native server-side Rename",
       "sameStorageMoveAndRename": "native Move then Rename; best-effort rollback on rename failure",
       "crossStorageMove": "stream Copy, verify target size, then Delete source",
+      "conflictStrategy": "manual",
       "overwrite": false
     },
     "resourceLibrary": {
@@ -466,10 +468,10 @@
       }
     },
     "organizePolicies": [
-      {"id": "move", "operation": "MOVE", "overwrite": false},
-      {"id": "copy", "operation": "COPY", "overwrite": false},
-      {"id": "hardlink", "operation": "HARDLINK", "overwrite": false},
-      {"id": "symlink", "operation": "SYMLINK", "overwrite": false}
+      {"id": "move", "operation": "MOVE", "conflictStrategy": "manual", "overwrite": false},
+      {"id": "copy", "operation": "COPY", "conflictStrategy": "skip", "overwrite": false},
+      {"id": "hardlink", "operation": "HARDLINK", "conflictStrategy": "rename", "overwrite": false},
+      {"id": "symlink", "operation": "SYMLINK", "conflictStrategy": "manual", "overwrite": false}
     ],
     "recognitionTypePolicy": {
       "id": "type-C",

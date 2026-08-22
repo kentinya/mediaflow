@@ -2,23 +2,31 @@ from __future__ import annotations
 
 import posixpath
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+from mediaflow.application.conflict_resolution import ConflictResolver
 from mediaflow.application.library_pipeline import MediaLibraryResolver, ResourceLibraryScanner
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
 from mediaflow.application.strategy_test import StrategyTestResult, StrategyTestRunner
 from mediaflow.domain.history import OperationHistoryRecord, OperationHistoryRepository
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.logging import Logger, LogLevel
-from mediaflow.domain.organizer import ExecutionResult, ExecutionStatus, OrganizePlan
+from mediaflow.domain.organizer import (
+    ConflictStrategy,
+    ExecutionResult,
+    ExecutionStatus,
+    OrganizePlan,
+    PlanOperation,
+    PlanStatus,
+)
 from mediaflow.domain.recognition import RecognitionTypePolicy
 from mediaflow.domain.scanner import CancellationToken, FileScanStatus, ScanError, Scanner
 from mediaflow.domain.storage import Storage
 
 if TYPE_CHECKING:
     from mediaflow.application.task_runtime import PersistentTaskCoordinator
-    from mediaflow.domain.task_persistence import PersistentTaskItem
+    from mediaflow.domain.task_persistence import ConflictConfirmation, PersistentTaskItem
 
 
 @dataclass(frozen=True)
@@ -94,6 +102,7 @@ class MediaOrganizerService:
         logger: Logger | None = None,
         task_coordinator: PersistentTaskCoordinator | None = None,
         task_id: str | None = None,
+        conflict_decisions: dict[tuple[str, str], ConflictConfirmation] | None = None,
     ) -> None:
         self._strategy = strategy
         self._scanner = scanner
@@ -109,6 +118,7 @@ class MediaOrganizerService:
         self._logger = logger
         self._task_coordinator = task_coordinator
         self._task_id = task_id
+        self._conflict_decisions = conflict_decisions or {}
 
     def process_file(
         self,
@@ -181,6 +191,36 @@ class MediaOrganizerService:
                 media_identity=strategy.metadata.identity,
                 target_storage=resolved_library.storage,
             )
+            resolver = ConflictResolver()
+            decision = self._conflict_decisions.get((resource_library.storage_id, storage_path))
+            replacement = None
+            if decision and decision.plan_id == plan.plan_id and decision.selected_strategy:
+                selected = ConflictStrategy(decision.selected_strategy)
+                if selected is ConflictStrategy.SKIP:
+                    replacement = replace(
+                        plan, operation=PlanOperation.SKIP, status=PlanStatus.NOOP, conflicts=()
+                    )
+                elif selected is ConflictStrategy.RENAME:
+                    replacement = resolver.rename(plan, resolved_library.storage)
+                elif selected is ConflictStrategy.OVERWRITE:
+                    replacement = resolver.overwrite(
+                        plan,
+                        type_policy.organize_policy,
+                        confirmed=decision.overwrite_authorized,
+                    )
+            else:
+                replacement = resolver.apply_configured(
+                    plan, type_policy.organize_policy, resolved_library.storage
+                )
+            if replacement is None:
+                item = MediaOrganizerItemResult(source, strategy, plan)
+                self._record(item)
+                if self._task_coordinator and tracked_item:
+                    self._task_coordinator.wait_for_confirmation(
+                        tracked_item, plan, type_policy.organize_policy
+                    )
+                return item
+            plan = replacement
             execution = self._executor.execute(
                 plan,
                 self._storages,
@@ -317,7 +357,13 @@ class MediaOrganizerService:
                 item.source,
                 execution.resolved_destination if execution else "",
                 execution.operation.value if execution else "SKIP",
-                execution.status.value if execution else "FAILED",
+                (
+                    execution.status.value
+                    if execution
+                    else "WAITING_CONFIRM"
+                    if item.plan and item.plan.conflicts and not item.error
+                    else "FAILED"
+                ),
                 provider_id=identity.provider_id if identity else None,
                 title=identity.title if identity else None,
                 error=item.error or ("; ".join(execution.errors) if execution else None),

@@ -319,18 +319,28 @@ def _organize_policies(document, base, required):
         if inherited:
             return inherited
         return tuple(policy.organize_policy for policy in base.recognition_type_policies)
-    policies = tuple(
-        OrganizePolicy(
-            _string(item, "id"),
-            _organize_operation(_string(item, "operation")),
-            ConflictStrategy.OVERWRITE
-            if _boolean(item, "overwrite", False)
-            else ConflictStrategy.MANUAL,
-        )
-        for item in values
-    )
+    policies = tuple(_organize_policy(item) for item in values)
     _unique(policies, lambda item: item.policy_id, "organizePolicies")
     return policies
+
+
+def _organize_policy(item: Mapping[str, Any]) -> OrganizePolicy:
+    legacy_overwrite = _boolean(item, "overwrite", False)
+    raw_strategy = item.get("conflictStrategy")
+    if raw_strategy is None:
+        strategy = ConflictStrategy.OVERWRITE if legacy_overwrite else ConflictStrategy.MANUAL
+    else:
+        try:
+            strategy = ConflictStrategy(str(raw_strategy).casefold())
+        except ValueError as error:
+            raise ValueError(
+                "organize policy conflictStrategy must be skip, rename, manual, or overwrite"
+            ) from error
+        if legacy_overwrite and strategy is not ConflictStrategy.OVERWRITE:
+            raise ValueError("overwrite=true conflicts with the configured conflictStrategy")
+    return OrganizePolicy(
+        _string(item, "id"), _organize_operation(_string(item, "operation")), strategy
+    )
 
 
 def _recognition_type(value: Mapping[str, Any]) -> RecognitionType:

@@ -34,14 +34,19 @@ mediaflow preview --limit 20
 mediaflow organize --limit 20
 mediaflow organize --execute --limit 20
 mediaflow tasks list
+mediaflow confirmations list
+mediaflow confirmations show CONFIRMATION_ID
+mediaflow confirmations resolve CONFIRMATION_ID --strategy skip
 mediaflow tasks show TASK_ID
 mediaflow tasks resume TASK_ID
 mediaflow tasks retry-failed TASK_ID --execute
 ```
 
 `preview` and `organize` without `--execute` produce DryRun results. Only `organize --execute`
-permits Storage mutations. Existing destinations and unresolved conflicts are rejected; overwrite
-and silent deletion are not enabled.
+permits Storage mutations. Existing destinations enter the configured Skip/Rename/Manual/Overwrite
+decision flow. Overwrite is rejected unless the OrganizePolicy enables it and the user records a
+fresh `--confirm-overwrite` decision; unresolved conflicts remain non-mutating.
+Silent deletion is not enabled.
 
 With no path argument, `scan`, `preview`, and `organize` iterate every enabled configured
 ResourceLibrary. The former path-taking preview/organize forms remain available for compatibility.
@@ -91,6 +96,6 @@ operation history remains compatible.
 
 ## Current milestone
 
-The core CLI pipeline and Phase 14 persistence foundation are complete. Interactive conflict
-handling is next; attachments, scheduling, API, and Web UI remain planned. A scheduler is not yet
+The core CLI pipeline, Phase 14 persistence foundation, and Phase 15 persistent conflict decision
+handling are complete; attachments, scheduling, API, and Web UI remain planned. A scheduler is not yet
 implemented, so unattended execution remains outside the supported workflow.

@@ -51,14 +51,17 @@ Runtime Configuration
 验收结果：生产 CLI 已接入持久 FileIndex；Task/TaskItem/Result/Lock 使用版本化 SQLite；
 显式 resume/retry 排除成功终态并重新要求执行授权；DryRun 仍零 mutation。
 
-### Phase 15：冲突与人工确认（下一步）
+### Phase 15：冲突与人工确认（已完成）
 
 - 完整实现 Skip、Rename、Manual；Overwrite 仅在显式高风险策略和确认后允许。
-- 建立 NeedConfirm 队列，支持元数据候选、分类、目标冲突的人工选择。
-- 加入 Provider ID、季集和可选 Hash 的重复检测策略。
+- 建立目标冲突 NeedConfirm 队列；元数据候选和分类人工选择留给后续交互层。
+- 加入 Provider ID、媒体类型和季集范围的重复检测身份；Hash 读取仍保持关闭。
 - 不把冲突解决逻辑放入 Naming、Classification 或 Storage Adapter。
 
-### Phase 16：附件与媒体集合
+验收范围：目标冲突的 Skip/Rename/Manual/Overwrite 决策、SQLite NeedConfirm 与审计、显式
+高风险覆盖授权和剧集范围重复身份已经实现。元数据候选与分类人工选择留给后续交互层。
+
+### Phase 16：附件与媒体集合（下一步）
 
 - 字幕、NFO、Poster、Fanart、Trailer 和同名附件发现。
 - 主文件与附件形成一个原子计划集合，保留字幕语言/Forced/SDH 后缀。
@@ -84,13 +87,13 @@ Runtime Configuration
 
 ## 下一步实施建议
 
-下一任务应限定为 Phase 15，不同时启动附件、API 或 UI。优先顺序：
+下一任务应限定为 Phase 16，不同时启动 API 或 UI。优先顺序：
 
-1. 固化 Skip、Rename、Manual 的领域决策与确认记录。
-2. 设计 NeedConfirm 项的持久状态和显式用户决策输入。
-3. 保持 Overwrite 默认关闭，并定义独立高风险授权边界。
-4. 扩充 Provider/季集/可选 Hash 重复检测证据。
-5. 增加冲突决策恢复、审计和零隐式 mutation 回归。
+1. 定义主媒体与字幕/NFO/图片/Trailer 的附件集合模型。
+2. 通过 Storage 只读发现同名附件并保留语言、Forced、SDH 后缀。
+3. 生成原子计划集合并为部分失败提供可恢复记录。
+4. 默认不清理源目录，不删除未知文件。
+5. 保持 Phase 15 冲突确认和执行授权边界不变。
 
 Scheduler 尚未实现；当前不支持无人值守定时 `organize --execute`。
 

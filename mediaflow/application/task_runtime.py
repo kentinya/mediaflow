@@ -8,7 +8,7 @@ from mediaflow.application.media_organizer import (
     MediaOrganizerBatchResult,
     MediaOrganizerItemResult,
 )
-from mediaflow.domain.organizer import ExecutionStatus
+from mediaflow.domain.organizer import ExecutionStatus, OrganizePlan, OrganizePolicy
 from mediaflow.domain.task_persistence import (
     FileOperationLockRepository,
     PersistentResultRecord,
@@ -201,16 +201,44 @@ class PersistentTaskCoordinator:
         finally:
             self.locks.release(item.storage_id, item.source_path, item.task_id)
 
+    def wait_for_confirmation(
+        self, item: PersistentTaskItem, plan: OrganizePlan, policy: OrganizePolicy
+    ) -> None:
+        from mediaflow.application.conflict_resolution import ConfirmationService
+
+        now = datetime.now(UTC)
+        waiting = replace(
+            item,
+            status=TaskItemStatus.WAITING_CONFIRM,
+            stage="waiting_confirm",
+            updated_at=now,
+            plan_id=plan.plan_id,
+            destination_storage_id=plan.target_storage_id,
+            destination_path=(
+                plan.destination_location.path if plan.destination_location else plan.target
+            ),
+            error=None,
+        )
+        self.repository.upsert_item(waiting)
+        ConfirmationService(self.repository).create(
+            task_id=item.task_id, item_id=item.item_id, plan=plan, policy=policy
+        )
+        self.locks.release(item.storage_id, item.source_path, item.task_id)
+
     def finish(self, task_id: str, batch: MediaOrganizerBatchResult) -> PersistentTask:
         task = self.require(task_id)
         items = self.repository.list_items(task_id)
         failed = sum(
             item.status in {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL} for item in items
         )
-        completed = sum(not item.status.retryable for item in items)
+        waiting = sum(item.status is TaskItemStatus.WAITING_CONFIRM for item in items)
+        completed = sum(
+            not item.status.retryable and item.status is not TaskItemStatus.WAITING_CONFIRM
+            for item in items
+        )
         status = (
             PersistentTaskStatus.PARTIAL_SUCCESS
-            if failed and completed
+            if waiting or (failed and completed)
             else PersistentTaskStatus.FAILED
             if failed or batch.scan_errors
             else PersistentTaskStatus.COMPLETED

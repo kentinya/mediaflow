@@ -67,6 +67,28 @@ class ConflictStrategy(StrEnum):
 
 
 @dataclass(frozen=True)
+class DuplicateIdentity:
+    provider: str
+    provider_id: str
+    media_type: str
+    season: int | None = None
+    episodes: tuple[int, ...] = ()
+
+    @classmethod
+    def from_media_identity(cls, identity: MediaIdentity) -> DuplicateIdentity:
+        episodes = identity.episodes or (
+            (identity.episode,) if identity.episode is not None else ()
+        )
+        return cls(
+            identity.provider.casefold(),
+            identity.provider_id,
+            identity.media_type.value,
+            identity.season,
+            tuple(sorted(set(episodes))),
+        )
+
+
+@dataclass(frozen=True)
 class OrganizePolicy:
     policy_id: str
     operation: OrganizeOperationType
@@ -121,6 +143,7 @@ class OrganizePlan:
     relative_destination: str = ""
     source_location: StorageLocation | None = None
     destination_location: StorageLocation | None = None
+    overwrite_authorized: bool = False
 
     @property
     def destination(self) -> str:

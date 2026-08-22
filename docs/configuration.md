@@ -350,6 +350,10 @@ The versioned SQLite database contains persistent FileIndex, Task, TaskItem, Res
 
 ```bash
 mediaflow tasks list
+mediaflow confirmations list
+mediaflow confirmations show CONFIRMATION_ID
+mediaflow confirmations resolve CONFIRMATION_ID --strategy rename --actor operator
+mediaflow confirmations resolve CONFIRMATION_ID --strategy overwrite --confirm-overwrite
 mediaflow tasks show TASK_ID
 mediaflow tasks resume TASK_ID
 mediaflow tasks retry-failed TASK_ID
@@ -359,3 +363,18 @@ Resume considers interrupted/pending/failed/partial items; retry-failed selects 
 items. Successful, skipped, and DryRun results are excluded. Retry without `--execute` creates a new
 DryRun task. Execute is accepted only if the original task was execute-authorized and the retry
 command supplies a fresh `--execute` flag.
+An organize policy also controls conflict behavior:
+
+```json
+{
+  "id": "A",
+  "operation": "MOVE",
+  "conflictStrategy": "manual",
+  "overwrite": false
+}
+```
+
+`conflictStrategy` is one of `skip`, `rename`, `manual`, or `overwrite`. The default is `manual`.
+Legacy `overwrite: true` maps to `overwrite`, but contradictory values fail validation. Overwrite
+still requires a persistent explicit decision made with `--confirm-overwrite`; configuration alone
+never authorizes mutation. `mediaflow config validate` only validates and never accesses Storage.

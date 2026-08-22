@@ -1,157 +1,107 @@
-# Phase 14 — Persistent FileIndex + Recoverable Task Foundation
+# Phase 15 — Conflict Decisions + Persistent NeedConfirm
 
 ## Goal
 
-Make the existing configuration-driven organizer durable across process restarts without
-redesigning any accepted strategy engine. This phase covers persistence, recovery, retry selection,
-and per-file execution locking only.
-
-## Existing pipeline
-
-```text
-ResourceLibrary Scanner → Parser → Recognition → Metadata → Naming → Classification
-→ OrganizePlan → OrganizerExecutor → Result
-```
-
-Do not move business decisions into Task orchestration or repositories.
+Complete conflict decision handling without redesigning accepted Parser, Recognition, Metadata,
+Naming, Classification, Planner, Executor, Scanner, or Storage behavior. Persist every decision so
+that process restarts never turn an unresolved conflict into an implicit mutation.
 
 ## Required implementation
 
-### 1. Runtime persistence configuration
+### 1. Domain decisions
 
-Support:
+- Define persistent confirmation records and statuses for organize-plan conflicts.
+- Support explicit `skip`, `rename`, `manual`, and `overwrite` decisions.
+- `manual` remains unresolved until a later concrete decision.
+- Invalid destinations are never overridable.
+- Rename generates a deterministic, traversal-safe destination without mutating Storage.
+- Overwrite requires both an overwrite-enabled OrganizePolicy and fresh high-risk authorization.
 
-```json
-"persistence": {"databasePath": ".mediaflow/mediaflow.sqlite3"}
-```
+### 2. Runtime configuration
 
-- Use the documented safe application-local default when omitted.
-- Configuration validation validates the value without creating files/directories.
-- Runtime processing may create the database parent when opening persistent state.
-- Never persist secrets.
+- `organizePolicies[].conflictStrategy` accepts `skip`, `rename`, `manual`, or `overwrite`.
+- Preserve legacy `overwrite: true` compatibility, but reject contradictory settings.
+- Default remains `manual`; no hidden Move, Skip, Rename, or Overwrite fallback.
+- Validate values before scanning and produce zero Storage mutations.
 
-### 2. Persistent FileIndex wiring
+### 3. Persistent NeedConfirm queue
 
-- Reuse `SQLiteFileIndexRepository`; do not duplicate FileIndex models or Scanner logic.
-- Production `mediaflow scan`, `preview`, and `organize` use the configured persistent index.
-- Developer `strategy-test` may retain its isolated in-memory index.
-- Separate process runs retain New/Modified/Unchanged/Missing and stability evidence.
-- Failed/cancelled/limited scans preserve Missing-reconciliation safety.
+- Persist conflict type, plan/source/destination identity, proposed decision, timestamps, actor,
+  note, and overwrite authorization.
+- Upgrade the SQLite runtime schema through an explicit forward migration.
+- Conflicted task items become `waiting_confirm`, not ordinary media failures.
+- Waiting-confirm items are not retried until explicitly resolved.
+- Preserve an append-only decision audit trail.
 
-### 3. Durable task and item model
+### 4. Application resolution
 
-Add domain records and repository ports for:
+- Keep conflict logic outside Naming, Classification, Storage adapters, and strategy engines.
+- Apply configured automatic `skip` or `rename` deterministically.
+- Queue `manual` and `overwrite` decisions when confirmation is required.
+- A resolved decision creates a safe replacement plan; it does not mutate Storage itself.
+- OrganizerExecutor remains the sole mutation boundary.
 
-- Task: ID, command/mode, status, execute flag, timestamps, totals, error.
-- TaskItem: Task ID, Storage ID, ResourceLibrary ID, source path, stage/status, attempts,
-  plan ID, destination Storage/path, execution status, error, timestamps.
-- ResultRecord: stable identity, RecognitionType, provider/provider ID, policy IDs, operation,
-  source/destination, final status, error.
+### 5. CLI
 
-Use one SQLite infrastructure adapter with an explicit schema version/migration table.
-
-### 4. State and recovery rules
-
-- Persist task/item state at meaningful orchestration boundaries.
-- Batch failure does not stop later items.
-- Active tasks left by process termination are discoverable and recoverable.
-- Recovery never blindly repeats a successful Storage mutation.
-- Terminal success/skipped/dry-run items are not retried.
-- Partial/failed items require explicit retry/resume.
-- Cancellation stops new items and persists Cancelled/PartialSuccess accurately.
-
-### 5. File operation lock
-
-- Identity is `StorageID + normalized Storage-relative source path`.
-- Prevent two active tasks from organizing the same source concurrently.
-- Acquire/release through a domain port and persist atomically.
-- Reclaim stale locks only through explicit recovery rules.
-- Lock failure produces zero Storage mutation.
-
-### 6. CLI
-
-Keep existing commands and default DryRun behavior. Add:
+Add read/decision commands:
 
 ```text
-mediaflow tasks list
-mediaflow tasks show TASK_ID
-mediaflow tasks resume TASK_ID [--execute]
-mediaflow tasks retry-failed TASK_ID [--execute]
+mediaflow confirmations list
+mediaflow confirmations show CONFIRMATION_ID
+mediaflow confirmations resolve CONFIRMATION_ID --strategy skip|rename|manual|overwrite
+  [--confirm-overwrite] [--actor NAME] [--note TEXT]
 ```
 
-- Resume/retry remains DryRun unless the original task was execute-authorized and the user again
-  supplies `--execute`.
-- Stored state never grants implicit future mutation authority.
-- Print stable task/item summaries and clear recovery errors.
+- Listing/showing/resolving records performs zero Storage mutation.
+- Overwrite resolution without `--confirm-overwrite` fails clearly.
+- Commands never print secrets.
 
-### 7. History compatibility
+### 6. Duplicate evidence
 
-- Preserve `OperationHistoryRepository` and JSONL compatibility.
-- Do not migrate or delete user history silently.
-- Persistent Task/Result storage may coexist with JSONL history in this phase.
+- Keep provider ID as provider-neutral duplicate evidence.
+- Include media type, season, and episode set in duplicate identity so distinct TV episodes do not
+  collide solely because they share a series provider ID.
+- Hash evidence remains optional and must not trigger file reads unless explicitly configured.
 
 ## Safety
 
-- Scanner through Planner remain read-only; only OrganizerExecutor mutates Storage.
-- DryRun and configuration validation produce zero Storage mutation.
-- No overwrite, silent delete, or implicit operation fallback.
-- Recovery/retry requires an explicit command and fresh `--execute` authorization.
-- RecognitionType C remains C while reusing downstream A policies.
+- Default behavior remains DryRun.
+- No silent overwrite or delete.
+- Configuration validation and confirmation commands make zero Storage mutations.
+- RecognitionType C remains C while reusing A downstream policies.
+- Phase 15 must not implement attachments, NFO parsing, API, Web UI, Scheduler, or Phase 16 work.
 
 ## Required tests
 
-### Persistence
-
-- Default/custom database path; config validation creates no database.
-- SQLite schema version initialization and reopen.
-- FileIndex and cross-scan stability/Missing semantics survive reopen.
-
-### Tasks and results
-
-- Task/TaskItem lifecycle and Unicode ResultRecord persistence.
-- Partial batch continues and persists later items.
-- Interrupted active task is discoverable/recoverable.
-- Completed items are never retried; retry-failed selects only failed/partial items.
-- Resume/retry without fresh `--execute` performs DryRun.
-
-### Locks
-
-- Same Storage/path cannot be acquired twice.
-- Different Storage IDs or paths do not conflict.
-- Release and explicit stale-lock recovery.
-- Lock conflict causes zero Storage mutation.
-
-### Regression
-
-Run Parser, Recognition/C, Metadata/CandidateMatcher, Naming, Classification, Planner, Executor,
-Strategy CLI, Scanner/FileIndex, all Storage adapters, and DryRun regressions.
+- Configured Skip, Rename, Manual, and Overwrite behavior.
+- Rename collision sequence and traversal/absolute-path rejection.
+- Explicit overwrite authorization and default denial.
+- SQLite schema v1→v2 migration, confirmation persistence, reopen, and audit history.
+- Waiting-confirm task status, retry exclusion, explicit resolution.
+- Duplicate identity distinguishes TV season/episode sets.
+- CLI list/show/resolve, malformed IDs/options, and zero mutation.
+- Parser, Recognition/C, Metadata, Naming, Classification, Planner, Executor, Strategy CLI,
+  Scanner/FileIndex, Storage adapters, Task recovery, and DryRun regressions.
 
 ## Documentation
 
-Update README, configuration, architecture, progress, roadmap, and config examples. Document
-database ownership, schema versioning, recovery semantics, CLI commands, and limitations.
-
-## Out of scope
-
-Do not implement conflict UI/overwrite approval, attachments, NFO, SMB/S3 JSON runtime construction,
-Scheduler, REST API, Web UI, or any Phase 15+ behavior.
+Update README, configuration, architecture, progress, roadmap, and example configuration. Document
+decision lifecycle, overwrite authorization, CLI use, migration, and limitations.
 
 ## Validation
 
 Run all tests, formatter, linter, compile check, dependency check, build, configuration validation,
-FFprobe/FFmpeg audit, and diff check. Fix every Phase 14 failure before reporting PASS.
+FFprobe/FFmpeg audit, and diff check. Fix every Phase 15 failure before reporting PASS.
 
 ## Final report
 
-## Phase 14 Result
+## Phase 15 Result
 
 PASS / FAIL
 
-## Persistence
+## Conflict Decisions
 
-## Recovery
-
-## Locking
+## NeedConfirm Persistence
 
 ## CLI
 

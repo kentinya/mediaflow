@@ -12,6 +12,7 @@ from mediaflow.domain.naming import NamingResult
 from mediaflow.domain.organizer import (
     Conflict,
     ConflictType,
+    DuplicateIdentity,
     ExecutionResult,
     ExecutionStatus,
     OrganizeOperationType,
@@ -52,7 +53,7 @@ class OrganizePlanner:
         media_identity: MediaIdentity | None = None,
         target_storage: Storage | None = None,
         claimed_destinations: Mapping[str, str] | None = None,
-        known_media: Mapping[tuple[str, str], str] | None = None,
+        known_media: Mapping[object, str] | None = None,
     ) -> OrganizePlan:
         if recognition.recognition_type != type_policy.recognition_type:
             raise PlanningError("recognition result and type policy do not match")
@@ -136,9 +137,12 @@ class OrganizePlanner:
                 )
             )
         if media_identity is not None:
-            duplicate = (known_media or {}).get(
-                (media_identity.provider.casefold(), media_identity.provider_id)
-            )
+            identities = known_media or {}
+            duplicate = identities.get(DuplicateIdentity.from_media_identity(media_identity))
+            if duplicate is None:
+                duplicate = identities.get(
+                    (media_identity.provider.casefold(), media_identity.provider_id)
+                )
             if duplicate is not None:
                 conflicts.append(
                     Conflict(
@@ -379,7 +383,7 @@ class OrganizerExecutor:
                     resolved_destination=display_destination,
                 )
             source_size = source_storage.stat(storage_source).size
-            if target_storage.exists(storage_target):
+            if target_storage.exists(storage_target) and not plan.overwrite_authorized:
                 return self._result(
                     plan,
                     ExecutionStatus.FAILED,
@@ -445,10 +449,10 @@ class OrganizerExecutor:
         same_storage = source is target
         if plan.operation is PlanOperation.MOVE:
             if same_storage:
-                source.move(storage_source, storage_target, overwrite=False)
+                source.move(storage_source, storage_target, overwrite=plan.overwrite_authorized)
             else:
                 with source.read(storage_source) as stream:
-                    target.write(storage_target, stream, overwrite=False)
+                    target.write(storage_target, stream, overwrite=plan.overwrite_authorized)
                 try:
                     if not target.exists(storage_target):
                         raise RuntimeError("cross-storage move copy verification failed")
@@ -457,10 +461,10 @@ class OrganizerExecutor:
                     raise PartialExecutionError(str(error), ("COPY",)) from error
         elif plan.operation is PlanOperation.COPY:
             if same_storage:
-                source.copy(storage_source, storage_target, overwrite=False)
+                source.copy(storage_source, storage_target, overwrite=plan.overwrite_authorized)
             else:
                 with source.read(storage_source) as stream:
-                    target.write(storage_target, stream, overwrite=False)
+                    target.write(storage_target, stream, overwrite=plan.overwrite_authorized)
         elif plan.operation is PlanOperation.LINK:
             if not same_storage:
                 raise RuntimeError("cross-storage LINK is not supported")

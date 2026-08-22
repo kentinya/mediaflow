@@ -6,6 +6,9 @@ from datetime import datetime
 from pathlib import Path
 
 from mediaflow.domain.task_persistence import (
+    ConfirmationStatus,
+    ConflictConfirmation,
+    ConflictDecisionAudit,
     PersistentResultRecord,
     PersistentTask,
     PersistentTaskItem,
@@ -13,7 +16,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class SQLiteTaskRepository:
@@ -152,6 +155,91 @@ class SQLiteTaskRepository:
             ).fetchall()
         return tuple(self._result(row) for row in rows)
 
+    def create_confirmation(self, confirmation: ConflictConfirmation) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO conflict_confirmations VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                self._confirmation_values(confirmation),
+            )
+
+    def get_confirmation(self, confirmation_id: str) -> ConflictConfirmation | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM conflict_confirmations WHERE confirmation_id=?",
+                (confirmation_id,),
+            ).fetchone()
+        return self._confirmation(row) if row else None
+
+    def list_confirmations(
+        self, *, status: ConfirmationStatus | None = None
+    ) -> tuple[ConflictConfirmation, ...]:
+        query = "SELECT * FROM conflict_confirmations"
+        parameters: tuple[object, ...] = ()
+        if status is not None:
+            query += " WHERE status=?"
+            parameters = (status.value,)
+        query += " ORDER BY created_at, confirmation_id"
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return tuple(self._confirmation(row) for row in rows)
+
+    def resolve_confirmation(
+        self, confirmation: ConflictConfirmation, audit: ConflictDecisionAudit
+    ) -> None:
+        if confirmation.status is not ConfirmationStatus.RESOLVED:
+            raise ValueError("resolved confirmation status is required")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE conflict_confirmations SET status=?, updated_at=?,
+                selected_strategy=?, proposed_destination_path=?, overwrite_authorized=?,
+                actor=?, note=? WHERE confirmation_id=? AND status=?""",
+                (
+                    confirmation.status.value,
+                    confirmation.updated_at.isoformat(),
+                    confirmation.selected_strategy,
+                    confirmation.proposed_destination_path,
+                    int(confirmation.overwrite_authorized),
+                    confirmation.actor,
+                    confirmation.note,
+                    confirmation.confirmation_id,
+                    ConfirmationStatus.PENDING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("confirmation is not pending")
+            self._connection.execute(
+                "INSERT INTO conflict_decision_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    audit.audit_id,
+                    audit.confirmation_id,
+                    audit.strategy,
+                    audit.decided_at.isoformat(),
+                    int(audit.overwrite_authorized),
+                    audit.actor,
+                    audit.note,
+                ),
+            )
+
+    def list_confirmation_audit(self, confirmation_id: str) -> tuple[ConflictDecisionAudit, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM conflict_decision_audit WHERE confirmation_id=? ORDER BY decided_at",
+                (confirmation_id,),
+            ).fetchall()
+        return tuple(
+            ConflictDecisionAudit(
+                row["audit_id"],
+                row["confirmation_id"],
+                row["strategy"],
+                datetime.fromisoformat(row["decided_at"]),
+                bool(row["overwrite_authorized"]),
+                row["actor"],
+                row["note"],
+            )
+            for row in rows
+        )
+
     def acquire(self, storage_id: str, path: str, task_id: str, acquired_at: datetime) -> bool:
         normalized = self._lock_path(path)
         try:
@@ -225,6 +313,27 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS task_items_task_status
                     ON task_items(task_id, status);
+                CREATE TABLE IF NOT EXISTS conflict_confirmations (
+                    confirmation_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, item_id TEXT NOT NULL,
+                    plan_id TEXT NOT NULL, conflict_type TEXT NOT NULL,
+                    source_storage_id TEXT NOT NULL, source_path TEXT NOT NULL,
+                    destination_storage_id TEXT NOT NULL, destination_path TEXT NOT NULL,
+                    configured_strategy TEXT NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    selected_strategy TEXT, proposed_destination_path TEXT,
+                    overwrite_authorized INTEGER NOT NULL DEFAULT 0,
+                    actor TEXT, note TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(item_id) REFERENCES task_items(item_id)
+                );
+                CREATE TABLE IF NOT EXISTS conflict_decision_audit (
+                    audit_id TEXT PRIMARY KEY, confirmation_id TEXT NOT NULL,
+                    strategy TEXT NOT NULL, decided_at TEXT NOT NULL,
+                    overwrite_authorized INTEGER NOT NULL, actor TEXT, note TEXT,
+                    FOREIGN KEY(confirmation_id) REFERENCES conflict_confirmations(confirmation_id)
+                );
+                CREATE INDEX IF NOT EXISTS confirmations_status
+                    ON conflict_confirmations(status, created_at);
                 """
             )
             self._connection.execute(
@@ -343,4 +452,50 @@ class SQLiteTaskRepository:
             datetime.fromisoformat(row["created_at"]),
             row["title"],
             row["error"],
+        )
+
+    @staticmethod
+    def _confirmation_values(value: ConflictConfirmation) -> tuple[object, ...]:
+        return (
+            value.confirmation_id,
+            value.task_id,
+            value.item_id,
+            value.plan_id,
+            value.conflict_type,
+            value.source_storage_id,
+            value.source_path,
+            value.destination_storage_id,
+            value.destination_path,
+            value.configured_strategy,
+            value.status.value,
+            value.created_at.isoformat(),
+            value.updated_at.isoformat(),
+            value.selected_strategy,
+            value.proposed_destination_path,
+            int(value.overwrite_authorized),
+            value.actor,
+            value.note,
+        )
+
+    @staticmethod
+    def _confirmation(row: sqlite3.Row) -> ConflictConfirmation:
+        return ConflictConfirmation(
+            row["confirmation_id"],
+            row["task_id"],
+            row["item_id"],
+            row["plan_id"],
+            row["conflict_type"],
+            row["source_storage_id"],
+            row["source_path"],
+            row["destination_storage_id"],
+            row["destination_path"],
+            row["configured_strategy"],
+            ConfirmationStatus(row["status"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["selected_strategy"],
+            row["proposed_destination_path"],
+            bool(row["overwrite_authorized"]),
+            row["actor"],
+            row["note"],
         )

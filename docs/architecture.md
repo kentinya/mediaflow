@@ -635,8 +635,15 @@ Classification/Organize A without changing RecognitionType C.
 
 ## Deferred work
 
-Interactive conflict resolution/confirmation, API, and UI remain deferred. Existing conflicts
-block execution; overwrite and silent delete remain unavailable.
+Phase 15 persists organize conflicts as `waiting_confirm` records in SQLite. `ConflictResolver`
+applies configured Skip/Rename decisions without mutation; Manual and Overwrite enter the durable
+confirmation queue. Rename uses bounded `Storage.exists` probes and produces a replacement plan.
+Overwrite requires an overwrite-enabled policy plus a fresh persisted high-risk confirmation.
+Only OrganizerExecutor consumes the resulting authorized plan and remains the sole mutation
+boundary. Decision audit records are append-only, and invalid destinations cannot be overridden.
+
+Metadata/classification interactive confirmation, API, and UI remain deferred. Unresolved
+conflicts block execution; silent delete remains unavailable.
 
 ## Runtime strategy catalogs
 
