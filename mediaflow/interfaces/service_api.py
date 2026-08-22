@@ -247,26 +247,35 @@ class MediaFlowApi:
         if method == "GET":
             self._require(principal, ApiPermission.READ)
         if parts == ["api", "v1", "tasks"] and method == "GET":
+            limit = self._single_limit(environ, "task")
+            values = self._repository.list_tasks(limit=limit + 1)
             return self._response(
                 start_response,
                 200,
-                {"items": [self._value(item) for item in self._repository.list_tasks(limit=100)]},
+                {
+                    "items": [self._value(item) for item in values[:limit]],
+                    "limit": limit,
+                    "truncated": len(values) > limit,
+                },
             )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "tasks"] and method == "GET":
+            item_limit, result_limit = self._task_detail_limits(environ)
             task = self._repository.get_task(parts[3])
             if task is None:
                 raise LookupError(f"task {parts[3]!r} was not found")
+            items = self._repository.list_items(task.task_id, limit=item_limit + 1)
+            results = self._repository.list_results(task.task_id, limit=result_limit + 1)
             return self._response(
                 start_response,
                 200,
                 {
                     **self._value(task),
-                    "items": [
-                        self._value(item) for item in self._repository.list_items(task.task_id)
-                    ],
-                    "results": [
-                        self._value(item) for item in self._repository.list_results(task.task_id)
-                    ],
+                    "items": [self._value(item) for item in items[:item_limit]],
+                    "results": [self._value(item) for item in results[:result_limit]],
+                    "item_limit": item_limit,
+                    "result_limit": result_limit,
+                    "items_truncated": len(items) > item_limit,
+                    "results_truncated": len(results) > result_limit,
                 },
             )
         if parts == ["api", "v1", "confirmations"] and method == "GET":
@@ -392,9 +401,16 @@ class MediaFlowApi:
             )
         if parts == ["api", "v1", "jobs"]:
             if method == "GET":
-                values = self._repository.list_jobs(limit=100)
+                limit = self._single_limit(environ, "job")
+                values = self._repository.list_jobs(limit=limit + 1)
                 return self._response(
-                    start_response, 200, {"items": [self._value(item) for item in values]}
+                    start_response,
+                    200,
+                    {
+                        "items": [self._value(item) for item in values[:limit]],
+                        "limit": limit,
+                        "truncated": len(values) > limit,
+                    },
                 )
             if method == "POST":
                 document = self._document(environ)
@@ -649,6 +665,35 @@ class MediaFlowApi:
             raise ValueError("classification review limit must be an integer") from error
         if limit < 1 or limit > 100:
             raise ValueError("classification review limit must be between 1 and 100")
+        return limit
+
+    @staticmethod
+    def _single_limit(environ: dict, resource: str) -> int:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
+            raise ValueError(f"{resource} query accepts one limit field")
+        return MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], resource)
+
+    @staticmethod
+    def _task_detail_limits(environ: dict) -> tuple[int, int]:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"itemLimit", "resultLimit"}) or any(
+            len(value) != 1 for value in values.values()
+        ):
+            raise ValueError("task detail query accepts itemLimit and resultLimit once")
+        return (
+            MediaFlowApi._parse_bounded_limit(values.get("itemLimit", ["100"])[0], "task item"),
+            MediaFlowApi._parse_bounded_limit(values.get("resultLimit", ["100"])[0], "task result"),
+        )
+
+    @staticmethod
+    def _parse_bounded_limit(raw: str, resource: str) -> int:
+        try:
+            limit = int(raw)
+        except ValueError as error:
+            raise ValueError(f"{resource} limit must be an integer") from error
+        if limit < 1 or limit > 100:
+            raise ValueError(f"{resource} limit must be between 1 and 100")
         return limit
 
     @classmethod

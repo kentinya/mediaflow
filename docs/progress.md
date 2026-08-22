@@ -905,3 +905,13 @@ Phase 19.2 API credential lifecycle and HTTP deployment guardrails (2026-08-22):
 - Full suite: 404 tests, 401 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated-free wheel build, both example validations,
   FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 19.3 read-only Task, Job, and Result observability UI (2026-08-22): PASS
+
+- Added bounded Task/Job collection queries and independently bounded TaskItem/Result detail reads
+- SQLite uses limit+1 deterministic queries to report truncation without loading whole batches
+- Added read-only Task/Job UI tabs, linked navigation, item/result tables, and truncation notices
+- Added API query validation, SQL-bound verification, UI safety, and no-control regressions
+- Full suite: 407 tests, 404 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated-free wheel build, both example validations,
+  FFmpeg/FFprobe runtime audit, and diff check passed

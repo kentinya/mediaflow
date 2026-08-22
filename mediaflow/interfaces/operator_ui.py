@@ -17,6 +17,8 @@ INDEX_HTML = b"""<!doctype html>
       <button id="disconnect" class="secondary">Disconnect</button></div></header>
   <nav aria-label="Operator views">
     <button data-view="dashboard" class="active">Dashboard</button>
+    <button data-view="tasks">Tasks</button>
+    <button data-view="jobs">Jobs</button>
     <button data-view="confirmations">Conflicts</button>
     <button data-view="metadata-reviews">Metadata</button>
     <button data-view="classification-reviews">Classification</button>
@@ -140,6 +142,68 @@ APP_JS = b"""(() => {
     content.append(table(['ID', 'Status', 'Type', 'Updated'], rows,
       index => showDetail(kind, itemId(kind, items[index]))));
   }
+  function truncation(data, noun) {
+    if (!data.truncated) return;
+    content.append(text('p', `Showing the first ${data.limit} ${noun}. Refresh to reload.`,
+      'warning'));
+  }
+  async function renderObservability(kind) {
+    const data = await api(`/api/v1/${kind}?limit=100`); const items = data.items || [];
+    clear(content); content.append(text('h2', kind === 'tasks' ? 'Tasks' : 'Automation jobs'));
+    if (kind === 'tasks') {
+      const rows = items.map(item => [item.task_id, item.command, item.status,
+        item.execute_authorized ? 'MUTATION_AUTHORIZED' : 'DRY_RUN', item.completed_items,
+        item.failed_items, item.updated_at]);
+      content.append(table(['ID', 'Command', 'Status', 'Authority', 'Done', 'Failed', 'Updated'], rows,
+        index => showTask(items[index].task_id)));
+      truncation(data, 'tasks');
+    } else {
+      const rows = items.map(item => [item.job_id, item.command, item.status,
+        item.execute_authorized ? 'MUTATION_AUTHORIZED' : 'DRY_RUN', item.task_id || '-',
+        item.updated_at]);
+      content.append(table(['ID', 'Command', 'Status', 'Authority', 'Task', 'Updated'], rows,
+        index => showJob(items[index].job_id)));
+      truncation(data, 'jobs');
+    }
+  }
+  function scalarDetails(data, excluded = []) {
+    const list = document.createElement('dl');
+    Object.entries(data).filter(([key, value]) => !excluded.includes(key) &&
+      !Array.isArray(value) && typeof value !== 'object')
+      .forEach(([key, value]) => field(list, key, value));
+    return list;
+  }
+  async function showTask(id) {
+    try {
+      const data = await api(`/api/v1/tasks/${encodeURIComponent(id)}?itemLimit=100&resultLimit=100`);
+      clear(detailContent); detailContent.append(text('h2', 'Task detail'),
+        scalarDetails(data, ['items_truncated', 'results_truncated']));
+      const items = (data.items || []).map(item => [item.item_id, item.status, item.stage,
+        item.storage_id, item.source_display, item.destination_storage_id || '-',
+        item.destination_path || '-']);
+      detailContent.append(text('h3', 'Items'), table(
+        ['ID', 'Status', 'Stage', 'Source storage', 'Source', 'Target storage', 'Target'], items));
+      if (data.items_truncated) detailContent.append(text('p',
+        `Items truncated at ${data.item_limit}.`, 'warning'));
+      const results = (data.results || []).map(item => [item.result_id, item.status,
+        item.recognition_type || '-', item.title || '-', item.operation || '-',
+        item.destination_path || '-', item.created_at]);
+      detailContent.append(text('h3', 'Results'), table(
+        ['ID', 'Status', 'Type', 'Title', 'Operation', 'Destination', 'Created'], results));
+      if (data.results_truncated) detailContent.append(text('p',
+        `Results truncated at ${data.result_limit}.`, 'warning'));
+      detail.hidden = false;
+    } catch (error) { message(error.message, true); }
+  }
+  async function showJob(id) {
+    try {
+      const data = await api(`/api/v1/jobs/${encodeURIComponent(id)}`);
+      clear(detailContent); detailContent.append(text('h2', 'Automation job detail'),
+        scalarDetails(data));
+      if (data.task_id) detailContent.append(actionButton('Open linked task', () => showTask(data.task_id)));
+      detail.hidden = false;
+    } catch (error) { message(error.message, true); }
+  }
   async function showDetail(kind, id) {
     try {
       const data = await api(`/api/v1/${kind}/${encodeURIComponent(id)}`);
@@ -182,6 +246,7 @@ APP_JS = b"""(() => {
   async function load() {
     try { message('Loading...');
       if (view === 'dashboard') renderDashboard(await api('/api/v1/dashboard?recentLimit=10'));
+      else if (view === 'tasks' || view === 'jobs') await renderObservability(view);
       else await renderQueue(view); message('Connected.');
     } catch (error) { clear(content); message(error.message, true); }
   }

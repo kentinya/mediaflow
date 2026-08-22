@@ -1,80 +1,76 @@
-# Phase 19.2 — API Credential Lifecycle and HTTP Deployment Guardrails
+# Phase 19.3 — Read-only Task, Job, and Result Observability UI
 
 ## Goal
 
-Make environment-owned API bearer credentials easier to generate, inspect, and rotate safely, and
-prevent accidental public exposure of the development HTTP server. Preserve the existing Principal,
-RBAC, audit, one-time execute authorization, and operator UI behavior.
+Extend the existing operator UI with bounded, read-only visibility into persistent Tasks,
+Automation Jobs, TaskItems, and ResultRecords. Reuse existing persistence and API models; do not add
+workflow control or execution authority.
 
-## 1. Credential operations
+## 1. Bounded observability API
 
-- Add `mediaflow api token generate [--bytes N]` using the operating-system cryptographic random
-  source. Default to at least 256 bits; enforce a bounded safe range.
-- Print the new token exactly once to stdout. Do not load configuration, write a file/database,
-  mutate environment state, log the token, or construct Storage/Provider/application services.
-- Add `mediaflow api credentials check` to list configured enabled/disabled principals, roles,
-  environment-variable names, and SET/UNSET state without displaying values, lengths, hashes, or
-  other secret-derived material.
-- Credential check must perform zero Storage/provider/database/network calls and return nonzero when
-  an enabled credential is missing.
-- Document zero-downtime rotation using two separately named principals/environment variables; do
-  not add a secret store or persist bearer credentials.
+- Add validated `limit` queries to Task and Job collections, bounded from 1 to 100.
+- Add independently bounded `itemLimit` and `resultLimit` queries to Task detail.
+- Execute limits in SQLite, fetching at most limit+1 to report deterministic truncation without
+  loading an entire large Task into memory.
+- Return explicit `limit`/truncation metadata while preserving existing item documents.
+- Reject unknown, duplicate, non-integer, zero, negative, or excessive query fields.
+- Keep viewer-readable RBAC and normalized security audit routes unchanged.
 
-## 2. HTTP deployment guardrails
+## 2. Operator UI
 
-- Continue defaulting `api serve` to loopback.
-- Reject a non-loopback bind unless the operator supplies an explicit
-  `--allow-insecure-remote-http` acknowledgement.
-- Treat IPv4/IPv6 loopback names and addresses deterministically; reject malformed bind hosts before
-  constructing repositories or starting the server.
-- Clearly warn when the explicit insecure remote acknowledgement is used. Do not claim that the
-  standard-library WSGI server supplies TLS or production hardening.
-- Add no-store, nosniff, referrer, and frame-denial headers to JSON API responses while preserving
-  the stricter UI CSP. Add a standards-compatible Bearer challenge on 401 responses.
+- Add read-only Tasks and Jobs navigation to the existing dependency-free UI.
+- Show compact status, command, counters, authority mode, timestamps, and linked identifiers.
+- Task detail shows bounded TaskItems and ResultRecords, including stage/status and destination
+  outcome needed for diagnosis.
+- Job detail shows its linked Task ID where available and permits navigation to that Task only.
+- Display truncation clearly and let the operator refresh; do not implement polling/live push.
+- Render all persisted values using safe text nodes and keep the bearer token memory-only.
 
-## 3. Authentication robustness
+## 3. Safety and privacy
 
-- Bound and validate the presented Authorization header before comparison to avoid accepting
-  malformed schemes or unbounded credentials.
-- Preserve comparison against every configured credential and existing constant-time comparison.
-- Never include presented/configured tokens in errors, audit, response bodies, CLI status, or docs.
-- Do not weaken RBAC or the independent one-time authorization required for remote real execution.
+- Do not add submit, cancel, retry, resume, execute, overwrite, delete, authorization, or scheduler
+  controls to the UI.
+- Reads perform no Storage/Provider/network operations and no persistence mutation other than the
+  existing redacted API security audit.
+- UI/API must not expose credentials, notification bodies, raw provider payloads, or new secret
+  fields. Do not add arbitrary search/path queries.
+- Preserve all strategy engines, Task execution semantics, review workflows, RBAC, one-time execute
+  authorization, and OrganizerExecutor boundaries.
 
 ## Required tests
 
-- Token generation entropy source, default/custom bounds, single stdout disclosure, and no config or
-  adapter access.
-- Credential status for enabled/disabled and SET/UNSET principals, exit status, redaction, legacy
-  compatibility, and zero database/Storage/provider/network access.
-- Loopback IPv4/IPv6/localhost accepted; wildcard/LAN/public hosts rejected without explicit flag;
-  invalid hosts rejected; explicit acknowledgement warns.
-- API JSON security headers and Bearer challenge on 401; UI headers remain unchanged.
-- Missing, wrong scheme, empty, whitespace-bearing, oversized, and valid credentials.
-- Existing RBAC, audit, remote execution double gate, operator UI, and review workflows regress.
-- Full suite plus formatter, lint, compile, dependency/build/configuration and FFprobe audits.
+- Task/Job list default/custom limits, truncation, invalid and injected queries.
+- Task detail independent item/result limits, SQL-level bounded reads, missing records, and stable
+  ordering.
+- UI Task/Job tabs, list/detail fields, Task link, truncation visibility, safe text rendering, and
+  absence of workflow-control payloads.
+- Viewer access and 401/403/security-audit compatibility.
+- Read paths construct no Storage/MetadataProvider and execute zero media mutations.
+- Existing API, credential, Dashboard, review UI, Task persistence, Worker, and full regressions.
+- Full formatter, lint, compile, dependency/build/configuration and FFprobe audits.
 
 ## Documentation
 
-Update README, requirements status, configuration, architecture, progress, and roadmap with token
-generation, credential checks, rotation, loopback/TLS boundary, and reverse-proxy guidance.
+Update README, requirements status, configuration, architecture, progress, and roadmap with the
+read-only observability scope and limits.
 
 ## Out of scope
 
-TLS termination, reverse-proxy implementation, database users, password login, sessions/cookies,
-OIDC/OAuth, automatic secret rotation, secret stores, certificate management, trusting forwarded
-headers, policy editing, task controls, and any expansion of remote execution.
+Task resume/retry/cancel, Job submit/cancel, real execution, execution authorization, Scheduler UI,
+log streaming, WebSocket/SSE, arbitrary filtering/search, history export, Storage/policy editors,
+OIDC, and TLS termination.
 
 ## Final report
 
-## Phase 19.2 Result
+## Phase 19.3 Result
 
 PASS / FAIL
 
-## Credential Operations
+## Task and Job Visibility
 
-## HTTP Guardrails
+## Bounded Reads
 
-## Authentication and Security
+## Operator UI
 
 ## Safety
 

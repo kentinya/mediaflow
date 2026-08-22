@@ -517,6 +517,18 @@ cookie or browser storage is used. Use a `viewer` principal for read-only visibi
 Overwrite, execution authorization, Job/Task controls, policy editing, and Storage configuration.
 Serve on loopback by default; this development WSGI server does not terminate TLS.
 
+Task and Job visibility uses bounded authenticated reads:
+
+```text
+GET /api/v1/tasks?limit=100
+GET /api/v1/tasks/{id}?itemLimit=100&resultLimit=100
+GET /api/v1/jobs?limit=100
+GET /api/v1/jobs/{id}
+```
+
+Collection and detail limits are 1–100. Responses include truncation metadata. These UI views never
+submit, cancel, resume, retry, authorize, or execute work.
+
 Wildcard, LAN, and public binds require `--allow-insecure-remote-http`. The flag only acknowledges
 unencrypted transport; it does not enable TLS. Prefer loopback behind a trusted HTTPS reverse proxy,
 restrict network access, and never treat forwarded headers as authenticated identity.

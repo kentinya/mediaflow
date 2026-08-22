@@ -240,12 +240,16 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._item(row) if row else None
 
-    def list_items(self, task_id: str) -> tuple[PersistentTaskItem, ...]:
+    def list_items(
+        self, task_id: str, *, limit: int | None = None
+    ) -> tuple[PersistentTaskItem, ...]:
+        query = "SELECT * FROM task_items WHERE task_id = ? ORDER BY created_at, item_id"
+        parameters: tuple[object, ...] = (task_id,)
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters = (task_id, limit)
         with self._lock:
-            rows = self._connection.execute(
-                "SELECT * FROM task_items WHERE task_id = ? ORDER BY created_at, item_id",
-                (task_id,),
-            ).fetchall()
+            rows = self._connection.execute(query, parameters).fetchall()
         return tuple(self._item(row) for row in rows)
 
     def append_result(self, result: PersistentResultRecord) -> None:
@@ -285,12 +289,16 @@ class SQLiteTaskRepository:
                 ),
             )
 
-    def list_results(self, task_id: str) -> tuple[PersistentResultRecord, ...]:
+    def list_results(
+        self, task_id: str, *, limit: int | None = None
+    ) -> tuple[PersistentResultRecord, ...]:
+        query = "SELECT * FROM task_results WHERE task_id = ? ORDER BY created_at, result_id"
+        parameters: tuple[object, ...] = (task_id,)
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters = (task_id, limit)
         with self._lock:
-            rows = self._connection.execute(
-                "SELECT * FROM task_results WHERE task_id = ? ORDER BY created_at, result_id",
-                (task_id,),
-            ).fetchall()
+            rows = self._connection.execute(query, parameters).fetchall()
         return tuple(self._result(row) for row in rows)
 
     def create_confirmation(self, confirmation: ConflictConfirmation) -> None:

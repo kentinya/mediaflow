@@ -881,6 +881,18 @@ challenge. Authorization parsing accepts one bounded, non-whitespace Bearer cred
 compares against every configured Principal using constant-time comparison. RBAC and the separate
 one-time remote-execution authorization remain unchanged.
 
+## Read-only Task and Job observability
+
+Phase 19.3 extends the same operator UI and authenticated API with bounded Task, Job, TaskItem, and
+ResultRecord visibility. Collection queries accept a 1–100 limit. Task detail independently bounds
+items and results; SQLite fetches only limit+1 rows so the transport can report truncation without
+enumerating a large batch. Stable repository ordering remains authoritative.
+
+The UI renders status, counters, authority mode, stages, linked Task IDs, and destination outcomes
+using text nodes. It issues no Task/Job POST and exposes no resume, retry, cancel, submission,
+authorization, or execution control. Reads do not construct Storage or MetadataProvider adapters;
+the only write remains the existing normalized security-audit record for an authenticated request.
+
 ## Runtime strategy catalogs
 
 The Phase 13 runtime boundary loads all strategy content from one JSON document selected by
