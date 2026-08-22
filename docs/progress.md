@@ -47,6 +47,7 @@
 - Phase 19.14 cooperative runtime maintenance lock: PASS
 - Phase 19.15 isolated runtime schema migration rehearsal: PASS
 - Phase 19.16 read-only configuration and system status API/UI: PASS
+- Phase 19.17 explicit Automation Job cancellation UI: PASS
 
 ## Planned
 
@@ -1094,4 +1095,17 @@ Phase 19.16 read-only configuration and system status API/UI (2026-08-22): PASS
 - RecognitionType C continues to expose Metadata C with Naming/Classification/Organize A; no Storage,
   provider, scanner, workflow, worker, planner, executor, backup, restore, or migration object is built
 - Full suite: 454 tests, 451 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
+  dependency, both example-configuration, forbidden-runtime-dependency, and wheel build gates passed
+
+Phase 19.17 explicit Automation Job cancellation UI (2026-08-22): PASS
+
+- Reused the existing cancellation endpoint, application service, persisted pending/running semantics,
+  `cancel_job` RBAC, worker observation, and normalized security audit without duplicating domain logic
+- Added a Pending/Running-only Job-detail control requiring Request then Confirm; Keep performs no
+  request or mutation, terminal Jobs show no control, and API state reloads after a confirmed request
+- Tightened cancellation transport to POST with an empty query and body; client-controlled actor,
+  status, command, Task, path, execute, or arbitrary fields cannot enter the cancellation service
+- Added no Job submission, Task control, retry/resume, remote execution, rollback, media workflow, or
+  Storage mutation behavior; running cancellation remains explicitly cooperative between items
+- Full suite: 457 tests, 454 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
   dependency, both example-configuration, forbidden-runtime-dependency, and wheel build gates passed

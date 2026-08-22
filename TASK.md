@@ -1,74 +1,73 @@
-# Phase 19.16 — Read-only Configuration and System Status API/UI
+# Phase 19.17 — Explicit Automation Job Cancellation UI
 
 ## Goal
 
-Expose a bounded, precomputed, secret-free view of the configuration already loaded by production so
-operators can verify system/library/policy wiring in the existing authenticated UI. Add no edit,
-connectivity test, workflow, or execution controls.
+Expose the already-implemented cooperative AutomationJob cancellation through the authenticated
+operator UI with an explicit two-step confirmation. Do not add job submission, Task control,
+resume/retry, remote execution, or media mutation behavior.
 
-## 1. Safe configuration snapshot
+## 1. Existing cancellation boundary
 
-- Build one immutable snapshot during API bootstrap from normalized `RuntimeConfiguration` models.
-- Include application/Python/Schema/platform/maintenance-lock support and configuration-valid status.
-- Include bounded summaries for configured Storages, ResourceLibraries, MediaLibraries, Recognition
-  types/rules/type-policy references, and Metadata/Naming/Classification/Organize policies.
-- Exclude every root/display/media path, rule pattern/value, naming template body, classification path,
-  endpoint/URL, environment variable name/value, credentials, webhook details, and arbitrary options.
-- Expose counts and safe IDs/types/statuses/reference IDs only; enforce deterministic ordering and a
-  hard per-section bound.
+- Reuse `POST /api/v1/jobs/{id}/cancel`, `AutomationJobService.cancel`, existing
+  `CANCEL_JOB` permission, persistence transitions, worker cancellation observation, and security audit.
+- Do not duplicate cancellation semantics in JavaScript or add a second endpoint.
+- Pending jobs become cancelled; running jobs record a cooperative cancellation request; terminal jobs
+  remain rejected by the existing application service.
 
-## 2. Authenticated read-only API
+## 2. Operator UI control
 
-- Add `GET /api/v1/system/status` using existing READ permission and security audit behavior.
-- Return only the injected immutable snapshot; do not reload configuration per request.
-- Reject other methods and query parameters before any snapshot/repository access.
-- The endpoint performs no repository read except the existing normalized security audit write.
+- Show cancellation only in AutomationJob detail for `pending` or `running` jobs.
+- Use two distinct user actions: `Request cancellation`, then `Confirm cancellation` or `Keep job`.
+- Explain that running cancellation is cooperative, an in-flight operation may finish, completed work is
+  not rolled back, and no new media execution authority is granted.
+- After success, reload the job detail and Jobs list; render errors through existing text-node-only UI.
+- Do not use browser-native implicit confirmation, automatic requests, polling, or optimistic status.
 
-## 3. Operator UI
+## 3. Authorization and transport safety
 
-- Add a System tab using the existing same-origin, CSP, no-store, in-memory bearer, and text-node-only UI.
-- Display compatibility cards and compact tables for Storages, Libraries, recognition mappings, and
-  policy catalogs, with explicit text that paths/templates/secrets are intentionally hidden.
-- Provide explicit refresh only. Add no polling, edit/apply, secret status/value, Storage check, scan,
-  backup/restore, migration, Task/Job, Scheduler, or execution controls.
+- Viewer/Auditor READ-only credentials may inspect jobs but cancellation remains forbidden by API RBAC.
+- Operator/Executor/Admin permissions retain existing cancellation authority.
+- Send an empty POST body with no actor, status, command, task, path, execute flag, or arbitrary fields.
+- Normalize audit routes as already implemented and never expose tokens, source paths, errors, or secrets.
 
-## 4. Safety
+## 4. Safety boundaries
 
-- Construct no Storage adapters, MetadataProvider, Scanner, workflow, Scheduler worker, Notification
-  worker, OrganizerExecutor, backup/restore, preflight, or migration rehearsal service.
-- Do not change Parser, Recognition, Metadata, Naming, Classification, Planner, Executor, or config models.
-- Snapshot/API/UI output must remain secret- and path-free even with hostile configured strings.
+- Construct no Storage, MetadataProvider, Scanner, strategy pipeline, Planner, OrganizerExecutor,
+  Scheduler, Notification worker, backup/restore, preflight, or migration service for UI/API cancellation.
+- Cancellation never grants execute authority, never resumes/retries a Task, and never rolls back or deletes
+  completed media operations.
+- Preserve default DryRun, explicit execution authorization, conflict protection, and RecognitionType C.
 
 ## Required tests
 
-- Snapshot covers all safe sections, deterministic ordering, hard bounds, C downstream references, and
-  current version/Schema/platform support.
-- Hostile paths/templates/rules/URLs/env names/secrets/options never appear in snapshot/API/UI/audit.
-- API authentication/RBAC, wrong method/query rejection, response allowlist, and zero repository reads.
-- Bootstrap injects the production snapshot without Storage/provider/workflow construction.
-- UI System tab fetch/refresh, text-node rendering, safe empty/error states, and absence of controls.
-- Existing API/UI/security/configuration/runtime/media regressions and quality gates pass.
+- Pending Job two-step UI control and successful cancellation refresh.
+- Running Job cooperative cancellation request and explanatory warning.
+- Completed/failed/cancelled jobs expose no cancellation control.
+- `Keep job` performs no request and restores the detail state.
+- Viewer gets 403; Operator succeeds; malformed method/path/query/body cannot bypass the existing endpoint.
+- One click cannot cancel; rendering remains text-node-only with no inline handlers or token persistence.
+- No submit/resume/retry/execute/overwrite controls are introduced.
+- API/UI cancellation constructs no media services and performs zero Storage mutations.
+- Existing API/UI/automation/worker/security/runtime/media regressions and all quality gates pass.
 
 ## Documentation
 
-Update README, requirements, architecture, progress, roadmap, and configuration documentation.
+Update README, requirements, architecture, progress, roadmap, and operator/API documentation.
 
 ## Out of scope
 
-Configuration editing/apply/rollback, full rule/template/path display, secret status, connectivity tests,
-live health checks, polling, metrics, OIDC, TLS, Task controls, database controls, and media execution.
+Job submission UI, Task pause/resume/retry/cancel, forced interruption, rollback, Scheduler controls,
+notification controls, remote execute UI, configuration editing, OIDC, TLS, and media organization changes.
 
 ## Final report
 
-## Phase 19.16 Result
+## Phase 19.17 Result
 
 PASS / FAIL
 
-## System Snapshot
+## Cancellation Flow
 
-## API and UI
-
-## Redaction and Authorization
+## Authorization and Audit
 
 ## Safety
 

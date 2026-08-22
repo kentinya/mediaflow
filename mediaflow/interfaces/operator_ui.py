@@ -316,7 +316,27 @@ APP_JS = b"""(() => {
       clear(detailContent); detailContent.append(text('h2', 'Automation job detail'),
         scalarDetails(data));
       if (data.task_id) detailContent.append(actionButton('Open linked task', () => showTask(data.task_id)));
+      if (data.status === 'pending' || data.status === 'running') {
+        detailContent.append(text('p', data.status === 'running' ?
+          'Cancellation is cooperative. An in-flight operation may finish and completed work is not rolled back.' :
+          'Cancellation prevents this pending job from starting. It grants no media execution authority.',
+          'warning'));
+        detailContent.append(actionButton('Request cancellation', () => confirmJobCancellation(id)));
+      }
       detail.hidden = false;
+    } catch (error) { message(error.message, true); }
+  }
+  function confirmJobCancellation(id) {
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p', 'Cancel this automation job? This does not roll back completed work.'),
+      actionButton('Confirm cancellation', () => cancelJob(id)),
+      actionButton('Keep job', () => confirmation.remove()));
+    detailContent.append(confirmation);
+  }
+  async function cancelJob(id) {
+    try {
+      await api(`/api/v1/jobs/${encodeURIComponent(id)}/cancel`, {method: 'POST'});
+      await renderObservability('jobs'); await showJob(id); message('Cancellation recorded.');
     } catch (error) { message(error.message, true); }
   }
   async function showDetail(kind, id) {

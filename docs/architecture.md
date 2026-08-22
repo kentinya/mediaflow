@@ -126,8 +126,9 @@ with a timing-safe operation; authorization data never enters responses or persi
 AutomationJob is a durable request to start an existing `scan` or `preview` workflow, separate from
 the media Task lifecycle. SQLite schema v4 atomically claims the oldest pending job. The Worker owns
 no Scanner, strategy, planner, or executor logic: its injected production handler invokes the
-existing workflow entry point, which creates normal Task and Result records. Cancellation is
-pending-only. The service accepts no organize/execute job, so preview preserves DryRun's zero-
+existing workflow entry point, which creates normal Task and Result records. Pending cancellation is
+terminal immediately; Phase 18.2 additionally makes running cancellation cooperative between items.
+The service accepts no organize/execute job, so preview preserves DryRun's zero-
 mutation boundary. Scheduler, Webhook, notifications, protected remote execute, and the minimal
 operator Web UI are implemented in later phases; production identity/TLS remain external work.
 
@@ -146,6 +147,13 @@ and age-guarded requeue are explicit operator actions.
 IntervalScheduler atomically persists each scan/preview occurrence and next-run timestamp. Restart
 or repeated ticks cannot duplicate an occurrence; missed intervals are coalesced, not backfilled.
 Scheduler creates queue records only and never calls Scanner, Storage, Metadata, or Executor.
+
+Phase 19.17 exposes only this existing cancellation use case in the operator UI. Job detail gates the
+control to pending/running states and requires Request then Confirm; Keep only removes the local
+confirmation prompt. The final POST has an empty body/query and remains protected by `CANCEL_JOB` plus normalized
+security audit. JavaScript does not infer or persist a new status, and terminal state is always
+reloaded from the API. This UI boundary constructs no media service and adds no submission, Task
+control, retry/resume, execute authority, rollback, or Storage mutation.
 
 ## Phase 18.3 Cron and schedule audit
 

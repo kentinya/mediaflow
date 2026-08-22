@@ -612,10 +612,16 @@ restrict network access, and never treat forwarded headers as authenticated iden
 
 The Worker claims one oldest pending job atomically and delegates it to the existing production
 workflow. Preview is always DryRun. `/api/v1` requires the bearer token and supports read-only
-Task/Job/Confirmation queries plus scan/preview submission and pending cancellation. Remote
+Task/Job/Confirmation queries plus scan/preview submission and pending/running cooperative
+cancellation. `POST /api/v1/jobs/{id}/cancel` accepts no query or request body. Remote
 organize is rejected unless the separately documented one-time execution feature is enabled and a
 valid ticket is atomically consumed. The server is a loopback development adapter, not a hardened
 Internet-facing deployment.
+
+The Web Job detail shows cancellation only for `pending` and `running`. A first click reveals
+separate Confirm/Keep actions; only Confirm sends the empty POST. Viewer/auditor credentials remain
+read-only, while operator/executor/admin roles use the existing `cancel_job` permission. Cancellation
+does not grant execute authority, roll back completed work, or create/resume/retry a Task.
 
 `dashboard` needs no additional configuration. It counts enabled libraries from this runtime
 document and persisted state from `persistence.databasePath`; it does not resolve Storage/provider

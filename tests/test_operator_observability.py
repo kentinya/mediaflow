@@ -131,7 +131,7 @@ class OperatorObservabilityTests(unittest.TestCase):
                         self.assertEqual(request(api, "/api/v1/tasks/task-0", query=query)[0], 400)
                 self.assertEqual(request(api, "/api/v1/tasks/missing")[0], 404)
 
-    def test_operator_ui_has_read_only_task_job_and_result_views(self) -> None:
+    def test_operator_ui_has_read_only_task_views_and_explicit_job_cancellation(self) -> None:
         html = INDEX_HTML.decode()
         script = APP_JS.decode()
         self.assertIn('data-view="tasks"', html)
@@ -147,7 +147,15 @@ class OperatorObservabilityTests(unittest.TestCase):
         self.assertIn("data.previous_result_cursor", script)
         self.assertIn("textContent", script)
         self.assertNotIn("/api/v1/tasks/${encodeURIComponent(id)}/resume", script)
-        self.assertNotIn("/api/v1/jobs/${encodeURIComponent(id)}/cancel", script)
+        self.assertIn("/api/v1/jobs/${encodeURIComponent(id)}/cancel", script)
+        self.assertIn("Request cancellation", script)
+        self.assertIn("Confirm cancellation", script)
+        self.assertIn("Keep job", script)
+        self.assertIn("Cancellation is cooperative", script)
+        self.assertIn("completed work is not rolled back", script)
+        self.assertIn("{method: 'POST'}", script)
+        self.assertIn("await renderObservability('jobs'); await showJob(id)", script)
+        self.assertNotIn("window.confirm", script)
         self.assertNotIn("/api/v1/jobs', {method: 'POST'", script)
 
     def test_notifications_are_bounded_filtered_and_redacted(self) -> None:

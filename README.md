@@ -305,10 +305,13 @@ first page.
 Enter a configured API principal token in the password field. The token exists only in page memory
 and is cleared from the input immediately; reloading or closing the page requires entering it again.
 
-Viewer/auditor tokens can inspect queues. Operator/executor/admin tokens may record the same
+Viewer/auditor tokens can inspect queues. Operator/executor/admin tokens may request cancellation of
+pending/running Automation Jobs through an explicit two-step Job-detail control. Pending work stops
+immediately; running cancellation is cooperative between items, so an in-flight operation may finish
+and completed work is not rolled back. Operator/executor/admin tokens may also record the same
 restricted decisions already supported by the API: conflict Skip/Rename, a persisted metadata
 candidate rank, or a persisted classification choice rank. The UI cannot Overwrite, edit paths or
-IDs, resume a Task, submit/cancel a Job, or execute organization. Decisions never resume work
+IDs, resume/retry/cancel a Task, submit a Job, or execute organization. Decisions never resume work
 automatically. The standard-library server has no TLS or production identity provider; keep it on
 trusted loopback or place it behind a correctly configured HTTPS reverse proxy.
 

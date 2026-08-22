@@ -185,6 +185,10 @@ Phase 19.16 已加入只读系统与配置状态：生产 API 启动时从已验
 快照，Web System 页只显示兼容性以及 Storage/Library/Policy 安全接线。路径、规则值、模板、
 分类目录、端点、环境变量和凭证结构性排除；没有编辑、连通性检查、轮询或工作流控制。
 
+Phase 19.17 已将既有 Automation Job 协作取消安全接入操作台：Pending/Running 详情需要请求
+与确认两步，Operator/Executor/Admin 继续由 `cancel_job` RBAC 和审计约束。取消不提交新 Job、
+不控制 Task、不授予执行权限、不回滚已完成操作，也不构造任何媒体或 Storage 服务。
+
 ## 下一步实施建议
 
 后续任务仍应保持小步推进。优先顺序：

@@ -599,13 +599,12 @@ class MediaFlowApi:
             if job is None:
                 raise LookupError(f"automation job {parts[3]!r} was not found")
             return self._response(start_response, 200, self._value(job))
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "jobs"]
-            and parts[4] == "cancel"
-            and method == "POST"
-        ):
+        if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
+            if method != "POST":
+                return self._error(start_response, 405, "method_not_allowed", "POST required")
             self._require(principal, ApiPermission.CANCEL_JOB)
+            self._require_empty_query(environ, "job cancellation")
+            self._require_empty_body(environ, "job cancellation")
             return self._response(start_response, 200, self._value(self._jobs.cancel(parts[3])))
         if (
             len(parts) == 5
@@ -828,6 +827,18 @@ class MediaFlowApi:
     def _require_empty_query(environ: dict, resource: str) -> None:
         if str(environ.get("QUERY_STRING", "")):
             raise ValueError(f"{resource} query does not accept fields")
+
+    @staticmethod
+    def _require_empty_body(environ: dict, resource: str) -> None:
+        raw_length = str(environ.get("CONTENT_LENGTH", "")).strip()
+        if not raw_length:
+            return
+        try:
+            length = int(raw_length)
+        except ValueError as error:
+            raise ValueError("invalid Content-Length") from error
+        if length != 0:
+            raise ValueError(f"{resource} body must be empty")
 
     @staticmethod
     def _scoped_page_query(
