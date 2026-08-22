@@ -44,6 +44,7 @@
 - Phase 19.11 reproducible release validation and CI baseline: PASS
 - Phase 19.12 read-only upgrade preflight and compatibility report: PASS
 - Phase 19.13 non-overwriting offline runtime database restore: PASS
+- Phase 19.14 cooperative runtime maintenance lock: PASS
 
 ## Planned
 
@@ -1048,5 +1049,19 @@ Phase 19.13 non-overwriting offline runtime database restore (2026-08-22): PASS
 - Added the stop/preserve/restore/verify/start procedure and exercised a second missing runtime through
   the isolated installed wheel without constructing media Storage/provider/workflow services
 - Full suite: 441 tests, 438 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated installed-wheel validation, both example validations,
+  FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 19.14 cooperative runtime maintenance lock (2026-08-22): PASS
+
+- Added a stable empty owner-only POSIX advisory lease derived from the configured runtime database;
+  shared runtime holders coexist while exclusive maintenance conflicts fail immediately
+- Production runtime commands hold shared leases for their full operation and confirmed restore takes
+  exclusive ownership before validation/staging; every return/error/cancellation path releases in finally
+- Config validation, token generation, credential status, and Storage list/preflight remain lock-free;
+  first-run shared commands preserve existing parent creation while restore remains fail-closed
+- Verified exception and subprocess-crash release, symlink/non-regular rejection, secret-free lock
+  content, restore contention zero-publication, and installed-wheel cross-process exclusion
+- Full suite: 445 tests, 442 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated installed-wheel validation, both example validations,
   FFmpeg/FFprobe runtime audit, and diff check passed

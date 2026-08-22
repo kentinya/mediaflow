@@ -591,8 +591,14 @@ Restore uses the configured `persistence.databasePath` only and refuses if that 
 symlink, or any `-wal`/`-shm`/`-journal` sidecar exists. Stop all MediaFlow processes and manually
 preserve/move the old runtime and sidecars before confirming. The command verifies and stages the
 backup, then atomically creates a private destination; it never moves/deletes/replaces old data and
-cannot prove that services are stopped. Encryption, remote upload, scheduling, and retention deletion
-are not provided.
+cannot prove that all arbitrary services are stopped.
+
+On POSIX, production runtime commands coordinate through a shared advisory lock at
+`<databasePath>.mediaflow.lock`; restore requires the exclusive lock and fails immediately on
+contention. The stable file is empty, mode `0600`, contains no PID/path/secret, and remains after
+release to avoid inode replacement races. Do not delete or replace it while MediaFlow processes may
+run. Exclusive restore locking is rejected on unsupported platforms. Encryption, remote upload,
+scheduling, and retention deletion are not provided.
 
 Wildcard, LAN, and public binds require `--allow-insecure-remote-http`. The flag only acknowledges
 unencrypted transport; it does not enable TLS. Prefer loopback behind a trusted HTTPS reverse proxy,

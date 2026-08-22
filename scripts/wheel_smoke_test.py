@@ -24,6 +24,7 @@ def inspect_wheel(wheel: Path) -> None:
         "mediaflow/final_cli.py",
         "mediaflow/infrastructure/sqlite_backup.py",
         "mediaflow/infrastructure/sqlite_restore.py",
+        "mediaflow/infrastructure/runtime_lease.py",
         "mediaflow/infrastructure/upgrade_preflight.py",
     }
     missing = sorted(required - names)
@@ -106,6 +107,46 @@ def smoke(wheel: Path, project: Path) -> None:
         configured_copy(
             project / "config" / "strategy.example.json", restore_configuration, restored
         )
+        lease_script = (
+            "import sys; from mediaflow.infrastructure.runtime_lease import "
+            "RuntimeDatabaseLease,RuntimeLeaseMode; "
+            "lease=RuntimeDatabaseLease(sys.argv[1],RuntimeLeaseMode.SHARED).acquire(); "
+            "print('READY',flush=True); input()"
+        )
+        with subprocess.Popen(
+            [str(python), "-c", lease_script, str(restored)],
+            cwd=root,
+            env=environment,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ) as holder:
+            assert holder.stdout is not None
+            if holder.stdout.readline().strip() != "READY":
+                raise RuntimeError("installed-wheel runtime lease holder did not start")
+            blocked = subprocess.run(
+                [
+                    str(mediaflow),
+                    "--config",
+                    str(restore_configuration),
+                    "database",
+                    "restore",
+                    str(backup),
+                    "--confirm-empty-destination",
+                ],
+                cwd=root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if blocked.returncode != 2 or restored.exists():
+                raise RuntimeError(
+                    "installed-wheel restore did not fail closed on lease contention"
+                )
+            holder.kill()
+            holder.communicate(timeout=5)
         run(
             [
                 str(mediaflow),

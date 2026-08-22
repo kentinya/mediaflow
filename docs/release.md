@@ -76,3 +76,8 @@ Restore is recovery-only and never overwrites:
 
 The command refuses any occupied destination or sidecar and does not detect process liveness. Never
 use it as an in-place replacement mechanism.
+
+On POSIX, every production runtime command holds a shared kernel advisory lease for its lifetime and
+restore requires the exclusive lease. Contention is evidence that a cooperating MediaFlow process is
+still active and restore fails before staging. This is an additional guard, not permission to skip the
+stop-and-verify procedure; unrelated processes and direct library consumers do not participate.

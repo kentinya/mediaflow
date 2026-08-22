@@ -51,6 +51,7 @@ class ReleaseValidationTests(unittest.TestCase):
                     "mediaflow/final_cli.py",
                     "mediaflow/infrastructure/sqlite_backup.py",
                     "mediaflow/infrastructure/sqlite_restore.py",
+                    "mediaflow/infrastructure/runtime_lease.py",
                     "mediaflow/infrastructure/upgrade_preflight.py",
                 ):
                     archive.writestr(name, "")
@@ -63,6 +64,7 @@ class ReleaseValidationTests(unittest.TestCase):
                         "mediaflow/final_cli.py",
                         "mediaflow/infrastructure/sqlite_backup.py",
                         "mediaflow/infrastructure/sqlite_restore.py",
+                        "mediaflow/infrastructure/runtime_lease.py",
                         "mediaflow/infrastructure/upgrade_preflight.py",
                         unsafe,
                     ):

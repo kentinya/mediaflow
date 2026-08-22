@@ -56,6 +56,7 @@ from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     load_runtime_configuration,
 )
+from mediaflow.infrastructure.runtime_lease import RuntimeDatabaseLease, RuntimeLeaseMode
 from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
@@ -260,6 +261,7 @@ def final_main(
     api_serve.add_argument("--port", type=int, default=8787)
     api_serve.add_argument("--allow-insecure-remote-http", action="store_true")
     arguments = parser.parse_args(argv)
+    runtime_lease: RuntimeDatabaseLease | None = None
     try:
         if arguments.command == "api" and arguments.api_command == "token":
             if not 32 <= arguments.token_bytes <= 128:
@@ -267,6 +269,17 @@ def final_main(
             stdout.write(f"{secrets.token_urlsafe(arguments.token_bytes)}\n")
             return 0
         configuration = _configuration(arguments.config)
+        if (
+            arguments.command == "database"
+            and arguments.database_command == "restore"
+            and not arguments.confirm_empty_destination
+        ):
+            raise ValueError("restore requires --confirm-empty-destination")
+        lease_mode = _runtime_lease_mode(arguments)
+        if lease_mode is not None:
+            runtime_lease = RuntimeDatabaseLease(configuration.database_path, lease_mode).acquire(
+                create_parent=lease_mode is RuntimeLeaseMode.SHARED
+            )
         if arguments.command == "api" and arguments.api_command == "credentials":
             statuses = configuration.api_credential_statuses()
             stdout.write(render_api_credentials(statuses))
@@ -930,6 +943,19 @@ def final_main(
     except (OSError, ValueError, LookupError, RuntimeError) as error:
         stderr.write(f"mediaflow error: {error}\n")
         return 2
+    finally:
+        if runtime_lease is not None:
+            runtime_lease.close()
+
+
+def _runtime_lease_mode(arguments: argparse.Namespace) -> RuntimeLeaseMode | None:
+    if arguments.command in {"config", "storage"}:
+        return None
+    if arguments.command == "api" and arguments.api_command in {"token", "credentials"}:
+        return None
+    if arguments.command == "database" and arguments.database_command == "restore":
+        return RuntimeLeaseMode.EXCLUSIVE
+    return RuntimeLeaseMode.SHARED
 
 
 def render_summary(summary: MediaOrganizerBatchResult, *, execute: bool) -> str:

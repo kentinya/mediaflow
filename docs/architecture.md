@@ -1001,6 +1001,19 @@ an existing runtime/sidecar/backup and constructs no media Storage or workflow. 
 all MediaFlow processes and manually preserve the old database; empty-path checks are not a process
 liveness guarantee.
 
+## Cooperative runtime maintenance lease
+
+Phase 19.14 wraps production CLI runtime operations with a process-lifetime advisory lease derived
+from `persistence.databasePath`. Normal database/workflow/service commands take a non-blocking shared
+POSIX `flock`; confirmed restore takes a non-blocking exclusive lease before invoking the restore
+service. `finally` releases descriptors, and the kernel releases them after crashes.
+
+The stable owner-only lock file is deliberately empty and retained after release so no unlink/recreate
+inode race can split lock participants. Config validation, token generation, credential status, and
+Storage preflight remain lock-free. Symlink/non-regular lock paths fail closed. This coordinates only
+production CLI participants on POSIX; it is neither a distributed lock nor detection of unrelated or
+direct-library processes, and exclusive restore is rejected where the mechanism is unsupported.
+
 ## Runtime strategy catalogs
 
 The Phase 13 runtime boundary loads all strategy content from one JSON document selected by

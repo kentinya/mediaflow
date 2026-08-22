@@ -344,6 +344,12 @@ preserve/move the existing runtime database and any `-wal`, `-shm`, or `-journal
 the explicitly confirmed restore command. The configured `persistence.databasePath` and all sidecars
 must be absent. MediaFlow never moves, replaces, or deletes the old database for you.
 
+On POSIX systems, runtime commands hold a shared advisory lease derived from `databasePath`; restore
+must acquire the exclusive form before it validates or stages data. A running cooperating MediaFlow
+CLI/API/Worker/Scheduler therefore makes restore fail immediately. The empty owner-only `.mediaflow.lock`
+file is intentionally retained, contains no identifiers, and must not be deleted while processes may
+run. This does not detect unrelated programs or MediaFlow code that bypasses the production CLI.
+
 Before installing a new MediaFlow artifact, run `upgrade check` against the configured runtime
 database and a fresh explicit backup. The read-only report checks Python support, application/schema
 versions, backup integrity, schema agreement, and a 24-hour freshness limit. Override that bounded
