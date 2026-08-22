@@ -31,6 +31,7 @@ from mediaflow.application.media_organizer import MediaOrganizerBatchResult, Med
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
+from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
@@ -40,6 +41,7 @@ from mediaflow.domain.classification_review import (
     ClassificationReviewStatus,
     ClassificationSelection,
 )
+from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.metadata_review import MetadataReviewStatus, MetadataSelection
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
@@ -49,6 +51,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskItem,
 )
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
+from mediaflow.infrastructure.operational_logging import SQLiteOperationalLogger
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     load_runtime_configuration,
@@ -186,6 +189,12 @@ def final_main(
     )
     security_audit_list = security_audit_commands.add_parser("list")
     security_audit_list.add_argument("--limit", type=int, default=100)
+    logs = commands.add_parser("logs", help="local redacted operational logs")
+    log_commands = logs.add_subparsers(dest="log_command", required=True)
+    log_list = log_commands.add_parser("list")
+    log_list.add_argument("--limit", type=int, default=100)
+    log_list.add_argument("--level", choices=[item.name for item in LogLevel])
+    log_commands.add_parser("prune")
     dashboard = commands.add_parser("dashboard", help="read-only operational summary")
     dashboard.add_argument("--recent-limit", type=int, default=10)
     metadata_reviews = commands.add_parser(
@@ -272,6 +281,22 @@ def final_main(
                     media_library_count=sum(item.enabled for item in configuration.media_libraries),
                 ).snapshot(recent_limit=arguments.recent_limit)
                 stdout.write(render_dashboard(snapshot))
+            return 0
+        if arguments.command == "logs":
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                if arguments.log_command == "list":
+                    values = repository.list_operational_logs(
+                        limit=arguments.limit,
+                        minimum_level=LogLevel[arguments.level] if arguments.level else None,
+                    )
+                    stdout.write(render_operational_logs(values))
+                else:
+                    removed = repository.prune_operational_logs(
+                        before=datetime.now(UTC)
+                        - timedelta(days=configuration.operational_logging_retention_days),
+                        maximum_records=configuration.operational_logging_maximum_records,
+                    )
+                    stdout.write(f"Operational log rows removed: {removed}\n")
             return 0
         if arguments.command == "metadata-reviews":
             with SQLiteTaskRepository(configuration.database_path) as repository:
@@ -657,6 +682,15 @@ def final_main(
                 SQLiteTaskRepository(configuration.database_path) as repository,
                 SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
+                operational_logger = (
+                    SQLiteOperationalLogger(
+                        repository,
+                        "workflow",
+                        configuration.operational_logging_minimum_level,
+                    )
+                    if configuration.operational_logging_enabled
+                    else None
+                )
                 coordinator = PersistentTaskCoordinator(repository, repository)
                 task = coordinator.create("scan", execute_authorized=False)
                 discovered = []
@@ -672,7 +706,7 @@ def final_main(
                     )
 
                 batch = ResourceLibraryScanner(
-                    StorageScanner(storages, file_index),
+                    StorageScanner(storages, file_index, logger=operational_logger),
                     configuration.resource_libraries,
                     storages,
                 ).scan_all(
@@ -713,6 +747,15 @@ def final_main(
             SQLiteTaskRepository(configuration.database_path) as repository,
             SQLiteFileIndexRepository(configuration.database_path) as file_index,
         ):
+            operational_logger = (
+                SQLiteOperationalLogger(
+                    repository,
+                    "workflow",
+                    configuration.operational_logging_minimum_level,
+                )
+                if configuration.operational_logging_enabled
+                else None
+            )
             coordinator = PersistentTaskCoordinator(repository, repository)
             retry_items: tuple[PersistentTaskItem, ...] | None = None
             if arguments.command == "tasks":
@@ -736,12 +779,14 @@ def final_main(
                 task = coordinator.create(arguments.command, execute_authorized=execute)
             service = MediaOrganizerService(
                 strategy,
-                StorageScanner(storages, file_index),
+                StorageScanner(storages, file_index, logger=operational_logger),
                 storages,
                 {item.library_id: item for item in configuration.media_libraries},
                 configuration.strategy.recognition_type_policies,
                 JsonLinesOperationHistoryRepository(configuration.history_path),
+                executor=OrganizerExecutor(operational_logger),
                 source_display_roots=dict(configuration.resource_display_roots),
+                logger=operational_logger,
                 task_coordinator=coordinator,
                 task_id=task.task_id,
                 conflict_decisions={
@@ -1025,6 +1070,22 @@ def render_notifications(values) -> str:
             f"{value.delivery_id} | {value.event_type.value} | {value.webhook_id} | "
             f"{value.status.value} | attempts={value.attempts} | "
             f"updated={value.updated_at.isoformat()} | failure={value.failure_category or '-'}"
+        )
+    lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_operational_logs(values) -> str:
+    lines = ["", "OPERATIONAL LOGS", ""]
+    for value in values:
+        identifiers = ",".join(
+            item
+            for item in (value.task_id, value.job_id, value.plan_id, value.status)
+            if item is not None
+        )
+        lines.append(
+            f"{value.occurred_at.isoformat()} | {value.level.name} | {value.component} | "
+            f"{value.event} | {identifiers or '-'}"
         )
     lines.extend(("", f"Total: {len(values)}", ""))
     return "\n".join(lines)

@@ -32,6 +32,7 @@ from mediaflow.domain.execution_authorization import (
     ExecutionAuthorizationAudit,
     ExecutionAuthorizationStatus,
 )
+from mediaflow.domain.logging import LogLevel, OperationalLogRecord
 from mediaflow.domain.metadata_review import (
     MetadataReview,
     MetadataReviewCandidate,
@@ -56,7 +57,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 class SQLiteTaskRepository:
@@ -1297,6 +1298,67 @@ class SQLiteTaskRepository:
             for row in rows
         )
 
+    def append_operational_log(self, value: OperationalLogRecord) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO operational_logs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    value.log_id,
+                    value.occurred_at.isoformat(),
+                    int(value.level),
+                    value.component,
+                    value.event,
+                    value.task_id,
+                    value.job_id,
+                    value.plan_id,
+                    value.status,
+                ),
+            )
+
+    def list_operational_logs(
+        self, *, limit: int, minimum_level: LogLevel | None = None
+    ) -> tuple[OperationalLogRecord, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 1000:
+            raise ValueError("operational log limit must be between 1 and 1000")
+        query = "SELECT * FROM operational_logs"
+        parameters: list[object] = []
+        if minimum_level is not None:
+            query += " WHERE level >= ?"
+            parameters.append(int(minimum_level))
+        query += " ORDER BY occurred_at DESC, log_id DESC LIMIT ?"
+        parameters.append(limit)
+        with self._lock:
+            rows = self._connection.execute(query, tuple(parameters)).fetchall()
+        return tuple(
+            OperationalLogRecord(
+                row["log_id"],
+                datetime.fromisoformat(row["occurred_at"]),
+                LogLevel(row["level"]),
+                row["component"],
+                row["event"],
+                row["task_id"],
+                row["job_id"],
+                row["plan_id"],
+                row["status"],
+            )
+            for row in rows
+        )
+
+    def prune_operational_logs(self, *, before: datetime, maximum_records: int) -> int:
+        if maximum_records < 1:
+            raise ValueError("operational log maximum records must be positive")
+        with self._lock, self._connection:
+            aged = self._connection.execute(
+                "DELETE FROM operational_logs WHERE occurred_at < ?", (before.isoformat(),)
+            ).rowcount
+            excess = self._connection.execute(
+                "DELETE FROM operational_logs WHERE log_id IN ("
+                "SELECT log_id FROM operational_logs ORDER BY occurred_at DESC, log_id DESC "
+                "LIMIT -1 OFFSET ?)",
+                (maximum_records,),
+            ).rowcount
+        return aged + excess
+
     def create_delivery(self, delivery: NotificationDelivery) -> bool:
         with self._lock, self._connection:
             cursor = self._connection.execute(
@@ -1662,6 +1724,13 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS security_audit_occurred
                     ON security_audit(occurred_at, audit_id);
+                CREATE TABLE IF NOT EXISTS operational_logs (
+                    log_id TEXT PRIMARY KEY, occurred_at TEXT NOT NULL, level INTEGER NOT NULL,
+                    component TEXT NOT NULL, event TEXT NOT NULL, task_id TEXT, job_id TEXT,
+                    plan_id TEXT, status TEXT
+                );
+                CREATE INDEX IF NOT EXISTS operational_logs_time
+                    ON operational_logs(occurred_at, log_id);
                 """
             )
             self._connection.execute(

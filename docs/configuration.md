@@ -553,6 +553,22 @@ reuse fails. Delivery output excludes webhook URLs, payload bodies,
 signatures, headers, response bodies, and secrets. Neither view exposes schedule ticking/editing or
 notification delivery/requeue controls.
 
+Optional persistent operational logging is disabled by default:
+
+```json
+"operationalLogging": {
+  "enabled": false,
+  "minimumLevel": "INFO",
+  "retentionDays": 30,
+  "maximumRecords": 10000
+}
+```
+
+Levels are `TRACE`, `DEBUG`, `INFO`, `WARN`, or `ERROR`. Use `mediaflow logs list --limit 100
+--level WARN` for bounded local reads and `mediaflow logs prune` to explicitly apply both retention
+bounds. Records contain only fixed event codes and validated identifiers; configuration validation
+rejects unknown logging fields and no secret value belongs in this section.
+
 Wildcard, LAN, and public binds require `--allow-insecure-remote-http`. The flag only acknowledges
 unencrypted transport; it does not enable TLS. Prefer loopback behind a trusted HTTPS reverse proxy,
 restrict network access, and never treat forwarded headers as authenticated identity.

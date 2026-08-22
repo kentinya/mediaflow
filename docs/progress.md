@@ -965,3 +965,17 @@ Phase 19.7 bidirectional Notification and Schedule Audit pagination (2026-08-22)
 - Full suite: 420 tests, 417 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated wheel build, both example validations, FFmpeg/FFprobe
   runtime audit, and diff check passed
+
+Phase 19.8 persistent redacted operational log foundation (2026-08-22): PASS
+
+- Added immutable structured OperationalLog records and SQLite v13 persistence with bounded
+  newest-first reads, minimum-level filtering, deterministic ordering, and reopen/migration coverage
+- Added a closed-event Logger adapter that persists only validated Task/Job/Plan/status identifiers;
+  paths, titles, raw errors, provider/HTTP values, arbitrary context, and credentials are discarded
+- Added default-disabled runtime configuration and explicit age plus maximum-row retention pruning
+  isolated to the operational log table
+- Wired one logger into production Scanner, MediaOrganizerService, and OrganizerExecutor; added local
+  bounded `logs list` and explicit `logs prune` commands without Storage/provider/workflow construction
+- Full suite: 424 tests, 421 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated wheel build, both example validations, FFmpeg/FFprobe
+  runtime audit, and diff check passed

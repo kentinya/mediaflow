@@ -2,6 +2,7 @@
   "version": 1,
   "historyPath": ".mediaflow/history.jsonl",
   "persistence": {"databasePath": ".mediaflow/mediaflow.sqlite3"},
+  "operationalLogging": {"enabled": false, "minimumLevel": "INFO", "retentionDays": 30, "maximumRecords": 10000},
   "api": {
     "principals": [
       {"id": "local-admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": true}

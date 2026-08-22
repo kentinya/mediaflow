@@ -18,6 +18,7 @@ from mediaflow.domain.automation import (
     ScheduleDefinition,
 )
 from mediaflow.domain.library import DEFAULT_MEDIA_EXTENSIONS, MediaLibrary, ResourceLibrary
+from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.notification import NotificationEventType, WebhookDefinition
 from mediaflow.domain.security import (
     ApiCredentialStatus,
@@ -62,6 +63,10 @@ class RuntimeConfiguration:
     remote_execution_enabled: bool = False
     remote_execution_maximum_ttl_seconds: int = 900
     api_principals: tuple[ApiPrincipalDefinition, ...] = ()
+    operational_logging_enabled: bool = False
+    operational_logging_minimum_level: LogLevel = LogLevel.INFO
+    operational_logging_retention_days: int = 30
+    operational_logging_maximum_records: int = 10_000
 
     def create_storages(
         self,
@@ -353,6 +358,27 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     webhook_ids = [item.webhook_id for item in webhooks]
     if len(webhook_ids) != len(set(webhook_ids)):
         raise ValueError("notification Webhook IDs must be unique")
+    logging = document.get("operationalLogging", {})
+    if not isinstance(logging, dict):
+        raise ValueError("operationalLogging must be an object")
+    allowed_logging = {"enabled", "minimumLevel", "retentionDays", "maximumRecords"}
+    if unknown := set(logging).difference(allowed_logging):
+        raise ValueError(f"unknown operationalLogging field {sorted(unknown)[0]!r}")
+    logging_enabled = logging.get("enabled", False)
+    if not isinstance(logging_enabled, bool):
+        raise ValueError("operationalLogging enabled must be boolean")
+    try:
+        logging_level = LogLevel[str(logging.get("minimumLevel", "INFO")).upper()]
+    except KeyError as error:
+        raise ValueError("operationalLogging minimumLevel is invalid") from error
+    retention_days = logging.get("retentionDays", 30)
+    maximum_records = logging.get("maximumRecords", 10_000)
+    for value, name, maximum in (
+        (retention_days, "retentionDays", 3650),
+        (maximum_records, "maximumRecords", 1_000_000),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1 or value > maximum:
+            raise ValueError(f"operationalLogging {name} must be between 1 and {maximum}")
     return RuntimeConfiguration(
         loaded.strategy,
         storage_definitions,
@@ -371,6 +397,10 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         remote_execution_enabled,
         maximum_ttl,
         api_principals,
+        logging_enabled,
+        logging_level,
+        retention_days,
+        maximum_records,
     )
 
 

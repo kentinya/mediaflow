@@ -933,6 +933,20 @@ display order without OFFSET, totals, or prior-row enumeration. An opaque SHA-25
 notification cursor to its status filter (`all` included) and each audit cursor to its schedule ID.
 The scope reveals neither the configured identifier nor media/secret data and prevents cross-scope use.
 
+## Persistent redacted operational logs
+
+Phase 19.8 implements the existing `Logger` port with a SQLite adapter and a distinct immutable
+`OperationalLogRecord`. SQLite v13 stores only UTC time, level, component, fixed event code, optional
+validated Task/Job/Plan ID, and categorical status. The adapter maps a closed set of application
+messages and discards all unrecognized messages and non-whitelisted context; paths, titles, raw
+errors, provider/HTTP values, arbitrary JSON, and credentials have no persistence columns.
+
+Logging is disabled by default and minimum level is configuration-owned. Scanner,
+MediaOrganizerService, and OrganizerExecutor receive the same adapter without acquiring logging
+policy. Local bounded listing opens no Storage/provider/workflow. Explicit prune applies age and
+maximum-row retention only to `operational_logs`; it cannot delete media or other runtime records.
+Web/API visibility, live tail, full-text search, and remote shipping remain deferred.
+
 ## Runtime strategy catalogs
 
 The Phase 13 runtime boundary loads all strategy content from one JSON document selected by

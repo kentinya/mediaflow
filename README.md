@@ -318,9 +318,16 @@ Generate and inspect API credentials without storing secret values in configurat
 mediaflow api token generate
 export MEDIAFLOW_API_TOKEN='<generated value>'
 mediaflow api credentials check
+mediaflow logs list --limit 100 --level WARN
+mediaflow logs prune
 ```
 
 The generator uses the operating-system cryptographic random source and prints the token once.
+
+Operational logging is disabled by default. When enabled, SQLite stores only fixed event codes,
+levels, components, safe task/job/plan identifiers, and status—never paths, titles, raw errors,
+provider/HTTP data, arbitrary context, or credentials. `logs prune` explicitly applies configured
+age and row-count retention and never touches media, Tasks, Results, history, or security audit.
 Credential check prints only principal ID, roles, environment-variable name, enabled state, and
 SET/UNSET. For rotation, temporarily configure old and new principals with different IDs and
 `tokenEnv` names, restart, migrate clients, then remove the old principal and restart again.
