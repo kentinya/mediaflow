@@ -291,20 +291,30 @@ class SQLiteTaskRepository:
         return self._confirmation(row) if row else None
 
     def list_confirmations(
-        self, *, status: ConfirmationStatus | None = None
+        self, *, status: ConfirmationStatus | None = None, limit: int | None = None
     ) -> tuple[ConflictConfirmation, ...]:
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 1000
+        ):
+            raise ValueError("confirmation limit must be between 1 and 1000")
         query = "SELECT * FROM conflict_confirmations"
         parameters: tuple[object, ...] = ()
         if status is not None:
             query += " WHERE status=?"
             parameters = (status.value,)
         query += " ORDER BY created_at, confirmation_id"
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters += (limit,)
         with self._lock:
             rows = self._connection.execute(query, parameters).fetchall()
         return tuple(self._confirmation(row) for row in rows)
 
     def resolve_confirmation(
-        self, confirmation: ConflictConfirmation, audit: ConflictDecisionAudit
+        self,
+        confirmation: ConflictConfirmation,
+        audit: ConflictDecisionAudit,
+        item: PersistentTaskItem | None = None,
     ) -> None:
         if confirmation.status is not ConfirmationStatus.RESOLVED:
             raise ValueError("resolved confirmation status is required")
@@ -327,6 +337,20 @@ class SQLiteTaskRepository:
             )
             if cursor.rowcount != 1:
                 raise ValueError("confirmation is not pending")
+            if item is not None:
+                cursor = self._connection.execute(
+                    """UPDATE task_items SET status=?, stage=?, updated_at=?
+                    WHERE item_id=? AND status=?""",
+                    (
+                        item.status.value,
+                        item.stage,
+                        item.updated_at.isoformat(),
+                        item.item_id,
+                        TaskItemStatus.WAITING_CONFIRM.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("confirmation TaskItem is not waiting for confirmation")
             self._connection.execute(
                 "INSERT INTO conflict_decision_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (

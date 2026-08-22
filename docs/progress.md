@@ -38,7 +38,7 @@
 
 ## Current
 
-- Phase 18.7 operational Dashboard read model for CLI/API: PASS
+- Phase 18.8 RBAC-protected conflict confirmation service API: PASS
 
 ## Planned
 
@@ -824,5 +824,18 @@ Phase 18.7 operational Dashboard read model (2026-08-22): PASS
 - Added zero-Storage `mediaflow dashboard` and viewer-readable `/api/v1/dashboard`; API access is
   included in the existing normalized security audit
 - Full suite: 365 tests, 362 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated-free wheel build, example validation, FFmpeg/FFprobe
+  runtime audit, and diff check passed
+
+Phase 18.8 conflict confirmation service API (2026-08-22): PASS
+
+- Added bounded pending/resolved/all confirmation list, show, and immutable decision-audit API reads
+- Added explicit `resolve_confirmation` permission for operator/executor/admin and remote Skip/Rename
+  decisions with authenticated principal identity; viewer/auditor remain read-only
+- Confirmation, decision audit, and waiting TaskItem transition now commit atomically for CLI/API;
+  concurrency and injected persistence failure fail safely
+- Remote Manual/Overwrite, destination editing, actor injection, Job creation, automatic retry, and
+  all Storage/Organizer execution remain forbidden
+- Full suite: 371 tests, 368 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated-free wheel build, example validation, FFmpeg/FFprobe
   runtime audit, and diff check passed

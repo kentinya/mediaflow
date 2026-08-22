@@ -466,16 +466,20 @@ still interpreted as one admin principal for backward compatibility.
 
 Role permissions are fixed and additive:
 
-| Role | Read | Submit scan/preview | Cancel Job | Remote execute | Read security audit |
-|---|---:|---:|---:|---:|---:|
-| `viewer` | yes | no | no | no | no |
-| `operator` | yes | yes | yes | no | no |
-| `executor` | yes | yes | yes | yes | no |
-| `auditor` | yes | no | no | no | yes |
-| `admin` | yes | yes | yes | yes | yes |
+| Role | Read | Submit scan/preview | Cancel Job | Resolve confirmation | Remote execute | Read security audit |
+|---|---:|---:|---:|---:|---:|---:|
+| `viewer` | yes | no | no | no | no | no |
+| `operator` | yes | yes | yes | yes | no | no |
+| `executor` | yes | yes | yes | yes | yes | no |
+| `auditor` | yes | no | no | no | no | yes |
+| `admin` | yes | yes | yes | yes | yes | yes |
 
 Remote execute also requires the Phase 18.5 feature flag and a separate valid one-time execution
 token. An executor role never bypasses that second gate or conflict/overwrite protections.
+
+Operator, executor, and admin roles additionally have `resolve_confirmation`; this records only
+remote `skip`/`rename` decisions. Viewer and auditor do not have it. Remote overwrite is forbidden
+for every role and remains available only through the explicit local CLI confirmation flow.
 
 ```bash
 export MEDIAFLOW_VIEWER_TOKEN='<long-random-viewer-token>'
@@ -503,6 +507,19 @@ Internet-facing deployment.
 document and persisted state from `persistence.databasePath`; it does not resolve Storage/provider
 secrets or test connections. The API equivalent is `GET /api/v1/dashboard?recentLimit=10` and uses
 the ordinary read permission. `recentLimit` must be between 1 and 50.
+
+Confirmation reads use the same read permission:
+
+```text
+GET /api/v1/confirmations?status=pending&limit=100
+GET /api/v1/confirmations/{id}
+GET /api/v1/confirmations/{id}/audit
+```
+
+The bounded list accepts `pending`, `resolved`, or `all`. Principals with
+`resolve_confirmation` may submit `POST /api/v1/confirmations/{id}/resolve` with exactly one JSON
+field, `strategy`, whose value is `skip` or `rename`. The authenticated principal ID is the audit
+actor; client actor/note/path/overwrite/execute/token fields are rejected.
 
 `GET /api/v1/security-audit` is restricted to auditor/admin. SQLite audit rows record timestamp,
 principal ID when known, method, normalized route, action/outcome/status, request ID, and a bounded

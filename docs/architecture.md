@@ -661,6 +661,21 @@ credentials do not enter the read model. `mediaflow dashboard` and authenticated
 `GET /api/v1/dashboard` reuse this service. Dashboard reads construct no Storage adapter, perform no
 health probe or network request, and remain covered by the normalized Phase 18.6 security audit.
 
+## Conflict confirmation service boundary
+
+Phase 18.8 exposes existing persistent confirmations through bounded list/show/audit API reads and
+a least-privilege resolution route. Resolution delegates to ConfirmationService rather than
+duplicating ConflictResolver behavior in the transport. SQLite atomically changes the confirmation,
+appends its immutable decision audit, and transitions the related waiting TaskItem to skipped or
+pending. A failed audit/item write rolls back the entire decision, and concurrent attempts can
+commit only once.
+
+Remote decisions are deliberately narrower than local operator capability: only Skip and Rename
+are accepted, the actor is the authenticated principal, and arbitrary destination changes,
+Manual, Overwrite, execute authority, and client-supplied audit identity are rejected. Resolving a
+confirmation never constructs Storage, queues a Job, resumes a Task, or executes a plan. A later
+explicit retry/resume re-enters the normal Planner/ConflictResolver/OrganizerExecutor boundaries.
+
 ## Classification policies and engine
 
 Classification is the pure “where does this identified media belong?” stage after Naming. The

@@ -231,6 +231,22 @@ It uses aggregate SQLite queries, performs no Storage health probe or provider/n
 redacts recent failures to identifiers, categorical status, and timestamps. Storage connectivity
 remains an explicit `mediaflow storage check` operation.
 
+Conflict confirmations also have an authenticated service workflow for future UI clients:
+
+```bash
+curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
+  'http://127.0.0.1:8787/api/v1/confirmations?status=pending&limit=20'
+curl -X POST -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"strategy":"skip"}' \
+  'http://127.0.0.1:8787/api/v1/confirmations/CONFIRMATION_ID/resolve'
+```
+
+Operators, executors, and admins may record remote `skip` or `rename` decisions. Viewer/auditor
+roles remain read-only. Remote `manual`, `overwrite`, actor injection, destination editing, and
+execute fields are rejected. A decision never resumes a Task or executes media automatically;
+local explicit retry/resume remains a separate action. High-risk overwrite stays local CLI-only.
+
 ## Persistent runtime state
 
 Production scan/preview/organize use the configured SQLite database:

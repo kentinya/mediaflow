@@ -10,8 +10,10 @@ from urllib.parse import parse_qs
 from uuid import uuid4
 
 from mediaflow.application.automation import AutomationJobService
+from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.task_persistence import ConfirmationStatus
 
@@ -190,9 +192,36 @@ class MediaFlowApi:
                 },
             )
         if parts == ["api", "v1", "confirmations"] and method == "GET":
-            values = self._repository.list_confirmations(status=ConfirmationStatus.PENDING)
+            status, limit = self._confirmation_query(environ)
+            values = self._repository.list_confirmations(status=status, limit=limit)
             return self._response(
-                start_response, 200, {"items": [self._value(item) for item in values]}
+                start_response,
+                200,
+                {"items": [self._confirmation_value(item) for item in values]},
+            )
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "confirmations"] and method == "GET":
+            value = self._repository.get_confirmation(parts[3])
+            if value is None:
+                raise LookupError(f"confirmation {parts[3]!r} was not found")
+            return self._response(start_response, 200, self._confirmation_value(value))
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "confirmations"]
+            and parts[4] == "audit"
+            and method == "GET"
+        ):
+            value = self._repository.get_confirmation(parts[3])
+            if value is None:
+                raise LookupError(f"confirmation {parts[3]!r} was not found")
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [
+                        self._confirmation_audit_value(item)
+                        for item in self._repository.list_confirmation_audit(parts[3])
+                    ]
+                },
             )
         if parts == ["api", "v1", "schedules"] and method == "GET":
             states = {item.schedule_id: item for item in self._repository.list_schedule_states()}
@@ -295,6 +324,27 @@ class MediaFlowApi:
         ):
             self._require(principal, ApiPermission.CANCEL_JOB)
             return self._response(start_response, 200, self._value(self._jobs.cancel(parts[3])))
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "confirmations"]
+            and parts[4] == "resolve"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.RESOLVE_CONFIRMATION)
+            document = self._document(environ)
+            unsupported = set(document).difference({"strategy"})
+            if unsupported:
+                raise ValueError(f"unsupported confirmation field {sorted(unsupported)[0]!r}")
+            try:
+                strategy = ConflictStrategy(document.get("strategy", ""))
+            except ValueError as error:
+                raise ValueError("remote confirmation strategy must be skip or rename") from error
+            if strategy not in {ConflictStrategy.SKIP, ConflictStrategy.RENAME}:
+                raise ValueError("remote confirmation strategy must be skip or rename")
+            value = ConfirmationService(self._repository).resolve(
+                parts[3], strategy, actor=principal.principal_id
+            )
+            return self._response(start_response, 200, self._confirmation_value(value))
         return self._error(start_response, 404, "not_found", "route was not found")
 
     def _authenticate(self, environ: dict) -> ResolvedApiPrincipal | None:
@@ -364,6 +414,18 @@ class MediaFlowApi:
             return "/api/v1/jobs/{id}/cancel"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":
             return "/api/v1/schedules/{id}/audit"
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "confirmations"]:
+            return "/api/v1/confirmations/{id}"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "confirmations"]
+            and parts[4]
+            in {
+                "audit",
+                "resolve",
+            }
+        ):
+            return f"/api/v1/confirmations/{{id}}/{parts[4]}"
         return "/api/v1/<unmatched>"
 
     @staticmethod
@@ -379,6 +441,44 @@ class MediaFlowApi:
             return int(raw[0])
         except ValueError as error:
             raise ValueError("dashboard recentLimit must be an integer") from error
+
+    @staticmethod
+    def _confirmation_query(
+        environ: dict,
+    ) -> tuple[ConfirmationStatus | None, int]:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        unknown = set(values).difference({"status", "limit"})
+        if unknown:
+            raise ValueError("confirmation query contains an unsupported field")
+        if any(len(value) != 1 for value in values.values()):
+            raise ValueError("confirmation query fields must be specified once")
+        raw_status = values.get("status", ["pending"])[0]
+        if raw_status == "all":
+            status = None
+        else:
+            try:
+                status = ConfirmationStatus(raw_status)
+            except ValueError as error:
+                raise ValueError("confirmation status must be pending, resolved, or all") from error
+        try:
+            limit = int(values.get("limit", ["100"])[0])
+        except ValueError as error:
+            raise ValueError("confirmation limit must be an integer") from error
+        if limit < 1 or limit > 100:
+            raise ValueError("confirmation limit must be between 1 and 100")
+        return status, limit
+
+    @classmethod
+    def _confirmation_value(cls, value) -> dict:
+        document = cls._value(value)
+        document.pop("note", None)
+        return document
+
+    @classmethod
+    def _confirmation_audit_value(cls, value) -> dict:
+        document = cls._value(value)
+        document.pop("note", None)
+        return document
 
     def _safe_audit(self, *args) -> None:
         try:

@@ -37,7 +37,6 @@ from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     PersistentTask,
     PersistentTaskItem,
-    TaskItemStatus,
 )
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.runtime_configuration import (
@@ -351,22 +350,6 @@ def final_main(
                         actor=arguments.actor,
                         note=arguments.note,
                     )
-                    item = repository.get_item(value.item_id)
-                    if item is not None:
-                        from dataclasses import replace
-
-                        repository.upsert_item(
-                            replace(
-                                item,
-                                status=(
-                                    TaskItemStatus.SKIPPED
-                                    if value.selected_strategy == ConflictStrategy.SKIP.value
-                                    else TaskItemStatus.PENDING
-                                ),
-                                stage="conflict_resolved",
-                                updated_at=datetime.now(UTC),
-                            )
-                        )
                     stdout.write(render_confirmation(value, ()))
             return 0
         if arguments.command == "storage":

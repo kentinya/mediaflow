@@ -20,13 +20,19 @@ from mediaflow.interfaces.service_api import MediaFlowApi
 PERMISSIONS = {
     "viewer": frozenset({ApiPermission.READ}),
     "operator": frozenset(
-        {ApiPermission.READ, ApiPermission.SUBMIT_DRY_RUN, ApiPermission.CANCEL_JOB}
+        {
+            ApiPermission.READ,
+            ApiPermission.SUBMIT_DRY_RUN,
+            ApiPermission.CANCEL_JOB,
+            ApiPermission.RESOLVE_CONFIRMATION,
+        }
     ),
     "executor": frozenset(
         {
             ApiPermission.READ,
             ApiPermission.SUBMIT_DRY_RUN,
             ApiPermission.CANCEL_JOB,
+            ApiPermission.RESOLVE_CONFIRMATION,
             ApiPermission.REMOTE_EXECUTE,
         }
     ),

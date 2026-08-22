@@ -18,6 +18,7 @@ class ApiPermission(StrEnum):
     READ = "read"
     SUBMIT_DRY_RUN = "submit_dry_run"
     CANCEL_JOB = "cancel_job"
+    RESOLVE_CONFIRMATION = "resolve_confirmation"
     REMOTE_EXECUTE = "remote_execute"
     READ_SECURITY_AUDIT = "read_security_audit"
 
@@ -25,13 +26,19 @@ class ApiPermission(StrEnum):
 ROLE_PERMISSIONS = {
     ApiRole.VIEWER: frozenset({ApiPermission.READ}),
     ApiRole.OPERATOR: frozenset(
-        {ApiPermission.READ, ApiPermission.SUBMIT_DRY_RUN, ApiPermission.CANCEL_JOB}
+        {
+            ApiPermission.READ,
+            ApiPermission.SUBMIT_DRY_RUN,
+            ApiPermission.CANCEL_JOB,
+            ApiPermission.RESOLVE_CONFIRMATION,
+        }
     ),
     ApiRole.EXECUTOR: frozenset(
         {
             ApiPermission.READ,
             ApiPermission.SUBMIT_DRY_RUN,
             ApiPermission.CANCEL_JOB,
+            ApiPermission.RESOLVE_CONFIRMATION,
             ApiPermission.REMOTE_EXECUTE,
         }
     ),

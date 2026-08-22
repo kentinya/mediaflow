@@ -22,6 +22,7 @@ from mediaflow.domain.task_persistence import (
     ConflictConfirmation,
     ConflictDecisionAudit,
     PersistentTaskRepository,
+    TaskItemStatus,
 )
 
 
@@ -196,5 +197,20 @@ class ConfirmationService:
             actor,
             note,
         )
-        self._repository.resolve_confirmation(resolved, audit)
+        item = self._repository.get_item(current.item_id)
+        transitioned = (
+            replace(
+                item,
+                status=(
+                    TaskItemStatus.SKIPPED
+                    if strategy is ConflictStrategy.SKIP
+                    else TaskItemStatus.PENDING
+                ),
+                stage="conflict_resolved",
+                updated_at=now,
+            )
+            if item is not None
+            else None
+        )
+        self._repository.resolve_confirmation(resolved, audit, transitioned)
         return resolved

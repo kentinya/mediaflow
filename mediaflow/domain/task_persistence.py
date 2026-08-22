@@ -143,10 +143,13 @@ class PersistentTaskRepository(Protocol):
     def create_confirmation(self, confirmation: ConflictConfirmation) -> None: ...
     def get_confirmation(self, confirmation_id: str) -> ConflictConfirmation | None: ...
     def list_confirmations(
-        self, *, status: ConfirmationStatus | None = None
+        self, *, status: ConfirmationStatus | None = None, limit: int | None = None
     ) -> tuple[ConflictConfirmation, ...]: ...
     def resolve_confirmation(
-        self, confirmation: ConflictConfirmation, audit: ConflictDecisionAudit
+        self,
+        confirmation: ConflictConfirmation,
+        audit: ConflictDecisionAudit,
+        item: PersistentTaskItem | None = None,
     ) -> None: ...
     def list_confirmation_audit(
         self, confirmation_id: str

@@ -1,60 +1,65 @@
-# Phase 18.7 — Operational Dashboard Read Model
+# Phase 18.8 — Conflict Confirmation Service API
 
 ## Goal
 
-Provide a bounded, read-only operational snapshot for CLI, API, and a future Web UI by aggregating
-existing persistent FileIndex, Task, Job, Confirmation, and Notification state. Do not implement a
-Web UI and do not move workflow logic into the dashboard.
+Expose the existing persistent target-conflict confirmation workflow through a least-privilege,
+audited service API for future UI clients. Keep resolution as a database decision only: it must
+never execute media operations, and remote Overwrite remains forbidden.
 
-## 1. Dashboard model and query service
+## 1. Authorization
 
-- Add provider-neutral immutable dashboard summary and recent-failure models.
-- Count configured/enabled ResourceLibraries and MediaLibraries from normalized runtime
-  configuration.
-- Aggregate indexed media by scan status, Tasks and AutomationJobs by status, pending conflict
-  confirmations, and notification dead letters from SQLite.
-- Include only bounded recent failure identifiers, kind, status/category, and timestamp. Do not
-  expose raw exception text, media paths, notification bodies, destination paths, or secrets.
-- Generate one UTC `asOf` value and deterministic output.
+- Add an explicit `resolve_confirmation` API permission.
+- operator, executor, and admin may resolve ordinary confirmations; viewer and auditor remain
+  read-only.
+- Existing read permission continues to protect confirmation list/show/audit routes.
+- Authentication and authorization failures remain stable 401/403 and use the redacted security
+  audit.
 
-## 2. Persistence read boundary
+## 2. Read API
 
-- Add an explicit dashboard read port and a SQLite implementation using aggregate SQL rather than
-  loading entire large-library tables into memory.
-- Treat a not-yet-created FileIndex table as an empty index without creating or mutating it during
-  the query.
-- Dashboard queries must not mutate database state and must not construct or call Storage,
-  MetadataProvider, Scanner, strategy engines, Planner, OrganizerExecutor, notification transport,
-  or network clients.
-- Do not change schema version unless persistent schema actually changes.
+- Keep `GET /api/v1/confirmations`, but add bounded `status=pending|resolved|all` and `limit`
+  query parameters with deterministic ordering.
+- Add `GET /api/v1/confirmations/{id}`.
+- Add `GET /api/v1/confirmations/{id}/audit`.
+- Return normalized confirmation/decision records only. Never return Task error text, credentials,
+  headers, cookies, execution tokens, or unrelated media state.
+- Unknown query fields, invalid values, and unknown IDs fail clearly.
 
-## 3. CLI and API
+## 3. Resolution API and atomic state transition
 
-- Add local `mediaflow dashboard [--recent-limit N]`.
-- Add authenticated `GET /api/v1/dashboard` under existing read permission.
-- Keep `GET /health` minimal and public; do not leak dashboard state through health.
-- Validate recent limits with a small bound and return stable JSON through the existing API
-  serialization boundary.
-- All API dashboard access remains covered by the Phase 18.6 redacted security audit.
+- Add `POST /api/v1/confirmations/{id}/resolve`.
+- Accept only `skip` and `rename` remotely. `manual` is not a decision and `overwrite` remains
+  local CLI-only even for admin.
+- Derive the actor from the authenticated principal. Reject client-supplied actor, overwrite flags,
+  proposed destination paths, execute fields, tokens, and unsupported fields.
+- Atomically persist confirmation resolution, immutable decision audit, and the related TaskItem
+  transition: Skip -> skipped; Rename -> pending for explicit retry/resume.
+- Concurrent resolution attempts may succeed once only.
+- Resolution never automatically retries/resumes a Task, queues a Job, or executes a plan.
 
-## 4. Safety and compatibility
+## 4. CLI compatibility and safety
 
-- Preserve every Parser, Recognition, Metadata, Naming, Classification, Planner, Executor, Storage,
-  Task, Scheduler, notification, RBAC, and one-time execution authorization behavior.
-- Dashboard must remain useful when tables are empty and after restart.
-- RecognitionType C invariants and DryRun zero-mutation guarantees remain unchanged.
+- Preserve existing local `mediaflow confirmations` behavior, including explicit high-risk
+  overwrite confirmation.
+- Move the existing CLI TaskItem transition into the shared atomic application/persistence path so
+  CLI and API cannot diverge.
+- Do not construct Storage, MetadataProvider, Scanner, Planner, OrganizerExecutor, or network
+  clients for any confirmation API operation.
+- Preserve one-time remote execution authorization, no-overwrite defaults, DryRun, and all strategy
+  semantics.
 
 ## Required tests
 
-- Empty database/config snapshot.
-- Accurate indexed Ready/Missing and Task/Job/Confirmation/notification counts.
-- Bounded deterministic recent failures with no raw errors, paths, bodies, credentials, or secrets.
-- Large-library aggregation proves the service does not enumerate FileIndex records.
-- Missing FileIndex table is read as zero without creating it.
-- CLI rendering and API JSON; viewer can read, unauthenticated is 401, auditor/admin can read.
-- Dashboard CLI/API construct no Storage and perform zero Storage mutations/network calls.
-- API dashboard request produces a normalized redacted security audit record.
-- Existing API/RBAC, Task, Scanner/FileIndex, notification, DryRun, strategy and Storage regressions.
+- Viewer/auditor read access; operator/executor/admin resolve access; 401/403 matrix.
+- Bounded pending/resolved/all list, deterministic ordering, show, audit, invalid query and 404.
+- Remote Skip and Rename update confirmation, audit, and TaskItem atomically.
+- Remote Manual/Overwrite and injected actor/path/execute/token fields are rejected for every role.
+- Concurrent double resolution produces exactly one decision.
+- Persistence failure rolls back confirmation, audit, and TaskItem together.
+- Existing local overwrite flow remains explicit and compatible.
+- Confirmation API security-audit routes are normalized and contain no body/query/token values.
+- Zero Storage mutation/construction and no automatic retry/Job creation.
+- All API/RBAC, Dashboard, conflict, Task, DryRun, strategy, notification, and Storage regressions.
 
 ## Documentation and validation
 
@@ -64,21 +69,21 @@ diff checks.
 
 ## Out of scope
 
-- HTML/JavaScript/Web UI, charts, live push/WebSocket/SSE, Storage health probing, database users,
-  OIDC/OAuth, metric time-series retention, log search, policy editing, confirmation mutation,
-  automatic remediation, and scheduled execute.
+- Remote Overwrite/Delete approval, automatic retry/resume, metadata candidate confirmation,
+  classification correction, arbitrary destination editing, Web UI, database users/OIDC, scheduled
+  execute, Rollback, and OrganizerExecutor changes.
 
 ## Final report
 
-## Phase 18.7 Result
+## Phase 18.8 Result
 
 PASS / FAIL
 
-## Dashboard Model
+## Confirmation API
 
-## CLI and API
+## Atomic Decisions
 
-## Privacy and Safety
+## Authorization and Safety
 
 ## Regression
 
