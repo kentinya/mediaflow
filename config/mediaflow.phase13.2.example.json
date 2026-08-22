@@ -5,7 +5,8 @@
     "databasePath": ".mediaflow/mediaflow.sqlite3"
   },
   "api": {
-    "tokenEnv": "MEDIAFLOW_API_TOKEN"
+    "tokenEnv": "MEDIAFLOW_API_TOKEN",
+    "remoteExecution": {"enabled": false, "maximumTtlSeconds": 900}
   },
   "automation": {
     "workerPollSeconds": 2,

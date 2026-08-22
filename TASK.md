@@ -1,71 +1,88 @@
-# Phase 18.4.1 — Notification Delivery Lease + Crash Recovery
+# Phase 18.5 — One-time Remote Execute Authorization + Audit
 
 ## Goal
 
-Close the accepted Phase 18.4 crash window where a process can stop after claiming an Outbox row
-and leave it permanently `delivering`. Add a bounded delivery lease with safe at-least-once
-recovery and auditable duplicate-delivery semantics. Do not start remote organize execution.
+Allow the existing authenticated API to queue a real `organize --execute` job only when a local
+operator has issued a short-lived, single-use authorization. Do not reuse the ordinary API bearer
+token as mutation authority. Preserve OrganizerExecutor as the only Storage mutation boundary.
 
-## 1. Delivery lease
+## 1. Authorization model
 
-- Add configurable positive `notifications.deliveryLeaseSeconds`, default 300 seconds.
-- A fresh `delivering` row remains exclusively owned and cannot be reclaimed.
-- A `delivering` row whose `updatedAt` is older than the lease may be atomically reclaimed.
-- Reclaim increments the same attempt counter and preserves delivery/event identity and exact body.
-- Concurrent workers must still produce exactly one successful claim.
+- Local CLI issues a cryptographically random one-time token with ID, expiry, maximum item limit,
+  created timestamp, status, and optional non-secret actor/note.
+- Persist only a SHA-256 token digest; display the raw token exactly once at issuance.
+- Statuses: active, consumed, revoked, expired. Expiry is evaluated against UTC.
+- Token consumption and execute-authorized Job creation must be one SQLite transaction.
+- Concurrent/replayed requests using one token may create exactly one Job.
 
-## 2. Retry and exhaustion
+## 2. API execution boundary
 
-- A reclaimed attempt uses the existing configured maximum-attempt and retry/dead-letter rules.
-- Never retry forever and never reset attempts during automatic crash recovery.
-- Preserve explicit dead-letter requeue as the only operation that resets attempts.
-- Document that a crash after a receiver accepted the request but before local commit may redeliver;
-  receivers must deduplicate by stable `X-MediaFlow-Delivery`.
+- Keep ordinary Bearer authentication for all `/api/v1` routes.
+- `POST /api/v1/jobs` accepts `command=organize` and `execute=true` only with a separate
+  `X-MediaFlow-Execution-Token` header and an enabled runtime feature gate.
+- Require an explicit positive `limit` not exceeding the authorization maximum.
+- Reject missing/invalid/expired/revoked/consumed tokens, body-carried tokens, overwrite/delete,
+  and organize without `execute=true`.
+- scan/preview remain DryRun and must reject execute authority.
+- API cannot issue, list, revoke, or renew execution tokens.
 
-## 3. Visibility
+## 3. Worker and persistence
 
-- CLI/API delivery metadata must expose `updatedAt`, attempts, and status, but never body or secrets.
-- Add a read-only stale-delivery inspection command or filter if needed for operational diagnosis.
-- Resident worker recovery remains bounded and graceful-shutdown compatible.
+- Persist `executeAuthorized` on AutomationJob with a compatible SQLite v7-to-v8 migration.
+- Worker delegates an authorized organize Job to the existing production CLI with `--execute`.
+- Worker never infers execute authority from command, configuration, schedule, or API bearer token.
+- Scheduler remains restricted to scan/preview and cannot reference authorization tokens.
+- Stale execute Job requeue preserves its original authorization but remains explicit and audited.
 
-## 4. Safety
+## 4. Local operator CLI and audit
 
-- Recovery may only change notification Outbox state and perform the configured Webhook request.
-- It must never call Storage, Metadata, Planner, OrganizerExecutor, or authorize media execution.
-- Configuration validation performs no network or Storage access.
-- Remote organize/execute, Web UI, inbound Webhooks, and strategy changes remain out of scope.
+- Add `mediaflow execution-authorizations issue --ttl-seconds N --max-items N`.
+- Add `list`, `show`, and `revoke`; these commands only access SQLite.
+- Audit issue/consume/revoke with timestamps and job identity; never persist or print raw tokens
+  after issuance.
+- Job CLI/API visibility includes execute authorization status but never the token/digest.
+
+## 5. Configuration and safety
+
+- Add `api.remoteExecution.enabled` and bounded maximum TTL; default disabled.
+- Config validation needs no API token, execution token, Storage construction, or network access.
+- Remote execute keeps all existing conflict, overwrite, delete, attachment, cancellation, task,
+  history, and Storage capability checks.
+- Notification, strategy, Storage adapters, Planner, and OrganizerExecutor semantics remain intact.
 
 ## Required tests
 
-- Fresh lease is not reclaimed; expired lease is reclaimed.
-- Reclaimed attempt preserves IDs/body and increments attempts.
-- Concurrent expired claims yield one owner.
-- Exhausted reclaimed attempt becomes dead-letter after delivery failure.
-- Explicit dead-letter requeue remains distinct and resets attempts.
-- Configuration default/custom/invalid lease values.
-- CLI/API redacted visibility, restart simulation, zero Storage mutation, and all regressions.
+- Disabled feature, missing separate token, invalid/expired/revoked/consumed/replayed token.
+- Token digest-only persistence, one-time display, TTL/max-items validation, list/show redaction.
+- Atomic concurrent consumption creates exactly one execute-authorized organize Job.
+- scan/preview execute rejection; Scheduler organize rejection remains.
+- Worker passes `--execute` only for an authorized organize Job and never for other Jobs.
+- End-to-end API → Job → Worker real LocalStorage execution with explicit token and limit.
+- Existing conflict/no-overwrite safety, cancellation, stale recovery, notifications, DryRun, all
+  strategy/Storage regressions, and zero mutation during authorization/config validation.
 
 ## Documentation and validation
 
-Update README, examples, architecture, progress, roadmap, and product status where relevant. Run all
-tests plus formatter, lint, compile, dependency, build, configuration, FFprobe/FFmpeg, and diff
+Update README, examples, configuration, architecture, progress, roadmap, and product status. Run
+all tests plus formatter, lint, compile, dependency, build, configuration, FFprobe/FFmpeg, and diff
 checks.
 
 ## Out of scope
 
-- Remote organize/execute authorization and scheduling.
-- Web UI, user/role/TLS, inbound Webhooks, email/chat adapters.
-- Storage, strategy engines, Planner, or OrganizerExecutor redesign.
+- Scheduled/unattended execute, reusable service execution keys, token renewal, Web UI, users/roles,
+  TLS termination, inbound Webhooks, and OrganizerExecutor redesign.
 
 ## Final report
 
-## Phase 18.4.1 Result
+## Phase 18.5 Result
 
 PASS / FAIL
 
-## Lease Recovery
+## Authorization Model
 
-## At-least-once Semantics
+## Remote Execute
+
+## Audit
 
 ## Security and Safety
 

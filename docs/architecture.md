@@ -612,6 +612,21 @@ Delivery semantics are at-least-once: a process can stop after the receiver acce
 before SQLite records success. A recovered worker therefore may redeliver the same stable
 `X-MediaFlow-Delivery`; receivers are responsible for idempotent deduplication by that value.
 
+## One-time remote execution authorization
+
+Remote real execution has two independent gates: ordinary API Bearer authentication and a locally
+issued one-time execution token. `ExecutionAuthorizationService` generates 256-bit-class random
+tokens and persists only SHA-256 digests with expiry and item bounds. SQLite v8 atomically changes
+an active authorization to consumed, appends its audit, and inserts an `execute_authorized`
+organize AutomationJob. Concurrent replay therefore creates at most one Job.
+
+The API cannot manage authorizations, rejects body-carried tokens, and requires the separate
+`X-MediaFlow-Execution-Token` header plus `execute:true` and an explicit bounded limit. The Worker
+adds `--execute` only when both the persisted command is organize and its persisted authority is
+true; inconsistent Jobs fail closed. Scheduler remains scan/preview-only. This boundary grants no
+overwrite/delete bypass: the existing Task, conflict, Storage capability, plan validation, and sole
+OrganizerExecutor mutation boundary remain authoritative.
+
 ## Classification policies and engine
 
 Classification is the pure “where does this identified media belong?” stage after Naming. The

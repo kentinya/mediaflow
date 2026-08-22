@@ -20,6 +20,7 @@ from mediaflow.application.automation import (
     IntervalScheduler,
 )
 from mediaflow.application.conflict_resolution import ConfirmationService
+from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata import MetadataProviderRegistry
@@ -28,7 +29,7 @@ from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.cli import render_strategy_result
-from mediaflow.domain.automation import CronSchedule
+from mediaflow.domain.automation import AutomationCommand, CronSchedule
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.task_persistence import (
@@ -152,6 +153,23 @@ def final_main(
     notification_worker_commands.add_parser("run-next")
     notification_worker_run = notification_worker_commands.add_parser("run")
     notification_worker_run.add_argument("--poll-seconds", type=float)
+    execution_authorizations = commands.add_parser(
+        "execution-authorizations", help="local one-time remote execution authority"
+    )
+    execution_authorization_commands = execution_authorizations.add_subparsers(
+        dest="execution_authorization_command", required=True
+    )
+    execution_authorization_issue = execution_authorization_commands.add_parser("issue")
+    execution_authorization_issue.add_argument("--ttl-seconds", type=int, required=True)
+    execution_authorization_issue.add_argument("--max-items", type=int, required=True)
+    execution_authorization_issue.add_argument("--actor")
+    execution_authorization_issue.add_argument("--note")
+    execution_authorization_commands.add_parser("list")
+    execution_authorization_show = execution_authorization_commands.add_parser("show")
+    execution_authorization_show.add_argument("authorization_id")
+    execution_authorization_revoke = execution_authorization_commands.add_parser("revoke")
+    execution_authorization_revoke.add_argument("authorization_id")
+    execution_authorization_revoke.add_argument("--actor")
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_serve = api_commands.add_parser("serve")
@@ -226,6 +244,46 @@ def final_main(
                     )
                 )
                 stdout.write(f"Notification worker stopped; processed={processed}\n")
+            return 0
+        if arguments.command == "execution-authorizations":
+            if not configuration.remote_execution_enabled:
+                raise ValueError("remote execution authorization is disabled")
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                service = ExecutionAuthorizationService(
+                    repository,
+                    maximum_ttl_seconds=configuration.remote_execution_maximum_ttl_seconds,
+                )
+                if arguments.execution_authorization_command == "issue":
+                    issued = service.issue(
+                        ttl_seconds=arguments.ttl_seconds,
+                        max_items=arguments.max_items,
+                        actor=arguments.actor,
+                        note=arguments.note,
+                    )
+                    stdout.write(render_issued_execution_authorization(issued))
+                elif arguments.execution_authorization_command == "list":
+                    stdout.write(render_execution_authorizations(service.list()))
+                elif arguments.execution_authorization_command == "show":
+                    value = service.get(arguments.authorization_id)
+                    if value is None:
+                        raise LookupError(
+                            f"execution authorization {arguments.authorization_id!r} was not found"
+                        )
+                    stdout.write(
+                        render_execution_authorization(
+                            value,
+                            repository.list_execution_authorization_audit(value.authorization_id),
+                        )
+                    )
+                else:
+                    stdout.write(
+                        render_execution_authorization(
+                            service.revoke(arguments.authorization_id, actor=arguments.actor),
+                            repository.list_execution_authorization_audit(
+                                arguments.authorization_id
+                            ),
+                        )
+                    )
             return 0
         if arguments.command == "tasks" and arguments.task_command in {"list", "show"}:
             with SQLiteTaskRepository(configuration.database_path) as repository:
@@ -420,7 +478,15 @@ def final_main(
             from mediaflow.interfaces.service_api import MediaFlowApi
 
             with SQLiteTaskRepository(configuration.database_path) as repository:
-                app = MediaFlowApi(repository, token, configuration.automation_schedules)
+                app = MediaFlowApi(
+                    repository,
+                    token,
+                    configuration.automation_schedules,
+                    remote_execution_enabled=configuration.remote_execution_enabled,
+                    remote_execution_maximum_ttl_seconds=(
+                        configuration.remote_execution_maximum_ttl_seconds
+                    ),
+                )
                 stdout.write(f"MediaFlow API listening on {arguments.host}:{arguments.port}\n")
                 stdout.flush()
                 with make_server(arguments.host, arguments.port, app) as server:
@@ -758,6 +824,7 @@ def render_job(value) -> str:
             f"Error: {value.error or '-'}",
             f"Cancellation requested: {'YES' if value.cancellation_requested else 'NO'}",
             f"Schedule ID: {value.schedule_id or '-'}",
+            f"Execute authorized: {'YES' if value.execute_authorized else 'NO'}",
             "",
         )
     )
@@ -779,6 +846,59 @@ def render_notification(value) -> str:
     return render_notifications((value,))
 
 
+def render_issued_execution_authorization(issued) -> str:
+    value = issued.authorization
+    return "\n".join(
+        (
+            "",
+            "EXECUTION AUTHORIZATION ISSUED",
+            "",
+            f"ID: {value.authorization_id}",
+            f"Expires: {value.expires_at.isoformat()}",
+            f"Max items: {value.max_items}",
+            f"Token: {issued.token}",
+            "Token shown once: YES",
+            "",
+        )
+    )
+
+
+def render_execution_authorizations(values) -> str:
+    lines = ["", "EXECUTION AUTHORIZATIONS", ""]
+    for value in values:
+        lines.append(
+            f"{value.authorization_id} | {value.status.value} | "
+            f"expires={value.expires_at.isoformat()} | maxItems={value.max_items} | "
+            f"job={value.consumed_job_id or '-'}"
+        )
+    lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_execution_authorization(value, audit) -> str:
+    lines = [
+        "",
+        "EXECUTION AUTHORIZATION",
+        "",
+        f"ID: {value.authorization_id}",
+        f"Status: {value.status.value}",
+        f"Created: {value.created_at.isoformat()}",
+        f"Expires: {value.expires_at.isoformat()}",
+        f"Max items: {value.max_items}",
+        f"Consumed job: {value.consumed_job_id or '-'}",
+        "",
+        "AUDIT",
+        "",
+    ]
+    lines.extend(
+        f"{item.occurred_at.isoformat()} | {item.action} | job={item.job_id or '-'} | "
+        f"actor={item.actor or '-'}"
+        for item in audit
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _run_queued_workflow(
     job, configured_path: str | None, cancellation_check: Callable[[], bool]
 ) -> str | None:
@@ -789,6 +909,12 @@ def _run_queued_workflow(
     args.append(job.command.value)
     if job.limit is not None:
         args.extend(("--limit", str(job.limit)))
+    if job.command is AutomationCommand.ORGANIZE:
+        if not job.execute_authorized:
+            raise RuntimeError("organize job lacks persisted execute authorization")
+        args.append("--execute")
+    elif job.execute_authorized:
+        raise RuntimeError("non-organize job must not carry execute authorization")
     output, errors = io.StringIO(), io.StringIO()
     code = final_main(args, stdout=output, stderr=errors, cancellation_check=cancellation_check)
     task_id = None

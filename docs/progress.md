@@ -790,3 +790,16 @@ Phase 18.4.1 notification delivery lease and crash recovery (2026-08-22): PASS
 - Added read-only stale-claim inspection and documented at-least-once receiver deduplication
 - Full suite: 342 tests, 339 passed, 0 failed, 3 optional real integrations skipped; formatter,
   lint, compile, dependency, build, configuration, FFmpeg/FFprobe, and diff checks passed
+
+Phase 18.5 one-time remote execute authorization and audit (2026-08-22): PASS
+
+- Added disabled-by-default, locally issued short-lived single-use execution authorizations;
+  SQLite stores only token SHA-256 digests, constraints, status, consumption, and audit
+- SQLite v8 atomically consumes one ticket and creates one execute-authorized organize Job, including
+  concurrent replay protection and compatible Job authority migration
+- API requires ordinary Bearer plus a separate header token, explicit execute=true, and bounded
+  limit; it cannot issue/manage tickets or bypass overwrite/delete/conflict safety
+- Worker passes --execute only from persisted organize authority; Scheduler remains scan/preview-only
+- Full suite: 353 tests, 350 passed, 0 failed, 3 optional real integrations skipped
+- Ruff format/lint, compileall, dependency check, isolated-free wheel build, both example config
+  validations, FFmpeg/FFprobe runtime audit, and diff check passed

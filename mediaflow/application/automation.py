@@ -37,6 +37,8 @@ class AutomationJobService:
             parsed = AutomationCommand(command)
         except ValueError as error:
             raise ValueError("automation command must be scan or preview") from error
+        if parsed not in {AutomationCommand.SCAN, AutomationCommand.PREVIEW}:
+            raise ValueError("automation command must be scan or preview")
         if limit is not None and (
             isinstance(limit, bool) or not isinstance(limit, int) or limit < 1
         ):

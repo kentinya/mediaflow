@@ -8,18 +8,31 @@ from datetime import datetime
 from enum import Enum
 
 from mediaflow.application.automation import AutomationJobService
+from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.domain.task_persistence import ConfirmationStatus
 
 
 class MediaFlowApi:
     """Small WSGI transport over persistence and queue application boundaries."""
 
-    def __init__(self, repository, bearer_token: str, schedules=()) -> None:
+    def __init__(
+        self,
+        repository,
+        bearer_token: str,
+        schedules=(),
+        *,
+        remote_execution_enabled: bool = False,
+        remote_execution_maximum_ttl_seconds: int = 900,
+    ) -> None:
         if not bearer_token:
             raise ValueError("API bearer token must be configured")
         self._repository = repository
         self._token = bearer_token
         self._jobs = AutomationJobService(repository)
+        self._execution_authorizations = ExecutionAuthorizationService(
+            repository, maximum_ttl_seconds=remote_execution_maximum_ttl_seconds
+        )
+        self._remote_execution_enabled = remote_execution_enabled
         self._schedules = tuple(schedules)
 
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
@@ -135,13 +148,28 @@ class MediaFlowApi:
                 )
             if method == "POST":
                 document = self._document(environ)
-                forbidden = {"execute", "overwrite", "delete"}.intersection(document)
+                forbidden = {
+                    "overwrite",
+                    "delete",
+                    "executionToken",
+                    "authorization",
+                }.intersection(document)
                 if forbidden:
-                    raise ValueError(
-                        f"unsupported service field {sorted(forbidden)[0]!r}; "
-                        "remote execution is disabled"
+                    raise ValueError(f"unsupported service field {sorted(forbidden)[0]!r}")
+                command = document.get("command", "")
+                if command == "organize":
+                    if not self._remote_execution_enabled:
+                        raise ValueError("remote execution is disabled")
+                    if document.get("execute") is not True:
+                        raise ValueError("remote organize requires execute=true")
+                    token = str(environ.get("HTTP_X_MEDIAFLOW_EXECUTION_TOKEN", ""))
+                    job = self._execution_authorizations.submit_organize(
+                        token, limit=document.get("limit")
                     )
-                job = self._jobs.submit(document.get("command", ""), limit=document.get("limit"))
+                else:
+                    if "execute" in document:
+                        raise ValueError("scan/preview cannot request execute authority")
+                    job = self._jobs.submit(command, limit=document.get("limit"))
                 return self._response(start_response, 202, self._value(job))
         if len(parts) == 4 and parts[:3] == ["api", "v1", "jobs"] and method == "GET":
             job = self._repository.get_job(parts[3])

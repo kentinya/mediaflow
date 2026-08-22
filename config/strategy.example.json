@@ -2,7 +2,10 @@
   "version": 1,
   "historyPath": ".mediaflow/history.jsonl",
   "persistence": {"databasePath": ".mediaflow/mediaflow.sqlite3"},
-  "api": {"tokenEnv": "MEDIAFLOW_API_TOKEN"},
+  "api": {
+    "tokenEnv": "MEDIAFLOW_API_TOKEN",
+    "remoteExecution": {"enabled": false, "maximumTtlSeconds": 900}
+  },
   "automation": {
     "workerPollSeconds": 2,
     "schedulerPollSeconds": 5,

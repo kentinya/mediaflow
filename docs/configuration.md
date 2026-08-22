@@ -86,6 +86,26 @@ may have accepted the prior attempt before the local process stopped, consumers 
 using the stable `X-MediaFlow-Delivery` header. Inspect expired leases without changing state with
 `mediaflow notifications stale --age-seconds 300`.
 
+### One-time remote execute authorization
+
+Remote real execution is disabled unless explicitly enabled under `api.remoteExecution`:
+
+```json
+{"api":{"tokenEnv":"MEDIAFLOW_API_TOKEN","remoteExecution":{
+  "enabled":true,"maximumTtlSeconds":900
+}}}
+```
+
+The local `execution-authorizations issue` command accepts a TTL no greater than the configured
+maximum and a positive maximum item count. It prints a cryptographically random token once; SQLite
+stores only its SHA-256 digest. A remote organize request must present both the normal API Bearer
+and the separate token in `X-MediaFlow-Execution-Token`, specify `execute:true`, and give a positive
+`limit` within the ticket bound. Token consumption and authorized Job creation are one transaction.
+Tokens cannot be issued, listed, renewed, or revoked through the API. They cannot authorize
+overwrite/delete by themselves and cannot be placed in schedules.
+Treat the one-time raw token as a secret: avoid shared terminal capture and shell-history expansion,
+submit it promptly, and revoke the authorization locally if it will not be used.
+
 ### Path model
 
 The path fields have separate meanings:
@@ -444,9 +464,10 @@ mediaflow api serve --host 127.0.0.1 --port 8787
 ```
 
 The Worker claims one oldest pending job atomically and delegates it to the existing production
-scan/preview workflow. Preview is always DryRun. `/api/v1` requires the bearer token and supports
-read-only Task/Job/Confirmation queries plus scan/preview submission and pending cancellation.
-Remote organize/execute is rejected. The server is a loopback development adapter, not a hardened
+workflow. Preview is always DryRun. `/api/v1` requires the bearer token and supports read-only
+Task/Job/Confirmation queries plus scan/preview submission and pending cancellation. Remote
+organize is rejected unless the separately documented one-time execution feature is enabled and a
+valid ticket is atomically consumed. The server is a loopback development adapter, not a hardened
 Internet-facing deployment.
 
 ### Resident Worker, interval schedules, and Cron

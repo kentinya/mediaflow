@@ -53,6 +53,8 @@ class RuntimeConfiguration:
     webhooks: tuple[WebhookDefinition, ...] = ()
     notification_poll_seconds: float = 5.0
     notification_delivery_lease_seconds: float = 300.0
+    remote_execution_enabled: bool = False
+    remote_execution_maximum_ttl_seconds: int = 900
 
     def create_storages(
         self,
@@ -237,6 +239,22 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         not isinstance(api_token_env, str) or not _ENV_NAME.fullmatch(api_token_env)
     ):
         raise ValueError("API tokenEnv must be a valid environment variable name")
+    remote_execution = api.get("remoteExecution", {})
+    if not isinstance(remote_execution, dict):
+        raise ValueError("API remoteExecution must be an object")
+    forbidden_remote_fields = {"token", "secret", "tokenEnv", "executionToken"}.intersection(
+        remote_execution
+    )
+    if forbidden_remote_fields:
+        raise ValueError(
+            f"API remoteExecution field {sorted(forbidden_remote_fields)[0]!r} is forbidden"
+        )
+    remote_execution_enabled = remote_execution.get("enabled", False)
+    if not isinstance(remote_execution_enabled, bool):
+        raise ValueError("API remoteExecution enabled must be boolean")
+    maximum_ttl = remote_execution.get("maximumTtlSeconds", 900)
+    if isinstance(maximum_ttl, bool) or not isinstance(maximum_ttl, int) or maximum_ttl < 1:
+        raise ValueError("API remoteExecution maximumTtlSeconds must be a positive integer")
     automation = document.get("automation", {})
     if not isinstance(automation, dict):
         raise ValueError("runtime configuration 'automation' must be an object")
@@ -287,6 +305,8 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         webhooks,
         notification_poll,
         notification_lease,
+        remote_execution_enabled,
+        maximum_ttl,
     )
 
 
@@ -480,6 +500,8 @@ def _schedule(value: dict) -> IntervalSchedule | CronSchedule:
         command = AutomationCommand(command_value)
     except ValueError as error:
         raise ValueError("automation schedule command must be scan or preview") from error
+    if command not in {AutomationCommand.SCAN, AutomationCommand.PREVIEW}:
+        raise ValueError("automation schedule command must be scan or preview")
     limit = value.get("limit")
     if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1):
         raise ValueError("automation schedule limit must be a positive integer")

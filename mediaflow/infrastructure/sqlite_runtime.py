@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +13,11 @@ from mediaflow.domain.automation import (
     AutomationJobStatus,
     ScheduleAuditRecord,
     ScheduleState,
+)
+from mediaflow.domain.execution_authorization import (
+    ExecutionAuthorization,
+    ExecutionAuthorizationAudit,
+    ExecutionAuthorizationStatus,
 )
 from mediaflow.domain.notification import (
     NotificationDelivery,
@@ -29,7 +35,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 class SQLiteTaskRepository:
@@ -263,7 +269,7 @@ class SQLiteTaskRepository:
     def create_job(self, job: AutomationJob) -> None:
         with self._lock, self._connection:
             self._connection.execute(
-                "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._job_values(job),
             )
 
@@ -316,7 +322,7 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE automation_jobs SET command=?, status=?, created_at=?, updated_at=?, "
                 "limit_value=?, started_at=?, completed_at=?, task_id=?, error=?, "
-                "cancellation_requested=?, schedule_id=? WHERE job_id=?",
+                "cancellation_requested=?, schedule_id=?, execute_authorized=? WHERE job_id=?",
                 (*self._job_values(job)[1:], job.job_id),
             )
             if cursor.rowcount != 1:
@@ -435,7 +441,7 @@ class SQLiteTaskRepository:
             if cursor.rowcount != 1:
                 return False
             self._connection.execute(
-                "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._job_values(job),
             )
             self._connection.execute(
@@ -484,6 +490,145 @@ class SQLiteTaskRepository:
                 row["job_id"],
                 AutomationCommand(row["command"]),
                 datetime.fromisoformat(row["next_run_at"]),
+            )
+            for row in rows
+        )
+
+    def create_execution_authorization(
+        self, value: ExecutionAuthorization, audit: ExecutionAuthorizationAudit
+    ) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO execution_authorizations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                self._execution_authorization_values(value),
+            )
+            self._insert_execution_authorization_audit(audit)
+
+    def get_execution_authorization(self, authorization_id: str) -> ExecutionAuthorization | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM execution_authorizations WHERE authorization_id=?",
+                (authorization_id,),
+            ).fetchone()
+        return self._execution_authorization(row) if row else None
+
+    def list_execution_authorizations(self) -> tuple[ExecutionAuthorization, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM execution_authorizations ORDER BY created_at DESC, authorization_id"
+            ).fetchall()
+        return tuple(self._execution_authorization(row) for row in rows)
+
+    def expire_execution_authorizations(self, now: datetime) -> int:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE execution_authorizations SET status=? WHERE status=? AND expires_at<=?",
+                (
+                    ExecutionAuthorizationStatus.EXPIRED.value,
+                    ExecutionAuthorizationStatus.ACTIVE.value,
+                    now.isoformat(),
+                ),
+            )
+        return cursor.rowcount
+
+    def consume_execution_authorization(
+        self,
+        token_digest: str,
+        job: AutomationJob,
+        now: datetime,
+        audit: ExecutionAuthorizationAudit,
+    ) -> ExecutionAuthorization:
+        expired = False
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT * FROM execution_authorizations WHERE token_digest=?", (token_digest,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("execution authorization is invalid")
+            value = self._execution_authorization(row)
+            if value.status is not ExecutionAuthorizationStatus.ACTIVE:
+                raise ValueError(f"execution authorization is {value.status.value}")
+            if value.expires_at <= now:
+                self._connection.execute(
+                    "UPDATE execution_authorizations SET status=? WHERE authorization_id=?",
+                    (ExecutionAuthorizationStatus.EXPIRED.value, value.authorization_id),
+                )
+                expired = True
+            elif job.limit is None or job.limit > value.max_items:
+                raise ValueError("remote organize limit exceeds execution authorization")
+            else:
+                cursor = self._connection.execute(
+                    "UPDATE execution_authorizations SET status=?, consumed_at=?, "
+                    "consumed_job_id=? WHERE authorization_id=? AND status=?",
+                    (
+                        ExecutionAuthorizationStatus.CONSUMED.value,
+                        now.isoformat(),
+                        job.job_id,
+                        value.authorization_id,
+                        ExecutionAuthorizationStatus.ACTIVE.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("execution authorization was already consumed")
+                self._connection.execute(
+                    "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    self._job_values(job),
+                )
+                self._insert_execution_authorization_audit(
+                    replace(audit, authorization_id=value.authorization_id)
+                )
+                updated = self._connection.execute(
+                    "SELECT * FROM execution_authorizations WHERE authorization_id=?",
+                    (value.authorization_id,),
+                ).fetchone()
+        if expired:
+            raise ValueError("execution authorization is expired")
+        return self._execution_authorization(updated)
+
+    def revoke_execution_authorization(
+        self, authorization_id: str, now: datetime, audit: ExecutionAuthorizationAudit
+    ) -> ExecutionAuthorization:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE execution_authorizations SET status=?, revoked_at=? "
+                "WHERE authorization_id=? AND status=? AND expires_at>?",
+                (
+                    ExecutionAuthorizationStatus.REVOKED.value,
+                    now.isoformat(),
+                    authorization_id,
+                    ExecutionAuthorizationStatus.ACTIVE.value,
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                existing = self.get_execution_authorization(authorization_id)
+                if existing is None:
+                    raise LookupError(f"execution authorization {authorization_id!r} was not found")
+                raise ValueError("only an active unexpired execution authorization can be revoked")
+            self._insert_execution_authorization_audit(audit)
+            row = self._connection.execute(
+                "SELECT * FROM execution_authorizations WHERE authorization_id=?",
+                (authorization_id,),
+            ).fetchone()
+        return self._execution_authorization(row)
+
+    def list_execution_authorization_audit(
+        self, authorization_id: str
+    ) -> tuple[ExecutionAuthorizationAudit, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM execution_authorization_audit WHERE authorization_id=? "
+                "ORDER BY occurred_at, audit_id",
+                (authorization_id,),
+            ).fetchall()
+        return tuple(
+            ExecutionAuthorizationAudit(
+                row["audit_id"],
+                row["authorization_id"],
+                row["action"],
+                datetime.fromisoformat(row["occurred_at"]),
+                row["job_id"],
+                row["actor"],
             )
             for row in rows
         )
@@ -722,7 +867,8 @@ class SQLiteTaskRepository:
                     job_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, limit_value INTEGER,
                     started_at TEXT, completed_at TEXT, task_id TEXT, error TEXT,
-                    cancellation_requested INTEGER NOT NULL DEFAULT 0, schedule_id TEXT
+                    cancellation_requested INTEGER NOT NULL DEFAULT 0, schedule_id TEXT,
+                    execute_authorized INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS automation_jobs_status_created
                     ON automation_jobs(status, created_at, job_id);
@@ -748,6 +894,20 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS notification_due
                     ON notification_deliveries(status, next_attempt_at, created_at);
+                CREATE TABLE IF NOT EXISTS execution_authorizations (
+                    authorization_id TEXT PRIMARY KEY, token_digest TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+                    max_items INTEGER NOT NULL, actor TEXT, note TEXT, consumed_at TEXT,
+                    consumed_job_id TEXT, revoked_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS execution_authorization_audit (
+                    audit_id TEXT PRIMARY KEY, authorization_id TEXT NOT NULL,
+                    action TEXT NOT NULL, occurred_at TEXT NOT NULL, job_id TEXT, actor TEXT,
+                    FOREIGN KEY(authorization_id)
+                        REFERENCES execution_authorizations(authorization_id)
+                );
+                CREATE INDEX IF NOT EXISTS execution_authorizations_status_expiry
+                    ON execution_authorizations(status, expires_at);
                 """
             )
             self._connection.execute(
@@ -779,6 +939,11 @@ class SQLiteTaskRepository:
                 )
             if "schedule_id" not in job_columns:
                 self._connection.execute("ALTER TABLE automation_jobs ADD COLUMN schedule_id TEXT")
+            if "execute_authorized" not in job_columns:
+                self._connection.execute(
+                    "ALTER TABLE automation_jobs ADD COLUMN "
+                    "execute_authorized INTEGER NOT NULL DEFAULT 0"
+                )
 
     @staticmethod
     def _lock_path(path: str) -> str:
@@ -956,6 +1121,7 @@ class SQLiteTaskRepository:
             job.error,
             int(job.cancellation_requested),
             job.schedule_id,
+            int(job.execute_authorized),
         )
 
     @staticmethod
@@ -973,6 +1139,52 @@ class SQLiteTaskRepository:
             row["error"],
             bool(row["cancellation_requested"]),
             row["schedule_id"],
+            bool(row["execute_authorized"]),
+        )
+
+    @staticmethod
+    def _execution_authorization_values(value: ExecutionAuthorization) -> tuple[object, ...]:
+        return (
+            value.authorization_id,
+            value.token_digest,
+            value.status.value,
+            value.created_at.isoformat(),
+            value.expires_at.isoformat(),
+            value.max_items,
+            value.actor,
+            value.note,
+            value.consumed_at.isoformat() if value.consumed_at else None,
+            value.consumed_job_id,
+            value.revoked_at.isoformat() if value.revoked_at else None,
+        )
+
+    @staticmethod
+    def _execution_authorization(row: sqlite3.Row) -> ExecutionAuthorization:
+        return ExecutionAuthorization(
+            row["authorization_id"],
+            row["token_digest"],
+            ExecutionAuthorizationStatus(row["status"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["expires_at"]),
+            row["max_items"],
+            row["actor"],
+            row["note"],
+            datetime.fromisoformat(row["consumed_at"]) if row["consumed_at"] else None,
+            row["consumed_job_id"],
+            datetime.fromisoformat(row["revoked_at"]) if row["revoked_at"] else None,
+        )
+
+    def _insert_execution_authorization_audit(self, value: ExecutionAuthorizationAudit) -> None:
+        self._connection.execute(
+            "INSERT INTO execution_authorization_audit VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                value.audit_id,
+                value.authorization_id,
+                value.action,
+                value.occurred_at.isoformat(),
+                value.job_id,
+                value.actor,
+            ),
         )
 
     @staticmethod

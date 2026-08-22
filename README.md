@@ -61,6 +61,10 @@ mediaflow notifications stale --age-seconds 300
 mediaflow notifications requeue DELIVERY_ID
 mediaflow notification-worker run-next
 mediaflow notification-worker run
+mediaflow execution-authorizations issue --ttl-seconds 300 --max-items 20
+mediaflow execution-authorizations list
+mediaflow execution-authorizations show AUTHORIZATION_ID
+mediaflow execution-authorizations revoke AUTHORIZATION_ID
 mediaflow api serve --host 127.0.0.1 --port 8787
 ```
 
@@ -134,10 +138,11 @@ environment-variable name in JSON:
 
 `GET /health` is public. Every `/api/v1` request requires
 `Authorization: Bearer $MEDIAFLOW_API_TOKEN`. The API can query tasks, jobs, and pending
-confirmations, and it can queue only `scan` or `preview`. Run one queued item with
-`mediaflow worker run-next`; preview is always DryRun. Remote organize/execute, overwrite, delete,
-and conflict resolution are rejected. This standard-library server is for trusted loopback
-development use, not direct Internet exposure.
+confirmations, and it queues `scan` or `preview` by default. Run one queued item with
+`mediaflow worker run-next`; preview is always DryRun. Remote organize is accepted only through the
+later disabled-by-default one-time authorization boundary documented below. Remote overwrite,
+delete, and conflict resolution remain rejected. This standard-library server is for trusted
+loopback development use, not direct Internet exposure.
 
 Phase 18.2 adds a resident Worker and opt-in interval schedules. Example schedules are disabled by
 default. Run Scheduler and Worker separately. `jobs cancel JOB_ID` cancels pending work immediately
@@ -168,6 +173,33 @@ Claimed deliveries use the configured `deliveryLeaseSeconds` (300 by default). A
 crash, an expired claim is safely eligible for another attempt; its stable delivery ID lets
 receivers deduplicate the unavoidable at-least-once crash window.
 
+Phase 18.5 optionally permits a remote real organize Job through a locally issued, short-lived,
+single-use authorization. It is disabled by default and the normal API bearer token is never
+sufficient mutation authority. Enable it explicitly:
+
+```json
+"api": {
+  "tokenEnv": "MEDIAFLOW_API_TOKEN",
+  "remoteExecution": {"enabled": true, "maximumTtlSeconds": 900}
+}
+```
+
+Issue a token locally, then submit exactly one bounded Job:
+
+```bash
+mediaflow execution-authorizations issue --ttl-seconds 300 --max-items 20
+curl -X POST http://127.0.0.1:8787/api/v1/jobs \
+  -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
+  -H "X-MediaFlow-Execution-Token: <one-time-token>" \
+  -H "Content-Type: application/json" \
+  --data '{"command":"organize","execute":true,"limit":20}'
+mediaflow worker run-next
+```
+
+The raw authorization token is displayed once and only its SHA-256 digest is persisted. Consumption
+and Job creation are atomic. Scheduler configurations remain scan/preview-only, and all existing
+conflict/no-overwrite/OrganizerExecutor checks still apply.
+
 ## Persistent runtime state
 
 Production scan/preview/organize use the configured SQLite database:
@@ -185,4 +217,6 @@ operation history remains compatible.
 
 The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries,
 persistent scan/preview jobs, Cron schedules, and signed Webhook notifications are complete.
-Protected remote execute and Web UI remain planned; unattended real organization is not supported.
+One-time protected remote execute is available only behind its disabled-by-default feature gate.
+Reusable service execution authority, scheduled execute, user/role controls, and Web UI remain
+planned; unattended scheduled real organization is not supported.
