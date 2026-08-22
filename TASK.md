@@ -1,67 +1,81 @@
-# Phase 19.9 — Read-only Operational Log API and UI
+# Phase 19.10 — Safe Runtime Database Backup and Verification
 
 ## Goal
 
-Expose Phase 19.8's already-redacted structured operational records through the existing authenticated
-API and operator UI using stable bidirectional keyset pagination. Keep retrieval bounded and strictly
-read-only; do not expand the persisted log schema or expose discarded context.
+Protect the production SQLite runtime state introduced through Phases 14–19 with consistent online
+backups and read-only verification. Provide local operator commands only. Do not implement restore or
+touch media Storage.
 
-## 1. Repository and cursor reads
+## 1. Backup adapter
 
-- Extend operational log reads with newest-first `(occurred_at, log_id)` after/before boundaries.
-- Add a scoped v2 cursor kind bound to the selected minimum level (`all` included).
-- Apply `limit + 1` in SQLite, reverse keyset queries for Previous, and restore canonical ordering.
-- Never use OFFSET, total counts, full enumeration, full-text search, or arbitrary context matching.
+- Add an infrastructure backup service using SQLite's online backup API so WAL/uncommitted file-copy
+  assumptions cannot produce inconsistent snapshots.
+- Back up the configured runtime database to an explicit local destination through a temporary file,
+  verify it, then publish atomically.
+- Refuse source=destination, directories, symlinks, existing targets, unsafe NUL paths, and unsupported
+  parent state. Never overwrite a backup.
+- Clean up only the service-owned temporary file after failure; never delete source or target data.
+- Return a structured result with UTC time, source schema version, byte size, SHA-256, and destination.
 
-## 2. API
+## 2. Verification
 
-- Add authenticated `GET /api/v1/logs?limit=100&level=all&cursor=...`.
-- Accept only 1–100 limit, existing level names, and one cursor; reject malformed/duplicate fields.
-- Return only Phase 19.8 safe fields plus Previous/Next cursors.
-- Use existing READ permission and normalized audit; query/cursor/records must not enter audit/errors.
+- Open candidate backups read-only and run bounded SQLite integrity/schema checks.
+- Require the runtime schema marker and reject newer-than-supported, missing, malformed, empty,
+  truncated, or non-SQLite files with clear local errors.
+- Verification must not migrate or otherwise modify the candidate.
 
-## 3. Operator UI
+## 3. CLI
 
-- Add a read-only Logs tab with level selector, explicit refresh, and Previous/Next.
-- Level changes reset to first page; cursor navigation preserves the selected level.
-- Render via text nodes and preserve CSP, no-store, same-origin, and in-memory credentials.
-- Add no prune, live tail, Task/Job controls, workflow actions, or execution controls.
+- Add `mediaflow database backup --output /safe/path/runtime.sqlite3`.
+- Add `mediaflow database verify /safe/path/runtime.sqlite3`.
+- Resolve the source only from configured `persistence.databasePath`; no arbitrary source option.
+- Commands construct no Storage, Provider, Scanner, workflow, Scheduler, Notification worker, API, or
+  OrganizerExecutor and never expose configuration secrets.
+
+## 4. Safety and concurrency
+
+- Existing readers/writers may continue during online backup; snapshot must pass integrity verification.
+- Backup/verify performs zero media Storage mutation and never changes Tasks, Results, audit, logs,
+  FileIndex, execution authorization, or source SQLite state.
+- No API/Web endpoint, scheduled backup, retention deletion, upload, encryption, or restore in this phase.
 
 ## Required tests
 
-- First→middle→last→middle→first traversal, same timestamps, page size one, empty dataset.
-- Minimum-level filters, filter-bound cursors, cross-filter/cross-kind rejection.
-- SQL reverse keyset/limit verification, insertion/deletion boundaries, canonical order/no duplicates.
-- Malformed version/direction/scope/time/ID/oversize and duplicate/injected query rejection.
-- API field allowlist and absence of paths/errors/titles/provider/HTTP/context/secrets.
-- Viewer/operator/executor/auditor/admin read behavior and normalized audit without query data.
-- UI level reset, Previous/Next preservation, explicit refresh, text rendering, and no write controls.
-- Existing logs CLI/prune, pagination, API/UI, Scheduler/Notification, workflow, Storage, and full regressions.
+- Successful online backup includes current schema and representative Task/Result/audit/log records.
+- WAL/concurrent-write snapshot remains internally consistent and source remains usable.
+- SHA-256/size/schema result correctness and deterministic verification output.
+- Existing target, same path, directory, symlink, missing parent/source, NUL, malformed/truncated/empty,
+  missing schema marker, and newer schema rejection.
+- Injected backup/integrity/publish failures leave source intact, never overwrite target, and remove only
+  owned temporary files.
+- Verify is provably read-only (mtime/hash unchanged) and creates no sidecar/WAL files.
+- CLI argument/config errors and output contain no secrets; no Storage/provider/workflow construction.
+- SQLite migration, Task/History, logs, API/UI, Scheduler/Notification, Storage, DryRun, and full regressions.
 - Formatter, lint, compile, dependency/build/configuration, FFprobe/FFmpeg, and diff checks.
 
 ## Documentation
 
-Update README, requirements, configuration, architecture, progress, and roadmap with endpoint,
-ordering, cursor scope, redaction, and no-search/no-live-tail limitations.
+Update README, requirements, configuration, architecture, progress, and roadmap with commands,
+snapshot semantics, verification, operational procedure, and explicit restore/encryption limitations.
 
 ## Out of scope
 
-Log writes through API, prune through API/UI, full-text search, arbitrary fields/context, media paths,
-raw errors, remote shipping/OpenTelemetry, live tail/SSE/WebSocket, OIDC, Secret Store, and TLS.
+Restore, automatic scheduling, backup retention/deletion, remote/object-storage upload, encryption/key
+management, compression, incremental backup, API/UI controls, OIDC, Secret Store, and TLS.
 
 ## Final report
 
-## Phase 19.9 Result
+## Phase 19.10 Result
 
 PASS / FAIL
 
-## Log Pagination
+## Backup
 
-## API and UI
+## Verification
 
-## Redaction and Authorization
+## CLI
 
-## Safety
+## Safety and Failure Handling
 
 ## Regression
 

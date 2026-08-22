@@ -38,10 +38,9 @@
 
 ## Current
 
-- Phase 18.8 RBAC-protected conflict confirmation service API: PASS
-- Phase 18.9 persistent metadata review queue: PASS
-- Phase 18.10 explicit metadata review resolution and recovery: PASS
-- Phase 18.11 classification review queue and explicit rule selection: PASS
+- Phase 19.8 persistent redacted operational log foundation: PASS
+- Phase 19.9 read-only operational log API and UI: PASS
+- Phase 19.10 safe runtime database backup and verification: PASS
 
 ## Planned
 
@@ -989,5 +988,19 @@ Phase 19.9 read-only operational log API and UI (2026-08-22): PASS
 - Added a text-node-only Logs UI with level selector, explicit first-page refresh, and Previous/Next;
   no prune, write, search, live tail, Task/Job, or execution controls are exposed
 - Full suite: 426 tests, 423 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated wheel build, both example validations, FFmpeg/FFprobe
+  runtime audit, and diff check passed
+
+Phase 19.10 safe runtime database backup and verification (2026-08-22): PASS
+
+- Added a local infrastructure-only backup service using SQLite's online backup API, including WAL
+  snapshot coverage, read-only integrity/schema verification, SHA-256, byte size, and UTC results
+- Added private same-directory staging and atomic no-overwrite publication; invalid source/target,
+  malformed/newer databases, and simulated publication failures fail without changing source/target
+- Added local `database backup` and `database verify` commands that use only configured persistence,
+  construct no media Storage/provider/workflow, and expose no configuration secrets
+- Verified representative Task, Result, security audit, and operational log records in a reopened
+  snapshot; restore, scheduling, retention deletion, upload, and encryption remain explicitly absent
+- Full suite: 429 tests, 426 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated wheel build, both example validations, FFmpeg/FFprobe
   runtime audit, and diff check passed

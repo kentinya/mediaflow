@@ -953,6 +953,18 @@ order. The opaque scope binds `all` or the chosen minimum level. API output uses
 allowlist, existing READ RBAC, and normalized audit without queries. The UI uses text nodes,
 in-memory credentials, explicit refresh, and no prune/write/live controls.
 
+## Runtime database backup boundary
+
+Phase 19.10 adds a local infrastructure-only `SQLiteBackupService`. The configured runtime database
+is opened read-only and SQLite's online backup API writes a private temporary database in the target
+directory. Integrity and runtime schema are checked before an atomic hard-link publication; an
+existing destination wins the race and is never overwritten. Only the owned temporary file is removed
+after failure. Verification opens candidates read-only, computes size/SHA-256, and cannot migrate them.
+
+These commands construct no Storage/provider/workflow/API/Executor and do not alter source state.
+Restore is deliberately absent because selecting and replacing an active production database requires
+a separately designed shutdown, rollback, compatibility, and authorization procedure.
+
 ## Runtime strategy catalogs
 
 The Phase 13 runtime boundary loads all strategy content from one JSON document selected by

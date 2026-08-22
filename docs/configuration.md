@@ -574,6 +574,18 @@ same names as configuration. Cursors are bound to the selected minimum level, us
 `(occurred_at, log_id)` keysets, and cannot cross filters. The UI provides explicit refresh and
 Previous/Next but no prune, search, live tail, or workflow control.
 
+The runtime database source is always `persistence.databasePath`. Create and verify local snapshots:
+
+```bash
+mediaflow database backup --output /safe/backups/mediaflow-2026-08-22.sqlite3
+mediaflow database verify /safe/backups/mediaflow-2026-08-22.sqlite3
+```
+
+Backup uses SQLite online snapshot semantics (including WAL state), validates integrity/schema, then
+atomically publishes a private new file. The destination parent must already exist and may not be a
+symlink; existing destinations are never overwritten. Verification is read-only. Restore, encryption,
+remote upload, scheduling, and retention deletion are not provided.
+
 Wildcard, LAN, and public binds require `--allow-insecure-remote-http`. The flag only acknowledges
 unencrypted transport; it does not enable TLS. Prefer loopback behind a trusted HTTPS reverse proxy,
 restrict network access, and never treat forwarded headers as authenticated identity.

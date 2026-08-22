@@ -56,6 +56,7 @@ from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     load_runtime_configuration,
 )
+from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.tmdb import TMDBClient, TMDBConfig, TMDBProvider
@@ -195,6 +196,12 @@ def final_main(
     log_list.add_argument("--limit", type=int, default=100)
     log_list.add_argument("--level", choices=[item.name for item in LogLevel])
     log_commands.add_parser("prune")
+    database = commands.add_parser("database", help="runtime database protection")
+    database_commands = database.add_subparsers(dest="database_command", required=True)
+    database_backup = database_commands.add_parser("backup")
+    database_backup.add_argument("--output", required=True)
+    database_verify = database_commands.add_parser("verify")
+    database_verify.add_argument("path")
     dashboard = commands.add_parser("dashboard", help="read-only operational summary")
     dashboard.add_argument("--recent-limit", type=int, default=10)
     metadata_reviews = commands.add_parser(
@@ -297,6 +304,15 @@ def final_main(
                         maximum_records=configuration.operational_logging_maximum_records,
                     )
                     stdout.write(f"Operational log rows removed: {removed}\n")
+            return 0
+        if arguments.command == "database":
+            service = SQLiteBackupService(configuration.database_path)
+            result = (
+                service.backup(arguments.output)
+                if arguments.database_command == "backup"
+                else service.verify(arguments.path)
+            )
+            stdout.write(render_database_backup(result, arguments.database_command))
             return 0
         if arguments.command == "metadata-reviews":
             with SQLiteTaskRepository(configuration.database_path) as repository:
@@ -1089,6 +1105,22 @@ def render_operational_logs(values) -> str:
         )
     lines.extend(("", f"Total: {len(values)}", ""))
     return "\n".join(lines)
+
+
+def render_database_backup(value, operation: str) -> str:
+    return "\n".join(
+        (
+            "",
+            f"DATABASE {operation.upper()}",
+            "",
+            f"Path: {value.destination}",
+            f"Schema: {value.schema_version}",
+            f"Size: {value.size_bytes}",
+            f"SHA-256: {value.sha256}",
+            f"Checked: {value.created_at.isoformat()}",
+            "",
+        )
+    )
 
 
 def render_notification(value) -> str:
