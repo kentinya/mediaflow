@@ -1,68 +1,65 @@
-# Phase 19.23.2 — Self-hosted Isolated OpenList Evidence Run
+# Phase 19.23.3 — OpenList v4 Empty-Directory DTO Repair and Rerun
 
 ## Goal
 
-Use the operator-authorized, locally self-hosted OpenList service to execute the
-Phase 19.23 production-adapter matrix and retain non-secret evidence. Close the
-self-hosted OpenList row only if every operation and cleanup assertion passes.
+Repair only the real OpenList v4.2.2 empty-directory response incompatibility
+found in Phase 19.23.2, then redeploy the isolated official service and rerun the
+complete production-adapter matrix.
 
 ## Scope
 
-### 1. Isolated deployment
+### 1. Strict DTO compatibility
 
-- Use the current official stable OpenList container image pinned by version.
-- Bind HTTP only to host loopback on an ephemeral/non-public port.
-- Generate a unique administrator credential for this run and never persist it
-  in Git, shell output, documentation, logs, or reports.
-- Store container state and backend files only in a new temporary directory.
-- Configure one OpenList Local storage rooted inside that temporary directory.
-- Do not mount repository, user configuration, or media directories.
+- Normalize `content: null` to an empty sequence only when `total == 0`.
+- Preserve normal non-empty list mapping.
+- Reject `content: null` with non-zero/negative/bool/missing total.
+- Reject non-list, non-null content and malformed entry DTOs.
+- Keep all OpenList HTTP DTO behavior inside the infrastructure adapter.
 
-### 2. Acceptance root and token
+### 2. Regression tests
 
-- Create a dedicated empty `mediaflow-acceptance-*` root through deployment
-  setup, separate from all user libraries.
-- Obtain a run-scoped API token from the isolated service.
-- Supply all Phase 19.23.1 gate variables explicitly, including a new report.
-- Do not use or inspect `config/alist.json`.
+- Add the exact v4.2.2 empty response regression.
+- Add inconsistent-null, malformed-content, and invalid-total cases.
+- Preserve authentication, error mapping, pagination, no-overwrite, retry, and
+  secret-redaction behavior.
 
-### 3. Execute real matrix
+### 3. Real isolated rerun
 
-Run the production `OpenListStorage` and `OrganizerExecutor` acceptance suite,
-covering adapter lifecycle, no-overwrite, Local↔OpenList COPY/MOVE,
-OpenList↔OpenList COPY/MOVE, content/size/source verification, and cleanup.
+- Reuse the Phase 19.23.2 loopback-only, pinned official container pattern with
+  new temporary credentials/data and an empty `mediaflow-acceptance-*` root.
+- Execute the full adapter lifecycle and Local↔OpenList/OpenList↔OpenList matrix.
+- Retain a new non-secret JSON report and destroy container/secrets/backend.
+- If another production defect appears, record FAIL and do not repair it in the
+  same acceptance run.
 
-### 4. Evidence and cleanup
+### 4. Status
 
-- Retain the generated non-secret JSON report outside Git unless explicitly
-  normalized into documentation.
-- Record pinned OpenList version, date, matrix result, and cleanup status in the
-  authoritative acceptance document.
-- Stop and remove the isolated container after validation.
-- Remove only run-created temporary deployment data after evidence inspection.
-- A cleanup failure is a FAIL, not PASS.
-
-### 5. Regression
-
-After the real run, execute focused OpenList/Organizer/Storage regressions, full
-offline tests, formatter, lint, compile, dependency/config validation,
-FFmpeg/FFprobe audit, and isolated wheel smoke.
+- Mark OpenList self-hosted acceptance PASS only if every matrix and cleanup
+  assertion passes.
+- Self-hosted Local-driver evidence does not certify third-party cloud drivers.
+- Do not begin Samba/MinIO until this OpenList repair/rerun concludes.
 
 ## Boundaries
 
-Do not alter production adapter semantics during an acceptance run. If the real
-matrix exposes a product defect, record FAIL and create a separate repair task.
-Do not begin SMB/S3/R2, long-duration testing, UI, or strategy engine work.
+Do not change Parser, Scanner, Recognition, Metadata, Naming, Classification,
+Planner, Organizer policy semantics, UI, API, or user configuration. Do not use
+`config/alist.json`. Do not broadly loosen response validation or thresholds.
+
+## Validation
+
+Run focused OpenList contract/storage/Organizer tests, full offline tests,
+formatter, lint, compile, dependency/configuration checks, FFmpeg/FFprobe audit,
+isolated wheel smoke, and the explicit real OpenList matrix.
 
 ## Completion Report
 
 Finish with:
 
-## Phase 19.23.2 Result
+## Phase 19.23.3 Result
 
-PASS / BLOCKED / FAIL
+PASS / FAIL
 
-## Deployment
+## DTO Repair
 
 ## Real Matrix
 

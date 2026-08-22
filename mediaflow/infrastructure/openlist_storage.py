@@ -476,14 +476,20 @@ class HttpOpenListClient:
             "/api/fs/list",
             {"path": path, "page": page, "per_page": per_page, "refresh": False},
         )
-        if (
-            not isinstance(data, dict)
-            or not isinstance(data.get("content"), list)
-            or not isinstance(data.get("total"), int)
-        ):
+        if not isinstance(data, dict):
             raise OpenListClientError(OpenListClientErrorKind.INVALID_RESPONSE)
-        entries = tuple(self._entry(item, path) for item in data["content"])
-        return OpenListPage(entries, data["total"])
+        content = data.get("content")
+        total = data.get("total")
+        if type(total) is not int or total < 0:
+            raise OpenListClientError(OpenListClientErrorKind.INVALID_RESPONSE)
+        if content is None:
+            if total != 0:
+                raise OpenListClientError(OpenListClientErrorKind.INVALID_RESPONSE)
+            content = []
+        if not isinstance(content, list):
+            raise OpenListClientError(OpenListClientErrorKind.INVALID_RESPONSE)
+        entries = tuple(self._entry(item, path) for item in content)
+        return OpenListPage(entries, total)
 
     def stat(self, path: str) -> OpenListClientEntry:
         return self._entry(

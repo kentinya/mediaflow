@@ -465,3 +465,23 @@ class HttpOpenListClientContractTests(unittest.TestCase):
                 FakeResponse(200, {"code": 403, "message": "file [movie.mkv] exists"})
             )
         self.assertEqual(OpenListClientErrorKind.ALREADY_EXISTS, raised.exception.kind)
+
+    def test_empty_v4_directory_null_content_maps_to_empty_page(self) -> None:
+        self.client._json = lambda *_args, **_kwargs: {"content": None, "total": 0}
+        self.assertEqual(OpenListPage((), 0), self.client.list_page("/empty", 1, 100))
+
+    def test_list_page_rejects_inconsistent_or_malformed_v4_data(self) -> None:
+        for data in (
+            {"content": None, "total": 1},
+            {"content": None, "total": -1},
+            {"content": None, "total": True},
+            {"content": None},
+            {"content": {}, "total": 0},
+            {"content": "", "total": 0},
+            {"content": [], "total": -1},
+            [],
+        ):
+            with self.subTest(data=data), self.assertRaises(OpenListClientError) as raised:
+                self.client._json = lambda *_args, data=data, **_kwargs: data
+                self.client.list_page("/empty", 1, 100)
+            self.assertEqual(OpenListClientErrorKind.INVALID_RESPONSE, raised.exception.kind)

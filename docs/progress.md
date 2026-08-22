@@ -1234,3 +1234,18 @@ Phase 19.23.2 self-hosted isolated OpenList evidence run (2026-08-22): FAIL
   are required in a separate task before Phase 19.24
 - Post-run offline suite: 488 tests, 485 passed, 0 failed, 3 real integrations skipped; Ruff, compile,
   dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed
+
+Phase 19.23.3 OpenList v4 empty-directory DTO repair and rerun (2026-08-22): PASS
+
+- Normalized only the real v4.2.2 empty response `content: null, total: 0` to an empty page; null with
+  inconsistent totals, bool/negative/missing totals, and other malformed content remain rejected
+- Redeployed the official v4.2.2 image on loopback with new temporary credentials/data and executed
+  the full production OpenListStorage/OrganizerExecutor lifecycle and transfer matrix
+- Empty-root/no-overwrite, same-service copy/move, Local↔OpenList COPY/MOVE, OpenList↔OpenList
+  Organizer COPY/MOVE, content/size/source assertions, and allowlisted cleanup all passed
+- The PASS report is retained at `/tmp/mediaflow-openlist-v4.2.2-acceptance-pass-20260822.json`; the
+  container, administrator credential, API token, and temporary backend were removed
+- Evidence is ISOLATED PASS for self-hosted OpenList with Local driver only; third-party drivers and
+  remote atomic publication remain uncertified, while Phase 19 overall remains BLOCKED on SMB/S3-R2
+- Full suite: 490 tests, 487 passed, 0 failed, 3 real integrations skipped; Ruff, compile, dependency,
+  both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed

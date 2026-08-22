@@ -19,7 +19,7 @@ real isolated evidence.
 |---|---|---|---|---|---|
 | Local | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS for write/copy target visibility | ISOLATED PASS on temporary host filesystem |
 | SMB | UNIT PASS | UNIT PASS | UNIT PASS | Not certified | BLOCKED: no isolated real share |
-| OpenList | UNIT PASS; ISOLATED FAIL | UNIT PASS; real rows NOT RUN | UNIT PASS | Not certified | FAIL: v4.2.2 empty-directory DTO rejected by production adapter |
+| OpenList | ISOLATED PASS | ISOLATED PASS | UNIT PASS | Not certified | ISOLATED PASS: self-hosted v4.2.2 with Local driver |
 | S3/R2 | UNIT PASS | UNIT PASS | UNIT PASS | Not certified | BLOCKED: no isolated bucket/prefix |
 
 Local `write` and `copy` stage in the target directory and publish atomically. A reader sees the old
@@ -31,10 +31,10 @@ power-loss durability, multi-file transactions, or source+target atomicity.
 | Source → destination | COPY | MOVE | Current evidence |
 |---|---|---|---|
 | Local → Local | ISOLATED PASS | ISOLATED PASS | Temporary real filesystem |
-| Local → SMB/OpenList/S3-R2 | UNIT PASS | UNIT PASS | OpenList NOT RUN after preflight FAIL; others BLOCKED |
-| SMB/OpenList/S3-R2 → Local | UNIT PASS | UNIT PASS | OpenList NOT RUN after preflight FAIL; others BLOCKED |
+| Local → SMB/OpenList/S3-R2 | UNIT PASS | UNIT PASS | OpenList ISOLATED PASS; others BLOCKED |
+| SMB/OpenList/S3-R2 → Local | UNIT PASS | UNIT PASS | OpenList ISOLATED PASS; others BLOCKED |
 | SMB → SMB | UNIT PASS | UNIT PASS | BLOCKED real share |
-| OpenList → OpenList | UNIT PASS | UNIT PASS | NOT RUN after isolated preflight FAIL |
+| OpenList → OpenList | ISOLATED PASS | ISOLATED PASS | Self-hosted v4.2.2 with Local driver |
 | S3/R2 → S3/R2 | UNIT PASS | UNIT PASS | BLOCKED real bucket/prefix |
 | Any cross-storage LINK | NOT APPLICABLE | NOT APPLICABLE | Explicitly rejected |
 
@@ -90,6 +90,20 @@ and Local↔OpenList/OpenList↔OpenList mutation rows were not run. The contain
 temporary backend were removed. The non-secret report remains outside Git at
 `/tmp/mediaflow-openlist-v4.2.2-acceptance-20260822.json`. This failure must be repaired in a separate
 task and the complete matrix rerun; it is not OpenList acceptance.
+
+### OpenList Phase 19.23.3 repair and rerun
+
+The infrastructure mapper now accepts the exact empty-directory pair `content: null, total: 0` as an
+empty page while rejecting null with inconsistent totals, bool/negative/missing totals, and other
+malformed content. A new loopback-only official `openlistteam/openlist:v4.2.2` instance then passed
+the full production-adapter matrix: empty-root preflight, lifecycle/no-overwrite, same-service
+copy/move, Local→OpenList COPY/MOVE, OpenList→Local COPY/MOVE, OpenList→OpenList Organizer COPY/MOVE,
+content/size/source assertions, and allowlisted cleanup.
+
+Result: `ISOLATED PASS` for the self-hosted OpenList service using its Local driver. The container,
+credential, token, and temporary backend were removed. The non-secret PASS record is retained outside
+Git at `/tmp/mediaflow-openlist-v4.2.2-acceptance-pass-20260822.json`. This does not certify individual
+third-party OpenList drivers or remote atomic publication semantics.
 
 ## Remaining blocking gates
 

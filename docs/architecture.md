@@ -300,7 +300,10 @@ and [authentication middleware](https://github.com/OpenListTeam/OpenList/blob/ma
 
 Business paths are normalized once, remain Unicode logical paths relative to the configured root,
 and reject absolute paths, URLs, drives, NULs, and traversal before any request. List exhausts the
-server's finite pages. Reads follow the `raw_url`/proxy/redirect choice made by OpenList and expose a
+server's finite pages. OpenList v4.2.2 represents an empty directory with `content: null` and
+`total: 0`; the adapter normalizes only that internally consistent pair to an empty page. Null with a
+non-zero total, invalid totals, and other non-list content remain invalid responses. Reads follow the
+`raw_url`/proxy/redirect choice made by OpenList and expose a
 stream; uploads pass a chunk iterator and never buffer a whole media file. Returned streams retain a
 concurrency permit until closed.
 
