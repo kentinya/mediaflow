@@ -51,6 +51,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskItem,
 )
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
+from mediaflow.infrastructure.migration_rehearsal import SQLiteMigrationRehearsalService
 from mediaflow.infrastructure.operational_logging import SQLiteOperationalLogger
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
@@ -213,6 +214,8 @@ def final_main(
     upgrade_check = upgrade_commands.add_parser("check")
     upgrade_check.add_argument("--backup", required=True)
     upgrade_check.add_argument("--max-backup-age-hours", type=float, default=24)
+    upgrade_rehearse = upgrade_commands.add_parser("rehearse")
+    upgrade_rehearse.add_argument("--backup", required=True)
     dashboard = commands.add_parser("dashboard", help="read-only operational summary")
     dashboard.add_argument("--recent-limit", type=int, default=10)
     metadata_reviews = commands.add_parser(
@@ -344,11 +347,15 @@ def final_main(
                 stdout.write(render_database_backup(result, arguments.database_command))
             return 0
         if arguments.command == "upgrade":
-            result = UpgradePreflightService(configuration.database_path).check(
-                arguments.backup,
-                maximum_backup_age_hours=arguments.max_backup_age_hours,
-            )
-            stdout.write(render_upgrade_preflight(result))
+            if arguments.upgrade_command == "rehearse":
+                result = SQLiteMigrationRehearsalService(arguments.backup).rehearse()
+                stdout.write(render_migration_rehearsal(result))
+            else:
+                result = UpgradePreflightService(configuration.database_path).check(
+                    arguments.backup,
+                    maximum_backup_age_hours=arguments.max_backup_age_hours,
+                )
+                stdout.write(render_upgrade_preflight(result))
             return 0
         if arguments.command == "metadata-reviews":
             with SQLiteTaskRepository(configuration.database_path) as repository:
@@ -1208,6 +1215,29 @@ def render_database_restore(value) -> str:
             f"Migration required: {'YES' if value.migration_required else 'NO'}",
             f"Size: {value.size_bytes}",
             f"SHA-256: {value.sha256}",
+            f"Completed: {value.completed_at.isoformat()}",
+            "",
+        )
+    )
+
+
+def render_migration_rehearsal(value) -> str:
+    counts = ", ".join(f"{name}={count}" for name, count in value.record_counts)
+    return "\n".join(
+        (
+            "",
+            "MIGRATION REHEARSAL",
+            "",
+            "Status: PASS",
+            f"Application: {value.application_version}",
+            f"Source schema: {value.source_schema}",
+            f"Target schema: {value.target_schema}",
+            f"Migration required: {'YES' if value.migration_required else 'NO'}",
+            f"Migration performed on copy: {'YES' if value.migration_performed else 'NO'}",
+            f"Record counts: {counts}",
+            f"Backup size: {value.backup_size_bytes}",
+            f"Backup SHA-256: {value.backup_sha256}",
+            f"Temporary cleanup: {'PASS' if value.temporary_cleanup_complete else 'FAIL'}",
             f"Completed: {value.completed_at.isoformat()}",
             "",
         )

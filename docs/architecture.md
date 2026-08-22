@@ -1001,6 +1001,18 @@ an existing runtime/sidecar/backup and constructs no media Storage or workflow. 
 all MediaFlow processes and manually preserve the old database; empty-path checks are not a process
 liveness guarantee.
 
+## Isolated migration rehearsal boundary
+
+Phase 19.15 copies an explicit verified backup through SQLite into an owner-only temporary database,
+records representative core-table counts, and opens only that copy using the production
+`SQLiteTaskRepository` migration path. It then verifies current Schema/integrity and unchanged counts
+before deleting the copy and its rehearsal-owned sidecars.
+
+The configured Runtime is used only to derive the existing shared process lease and is never opened.
+Backup and Runtime remain unchanged on success and injected copy/migration failures. Rehearsal tests
+the current artifact's forward migration mechanics; it does not perform production migration,
+replacement, rollback, restore, service orchestration, or media Storage access.
+
 ## Cooperative runtime maintenance lease
 
 Phase 19.14 wraps production CLI runtime operations with a process-lifetime advisory lease derived

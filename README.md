@@ -323,6 +323,7 @@ mediaflow logs prune
 mediaflow database backup --output /safe/backups/mediaflow.sqlite3
 mediaflow database verify /safe/backups/mediaflow.sqlite3
 mediaflow upgrade check --backup /safe/backups/mediaflow.sqlite3
+mediaflow upgrade rehearse --backup /safe/backups/mediaflow.sqlite3
 mediaflow database restore /safe/backups/mediaflow.sqlite3 --confirm-empty-destination
 ```
 
@@ -362,6 +363,17 @@ mediaflow upgrade check \
 ```
 
 Preflight does not migrate, stop services, restore, replace, or prove live Storage connectivity.
+
+Before allowing a newer artifact to open production Runtime state, rehearse its real forward migration
+against a disposable copy:
+
+```bash
+mediaflow upgrade rehearse --backup /safe/backups/mediaflow.sqlite3
+```
+
+The command verifies and copies the backup, opens only the private copy through the production
+migration repository, validates the current Schema and representative record counts, then removes the
+copy and its sidecars. Runtime and backup are never migrated or replaced.
 
 ## Release validation
 

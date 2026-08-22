@@ -579,6 +579,7 @@ The runtime database source is always `persistence.databasePath`. Create and ver
 ```bash
 mediaflow database backup --output /safe/backups/mediaflow-2026-08-22.sqlite3
 mediaflow database verify /safe/backups/mediaflow-2026-08-22.sqlite3
+mediaflow upgrade rehearse --backup /safe/backups/mediaflow-2026-08-22.sqlite3
 mediaflow database restore /safe/backups/mediaflow-2026-08-22.sqlite3 \
   --confirm-empty-destination
 ```
@@ -599,6 +600,11 @@ contention. The stable file is empty, mode `0600`, contains no PID/path/secret, 
 release to avoid inode replacement races. Do not delete or replace it while MediaFlow processes may
 run. Exclusive restore locking is rejected on unsupported platforms. Encryption, remote upload,
 scheduling, and retention deletion are not provided.
+
+`upgrade rehearse` uses the explicit backup only. It creates an owner-only temporary SQLite copy next
+to the backup, runs the production forward migration against that copy, verifies the current Schema
+and representative Task/Result/audit/log counts, and removes the copy plus its sidecars. It never opens
+or migrates the configured Runtime database and constructs no Storage/provider workflow.
 
 Wildcard, LAN, and public binds require `--allow-insecure-remote-http`. The flag only acknowledges
 unencrypted transport; it does not enable TLS. Prefer loopback behind a trusted HTTPS reverse proxy,

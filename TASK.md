@@ -1,74 +1,80 @@
-# Phase 19.14 — Cooperative Runtime Maintenance Lock
+# Phase 19.15 — Isolated Runtime Schema Migration Rehearsal
 
 ## Goal
 
-Prevent a confirmed offline restore from running concurrently with other cooperating MediaFlow CLI,
-API, Worker, Scheduler, or maintenance processes that use the same configured runtime database.
-Introduce a process-lifetime shared/exclusive lock without changing database or media behavior.
+Exercise the real SQLite forward-migration path against a private copy of an explicit verified backup,
+then discard the copy. Give operators evidence that the target MediaFlow artifact can migrate their
+data before it ever opens the production runtime database.
 
-## 1. Runtime lease adapter
+## 1. Rehearsal service
 
-- Add a local infrastructure lease derived deterministically from `persistence.databasePath`.
-- Normal runtime commands acquire a non-blocking shared lease for their complete process operation.
-- `database restore` acquires a non-blocking exclusive maintenance lease before backup validation or
-  destination staging and holds it through publication/verification output.
-- Multiple shared holders are allowed; an exclusive holder conflicts with every shared/exclusive holder.
-- Lock contention fails immediately with a clear message and never waits indefinitely.
-- Use kernel-released advisory locks so crashes release ownership. Keep one stable owner-only empty lock
-  file and never delete it during ordinary release, avoiding inode split races.
+- Add a local infrastructure service accepting an explicit backup.
+- Verify the backup with Phase 19.10 rules, copy it through SQLite into an owner-only temporary database,
+  and record the source schema.
+- Open only the temporary database through the production `SQLiteTaskRepository` migration path.
+- Reopen/verify the migrated copy, require the current schema, and confirm representative core table
+  counts remain readable before reporting PASS.
+- Return source/target schema, migration-required/performed flags, backup SHA-256/size, temporary cleanup
+  status, UTC completion time, and application version.
 
-## 2. CLI integration
+## 2. Cleanup and failure safety
 
-- Apply shared leases to commands that access the runtime database or long-lived runtime services.
-- Keep `config validate`, token generation, credential status, and Storage preflight free of runtime
-  lease/file creation because they do not use the runtime database.
-- Validate restore confirmation before acquiring/creating a lease.
-- Release leases in `finally` on success, validation error, exception, cancellation, and service exit.
-- Do not place lock behavior inside Parser, strategy engines, SQLite repositories, or media Storage.
+- Always close the repository and remove only the rehearsal-owned temporary database plus its own
+  `-wal`, `-shm`, and `-journal` sidecars.
+- Preserve backup and configured Runtime hash/mtime/size on success and every injected failure.
+- Reject missing, empty, malformed, symlink, unsupported/newer backup, unsafe parent, and NUL paths.
+- A migration failure must return a clear local error and leave no rehearsal files.
+- Never publish, restore, replace, migrate, or open the configured Runtime database.
 
-## 3. Platform and safety
+## 3. CLI and release integration
 
-- Implement safe POSIX advisory locking first; on unsupported platforms fail restore clearly rather
-  than pretending exclusivity. Normal read-only/non-restore compatibility must remain documented.
-- Refuse symlink/non-regular lock paths and invalid/missing/symlink parents; never follow a lock symlink.
-- Lock files contain no PID, path, token, configuration, or secret data and use owner-only permissions.
-- Locking performs zero media Storage mutation and never changes Runtime records or backup files.
-- This is cooperative MediaFlow process detection, not arbitrary OS-process detection.
+- Add `mediaflow upgrade rehearse --backup /safe/backups/runtime.sqlite3`.
+- Resolve the configured Runtime only for the existing shared cooperative lease; do not read/open it.
+- Output safe schema/count/checksum facts only; never configuration, credentials, paths from records,
+  task errors, titles, provider data, or media paths.
+- Add rehearsal after backup/preflight in the release checklist and installed-wheel smoke test.
+
+## 4. Boundaries
+
+- Construct no media Storage, MetadataProvider, Scanner, workflow, Scheduler, Notification worker,
+  API, or OrganizerExecutor.
+- Do not add new migration semantics or alter existing migration SQL except for a proven defect.
+- Do not implement in-place upgrade, rollback, replacement, automatic restore, API/UI, or scheduling.
+- Preserve RecognitionType C and every accepted media pipeline behavior.
 
 ## Required tests
 
-- Multiple shared leases coexist; exclusive versus shared and exclusive versus exclusive fail fast.
-- Leases release after normal close, exception, cancellation-equivalent unwinding, and subprocess exit.
-- Lock path/mode/content, symlink/non-regular/parent rejection, and crash-release behavior.
-- Runtime CLI command holds a shared lease for its operation; restore holds exclusive before service call.
-- Restore contention creates no destination/temp file and leaves backup/Runtime unchanged.
-- Missing restore confirmation and exempt config/token/credential/storage commands create no lock file.
-- Errors/output contain no secrets; media Storage/provider/workflow behavior remains unchanged.
-- Installed-wheel smoke validates shared/exclusive contention and successful restore after release.
+- Current-schema rehearsal is a verified no-op copy exercise.
+- Representative older-schema backup migrates to current and preserves Task/Result/audit/log records.
+- Missing/malformed/empty/symlink/newer backup and invalid path fail without residue.
+- Injected copy, repository migration, verification, and cleanup-adjacent failures preserve source data
+  and remove owned database/sidecars.
+- Backup and configured Runtime hash/mtime/size stay unchanged; Runtime repository is never opened.
+- CLI holds shared lease, creates no media services, and emits secret-free bounded output.
+- Installed-wheel rehearsal passes outside the checkout.
 - Full existing regression and quality gates pass.
 
 ## Documentation
 
 Update README, requirements, architecture, progress, roadmap, release checklist, and configuration
-operations documentation with cooperative-lock semantics and platform limitations.
+operations documentation.
 
 ## Out of scope
 
-Killing processes, distributed/network locks, Windows-equivalent exclusive restore support, automatic
-maintenance mode, replacing existing databases, rollback, service orchestration, API/UI restore,
-remote restore, deployment, and media Storage locking.
+Production/in-place migration orchestration, rollback, database replacement, automatic restore,
+maintenance shutdown, remote backups, encryption, retention, API/UI, deployment, and media Storage.
 
 ## Final report
 
-## Phase 19.14 Result
+## Phase 19.15 Result
 
 PASS / FAIL
 
-## Runtime Lease
+## Migration Rehearsal
 
-## Restore Exclusion
+## Data Preservation
 
-## CLI Integration
+## CLI
 
 ## Safety
 

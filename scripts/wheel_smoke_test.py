@@ -22,6 +22,7 @@ def inspect_wheel(wheel: Path) -> None:
     required = {
         "mediaflow/cli.py",
         "mediaflow/final_cli.py",
+        "mediaflow/infrastructure/migration_rehearsal.py",
         "mediaflow/infrastructure/sqlite_backup.py",
         "mediaflow/infrastructure/sqlite_restore.py",
         "mediaflow/infrastructure/runtime_lease.py",
@@ -97,6 +98,19 @@ def smoke(wheel: Path, project: Path) -> None:
                 "database",
                 "backup",
                 "--output",
+                str(backup),
+            ],
+            cwd=root,
+            environment=environment,
+        )
+        run(
+            [
+                str(mediaflow),
+                "--config",
+                str(configurations[0]),
+                "upgrade",
+                "rehearse",
+                "--backup",
                 str(backup),
             ],
             cwd=root,

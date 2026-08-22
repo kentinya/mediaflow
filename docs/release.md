@@ -45,6 +45,8 @@ backup/verify round trip. It never reads configured production Storage or creden
   ```bash
   mediaflow --config /path/to/strategy.json upgrade check \
     --backup /safe/backups/mediaflow-before-upgrade.sqlite3
+  mediaflow --config /path/to/strategy.json upgrade rehearse \
+    --backup /safe/backups/mediaflow-before-upgrade.sqlite3
   ```
 
 - Review schema compatibility and retain the previous application artifact and database backup.
@@ -61,6 +63,11 @@ reachable or correctly authorized.
 Upgrade preflight accepts only a configured runtime database and explicit local backup. It reports
 `READY` for the current schema or `MIGRATION_REQUIRED` for an older mutually matching supported
 schema, but performs no migration. A PASS does not stop running services or authorize restore.
+
+Migration rehearsal copies the verified backup to a private temporary SQLite database and opens only
+that copy through the artifact's real repository migration path. PASS confirms the tested copy reached
+the current Schema with representative record counts preserved; it is not an automatic production
+migration or rollback guarantee.
 
 ## Offline restore procedure
 

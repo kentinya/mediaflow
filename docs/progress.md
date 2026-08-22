@@ -45,6 +45,7 @@
 - Phase 19.12 read-only upgrade preflight and compatibility report: PASS
 - Phase 19.13 non-overwriting offline runtime database restore: PASS
 - Phase 19.14 cooperative runtime maintenance lock: PASS
+- Phase 19.15 isolated runtime schema migration rehearsal: PASS
 
 ## Planned
 
@@ -1063,5 +1064,19 @@ Phase 19.14 cooperative runtime maintenance lock (2026-08-22): PASS
 - Verified exception and subprocess-crash release, symlink/non-regular rejection, secret-free lock
   content, restore contention zero-publication, and installed-wheel cross-process exclusion
 - Full suite: 445 tests, 442 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated installed-wheel validation, both example validations,
+  FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 19.15 isolated runtime schema migration rehearsal (2026-08-22): PASS
+
+- Added a local rehearsal service that verifies/copies an explicit backup and opens only its private
+  owner-only temporary copy through the production SQLite repository migration path
+- Current-schema copies complete as verified no-op rehearsals; older supported copies reach current
+  Schema with Task/Result/security-audit/operational-log counts preserved
+- Copy/migration/validation failures preserve backup and configured Runtime and remove rehearsal-owned
+  database plus WAL/SHM/journal sidecars; no production Runtime repository is opened
+- Added `upgrade rehearse --backup ...`, release procedure integration, and installed-wheel rehearsal
+  without constructing Storage/provider/scanner/workflow/executor services
+- Full suite: 449 tests, 446 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated installed-wheel validation, both example validations,
   FFmpeg/FFprobe runtime audit, and diff check passed
