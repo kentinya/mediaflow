@@ -58,6 +58,7 @@ from mediaflow.infrastructure.runtime_configuration import (
 )
 from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
+from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.tmdb import TMDBClient, TMDBConfig, TMDBProvider
 from mediaflow.infrastructure.upgrade_preflight import UpgradePreflightService
@@ -203,6 +204,9 @@ def final_main(
     database_backup.add_argument("--output", required=True)
     database_verify = database_commands.add_parser("verify")
     database_verify.add_argument("path")
+    database_restore = database_commands.add_parser("restore")
+    database_restore.add_argument("backup")
+    database_restore.add_argument("--confirm-empty-destination", action="store_true")
     upgrade = commands.add_parser("upgrade", help="read-only upgrade readiness")
     upgrade_commands = upgrade.add_subparsers(dest="upgrade_command", required=True)
     upgrade_check = upgrade_commands.add_parser("check")
@@ -312,13 +316,19 @@ def final_main(
                     stdout.write(f"Operational log rows removed: {removed}\n")
             return 0
         if arguments.command == "database":
-            service = SQLiteBackupService(configuration.database_path)
-            result = (
-                service.backup(arguments.output)
-                if arguments.database_command == "backup"
-                else service.verify(arguments.path)
-            )
-            stdout.write(render_database_backup(result, arguments.database_command))
+            if arguments.database_command == "restore":
+                result = SQLiteRestoreService(
+                    arguments.backup, configuration.database_path
+                ).restore(confirmed_empty_destination=arguments.confirm_empty_destination)
+                stdout.write(render_database_restore(result))
+            else:
+                service = SQLiteBackupService(configuration.database_path)
+                result = (
+                    service.backup(arguments.output)
+                    if arguments.database_command == "backup"
+                    else service.verify(arguments.path)
+                )
+                stdout.write(render_database_backup(result, arguments.database_command))
             return 0
         if arguments.command == "upgrade":
             result = UpgradePreflightService(configuration.database_path).check(
@@ -1155,6 +1165,24 @@ def render_upgrade_preflight(value) -> str:
             f"Backup size: {value.backup_size_bytes}",
             f"Backup SHA-256: {value.backup_sha256}",
             f"Checked: {value.checked_at.isoformat()}",
+            "",
+        )
+    )
+
+
+def render_database_restore(value) -> str:
+    return "\n".join(
+        (
+            "",
+            "DATABASE RESTORE",
+            "",
+            "Status: RESTORED",
+            f"Destination: {value.destination}",
+            f"Schema: {value.schema_version}",
+            f"Migration required: {'YES' if value.migration_required else 'NO'}",
+            f"Size: {value.size_bytes}",
+            f"SHA-256: {value.sha256}",
+            f"Completed: {value.completed_at.isoformat()}",
             "",
         )
     )

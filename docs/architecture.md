@@ -988,6 +988,19 @@ is not identity evidence. The service also validates the declared Python support
 installed package/schema versions. It never constructs Storage/provider/workflow/API/Executor,
 migrates, creates a backup, replaces a database, detects service shutdown, or performs restore.
 
+## Offline database restore boundary
+
+Phase 19.13 permits recovery only when the configured runtime database and all SQLite sidecars are
+absent. `SQLiteRestoreService` verifies the explicit backup, copies it through SQLite into an
+owner-only same-directory temporary file, verifies/fsyncs the stage, and publishes via an atomic
+no-overwrite hard link. It reports older supported schemas without opening the migration-capable
+repository.
+
+The service removes only its own stage after failure. It never moves, deletes, renames, or overwrites
+an existing runtime/sidecar/backup and constructs no media Storage or workflow. Operators must stop
+all MediaFlow processes and manually preserve the old database; empty-path checks are not a process
+liveness guarantee.
+
 ## Runtime strategy catalogs
 
 The Phase 13 runtime boundary loads all strategy content from one JSON document selected by

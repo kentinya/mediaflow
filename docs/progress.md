@@ -43,6 +43,7 @@
 - Phase 19.10 safe runtime database backup and verification: PASS
 - Phase 19.11 reproducible release validation and CI baseline: PASS
 - Phase 19.12 read-only upgrade preflight and compatibility report: PASS
+- Phase 19.13 non-overwriting offline runtime database restore: PASS
 
 ## Planned
 
@@ -1033,5 +1034,19 @@ Phase 19.12 read-only upgrade preflight and compatibility report (2026-08-22): P
 - Proved source and backup hash/mtime/size and sidecar state remain unchanged; no Storage/provider/
   workflow construction occurs, and the isolated installed-wheel smoke test exercises preflight
 - Full suite: 436 tests, 433 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated installed-wheel validation, both example validations,
+  FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 19.13 non-overwriting offline runtime database restore (2026-08-22): PASS
+
+- Added a local restore service that verifies an explicit backup, stages through SQLite, verifies and
+  fsyncs the stage, then atomically creates an owner-only configured runtime file
+- Restore requires explicit `--confirm-empty-destination` and refuses any existing runtime file,
+  directory, symlink, SQLite sidecar, same path, invalid parent, malformed backup, or newer schema
+- Older supported backups remain unmigrated and report migration-required; backup bytes/mtime are
+  preserved, publish races never overwrite, and failures remove only service-owned temporary files
+- Added the stop/preserve/restore/verify/start procedure and exercised a second missing runtime through
+  the isolated installed wheel without constructing media Storage/provider/workflow services
+- Full suite: 441 tests, 438 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated installed-wheel validation, both example validations,
   FFmpeg/FFprobe runtime audit, and diff check passed

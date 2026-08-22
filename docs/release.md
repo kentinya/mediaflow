@@ -61,3 +61,18 @@ reachable or correctly authorized.
 Upgrade preflight accepts only a configured runtime database and explicit local backup. It reports
 `READY` for the current schema or `MIGRATION_REQUIRED` for an older mutually matching supported
 schema, but performs no migration. A PASS does not stop running services or authorize restore.
+
+## Offline restore procedure
+
+Restore is recovery-only and never overwrites:
+
+1. Stop every MediaFlow CLI worker, scheduler, API, and notification process.
+2. Verify the selected backup with `mediaflow database verify BACKUP`.
+3. Manually preserve/move the configured runtime database and its `-wal`, `-shm`, and `-journal`
+   sidecars. Do not delete them until recovery is independently confirmed.
+4. Run `mediaflow database restore BACKUP --confirm-empty-destination`.
+5. Verify the restored configured path, then start one MediaFlow process. If restore reported an old
+   supported schema, the normal repository open may perform the existing forward migration.
+
+The command refuses any occupied destination or sidecar and does not detect process liveness. Never
+use it as an in-place replacement mechanism.

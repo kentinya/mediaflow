@@ -323,6 +323,7 @@ mediaflow logs prune
 mediaflow database backup --output /safe/backups/mediaflow.sqlite3
 mediaflow database verify /safe/backups/mediaflow.sqlite3
 mediaflow upgrade check --backup /safe/backups/mediaflow.sqlite3
+mediaflow database restore /safe/backups/mediaflow.sqlite3 --confirm-empty-destination
 ```
 
 The generator uses the operating-system cryptographic random source and prints the token once.
@@ -336,8 +337,12 @@ it cannot write or prune logs.
 
 Runtime database backup uses SQLite's online backup API, validates the snapshot, and atomically
 publishes a new non-existing local file. It never overwrites. Verification opens the candidate
-read-only and checks SQLite integrity plus the supported MediaFlow schema marker. Stop services and
-take an additional backup before any future manual restore; automatic restore is intentionally absent.
+read-only and checks SQLite integrity plus the supported MediaFlow schema marker.
+
+Restore is deliberately non-overwriting. Stop every MediaFlow process, verify the backup, manually
+preserve/move the existing runtime database and any `-wal`, `-shm`, or `-journal` sidecars, then run
+the explicitly confirmed restore command. The configured `persistence.databasePath` and all sidecars
+must be absent. MediaFlow never moves, replaces, or deletes the old database for you.
 
 Before installing a new MediaFlow artifact, run `upgrade check` against the configured runtime
 database and a fresh explicit backup. The read-only report checks Python support, application/schema

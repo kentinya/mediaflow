@@ -23,6 +23,7 @@ def inspect_wheel(wheel: Path) -> None:
         "mediaflow/cli.py",
         "mediaflow/final_cli.py",
         "mediaflow/infrastructure/sqlite_backup.py",
+        "mediaflow/infrastructure/sqlite_restore.py",
         "mediaflow/infrastructure/upgrade_preflight.py",
     }
     missing = sorted(required - names)
@@ -96,6 +97,36 @@ def smoke(wheel: Path, project: Path) -> None:
                 "backup",
                 "--output",
                 str(backup),
+            ],
+            cwd=root,
+            environment=environment,
+        )
+        restored = root / "restored-runtime.sqlite3"
+        restore_configuration = root / "restore.json"
+        configured_copy(
+            project / "config" / "strategy.example.json", restore_configuration, restored
+        )
+        run(
+            [
+                str(mediaflow),
+                "--config",
+                str(restore_configuration),
+                "database",
+                "restore",
+                str(backup),
+                "--confirm-empty-destination",
+            ],
+            cwd=root,
+            environment=environment,
+        )
+        run(
+            [
+                str(mediaflow),
+                "--config",
+                str(restore_configuration),
+                "database",
+                "verify",
+                str(restored),
             ],
             cwd=root,
             environment=environment,

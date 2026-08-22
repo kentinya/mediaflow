@@ -579,12 +579,20 @@ The runtime database source is always `persistence.databasePath`. Create and ver
 ```bash
 mediaflow database backup --output /safe/backups/mediaflow-2026-08-22.sqlite3
 mediaflow database verify /safe/backups/mediaflow-2026-08-22.sqlite3
+mediaflow database restore /safe/backups/mediaflow-2026-08-22.sqlite3 \
+  --confirm-empty-destination
 ```
 
 Backup uses SQLite online snapshot semantics (including WAL state), validates integrity/schema, then
 atomically publishes a private new file. The destination parent must already exist and may not be a
-symlink; existing destinations are never overwritten. Verification is read-only. Restore, encryption,
-remote upload, scheduling, and retention deletion are not provided.
+symlink; existing destinations are never overwritten. Verification is read-only.
+
+Restore uses the configured `persistence.databasePath` only and refuses if that path, a directory,
+symlink, or any `-wal`/`-shm`/`-journal` sidecar exists. Stop all MediaFlow processes and manually
+preserve/move the old runtime and sidecars before confirming. The command verifies and stages the
+backup, then atomically creates a private destination; it never moves/deletes/replaces old data and
+cannot prove that services are stopped. Encryption, remote upload, scheduling, and retention deletion
+are not provided.
 
 Wildcard, LAN, and public binds require `--allow-insecure-remote-http`. The flag only acknowledges
 unencrypted transport; it does not enable TLS. Prefer loopback behind a trusted HTTPS reverse proxy,

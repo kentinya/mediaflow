@@ -1,84 +1,86 @@
-# Phase 19.12 — Read-only Upgrade Preflight and Compatibility Report
+# Phase 19.13 — Non-overwriting Offline Runtime Database Restore
 
 ## Goal
 
-Provide a local, fail-fast pre-upgrade check that proves the configured runtime database and an
-operator-supplied backup are readable and compatible before any application upgrade. The command is
-strictly observational: it must not migrate, restore, replace, or mutate any database or media Storage.
+Restore a verified local SQLite backup only into a missing configured runtime database path. Preserve
+the existing no-overwrite safety model: MediaFlow must never replace, rename, delete, or migrate an
+existing runtime database during restore.
 
-## 1. Upgrade preflight service
+## 1. Restore service
 
-- Add an infrastructure/application boundary that inspects the configured runtime database and one
-  explicit backup through read-only SQLite connections.
-- Reuse the Phase 19.10 verification rules rather than duplicating SQLite integrity/schema semantics.
-- Report application version, running Python version/support, current supported schema, runtime schema,
-  backup schema, backup age, size, SHA-256, and readiness status.
-- Require runtime and backup schema versions to agree and be supported; older supported schemas may be
-  reported as migration-required but must not be migrated during preflight.
-- Require a configurable positive maximum backup age and use filesystem UTC modification time only as
-  operational freshness evidence, not database identity proof.
+- Add a local infrastructure restore service that accepts an explicit backup and the configured
+  `persistence.databasePath` destination.
+- Verify the backup with the existing Phase 19.10 integrity/schema rules before staging.
+- Copy through SQLite's online backup API into a private temporary file in the destination directory,
+  verify the staged database, fsync it, and atomically publish only if the destination is still absent.
+- Preserve backup content/mtime/hash and return destination, restored schema, byte size, SHA-256, UTC
+  completion time, and whether a later repository open will require migration.
+- Apply restrictive owner-only file permissions where supported.
 
-## 2. CLI
+## 2. Fail-closed destination rules
 
-- Add `mediaflow upgrade check --backup /safe/backups/runtime.sqlite3`.
-- Add optional `--max-backup-age-hours` with a safe 24-hour default and bounded positive value.
-- Resolve the runtime database only from configured `persistence.databasePath`.
-- Return success only when Python, runtime database, backup integrity/schema, schema agreement, and
-  backup freshness all pass. Fail with a clear local configuration/compatibility error otherwise.
-- Output only local compatibility facts; never print configuration content, tokens, passwords, URLs,
-  media paths, task errors, titles, or provider data.
+- Refuse an existing file, directory, symlink, same backup/destination, missing/symlink parent, NUL,
+  or any existing destination `-wal`, `-shm`, or `-journal` sidecar.
+- Never overwrite or remove any destination/sidecar, even after a race.
+- On verification/copy/fsync/publish failure, remove only the service-owned temporary file.
+- An existing/corrupt runtime database must be moved aside manually after services are stopped; this
+  command does not automate that destructive operator decision.
 
-## 3. Read-only guarantees
+## 3. CLI and explicit confirmation
 
-- Do not instantiate SQLiteTaskRepository or any adapter that can run migrations.
-- Hash/mtime/size of runtime and backup must remain unchanged and no `-wal`/`-shm` sidecars may be
-  created by preflight.
-- Construct no Storage, MetadataProvider, Scanner, workflow, Scheduler, Notification worker, API, or
-  OrganizerExecutor.
-- Do not create a backup automatically; the operator must explicitly create and identify it.
+- Add `mediaflow database restore BACKUP --confirm-empty-destination`.
+- Resolve destination only from configured `persistence.databasePath`; expose no arbitrary destination.
+- Without the exact confirmation flag, fail before validating/copying or creating any file.
+- Output no configuration content, credentials, task errors, titles, provider data, or media paths.
+- Construct no media Storage, MetadataProvider, Scanner, workflow, Scheduler, Notification worker,
+  API, or OrganizerExecutor.
 
-## 4. Documentation and release integration
+## 4. Operational boundary
 
-- Add the preflight command to the release checklist after backup creation and before upgrade.
-- Document that PASS is compatibility evidence only, not service shutdown, restore, rollback, or live
-  Storage/provider validation.
-- Exercise preflight in the isolated installed-wheel smoke test using temporary local databases.
+- Document the required sequence: stop all MediaFlow processes, verify backup, manually preserve/move
+  any existing runtime and sidecars, restore into the empty configured path, verify, then start one
+  process and allow normal repository migration if reported.
+- Do not claim to detect service shutdown. Refusal of destination and sidecars is a safety guard, not
+  a complete process-liveness proof.
+- Exercise restore in the isolated installed-wheel smoke test using temporary local state only.
 
 ## Required tests
 
-- Ready current-schema source plus verified fresh backup.
-- Older matching schema reports migration-required without changing either file.
-- Runtime/backup schema mismatch, newer schema, missing/malformed/empty backup, stale/future-dated
-  backup, missing runtime, same source/backup, and invalid age bounds fail clearly.
-- Python support and installed/development version reporting are deterministic and secret-free.
-- Hash, mtime, size, and sidecar absence prove read-only behavior on success and failure.
-- CLI exits correctly and creates no Storage/provider/workflow objects.
-- Installed-wheel smoke test includes a successful upgrade preflight.
+- Successful current-schema restore preserves representative Task/Result/audit/log records and backup.
+- Older supported backup restores unchanged and reports migration-required without migrating.
+- Confirmation missing, existing destination file/directory/symlink, same path, sidecars, missing or
+  symlink parent, NUL, malformed/empty/missing/newer backup fail before publication.
+- Destination race and injected verify/copy/fsync/publish failures never overwrite data and clean only
+  owned temporary files.
+- Restored file mode is owner-only where supported; result size/hash/schema are correct and reopen works.
+- CLI uses configured destination, constructs no media services, and has secret-free errors/output.
+- Installed-wheel smoke test restores to a second missing temporary runtime and verifies it.
 - Full existing regression and quality gates pass.
 
 ## Documentation
 
-Update README, requirements, architecture, progress, roadmap, and release checklist.
+Update README, requirements, architecture, progress, roadmap, release checklist, and configuration
+operations documentation.
 
 ## Out of scope
 
-Database migration execution, restore/replacement, rollback, automatic backup, service-stop detection,
-retention, remote upload, encryption, API/UI exposure, release publishing, deployment, and live
-provider/storage tests.
+Replacing an existing database, automatic rollback backup, moving/deleting old runtime files,
+service-stop detection, in-place migration, remote backup/restore, encryption, retention, API/UI,
+scheduling, release publishing, deployment, and media Storage operations.
 
 ## Final report
 
-## Phase 19.12 Result
+## Phase 19.13 Result
 
 PASS / FAIL
 
-## Preflight
-
-## Compatibility
+## Restore
 
 ## CLI
 
-## Read-only Safety
+## Safety and Failure Handling
+
+## Operational Procedure
 
 ## Regression
 
