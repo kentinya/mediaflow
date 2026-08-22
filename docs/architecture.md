@@ -700,6 +700,22 @@ canonical MediaIdentity before unchanged Naming/Classification/Planner/Executor 
 snapshot is never promoted directly into MediaIdentity, C remains C, and original execution
 authority cannot be widened.
 
+## Persistent classification review and configured-rule selection
+
+Phase 18.11 captures only production `unclassified` outcomes. ClassificationReviewService takes
+the resolved ClassificationPolicy and snapshots a bounded deterministic list of its enabled rules;
+each choice contains a configured rule ID, MediaLibrary ID, and already-validated relative path.
+SQLite v12 atomically creates review/choices with `waiting_classification`, or resolves one rank
+with immutable audit and a waiting-to-pending TaskItem transition. Source locks are released while
+waiting, and concurrent resolution commits once.
+
+Neither queue creation nor resolution changes ClassificationEngine matching semantics. A decision
+cannot invent a destination. On explicit Task resume, StrategyTestRunner verifies RecognitionType,
+ClassificationPolicy, enabled rule, MediaLibrary ID, and relative path against current configuration,
+then ClassificationPreviewService produces a manual configured-rule result. Stale configuration
+fails closed. Resolution itself creates no Storage/provider/Task/Job and performs no planning or
+execution; normal DryRun and execute authorization remain downstream.
+
 ## Classification policies and engine
 
 Classification is the pure “where does this identified media belong?” stage after Naming. The
@@ -823,8 +839,8 @@ Overwrite requires an overwrite-enabled policy plus a fresh persisted high-risk 
 Only OrganizerExecutor consumes the resulting authorized plan and remains the sole mutation
 boundary. Decision audit records are append-only, and invalid destinations cannot be overridden.
 
-Metadata/classification interactive confirmation, API, and UI remain deferred. Unresolved
-conflicts block execution; silent delete remains unavailable.
+Metadata and classification review/resolution APIs are complete; a graphical UI remains deferred.
+Unresolved conflicts/reviews block execution, and silent delete remains unavailable.
 
 ## Runtime strategy catalogs
 

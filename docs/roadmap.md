@@ -120,6 +120,10 @@ Phase 18.10 已完成显式元数据候选选择与恢复接线：仅允许选�
 TaskItem 状态原子提交；选择本身零网络、零 Storage、零 Job，只有后续显式 `tasks resume`
 才校验策略并通过现有 Provider-ID 详情流程继续处理。
 
+Phase 18.11 已完成分类复核队列与显式配置规则选择：未分类项目持久保存当前策略的启用规则
+选择，决策/审计/TaskItem 原子提交；不允许任意媒体库或路径，显式 resume 会重新校验当前
+规则后才进入 Planner。
+
 ### Phase 19：Web UI 与生产发布
 
 - Dashboard、Storage/Library/Policy 管理、候选确认、冲突处理、任务和历史页面。
@@ -130,7 +134,7 @@ TaskItem 状态原子提交；选择本身零网络、零 Storage、零 Job，�
 
 下一任务应限定为 Phase 18，不同时启动 Web UI。优先顺序：
 
-1. 设计分类人工修正或最小 Web UI 壳，不扩大 Organizer 执行权限。
+1. 在现有 Dashboard 与三类复核 API 上设计最小 Web UI 壳，不扩大 Organizer 执行权限。
 2. 评估数据库用户/OIDC、凭证轮换和 TLS 部署边界。
 3. 评估节假日日历等高级调度需求，避免扩大 Cron 核心。
 4. 保持 Storage 预检、附件、冲突确认和一次性执行授权不变。

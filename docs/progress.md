@@ -41,6 +41,7 @@
 - Phase 18.8 RBAC-protected conflict confirmation service API: PASS
 - Phase 18.9 persistent metadata review queue: PASS
 - Phase 18.10 explicit metadata review resolution and recovery: PASS
+- Phase 18.11 classification review queue and explicit rule selection: PASS
 
 ## Planned
 
@@ -863,5 +864,18 @@ Phase 18.10 explicit metadata review resolution and recovery (2026-08-22): PASS
 - Explicit Task resume validates RecognitionType/policy/provider/media type and uses the existing
   provider-ID details flow; C remains C and execution authority cannot be widened
 - Full suite: 385 tests, 382 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated-free wheel build, both example validations,
+  FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 18.11 classification review queue and explicit rule selection (2026-08-22): PASS
+
+- Added bounded configured-rule snapshots for unclassified items, source-lock release, and
+  `waiting_classification` Task semantics
+- Added SQLite v12 atomic review creation/resolution and immutable decision audit with concurrent
+  single-commit behavior
+- Added operator/executor/admin CLI/API resolution and Dashboard count; arbitrary destination input,
+  automatic resume, Storage/provider construction, Job creation, and execution remain forbidden
+- Explicit resume revalidates current RecognitionType/policy/rule/library/path; C remains C
+- Full suite: 394 tests, 391 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated-free wheel build, both example validations,
   FFmpeg/FFprobe runtime audit, and diff check passed

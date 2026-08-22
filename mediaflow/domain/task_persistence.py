@@ -26,6 +26,7 @@ class TaskItemStatus(StrEnum):
     CANCELLED = "cancelled"
     WAITING_CONFIRM = "waiting_confirm"
     WAITING_METADATA = "waiting_metadata"
+    WAITING_CLASSIFICATION = "waiting_classification"
 
     @property
     def retryable(self) -> bool:

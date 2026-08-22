@@ -10,6 +10,7 @@ from urllib.parse import parse_qs
 from uuid import uuid4
 
 from mediaflow.application.automation import AutomationJobService
+from mediaflow.application.classification_review import ClassificationReviewService
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
@@ -180,6 +181,19 @@ class MediaFlowApi:
                     ]
                 },
             )
+        if parts == ["api", "v1", "classification-reviews"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            limit = self._classification_review_limit(environ)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [
+                        self._value(item)
+                        for item in self._repository.list_classification_reviews(limit=limit)
+                    ]
+                },
+            )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "metadata-reviews"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             review = self._repository.get_metadata_review(parts[3])
@@ -197,6 +211,30 @@ class MediaFlowApi:
                     "audit": [
                         self._metadata_review_audit_value(item)
                         for item in self._repository.list_metadata_review_audit(parts[3])
+                    ],
+                },
+            )
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "v1", "classification-reviews"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            review = self._repository.get_classification_review(parts[3])
+            if review is None:
+                raise LookupError(f"classification review {parts[3]!r} was not found")
+            return self._response(
+                start_response,
+                200,
+                {
+                    **self._value(review),
+                    "choices": [
+                        self._value(item)
+                        for item in self._repository.list_classification_review_choices(parts[3])
+                    ],
+                    "audit": [
+                        self._classification_review_audit_value(item)
+                        for item in self._repository.list_classification_review_audit(parts[3])
                     ],
                 },
             )
@@ -253,6 +291,23 @@ class MediaFlowApi:
                 raise ValueError("candidateRank must be an integer")
             value = MetadataReviewService(self._repository).resolve(
                 parts[3], candidate_rank, actor=principal.principal_id
+            )
+            return self._response(start_response, 200, self._value(value))
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "classification-reviews"]
+            and parts[4] == "resolve"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.RESOLVE_CLASSIFICATION_REVIEW)
+            document = self._document(environ)
+            if set(document) != {"choiceRank"}:
+                raise ValueError("classification review resolution requires only choiceRank")
+            choice_rank = document["choiceRank"]
+            if isinstance(choice_rank, bool) or not isinstance(choice_rank, int):
+                raise ValueError("choiceRank must be an integer")
+            value = ClassificationReviewService(self._repository).resolve(
+                parts[3], choice_rank, actor=principal.principal_id
             )
             return self._response(start_response, 200, self._value(value))
         if (
@@ -453,6 +508,7 @@ class MediaFlowApi:
             ("api", "v1", "security-audit"),
             ("api", "v1", "dashboard"),
             ("api", "v1", "metadata-reviews"),
+            ("api", "v1", "classification-reviews"),
         }
         key = tuple(parts)
         if key in exact:
@@ -470,12 +526,20 @@ class MediaFlowApi:
             return "/api/v1/confirmations/{id}"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "metadata-reviews"]:
             return "/api/v1/metadata-reviews/{id}"
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "classification-reviews"]:
+            return "/api/v1/classification-reviews/{id}"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "metadata-reviews"]
             and parts[4] == "resolve"
         ):
             return "/api/v1/metadata-reviews/{id}/resolve"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "classification-reviews"]
+            and parts[4] == "resolve"
+        ):
+            return "/api/v1/classification-reviews/{id}/resolve"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "confirmations"]
@@ -541,6 +605,19 @@ class MediaFlowApi:
             raise ValueError("metadata review limit must be between 1 and 100")
         return limit
 
+    @staticmethod
+    def _classification_review_limit(environ: dict) -> int:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("classification review query accepts one limit field")
+        try:
+            limit = int(values.get("limit", ["100"])[0])
+        except ValueError as error:
+            raise ValueError("classification review limit must be an integer") from error
+        if limit < 1 or limit > 100:
+            raise ValueError("classification review limit must be between 1 and 100")
+        return limit
+
     @classmethod
     def _confirmation_value(cls, value) -> dict:
         document = cls._value(value)
@@ -555,6 +632,12 @@ class MediaFlowApi:
 
     @classmethod
     def _metadata_review_audit_value(cls, value) -> dict:
+        document = cls._value(value)
+        document.pop("note", None)
+        return document
+
+    @classmethod
+    def _classification_review_audit_value(cls, value) -> dict:
         document = cls._value(value)
         document.pop("note", None)
         return document

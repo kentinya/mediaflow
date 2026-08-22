@@ -14,6 +14,12 @@ from mediaflow.domain.automation import (
     ScheduleAuditRecord,
     ScheduleState,
 )
+from mediaflow.domain.classification_review import (
+    ClassificationReview,
+    ClassificationReviewChoice,
+    ClassificationReviewDecisionAudit,
+    ClassificationReviewStatus,
+)
 from mediaflow.domain.dashboard import (
     DashboardFileCounts,
     DashboardJobCounts,
@@ -50,7 +56,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 class SQLiteTaskRepository:
@@ -135,6 +141,9 @@ class SQLiteTaskRepository:
             job_counts = self._status_counts("automation_jobs", "status")
             pending_confirmations = self._count_where("conflict_confirmations", "status", "pending")
             pending_metadata_reviews = self._count_where("metadata_reviews", "status", "pending")
+            pending_classification_reviews = self._count_where(
+                "classification_reviews", "status", "pending"
+            )
             dead_letters = self._count_where("notification_deliveries", "status", "dead-letter")
             failures = self._recent_operational_failures(recent_limit)
         return DashboardPersistentState(
@@ -164,6 +173,7 @@ class SQLiteTaskRepository:
             ),
             pending_confirmations=pending_confirmations,
             pending_metadata_reviews=pending_metadata_reviews,
+            pending_classification_reviews=pending_classification_reviews,
             dead_letter_notifications=dead_letters,
             recent_failures=failures,
         )
@@ -470,6 +480,184 @@ class SQLiteTaskRepository:
                 row["provider"],
                 row["provider_id"],
                 row["media_type"],
+                datetime.fromisoformat(row["decided_at"]),
+                row["actor"],
+                row["note"],
+            )
+            for row in rows
+        )
+
+    def create_classification_review(
+        self,
+        review: ClassificationReview,
+        choices: tuple[ClassificationReviewChoice, ...],
+        item: PersistentTaskItem,
+    ) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO classification_reviews
+                (review_id, task_id, item_id, source_storage_id, source_path, recognition_type,
+                classification_policy_id, provider, provider_id, media_type, title,
+                canonical_year, status, created_at, updated_at) VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    review.review_id,
+                    review.task_id,
+                    review.item_id,
+                    review.source_storage_id,
+                    review.source_path,
+                    review.recognition_type,
+                    review.classification_policy_id,
+                    review.provider,
+                    review.provider_id,
+                    review.media_type,
+                    review.title,
+                    review.canonical_year,
+                    review.status.value,
+                    review.created_at.isoformat(),
+                    review.updated_at.isoformat(),
+                ),
+            )
+            self._connection.executemany(
+                "INSERT INTO classification_review_choices VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    (
+                        value.review_id,
+                        value.rank,
+                        value.rule_id,
+                        value.rule_name,
+                        value.media_library_id,
+                        value.relative_path,
+                        value.priority,
+                        value.description,
+                    )
+                    for value in choices
+                ),
+            )
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    TaskItemStatus.PROCESSING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("classification review TaskItem is not processing")
+
+    def get_classification_review(self, review_id: str) -> ClassificationReview | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM classification_reviews WHERE review_id=?", (review_id,)
+            ).fetchone()
+        return self._classification_review(row) if row else None
+
+    def get_classification_review_for_item(self, item_id: str) -> ClassificationReview | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM classification_reviews WHERE item_id=?", (item_id,)
+            ).fetchone()
+        return self._classification_review(row) if row else None
+
+    def list_classification_reviews(self, *, limit: int = 100) -> tuple[ClassificationReview, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 1000:
+            raise ValueError("classification review limit must be between 1 and 1000")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM classification_reviews
+                ORDER BY created_at DESC, review_id DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return tuple(self._classification_review(row) for row in rows)
+
+    def list_classification_review_choices(
+        self, review_id: str
+    ) -> tuple[ClassificationReviewChoice, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM classification_review_choices WHERE review_id=?
+                ORDER BY rank""",
+                (review_id,),
+            ).fetchall()
+        return tuple(self._classification_review_choice(row) for row in rows)
+
+    def resolve_classification_review(
+        self,
+        review: ClassificationReview,
+        audit: ClassificationReviewDecisionAudit,
+        item: PersistentTaskItem,
+    ) -> None:
+        if review.status is not ClassificationReviewStatus.RESOLVED:
+            raise ValueError("resolved classification review status is required")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE classification_reviews SET status=?, updated_at=?, selected_rank=?,
+                selected_rule_id=?, selected_media_library_id=?, selected_relative_path=?,
+                decided_at=?, actor=? WHERE review_id=? AND status=?""",
+                (
+                    review.status.value,
+                    review.updated_at.isoformat(),
+                    review.selected_rank,
+                    review.selected_rule_id,
+                    review.selected_media_library_id,
+                    review.selected_relative_path,
+                    review.decided_at.isoformat() if review.decided_at else None,
+                    review.actor,
+                    review.review_id,
+                    ClassificationReviewStatus.PENDING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("classification review is not pending")
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    TaskItemStatus.WAITING_CLASSIFICATION.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("classification review TaskItem is not waiting")
+            self._connection.execute(
+                """INSERT INTO classification_review_decision_audit VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    audit.audit_id,
+                    audit.review_id,
+                    audit.selected_rank,
+                    audit.rule_id,
+                    audit.media_library_id,
+                    audit.relative_path,
+                    audit.decided_at.isoformat(),
+                    audit.actor,
+                    audit.note,
+                ),
+            )
+
+    def list_classification_review_audit(
+        self, review_id: str
+    ) -> tuple[ClassificationReviewDecisionAudit, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM classification_review_decision_audit WHERE review_id=?
+                ORDER BY decided_at, audit_id""",
+                (review_id,),
+            ).fetchall()
+        return tuple(
+            ClassificationReviewDecisionAudit(
+                row["audit_id"],
+                row["review_id"],
+                row["selected_rank"],
+                row["rule_id"],
+                row["media_library_id"],
+                row["relative_path"],
                 datetime.fromisoformat(row["decided_at"]),
                 row["actor"],
                 row["note"],
@@ -1249,6 +1437,35 @@ class SQLiteTaskRepository:
                     decided_at TEXT NOT NULL, actor TEXT, note TEXT,
                     FOREIGN KEY(review_id) REFERENCES metadata_reviews(review_id)
                 );
+                CREATE TABLE IF NOT EXISTS classification_reviews (
+                    review_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL UNIQUE, source_storage_id TEXT NOT NULL,
+                    source_path TEXT NOT NULL, recognition_type TEXT NOT NULL,
+                    classification_policy_id TEXT NOT NULL, provider TEXT NOT NULL,
+                    provider_id TEXT NOT NULL, media_type TEXT NOT NULL, title TEXT NOT NULL,
+                    canonical_year INTEGER, status TEXT NOT NULL, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, selected_rank INTEGER, selected_rule_id TEXT,
+                    selected_media_library_id TEXT, selected_relative_path TEXT,
+                    decided_at TEXT, actor TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(item_id) REFERENCES task_items(item_id)
+                );
+                CREATE TABLE IF NOT EXISTS classification_review_choices (
+                    review_id TEXT NOT NULL, rank INTEGER NOT NULL, rule_id TEXT NOT NULL,
+                    rule_name TEXT NOT NULL, media_library_id TEXT NOT NULL,
+                    relative_path TEXT NOT NULL, priority INTEGER NOT NULL,
+                    description TEXT NOT NULL, PRIMARY KEY(review_id, rank),
+                    FOREIGN KEY(review_id) REFERENCES classification_reviews(review_id)
+                );
+                CREATE TABLE IF NOT EXISTS classification_review_decision_audit (
+                    audit_id TEXT PRIMARY KEY, review_id TEXT NOT NULL,
+                    selected_rank INTEGER NOT NULL, rule_id TEXT NOT NULL,
+                    media_library_id TEXT NOT NULL, relative_path TEXT NOT NULL,
+                    decided_at TEXT NOT NULL, actor TEXT, note TEXT,
+                    FOREIGN KEY(review_id) REFERENCES classification_reviews(review_id)
+                );
+                CREATE INDEX IF NOT EXISTS classification_reviews_status_created
+                    ON classification_reviews(status, created_at, review_id);
                 CREATE TABLE IF NOT EXISTS automation_jobs (
                     job_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, limit_value INTEGER,
@@ -1565,6 +1782,45 @@ class SQLiteTaskRepository:
                 )
                 for component in components
             ),
+        )
+
+    @staticmethod
+    def _classification_review(row: sqlite3.Row) -> ClassificationReview:
+        return ClassificationReview(
+            row["review_id"],
+            row["task_id"],
+            row["item_id"],
+            row["source_storage_id"],
+            row["source_path"],
+            row["recognition_type"],
+            row["classification_policy_id"],
+            row["provider"],
+            row["provider_id"],
+            row["media_type"],
+            row["title"],
+            row["canonical_year"],
+            ClassificationReviewStatus(row["status"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["selected_rank"],
+            row["selected_rule_id"],
+            row["selected_media_library_id"],
+            row["selected_relative_path"],
+            datetime.fromisoformat(row["decided_at"]) if row["decided_at"] else None,
+            row["actor"],
+        )
+
+    @staticmethod
+    def _classification_review_choice(row: sqlite3.Row) -> ClassificationReviewChoice:
+        return ClassificationReviewChoice(
+            row["review_id"],
+            row["rank"],
+            row["rule_id"],
+            row["rule_name"],
+            row["media_library_id"],
+            row["relative_path"],
+            row["priority"],
+            row["description"],
         )
 
     @staticmethod

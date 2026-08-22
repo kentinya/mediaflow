@@ -25,6 +25,7 @@ from mediaflow.domain.classification import (
     ClassificationPolicy,
     ClassificationResult,
 )
+from mediaflow.domain.classification_review import ClassificationSelection
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.metadata import (
     EpisodeIdentity,
@@ -435,6 +436,7 @@ class StrategyTestRunner:
         resource_library_id: str = "strategy-test",
         storage_id: str = "strategy-test",
         metadata_selection: MetadataSelection | None = None,
+        classification_selection: ClassificationSelection | None = None,
     ) -> StrategyTestResult:
         self.validate_configuration(
             live_metadata=live_metadata,
@@ -531,17 +533,53 @@ class StrategyTestRunner:
         classification_error = None
         if (show_classification or show_plan) and resolved and metadata and metadata.identity:
             try:
-                classification = ClassificationPreviewService(
-                    self._classification_policies
-                ).preview(
-                    ClassificationContext(
-                        recognition.recognition_type,
-                        metadata.identity,
-                        parsed,
-                        naming,
-                    ),
-                    resolved.classification_policy_id,
+                preview = ClassificationPreviewService(self._classification_policies)
+                classification_context = ClassificationContext(
+                    recognition.recognition_type,
+                    metadata.identity,
+                    parsed,
+                    naming,
                 )
+                if classification_selection is not None:
+                    if classification_selection.recognition_type != recognition.recognition_type_id:
+                        raise StrategyConfigurationError(
+                            "resolved classification selection RecognitionType no longer matches"
+                        )
+                    if (
+                        classification_selection.classification_policy_id
+                        != resolved.classification_policy_id
+                    ):
+                        raise StrategyConfigurationError(
+                            "resolved classification selection policy no longer matches"
+                        )
+                    policy = self._classification_policies.resolve(
+                        resolved.classification_policy_id
+                    )
+                    rule = next(
+                        (
+                            value
+                            for value in policy.rules
+                            if value.enabled and value.rule_id == classification_selection.rule_id
+                        ),
+                        None,
+                    )
+                    if (
+                        rule is None
+                        or rule.media_library_id != classification_selection.media_library_id
+                        or rule.relative_category_path != classification_selection.relative_path
+                    ):
+                        raise StrategyConfigurationError(
+                            "resolved classification selection rule no longer matches"
+                        )
+                    classification = preview.select_configured_rule(
+                        classification_context,
+                        resolved.classification_policy_id,
+                        classification_selection.rule_id,
+                    )
+                else:
+                    classification = preview.preview(
+                        classification_context, resolved.classification_policy_id
+                    )
             except ClassificationError as error:
                 classification_error = str(error)
         organize_plan = None
@@ -592,6 +630,9 @@ class StrategyTestRunner:
         if self._storage_guard and any(self._storage_guard.mutation_calls.values()):
             raise StrategyMutationError("strategy-test detected a Storage mutation")
         return result
+
+    def classification_policy(self, policy_id: str) -> ClassificationPolicy:
+        return self._classification_policies.resolve(policy_id)
 
     def run_cases(self, document: Any, *, show_naming: bool = False) -> CaseRunSummary:
         raw_cases = document.get("cases") if isinstance(document, dict) else document

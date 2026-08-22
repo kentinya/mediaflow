@@ -20,6 +20,7 @@ class ApiPermission(StrEnum):
     CANCEL_JOB = "cancel_job"
     RESOLVE_CONFIRMATION = "resolve_confirmation"
     RESOLVE_METADATA_REVIEW = "resolve_metadata_review"
+    RESOLVE_CLASSIFICATION_REVIEW = "resolve_classification_review"
     REMOTE_EXECUTE = "remote_execute"
     READ_SECURITY_AUDIT = "read_security_audit"
 
@@ -33,6 +34,7 @@ ROLE_PERMISSIONS = {
             ApiPermission.CANCEL_JOB,
             ApiPermission.RESOLVE_CONFIRMATION,
             ApiPermission.RESOLVE_METADATA_REVIEW,
+            ApiPermission.RESOLVE_CLASSIFICATION_REVIEW,
         }
     ),
     ApiRole.EXECUTOR: frozenset(
@@ -42,6 +44,7 @@ ROLE_PERMISSIONS = {
             ApiPermission.CANCEL_JOB,
             ApiPermission.RESOLVE_CONFIRMATION,
             ApiPermission.RESOLVE_METADATA_REVIEW,
+            ApiPermission.RESOLVE_CLASSIFICATION_REVIEW,
             ApiPermission.REMOTE_EXECUTE,
         }
     ),

@@ -97,6 +97,33 @@ class ClassificationPreviewService:
     def preview(self, context: ClassificationContext, policy_id: str) -> ClassificationResult:
         return self._engine.classify(context, self._registry.resolve(policy_id))
 
+    def select_configured_rule(
+        self, context: ClassificationContext, policy_id: str, rule_id: str
+    ) -> ClassificationResult:
+        policy = self._registry.resolve(policy_id)
+        rule = next(
+            (value for value in policy.rules if value.enabled and value.rule_id == rule_id), None
+        )
+        if rule is None:
+            raise ClassificationError(
+                ClassificationErrorCode.INVALID_RULE,
+                f"configured ClassificationRule {rule_id!r} is unavailable",
+            )
+        return ClassificationResult(
+            rule.media_library_id,
+            rule.relative_category_path or "",
+            policy.policy_id,
+            context.recognition_type_id,
+            ClassificationStatus.CLASSIFIED,
+            rule.rule_id,
+            rule.name,
+            rule.library,
+            rule.category,
+            rule.subcategory,
+            rule.confidence,
+            (f"manual configured rule={rule.rule_id}",),
+        )
+
 
 def _matches(
     rule: ClassificationRule, context: ClassificationContext

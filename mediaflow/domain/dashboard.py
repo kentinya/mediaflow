@@ -51,6 +51,7 @@ class DashboardPersistentState:
     jobs: DashboardJobCounts
     pending_confirmations: int
     pending_metadata_reviews: int
+    pending_classification_reviews: int
     dead_letter_notifications: int
     recent_failures: tuple[RecentOperationalFailure, ...] = ()
 
@@ -65,6 +66,7 @@ class DashboardSnapshot:
     jobs: DashboardJobCounts
     pending_confirmations: int
     pending_metadata_reviews: int
+    pending_classification_reviews: int
     dead_letter_notifications: int
     recent_failures: tuple[RecentOperationalFailure, ...] = ()
 

@@ -19,6 +19,7 @@ from mediaflow.application.automation import (
     AutomationWorker,
     IntervalScheduler,
 )
+from mediaflow.application.classification_review import ClassificationReviewService
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
@@ -32,6 +33,10 @@ from mediaflow.application.strategy_test import strategy_runner_from_configurati
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.cli import render_strategy_result
 from mediaflow.domain.automation import AutomationCommand, CronSchedule
+from mediaflow.domain.classification_review import (
+    ClassificationReviewStatus,
+    ClassificationSelection,
+)
 from mediaflow.domain.metadata_review import MetadataReviewStatus, MetadataSelection
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
@@ -195,6 +200,21 @@ def final_main(
     metadata_review_resolve.add_argument("--candidate-rank", required=True, type=int)
     metadata_review_resolve.add_argument("--actor")
     metadata_review_resolve.add_argument("--note")
+    classification_reviews = commands.add_parser(
+        "classification-reviews", help="persistent classification review queue"
+    )
+    classification_review_commands = classification_reviews.add_subparsers(
+        dest="classification_review_command", required=True
+    )
+    classification_review_list = classification_review_commands.add_parser("list")
+    classification_review_list.add_argument("--limit", type=int, default=100)
+    classification_review_show = classification_review_commands.add_parser("show")
+    classification_review_show.add_argument("review_id")
+    classification_review_resolve = classification_review_commands.add_parser("resolve")
+    classification_review_resolve.add_argument("review_id")
+    classification_review_resolve.add_argument("--choice-rank", required=True, type=int)
+    classification_review_resolve.add_argument("--actor")
+    classification_review_resolve.add_argument("--note")
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_serve = api_commands.add_parser("serve")
@@ -258,6 +278,42 @@ def final_main(
                             review,
                             repository.list_metadata_review_candidates(review.review_id),
                             repository.list_metadata_review_audit(review.review_id),
+                        )
+                    )
+            return 0
+        if arguments.command == "classification-reviews":
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                if arguments.classification_review_command == "list":
+                    stdout.write(
+                        render_classification_reviews(
+                            repository.list_classification_reviews(limit=arguments.limit)
+                        )
+                    )
+                elif arguments.classification_review_command == "show":
+                    review = repository.get_classification_review(arguments.review_id)
+                    if review is None:
+                        raise LookupError(
+                            f"classification review {arguments.review_id!r} was not found"
+                        )
+                    stdout.write(
+                        render_classification_review(
+                            review,
+                            repository.list_classification_review_choices(review.review_id),
+                            repository.list_classification_review_audit(review.review_id),
+                        )
+                    )
+                else:
+                    review = ClassificationReviewService(repository).resolve(
+                        arguments.review_id,
+                        arguments.choice_rank,
+                        actor=arguments.actor,
+                        note=arguments.note,
+                    )
+                    stdout.write(
+                        render_classification_review(
+                            review,
+                            repository.list_classification_review_choices(review.review_id),
+                            repository.list_classification_review_audit(review.review_id),
                         )
                     )
             return 0
@@ -672,6 +728,21 @@ def final_main(
                     and review.selected_provider_id is not None
                     and review.selected_media_type is not None
                 },
+                classification_selections={
+                    (stored.storage_id, stored.source_path): ClassificationSelection(
+                        review.recognition_type,
+                        review.classification_policy_id,
+                        review.selected_rule_id,
+                        review.selected_media_library_id,
+                        review.selected_relative_path,
+                    )
+                    for stored in (retry_items or ())
+                    if (review := repository.get_classification_review_for_item(stored.item_id))
+                    and review.status is ClassificationReviewStatus.RESOLVED
+                    and review.selected_rule_id is not None
+                    and review.selected_media_library_id is not None
+                    and review.selected_relative_path is not None
+                },
             )
             if retry_items is not None:
                 libraries = {item.library_id: item for item in configuration.resource_libraries}
@@ -1009,6 +1080,7 @@ def render_dashboard(value) -> str:
         f"failed={value.jobs.failed})",
         f"Pending confirmations: {value.pending_confirmations}",
         f"Pending metadata reviews: {value.pending_metadata_reviews}",
+        f"Pending classification reviews: {value.pending_classification_reviews}",
         f"Dead-letter notifications: {value.dead_letter_notifications}",
         "",
         "RECENT FAILURES",
@@ -1065,6 +1137,51 @@ def render_metadata_review(review, candidates, audit=()) -> str:
     lines.extend(
         f"{item.decided_at.isoformat()} | rank={item.selected_rank} | "
         f"{item.provider}:{item.provider_id} | {item.actor or '-'}"
+        for item in audit
+    )
+    if not audit:
+        lines.append("None")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_classification_reviews(values) -> str:
+    lines = ["", "CLASSIFICATION REVIEWS", ""]
+    lines.extend(
+        f"{item.review_id} | {item.status.value} | {item.source_storage_id}:"
+        f"{item.source_path} | {item.title}"
+        for item in values
+    )
+    lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_classification_review(review, choices, audit=()) -> str:
+    lines = [
+        "",
+        "CLASSIFICATION REVIEW",
+        "",
+        f"ID: {review.review_id}",
+        f"Status: {review.status.value}",
+        f"Source: {review.source_storage_id}:{review.source_path}",
+        f"RecognitionType: {review.recognition_type}",
+        f"ClassificationPolicy: {review.classification_policy_id}",
+        f"Media: {review.title} ({review.canonical_year or '-'})",
+        f"Selected rank: {review.selected_rank or '-'}",
+        f"Selected rule: {review.selected_rule_id or '-'}",
+        "",
+        "CHOICES",
+        "",
+    ]
+    lines.extend(
+        f"{item.rank} | {item.rule_id} | {item.media_library_id}:{item.relative_path} | "
+        f"priority={item.priority}"
+        for item in choices
+    )
+    lines.extend(("", "DECISION AUDIT", ""))
+    lines.extend(
+        f"{item.decided_at.isoformat()} | rank={item.selected_rank} | "
+        f"{item.rule_id} | {item.actor or '-'}"
         for item in audit
     )
     if not audit:

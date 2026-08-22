@@ -231,13 +231,23 @@ class PersistentTaskCoordinator:
         MetadataReviewService(self.repository).create(item, identification, metadata_policy_id)
         self.locks.release(item.storage_id, item.source_path, item.task_id)
 
+    def wait_for_classification(self, item, result, policy, identity) -> None:
+        from mediaflow.application.classification_review import ClassificationReviewService
+
+        ClassificationReviewService(self.repository).create(item, result, policy, identity)
+        self.locks.release(item.storage_id, item.source_path, item.task_id)
+
     def finish(self, task_id: str, batch: MediaOrganizerBatchResult) -> PersistentTask:
         task = self.require(task_id)
         items = self.repository.list_items(task_id)
         failed = sum(
             item.status in {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL} for item in items
         )
-        waiting_statuses = {TaskItemStatus.WAITING_CONFIRM, TaskItemStatus.WAITING_METADATA}
+        waiting_statuses = {
+            TaskItemStatus.WAITING_CONFIRM,
+            TaskItemStatus.WAITING_METADATA,
+            TaskItemStatus.WAITING_CLASSIFICATION,
+        }
         waiting = sum(item.status in waiting_statuses for item in items)
         completed = sum(
             not item.status.retryable and item.status not in waiting_statuses for item in items

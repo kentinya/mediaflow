@@ -35,6 +35,9 @@ mediaflow dashboard --recent-limit 10
 mediaflow metadata-reviews list --limit 100
 mediaflow metadata-reviews show REVIEW_ID
 mediaflow metadata-reviews resolve REVIEW_ID --candidate-rank 1
+mediaflow classification-reviews list --limit 100
+mediaflow classification-reviews show REVIEW_ID
+mediaflow classification-reviews resolve REVIEW_ID --choice-rank 1
 mediaflow scan --limit 20
 mediaflow preview --limit 20
 mediaflow organize --limit 20
@@ -272,6 +275,21 @@ Resolution is persistence-only: it records an immutable decision and changes the
 pending, but does not contact a provider, resume a Task, create a Job, or mutate Storage. The later
 explicit resume re-runs recognition/policy checks and uses the existing provider-ID details flow;
 it cannot upgrade a DryRun task to execute.
+
+An identified item for which no ClassificationRule matches enters a separate classification
+review queue. Only enabled rules already present in the resolved ClassificationPolicy are offered:
+
+```bash
+mediaflow classification-reviews list --limit 100
+mediaflow classification-reviews show REVIEW_ID
+mediaflow classification-reviews resolve REVIEW_ID --choice-rank 1 --actor local-operator
+mediaflow tasks resume TASK_ID
+```
+
+The decision cannot supply a custom MediaLibrary or path. It atomically records the configured
+rule choice and makes the item pending; the later explicit resume revalidates RecognitionType,
+ClassificationPolicy, rule, MediaLibrary, and safe relative path before planning. Resolution
+constructs no Storage/provider and never creates or resumes a Task or Job automatically.
 
 ## Persistent runtime state
 

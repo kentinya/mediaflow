@@ -10,6 +10,8 @@ from mediaflow.application.conflict_resolution import ConflictResolver
 from mediaflow.application.library_pipeline import MediaLibraryResolver, ResourceLibraryScanner
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
 from mediaflow.application.strategy_test import StrategyTestResult, StrategyTestRunner
+from mediaflow.domain.classification import ClassificationStatus
+from mediaflow.domain.classification_review import ClassificationSelection
 from mediaflow.domain.history import OperationHistoryRecord, OperationHistoryRepository
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.logging import Logger, LogLevel
@@ -108,6 +110,7 @@ class MediaOrganizerService:
         task_id: str | None = None,
         conflict_decisions: dict[tuple[str, str], ConflictConfirmation] | None = None,
         metadata_selections: dict[tuple[str, str], MetadataSelection] | None = None,
+        classification_selections: dict[tuple[str, str], ClassificationSelection] | None = None,
     ) -> None:
         self._strategy = strategy
         self._scanner = scanner
@@ -125,6 +128,7 @@ class MediaOrganizerService:
         self._task_id = task_id
         self._conflict_decisions = conflict_decisions or {}
         self._metadata_selections = metadata_selections or {}
+        self._classification_selections = classification_selections or {}
 
     def process_file(
         self,
@@ -152,6 +156,9 @@ class MediaOrganizerService:
                 resource_library_id=resource_library.library_id,
                 storage_id=resource_library.storage_id,
                 metadata_selection=self._metadata_selections.get(
+                    (resource_library.storage_id, storage_path)
+                ),
+                classification_selection=self._classification_selections.get(
                     (resource_library.storage_id, storage_path)
                 ),
             )
@@ -189,6 +196,23 @@ class MediaOrganizerService:
                     source, strategy, strategy.naming_error or "naming failed", tracked_item
                 )
             if not strategy.classification or not strategy.classification.media_library_id:
+                if (
+                    strategy.classification
+                    and strategy.classification.status is ClassificationStatus.UNCLASSIFIED
+                    and self._task_coordinator
+                    and tracked_item
+                ):
+                    item = MediaOrganizerItemResult(source, strategy)
+                    self._record(item)
+                    self._task_coordinator.wait_for_classification(
+                        tracked_item,
+                        strategy.classification,
+                        self._strategy.classification_policy(
+                            strategy.policy.classification_policy_id
+                        ),
+                        strategy.metadata.identity,
+                    )
+                    return item
                 return self._failed(
                     source,
                     strategy,
@@ -411,6 +435,10 @@ class MediaOrganizerService:
                         MetadataIdentificationStatus.NEED_CONFIRM,
                         MetadataIdentificationStatus.AMBIGUOUS,
                     }
+                    else "WAITING_CLASSIFICATION"
+                    if item.strategy
+                    and item.strategy.classification
+                    and item.strategy.classification.status is ClassificationStatus.UNCLASSIFIED
                     else "WAITING_CONFIRM"
                     if item.plan and item.plan.conflicts and not item.error
                     else "FAILED"

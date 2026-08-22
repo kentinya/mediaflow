@@ -36,6 +36,7 @@ class DashboardService:
             jobs=state.jobs,
             pending_confirmations=state.pending_confirmations,
             pending_metadata_reviews=state.pending_metadata_reviews,
+            pending_classification_reviews=state.pending_classification_reviews,
             dead_letter_notifications=state.dead_letter_notifications,
             recent_failures=state.recent_failures,
         )
