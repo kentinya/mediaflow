@@ -141,6 +141,9 @@ Phase 19.2 已实现 API 凭证生命周期与 HTTP 部署护栏：提供系统�
 Phase 19.3 已实现 Task/Job/Result 只读操作台：列表和 TaskItem/Result 详情均受 1–100 上限
 约束，SQLite 使用 limit+1 判断截断；UI 不提供提交、取消、恢复、重试、授权或执行操作。
 
+Phase 19.4 已消除大型历史只能查看首页的风险：Task/Job 与 TaskItem/Result 使用稳定复合键
+进行前向 keyset 游标分页，不使用 OFFSET；操作台提供显式 Next，仍无任何任务控制权限。
+
 ## 下一步实施建议
 
 Phase 19.1 完成后，后续任务仍应保持小步推进。优先顺序：

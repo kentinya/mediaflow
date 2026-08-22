@@ -893,6 +893,19 @@ using text nodes. It issues no Task/Job POST and exposes no resume, retry, cance
 authorization, or execution control. Reads do not construct Storage or MetadataProvider adapters;
 the only write remains the existing normalized security-audit record for an authenticated request.
 
+## Stable operational-history cursors
+
+Phase 19.4 replaces the Phase 19.3 first-page-only limitation with forward keyset pagination.
+Tasks/Jobs use newest-first `(created_at, ID)` ordering; TaskItems/Results retain oldest-first
+processing order. SQLite applies the composite boundary before `LIMIT`, never OFFSET or prior-row
+enumeration. The established cursor boundary therefore remains stable when newer records arrive.
+
+The opaque URL-safe cursor has a version, resource kind, timezone-aware ordering timestamp, and
+stable record ID. Decoding strictly bounds length and validates Base64, JSON schema, version, kind,
+timestamp, and ID. It contains no media or secret fields and query strings remain excluded from
+security audit. TaskItem and Result cursors advance independently. The UI exposes explicit Next and
+first-page refresh only; backward navigation, totals, and live polling remain deferred.
+
 ## Runtime strategy catalogs
 
 The Phase 13 runtime boundary loads all strategy content from one JSON document selected by

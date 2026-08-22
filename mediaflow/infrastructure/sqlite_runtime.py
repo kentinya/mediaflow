@@ -117,12 +117,19 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._task(row) if row else None
 
-    def list_tasks(self, *, limit: int | None = None) -> tuple[PersistentTask, ...]:
-        query = "SELECT * FROM tasks ORDER BY created_at DESC"
+    def list_tasks(
+        self, *, limit: int | None = None, after: tuple[datetime, str] | None = None
+    ) -> tuple[PersistentTask, ...]:
+        query = "SELECT * FROM tasks"
         parameters: tuple[object, ...] = ()
+        if after is not None:
+            timestamp = after[0].isoformat()
+            query += " WHERE (created_at < ? OR (created_at = ? AND task_id < ?))"
+            parameters = (timestamp, timestamp, after[1])
+        query += " ORDER BY created_at DESC, task_id DESC"
         if limit is not None:
             query += " LIMIT ?"
-            parameters = (limit,)
+            parameters += (limit,)
         with self._lock:
             rows = self._connection.execute(query, parameters).fetchall()
         return tuple(self._task(row) for row in rows)
@@ -241,13 +248,22 @@ class SQLiteTaskRepository:
         return self._item(row) if row else None
 
     def list_items(
-        self, task_id: str, *, limit: int | None = None
+        self,
+        task_id: str,
+        *,
+        limit: int | None = None,
+        after: tuple[datetime, str] | None = None,
     ) -> tuple[PersistentTaskItem, ...]:
-        query = "SELECT * FROM task_items WHERE task_id = ? ORDER BY created_at, item_id"
+        query = "SELECT * FROM task_items WHERE task_id = ?"
         parameters: tuple[object, ...] = (task_id,)
+        if after is not None:
+            timestamp = after[0].isoformat()
+            query += " AND (created_at > ? OR (created_at = ? AND item_id > ?))"
+            parameters += (timestamp, timestamp, after[1])
+        query += " ORDER BY created_at, item_id"
         if limit is not None:
             query += " LIMIT ?"
-            parameters = (task_id, limit)
+            parameters += (limit,)
         with self._lock:
             rows = self._connection.execute(query, parameters).fetchall()
         return tuple(self._item(row) for row in rows)
@@ -290,13 +306,22 @@ class SQLiteTaskRepository:
             )
 
     def list_results(
-        self, task_id: str, *, limit: int | None = None
+        self,
+        task_id: str,
+        *,
+        limit: int | None = None,
+        after: tuple[datetime, str] | None = None,
     ) -> tuple[PersistentResultRecord, ...]:
-        query = "SELECT * FROM task_results WHERE task_id = ? ORDER BY created_at, result_id"
+        query = "SELECT * FROM task_results WHERE task_id = ?"
         parameters: tuple[object, ...] = (task_id,)
+        if after is not None:
+            timestamp = after[0].isoformat()
+            query += " AND (created_at > ? OR (created_at = ? AND result_id > ?))"
+            parameters += (timestamp, timestamp, after[1])
+        query += " ORDER BY created_at, result_id"
         if limit is not None:
             query += " LIMIT ?"
-            parameters = (task_id, limit)
+            parameters += (limit,)
         with self._lock:
             rows = self._connection.execute(query, parameters).fetchall()
         return tuple(self._result(row) for row in rows)
@@ -788,12 +813,19 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._job(row) if row else None
 
-    def list_jobs(self, *, limit: int | None = None) -> tuple[AutomationJob, ...]:
-        query = "SELECT * FROM automation_jobs ORDER BY created_at DESC, job_id DESC"
+    def list_jobs(
+        self, *, limit: int | None = None, after: tuple[datetime, str] | None = None
+    ) -> tuple[AutomationJob, ...]:
+        query = "SELECT * FROM automation_jobs"
         parameters: tuple[object, ...] = ()
+        if after is not None:
+            timestamp = after[0].isoformat()
+            query += " WHERE (created_at < ? OR (created_at = ? AND job_id < ?))"
+            parameters = (timestamp, timestamp, after[1])
+        query += " ORDER BY created_at DESC, job_id DESC"
         if limit is not None:
             query += " LIMIT ?"
-            parameters = (limit,)
+            parameters += (limit,)
         with self._lock:
             rows = self._connection.execute(query, parameters).fetchall()
         return tuple(self._job(row) for row in rows)

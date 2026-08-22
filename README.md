@@ -296,7 +296,9 @@ constructs no Storage/provider and never creates or resumes a Task or Job automa
 Start the existing loopback API process and open `http://127.0.0.1:8787/ui/`. The dependency-free
 operator page shows the Dashboard and the conflict, metadata, and classification review queues.
 It also provides read-only Task and Automation Job lists. Task detail shows bounded TaskItems and
-ResultRecords; Job detail can navigate to its linked Task. Truncation is shown explicitly.
+ResultRecords; Job detail can navigate to its linked Task. Truncated lists expose explicit Next
+controls backed by stable keyset cursors, while selecting the navigation tab again returns to the
+first page.
 Enter a configured API principal token in the password field. The token exists only in page memory
 and is cleared from the input immediately; reloading or closing the page requires entering it again.
 

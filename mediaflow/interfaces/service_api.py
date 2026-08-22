@@ -19,6 +19,7 @@ from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.task_persistence import ConfirmationStatus
 from mediaflow.interfaces.operator_ui import ASSETS as OPERATOR_UI_ASSETS
+from mediaflow.interfaces.pagination import decode_cursor, encode_cursor
 
 
 class ApiPermissionDenied(RuntimeError):
@@ -247,35 +248,59 @@ class MediaFlowApi:
         if method == "GET":
             self._require(principal, ApiPermission.READ)
         if parts == ["api", "v1", "tasks"] and method == "GET":
-            limit = self._single_limit(environ, "task")
-            values = self._repository.list_tasks(limit=limit + 1)
+            limit, cursor = self._collection_page(environ, "tasks")
+            values = (
+                self._repository.list_tasks(limit=limit + 1, after=cursor)
+                if cursor
+                else self._repository.list_tasks(limit=limit + 1)
+            )
+            page = values[:limit]
             return self._response(
                 start_response,
                 200,
                 {
-                    "items": [self._value(item) for item in values[:limit]],
+                    "items": [self._value(item) for item in page],
                     "limit": limit,
                     "truncated": len(values) > limit,
+                    "next_cursor": self._next_cursor("tasks", page, len(values) > limit),
                 },
             )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "tasks"] and method == "GET":
-            item_limit, result_limit = self._task_detail_limits(environ)
+            item_limit, result_limit, item_cursor, result_cursor = self._task_detail_page(environ)
             task = self._repository.get_task(parts[3])
             if task is None:
                 raise LookupError(f"task {parts[3]!r} was not found")
-            items = self._repository.list_items(task.task_id, limit=item_limit + 1)
-            results = self._repository.list_results(task.task_id, limit=result_limit + 1)
+            items = (
+                self._repository.list_items(task.task_id, limit=item_limit + 1, after=item_cursor)
+                if item_cursor
+                else self._repository.list_items(task.task_id, limit=item_limit + 1)
+            )
+            results = (
+                self._repository.list_results(
+                    task.task_id, limit=result_limit + 1, after=result_cursor
+                )
+                if result_cursor
+                else self._repository.list_results(task.task_id, limit=result_limit + 1)
+            )
+            item_page = items[:item_limit]
+            result_page = results[:result_limit]
             return self._response(
                 start_response,
                 200,
                 {
                     **self._value(task),
-                    "items": [self._value(item) for item in items[:item_limit]],
-                    "results": [self._value(item) for item in results[:result_limit]],
+                    "items": [self._value(item) for item in item_page],
+                    "results": [self._value(item) for item in result_page],
                     "item_limit": item_limit,
                     "result_limit": result_limit,
                     "items_truncated": len(items) > item_limit,
                     "results_truncated": len(results) > result_limit,
+                    "next_item_cursor": self._next_cursor(
+                        "task_items", item_page, len(items) > item_limit
+                    ),
+                    "next_result_cursor": self._next_cursor(
+                        "task_results", result_page, len(results) > result_limit
+                    ),
                 },
             )
         if parts == ["api", "v1", "confirmations"] and method == "GET":
@@ -401,15 +426,21 @@ class MediaFlowApi:
             )
         if parts == ["api", "v1", "jobs"]:
             if method == "GET":
-                limit = self._single_limit(environ, "job")
-                values = self._repository.list_jobs(limit=limit + 1)
+                limit, cursor = self._collection_page(environ, "jobs")
+                values = (
+                    self._repository.list_jobs(limit=limit + 1, after=cursor)
+                    if cursor
+                    else self._repository.list_jobs(limit=limit + 1)
+                )
+                page = values[:limit]
                 return self._response(
                     start_response,
                     200,
                     {
-                        "items": [self._value(item) for item in values[:limit]],
+                        "items": [self._value(item) for item in page],
                         "limit": limit,
                         "truncated": len(values) > limit,
+                        "next_cursor": self._next_cursor("jobs", page, len(values) > limit),
                     },
                 )
             if method == "POST":
@@ -668,23 +699,48 @@ class MediaFlowApi:
         return limit
 
     @staticmethod
-    def _single_limit(environ: dict, resource: str) -> int:
+    def _collection_page(environ: dict, resource: str) -> tuple[int, tuple[datetime, str] | None]:
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
-            raise ValueError(f"{resource} query accepts one limit field")
-        return MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], resource)
-
-    @staticmethod
-    def _task_detail_limits(environ: dict) -> tuple[int, int]:
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        if set(values).difference({"itemLimit", "resultLimit"}) or any(
+        if set(values).difference({"limit", "cursor"}) or any(
             len(value) != 1 for value in values.values()
         ):
-            raise ValueError("task detail query accepts itemLimit and resultLimit once")
+            raise ValueError(f"{resource} query accepts limit and cursor once")
+        limit = MediaFlowApi._parse_bounded_limit(
+            values.get("limit", ["100"])[0], resource.rstrip("s")
+        )
+        raw_cursor = values.get("cursor")
+        return limit, decode_cursor(raw_cursor[0], resource) if raw_cursor else None
+
+    @staticmethod
+    def _task_detail_page(
+        environ: dict,
+    ) -> tuple[int, int, tuple[datetime, str] | None, tuple[datetime, str] | None]:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"itemLimit", "resultLimit", "itemCursor", "resultCursor"}
+        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("task detail query fields must be supported and specified once")
+        raw_item_cursor = values.get("itemCursor")
+        raw_result_cursor = values.get("resultCursor")
         return (
             MediaFlowApi._parse_bounded_limit(values.get("itemLimit", ["100"])[0], "task item"),
             MediaFlowApi._parse_bounded_limit(values.get("resultLimit", ["100"])[0], "task result"),
+            decode_cursor(raw_item_cursor[0], "task_items") if raw_item_cursor else None,
+            decode_cursor(raw_result_cursor[0], "task_results") if raw_result_cursor else None,
         )
+
+    @staticmethod
+    def _next_cursor(kind: str, page: tuple | list, truncated: bool) -> str | None:
+        if not truncated or not page:
+            return None
+        last = page[-1]
+        attribute = {
+            "tasks": "task_id",
+            "jobs": "job_id",
+            "task_items": "item_id",
+            "task_results": "result_id",
+        }[kind]
+        identifier = getattr(last, attribute)
+        return encode_cursor(kind, last.created_at, identifier)
 
     @staticmethod
     def _parse_bounded_limit(raw: str, resource: str) -> int:

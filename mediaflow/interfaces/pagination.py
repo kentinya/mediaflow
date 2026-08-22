@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+import base64
+import binascii
+import json
+import re
+from datetime import datetime, timedelta
+
+_CURSOR_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+_ENCODED_CURSOR = re.compile(r"[A-Za-z0-9_-]+")
+_KINDS = frozenset({"tasks", "jobs", "task_items", "task_results"})
+MAX_CURSOR_LENGTH = 512
+
+
+def encode_cursor(kind: str, created_at: datetime, record_id: str) -> str:
+    if kind not in _KINDS:
+        raise ValueError("unsupported cursor kind")
+    _validate_position(created_at, record_id)
+    document = {"at": created_at.isoformat(), "id": record_id, "kind": kind, "version": 1}
+    raw = json.dumps(document, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def decode_cursor(value: str, expected_kind: str) -> tuple[datetime, str]:
+    if expected_kind not in _KINDS:
+        raise ValueError("unsupported cursor kind")
+    if (
+        not value
+        or len(value) > MAX_CURSOR_LENGTH
+        or not value.isascii()
+        or not _ENCODED_CURSOR.fullmatch(value)
+    ):
+        raise ValueError("cursor is malformed")
+    try:
+        padding = "=" * (-len(value) % 4)
+        raw = base64.b64decode(value + padding, altchars=b"-_", validate=True)
+        document = json.loads(raw.decode("utf-8"))
+    except (binascii.Error, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("cursor is malformed") from error
+    if not isinstance(document, dict) or set(document) != {"at", "id", "kind", "version"}:
+        raise ValueError("cursor has an invalid schema")
+    if type(document["version"]) is not int or document["version"] != 1:
+        raise ValueError("cursor does not match this resource")
+    if not isinstance(document["kind"], str) or document["kind"] != expected_kind:
+        raise ValueError("cursor does not match this resource")
+    if not isinstance(document["at"], str) or not isinstance(document["id"], str):
+        raise ValueError("cursor has invalid position fields")
+    try:
+        created_at = datetime.fromisoformat(document["at"])
+    except ValueError as error:
+        raise ValueError("cursor timestamp is invalid") from error
+    _validate_position(created_at, document["id"])
+    return created_at, document["id"]
+
+
+def _validate_position(created_at: datetime, record_id: str) -> None:
+    if created_at.tzinfo is None or created_at.utcoffset() != timedelta(0):
+        raise ValueError("cursor timestamp must use UTC")
+    if not _CURSOR_ID.fullmatch(record_id):
+        raise ValueError("cursor record ID is invalid")

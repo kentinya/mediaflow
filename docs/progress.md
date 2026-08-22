@@ -915,3 +915,15 @@ Phase 19.3 read-only Task, Job, and Result observability UI (2026-08-22): PASS
 - Full suite: 407 tests, 404 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated-free wheel build, both example validations,
   FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 19.4 stable cursor pagination for operational history (2026-08-22): PASS
+
+- Added strict resource-scoped URL-safe operational cursors containing only timestamp and stable ID
+- Added composite keyset pagination for Task/Job newest-first and TaskItem/Result oldest-first reads
+- Added independent UI Next controls for collections and Task detail while preserving first-page
+  refresh and all read-only boundaries
+- Added same-timestamp, concurrent insertion, end-page, SQL-bound, malformed/cross-kind, audit, and
+  no-write regressions
+- Full suite: 411 tests, 408 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated-free wheel build, both example validations,
+  FFmpeg/FFprobe runtime audit, and diff check passed
