@@ -1043,3 +1043,18 @@ The canonical runtime content is `config/strategy.example.json`. Python smoke/de
 constructors are isolated compatibility test fixtures, not production fallback configuration.
 RecognitionType C remains the identity while resolving Metadata C and configured Naming,
 Classification, and Organize A.
+
+## Read-only runtime configuration snapshot
+
+Phase 19.16 adds a one-way projection from normalized `RuntimeConfiguration` into an immutable,
+allowlisted `ConfigurationSnapshot` during API bootstrap. This projection constructs no Storage,
+provider, Scanner, workflow, Scheduler/Notification worker, Planner, Executor, backup, restore, or
+migration service. Requests only copy the already-frozen snapshot into JSON and never reload the
+configuration or query runtime repositories; the existing security-audit append remains unchanged.
+
+The projection deliberately reports only bounded, deterministically ordered catalog IDs, types,
+states, counts, and RecognitionTypePolicy reference IDs. Paths, condition operands, templates,
+classification destinations, endpoints, environment-variable identifiers/values, webhook fields,
+credentials, and arbitrary adapter options have no output mapping. This makes omission structural
+rather than dependent on pattern-based redaction. The authenticated System UI renders values only
+through DOM text nodes and exposes refresh but no configuration or workflow controls.

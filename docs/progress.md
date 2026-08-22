@@ -46,6 +46,7 @@
 - Phase 19.13 non-overwriting offline runtime database restore: PASS
 - Phase 19.14 cooperative runtime maintenance lock: PASS
 - Phase 19.15 isolated runtime schema migration rehearsal: PASS
+- Phase 19.16 read-only configuration and system status API/UI: PASS
 
 ## Planned
 
@@ -1080,3 +1081,17 @@ Phase 19.15 isolated runtime schema migration rehearsal (2026-08-22): PASS
 - Full suite: 449 tests, 446 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated installed-wheel validation, both example validations,
   FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 19.16 read-only configuration and system status API/UI (2026-08-22): PASS
+
+- Added one immutable, deterministic API-bootstrap snapshot of normalized Runtime configuration with
+  runtime compatibility plus bounded Storage, Library, Recognition, and downstream policy catalogs
+- Added authenticated `GET /api/v1/system/status` and a text-node-only System UI with explicit refresh;
+  wrong methods and all query parameters fail before snapshot/repository reads
+- Structurally excluded paths, rule operands, templates, classification destinations, endpoints,
+  environment variables, credentials, Webhook data, and arbitrary Storage options; hostile-config
+  regression confirms none enter the snapshot or API response
+- RecognitionType C continues to expose Metadata C with Naming/Classification/Organize A; no Storage,
+  provider, scanner, workflow, worker, planner, executor, backup, restore, or migration object is built
+- Full suite: 454 tests, 451 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
+  dependency, both example-configuration, forbidden-runtime-dependency, and wheel build gates passed

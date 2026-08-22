@@ -1,80 +1,74 @@
-# Phase 19.15 — Isolated Runtime Schema Migration Rehearsal
+# Phase 19.16 — Read-only Configuration and System Status API/UI
 
 ## Goal
 
-Exercise the real SQLite forward-migration path against a private copy of an explicit verified backup,
-then discard the copy. Give operators evidence that the target MediaFlow artifact can migrate their
-data before it ever opens the production runtime database.
+Expose a bounded, precomputed, secret-free view of the configuration already loaded by production so
+operators can verify system/library/policy wiring in the existing authenticated UI. Add no edit,
+connectivity test, workflow, or execution controls.
 
-## 1. Rehearsal service
+## 1. Safe configuration snapshot
 
-- Add a local infrastructure service accepting an explicit backup.
-- Verify the backup with Phase 19.10 rules, copy it through SQLite into an owner-only temporary database,
-  and record the source schema.
-- Open only the temporary database through the production `SQLiteTaskRepository` migration path.
-- Reopen/verify the migrated copy, require the current schema, and confirm representative core table
-  counts remain readable before reporting PASS.
-- Return source/target schema, migration-required/performed flags, backup SHA-256/size, temporary cleanup
-  status, UTC completion time, and application version.
+- Build one immutable snapshot during API bootstrap from normalized `RuntimeConfiguration` models.
+- Include application/Python/Schema/platform/maintenance-lock support and configuration-valid status.
+- Include bounded summaries for configured Storages, ResourceLibraries, MediaLibraries, Recognition
+  types/rules/type-policy references, and Metadata/Naming/Classification/Organize policies.
+- Exclude every root/display/media path, rule pattern/value, naming template body, classification path,
+  endpoint/URL, environment variable name/value, credentials, webhook details, and arbitrary options.
+- Expose counts and safe IDs/types/statuses/reference IDs only; enforce deterministic ordering and a
+  hard per-section bound.
 
-## 2. Cleanup and failure safety
+## 2. Authenticated read-only API
 
-- Always close the repository and remove only the rehearsal-owned temporary database plus its own
-  `-wal`, `-shm`, and `-journal` sidecars.
-- Preserve backup and configured Runtime hash/mtime/size on success and every injected failure.
-- Reject missing, empty, malformed, symlink, unsupported/newer backup, unsafe parent, and NUL paths.
-- A migration failure must return a clear local error and leave no rehearsal files.
-- Never publish, restore, replace, migrate, or open the configured Runtime database.
+- Add `GET /api/v1/system/status` using existing READ permission and security audit behavior.
+- Return only the injected immutable snapshot; do not reload configuration per request.
+- Reject other methods and query parameters before any snapshot/repository access.
+- The endpoint performs no repository read except the existing normalized security audit write.
 
-## 3. CLI and release integration
+## 3. Operator UI
 
-- Add `mediaflow upgrade rehearse --backup /safe/backups/runtime.sqlite3`.
-- Resolve the configured Runtime only for the existing shared cooperative lease; do not read/open it.
-- Output safe schema/count/checksum facts only; never configuration, credentials, paths from records,
-  task errors, titles, provider data, or media paths.
-- Add rehearsal after backup/preflight in the release checklist and installed-wheel smoke test.
+- Add a System tab using the existing same-origin, CSP, no-store, in-memory bearer, and text-node-only UI.
+- Display compatibility cards and compact tables for Storages, Libraries, recognition mappings, and
+  policy catalogs, with explicit text that paths/templates/secrets are intentionally hidden.
+- Provide explicit refresh only. Add no polling, edit/apply, secret status/value, Storage check, scan,
+  backup/restore, migration, Task/Job, Scheduler, or execution controls.
 
-## 4. Boundaries
+## 4. Safety
 
-- Construct no media Storage, MetadataProvider, Scanner, workflow, Scheduler, Notification worker,
-  API, or OrganizerExecutor.
-- Do not add new migration semantics or alter existing migration SQL except for a proven defect.
-- Do not implement in-place upgrade, rollback, replacement, automatic restore, API/UI, or scheduling.
-- Preserve RecognitionType C and every accepted media pipeline behavior.
+- Construct no Storage adapters, MetadataProvider, Scanner, workflow, Scheduler worker, Notification
+  worker, OrganizerExecutor, backup/restore, preflight, or migration rehearsal service.
+- Do not change Parser, Recognition, Metadata, Naming, Classification, Planner, Executor, or config models.
+- Snapshot/API/UI output must remain secret- and path-free even with hostile configured strings.
 
 ## Required tests
 
-- Current-schema rehearsal is a verified no-op copy exercise.
-- Representative older-schema backup migrates to current and preserves Task/Result/audit/log records.
-- Missing/malformed/empty/symlink/newer backup and invalid path fail without residue.
-- Injected copy, repository migration, verification, and cleanup-adjacent failures preserve source data
-  and remove owned database/sidecars.
-- Backup and configured Runtime hash/mtime/size stay unchanged; Runtime repository is never opened.
-- CLI holds shared lease, creates no media services, and emits secret-free bounded output.
-- Installed-wheel rehearsal passes outside the checkout.
-- Full existing regression and quality gates pass.
+- Snapshot covers all safe sections, deterministic ordering, hard bounds, C downstream references, and
+  current version/Schema/platform support.
+- Hostile paths/templates/rules/URLs/env names/secrets/options never appear in snapshot/API/UI/audit.
+- API authentication/RBAC, wrong method/query rejection, response allowlist, and zero repository reads.
+- Bootstrap injects the production snapshot without Storage/provider/workflow construction.
+- UI System tab fetch/refresh, text-node rendering, safe empty/error states, and absence of controls.
+- Existing API/UI/security/configuration/runtime/media regressions and quality gates pass.
 
 ## Documentation
 
-Update README, requirements, architecture, progress, roadmap, release checklist, and configuration
-operations documentation.
+Update README, requirements, architecture, progress, roadmap, and configuration documentation.
 
 ## Out of scope
 
-Production/in-place migration orchestration, rollback, database replacement, automatic restore,
-maintenance shutdown, remote backups, encryption, retention, API/UI, deployment, and media Storage.
+Configuration editing/apply/rollback, full rule/template/path display, secret status, connectivity tests,
+live health checks, polling, metrics, OIDC, TLS, Task controls, database controls, and media execution.
 
 ## Final report
 
-## Phase 19.15 Result
+## Phase 19.16 Result
 
 PASS / FAIL
 
-## Migration Rehearsal
+## System Snapshot
 
-## Data Preservation
+## API and UI
 
-## CLI
+## Redaction and Authorization
 
 ## Safety
 

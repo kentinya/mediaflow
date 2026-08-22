@@ -47,6 +47,7 @@ class MediaFlowApi:
         dashboard_media_library_count: int = 0,
         remote_execution_enabled: bool = False,
         remote_execution_maximum_ttl_seconds: int = 900,
+        system_status=None,
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -63,6 +64,7 @@ class MediaFlowApi:
             repository, maximum_ttl_seconds=remote_execution_maximum_ttl_seconds
         )
         self._remote_execution_enabled = remote_execution_enabled
+        self._system_status = system_status
         self._schedules = tuple(schedules)
         self._dashboard = DashboardService(
             repository,
@@ -168,6 +170,16 @@ class MediaFlowApi:
         principal: ResolvedApiPrincipal,
     ):
         parts = [part for part in path.split("/") if part]
+        if parts == ["api", "v1", "system", "status"]:
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            self._require_empty_query(environ, "system status")
+            self._require(principal, ApiPermission.READ)
+            if self._system_status is None:
+                return self._error(
+                    start_response, 503, "service_unavailable", "system status is unavailable"
+                )
+            return self._response(start_response, 200, self._system_status.as_document())
         if parts == ["api", "v1", "security-audit"] and method == "GET":
             self._require(principal, ApiPermission.READ_SECURITY_AUDIT)
             return self._response(
@@ -700,6 +712,7 @@ class MediaFlowApi:
             ("api", "v1", "jobs"),
             ("api", "v1", "security-audit"),
             ("api", "v1", "dashboard"),
+            ("api", "v1", "system", "status"),
             ("api", "v1", "metadata-reviews"),
             ("api", "v1", "classification-reviews"),
         }
@@ -1057,6 +1070,7 @@ class MediaFlowApi:
             404: "Not Found",
             405: "Method Not Allowed",
             500: "Internal Server Error",
+            503: "Service Unavailable",
         }
         headers = [
             ("Content-Type", "application/json; charset=utf-8"),

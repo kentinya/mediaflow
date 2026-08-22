@@ -753,3 +753,22 @@ where attachment processing is explicitly disabled. The exhaustive field and ope
 [`config/mediaflow.phase13.2.example.json`](../config/mediaflow.phase13.2.example.json); its main
 MOVE policy demonstrates enabled attachment handling, while the embedded catalog shows attachment
 settings for MOVE, COPY, HARDLINK, and SYMLINK.
+
+## Read-only configuration visibility
+
+The API builds a secret-free status snapshot once after the production configuration has loaded and
+validated. A Principal with the existing `read` permission can retrieve it at:
+
+```text
+GET /api/v1/system/status
+```
+
+The response is an operational wiring summary, not a configuration export. Every catalog is sorted,
+reports `total` and `truncated`, and returns at most 100 entries. Safe fields include IDs, adapter or
+operation types, enabled/read-only flags, counts, and downstream policy reference IDs. It never
+contains root/display paths, scan extensions or rule operands, template bodies, classification
+paths, URLs/endpoints, environment-variable names or values, webhook data, credentials, or arbitrary
+Storage options. The System UI uses the same endpoint and offers explicit refresh only.
+
+The snapshot is not reloaded per request. After a configuration change, continue to run
+`mediaflow config validate`, then restart the API process to publish the newly validated snapshot.

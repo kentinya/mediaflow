@@ -25,6 +25,7 @@ INDEX_HTML = b"""<!doctype html>
     <button data-view="confirmations">Conflicts</button>
     <button data-view="metadata-reviews">Metadata</button>
     <button data-view="classification-reviews">Classification</button>
+    <button data-view="system">System</button>
   </nav>
   <main>
     <div id="notice" role="status" aria-live="polite">Enter an API token to connect.</div>
@@ -116,6 +117,37 @@ APP_JS = b"""(() => {
     const failures = (data.recent_failures || []).map(item => [item.kind, item.status,
       item.category, item.occurred_at]);
     content.append(text('h3', 'Recent failures'), table(['Kind', 'Status', 'Category', 'Time'], failures));
+  }
+  async function renderSystem() {
+    const data = await api('/api/v1/system/status');
+    clear(content); content.append(text('h2', 'System status'));
+    content.append(text('p', 'Paths, templates, endpoints, environment variables, and secrets are intentionally hidden.',
+      'warning'));
+    const system = data.system || {};
+    content.append(cards([
+      ['Application', system.application_version], ['Python', system.python_version],
+      ['Python supported', system.python_supported], ['Runtime schema', system.runtime_schema_version],
+      ['Platform', system.platform], ['Configuration valid', system.configuration_valid]
+    ]));
+    content.append(actionButton('Refresh system status', renderSystem));
+    const sections = [
+      ['Storages', 'storages', ['id', 'type', 'read_only']],
+      ['Resource libraries', 'resource_libraries', ['id', 'storage_id', 'enabled', 'scan_mode']],
+      ['Media libraries', 'media_libraries', ['id', 'storage_id', 'enabled']],
+      ['Recognition mappings', 'recognition_type_policies', ['recognition_type_id',
+        'metadata_policy_id', 'naming_policy_id', 'classification_policy_id', 'organize_policy_id']],
+      ['Metadata policies', 'metadata_policies', ['id', 'provider_id', 'query_type', 'enabled']],
+      ['Naming policies', 'naming_policies', ['id', 'media_type_mode', 'enabled']],
+      ['Classification policies', 'classification_policies', ['id', 'rule_count', 'enabled']],
+      ['Organize policies', 'organize_policies', ['id', 'operation', 'conflict_strategy']]
+    ];
+    sections.forEach(([label, key, fields]) => {
+      const section = data[key] || {items: [], total: 0, truncated: false};
+      content.append(text('h3', `${label} (${section.total || 0})`));
+      if (section.truncated) content.append(text('p', 'This section is truncated.', 'warning'));
+      const items = section.items || [];
+      content.append(table(fields, items.map(item => fields.map(fieldName => item[fieldName]))));
+    });
   }
   function table(headers, rows, onRow) {
     const tableNode = document.createElement('table');
@@ -333,6 +365,7 @@ APP_JS = b"""(() => {
       else if (view === 'schedules') await renderSchedules();
       else if (view === 'notifications') await renderNotifications();
       else if (view === 'logs') await renderLogs();
+      else if (view === 'system') await renderSystem();
       else await renderQueue(view); message('Connected.');
     } catch (error) { clear(content); message(error.message, true); }
   }

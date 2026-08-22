@@ -413,6 +413,13 @@ operation history remains compatible.
 
 ## Current milestone
 
+The authenticated operator console now includes a read-only **System** tab. It is backed by a
+precomputed `GET /api/v1/system/status` snapshot and shows bounded Storage/library/policy wiring plus
+runtime compatibility. Root paths, display paths, scan-rule values, naming templates,
+classification paths, endpoints, environment-variable names, arbitrary adapter options, and secrets
+are intentionally excluded. Reselect **System** or use its explicit refresh button to reload the
+same startup snapshot; changing JSON still requires validation and an API restart.
+
 The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries,
 persistent scan/preview jobs, Cron schedules, and signed Webhook notifications are complete.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.

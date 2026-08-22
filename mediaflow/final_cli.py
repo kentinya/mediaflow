@@ -710,6 +710,9 @@ def final_main(
                 raise ValueError("API port must be between 1 and 65535")
             from wsgiref.simple_server import make_server
 
+            from mediaflow.infrastructure.configuration_snapshot import (
+                build_configuration_snapshot,
+            )
             from mediaflow.interfaces.service_api import MediaFlowApi
 
             with SQLiteTaskRepository(configuration.database_path) as repository:
@@ -728,6 +731,7 @@ def final_main(
                     remote_execution_maximum_ttl_seconds=(
                         configuration.remote_execution_maximum_ttl_seconds
                     ),
+                    system_status=build_configuration_snapshot(configuration),
                 )
                 stdout.write(f"MediaFlow API listening on {arguments.host}:{arguments.port}\n")
                 stdout.flush()
