@@ -1,96 +1,84 @@
-# Phase 19.23 — Isolated Real OpenList Acceptance Matrix
+# Phase 19.23.1 — OpenList Empty-Root Preflight and Evidence Record
 
 ## Goal
 
-Create a fail-closed, explicitly destructive opt-in acceptance suite for the
-production OpenList adapter and Local↔OpenList/OpenList↔OpenList transfers.
-Execute it only when a dedicated empty test root and explicit operator consent
-are present. Missing prerequisites produce BLOCKED/NOT RUN, never PASS.
+Close the remaining safety and evidence gaps in the Phase 19.23 real OpenList
+acceptance harness without advancing to Phase 19.24. Prove the explicitly
+approved remote test root is empty before any mutation and produce one
+non-secret, machine-readable acceptance record after an attempted real run.
 
 ## Scope
 
-### 1. Destructive acceptance gate
+### 1. Fail-closed empty-root preflight
 
-Require all of:
+- Keep every Phase 19.23 URL/token/root/confirmation prerequisite.
+- Before creating a run child, use production `OpenListStorage` read operations
+  to prove the configured root exists, is a directory, and contains zero items.
+- Any listed item, permission failure, or unreadable root blocks mutation and
+  fails acceptance.
+- Do not delete, rename, move, or otherwise prepare a non-empty root.
 
-- `TEST_OPENLIST_URL`
-- `TEST_OPENLIST_TOKEN`
-- `TEST_OPENLIST_ROOT`
-- `TEST_OPENLIST_DESTRUCTIVE_CONFIRM=DELETE_ONLY_GENERATED_MEDIAFLOW_ACCEPTANCE_DATA`
+### 2. Explicit evidence destination
 
-The root must be absolute, non-root, traversal-free, and have a final component
-starting with `mediaflow-acceptance-`. There is no default root. Reject known
-configured ResourceLibrary/MediaLibrary paths and never inspect user config to
-infer consent.
+- Require `TEST_OPENLIST_REPORT` for an enabled real run.
+- It must be an absolute, non-existing local `.json` file whose parent exists.
+- Never overwrite a report and never derive its path from runtime/user config.
+- Publish the completed report without exposing a partial target.
 
-### 2. Generated-run isolation and cleanup
+### 3. Safe acceptance record
 
-- Create one cryptographically unique child under the approved test root.
-- Mutate/delete only objects created under that child.
-- Verify the child did not pre-exist.
-- Always attempt bounded cleanup in `finally`.
-- Cleanup failure fails acceptance and reports safe logical paths only.
-- Never recursively delete unknown/pre-existing content.
+Record only bounded, non-secret evidence:
 
-### 3. Real OpenList matrix
+- schema/version and UTC start/end time
+- suite/result (`PASS` or `FAIL`)
+- production adapter and package version
+- approved test-root identifier, never URL/token/header
+- planned operation names and completed operation names
+- empty-root preflight result
+- cleanup attempted/result
+- normalized error category without raw remote response or secrets
 
-Using production `OpenListStorage` and `OrganizerExecutor`, cover:
+The report is evidence of an attempted run, not an automatic claim that all of
+Phase 19 is accepted.
 
-- health/list/stat/read/write
-- no-overwrite conflict
-- same-OpenList copy and move
-- Local → OpenList COPY and MOVE
-- OpenList → Local COPY and MOVE
-- OpenList → OpenList Organizer COPY and MOVE
-- source/destination size and content checks where readable
-- MOVE source absence only after verified destination
-- generated-object cleanup
+### 4. Unit coverage
 
-Use small deterministic generated payloads; never media-library files.
+- Test report-path prerequisite rejection without network.
+- Test empty, non-empty, unreadable, and non-directory root preflight.
+- Test report redaction, no-overwrite publication, PASS and FAIL records.
+- Confirm every rejected preflight performs zero Storage mutations.
 
-### 4. Unit safety and fault coverage
+### 5. Status
 
-- Unit-test every prerequisite rejection without network access.
-- Existing fake OpenList timeout/rate-limit/connection/rename rollback tests
-  remain UNIT PASS only.
-- Add Organizer fake fault tests for the new real matrix directions if a
-  direction lacks failure/source-preservation coverage.
-- Do not change production OpenList behavior when acceptance discovers a defect;
-  record it as FAIL for a separate repair phase.
-
-### 5. Evidence and status
-
-- Update `docs/storage-acceptance.md` with exact command, environment contract,
-  date, and status.
-- If prerequisites are absent, mark all real OpenList rows BLOCKED/NOT RUN.
-- Do not claim Phase 19.23 PASS without actual isolated execution.
-- Phase 19 overall remains BLOCKED until later SMB/S3 and duration gates finish.
+- Execute the real matrix only when all five prerequisites exist.
+- If they are absent, retain `BLOCKED / NOT RUN`; do not use `config/alist.json`.
+- Do not begin SMB/S3/R2 acceptance or alter production adapters in this task.
 
 ## Boundaries
 
 Do not modify Parser, Scanner, Recognition, Metadata, Naming, Classification,
-Planner semantics, production OpenList adapter semantics, or UI/API. Do not use
-`config/alist.json`. Do not add secrets to logs, reports, tests, or Git.
+Planner, OrganizerExecutor, production Storage semantics, UI, API, or user
+configuration. Generated report writing is limited to the operator-selected
+new local evidence file.
 
 ## Validation
 
-Run OpenList/Organizer/Local focused unit tests, full tests, formatter, lint,
-compile, dependency/configuration/FFmpeg audits, and isolated wheel validation.
-Run the real suite only if every destructive prerequisite is present.
+Run focused OpenList acceptance/gate tests, all Storage and Organizer
+regressions, the full offline suite, formatter, lint, compile, dependency and
+configuration checks, FFmpeg/FFprobe audit, and isolated wheel smoke. Run real
+OpenList only when every prerequisite is explicitly supplied.
 
 ## Completion Report
 
 Finish with:
 
-## Phase 19.23 Result
+## Phase 19.23.1 Result
 
 PASS / BLOCKED / FAIL
 
-## Destructive Gate
+## Empty-Root Preflight
 
-## Real OpenList Matrix
-
-## Fault Injection
+## Evidence Record
 
 ## Safety
 

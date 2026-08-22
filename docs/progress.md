@@ -1204,3 +1204,16 @@ Phase 19.23 isolated real OpenList acceptance matrix (2026-08-22): BLOCKED
   OpenList rows and Phase 19 overall remain BLOCKED and no real Storage mutation occurred
 - Full offline suite: 486 tests, 483 passed, 0 failed, 3 real integrations skipped; Ruff, compile,
   dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed
+
+Phase 19.23.1 OpenList empty-root preflight and evidence record (2026-08-22): BLOCKED
+
+- Added a production-Storage read-only preflight requiring the approved OpenList root to exist, be a
+  directory, and contain zero listed objects before the first generated directory or file is created
+- Enabled real runs now require an explicit new absolute local JSON report path; evidence publication
+  is atomic/no-overwrite and excludes endpoint, credential, header, raw response, and arbitrary errors
+- Unit regressions prove non-empty, non-directory, unreadable, incomplete gate, unsafe report path,
+  report collision, and secret-bearing report data fail closed with zero Storage mutation
+- Actual isolated matrix remains NOT RUN because all five dedicated prerequisites are absent; Phase
+  19.23.1, Phase 19.23, and Phase 19 overall remain BLOCKED
+- Full offline suite: 488 tests, 485 passed, 0 failed, 3 real integrations skipped; Ruff, compile,
+  dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed

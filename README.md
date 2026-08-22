@@ -12,7 +12,8 @@ blocking. Fake-client unit tests are not counted as real-service evidence. See t
 
 The Phase 19.23 real OpenList suite is destructive only inside an explicitly named
 `mediaflow-acceptance-*` root and requires a fixed confirmation value. It has no default test root
-and never derives consent from runtime or user configuration; see the matrix document for the exact command.
+and never derives consent from runtime or user configuration. The suite proves the root is empty
+before mutation and writes a new non-secret JSON evidence record; see the matrix document for the exact command.
 
 ## Setup
 

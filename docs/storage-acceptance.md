@@ -66,13 +66,17 @@ TEST_OPENLIST_URL='https://openlist.test.example' \
 TEST_OPENLIST_TOKEN='<dedicated-test-token>' \
 TEST_OPENLIST_ROOT='/qa/mediaflow-acceptance-openlist' \
 TEST_OPENLIST_DESTRUCTIVE_CONFIRM='DELETE_ONLY_GENERATED_MEDIAFLOW_ACCEPTANCE_DATA' \
+TEST_OPENLIST_REPORT='/var/tmp/mediaflow-openlist-acceptance.json' \
 .venv/bin/python -m unittest tests.test_openlist_real_acceptance
 ```
 
-The suite creates one random `run-*` child, rejects pre-existence, deletes only its allowlisted
-generated names, and fails cleanup if any unknown object appears. It covers production-adapter
-lifecycle plus Local→OpenList, OpenList→Local, and OpenList→OpenList COPY/MOVE. As of 2026-08-22 the
-current environment has none of these dedicated variables, so the real matrix is `BLOCKED / NOT RUN`.
+Before mutation, the suite requires the production adapter to prove the approved root is a directory
+with zero listed items. It then creates one random `run-*` child, rejects pre-existence, deletes only
+its allowlisted generated names, and fails cleanup if any unknown object appears. The report target
+must be a new absolute local `.json` path in an existing directory; publication never overwrites and
+contains no endpoint or credential. The matrix covers production-adapter lifecycle plus
+Local→OpenList, OpenList→Local, and OpenList→OpenList COPY/MOVE. As of 2026-08-22 the current environment
+has none of these dedicated variables, so the real matrix is `BLOCKED / NOT RUN`.
 
 ## Remaining blocking gates
 
