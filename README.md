@@ -10,6 +10,10 @@ OpenList, and S3/R2 matrices, cross-provider fault injection, and long-running v
 blocking. Fake-client unit tests are not counted as real-service evidence. See the
 [Storage Acceptance Matrix](docs/storage-acceptance.md).
 
+The Phase 19.23 real OpenList suite is destructive only inside an explicitly named
+`mediaflow-acceptance-*` root and requires a fixed confirmation value. It has no default test root
+and never derives consent from runtime or user configuration; see the matrix document for the exact command.
+
 ## Setup
 
 ```bash

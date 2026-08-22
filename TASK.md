@@ -1,117 +1,102 @@
-# Phase 19.22 — Local Storage Atomic Publication and Fault-Injection Baseline
+# Phase 19.23 — Isolated Real OpenList Acceptance Matrix
 
 ## Goal
 
-Correct the Phase 19 acceptance drift by implementing and validating the first
-real Storage safety gate: atomic target visibility for LocalStorage write/copy,
-failure cleanup, overwrite preservation, and Organizer cross-storage failure
-semantics. Record remote real-storage matrix items as blocking and unverified
-unless an isolated destructive test root is explicitly supplied.
+Create a fail-closed, explicitly destructive opt-in acceptance suite for the
+production OpenList adapter and Local↔OpenList/OpenList↔OpenList transfers.
+Execute it only when a dedicated empty test root and explicit operator consent
+are present. Missing prerequisites produce BLOCKED/NOT RUN, never PASS.
 
 ## Scope
 
-### 1. Production-readiness status correction
+### 1. Destructive acceptance gate
 
-- Remove or qualify claims that Phase 19 or the project is production accepted.
-- Publish one authoritative Storage acceptance matrix covering Local, SMB,
-  OpenList, and S3/R2 plus same/cross-storage transfer directions.
-- Distinguish unit/fake coverage, isolated real coverage, blocked, and failed.
-- Never count fake transports or mock servers as real-storage acceptance.
+Require all of:
 
-### 2. LocalStorage atomic target visibility
+- `TEST_OPENLIST_URL`
+- `TEST_OPENLIST_TOKEN`
+- `TEST_OPENLIST_ROOT`
+- `TEST_OPENLIST_DESTRUCTIVE_CONFIRM=DELETE_ONLY_GENERATED_MEDIAFLOW_ACCEPTANCE_DATA`
 
-- `write` and `copy` stage data in a unique same-directory temporary file.
-- Publish only after the complete stage succeeds.
-- Default no-overwrite publication must atomically fail if target exists.
-- Explicit overwrite must atomically replace the target.
-- Any source/read/copy/publish failure must preserve an existing target and
-  remove only the operation-owned temporary file.
-- Temporary names must not expose source media names unnecessarily and must not
-  escape the configured Storage root.
-- Do not claim power-loss durability or transactional source+target atomicity.
+The root must be absolute, non-root, traversal-free, and have a final component
+starting with `mediaflow-acceptance-`. There is no default root. Reject known
+configured ResourceLibrary/MediaLibrary paths and never inspect user config to
+infer consent.
 
-### 3. Fault injection
+### 2. Generated-run isolation and cleanup
 
-Add deterministic tests for:
+- Create one cryptographically unique child under the approved test root.
+- Mutate/delete only objects created under that child.
+- Verify the child did not pre-exist.
+- Always attempt bounded cleanup in `finally`.
+- Cleanup failure fails acceptance and reports safe logical paths only.
+- Never recursively delete unknown/pre-existing content.
 
-- stream failure before publication
-- copy failure after partial stage data
-- target race during no-overwrite publication
-- overwrite failure preserving original target
-- publication failure cleanup
-- no orphan operation-owned stage files
-- source remains unchanged on write/copy failure
-- Organizer cross-storage copy/write failure does not delete source
-- cross-storage MOVE delete failure remains explicit PARTIAL with both copies
-- size verification failure remains visible and never reported SUCCESS
+### 3. Real OpenList matrix
 
-### 4. Real acceptance evidence boundary
+Using production `OpenListStorage` and `OrganizerExecutor`, cover:
 
-- Execute Local adapter tests against real temporary filesystem directories.
-- Document exact isolated prerequisites for SMB, OpenList, and S3/R2 destructive
-  acceptance: dedicated credentials, dedicated empty test root/bucket prefix,
-  explicit operator confirmation, and permission to create/delete test data.
-- Do not read or mutate configured media-library roots.
-- Do not run against `config/alist.json` or any user Storage automatically.
-- Remote matrices remain BLOCKED/NOT RUN in this phase unless those explicit
-  prerequisites are provided.
+- health/list/stat/read/write
+- no-overwrite conflict
+- same-OpenList copy and move
+- Local → OpenList COPY and MOVE
+- OpenList → Local COPY and MOVE
+- OpenList → OpenList Organizer COPY and MOVE
+- source/destination size and content checks where readable
+- MOVE source absence only after verified destination
+- generated-object cleanup
 
-### 5. Architecture boundaries
+Use small deterministic generated payloads; never media-library files.
 
-- Keep filesystem APIs inside LocalStorage infrastructure.
-- Do not change Parser, Recognition, Metadata, Naming, Classification, Scanner,
-  Task, Planner policy semantics, or remote Storage adapter behavior.
-- OrganizerExecutor remains the only business-layer Storage mutation boundary.
-- Preserve DryRun zero mutation and RecognitionType C behavior.
+### 4. Unit safety and fault coverage
 
-## Tests and quality gates
+- Unit-test every prerequisite rejection without network access.
+- Existing fake OpenList timeout/rate-limit/connection/rename rollback tests
+  remain UNIT PASS only.
+- Add Organizer fake fault tests for the new real matrix directions if a
+  direction lacks failure/source-preservation coverage.
+- Do not change production OpenList behavior when acceptance discovers a defect;
+  record it as FAIL for a separate repair phase.
 
-Run:
+### 5. Evidence and status
 
-- focused LocalStorage atomic/fault tests
-- Organizer execution/fault regressions
-- all Local/SMB/OpenList/S3-R2 unit regressions
-- DryRun and full project tests
-- formatter, lint, compile, dependency check
-- both canonical configuration validations
-- FFmpeg/FFprobe audit
-- isolated wheel build/smoke validation
+- Update `docs/storage-acceptance.md` with exact command, environment contract,
+  date, and status.
+- If prerequisites are absent, mark all real OpenList rows BLOCKED/NOT RUN.
+- Do not claim Phase 19.23 PASS without actual isolated execution.
+- Phase 19 overall remains BLOCKED until later SMB/S3 and duration gates finish.
 
-## Documentation
+## Boundaries
 
-Update README, requirements, architecture, progress, roadmap, release checklist,
-and add an authoritative Storage acceptance matrix document.
+Do not modify Parser, Scanner, Recognition, Metadata, Naming, Classification,
+Planner semantics, production OpenList adapter semantics, or UI/API. Do not use
+`config/alist.json`. Do not add secrets to logs, reports, tests, or Git.
 
-## Out of Scope
+## Validation
 
-- claiming SMB/OpenList/S3-R2 real acceptance without isolated endpoints
-- automatic destructive acceptance against configured libraries
-- remote adapter redesign
-- distributed transactions or rollback
-- power-loss/fsync durability certification
-- UI, OIDC, scheduling, or recovery features
+Run OpenList/Organizer/Local focused unit tests, full tests, formatter, lint,
+compile, dependency/configuration/FFmpeg audits, and isolated wheel validation.
+Run the real suite only if every destructive prerequisite is present.
 
 ## Completion Report
 
 Finish with:
 
-## Phase 19.22 Result
+## Phase 19.23 Result
 
-PASS / FAIL
+PASS / BLOCKED / FAIL
 
-## Atomic Publication
+## Destructive Gate
+
+## Real OpenList Matrix
 
 ## Fault Injection
-
-## Storage Acceptance Matrix
 
 ## Safety
 
 ## Regression
 
 ## Changed Files
-
-## Decisions
 
 ## Remaining Work
 

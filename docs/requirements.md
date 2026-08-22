@@ -4002,6 +4002,10 @@ LocalStorage write/copy 必须先在目标同目录完成私有 stage，再原�
 删除失败必须报告 PARTIAL 并明确两边文件状态，不得报告 SUCCESS。真实远端破坏性验收必须要求
 专用凭证、明确空测试根和操作员确认，禁止自动使用 ResourceLibrary、MediaLibrary 或用户配置路径。
 
+OpenList 实机验收必须同时显式提供测试 URL、专用 Token、无默认值的绝对测试根和固定破坏性确认
+短语。测试根末级名称必须以 `mediaflow-acceptance-` 开头。每次只创建随机 run 子目录，清理仅允许
+预先列举的生成对象；发现未知对象必须停止并将验收记为 FAIL/BLOCKED，不得递归清理。
+
 # 110. 最终核心原则
 
 系统的实际执行链必须始终为：

@@ -19,7 +19,7 @@ real isolated evidence.
 |---|---|---|---|---|---|
 | Local | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS for write/copy target visibility | ISOLATED PASS on temporary host filesystem |
 | SMB | UNIT PASS | UNIT PASS | UNIT PASS | Not certified | BLOCKED: no isolated real share |
-| OpenList | UNIT PASS | UNIT PASS | UNIT PASS | Not certified | BLOCKED: no explicitly approved empty test root |
+| OpenList | UNIT PASS | UNIT PASS | UNIT PASS | Not certified | BLOCKED: isolated matrix implemented but prerequisites absent |
 | S3/R2 | UNIT PASS | UNIT PASS | UNIT PASS | Not certified | BLOCKED: no isolated bucket/prefix |
 
 Local `write` and `copy` stage in the target directory and publish atomically. A reader sees the old
@@ -55,6 +55,24 @@ For each SMB, OpenList, or S3/R2 deployment, provide all of the following before
 Never use a ResourceLibrary or MediaLibrary root and never run destructive acceptance automatically.
 `config/alist.json` and user media remain outside the test boundary unless the operator later supplies
 a distinct approved test root.
+
+### OpenList Phase 19.23 command
+
+The acceptance root has no default and its final component must start with
+`mediaflow-acceptance-`. Run only after creating and verifying that dedicated empty root:
+
+```bash
+TEST_OPENLIST_URL='https://openlist.test.example' \
+TEST_OPENLIST_TOKEN='<dedicated-test-token>' \
+TEST_OPENLIST_ROOT='/qa/mediaflow-acceptance-openlist' \
+TEST_OPENLIST_DESTRUCTIVE_CONFIRM='DELETE_ONLY_GENERATED_MEDIAFLOW_ACCEPTANCE_DATA' \
+.venv/bin/python -m unittest tests.test_openlist_real_acceptance
+```
+
+The suite creates one random `run-*` child, rejects pre-existence, deletes only its allowlisted
+generated names, and fails cleanup if any unknown object appears. It covers production-adapter
+lifecycle plus Local→OpenList, OpenList→Local, and OpenList→OpenList COPY/MOVE. As of 2026-08-22 the
+current environment has none of these dedicated variables, so the real matrix is `BLOCKED / NOT RUN`.
 
 ## Remaining blocking gates
 

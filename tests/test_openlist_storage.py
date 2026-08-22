@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import io
-import os
 import unittest
-import uuid
 from datetime import UTC, datetime
 
 from mediaflow.domain.storage import StorageEntryType, StorageError, StorageErrorCode
@@ -467,36 +465,3 @@ class HttpOpenListClientContractTests(unittest.TestCase):
                 FakeResponse(200, {"code": 403, "message": "file [movie.mkv] exists"})
             )
         self.assertEqual(OpenListClientErrorKind.ALREADY_EXISTS, raised.exception.kind)
-
-
-@unittest.skipUnless(
-    os.getenv("TEST_OPENLIST_URL") and os.getenv("TEST_OPENLIST_TOKEN"),
-    "real OpenList test environment not configured",
-)
-class RealOpenListIntegrationTests(unittest.TestCase):
-    def test_dedicated_directory_lifecycle(self) -> None:
-        config = OpenListStorageConfig(
-            "integration",
-            "OpenList integration",
-            os.environ["TEST_OPENLIST_URL"],
-            os.environ["TEST_OPENLIST_TOKEN"],
-            root_path=os.environ.get("TEST_OPENLIST_ROOT", "/mediaflow-test"),
-        )
-        directory = f"run-{uuid.uuid4().hex}"
-        with OpenListStorage(config) as storage:
-            storage.health_check()
-            storage.create_directory(directory)
-            try:
-                storage.write(f"{directory}/source.txt", b"mediaflow-openlist-test")
-                with storage.read(f"{directory}/source.txt") as stream:
-                    self.assertEqual(b"mediaflow-openlist-test", stream.read())
-                storage.copy(f"{directory}/source.txt", f"{directory}/copy.txt")
-                storage.move(f"{directory}/copy.txt", f"{directory}/moved.txt")
-                self.assertEqual(2, len(storage.list(directory)))
-                storage.delete(f"{directory}/moved.txt")
-                storage.delete(f"{directory}/source.txt")
-            finally:
-                if storage.exists(directory):
-                    for entry in storage.list(directory):
-                        storage.delete(entry.path)
-                    storage.delete(directory)

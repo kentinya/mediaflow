@@ -1191,3 +1191,16 @@ Phase 19.22 Local Storage atomic publication and fault-injection baseline (2026-
   reports PARTIAL and preserves the complete source, while delete failure retains both copies
 - Full suite: 485 tests, 482 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
   dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed
+
+Phase 19.23 isolated real OpenList acceptance matrix (2026-08-22): BLOCKED
+
+- Replaced the unsafe URL+Token-only optional integration with a four-part destructive gate requiring
+  an explicit non-root `mediaflow-acceptance-*` path and exact operator confirmation; no default exists
+- Added a production OpenListStorage/OrganizerExecutor matrix for lifecycle, no-overwrite, same-
+  OpenList operations, Local↔OpenList COPY/MOVE, content/size/source checks, and allowlisted cleanup
+- Gate validation and all fake fault regressions pass without network access; acceptance never imports
+  runtime/user configuration and `config/alist.json` remains outside its boundary
+- Actual isolated execution is NOT RUN because TEST_OPENLIST_URL/TOKEN/ROOT/confirmation are absent;
+  OpenList rows and Phase 19 overall remain BLOCKED and no real Storage mutation occurred
+- Full offline suite: 486 tests, 483 passed, 0 failed, 3 real integrations skipped; Ruff, compile,
+  dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed
