@@ -229,6 +229,11 @@ Callers use portable logical paths relative to the configured root; absolute pat
 The adapter normalizes `.` and repeated separators, rejects traversal above the root, and resolves
 existing symbolic links before access so a link cannot provide access outside the root.
 
+Write and copy stage into a unique operation-owned file in the target directory, flush the stage,
+then publish it with an atomic same-filesystem namespace operation. No-overwrite uses atomic link
+creation; overwrite uses atomic replace. Failures remove only the stage and preserve any old target.
+This is target-visibility atomicity, not power-loss durability or a multi-file transaction.
+
 Directory and stat results use `StorageEntry`, including name, logical path, entry type, size, and
 UTC modification time. Reads return binary streams. Writes accept bytes or a binary stream; stream
 copying and filesystem-native copy avoid loading an entire media file into memory. Parent
@@ -819,8 +824,8 @@ unresolved conflicts before mutation, creates the destination parent through Sto
 MOVE/COPY/LINK through Storage methods, and verifies the destination afterward.
 
 Same-adapter operations use native Storage move/copy/link capabilities. Cross-storage COPY streams
-from `Storage.read` to `Storage.write`; cross-storage MOVE uses the same copy, verifies the target,
-and only then calls source `delete`. A failure before any completed mutation is FAILED; a failure
+from `Storage.read` to `Storage.write`; cross-storage MOVE uses the same copy, verifies target
+existence and size, and only then calls source `delete`. A failure before any completed mutation is FAILED; a failure
 after directory creation or another completed step is PARTIAL. ExecutionResult records status,
 operation, paths, created directories, completed operations, warnings/errors, timestamp, stable
 plan ID, and duration. Structured Logger records contain the same non-secret execution context.

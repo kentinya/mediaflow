@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -172,11 +173,17 @@ class LocalStorage:
 
         def perform() -> None:
             target = self._resolve(path, "write")
-            with target.open("wb" if overwrite else "xb") as destination:
-                if isinstance(data, bytes | bytearray | memoryview):
-                    destination.write(data)
-                else:
-                    shutil.copyfileobj(data, destination, length=1024 * 1024)
+
+            def stage(destination: Path) -> None:
+                with destination.open("wb") as stream:
+                    if isinstance(data, bytes | bytearray | memoryview):
+                        stream.write(data)
+                    else:
+                        shutil.copyfileobj(data, stream, length=1024 * 1024)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+
+            self._atomic_publish(target, stage, overwrite=overwrite)
 
         self._execute("write", path, perform)
 
@@ -208,8 +215,11 @@ class LocalStorage:
         def perform() -> None:
             source_path = self._resolve(source, "copy")
             target_path = self._resolve(target, "copy")
-            self._guard_target(target_path, overwrite, "copy", target)
-            shutil.copy2(source_path, target_path)
+            self._atomic_publish(
+                target_path,
+                lambda stage: shutil.copy2(source_path, stage),
+                overwrite=overwrite,
+            )
 
         self._execute("copy", source, perform)
 
@@ -264,6 +274,29 @@ class LocalStorage:
                 path,
                 f"storage {self._storage_id!r} is read-only",
             )
+
+    @staticmethod
+    def _atomic_publish(
+        target: Path,
+        writer: Callable[[Path], object],
+        *,
+        overwrite: bool,
+    ) -> None:
+        descriptor, stage_name = tempfile.mkstemp(prefix=".mediaflow-stage-", dir=target.parent)
+        os.close(descriptor)
+        stage = Path(stage_name)
+        try:
+            writer(stage)
+            if overwrite:
+                os.replace(stage, target)
+            else:
+                os.link(stage, target)
+                stage.unlink()
+        finally:
+            try:
+                stage.unlink()
+            except FileNotFoundError:
+                pass
 
     @staticmethod
     def _can_hard_link() -> bool:

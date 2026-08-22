@@ -34,6 +34,10 @@ backup/verify round trip. It never reads configured production Storage or creden
 
 ## Maintainer review
 
+- Review [Storage Acceptance Matrix](storage-acceptance.md). A green unit/CI suite does not satisfy
+  real SMB/OpenList/S3-R2 or cross-provider acceptance; do not label the deployment production-
+  accepted while required rows are `BLOCKED` or `FAIL`.
+
 - Confirm the worktree contains only intended release changes; never include local configuration,
   databases, caches, credentials, logs, or media.
 - Review the version and release notes/changelog for the intended compatibility statement.

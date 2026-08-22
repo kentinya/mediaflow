@@ -5,6 +5,11 @@ S3/R2. Its production pipeline scans media, parses filenames, recognizes a confi
 identifies metadata, calculates names and classification, plans an operation, and optionally
 executes it. Dry-run is always the default.
 
+The core workflow is complete, but Phase 19 production acceptance is not complete. Real SMB,
+OpenList, and S3/R2 matrices, cross-provider fault injection, and long-running validation remain
+blocking. Fake-client unit tests are not counted as real-service evidence. See the
+[Storage Acceptance Matrix](docs/storage-acceptance.md).
+
 ## Setup
 
 ```bash

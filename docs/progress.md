@@ -50,6 +50,10 @@
 - Phase 19.17 explicit Automation Job cancellation UI: PASS
 - Phase 19.18 explicit DryRun Automation Job submission UI: PASS
 - Phase 19.19 durable active Automation Job admission control: PASS
+- Phase 19.20 read-only stale Running Automation Job visibility: PASS
+- Phase 19.21 fenced cooperative Automation Job heartbeats: PASS
+- Phase 19 overall production acceptance: BLOCKED on real remote Storage matrix, cross-provider
+  fault injection, and long-duration validation
 
 ## Planned
 
@@ -61,8 +65,9 @@
 - Cross-storage links are unsupported; cross-storage COPY/MOVE use bounded streaming transfer
 - LocalStorage link capabilities still depend on the host filesystem
 - No static type checker is configured; typed source receives compile validation only
-- Write operations are streamed but not transactionally atomic; a failed write can leave a partial
-  target. Atomic temporary-file replacement is deferred to Organizer safety hardening.
+- LocalStorage write/copy use same-directory atomic target publication, but power-loss durability and
+  multi-file/source+target transactions are not certified. Remote adapter atomic publication remains
+  unverified against real services.
 - Path checks minimize symlink escape risk, but filesystem-level time-of-check/time-of-use races
   require OS-specific directory-handle APIs for complete hardening.
 - SMB HardLink and SoftLink are unsupported and never fall back to another operation.
@@ -1172,4 +1177,17 @@ Phase 19.21 fenced cooperative Automation Job heartbeats (2026-08-22): PASS
 - Claim tokens are absent from API/UI/CLI/log/notification/configuration output; stale observation
   remains conservative during blocking external calls and no recovery control was added
 - Full suite: 477 tests, 474 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
+  dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed
+
+Phase 19.22 Local Storage atomic publication and fault-injection baseline (2026-08-22): PASS
+
+- Corrected project status: Phase 19 overall production acceptance is BLOCKED, and fake/mock Storage
+  tests are no longer described as real-service evidence
+- Added the authoritative Local/SMB/OpenList/S3-R2 and transfer acceptance matrix; remote rows remain
+  BLOCKED until dedicated credentials and explicitly approved empty destructive roots are supplied
+- LocalStorage write/copy now stage in the target directory and atomically publish with no-overwrite
+  race protection; injected stream/copy/publish failures preserve old targets and leave no owned stage
+- Cross-storage MOVE now verifies destination existence and size before source delete; truncated target
+  reports PARTIAL and preserves the complete source, while delete failure retains both copies
+- Full suite: 485 tests, 482 passed, 0 failed, 3 optional real integrations skipped; Ruff, compile,
   dependency, both example-configuration, forbidden-runtime-dependency, and isolated wheel gates passed

@@ -205,15 +205,18 @@ Phase 19.21 已加入 Automation Job claim fencing 与协作心跳：每次领�
 心跳和终态按 Running+token 原子校验，重排清除旧 token。旧 Worker 无法覆盖新 claim 或发布其终态
 通知；token 不进入 API/UI/CLI/日志。阻塞中的外部调用仍无后台心跳，也不提供自动恢复。
 
+Phase 19 总体验收仍为 BLOCKED：此前子阶段 PASS 只代表各自范围通过，不代表真实 SMB/OpenList/
+S3-R2、跨存储矩阵、长时间批处理与故障注入完成。Phase 19.22 开始纠偏，先建立权威矩阵并完成
+LocalStorage 原子目标发布及跨存储 MOVE 大小不一致保源回归。
+
 ## 下一步实施建议
 
 后续任务仍应保持小步推进。优先顺序：
 
-1. 基于已完成的 fencing/heartbeat，设计只读 claim 健康信息与显式人工恢复前置检查；不做
-   自动恢复，也不把心跳解释为外部 Storage exactly-once 保证。
-2. 评估数据库用户/OIDC 与外部 Secret Store 集成，不在核心中自建弱认证系统。
-3. 评估节假日日历等高级调度需求，避免扩大 Cron 核心。
-4. 保持 Storage 预检、附件、冲突确认和一次性执行授权不变。
+1. 完成隔离真实 OpenList 矩阵与 Local↔OpenList/OpenList↔OpenList 故障注入。
+2. 完成隔离真实 SMB 与 S3/R2 矩阵，并形成可复现验收报告。
+3. 完成长时间批处理、大文件、中断恢复与一致性验证；在此之前 Phase 19 不得整体 PASS。
+4. 上述硬门完成后再继续 recovery UI、OIDC/Secret Store 或高级调度。
 
 Interval/Cron Scheduler 已实现但只允许 scan/preview；仍不支持无人值守定时
 `organize --execute`。

@@ -286,6 +286,84 @@ class LocalStorageTest(unittest.TestCase):
         self.assertIsInstance(error.cause, FileNotFoundError)
         self.assertNotIn("test-media-content", str(error))
 
+    def test_atomic_write_stream_failure_has_no_target_or_stage_file(self) -> None:
+        class FailingStream(io.BytesIO):
+            reads = 0
+
+            def read(self, size=-1):
+                self.reads += 1
+                if self.reads > 1:
+                    raise OSError("injected stream failure")
+                return super().read(min(size, 4))
+
+        with self.assertRaises(StorageError):
+            self.storage.write("target.mkv", FailingStream(b"partial-media"))
+        self.assertFalse((self.root / "target.mkv").exists())
+        self.assertEqual([], list(self.root.glob(".mediaflow-stage-*")))
+
+    def test_atomic_write_overwrite_failure_preserves_existing_target(self) -> None:
+        self.storage.write("target.mkv", b"original")
+        with patch(
+            "mediaflow.infrastructure.local_storage.os.replace", side_effect=OSError("fail")
+        ):
+            with self.assertRaises(StorageError):
+                self.storage.write("target.mkv", b"replacement", overwrite=True)
+        self.assertEqual(b"original", (self.root / "target.mkv").read_bytes())
+        self.assertEqual([], list(self.root.glob(".mediaflow-stage-*")))
+
+    def test_atomic_write_and_copy_explicit_overwrite_publish_complete_content(self) -> None:
+        self.storage.write("target.mkv", b"old")
+        self.storage.write("target.mkv", b"new-write", overwrite=True)
+        self.assertEqual(b"new-write", (self.root / "target.mkv").read_bytes())
+        self.storage.write("source.mkv", b"new-copy")
+        self.storage.copy("source.mkv", "target.mkv", overwrite=True)
+        self.assertEqual(b"new-copy", (self.root / "target.mkv").read_bytes())
+        self.assertEqual([], list(self.root.glob(".mediaflow-stage-*")))
+
+    def test_atomic_copy_partial_stage_failure_preserves_source_and_target(self) -> None:
+        self.storage.write("source.mkv", b"source-media")
+        self.storage.write("target.mkv", b"original-target")
+
+        def fail_after_partial(source, stage):
+            Path(stage).write_bytes(b"partial")
+            raise OSError("injected copy failure")
+
+        with patch("mediaflow.infrastructure.local_storage.shutil.copy2", fail_after_partial):
+            with self.assertRaises(StorageError):
+                self.storage.copy("source.mkv", "target.mkv", overwrite=True)
+        self.assertEqual(b"source-media", (self.root / "source.mkv").read_bytes())
+        self.assertEqual(b"original-target", (self.root / "target.mkv").read_bytes())
+        self.assertEqual([], list(self.root.glob(".mediaflow-stage-*")))
+
+    def test_atomic_no_overwrite_target_race_preserves_racer_and_cleans_stage(self) -> None:
+        self.storage.write("source.mkv", b"source-media")
+
+        def target_race(stage, target):
+            Path(target).write_bytes(b"racer")
+            raise FileExistsError("injected target race")
+
+        with patch("mediaflow.infrastructure.local_storage.os.link", target_race):
+            error = self.assert_storage_error(
+                StorageErrorCode.ALREADY_EXISTS,
+                self.storage.copy,
+                "source.mkv",
+                "target.mkv",
+            )
+        self.assertIsInstance(error.cause, FileExistsError)
+        self.assertEqual(b"racer", (self.root / "target.mkv").read_bytes())
+        self.assertEqual([], list(self.root.glob(".mediaflow-stage-*")))
+
+    def test_atomic_publish_permission_failure_leaves_no_target_or_stage(self) -> None:
+        with patch(
+            "mediaflow.infrastructure.local_storage.os.link",
+            side_effect=PermissionError("injected publish failure"),
+        ):
+            self.assert_storage_error(
+                StorageErrorCode.PERMISSION_DENIED, self.storage.write, "target.mkv", b"media"
+            )
+        self.assertFalse((self.root / "target.mkv").exists())
+        self.assertEqual([], list(self.root.glob(".mediaflow-stage-*")))
+
     def test_permission_denied_is_mapped_to_unified_error(self) -> None:
         self.storage.write("file", b"content")
         with patch.object(Path, "open", side_effect=PermissionError("denied")):

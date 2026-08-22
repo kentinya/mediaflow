@@ -400,6 +400,72 @@ class OrganizePlannerTest(unittest.TestCase):
             self.assertTrue(Path(source_root, "source.mkv").exists())
             self.assertTrue(Path(target_root, plan.target).exists())
 
+    def test_cross_storage_move_size_mismatch_never_deletes_source_or_reports_success(self) -> None:
+        class TruncatingTarget:
+            storage_id = "target"
+
+            def __init__(self, delegate):
+                self._delegate = delegate
+
+            def __getattr__(self, name):
+                return getattr(self._delegate, name)
+
+            def write(self, path, data, *, overwrite=False):
+                data.read()
+                self._delegate.write(path, b"x", overwrite=overwrite)
+
+        with (
+            tempfile.TemporaryDirectory() as source_root,
+            tempfile.TemporaryDirectory() as target_root,
+        ):
+            source_path = Path(source_root, "source.mkv")
+            source_path.write_bytes(b"complete-media")
+            source = LocalStorage("source", source_root)
+            target = TruncatingTarget(LocalStorage("target", target_root))
+            plan = replace(
+                OrganizePlanner().plan(**self._inputs(source="source.mkv")),
+                source_storage_id="source",
+                target_storage_id="target",
+            )
+            result = OrganizerExecutor().execute(
+                plan, {"source": source, "target": target}, execute=True
+            )
+            self.assertEqual(ExecutionStatus.PARTIAL, result.status)
+            self.assertIn("size mismatch", result.errors[0])
+            self.assertTrue(source_path.exists())
+            self.assertEqual(b"complete-media", source_path.read_bytes())
+            self.assertEqual(b"x", Path(target_root, plan.target).read_bytes())
+
+    def test_cross_storage_write_failure_never_deletes_source(self) -> None:
+        class WriteFailingTarget:
+            storage_id = "target"
+
+            def exists(self, path):
+                return False
+
+            def create_directory(self, path):
+                pass
+
+            def write(self, path, data, *, overwrite=False):
+                data.read(2)
+                raise RuntimeError("injected target write failure")
+
+        with tempfile.TemporaryDirectory() as source_root:
+            source_path = Path(source_root, "source.mkv")
+            source_path.write_bytes(b"complete-media")
+            source = LocalStorage("source", source_root)
+            plan = replace(
+                OrganizePlanner().plan(**self._inputs(source="source.mkv")),
+                source_storage_id="source",
+                target_storage_id="target",
+            )
+            result = OrganizerExecutor().execute(
+                plan, {"source": source, "target": WriteFailingTarget()}, execute=True
+            )
+            self.assertNotEqual(ExecutionStatus.SUCCESS, result.status)
+            self.assertTrue(source_path.exists())
+            self.assertEqual(b"complete-media", source_path.read_bytes())
+
     def test_executor_rejects_tampered_destination_before_storage_access(self) -> None:
         class ExplodingStorage:
             def __getattr__(self, name):

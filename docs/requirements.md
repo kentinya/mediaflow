@@ -3988,6 +3988,20 @@ SQLite 必须在一个写事务内完成活动数量判断和插入，跨进程�
 通知、审计、配置快照或错误信息。该 fencing 只保护 Runtime 状态所有权，不提供外部 Storage
 exactly-once 或回滚语义。
 
+## 109.7 Phase 19 Storage 验收门
+
+子阶段单元测试 PASS 不等于 Phase 19 生产验收。必须分别记录 Local、SMB、OpenList、S3/R2
+以及同存储/跨存储 COPY、MOVE 的证据类型。Fake client、mock HTTP 和内存 Storage 只能标记为
+UNIT PASS；只有生产 Adapter 在明确隔离的真实文件系统或服务测试根执行才可标记 ISOLATED PASS。
+
+LocalStorage write/copy 必须先在目标同目录完成私有 stage，再原子发布。任何读取、复制或发布失败
+不得暴露不完整目标；存在旧目标时必须保持旧内容，并清理操作自身 stage。该保证仅针对命名空间
+可见性，不宣称断电持久性或多文件事务。
+
+跨存储 MOVE 必须在删除源之前至少验证目标存在且大小一致。写入失败或大小不一致必须保留源；
+删除失败必须报告 PARTIAL 并明确两边文件状态，不得报告 SUCCESS。真实远端破坏性验收必须要求
+专用凭证、明确空测试根和操作员确认，禁止自动使用 ResourceLibrary、MediaLibrary 或用户配置路径。
+
 # 110. 最终核心原则
 
 系统的实际执行链必须始终为：

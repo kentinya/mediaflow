@@ -518,6 +518,10 @@ class OrganizerExecutor:
                 try:
                     if not target.exists(storage_target):
                         raise RuntimeError("cross-storage move copy verification failed")
+                    if target.stat(storage_target).size != source.stat(storage_source).size:
+                        raise RuntimeError(
+                            "cross-storage move copy verification failed: size mismatch"
+                        )
                     source.delete(storage_source)
                 except (StorageError, RuntimeError, OSError) as error:
                     raise PartialExecutionError(str(error), ("COPY",)) from error
