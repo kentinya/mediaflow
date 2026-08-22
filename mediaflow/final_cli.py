@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import io
+import ipaddress
 import json
 import os
+import re
+import secrets
 import signal
 import threading
 import time
@@ -217,12 +220,35 @@ def final_main(
     classification_review_resolve.add_argument("--note")
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
+    api_token = api_commands.add_parser("token", help="cryptographic bearer token operations")
+    api_token_commands = api_token.add_subparsers(dest="api_token_command", required=True)
+    api_token_generate = api_token_commands.add_parser("generate")
+    api_token_generate.add_argument("--bytes", type=int, default=32, dest="token_bytes")
+    api_credentials = api_commands.add_parser("credentials", help="redacted credential status")
+    api_credential_commands = api_credentials.add_subparsers(
+        dest="api_credential_command", required=True
+    )
+    api_credential_commands.add_parser("check")
     api_serve = api_commands.add_parser("serve")
     api_serve.add_argument("--host", default="127.0.0.1")
     api_serve.add_argument("--port", type=int, default=8787)
+    api_serve.add_argument("--allow-insecure-remote-http", action="store_true")
     arguments = parser.parse_args(argv)
     try:
+        if arguments.command == "api" and arguments.api_command == "token":
+            if not 32 <= arguments.token_bytes <= 128:
+                raise ValueError("API token bytes must be between 32 and 128")
+            stdout.write(f"{secrets.token_urlsafe(arguments.token_bytes)}\n")
+            return 0
         configuration = _configuration(arguments.config)
+        if arguments.command == "api" and arguments.api_command == "credentials":
+            statuses = configuration.api_credential_statuses()
+            stdout.write(render_api_credentials(statuses))
+            return (
+                0
+                if statuses and all(not item.enabled or item.configured for item in statuses)
+                else 1
+            )
         if arguments.command == "config":
             strategy = configuration.strategy
             stdout.write(
@@ -584,6 +610,17 @@ def final_main(
                 stdout.write(f"Scheduler stopped; emitted={emitted}\n")
                 return 0
         if arguments.command == "api":
+            loopback = _validate_api_bind_host(arguments.host)
+            if not loopback and not arguments.allow_insecure_remote_http:
+                raise ValueError(
+                    "non-loopback API bind requires --allow-insecure-remote-http; "
+                    "the development server does not provide TLS"
+                )
+            if not loopback:
+                stderr.write(
+                    "WARNING: serving authenticated traffic over unencrypted non-loopback HTTP; "
+                    "use a trusted TLS reverse proxy\n"
+                )
             principals = configuration.resolve_api_principals()
             if not 1 <= arguments.port <= 65535:
                 raise ValueError("API port must be between 1 and 65535")
@@ -1326,6 +1363,47 @@ def _configuration(path: str | None) -> RuntimeConfiguration:
     if not configured:
         raise ValueError("--config or MEDIAFLOW_CONFIG is required")
     return load_runtime_configuration(json.loads(Path(configured).read_text(encoding="utf-8")))
+
+
+_HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
+
+
+def _validate_api_bind_host(host: str) -> bool:
+    if (
+        not host
+        or len(host) > 253
+        or host != host.strip()
+        or any(value in host for value in "/\\\x00")
+    ):
+        raise ValueError("API host must be a valid hostname or IP address")
+    if host.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        labels = host[:-1].split(".") if host.endswith(".") else host.split(".")
+        if not labels or any(not _HOST_LABEL.fullmatch(label) for label in labels):
+            raise ValueError("API host must be a valid hostname or IP address") from None
+        return False
+
+
+def render_api_credentials(values) -> str:
+    lines = ["API CREDENTIALS", ""]
+    if not values:
+        return "\n".join(lines + ["No API principals configured", ""])
+    for value in values:
+        lines.append(
+            " | ".join(
+                (
+                    value.principal_id,
+                    ",".join(role.value for role in value.roles),
+                    value.token_env,
+                    "ENABLED" if value.enabled else "DISABLED",
+                    "SET" if value.configured else "UNSET",
+                )
+            )
+        )
+    return "\n".join(lines + [""])
 
 
 def _resource_library(configuration: RuntimeConfiguration, path: str) -> tuple[object, str]:

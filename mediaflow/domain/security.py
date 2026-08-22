@@ -66,6 +66,15 @@ class ApiPrincipalDefinition:
 
 
 @dataclass(frozen=True)
+class ApiCredentialStatus:
+    principal_id: str
+    token_env: str
+    roles: tuple[ApiRole, ...]
+    enabled: bool
+    configured: bool
+
+
+@dataclass(frozen=True)
 class ResolvedApiPrincipal:
     principal_id: str
     token: str

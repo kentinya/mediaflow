@@ -893,3 +893,15 @@ Phase 19.1 minimal secure operator Web UI (2026-08-22): PASS
 - Full suite: 398 tests, 395 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated-free wheel build, both example validations,
   FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 19.2 API credential lifecycle and HTTP deployment guardrails (2026-08-22): PASS
+
+- Added cryptographic one-time stdout Token generation with bounded 32–128 byte entropy selection
+- Added redacted config-only Principal credential status with enabled SET/UNSET failure semantics
+- Added loopback-by-default listener validation and explicit warning acknowledgement for non-loopback
+  unencrypted HTTP
+- Hardened JSON responses and bounded Bearer parsing without changing RBAC or execute authorization
+- Added focused generation/status/host/header/authentication safety regressions
+- Full suite: 404 tests, 401 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated-free wheel build, both example validations,
+  FFmpeg/FFprobe runtime audit, and diff check passed

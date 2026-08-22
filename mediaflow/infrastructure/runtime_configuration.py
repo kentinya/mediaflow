@@ -19,7 +19,12 @@ from mediaflow.domain.automation import (
 )
 from mediaflow.domain.library import DEFAULT_MEDIA_EXTENSIONS, MediaLibrary, ResourceLibrary
 from mediaflow.domain.notification import NotificationEventType, WebhookDefinition
-from mediaflow.domain.security import ApiPrincipalDefinition, ApiRole, ResolvedApiPrincipal
+from mediaflow.domain.security import (
+    ApiCredentialStatus,
+    ApiPrincipalDefinition,
+    ApiRole,
+    ResolvedApiPrincipal,
+)
 from mediaflow.domain.storage import Storage
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.openlist_storage import OpenListStorage, OpenListStorageConfig
@@ -199,6 +204,23 @@ class RuntimeConfiguration:
         if not resolved:
             raise ValueError("API requires at least one enabled configured principal")
         return tuple(resolved)
+
+    def api_credential_statuses(self) -> tuple[ApiCredentialStatus, ...]:
+        definitions = self.api_principals
+        if not definitions and self.api_token_env:
+            definitions = (
+                ApiPrincipalDefinition("legacy-admin", self.api_token_env, (ApiRole.ADMIN,)),
+            )
+        return tuple(
+            ApiCredentialStatus(
+                definition.principal_id,
+                definition.token_env,
+                definition.roles,
+                definition.enabled,
+                bool(os.environ.get(definition.token_env)),
+            )
+            for definition in definitions
+        )
 
 
 def load_runtime_configuration(document: Any) -> RuntimeConfiguration:

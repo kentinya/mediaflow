@@ -128,7 +128,8 @@ the media Task lifecycle. SQLite schema v4 atomically claims the oldest pending 
 no Scanner, strategy, planner, or executor logic: its injected production handler invokes the
 existing workflow entry point, which creates normal Task and Result records. Cancellation is
 pending-only. The service accepts no organize/execute job, so preview preserves DryRun's zero-
-mutation boundary. Scheduler, Webhook, notifications, remote execute, and Web UI remain future work.
+mutation boundary. Scheduler, Webhook, notifications, protected remote execute, and the minimal
+operator Web UI are implemented in later phases; production identity/TLS remain external work.
 
 ## Phase 18.2 automation loop
 
@@ -861,6 +862,24 @@ The exposed write surface is intentionally narrower than the API: conflict Skip/
 metadata candidate rank, and persisted classification choice rank. The UI cannot resume a Task,
 create/cancel a Job, request execute authority, Overwrite, or edit paths and identifiers. It does
 not change any strategy engine or Organizer boundary.
+
+## API credential lifecycle and transport guardrails
+
+Phase 19.2 keeps bearer credentials environment-owned. Token generation uses the operating-system
+cryptographic random source, prints once, and never loads configuration. Credential inspection
+loads only JSON and reports Principal/role/environment names plus SET/UNSET; it never opens SQLite
+or reveals a value, length, hash, or secret-derived identifier. Rotation uses overlapping,
+separately named configured Principals and controlled process restarts, not secret persistence.
+
+The development WSGI listener remains loopback-only by default. Deterministic validation accepts
+localhost plus IPv4/IPv6 loopback; any other valid bind needs
+`--allow-insecure-remote-http` and emits a warning. The acknowledgement supplies no TLS. A trusted
+external reverse proxy remains responsible for HTTPS, certificates, and network policy.
+
+JSON responses use no-store, nosniff, no-referrer, and frame-denial headers; 401 includes a Bearer
+challenge. Authorization parsing accepts one bounded, non-whitespace Bearer credential and still
+compares against every configured Principal using constant-time comparison. RBAC and the separate
+one-time remote-execution authorization remain unchanged.
 
 ## Runtime strategy catalogs
 

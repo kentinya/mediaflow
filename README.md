@@ -305,6 +305,23 @@ IDs, resume a Task, submit/cancel a Job, or execute organization. Decisions neve
 automatically. The standard-library server has no TLS or production identity provider; keep it on
 trusted loopback or place it behind a correctly configured HTTPS reverse proxy.
 
+Generate and inspect API credentials without storing secret values in configuration:
+
+```bash
+mediaflow api token generate
+export MEDIAFLOW_API_TOKEN='<generated value>'
+mediaflow api credentials check
+```
+
+The generator uses the operating-system cryptographic random source and prints the token once.
+Credential check prints only principal ID, roles, environment-variable name, enabled state, and
+SET/UNSET. For rotation, temporarily configure old and new principals with different IDs and
+`tokenEnv` names, restart, migrate clients, then remove the old principal and restart again.
+
+Non-loopback HTTP is rejected by default. A bind intended for a trusted HTTPS reverse proxy needs
+explicit `--allow-insecure-remote-http`; this acknowledgement does not add encryption. Prefer
+loopback binding and TLS termination at a trusted proxy.
+
 ## Persistent runtime state
 
 Production scan/preview/organize use the configured SQLite database:
@@ -325,6 +342,6 @@ persistent scan/preview jobs, Cron schedules, and signed Webhook notifications a
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
 Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
 The operational Dashboard and explicit metadata-review resolution are available without a Web UI.
-Database-managed
-users/login, token rotation, scheduled execute, and Web UI remain planned;
+Database-managed users/login, automatic secret rotation, scheduled execute, and extended Web UI
+remain planned;
 unattended scheduled real organization is not supported.

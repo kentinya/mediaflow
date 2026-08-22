@@ -462,7 +462,13 @@ class MediaFlowApi:
     def _authenticate(self, environ: dict) -> ResolvedApiPrincipal | None:
         header = str(environ.get("HTTP_AUTHORIZATION", ""))
         prefix = "Bearer "
-        presented = header[len(prefix) :] if header.startswith(prefix) else ""
+        candidate = header[len(prefix) :] if header.startswith(prefix) else ""
+        valid = (
+            len(header) <= 4096
+            and 1 <= len(candidate) <= 2048
+            and not any(character.isspace() for character in candidate)
+        )
+        presented = candidate if valid else ""
         matched = None
         for principal in self._principals:
             if hmac.compare_digest(presented, principal.token):
@@ -717,13 +723,17 @@ class MediaFlowApi:
             405: "Method Not Allowed",
             500: "Internal Server Error",
         }
-        start_response(
-            f"{status} {labels[status]}",
-            [
-                ("Content-Type", "application/json; charset=utf-8"),
-                ("Content-Length", str(len(body))),
-            ],
-        )
+        headers = [
+            ("Content-Type", "application/json; charset=utf-8"),
+            ("Content-Length", str(len(body))),
+            ("Cache-Control", "no-store"),
+            ("X-Content-Type-Options", "nosniff"),
+            ("Referrer-Policy", "no-referrer"),
+            ("X-Frame-Options", "DENY"),
+        ]
+        if status == 401:
+            headers.append(("WWW-Authenticate", 'Bearer realm="mediaflow"'))
+        start_response(f"{status} {labels[status]}", headers)
         return [body]
 
     @classmethod

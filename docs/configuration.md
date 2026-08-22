@@ -464,6 +464,20 @@ principal's environment value. Literal secrets, duplicate IDs/environment names,
 roles, and mixing `principals` with legacy `api.tokenEnv` are rejected. Legacy `tokenEnv` alone is
 still interpreted as one admin principal for backward compatibility.
 
+Generate and inspect credentials without connecting to Storage or opening SQLite:
+
+```bash
+mediaflow api token generate                 # 32 random bytes by default
+mediaflow api token generate --bytes 64      # supported range: 32..128
+export MEDIAFLOW_VIEWER_TOKEN='<generated value>'
+mediaflow --config config/strategy.json api credentials check
+```
+
+`credentials check` never displays values, lengths, or hashes. An enabled UNSET credential makes
+the command fail; disabled credentials are informational. For manual zero-downtime rotation,
+temporarily configure two principals with distinct IDs and environment names, restart, migrate
+clients, then disable/remove the old principal and restart. Never put either value in JSON.
+
 Role permissions are fixed and additive:
 
 | Role | Read | Submit DryRun | Cancel Job | Resolve conflict | Resolve metadata | Resolve classification | Remote execute | Security audit |
@@ -502,6 +516,10 @@ cookie or browser storage is used. Use a `viewer` principal for read-only visibi
 `operator` principal for the existing safe review decisions. The UI deliberately excludes remote
 Overwrite, execution authorization, Job/Task controls, policy editing, and Storage configuration.
 Serve on loopback by default; this development WSGI server does not terminate TLS.
+
+Wildcard, LAN, and public binds require `--allow-insecure-remote-http`. The flag only acknowledges
+unencrypted transport; it does not enable TLS. Prefer loopback behind a trusted HTTPS reverse proxy,
+restrict network access, and never treat forwarded headers as authenticated identity.
 
 The Worker claims one oldest pending job atomically and delegates it to the existing production
 workflow. Preview is always DryRun. `/api/v1` requires the bearer token and supports read-only
