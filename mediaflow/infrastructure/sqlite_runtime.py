@@ -525,23 +525,29 @@ class SQLiteTaskRepository:
             rows = self._connection.execute(query, tuple(parameters)).fetchall()
         return tuple(self._delivery(row) for row in rows)
 
-    def claim_next_delivery(self, now: datetime) -> NotificationDelivery | None:
+    def claim_next_delivery(
+        self, now: datetime, stale_before: datetime
+    ) -> NotificationDelivery | None:
         with self._lock, self._connection:
             row = self._connection.execute(
                 "SELECT delivery_id FROM notification_deliveries "
-                "WHERE status IN (?, ?) AND next_attempt_at<=? "
+                "WHERE (status IN (?, ?) AND next_attempt_at<=?) "
+                "OR (status=? AND updated_at<=?) "
                 "ORDER BY next_attempt_at, created_at, delivery_id LIMIT 1",
                 (
                     NotificationDeliveryStatus.PENDING.value,
                     NotificationDeliveryStatus.RETRY.value,
                     now.isoformat(),
+                    NotificationDeliveryStatus.DELIVERING.value,
+                    stale_before.isoformat(),
                 ),
             ).fetchone()
             if row is None:
                 return None
             cursor = self._connection.execute(
                 "UPDATE notification_deliveries SET status=?, attempts=attempts+1, updated_at=? "
-                "WHERE delivery_id=? AND status IN (?, ?) AND next_attempt_at<=?",
+                "WHERE delivery_id=? AND ((status IN (?, ?) AND next_attempt_at<=?) "
+                "OR (status=? AND updated_at<=?))",
                 (
                     NotificationDeliveryStatus.DELIVERING.value,
                     now.isoformat(),
@@ -549,6 +555,8 @@ class SQLiteTaskRepository:
                     NotificationDeliveryStatus.PENDING.value,
                     NotificationDeliveryStatus.RETRY.value,
                     now.isoformat(),
+                    NotificationDeliveryStatus.DELIVERING.value,
+                    stale_before.isoformat(),
                 ),
             )
             if cursor.rowcount != 1:
@@ -558,6 +566,26 @@ class SQLiteTaskRepository:
                 (row["delivery_id"],),
             ).fetchone()
         return self._delivery(claimed)
+
+    def list_stale_deliveries(
+        self, stale_before: datetime, *, limit: int | None = None
+    ) -> tuple[NotificationDelivery, ...]:
+        if limit is not None and limit < 1:
+            raise ValueError("notification limit must be positive")
+        query = (
+            "SELECT * FROM notification_deliveries WHERE status=? AND updated_at<=? "
+            "ORDER BY updated_at, delivery_id"
+        )
+        parameters: list[object] = [
+            NotificationDeliveryStatus.DELIVERING.value,
+            stale_before.isoformat(),
+        ]
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters.append(limit)
+        with self._lock:
+            rows = self._connection.execute(query, tuple(parameters)).fetchall()
+        return tuple(self._delivery(row) for row in rows)
 
     def update_delivery(self, delivery: NotificationDelivery) -> None:
         with self._lock, self._connection:

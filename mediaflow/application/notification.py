@@ -75,15 +75,22 @@ class NotificationWorker:
         targets: dict[str, tuple[WebhookDefinition, str]],
         transport: WebhookTransport,
         *,
+        delivery_lease_seconds: float = 300.0,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
+        if delivery_lease_seconds <= 0:
+            raise ValueError("notification delivery lease must be positive")
         self._repository = repository
         self._targets = targets
         self._transport = transport
+        self._delivery_lease_seconds = delivery_lease_seconds
         self._clock = clock
 
     def run_next(self) -> NotificationDelivery | None:
-        delivery = self._repository.claim_next_delivery(self._clock())
+        now = self._clock()
+        delivery = self._repository.claim_next_delivery(
+            now, now - timedelta(seconds=self._delivery_lease_seconds)
+        )
         if delivery is None:
             return None
         target = self._targets.get(delivery.webhook_id)

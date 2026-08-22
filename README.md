@@ -57,6 +57,7 @@ mediaflow scheduler audit
 mediaflow scheduler audit SCHEDULE_ID --limit 100
 mediaflow notifications list --limit 100
 mediaflow notifications list --status dead-letter
+mediaflow notifications stale --age-seconds 300
 mediaflow notifications requeue DELIVERY_ID
 mediaflow notification-worker run-next
 mediaflow notification-worker run
@@ -162,6 +163,10 @@ emission events. Enable a configured HTTPS Webhook, set its `secretEnv`, then ru
 other 4xx responses enter dead-letter. Delivery failures never change completed media work.
 The API exposes authenticated read-only `GET /api/v1/notifications` and never returns payload
 bodies or secrets.
+
+Claimed deliveries use the configured `deliveryLeaseSeconds` (300 by default). After a worker
+crash, an expired claim is safely eligible for another attempt; its stable delivery ID lets
+receivers deduplicate the unavoidable at-least-once crash window.
 
 ## Persistent runtime state
 

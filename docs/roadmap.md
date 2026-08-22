@@ -97,6 +97,9 @@ interval 都只允许 scan/preview；远程真实执行仍未开放。
 Phase 18.4 已完成持久通知 Outbox、HMAC 签名 Webhook、受限重试/死信、独立投递 Worker
 和只读通知查询。通知失败不改变作业终态，也不触发任何 Storage 或媒体操作。
 
+Phase 18.4.1 已完成通知投递租约与进程崩溃后的过期领取恢复；稳定 Delivery ID 支持接收端
+在 at-least-once 语义下去重，自动恢复不会重置尝试次数。
+
 ### Phase 19：Web UI 与生产发布
 
 - Dashboard、Storage/Library/Policy 管理、候选确认、冲突处理、任务和历史页面。

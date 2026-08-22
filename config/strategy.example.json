@@ -14,6 +14,7 @@
   },
   "notifications": {
     "pollSeconds": 5,
+    "deliveryLeaseSeconds": 300,
     "webhooks": [
       {
         "id": "operations-webhook",

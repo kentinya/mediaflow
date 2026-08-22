@@ -164,9 +164,77 @@ class NotificationTests(unittest.TestCase):
             def claim() -> None:
                 with SQLiteTaskRepository(database) as repository:
                     barrier.wait()
-                    results.append(repository.claim_next_delivery(NOW))
+                    results.append(repository.claim_next_delivery(NOW, NOW - timedelta(minutes=5)))
 
             threads = [Thread(target=claim), Thread(target=claim)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(sum(item is not None for item in results), 1)
+
+    def test_fresh_delivery_lease_is_not_reclaimed_but_expired_is(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                original = publish(repository)[0]
+                claimed = repository.claim_next_delivery(NOW, NOW - timedelta(minutes=5))
+                self.assertEqual(claimed.attempts, 1)
+                self.assertIsNone(
+                    repository.claim_next_delivery(
+                        NOW + timedelta(seconds=299), NOW - timedelta(seconds=1)
+                    )
+                )
+                self.assertEqual(repository.list_stale_deliveries(NOW - timedelta(seconds=1)), ())
+                self.assertEqual(
+                    repository.list_stale_deliveries(NOW + timedelta(seconds=1)), (claimed,)
+                )
+                reclaimed = repository.claim_next_delivery(
+                    NOW + timedelta(seconds=301), NOW + timedelta(seconds=1)
+                )
+                self.assertEqual(reclaimed.delivery_id, original.delivery_id)
+                self.assertEqual(reclaimed.event_id, original.event_id)
+                self.assertEqual(reclaimed.body, original.body)
+                self.assertEqual(reclaimed.attempts, 2)
+
+    def test_restart_worker_reclaims_expired_and_dead_letters_exhausted_attempt(self) -> None:
+        clock = [NOW]
+        definition = webhook(max_attempts=1)
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                publish(repository, definition)
+                repository.claim_next_delivery(NOW, NOW - timedelta(seconds=300))
+            clock[0] += timedelta(seconds=301)
+            with SQLiteTaskRepository(database) as restarted:
+                result = NotificationWorker(
+                    restarted,
+                    {"ops": (definition, "secret")},
+                    FakeTransport(503),
+                    delivery_lease_seconds=300,
+                    clock=lambda: clock[0],
+                ).run_next()
+                self.assertEqual(result.status, NotificationDeliveryStatus.DEAD_LETTER)
+                self.assertEqual(result.attempts, 2)
+
+    def test_concurrent_workers_reclaim_one_expired_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                publish(repository)
+                repository.claim_next_delivery(NOW, NOW - timedelta(minutes=5))
+            barrier = Barrier(2)
+            results = []
+
+            def reclaim() -> None:
+                with SQLiteTaskRepository(database) as repository:
+                    barrier.wait()
+                    results.append(
+                        repository.claim_next_delivery(
+                            NOW + timedelta(minutes=6), NOW + timedelta(minutes=1)
+                        )
+                    )
+
+            threads = [Thread(target=reclaim), Thread(target=reclaim)]
             for thread in threads:
                 thread.start()
             for thread in threads:
@@ -188,6 +256,7 @@ class NotificationTests(unittest.TestCase):
         }
         loaded = load_runtime_configuration(copy.deepcopy(document))
         self.assertEqual(loaded.notification_poll_seconds, 3)
+        self.assertEqual(loaded.notification_delivery_lease_seconds, 300)
         with self.assertRaisesRegex(ValueError, "MEDIAFLOW_WEBHOOK_SECRET"):
             loaded.resolve_webhook_targets()
         with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "top-secret"}):
@@ -205,6 +274,13 @@ class NotificationTests(unittest.TestCase):
         literal["notifications"]["webhooks"][0]["secret"] = "forbidden"
         with self.assertRaises(ValueError):
             load_runtime_configuration(literal)
+        custom = copy.deepcopy(document)
+        custom["notifications"]["deliveryLeaseSeconds"] = 45
+        self.assertEqual(load_runtime_configuration(custom).notification_delivery_lease_seconds, 45)
+        invalid_lease = copy.deepcopy(document)
+        invalid_lease["notifications"]["deliveryLeaseSeconds"] = 0
+        with self.assertRaises(ValueError):
+            load_runtime_configuration(invalid_lease)
 
     def test_cli_and_api_visibility_omit_body_and_secret(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
@@ -227,6 +303,9 @@ class NotificationTests(unittest.TestCase):
                 body = b"".join(api(environ, lambda value, headers: statuses.append(value)))
                 self.assertEqual(statuses[0].split()[0], "200")
                 self.assertNotIn(b'"body"', body)
+                api_item = json.loads(body)["items"][0]
+                self.assertIn("updatedAt", api_item)
+                self.assertEqual(api_item["attempts"], 0)
             output, error = io.StringIO(), io.StringIO()
             code = final_main(
                 ["--config", str(config), "notifications", "list"],
@@ -236,6 +315,7 @@ class NotificationTests(unittest.TestCase):
             self.assertEqual(code, 0, error.getvalue())
             self.assertNotIn("千与千寻", output.getvalue())
             self.assertNotIn("secret", output.getvalue())
+            self.assertIn("updated=", output.getvalue())
 
     def test_schema_six_migrates_to_notification_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

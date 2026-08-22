@@ -52,6 +52,7 @@ class RuntimeConfiguration:
     scheduler_poll_seconds: float = 5.0
     webhooks: tuple[WebhookDefinition, ...] = ()
     notification_poll_seconds: float = 5.0
+    notification_delivery_lease_seconds: float = 300.0
 
     def create_storages(
         self,
@@ -258,6 +259,10 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     notification_poll = _positive_number(
         notifications.get("pollSeconds", 5), "notification pollSeconds"
     )
+    notification_lease = _positive_number(
+        notifications.get("deliveryLeaseSeconds", 300),
+        "notification deliveryLeaseSeconds",
+    )
     raw_webhooks = notifications.get("webhooks", [])
     if not isinstance(raw_webhooks, list) or not all(
         isinstance(item, dict) for item in raw_webhooks
@@ -281,6 +286,7 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         scheduler_poll,
         webhooks,
         notification_poll,
+        notification_lease,
     )
 
 

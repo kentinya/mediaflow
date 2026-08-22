@@ -8,7 +8,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 from zoneinfo import ZoneInfo
@@ -140,6 +140,9 @@ def final_main(
     notification_list.add_argument("--limit", type=int, default=100)
     notification_requeue = notification_commands.add_parser("requeue")
     notification_requeue.add_argument("delivery_id")
+    notification_stale = notification_commands.add_parser("stale")
+    notification_stale.add_argument("--age-seconds", type=float, required=True)
+    notification_stale.add_argument("--limit", type=int, default=100)
     notification_worker = commands.add_parser(
         "notification-worker", help="deliver signed webhook notifications"
     )
@@ -171,7 +174,7 @@ def final_main(
             )
             return 0
         if arguments.command == "notifications":
-            if arguments.notification_command == "list" and arguments.limit < 1:
+            if arguments.notification_command in {"list", "stale"} and arguments.limit < 1:
                 raise ValueError("notification limit must be positive")
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 if arguments.notification_command == "list":
@@ -183,10 +186,19 @@ def final_main(
                             repository.list_deliveries(status=status, limit=arguments.limit)
                         )
                     )
-                else:
+                elif arguments.notification_command == "requeue":
                     stdout.write(
                         render_notification(
                             repository.requeue_dead_letter(arguments.delivery_id, datetime.now(UTC))
+                        )
+                    )
+                else:
+                    if arguments.age_seconds <= 0:
+                        raise ValueError("notification stale age must be positive")
+                    cutoff = datetime.now(UTC) - timedelta(seconds=arguments.age_seconds)
+                    stdout.write(
+                        render_notifications(
+                            repository.list_stale_deliveries(cutoff, limit=arguments.limit)
                         )
                     )
             return 0
@@ -198,6 +210,7 @@ def final_main(
                     repository,
                     configuration.resolve_webhook_targets(),
                     UrllibWebhookTransport(),
+                    delivery_lease_seconds=configuration.notification_delivery_lease_seconds,
                 )
                 if arguments.notification_worker_command == "run-next":
                     delivery = delivery_worker.run_next()
@@ -756,7 +769,7 @@ def render_notifications(values) -> str:
         lines.append(
             f"{value.delivery_id} | {value.event_type.value} | {value.webhook_id} | "
             f"{value.status.value} | attempts={value.attempts} | "
-            f"failure={value.failure_category or '-'}"
+            f"updated={value.updated_at.isoformat()} | failure={value.failure_category or '-'}"
         )
     lines.extend(("", f"Total: {len(values)}", ""))
     return "\n".join(lines)

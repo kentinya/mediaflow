@@ -781,3 +781,12 @@ Phase 18.4 durable notification Outbox and signed Webhooks (2026-08-22): PASS
 - Full suite: 339 tests, 336 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated-free wheel build, example validation, FFmpeg/FFprobe audit,
   and diff check passed
+
+Phase 18.4.1 notification delivery lease and crash recovery (2026-08-22): PASS
+
+- Added configurable bounded delivery leases with automatic reclaim only after expiry
+- Reclaimed deliveries preserve stable delivery/event/body identity and increment attempts; fresh
+  claims remain exclusive and exhausted failures enter the existing dead-letter flow
+- Added read-only stale-claim inspection and documented at-least-once receiver deduplication
+- Full suite: 342 tests, 339 passed, 0 failed, 3 optional real integrations skipped; formatter,
+  lint, compile, dependency, build, configuration, FFmpeg/FFprobe, and diff checks passed

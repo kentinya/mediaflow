@@ -1,88 +1,71 @@
-# Phase 18.4 — Durable Notification Outbox + Signed Webhooks
+# Phase 18.4.1 — Notification Delivery Lease + Crash Recovery
 
 ## Goal
 
-Add asynchronous, durable notifications for accepted Automation Job and Scheduler events. Persist
-an Outbox before delivery, send signed Webhooks through a dedicated NotificationWorker, and apply
-bounded retry/dead-letter behavior. Do not block media workflows on network delivery and do not
-expose remote organization execution.
+Close the accepted Phase 18.4 crash window where a process can stop after claiming an Outbox row
+and leave it permanently `delivering`. Add a bounded delivery lease with safe at-least-once
+recovery and auditable duplicate-delivery semantics. Do not start remote organize execution.
 
-## 1. Notification events and configuration
+## 1. Delivery lease
 
-- Support events: `job.completed`, `job.failed`, `job.cancelled`, and `schedule.emitted`.
-- Configure multiple Webhooks with unique ID, HTTPS URL, enabled flag, subscribed events,
-  `secretEnv`, timeout, maximum attempts, and base/max retry delays.
-- Secrets remain environment-owned; config validation checks names but needs no secret value.
-- Reject literal secrets, credentials in URLs, fragments, unsupported schemes/events, duplicate IDs,
-  invalid retry values, and unknown fields that imply execute behavior.
+- Add configurable positive `notifications.deliveryLeaseSeconds`, default 300 seconds.
+- A fresh `delivering` row remains exclusively owned and cannot be reclaimed.
+- A `delivering` row whose `updatedAt` is older than the lease may be atomically reclaimed.
+- Reclaim increments the same attempt counter and preserves delivery/event identity and exact body.
+- Concurrent workers must still produce exactly one successful claim.
 
-## 2. Durable Outbox
+## 2. Retry and exhaustion
 
-- Persist one delivery per matching Webhook/event with deterministic idempotency identity.
-- Statuses: pending, delivering, retry, delivered, dead-letter.
-- Store canonical event JSON, attempts, next-attempt, timestamps, and redacted failure category.
-- Atomically claim due deliveries so multiple NotificationWorkers cannot send the same claim.
-- Existing Job/Schedule success must not be changed by notification availability or delivery failure.
-- Upgrade SQLite compatibly and preserve all accepted Task/Job/Schedule state.
+- A reclaimed attempt uses the existing configured maximum-attempt and retry/dead-letter rules.
+- Never retry forever and never reset attempts during automatic crash recovery.
+- Preserve explicit dead-letter requeue as the only operation that resets attempts.
+- Document that a crash after a receiver accepted the request but before local commit may redeliver;
+  receivers must deduplicate by stable `X-MediaFlow-Delivery`.
 
-## 3. Signed Webhook delivery
+## 3. Visibility
 
-- Send deterministic UTF-8 JSON with content type, event ID/type, UTC timestamp, and delivery ID.
-- Sign `timestamp + '.' + exact body` using HMAC-SHA256 and the configured environment secret.
-- Never persist/log/return the secret, Authorization, response body, cookies, or signed URL data.
-- Treat 2xx as delivered; retry timeout/connection/429/5xx with bounded exponential delay.
-- Treat other 4xx as dead-letter; never retry forever and never follow cross-host redirects.
-- Inject transport in tests; unit tests make no Internet requests.
+- CLI/API delivery metadata must expose `updatedAt`, attempts, and status, but never body or secrets.
+- Add a read-only stale-delivery inspection command or filter if needed for operational diagnosis.
+- Resident worker recovery remains bounded and graceful-shutdown compatible.
 
-## 4. Worker, CLI, and API
+## 4. Safety
 
-- Add `mediaflow notifications list [--status ...] [--limit N]`.
-- Add `mediaflow notification-worker run-next` and bounded resident `run` with graceful shutdown.
-- Add explicit dead-letter requeue; no silent automatic resurrection.
-- Add authenticated read-only `GET /api/v1/notifications`.
-- CLI/API output contains delivery metadata and redacted categories only.
-
-## 5. Integration and safety
-
-- AutomationWorker publishes a terminal event after durable Job state; Scheduler publishes an event
-  after durable job/audit emission. Publishing only writes the Outbox.
-- Notification delivery never calls Storage, Metadata, strategy engines, Planner, or Executor.
-- Notification failures never authorize, retry, or alter media operations.
-- No implicit overwrite/delete and no remote OrganizerExecutor execute mode.
-- Existing DryRun, cancellation, scheduling, audit, and RecognitionType C behavior remain unchanged.
+- Recovery may only change notification Outbox state and perform the configured Webhook request.
+- It must never call Storage, Metadata, Planner, OrganizerExecutor, or authorize media execution.
+- Configuration validation performs no network or Storage access.
+- Remote organize/execute, Web UI, inbound Webhooks, and strategy changes remain out of scope.
 
 ## Required tests
 
-- Configuration validation and secret ownership/redaction.
-- Outbox idempotency, persistence, atomic claim, ordering, filter/limit, and v6-to-v7 migration.
-- Exact canonical body/signature/header verification and Unicode payload.
-- 2xx, 4xx, 429, 5xx, timeout/connection, exponential retry cap, maximum attempts/dead-letter.
-- Multiple subscriptions, disabled/unsubscribed Webhooks, terminal Job and schedule events.
-- Resident worker polling/failure isolation/graceful stop and explicit dead-letter requeue.
-- CLI/API visibility, zero Storage mutation/network-free config validation, and full regressions.
+- Fresh lease is not reclaimed; expired lease is reclaimed.
+- Reclaimed attempt preserves IDs/body and increments attempts.
+- Concurrent expired claims yield one owner.
+- Exhausted reclaimed attempt becomes dead-letter after delivery failure.
+- Explicit dead-letter requeue remains distinct and resets attempts.
+- Configuration default/custom/invalid lease values.
+- CLI/API redacted visibility, restart simulation, zero Storage mutation, and all regressions.
 
 ## Documentation and validation
 
-Update all current docs and configuration examples. Run all tests and configured quality, build,
-dependency, configuration, FFprobe/FFmpeg, and diff checks.
+Update README, examples, architecture, progress, roadmap, and product status where relevant. Run all
+tests plus formatter, lint, compile, dependency, build, configuration, FFprobe/FFmpeg, and diff
+checks.
 
 ## Out of scope
 
-- Remote organize/execute, inbound Webhooks, Web UI, user/role/TLS work.
-- Email/chat-specific providers, templates, notification aggregation, and media-server refresh.
-- Strategy, Storage, Planner, or OrganizerExecutor redesign.
+- Remote organize/execute authorization and scheduling.
+- Web UI, user/role/TLS, inbound Webhooks, email/chat adapters.
+- Storage, strategy engines, Planner, or OrganizerExecutor redesign.
 
 ## Final report
 
-## Phase 18.4 Result
+## Phase 18.4.1 Result
 
 PASS / FAIL
 
-## Notification Outbox
+## Lease Recovery
 
-## Signed Webhooks
-
-## Retry and Dead-letter
+## At-least-once Semantics
 
 ## Security and Safety
 

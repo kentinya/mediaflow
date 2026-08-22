@@ -596,7 +596,9 @@ Organizer executions, and zero Storage mutations.
 `NotificationPublisher` converts accepted terminal Automation Job and durable Scheduler emission
 events into canonical provider-neutral JSON and persists one idempotent Outbox delivery per enabled
 subscription. It performs no network or Storage operation. SQLite v7 atomically claims due
-pending/retry deliveries, so concurrent NotificationWorkers cannot claim the same row.
+pending/retry deliveries, so concurrent NotificationWorkers cannot claim the same row. A claimed
+row has a bounded configured lease. Only an expired `delivering` row can be atomically reclaimed;
+reclaim preserves its stable ID/body and increments rather than resets attempts.
 
 The independent `NotificationWorker` resolves environment-owned secrets only at startup and signs
 `timestamp + "." + exact body` with HMAC-SHA256. Its injected Webhook transport posts only to
@@ -605,6 +607,10 @@ bounded exponential retry; other 4xx and exhausted attempts become dead-letter. 
 requeue can reactivate a dead letter. Persisted and displayed failure information is categorical;
 payload bodies and secrets are omitted from CLI/API views. Notification failure never changes Job,
 Schedule, Task, plan, execution, or media Storage state.
+
+Delivery semantics are at-least-once: a process can stop after the receiver accepts a POST but
+before SQLite records success. A recovered worker therefore may redeliver the same stable
+`X-MediaFlow-Delivery`; receivers are responsible for idempotent deduplication by that value.
 
 ## Classification policies and engine
 
