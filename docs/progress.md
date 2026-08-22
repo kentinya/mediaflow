@@ -879,3 +879,17 @@ Phase 18.11 classification review queue and explicit rule selection (2026-08-22)
 - Full suite: 394 tests, 391 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated-free wheel build, both example validations,
   FFmpeg/FFprobe runtime audit, and diff check passed
+
+Phase 19.1 minimal secure operator Web UI (2026-08-22): PASS
+
+- Added a dependency-free same-origin `/ui/` shell to the existing WSGI service with strict CSP,
+  no-store caching, no external assets, and in-memory-only bearer credentials
+- Added Dashboard and bounded conflict/metadata/classification review list/detail views using only
+  existing authenticated APIs
+- Restricted UI decisions to conflict Skip/Rename and persisted candidate/choice ranks; Task/Job,
+  execute, Overwrite, arbitrary identifiers/paths, and automatic resume remain unavailable
+- Added static-route zero-repository tests plus credential, rendering, request-bound and payload
+  safety regressions
+- Full suite: 398 tests, 395 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated-free wheel build, both example validations,
+  FFmpeg/FFprobe runtime audit, and diff check passed

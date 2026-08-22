@@ -842,6 +842,26 @@ boundary. Decision audit records are append-only, and invalid destinations canno
 Metadata and classification review/resolution APIs are complete; a graphical UI remains deferred.
 Unresolved conflicts/reviews block execution, and silent delete remains unavailable.
 
+## Minimal operator Web UI
+
+Phase 19.1 adds a dependency-free same-origin adapter at `/ui/` to the existing WSGI API process.
+Static HTML/CSS/JavaScript is returned before authentication or repository dispatch, so loading the
+shell performs no persistence, Storage, Provider, Task, Job, or execution operation. Browser
+security headers restrict scripts, styles, connections, framing, forms, referrers, and device
+permissions to the smallest useful set; UI assets are never cached.
+
+The page is not a second application service. It calls only the existing authenticated Dashboard,
+confirmation, metadata-review, and classification-review endpoints. Untrusted values are rendered
+as text nodes. A bearer token is held in one in-memory JavaScript variable, cleared from the input,
+and never placed in a URL, DOM output, browser persistence, cookie, or application log. Existing API
+RBAC, principal-derived actor identity, exact-field validation, atomic decision persistence, and
+security audit remain authoritative.
+
+The exposed write surface is intentionally narrower than the API: conflict Skip/Rename, persisted
+metadata candidate rank, and persisted classification choice rank. The UI cannot resume a Task,
+create/cancel a Job, request execute authority, Overwrite, or edit paths and identifiers. It does
+not change any strategy engine or Organizer boundary.
+
 ## Runtime strategy catalogs
 
 The Phase 13 runtime boundary loads all strategy content from one JSON document selected by

@@ -291,6 +291,20 @@ rule choice and makes the item pending; the later explicit resume revalidates Re
 ClassificationPolicy, rule, MediaLibrary, and safe relative path before planning. Resolution
 constructs no Storage/provider and never creates or resumes a Task or Job automatically.
 
+### Operator Web UI
+
+Start the existing loopback API process and open `http://127.0.0.1:8787/ui/`. The dependency-free
+operator page shows the Dashboard and the conflict, metadata, and classification review queues.
+Enter a configured API principal token in the password field. The token exists only in page memory
+and is cleared from the input immediately; reloading or closing the page requires entering it again.
+
+Viewer/auditor tokens can inspect queues. Operator/executor/admin tokens may record the same
+restricted decisions already supported by the API: conflict Skip/Rename, a persisted metadata
+candidate rank, or a persisted classification choice rank. The UI cannot Overwrite, edit paths or
+IDs, resume a Task, submit/cancel a Job, or execute organization. Decisions never resume work
+automatically. The standard-library server has no TLS or production identity provider; keep it on
+trusted loopback or place it behind a correctly configured HTTPS reverse proxy.
+
 ## Persistent runtime state
 
 Production scan/preview/organize use the configured SQLite database:

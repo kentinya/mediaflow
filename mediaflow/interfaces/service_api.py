@@ -18,6 +18,7 @@ from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.task_persistence import ConfirmationStatus
+from mediaflow.interfaces.operator_ui import ASSETS as OPERATOR_UI_ASSETS
 
 
 class ApiPermissionDenied(RuntimeError):
@@ -68,6 +69,11 @@ class MediaFlowApi:
         try:
             if path == "/health" and method == "GET":
                 return self._response(start_response, 200, {"status": "ok"})
+            if path in OPERATOR_UI_ASSETS:
+                if method != "GET":
+                    return self._error(start_response, 405, "method_not_allowed", "GET required")
+                content_type, body = OPERATOR_UI_ASSETS[path]
+                return self._static_response(start_response, content_type, body)
             if not path.startswith("/api/v1"):
                 return self._error(start_response, 404, "not_found", "route was not found")
             principal = self._authenticate(environ)
@@ -464,6 +470,27 @@ class MediaFlowApi:
         return matched
 
     @staticmethod
+    def _static_response(start_response: Callable, content_type: str, body: bytes):
+        start_response(
+            "200 OK",
+            [
+                ("Content-Type", content_type),
+                ("Content-Length", str(len(body))),
+                ("Cache-Control", "no-store"),
+                (
+                    "Content-Security-Policy",
+                    "default-src 'self'; connect-src 'self'; "
+                    "script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; "
+                    "frame-ancestors 'none'; form-action 'none'",
+                ),
+                ("X-Content-Type-Options", "nosniff"),
+                ("Referrer-Policy", "no-referrer"),
+                ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+            ],
+        )
+        return [body]
+
+    @staticmethod
     def _require(principal: ResolvedApiPrincipal, permission: ApiPermission) -> None:
         if permission not in principal.permissions:
             raise ApiPermissionDenied(f"principal lacks {permission.value} permission")
@@ -687,6 +714,7 @@ class MediaFlowApi:
             401: "Unauthorized",
             403: "Forbidden",
             404: "Not Found",
+            405: "Method Not Allowed",
             500: "Internal Server Error",
         }
         start_response(

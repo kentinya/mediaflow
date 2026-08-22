@@ -496,6 +496,13 @@ mediaflow api serve --host 127.0.0.1 --port 8787
 mediaflow security-audit list --limit 100
 ```
 
+The same process serves the minimal operator UI at `http://127.0.0.1:8787/ui/`. It adds no JSON
+configuration. Its API token is entered after page load and retained only in JavaScript memory—no
+cookie or browser storage is used. Use a `viewer` principal for read-only visibility or an
+`operator` principal for the existing safe review decisions. The UI deliberately excludes remote
+Overwrite, execution authorization, Job/Task controls, policy editing, and Storage configuration.
+Serve on loopback by default; this development WSGI server does not terminate TLS.
+
 The Worker claims one oldest pending job atomically and delegates it to the existing production
 workflow. Preview is always DryRun. `/api/v1` requires the bearer token and supports read-only
 Task/Job/Confirmation queries plus scan/preview submission and pending cancellation. Remote
