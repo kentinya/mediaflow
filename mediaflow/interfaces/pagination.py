@@ -13,9 +13,17 @@ from enum import StrEnum
 _CURSOR_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 _ENCODED_CURSOR = re.compile(r"[A-Za-z0-9_-]+")
 _KINDS = frozenset(
-    {"tasks", "jobs", "task_items", "task_results", "notification_deliveries", "schedule_audit"}
+    {
+        "tasks",
+        "jobs",
+        "task_items",
+        "task_results",
+        "notification_deliveries",
+        "schedule_audit",
+        "operational_logs",
+    }
 )
-_SCOPED_KINDS = frozenset({"notification_deliveries", "schedule_audit"})
+_SCOPED_KINDS = frozenset({"notification_deliveries", "schedule_audit", "operational_logs"})
 MAX_CURSOR_LENGTH = 512
 
 

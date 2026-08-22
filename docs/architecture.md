@@ -947,6 +947,12 @@ policy. Local bounded listing opens no Storage/provider/workflow. Explicit prune
 maximum-row retention only to `operational_logs`; it cannot delete media or other runtime records.
 Web/API visibility, live tail, full-text search, and remote shipping remain deferred.
 
+Phase 19.9 adds read-only API/UI visibility without expanding that schema. SQLite applies scoped
+forward/reverse `(occurred_at, log_id)` keysets before `limit + 1`; reverse pages restore newest-first
+order. The opaque scope binds `all` or the chosen minimum level. API output uses an explicit field
+allowlist, existing READ RBAC, and normalized audit without queries. The UI uses text nodes,
+in-memory credentials, explicit refresh, and no prune/write/live controls.
+
 ## Runtime strategy catalogs
 
 The Phase 13 runtime boundary loads all strategy content from one JSON document selected by

@@ -979,3 +979,15 @@ Phase 19.8 persistent redacted operational log foundation (2026-08-22): PASS
 - Full suite: 424 tests, 421 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated wheel build, both example validations, FFmpeg/FFprobe
   runtime audit, and diff check passed
+
+Phase 19.9 read-only operational log API and UI (2026-08-22): PASS
+
+- Added scoped v2 bidirectional cursors for newest-first OperationalLog reads, bound to `all` or the
+  selected minimum level with bounded forward/reverse SQLite `limit + 1` keysets
+- Added authenticated `GET /api/v1/logs` with strict query validation, explicit safe-field allowlist,
+  existing READ RBAC, and normalized audit that excludes query/cursor/record data
+- Added a text-node-only Logs UI with level selector, explicit first-page refresh, and Previous/Next;
+  no prune, write, search, live tail, Task/Job, or execution controls are exposed
+- Full suite: 426 tests, 423 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated wheel build, both example validations, FFmpeg/FFprobe
+  runtime audit, and diff check passed

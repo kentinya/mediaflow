@@ -1316,20 +1316,44 @@ class SQLiteTaskRepository:
             )
 
     def list_operational_logs(
-        self, *, limit: int, minimum_level: LogLevel | None = None
+        self,
+        *,
+        limit: int,
+        minimum_level: LogLevel | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> tuple[OperationalLogRecord, ...]:
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 1000:
             raise ValueError("operational log limit must be between 1 and 1000")
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
         query = "SELECT * FROM operational_logs"
         parameters: list[object] = []
+        predicates: list[str] = []
+        reverse = before is not None
         if minimum_level is not None:
-            query += " WHERE level >= ?"
+            predicates.append("level >= ?")
             parameters.append(int(minimum_level))
-        query += " ORDER BY occurred_at DESC, log_id DESC LIMIT ?"
+        if after is not None:
+            timestamp = after[0].isoformat()
+            predicates.append("(occurred_at < ? OR (occurred_at = ? AND log_id < ?))")
+            parameters.extend((timestamp, timestamp, after[1]))
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            predicates.append("(occurred_at > ? OR (occurred_at = ? AND log_id > ?))")
+            parameters.extend((timestamp, timestamp, before[1]))
+        if predicates:
+            query += " WHERE " + " AND ".join(predicates)
+        query += (
+            " ORDER BY occurred_at ASC, log_id ASC"
+            if reverse
+            else " ORDER BY occurred_at DESC, log_id DESC"
+        )
+        query += " LIMIT ?"
         parameters.append(limit)
         with self._lock:
             rows = self._connection.execute(query, tuple(parameters)).fetchall()
-        return tuple(
+        values = tuple(
             OperationalLogRecord(
                 row["log_id"],
                 datetime.fromisoformat(row["occurred_at"]),
@@ -1343,6 +1367,7 @@ class SQLiteTaskRepository:
             )
             for row in rows
         )
+        return tuple(reversed(values)) if reverse else values
 
     def prune_operational_logs(self, *, before: datetime, maximum_records: int) -> int:
         if maximum_records < 1:

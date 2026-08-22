@@ -569,6 +569,11 @@ Levels are `TRACE`, `DEBUG`, `INFO`, `WARN`, or `ERROR`. Use `mediaflow logs lis
 bounds. Records contain only fixed event codes and validated identifiers; configuration validation
 rejects unknown logging fields and no secret value belongs in this section.
 
+Authenticated read-only access is `GET /api/v1/logs?limit=100&level=all&cursor=...`. Levels use the
+same names as configuration. Cursors are bound to the selected minimum level, use newest-first
+`(occurred_at, log_id)` keysets, and cannot cross filters. The UI provides explicit refresh and
+Previous/Next but no prune, search, live tail, or workflow control.
+
 Wildcard, LAN, and public binds require `--allow-insecure-remote-http`. The flag only acknowledges
 unencrypted transport; it does not enable TLS. Prefer loopback behind a trusted HTTPS reverse proxy,
 restrict network access, and never treat forwarded headers as authenticated identity.

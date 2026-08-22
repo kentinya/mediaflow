@@ -21,6 +21,7 @@ INDEX_HTML = b"""<!doctype html>
     <button data-view="jobs">Jobs</button>
     <button data-view="schedules">Schedules</button>
     <button data-view="notifications">Notifications</button>
+    <button data-view="logs">Logs</button>
     <button data-view="confirmations">Conflicts</button>
     <button data-view="metadata-reviews">Metadata</button>
     <button data-view="classification-reviews">Classification</button>
@@ -221,6 +222,23 @@ APP_JS = b"""(() => {
       () => renderNotifications(status, data.previous_cursor),
       () => renderNotifications(status, data.next_cursor));
   }
+  async function renderLogs(level = 'all', cursor = null) {
+    const selector = document.createElement('select'); selector.setAttribute('aria-label', 'Log level');
+    ['all', 'TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR'].forEach(value => {
+      const option = text('option', value); option.value = value; option.selected = value === level;
+      selector.append(option);
+    });
+    const refresh = actionButton('Refresh logs', () => renderLogs(selector.value));
+    const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const data = await api(`/api/v1/logs?limit=100&level=${encodeURIComponent(level)}${suffix}`);
+    clear(content); content.append(text('h2', 'Operational logs'), selector, refresh);
+    const rows = (data.items || []).map(item => [item.occurred_at, item.level, item.component,
+      item.event, item.task_id || '-', item.job_id || '-', item.plan_id || '-', item.status || '-']);
+    content.append(table(['Time', 'Level', 'Component', 'Event', 'Task', 'Job', 'Plan', 'Status'], rows));
+    pageNavigation(content, 'logs', data.previous_cursor, data.next_cursor,
+      () => renderLogs(level, data.previous_cursor),
+      () => renderLogs(level, data.next_cursor));
+  }
   function scalarDetails(data, excluded = []) {
     const list = document.createElement('dl');
     Object.entries(data).filter(([key, value]) => !excluded.includes(key) &&
@@ -314,6 +332,7 @@ APP_JS = b"""(() => {
       else if (view === 'tasks' || view === 'jobs') await renderObservability(view);
       else if (view === 'schedules') await renderSchedules();
       else if (view === 'notifications') await renderNotifications();
+      else if (view === 'logs') await renderLogs();
       else await renderQueue(view); message('Connected.');
     } catch (error) { clear(content); message(error.message, true); }
   }

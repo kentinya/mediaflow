@@ -1,79 +1,65 @@
-# Phase 19.8 — Persistent Redacted Operational Log Foundation
+# Phase 19.9 — Read-only Operational Log API and UI
 
 ## Goal
 
-Introduce a durable, bounded, structured operational logging boundary for the production workflow.
-Persist only controlled event metadata, enforce retention, and provide local read-only retrieval
-without leaking paths, raw errors, arbitrary context, credentials, or media/provider data.
+Expose Phase 19.8's already-redacted structured operational records through the existing authenticated
+API and operator UI using stable bidirectional keyset pagination. Keep retrieval bounded and strictly
+read-only; do not expand the persisted log schema or expose discarded context.
 
-## 1. Domain and persistence
+## 1. Repository and cursor reads
 
-- Add immutable `OperationalLogRecord` and repository contracts separate from result/security audit.
-- Fields: stable ID, UTC timestamp, level, component, event code, optional task/job/plan ID and status.
-- Add SQLite v13 storage with newest-first deterministic bounded reads and useful indexes.
-- Never persist free-form context, source/destination paths, titles, provider IDs, HTTP data, exception
-  text, tokens, passwords, authorization values, cookies, signatures, or secret-derived identifiers.
+- Extend operational log reads with newest-first `(occurred_at, log_id)` after/before boundaries.
+- Add a scoped v2 cursor kind bound to the selected minimum level (`all` included).
+- Apply `limit + 1` in SQLite, reverse keyset queries for Previous, and restore canonical ordering.
+- Never use OFFSET, total counts, full enumeration, full-text search, or arbitrary context matching.
 
-## 2. Safe Logger adapter
+## 2. API
 
-- Implement the existing domain `Logger` protocol as an infrastructure adapter.
-- Map bounded fixed application messages to validated event codes; reject/drop unknown unsafe fields.
-- Whitelist only task/job/plan/status identifiers with strict length/character validation.
-- Respect configured minimum level. Logging failure must not widen execution authority or mutate media.
-- Wire the same logger into production Scanner, MediaOrganizerService, and OrganizerExecutor only;
-  do not move logging policy into those engines.
+- Add authenticated `GET /api/v1/logs?limit=100&level=all&cursor=...`.
+- Accept only 1–100 limit, existing level names, and one cursor; reject malformed/duplicate fields.
+- Return only Phase 19.8 safe fields plus Previous/Next cursors.
+- Use existing READ permission and normalized audit; query/cursor/records must not enter audit/errors.
 
-## 3. Configuration and retention
+## 3. Operator UI
 
-- Add optional `operationalLogging` runtime configuration with `enabled`, `minimumLevel`,
-  `retentionDays`, and `maximumRecords`, using safe disabled defaults.
-- Validate booleans/types/ranges and reject unknown/literal-secret fields.
-- Enforce both age and record-count retention through an explicit local maintenance operation.
-- Retention deletes only operational log rows, never media, Tasks, Results, history, or security audit.
-
-## 4. Local retrieval
-
-- Add `mediaflow logs list --limit N [--level LEVEL]` as a local read-only bounded command.
-- Add `mediaflow logs prune` as an explicit database-maintenance command with removed-row count.
-- Output only persisted safe fields. Do not construct Storage, Provider, Scanner, workflow, or Executor.
-- Do not add Web/API/UI log visibility in this phase.
+- Add a read-only Logs tab with level selector, explicit refresh, and Previous/Next.
+- Level changes reset to first page; cursor navigation preserves the selected level.
+- Render via text nodes and preserve CSP, no-store, same-origin, and in-memory credentials.
+- Add no prune, live tail, Task/Job controls, workflow actions, or execution controls.
 
 ## Required tests
 
-- SQLite v12→v13 migration, append, deterministic order, level filter, bounded SQL read, and reopen.
-- Logger minimum-level behavior, fixed-event normalization, identifier whitelist, unknown context drop.
-- Secret/path/raw-error/title/provider/HTTP payload values cannot reach persisted rows or CLI output.
-- Valid/invalid logging configuration, disabled default, record-count and age retention, prune isolation.
-- Production workflow wiring emits safe scan/workflow/execution events without changing outcomes.
-- Logging persistence failure does not trigger Storage mutation, retry, authority widening, or deletion.
-- CLI list/prune bounds and validation; read-only list constructs no Storage/provider/workflow.
-- Existing Storage, Scanner, Parser, Recognition, Metadata, Naming, Classification, Planner, Executor,
-  Task/History, API/UI, Scheduler/Notification, DryRun, and full regressions.
+- First→middle→last→middle→first traversal, same timestamps, page size one, empty dataset.
+- Minimum-level filters, filter-bound cursors, cross-filter/cross-kind rejection.
+- SQL reverse keyset/limit verification, insertion/deletion boundaries, canonical order/no duplicates.
+- Malformed version/direction/scope/time/ID/oversize and duplicate/injected query rejection.
+- API field allowlist and absence of paths/errors/titles/provider/HTTP/context/secrets.
+- Viewer/operator/executor/auditor/admin read behavior and normalized audit without query data.
+- UI level reset, Previous/Next preservation, explicit refresh, text rendering, and no write controls.
+- Existing logs CLI/prune, pagination, API/UI, Scheduler/Notification, workflow, Storage, and full regressions.
 - Formatter, lint, compile, dependency/build/configuration, FFprobe/FFmpeg, and diff checks.
 
 ## Documentation
 
-Update README, requirements status, example configuration, configuration guide, architecture,
-progress, and roadmap with event schema, redaction, retention, commands, and limitations.
+Update README, requirements, configuration, architecture, progress, and roadmap with endpoint,
+ordering, cursor scope, redaction, and no-search/no-live-tail limitations.
 
 ## Out of scope
 
-Web/API log UI, full-text search, arbitrary context JSON, media-path debugging, remote log shipping,
-OpenTelemetry, live tail/SSE/WebSocket, audit replacement, OIDC, Secret Store, and TLS termination.
+Log writes through API, prune through API/UI, full-text search, arbitrary fields/context, media paths,
+raw errors, remote shipping/OpenTelemetry, live tail/SSE/WebSocket, OIDC, Secret Store, and TLS.
 
 ## Final report
 
-## Phase 19.8 Result
+## Phase 19.9 Result
 
 PASS / FAIL
 
-## Operational Log Model
+## Log Pagination
 
-## Redaction and Retention
+## API and UI
 
-## CLI
-
-## Workflow Wiring
+## Redaction and Authorization
 
 ## Safety
 

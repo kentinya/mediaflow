@@ -15,6 +15,7 @@ from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.metadata_review import MetadataReviewService
+from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
@@ -491,6 +492,49 @@ class MediaFlowApi:
                     ),
                 },
             )
+        if parts == ["api", "v1", "logs"] and method == "GET":
+            limit, minimum_level, cursor = self._log_query(environ)
+            scope = minimum_level.name if minimum_level else "all"
+            values = self._list_page(
+                lambda **kwargs: self._repository.list_operational_logs(
+                    minimum_level=minimum_level, **kwargs
+                ),
+                limit,
+                cursor,
+            )
+            page, has_previous, has_next = self._page_window(values, limit, cursor)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [
+                        {
+                            "log_id": item.log_id,
+                            "occurred_at": item.occurred_at.isoformat(),
+                            "level": item.level.name,
+                            "component": item.component,
+                            "event": item.event,
+                            "task_id": item.task_id,
+                            "job_id": item.job_id,
+                            "plan_id": item.plan_id,
+                            "status": item.status,
+                        }
+                        for item in page
+                    ],
+                    "limit": limit,
+                    "level": minimum_level.name if minimum_level else None,
+                    "previous_cursor": self._page_cursor(
+                        "operational_logs",
+                        page,
+                        has_previous,
+                        CursorDirection.PREVIOUS,
+                        scope=scope,
+                    ),
+                    "next_cursor": self._page_cursor(
+                        "operational_logs", page, has_next, CursorDirection.NEXT, scope=scope
+                    ),
+                },
+            )
         if parts == ["api", "v1", "jobs"]:
             if method == "GET":
                 limit, cursor = self._collection_page(environ, "jobs")
@@ -652,6 +696,7 @@ class MediaFlowApi:
             ("api", "v1", "confirmations"),
             ("api", "v1", "schedules"),
             ("api", "v1", "notifications"),
+            ("api", "v1", "logs"),
             ("api", "v1", "jobs"),
             ("api", "v1", "security-audit"),
             ("api", "v1", "dashboard"),
@@ -820,6 +865,34 @@ class MediaFlowApi:
         return limit, status, cursor
 
     @staticmethod
+    def _log_query(environ: dict) -> tuple[int, LogLevel | None, DecodedCursor | None]:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit", "level", "cursor"}) or any(
+            len(value) != 1 for value in values.values()
+        ):
+            raise ValueError("log query accepts limit, level, and cursor once")
+        limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], "log")
+        raw_level = values.get("level", ["all"])[0]
+        if raw_level == "all":
+            level = None
+        else:
+            try:
+                level = LogLevel[raw_level]
+            except KeyError as error:
+                raise ValueError("log level is invalid") from error
+        raw_cursor = values.get("cursor")
+        cursor = (
+            decode_directional_cursor(
+                raw_cursor[0],
+                "operational_logs",
+                expected_scope=level.name if level else "all",
+            )
+            if raw_cursor
+            else None
+        )
+        return limit, level, cursor
+
+    @staticmethod
     def _collection_page(environ: dict, resource: str) -> tuple[int, DecodedCursor | None]:
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
         if set(values).difference({"limit", "cursor"}) or any(
@@ -891,9 +964,16 @@ class MediaFlowApi:
             "task_results": "result_id",
             "notification_deliveries": "delivery_id",
             "schedule_audit": "audit_id",
+            "operational_logs": "log_id",
         }[kind]
         identifier = getattr(record, attribute)
-        timestamp = record.emitted_at if kind == "schedule_audit" else record.created_at
+        timestamp = (
+            record.emitted_at
+            if kind == "schedule_audit"
+            else record.occurred_at
+            if kind == "operational_logs"
+            else record.created_at
+        )
         return encode_cursor(kind, timestamp, identifier, direction, scope=scope)
 
     @staticmethod

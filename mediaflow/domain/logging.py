@@ -32,6 +32,11 @@ class OperationalLogRecord:
 class OperationalLogRepository(Protocol):
     def append_operational_log(self, value: OperationalLogRecord) -> None: ...
     def list_operational_logs(
-        self, *, limit: int, minimum_level: LogLevel | None = None
+        self,
+        *,
+        limit: int,
+        minimum_level: LogLevel | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
     ) -> tuple[OperationalLogRecord, ...]: ...
     def prune_operational_logs(self, *, before: datetime, maximum_records: int) -> int: ...

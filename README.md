@@ -328,6 +328,8 @@ Operational logging is disabled by default. When enabled, SQLite stores only fix
 levels, components, safe task/job/plan identifiers, and status—never paths, titles, raw errors,
 provider/HTTP data, arbitrary context, or credentials. `logs prune` explicitly applies configured
 age and row-count retention and never touches media, Tasks, Results, history, or security audit.
+The authenticated operator UI exposes the same safe fields with level-scoped Previous/Next cursors;
+it cannot write or prune logs.
 Credential check prints only principal ID, roles, environment-variable name, enabled state, and
 SET/UNSET. For rotation, temporarily configure old and new principals with different IDs and
 `tokenEnv` names, restart, migrate clients, then remove the old principal and restart again.
