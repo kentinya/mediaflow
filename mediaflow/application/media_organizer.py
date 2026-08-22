@@ -85,6 +85,7 @@ class MediaOrganizerBatchResult:
 
 
 ProgressReporter = Callable[[int, int | None, str], None]
+CancellationCheck = Callable[[], bool]
 
 
 class MediaOrganizerService:
@@ -260,12 +261,16 @@ class MediaOrganizerService:
         execute: bool = False,
         limit: int | None = None,
         progress: ProgressReporter | None = None,
+        cancellation_check: CancellationCheck | None = None,
     ) -> MediaOrganizerBatchResult:
         items: list[MediaOrganizerItemResult] = []
         cancellation = CancellationToken()
         self._log(LogLevel.INFO, "library scan started", library_id=library.library_id)
 
         def discovered(file) -> None:
+            if cancellation_check and cancellation_check():
+                cancellation.cancel()
+                return
             if file.status is not FileScanStatus.READY:
                 return
             relative_display_path = file.path
@@ -306,11 +311,14 @@ class MediaOrganizerService:
         execute: bool = False,
         limit: int | None = None,
         progress: ProgressReporter | None = None,
+        cancellation_check: CancellationCheck | None = None,
     ) -> MediaOrganizerBatchResult:
         """Process all enabled configured libraries without local-path assumptions."""
         items: list[MediaOrganizerItemResult] = []
 
         def discovered(library: ResourceLibrary, file) -> None:
+            if cancellation_check and cancellation_check():
+                return
             source = f"{library.storage_id}:{file.path}"
             items.append(
                 self.process_file(
@@ -326,6 +334,7 @@ class MediaOrganizerService:
         batch = ResourceLibraryScanner(self._scanner, libraries, self._storages).scan_all(
             limit=limit,
             on_discovered=discovered,
+            cancellation_check=cancellation_check,
         )
         errors = tuple(error for result in batch.results for error in result.errors)
         return MediaOrganizerBatchResult(tuple(items), errors)

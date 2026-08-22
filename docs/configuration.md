@@ -424,6 +424,35 @@ scan/preview workflow. Preview is always DryRun. `/api/v1` requires the bearer t
 read-only Task/Job/Confirmation queries plus scan/preview submission and pending cancellation.
 Remote organize/execute is rejected. The server is a loopback development adapter, not a hardened
 Internet-facing deployment.
+
+### Resident Worker and interval schedules
+
+```json
+"automation": {
+  "workerPollSeconds": 2,
+  "schedulerPollSeconds": 5,
+  "schedules": [
+    {"id": "hourly-scan", "command": "scan", "intervalSeconds": 3600,
+     "limit": 20, "enabled": false}
+  ]
+}
+```
+
+IDs are unique; command is only `scan` or `preview`; intervals and limits are positive. The first
+enabled tick emits one job and persists its next-run time. Missed periods do not create a backlog.
+
+```bash
+mediaflow scheduler list
+mediaflow scheduler tick
+mediaflow scheduler run
+mediaflow worker run
+mediaflow jobs cancel JOB_ID
+mediaflow jobs stale --age-seconds 3600
+mediaflow jobs requeue JOB_ID --age-seconds 3600
+```
+
+Worker/Scheduler stop gracefully on SIGINT/SIGTERM. Running cancellation is cooperative between
+items. Stale jobs require an explicit age-guarded requeue because prior external work is uncertain.
 An organize policy also controls conflict behavior:
 
 ```json

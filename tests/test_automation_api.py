@@ -3,15 +3,21 @@ from __future__ import annotations
 import copy
 import io
 import json
+import sqlite3
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Thread
 from unittest.mock import patch
 
-from mediaflow.application.automation import AutomationJobService, AutomationWorker
-from mediaflow.domain.automation import AutomationJobStatus
+from mediaflow.application.automation import (
+    AutomationJobService,
+    AutomationWorker,
+    IntervalScheduler,
+)
+from mediaflow.domain.automation import AutomationJobStatus, IntervalSchedule
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
@@ -19,7 +25,29 @@ from mediaflow.interfaces.service_api import MediaFlowApi
 
 
 class AutomationPersistenceTests(unittest.TestCase):
-    def test_jobs_persist_claim_in_order_and_cancel_only_pending(self) -> None:
+    def test_schema_four_job_table_migrates_to_cancellation_and_schedules(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            connection = sqlite3.connect(database)
+            connection.executescript(
+                """
+                CREATE TABLE schema_version (component TEXT PRIMARY KEY, version INTEGER NOT NULL);
+                INSERT INTO schema_version VALUES ('runtime', 4);
+                CREATE TABLE automation_jobs (
+                    job_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, limit_value INTEGER,
+                    started_at TEXT, completed_at TEXT, task_id TEXT, error TEXT
+                );
+                """
+            )
+            connection.close()
+            with SQLiteTaskRepository(database) as repository:
+                self.assertEqual(repository.schema_version, 5)
+                job = AutomationJobService(repository).submit("scan")
+                self.assertFalse(job.cancellation_requested)
+                self.assertEqual(repository.list_schedule_states(), ())
+
+    def test_jobs_persist_claim_in_order_and_cancel_pending_or_running(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
@@ -29,12 +57,13 @@ class AutomationPersistenceTests(unittest.TestCase):
                 claimed = repository.claim_next_job(datetime.now(UTC))
                 self.assertEqual(claimed.job_id, first.job_id)
                 self.assertEqual(claimed.status, AutomationJobStatus.RUNNING)
-                with self.assertRaisesRegex(ValueError, "only a pending"):
-                    service.cancel(first.job_id)
+                requested = service.cancel(first.job_id)
+                self.assertEqual(requested.status, AutomationJobStatus.RUNNING)
+                self.assertTrue(requested.cancellation_requested)
                 cancelled = service.cancel(second.job_id)
                 self.assertEqual(cancelled.status, AutomationJobStatus.CANCELLED)
             with SQLiteTaskRepository(database) as reopened:
-                self.assertEqual(reopened.get_job(first.job_id).status, AutomationJobStatus.RUNNING)
+                self.assertTrue(reopened.get_job(first.job_id).cancellation_requested)
                 self.assertEqual(
                     reopened.get_job(second.job_id).status, AutomationJobStatus.CANCELLED
                 )
@@ -64,18 +93,113 @@ class AutomationPersistenceTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
                 service.submit("preview")
-                completed = AutomationWorker(repository, lambda job: "task-1").run_next()
+                completed = AutomationWorker(repository, lambda job, cancelled: "task-1").run_next()
                 self.assertEqual(completed.status, AutomationJobStatus.COMPLETED)
                 self.assertEqual(completed.task_id, "task-1")
                 service.submit("scan")
 
-                def fail(job):
+                def fail(job, cancelled):
                     raise RuntimeError("Authorization: Bearer top-secret")
 
                 failed = AutomationWorker(repository, fail).run_next()
                 self.assertEqual(failed.status, AutomationJobStatus.FAILED)
                 self.assertNotIn("top-secret", failed.error)
                 self.assertEqual(failed.error, "workflow failed (RuntimeError)")
+
+    def test_running_cancellation_becomes_cancelled_and_retains_task(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                queued = AutomationJobService(repository).submit("preview")
+
+                def handler(job, cancelled):
+                    repository.request_job_cancellation(job.job_id, datetime.now(UTC))
+                    self.assertTrue(cancelled())
+                    return "task-cancelled"
+
+                result = AutomationWorker(repository, handler).run_next()
+                self.assertEqual(result.status, AutomationJobStatus.CANCELLED)
+                self.assertEqual(result.task_id, "task-cancelled")
+                self.assertTrue(repository.get_job(queued.job_id).cancellation_requested)
+
+    def test_stale_requeue_is_explicit_and_age_guarded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                service = AutomationJobService(repository)
+                queued = service.submit("scan")
+                running = repository.claim_next_job(datetime.now(UTC))
+                old = replace(running, updated_at=datetime.now(UTC) - timedelta(hours=2))
+                repository.update_job(old)
+                self.assertEqual(len(service.stale(age_seconds=3600)), 1)
+                with self.assertRaisesRegex(ValueError, "not stale"):
+                    service.requeue_stale(queued.job_id, age_seconds=10800)
+                requeued = service.requeue_stale(queued.job_id, age_seconds=3600)
+                self.assertEqual(requeued.status, AutomationJobStatus.PENDING)
+                self.assertIsNone(requeued.started_at)
+
+    def test_resident_worker_polls_without_busy_loop_and_isolates_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                service = AutomationJobService(repository)
+                service.submit("scan")
+                service.submit("preview")
+                calls, sleeps = [], []
+                stopped = False
+
+                def handler(job, cancelled):
+                    calls.append(job.command.value)
+                    if job.command.value == "scan":
+                        raise RuntimeError("failed")
+                    return "task-ok"
+
+                def sleep(seconds):
+                    nonlocal stopped
+                    sleeps.append(seconds)
+                    stopped = True
+
+                processed = AutomationWorker(repository, handler).run(
+                    lambda: stopped, poll_seconds=0.5, sleep=sleep
+                )
+                self.assertEqual(processed, 2)
+                self.assertEqual(calls, ["scan", "preview"])
+                self.assertEqual(sleeps, [0.5])
+
+
+class IntervalSchedulerTests(unittest.TestCase):
+    def test_due_disabled_not_due_and_restart_idempotency(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            schedules = (
+                IntervalSchedule("scan-fast", "scan", 60, 5),
+                IntervalSchedule("disabled", "preview", 60, enabled=False),
+            )
+            now = datetime(2026, 8, 22, tzinfo=UTC)
+            with SQLiteTaskRepository(database) as repository:
+                scheduler = IntervalScheduler(repository, schedules)
+                first = scheduler.tick(now)
+                self.assertEqual([item.schedule_id for item in first], ["scan-fast"])
+                self.assertEqual(scheduler.tick(now), ())
+            with SQLiteTaskRepository(database) as repository:
+                scheduler = IntervalScheduler(repository, schedules)
+                self.assertEqual(scheduler.tick(now + timedelta(seconds=59)), ())
+                second = scheduler.tick(now + timedelta(seconds=60))
+                self.assertEqual(len(second), 1)
+                self.assertEqual(len(repository.list_jobs()), 2)
+
+    def test_scheduler_resident_loop_has_bounded_poll(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                stopped, sleeps = False, []
+
+                def sleep(seconds):
+                    nonlocal stopped
+                    sleeps.append(seconds)
+                    stopped = True
+
+                emitted = IntervalScheduler(
+                    repository, (IntervalSchedule("daily", "preview", 86400),)
+                ).run(lambda: stopped, poll_seconds=2, sleep=sleep)
+                self.assertEqual(emitted, 1)
+                self.assertEqual(sleeps, [2])
 
     def test_invalid_commands_and_limits_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -143,6 +267,27 @@ class ServiceApiTests(unittest.TestCase):
         cancelled = self.request("POST", f"/api/v1/jobs/{job_id}/cancel", token="api-secret")[1]
         self.assertEqual(cancelled["status"], "cancelled")
 
+    def test_schedule_output_is_read_only(self) -> None:
+        self.api = MediaFlowApi(
+            self.repository,
+            "api-secret",
+            (IntervalSchedule("nightly", "preview", 3600, 20),),
+        )
+        status, response, _ = self.request("GET", "/api/v1/schedules", token="api-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(response["items"][0]["schedule_id"], "nightly")
+        self.assertIsNone(response["items"][0]["state"])
+
+    def test_api_requests_running_job_cancellation(self) -> None:
+        queued = AutomationJobService(self.repository).submit("scan")
+        self.repository.claim_next_job(datetime.now(UTC))
+        status, response, _ = self.request(
+            "POST", f"/api/v1/jobs/{queued.job_id}/cancel", token="api-secret"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(response["status"], "running")
+        self.assertTrue(response["cancellation_requested"])
+
     def test_rejects_execute_and_unsupported_commands(self) -> None:
         for document in (
             {"command": "organize"},
@@ -192,6 +337,18 @@ class AutomationCliTests(unittest.TestCase):
         document["persistence"] = {"databasePath": str(root / "state.sqlite3")}
         document["historyPath"] = str(root / "history.jsonl")
         document["api"] = {"tokenEnv": "MEDIAFLOW_API_TOKEN"}
+        document["automation"] = {
+            "workerPollSeconds": 1,
+            "schedulerPollSeconds": 2,
+            "schedules": [
+                {
+                    "id": "periodic-scan",
+                    "command": "scan",
+                    "intervalSeconds": 3600,
+                    "limit": 20,
+                }
+            ],
+        }
         config = root / "config.json"
         config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
         return config
@@ -229,11 +386,72 @@ class AutomationCliTests(unittest.TestCase):
     def test_api_config_validation_does_not_require_secret(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         document["api"] = {"tokenEnv": "MEDIAFLOW_API_TOKEN"}
+        document["automation"] = {
+            "schedules": [{"id": "periodic-scan", "command": "scan", "intervalSeconds": 3600}]
+        }
         loaded = load_runtime_configuration(copy.deepcopy(document))
         self.assertEqual(loaded.api_token_env, "MEDIAFLOW_API_TOKEN")
+        self.assertEqual(loaded.automation_schedules[0].schedule_id, "periodic-scan")
         document["api"] = {"tokenEnv": "invalid-name"}
         with self.assertRaisesRegex(ValueError, "API tokenEnv"):
             load_runtime_configuration(document)
+
+    def test_invalid_automation_configuration_rejects_execute_and_duplicates(self) -> None:
+        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+        for schedules, message in (
+            ([{"id": "x", "command": "organize", "intervalSeconds": 1}], "scan or preview"),
+            (
+                [
+                    {"id": "x", "command": "scan", "intervalSeconds": 1},
+                    {"id": "x", "command": "preview", "intervalSeconds": 2},
+                ],
+                "IDs must be unique",
+            ),
+        ):
+            candidate = copy.deepcopy(document)
+            candidate["automation"] = {"schedules": schedules}
+            with self.assertRaisesRegex(ValueError, message):
+                load_runtime_configuration(candidate)
+
+    def test_production_scan_cooperatively_cancels_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = self._configuration(directory)
+            media = Path(directory, "source", "Movie.2025.mkv")
+            media.write_bytes(b"unchanged")
+            code = final_main(
+                ["--config", str(config), "scan"],
+                stdout=io.StringIO(),
+                stderr=io.StringIO(),
+                cancellation_check=lambda: True,
+            )
+            self.assertEqual(code, 130)
+            self.assertEqual(media.read_bytes(), b"unchanged")
+            self.assertEqual(list(Path(directory, "target").iterdir()), [])
+
+    def test_scheduler_cli_tick_is_persistent_and_storage_free(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = self._configuration(directory)
+            target = Path(directory, "target")
+            output, error = io.StringIO(), io.StringIO()
+            code = final_main(
+                ["--config", str(config), "scheduler", "tick"],
+                stdout=output,
+                stderr=error,
+            )
+            self.assertEqual(code, 0, error.getvalue())
+            # The test configuration's schedule is enabled and emits one job on first tick.
+            self.assertIn("periodic-scan", output.getvalue())
+            self.assertEqual(list(target.iterdir()), [])
+            second = io.StringIO()
+            self.assertEqual(
+                final_main(
+                    ["--config", str(config), "scheduler", "tick"],
+                    stdout=second,
+                    stderr=error,
+                ),
+                0,
+            )
+            self.assertIn("Total: 0", second.getvalue())
 
     def test_api_startup_requires_configured_secret_without_leaking_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

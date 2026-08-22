@@ -1,78 +1,93 @@
-# Phase 18.1 — Read-only REST API + Persistent DryRun Worker
+# Phase 18.2 — Resident Worker + Cooperative Cancellation + Interval Scheduler
 
 ## Goal
 
-Establish the first service boundary for MediaFlow: a versioned REST API for read-only runtime
-state and a persistent background queue for scan/preview DryRun work. Reuse existing Application
-Services and persistent repositories. Do not expose real organization execution remotely.
+Complete the safe automation loop for scan and preview: add a controlled resident Worker,
+cooperative cancellation at batch/scan boundaries, and persistent interval schedules. Reuse the
+Phase 18.1 queue and existing Application Services. Do not expose real organization execution.
 
-## 1. Persistent background jobs
+## 1. Cooperative job cancellation
 
-Add a provider-neutral job model and repository port with:
+- A pending job is cancelled immediately.
+- A running job records `cancellationRequested` durably and the Worker observes it through a
+  cancellation probe.
+- Pass the probe into existing scan/batch orchestration so discovery stops before starting another
+  file. Do not move cancellation logic into Parser, strategy engines, or Storage adapters.
+- Cancellation is cooperative: an in-flight provider or Storage read may finish, but no new item is
+  started afterward.
+- A cancelled workflow ends as `cancelled`, not `failed`, and retains its related Task audit.
 
-- command: `scan` or `preview`
-- status: `pending`, `running`, `completed`, `failed`, `cancelled`
-- optional positive limit
-- timestamps, related persistent task ID, and redacted error
+## 2. Resident Worker
 
-Upgrade SQLite compatibly. Claiming must be atomic so two workers cannot process the same job.
+- Add `mediaflow worker run` with configurable bounded polling and graceful SIGINT/SIGTERM stop.
+- Keep `worker run-next` for deterministic operations and tests.
+- Only one job is processed at a time per Worker; SQLite atomic claiming still prevents duplicate
+  work across multiple processes.
+- Add explicit stale-running-job inspection/requeue. Never silently requeue a possibly completed
+  job. Requeue requires an age threshold and operator command.
+- Worker errors remain isolated and redacted; one failed job does not terminate resident mode.
 
-## 2. Worker and CLI
+## 3. Persistent interval schedules
 
-Add a bounded worker which claims one job and invokes an injected workflow handler. Production CLI
-wiring must reuse existing `scan` and `preview` workflows, never duplicate their business logic.
+- Load schedules from RuntimeConfiguration.
+- A schedule has unique ID, `scan` or `preview`, positive `intervalSeconds`, optional positive limit,
+  enabled flag, and a persisted next-run timestamp.
+- `mediaflow scheduler tick` evaluates due schedules once and queues jobs idempotently.
+- `mediaflow scheduler run` performs bounded polling and graceful shutdown.
+- Restart must not duplicate an already emitted occurrence.
+- Scheduling always creates DryRun-safe commands; organize/execute is invalid configuration.
 
-Add `mediaflow jobs list|show|submit|cancel` and `mediaflow worker run-next`. Only `scan` and
-`preview` are accepted; preview is always DryRun and pending-only cancellation is supported.
+## 4. CLI and API
 
-## 3. REST API
+- Existing `jobs cancel` and `POST /api/v1/jobs/{id}/cancel` request cancellation for pending or
+  running jobs.
+- Add job cancellation state to API/CLI output.
+- Add read-only `GET /api/v1/schedules`.
+- Scheduling configuration validation and listing never construct Storage or require TMDB secrets.
 
-Provide a versioned WSGI application and `mediaflow api serve --host 127.0.0.1 --port 8787`.
-Required endpoints are health; task/job/confirmation listing and lookup; scan/preview job submit;
-and pending job cancellation. JSON must be deterministic UTF-8 with stable errors.
+## 5. Safety
 
-## 4. API authorization
-
-- Health may be public; all `/api/v1` endpoints require a bearer token.
-- Configuration names the token environment variable; validation does not require its value.
-- Server startup fails clearly when the secret is absent.
-- Never log or return credentials or Authorization headers.
-
-## 5. Execution boundary
-
-- Reject `organize`, execute, overwrite, delete, and conflict-decision mutation requests.
-- API requests never directly access Storage.
-- Worker preview retains complete DryRun zero-mutation behavior.
-- OrganizerExecutor is never invoked in execute mode by this phase.
+- Only scan and preview may be queued or scheduled.
+- Preview remains DryRun; zero Storage mutations under normal, cancelled, failed, and stale-requeue
+  paths.
+- No implicit overwrite/delete and no remote OrganizerExecutor execute mode.
+- RecognitionType C and all accepted pipeline behavior remain unchanged.
 
 ## Required tests
 
-- SQLite migration, persistence, atomic claim, ordering, cancellation, and failure records.
-- Worker handler reuse and failure isolation.
-- API health/auth/serialization/invalid JSON/unknown route behavior.
-- Rejection of unsupported commands and execute attempts; secret redaction.
-- Zero Storage mutations and all existing regressions.
+- SQLite migration for cancellation and schedules.
+- Pending cancellation, running cancellation request, cooperative stop between items, and cancelled
+  terminal state.
+- Resident Worker idle polling, multiple jobs, failure isolation, graceful stop, and no busy loop.
+- Schedule validation, due/not-due/disabled evaluation, restart idempotency, and multiple schedules.
+- Stale inspection and explicit safe requeue; non-stale/unknown/completed rejection.
+- API cancellation and read-only schedule output.
+- Zero mutation for Worker/Scheduler/API and complete existing regressions.
 
 ## Documentation and validation
 
-Update README, examples, architecture, progress, roadmap, and product status. Run all tests,
-formatter, linter, compile check, dependency check, wheel build, configuration validation,
-FFprobe/FFmpeg audit, and diff check.
+Update README, example/catalog configuration, architecture, progress, roadmap, and product status.
+Run all tests, formatter, linter, compile, dependency, wheel, configuration, FFprobe/FFmpeg, and
+diff checks.
 
 ## Out of scope
 
-- Remote `organize --execute`, Scheduler/Cron, webhooks/notifications, Web UI/users/roles/TLS.
-- Changes to strategy engines, Storage adapters, Planner, or OrganizerExecutor.
+- Cron expressions and calendar/time-zone schedules.
+- Remote organize/execute, Webhooks/notifications, Web UI, user/role/TLS work.
+- Forced interruption of an in-flight network request or process killing.
+- Strategy, Storage, Planner, or OrganizerExecutor redesign.
 
 ## Final report
 
-## Phase 18.1 Result
+## Phase 18.2 Result
 
 PASS / FAIL
 
-## API
+## Cancellation
 
 ## Worker
+
+## Scheduler
 
 ## Security and Safety
 

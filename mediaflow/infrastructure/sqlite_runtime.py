@@ -10,6 +10,8 @@ from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationJob,
     AutomationJobStatus,
+    IntervalSchedule,
+    ScheduleState,
 )
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
@@ -22,7 +24,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class SQLiteTaskRepository:
@@ -256,7 +258,7 @@ class SQLiteTaskRepository:
     def create_job(self, job: AutomationJob) -> None:
         with self._lock, self._connection:
             self._connection.execute(
-                "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._job_values(job),
             )
 
@@ -308,34 +310,120 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 "UPDATE automation_jobs SET command=?, status=?, created_at=?, updated_at=?, "
-                "limit_value=?, started_at=?, completed_at=?, task_id=?, error=? WHERE job_id=?",
+                "limit_value=?, started_at=?, completed_at=?, task_id=?, error=?, "
+                "cancellation_requested=?, schedule_id=? WHERE job_id=?",
                 (*self._job_values(job)[1:], job.job_id),
             )
             if cursor.rowcount != 1:
                 raise LookupError(f"automation job {job.job_id!r} was not found")
 
-    def cancel_pending_job(self, job_id: str, now: datetime) -> AutomationJob:
+    def request_job_cancellation(self, job_id: str, now: datetime) -> AutomationJob:
         with self._lock, self._connection:
             cursor = self._connection.execute(
-                "UPDATE automation_jobs SET status=?, updated_at=?, completed_at=? "
-                "WHERE job_id=? AND status=?",
+                "UPDATE automation_jobs SET status=CASE WHEN status=? THEN ? ELSE status END, "
+                "cancellation_requested=1, updated_at=?, "
+                "completed_at=CASE WHEN status=? THEN ? ELSE completed_at END "
+                "WHERE job_id=? AND status IN (?, ?)",
                 (
+                    AutomationJobStatus.PENDING.value,
                     AutomationJobStatus.CANCELLED.value,
                     now.isoformat(),
+                    AutomationJobStatus.PENDING.value,
                     now.isoformat(),
                     job_id,
                     AutomationJobStatus.PENDING.value,
+                    AutomationJobStatus.RUNNING.value,
                 ),
             )
             if cursor.rowcount != 1:
                 existing = self.get_job(job_id)
                 if existing is None:
                     raise LookupError(f"automation job {job_id!r} was not found")
-                raise ValueError("only a pending automation job can be cancelled")
+                raise ValueError("only a pending or running automation job can be cancelled")
             row = self._connection.execute(
                 "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
             ).fetchone()
         return self._job(row)
+
+    def job_cancellation_requested(self, job_id: str) -> bool:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT cancellation_requested FROM automation_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+        return bool(row and row["cancellation_requested"])
+
+    def list_stale_running_jobs(self, before: datetime) -> tuple[AutomationJob, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM automation_jobs WHERE status=? AND updated_at<? "
+                "ORDER BY updated_at, job_id",
+                (AutomationJobStatus.RUNNING.value, before.isoformat()),
+            ).fetchall()
+        return tuple(self._job(row) for row in rows)
+
+    def requeue_stale_job(self, job_id: str, before: datetime, now: datetime) -> AutomationJob:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE automation_jobs SET status=?, updated_at=?, started_at=NULL, "
+                "completed_at=NULL, task_id=NULL, error='explicitly requeued stale job', "
+                "cancellation_requested=0 WHERE job_id=? AND status=? AND updated_at<?",
+                (
+                    AutomationJobStatus.PENDING.value,
+                    now.isoformat(),
+                    job_id,
+                    AutomationJobStatus.RUNNING.value,
+                    before.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                existing = self.get_job(job_id)
+                if existing is None:
+                    raise LookupError(f"automation job {job_id!r} was not found")
+                raise ValueError("automation job is not stale and running")
+            row = self._connection.execute(
+                "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+        return self._job(row)
+
+    def enqueue_due_schedule(
+        self, schedule: IntervalSchedule, job: AutomationJob, now: datetime
+    ) -> bool:
+        from datetime import timedelta
+
+        with self._lock, self._connection:
+            state = self._connection.execute(
+                "SELECT * FROM automation_schedules WHERE schedule_id=?",
+                (schedule.schedule_id,),
+            ).fetchone()
+            if state is not None and datetime.fromisoformat(state["next_run_at"]) > now:
+                return False
+            self._connection.execute(
+                "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                self._job_values(job),
+            )
+            next_run = now + timedelta(seconds=schedule.interval_seconds)
+            self._connection.execute(
+                "INSERT INTO automation_schedules VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(schedule_id) DO UPDATE SET next_run_at=excluded.next_run_at, "
+                "updated_at=excluded.updated_at, last_job_id=excluded.last_job_id",
+                (schedule.schedule_id, next_run.isoformat(), now.isoformat(), job.job_id),
+            )
+        return True
+
+    def list_schedule_states(self) -> tuple[ScheduleState, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM automation_schedules ORDER BY schedule_id"
+            ).fetchall()
+        return tuple(
+            ScheduleState(
+                row["schedule_id"],
+                datetime.fromisoformat(row["next_run_at"]),
+                datetime.fromisoformat(row["updated_at"]),
+                row["last_job_id"],
+            )
+            for row in rows
+        )
 
     def acquire(self, storage_id: str, path: str, task_id: str, acquired_at: datetime) -> bool:
         normalized = self._lock_path(path)
@@ -436,10 +524,15 @@ class SQLiteTaskRepository:
                 CREATE TABLE IF NOT EXISTS automation_jobs (
                     job_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, limit_value INTEGER,
-                    started_at TEXT, completed_at TEXT, task_id TEXT, error TEXT
+                    started_at TEXT, completed_at TEXT, task_id TEXT, error TEXT,
+                    cancellation_requested INTEGER NOT NULL DEFAULT 0, schedule_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS automation_jobs_status_created
                     ON automation_jobs(status, created_at, job_id);
+                CREATE TABLE IF NOT EXISTS automation_schedules (
+                    schedule_id TEXT PRIMARY KEY, next_run_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, last_job_id TEXT
+                );
                 """
             )
             self._connection.execute(
@@ -460,6 +553,17 @@ class SQLiteTaskRepository:
                     "ALTER TABLE task_results ADD COLUMN "
                     "attachment_count INTEGER NOT NULL DEFAULT 0"
                 )
+            job_columns = {
+                row["name"]
+                for row in self._connection.execute("PRAGMA table_info(automation_jobs)").fetchall()
+            }
+            if "cancellation_requested" not in job_columns:
+                self._connection.execute(
+                    "ALTER TABLE automation_jobs ADD COLUMN "
+                    "cancellation_requested INTEGER NOT NULL DEFAULT 0"
+                )
+            if "schedule_id" not in job_columns:
+                self._connection.execute("ALTER TABLE automation_jobs ADD COLUMN schedule_id TEXT")
 
     @staticmethod
     def _lock_path(path: str) -> str:
@@ -635,6 +739,8 @@ class SQLiteTaskRepository:
             job.completed_at.isoformat() if job.completed_at else None,
             job.task_id,
             job.error,
+            int(job.cancellation_requested),
+            job.schedule_id,
         )
 
     @staticmethod
@@ -650,4 +756,6 @@ class SQLiteTaskRepository:
             datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
             row["task_id"],
             row["error"],
+            bool(row["cancellation_requested"]),
+            row["schedule_id"],
         )

@@ -34,8 +34,8 @@ Runtime Configuration
 | Naming | 已完成 | 安全模板、Unicode、多集、预览 | 用户界面配置体验 |
 | Classification | 已完成 | 确定性规则和媒体库选择 | 人工分类确认 |
 | Planner/Executor | 部分完成 | 计划、冲突保护、DryRun、真实执行、跨存储 | 完整冲突策略、附件、Rollback |
-| Task/History | 部分完成 | 持久 Task/Item/Result、恢复重试、锁、JSONL 历史 | 后台队列、实时暂停/控制 |
-| API/UI/Scheduler | 未开始 | 需求和模块边界 | API、Web UI、调度、权限、通知 |
+| Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、协作取消、锁、JSONL 历史 | 强制中断、自动恢复 |
+| API/UI/Scheduler | 部分完成 | 只读/DryRun API、interval 调度 | Cron、执行 API、Web UI、权限、通知 |
 
 ## 总体阶段计划
 
@@ -88,6 +88,9 @@ Runtime Configuration
 Phase 18.1 已完成持久 scan/preview 队列、单作业原子领取 Worker、只读 Task/Job/
 Confirmation REST 查询，以及只允许 DryRun 工作的受鉴权提交接口。远程真实执行未开放。
 
+Phase 18.2 已完成常驻 Worker、跨扫描/批处理边界的协作取消、显式陈旧作业恢复和持久
+interval 调度。调度仅允许 scan/preview；Cron 日历表达式与远程真实执行仍未开放。
+
 ### Phase 19：Web UI 与生产发布
 
 - Dashboard、Storage/Library/Policy 管理、候选确认、冲突处理、任务和历史页面。
@@ -98,13 +101,14 @@ Confirmation REST 查询，以及只允许 DryRun 工作的受鉴权提交接口
 
 下一任务应限定为 Phase 18，不同时启动 Web UI。优先顺序：
 
-1. 为 Worker 增加运行中取消检查和受控常驻循环。
-2. 引入 Scheduler/Cron，但默认只调度 scan/preview。
+1. 增加 Cron/时区日历调度与调度审计，不改变 scan/preview-only 默认边界。
+2. 增加 Webhook/通知投递和失败重试，不泄露配置密钥。
 3. 设计独立、可审计的远程 organize execute 授权，不复用普通 API Token。
-4. 增加权限、审计、Webhook 和通知边界。
+4. 增加用户、权限和更完整的审计边界。
 5. 保持 Storage 预检、附件、冲突确认和显式执行授权不变。
 
-Scheduler 尚未实现；当前不支持无人值守定时 `organize --execute`。
+Interval Scheduler 已实现但只允许 scan/preview；仍不支持无人值守定时
+`organize --execute`。
 
 ## 持续安全基线
 

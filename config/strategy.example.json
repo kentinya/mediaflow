@@ -3,6 +3,14 @@
   "historyPath": ".mediaflow/history.jsonl",
   "persistence": {"databasePath": ".mediaflow/mediaflow.sqlite3"},
   "api": {"tokenEnv": "MEDIAFLOW_API_TOKEN"},
+  "automation": {
+    "workerPollSeconds": 2,
+    "schedulerPollSeconds": 5,
+    "schedules": [
+      {"id": "hourly-scan", "command": "scan", "intervalSeconds": 3600, "limit": 20, "enabled": false},
+      {"id": "daily-preview", "command": "preview", "intervalSeconds": 86400, "limit": 20, "enabled": false}
+    ]
+  },
   "storages": [
     {"id": "source-storage", "name": "Source", "type": "local", "rootPath": "/mnt/HDD_2"},
     {"id": "media-target", "type": "local", "rootPath": "/mnt/HDD_2/Organized"}

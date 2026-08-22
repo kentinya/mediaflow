@@ -4,10 +4,19 @@ import argparse
 import io
 import json
 import os
+import signal
+import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
-from mediaflow.application.automation import AutomationJobService, AutomationWorker
+from mediaflow.application.automation import (
+    AutomationCancelled,
+    AutomationJobService,
+    AutomationWorker,
+    IntervalScheduler,
+)
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
@@ -33,7 +42,13 @@ from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.tmdb import TMDBClient, TMDBConfig, TMDBProvider
 
 
-def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
+def final_main(
+    argv: list[str],
+    *,
+    stdout: TextIO,
+    stderr: TextIO,
+    cancellation_check: Callable[[], bool] | None = None,
+) -> int:
     parser = argparse.ArgumentParser(prog="mediaflow")
     parser.add_argument("--config", help="runtime JSON configuration")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -92,9 +107,22 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
     job_submit.add_argument("--limit", type=int)
     job_cancel = job_commands.add_parser("cancel")
     job_cancel.add_argument("job_id")
+    job_stale = job_commands.add_parser("stale")
+    job_stale.add_argument("--age-seconds", type=float, required=True)
+    job_requeue = job_commands.add_parser("requeue")
+    job_requeue.add_argument("job_id")
+    job_requeue.add_argument("--age-seconds", type=float, required=True)
     worker = commands.add_parser("worker", help="run persistent DryRun jobs")
     worker_commands = worker.add_subparsers(dest="worker_command", required=True)
     worker_commands.add_parser("run-next")
+    worker_run = worker_commands.add_parser("run")
+    worker_run.add_argument("--poll-seconds", type=float)
+    scheduler = commands.add_parser("scheduler", help="persistent interval schedules")
+    scheduler_commands = scheduler.add_subparsers(dest="scheduler_command", required=True)
+    scheduler_commands.add_parser("list")
+    scheduler_commands.add_parser("tick")
+    scheduler_run = scheduler_commands.add_parser("run")
+    scheduler_run.add_argument("--poll-seconds", type=float)
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_serve = api_commands.add_parser("serve")
@@ -219,21 +247,65 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
                 elif arguments.job_command == "submit":
                     job = service.submit(arguments.workflow, limit=arguments.limit)
                     stdout.write(render_job(job))
-                else:
+                elif arguments.job_command == "cancel":
                     stdout.write(render_job(service.cancel(arguments.job_id)))
+                elif arguments.job_command == "stale":
+                    stdout.write(render_jobs(service.stale(age_seconds=arguments.age_seconds)))
+                else:
+                    stdout.write(
+                        render_job(
+                            service.requeue_stale(
+                                arguments.job_id, age_seconds=arguments.age_seconds
+                            )
+                        )
+                    )
             return 0
         if arguments.command == "worker":
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 worker_service = AutomationWorker(
                     repository,
-                    lambda job: _run_queued_workflow(job, arguments.config),
+                    lambda job, cancelled: _run_queued_workflow(job, arguments.config, cancelled),
                 )
-                job = worker_service.run_next()
-                if job is None:
-                    stdout.write("No pending automation jobs\n")
+                if arguments.worker_command == "run-next":
+                    job = worker_service.run_next()
+                    if job is None:
+                        stdout.write("No pending automation jobs\n")
+                        return 0
+                    stdout.write(render_job(job))
+                    return 0 if job.status.value in {"completed", "cancelled"} else 1
+                poll = arguments.poll_seconds or configuration.worker_poll_seconds
+                processed = _run_resident(
+                    lambda stop: worker_service.run(
+                        stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
+                    )
+                )
+                stdout.write(f"Worker stopped; processed={processed}\n")
+                return 0
+        if arguments.command == "scheduler":
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                scheduler_service = IntervalScheduler(
+                    repository, configuration.automation_schedules
+                )
+                if arguments.scheduler_command == "list":
+                    stdout.write(
+                        render_schedules(
+                            configuration.automation_schedules,
+                            repository.list_schedule_states(),
+                        )
+                    )
                     return 0
-                stdout.write(render_job(job))
-                return 0 if job.status.value == "completed" else 1
+                if arguments.scheduler_command == "tick":
+                    queued = scheduler_service.tick()
+                    stdout.write(render_jobs(queued))
+                    return 0
+                poll = arguments.poll_seconds or configuration.scheduler_poll_seconds
+                emitted = _run_resident(
+                    lambda stop: scheduler_service.run(
+                        stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
+                    )
+                )
+                stdout.write(f"Scheduler stopped; emitted={emitted}\n")
+                return 0
         if arguments.command == "api":
             if not configuration.api_token_env:
                 raise ValueError("API tokenEnv is not configured")
@@ -247,7 +319,7 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
             from mediaflow.interfaces.service_api import MediaFlowApi
 
             with SQLiteTaskRepository(configuration.database_path) as repository:
-                app = MediaFlowApi(repository, token)
+                app = MediaFlowApi(repository, token, configuration.automation_schedules)
                 stdout.write(f"MediaFlow API listening on {arguments.host}:{arguments.port}\n")
                 stdout.flush()
                 with make_server(arguments.host, arguments.port, app) as server:
@@ -278,12 +350,20 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
                     StorageScanner(storages, file_index),
                     configuration.resource_libraries,
                     storages,
-                ).scan_all(limit=arguments.limit, on_discovered=on_discovered)
+                ).scan_all(
+                    limit=arguments.limit,
+                    on_discovered=on_discovered,
+                    cancellation_check=cancellation_check,
+                )
                 errors = tuple(error for result in batch.results for error in result.errors)
-                coordinator.finish(task.task_id, MediaOrganizerBatchResult((), errors))
+                cancelled = bool(cancellation_check and cancellation_check())
+                if cancelled:
+                    coordinator.cancel(task.task_id)
+                else:
+                    coordinator.finish(task.task_id, MediaOrganizerBatchResult((), errors))
                 stdout.write(f"Task ID: {task.task_id}\n")
                 stdout.write(render_scan(batch.results, discovered))
-                return 1 if errors else 0
+                return 130 if cancelled else 1 if errors else 0
         library = display_root = None
         if getattr(arguments, "path", None):
             library, display_root = _resource_library(configuration, arguments.path)
@@ -373,6 +453,7 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
                     progress=lambda done, total, source: stdout.write(
                         f"PROGRESS {done}/{total or '?'} {source}\n"
                     ),
+                    cancellation_check=cancellation_check,
                 )
             else:
                 assert library is not None and display_root is not None
@@ -385,6 +466,7 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
                         progress=lambda done, total, source: stdout.write(
                             f"PROGRESS {done}/{total or '?'} {source}\n"
                         ),
+                        cancellation_check=cancellation_check,
                     )
                 else:
                     storage_path = path.relative_to(
@@ -398,10 +480,14 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
                         execute=execute,
                     )
                     summary = MediaOrganizerBatchResult((item,))
-            coordinator.finish(task.task_id, summary)
+            cancelled = bool(cancellation_check and cancellation_check())
+            if cancelled:
+                coordinator.cancel(task.task_id)
+            else:
+                coordinator.finish(task.task_id, summary)
             stdout.write(f"Task ID: {task.task_id}\n")
             stdout.write(render_summary(summary, execute=execute))
-            return 1 if summary.failed else 0
+            return 130 if cancelled else 1 if summary.failed else 0
     except (OSError, ValueError, LookupError, RuntimeError) as error:
         stderr.write(f"mediaflow error: {error}\n")
         return 2
@@ -550,7 +636,8 @@ def render_jobs(values) -> str:
     for value in values:
         lines.append(
             f"{value.job_id} | {value.command.value} | {value.status.value} | "
-            f"limit={value.limit or '-'} | task={value.task_id or '-'}"
+            f"limit={value.limit or '-'} | task={value.task_id or '-'} | "
+            f"schedule={value.schedule_id or '-'}"
         )
     lines.extend(("", f"Total: {len(values)}", ""))
     return "\n".join(lines)
@@ -568,12 +655,16 @@ def render_job(value) -> str:
             f"Limit: {value.limit or '-'}",
             f"Task ID: {value.task_id or '-'}",
             f"Error: {value.error or '-'}",
+            f"Cancellation requested: {'YES' if value.cancellation_requested else 'NO'}",
+            f"Schedule ID: {value.schedule_id or '-'}",
             "",
         )
     )
 
 
-def _run_queued_workflow(job, configured_path: str | None) -> str | None:
+def _run_queued_workflow(
+    job, configured_path: str | None, cancellation_check: Callable[[], bool]
+) -> str | None:
     args = []
     resolved = configured_path or os.environ.get("MEDIAFLOW_CONFIG")
     if resolved:
@@ -582,13 +673,56 @@ def _run_queued_workflow(job, configured_path: str | None) -> str | None:
     if job.limit is not None:
         args.extend(("--limit", str(job.limit)))
     output, errors = io.StringIO(), io.StringIO()
-    code = final_main(args, stdout=output, stderr=errors)
-    if code:
-        raise RuntimeError("queued workflow returned a failure status")
+    code = final_main(args, stdout=output, stderr=errors, cancellation_check=cancellation_check)
+    task_id = None
     for line in output.getvalue().splitlines():
         if line.startswith("Task ID: "):
-            return line.removeprefix("Task ID: ").strip()
-    return None
+            task_id = line.removeprefix("Task ID: ").strip()
+            break
+    if code == 130:
+        raise AutomationCancelled(task_id)
+    if code:
+        raise RuntimeError("queued workflow returned a failure status")
+    return task_id
+
+
+def render_schedules(definitions, states) -> str:
+    state_by_id = {item.schedule_id: item for item in states}
+    lines = ["", "INTERVAL SCHEDULES", ""]
+    for value in definitions:
+        state = state_by_id.get(value.schedule_id)
+        lines.append(
+            f"{value.schedule_id} | {value.command.value} | "
+            f"enabled={'YES' if value.enabled else 'NO'} | interval={value.interval_seconds:g}s | "
+            f"limit={value.limit or '-'} | next={state.next_run_at.isoformat() if state else '-'}"
+        )
+    lines.extend(("", f"Total: {len(definitions)}", ""))
+    return "\n".join(lines)
+
+
+def _run_resident(run: Callable[[Callable[[], bool]], int]) -> int:
+    stopped = threading.Event()
+    previous = {}
+
+    def request_stop(_signum, _frame) -> None:
+        stopped.set()
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        previous[signum] = signal.signal(signum, request_stop)
+    try:
+        return run(stopped.is_set)
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def _wait(stop: Callable[[], bool], seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while not stop():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        threading.Event().wait(min(remaining, 0.25))
 
 
 def _declared_capabilities(storage_type: str, read_only: bool) -> str:

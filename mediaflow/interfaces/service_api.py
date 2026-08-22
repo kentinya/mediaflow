@@ -14,12 +14,13 @@ from mediaflow.domain.task_persistence import ConfirmationStatus
 class MediaFlowApi:
     """Small WSGI transport over persistence and queue application boundaries."""
 
-    def __init__(self, repository, bearer_token: str) -> None:
+    def __init__(self, repository, bearer_token: str, schedules=()) -> None:
         if not bearer_token:
             raise ValueError("API bearer token must be configured")
         self._repository = repository
         self._token = bearer_token
         self._jobs = AutomationJobService(repository)
+        self._schedules = tuple(schedules)
 
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
         method = str(environ.get("REQUEST_METHOD", "GET")).upper()
@@ -70,6 +71,21 @@ class MediaFlowApi:
             values = self._repository.list_confirmations(status=ConfirmationStatus.PENDING)
             return self._response(
                 start_response, 200, {"items": [self._value(item) for item in values]}
+            )
+        if parts == ["api", "v1", "schedules"] and method == "GET":
+            states = {item.schedule_id: item for item in self._repository.list_schedule_states()}
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [
+                        {
+                            **self._value(item),
+                            "state": self._value(states.get(item.schedule_id)),
+                        }
+                        for item in self._schedules
+                    ]
+                },
             )
         if parts == ["api", "v1", "jobs"]:
             if method == "GET":

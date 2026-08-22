@@ -72,6 +72,7 @@ class ResourceLibraryScanBatch:
 
 
 LibraryDiscoveryCallback = Callable[[ResourceLibrary, DiscoveredFile], None]
+CancellationCheck = Callable[[], bool]
 
 
 class ResourceLibraryScanner:
@@ -101,18 +102,26 @@ class ResourceLibraryScanner:
         *,
         limit: int | None = None,
         on_discovered: LibraryDiscoveryCallback | None = None,
+        cancellation_check: CancellationCheck | None = None,
     ) -> ResourceLibraryScanBatch:
         if limit is not None and limit < 1:
             raise ValueError("scan limit must be positive")
         results: list[ScanResult] = []
         discovered = 0
         for library in self._libraries:
-            if not library.enabled or (limit is not None and discovered >= limit):
+            if (
+                not library.enabled
+                or (limit is not None and discovered >= limit)
+                or (cancellation_check and cancellation_check())
+            ):
                 continue
             cancellation = CancellationToken()
 
             def receive(file: DiscoveredFile) -> None:
                 nonlocal discovered
+                if cancellation_check and cancellation_check():
+                    cancellation.cancel()
+                    return
                 if file.status is not FileScanStatus.READY:
                     return
                 if limit is not None and discovered >= limit:

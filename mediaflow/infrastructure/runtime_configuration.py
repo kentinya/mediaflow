@@ -10,6 +10,7 @@ from mediaflow.application.strategy_test import (
     StrategyTestConfiguration,
     strategy_runner_from_configuration,
 )
+from mediaflow.domain.automation import AutomationCommand, IntervalSchedule
 from mediaflow.domain.library import DEFAULT_MEDIA_EXTENSIONS, MediaLibrary, ResourceLibrary
 from mediaflow.domain.storage import Storage
 from mediaflow.infrastructure.local_storage import LocalStorage
@@ -39,6 +40,9 @@ class RuntimeConfiguration:
     history_path: str
     database_path: str
     api_token_env: str | None = None
+    automation_schedules: tuple[IntervalSchedule, ...] = ()
+    worker_poll_seconds: float = 2.0
+    scheduler_poll_seconds: float = 5.0
 
     def create_storages(
         self,
@@ -209,6 +213,22 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         not isinstance(api_token_env, str) or not _ENV_NAME.fullmatch(api_token_env)
     ):
         raise ValueError("API tokenEnv must be a valid environment variable name")
+    automation = document.get("automation", {})
+    if not isinstance(automation, dict):
+        raise ValueError("runtime configuration 'automation' must be an object")
+    worker_poll = _positive_number(automation.get("workerPollSeconds", 2), "workerPollSeconds")
+    scheduler_poll = _positive_number(
+        automation.get("schedulerPollSeconds", 5), "schedulerPollSeconds"
+    )
+    raw_schedules = automation.get("schedules", [])
+    if not isinstance(raw_schedules, list) or not all(
+        isinstance(item, dict) for item in raw_schedules
+    ):
+        raise ValueError("automation schedules must be an array of objects")
+    schedules = tuple(_interval_schedule(item) for item in raw_schedules)
+    schedule_ids = [item.schedule_id for item in schedules]
+    if len(schedule_ids) != len(set(schedule_ids)):
+        raise ValueError("automation schedule IDs must be unique")
     return RuntimeConfiguration(
         loaded.strategy,
         storage_definitions,
@@ -218,6 +238,9 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         history_path,
         database_path,
         api_token_env,
+        schedules,
+        worker_poll,
+        scheduler_poll,
     )
 
 
@@ -397,6 +420,33 @@ def _required(document: dict, key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"runtime configuration {key!r} must be a non-empty string")
     return value
+
+
+def _positive_number(value: object, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise ValueError(f"automation {label} must be a positive number")
+    return float(value)
+
+
+def _interval_schedule(value: dict) -> IntervalSchedule:
+    command_value = _required(value, "command")
+    try:
+        command = AutomationCommand(command_value)
+    except ValueError as error:
+        raise ValueError("automation schedule command must be scan or preview") from error
+    limit = value.get("limit")
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1):
+        raise ValueError("automation schedule limit must be a positive integer")
+    enabled = value.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("automation schedule enabled must be boolean")
+    return IntervalSchedule(
+        _required(value, "id"),
+        command,
+        _positive_number(value.get("intervalSeconds"), "schedule intervalSeconds"),
+        limit,
+        enabled,
+    )
 
 
 def _reference(value: str, available: set[str], label: str) -> None:

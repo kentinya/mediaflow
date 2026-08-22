@@ -48,6 +48,10 @@ mediaflow jobs submit scan --limit 20
 mediaflow jobs submit preview --limit 20
 mediaflow jobs list
 mediaflow worker run-next
+mediaflow worker run
+mediaflow scheduler list
+mediaflow scheduler tick
+mediaflow scheduler run
 mediaflow api serve --host 127.0.0.1 --port 8787
 ```
 
@@ -125,6 +129,12 @@ confirmations, and it can queue only `scan` or `preview`. Run one queued item wi
 `mediaflow worker run-next`; preview is always DryRun. Remote organize/execute, overwrite, delete,
 and conflict resolution are rejected. This standard-library server is for trusted loopback
 development use, not direct Internet exposure.
+
+Phase 18.2 adds a resident Worker and opt-in interval schedules. Example schedules are disabled by
+default. Run Scheduler and Worker separately. `jobs cancel JOB_ID` cancels pending work immediately
+or requests cooperative cancellation of running work before another media item starts; an in-flight
+read may finish. Stale crash leftovers are never retried automatically: inspect with
+`jobs stale --age-seconds N` and explicitly use `jobs requeue JOB_ID --age-seconds N`.
 
 ## Persistent runtime state
 

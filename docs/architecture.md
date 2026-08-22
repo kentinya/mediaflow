@@ -130,6 +130,22 @@ existing workflow entry point, which creates normal Task and Result records. Can
 pending-only. The service accepts no organize/execute job, so preview preserves DryRun's zero-
 mutation boundary. Scheduler, Webhook, notifications, remote execute, and Web UI remain future work.
 
+## Phase 18.2 automation loop
+
+SQLite schema v5 adds durable cancellation requests, schedule provenance, and next-run state.
+Pending cancellation is terminal immediately; a running request is observed by Worker and passed
+into ResourceLibraryScanner/MediaOrganizerService. Discovery stops before another item begins while
+an in-flight provider or Storage read may finish. Strategy engines and adapters remain unaware of
+Task control.
+
+The resident Worker claims one job at a time, sleeps for a bounded configured interval when idle,
+and stops gracefully on SIGINT/SIGTERM. Stale running jobs are never silently retried; inspection
+and age-guarded requeue are explicit operator actions.
+
+IntervalScheduler atomically persists each scan/preview occurrence and next-run timestamp. Restart
+or repeated ticks cannot duplicate an occurrence; missed intervals are coalesced, not backfilled.
+Scheduler creates queue records only and never calls Scanner, Storage, Metadata, or Executor.
+
 - `Storage` exposes read/write concepts and explicit capabilities. Business logic targets this
   protocol rather than filesystem APIs.
 - `Scanner` and `Parser` are read-only/local-information boundaries.

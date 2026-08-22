@@ -740,3 +740,16 @@ Phase 18.1 read-only REST API and persistent DryRun worker (2026-08-22): PASS
   variable, persisted failures are redacted, and API queries construct no Storage adapters
 - Added `mediaflow jobs ...`, `mediaflow worker run-next`, and loopback development API commands
 - Full suite: 307 tests, 304 passed, 0 failed, 3 optional real integrations skipped
+
+Phase 18.2 resident Worker, cooperative cancellation, and interval Scheduler (2026-08-22): PASS
+
+- Upgraded SQLite runtime schema to v5 with durable cancellation requests, schedule provenance,
+  and idempotent next-run state
+- Running cancellation propagates through Worker into ResourceLibrary scan/batch orchestration and
+  stops before another item begins; pending cancellation remains immediate
+- Added bounded resident Worker/Scheduler loops with graceful SIGINT/SIGTERM shutdown and isolated
+  job failures; preview remains DryRun
+- Added explicit age-guarded stale inspection/requeue with no automatic recovery of uncertain work
+- Added configuration-driven scan/preview interval schedules, CLI controls, and authenticated
+  read-only schedule API output; organize/execute schedule configuration is rejected
+- Full suite: 318 tests, 315 passed, 0 failed, 3 optional real integrations skipped
