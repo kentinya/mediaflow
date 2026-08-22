@@ -26,7 +26,7 @@ Runtime Configuration
 
 | 领域 | 状态 | 当前能力 | 主要缺口 |
 |---|---|---|---|
-| Storage | 已完成 | Local、SMB、OpenList、S3/R2 Adapter | SMB/S3/R2 JSON Runtime 装配、更多实机验证 |
+| Storage | 已完成 | Local、SMB、OpenList、S3/R2 Adapter 与 JSON Runtime | 更多实机验证 |
 | Scanner/FileIndex | 已完成 | 扫描、稳定性、全量/增量、生产 SQLite FileIndex | 后续管理/清理工具 |
 | Parser | 已完成 | 文件名/路径、电影/剧集、多集、标签 | NFO Parser |
 | Recognition | 已完成 | 配置规则、优先级、证据、C 身份保持 | 人工修正流程 |
@@ -70,13 +70,16 @@ Runtime Configuration
 验收范围：附件策略默认关闭；启用后通过 Storage 只读发现同目录关联文件，生成安全的文件
 集合计划并由 OrganizerExecutor 统一执行。部分结果保存已完成步骤，不清理未知文件。
 
-### Phase 17：运行时适配器与运维完善（下一步）
+### Phase 17：运行时适配器与运维完善（已完成）
 
 - 为 SMB、S3/R2 增加环境变量持有密钥的 JSON Runtime 配置构造。
 - 增加连接测试、只读验证、能力预检和专用实机验收套件。
 - 配置导入导出、版本迁移、日志轮转和缓存维护。
 
-### Phase 18：服务化与自动化
+验收范围：SMB/S3/R2 JSON Runtime 装配、环境变量密钥、配置校验和只读 Storage 预检已
+完成。持久缓存管理和文件日志轮转将在相应持久后端引入时实现，不提供空操作命令。
+
+### Phase 18：服务化与自动化（下一步）
 
 - REST API、Task Worker、Scheduler、Cron、Webhook 和通知。
 - API 复用 Application Service，不复制策略引擎或绕过 OrganizerExecutor。
@@ -90,13 +93,13 @@ Runtime Configuration
 
 ## 下一步实施建议
 
-下一任务应限定为 Phase 17，不同时启动 API 或 UI。优先顺序：
+下一任务应限定为 Phase 18，不同时启动 Web UI。优先顺序：
 
-1. 补齐 SMB、S3/R2 的 JSON Runtime 装配和环境变量密钥绑定。
-2. 增加 Storage 连接、只读和能力预检命令。
-3. 完善配置迁移、日志轮转与缓存维护工具。
-4. 扩展真实 Storage 验收矩阵和故障注入。
-5. 保持附件文件集合、冲突确认和显式执行授权边界不变。
+1. 定义只复用 Application Service 的只读 REST 查询边界。
+2. 引入后台 Task Worker 和受控的调度/取消机制。
+3. 先开放 scan/analyze/preview，再开放受保护的 organize execute。
+4. 增加权限、审计、Webhook 和通知边界。
+5. 保持 Storage 预检、附件、冲突确认和显式执行授权不变。
 
 Scheduler 尚未实现；当前不支持无人值守定时 `organize --execute`。
 

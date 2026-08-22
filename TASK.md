@@ -1,119 +1,101 @@
-# Phase 16 — Attachments + Atomic Media File Sets
+# Phase 17 — Runtime Storage Adapters + Read-only Preflight
 
 ## Goal
 
-Discover safe sidecar files through Storage, group them with one already-identified primary media
-file, plan their destinations, and execute the group only through OrganizerExecutor. Do not parse
-or generate NFO content and do not redesign accepted strategy engines.
+Complete production JSON runtime construction for the already-implemented SMB and S3/R2 Storage
+adapters, and add a safe read-only preflight command. Do not redesign Storage adapters or begin
+service/API/UI work.
 
-## 1. Domain model
+## 1. Runtime configuration
 
-Add provider-neutral immutable models for:
+Support Storage `type` values:
 
-- AttachmentType: subtitle, nfo, poster, fanart, trailer, image, other.
-- MediaAttachment: source StorageLocation, type, suffix/language/flags, size.
-- MediaFileSet: primary StorageLocation plus ordered attachments.
-- AttachmentPlan: source/destination StorageLocation, type, operation and status/error evidence.
+- `local`
+- `openlist`
+- `smb`
+- `s3`
+- `r2`
+- `s3-compatible`
 
-`OrganizePlan` may contain an ordered attachment-plan tuple while retaining backward compatibility.
+Normalize them into existing LocalStorage, OpenListStorage, SMBStorage, and S3Storage adapters.
 
-## 2. Configuration
+## 2. Secret ownership
 
-Add an optional attachment policy under each OrganizePolicy:
+- SMB username/password and S3 access/secret/session credentials come from named environment
+  variables, never literal JSON secret values.
+- OpenList continues using `tokenEnv`.
+- Fail clearly when a required environment variable name or value is missing.
+- Never include secret values in repr, CLI output, errors, logs, examples, or persisted records.
 
-```json
-"attachments": {
-  "enabled": true,
-  "subtitles": true,
-  "nfo": true,
-  "artwork": true,
-  "trailers": true,
-  "otherSameStem": false
-}
+## 3. Validation
+
+- `mediaflow config validate` validates all non-secret fields without constructing adapters,
+  accessing network/storage, or requiring secret values to be present.
+- Validate provider names, endpoint rules, bucket/share/host, ports, timeouts, concurrency,
+  multipart sizes, page sizes, retries, root paths, and environment-variable names.
+- Duplicate/unknown Storage definitions still fail before processing.
+
+## 4. Read-only Storage preflight
+
+Add:
+
+```text
+mediaflow storage list
+mediaflow storage check [STORAGE_ID]
 ```
 
-- Default is disabled for backward compatibility.
-- Validate types at startup without accessing Storage.
-- Unknown files and disabled attachment kinds are never included or deleted.
+- `list` prints configured type, root, read-only state, and declared capabilities without network
+  access or secret requirements.
+- `check` constructs selected adapters, invokes existing adapter health checks where available, and
+  performs no Storage mutation.
+- Check all configured Storages when ID is omitted; failures are isolated and summarized.
+- Local preflight verifies the configured root through read-only queries only.
+- Output distinguishes configuration, dependency, authentication, permission, connection, and
+  unsupported errors without exposing secrets.
 
-## 3. Read-only discovery
+## 5. Configuration examples
 
-- Use only `Storage.list`/read-only metadata; never direct filesystem APIs.
-- Inspect only the primary file's containing directory; do not add another recursive scanner.
-- Recognize subtitle extensions: srt, ass, ssa, vtt, sub, sup.
-- Recognize same-stem NFO, conventional poster/fanart artwork, and same-stem trailer files.
-- Preserve subtitle language and Forced/SDH/HI suffix evidence.
-- Deterministic ordering and case-insensitive extension matching.
-- Do not read file contents, call metadata providers, or mutate Storage.
-
-## 4. Planning
-
-- Main destination remains Classification path + Naming directory/file.
-- Attachment destinations remain in the same named media directory.
-- Subtitle output uses the named primary stem plus its preserved safe suffix and original extension.
-- NFO uses the named primary stem; poster/fanart keep conventional safe names; trailer identity is
-  preserved.
-- Reject traversal, absolute, duplicate, or colliding attachment destinations.
-- A file set with a conflict is not implicitly partially executed.
-
-## 5. Execution and recovery evidence
-
-- Default remains DryRun with zero mutations for main and attachments.
-- Explicit execution processes only the immutable plan through OrganizerExecutor.
-- Use the existing operation semantics for every file; no fallback and no overwrite by default.
-- Record each completed attachment operation. If a later operation fails, return PARTIAL with exact
-  completed/pending evidence so explicit task retry can recover safely.
-- Never delete unknown files or recursively clean the source directory.
-
-## 6. CLI output
-
-Preview/organize summaries expose attachment count and, in detailed plan output where available,
-the source/type/destination list. No separate attachment scanner command is required.
+Document complete Local/OpenList/SMB/AWS S3/Cloudflare R2/generic S3-compatible definitions and
+required environment variables. Examples contain placeholders only, never working credentials.
 
 ## Safety
 
-- Scanner through attachment planning remain read-only.
-- Only OrganizerExecutor mutates Storage.
-- DryRun, configuration validation, and discovery have zero mutation calls.
-- RecognitionType C remains C.
-- Do not implement NFO parsing/generation, image downloading, rollback, API, UI, scheduler, or
-  Phase 17 work.
+- Preflight may call only health/list/stat/exists-style read operations.
+- Zero Write/CreateDirectory/Move/Copy/Delete/HardLink/SoftLink calls.
+- Existing DryRun, conflict, attachment, and explicit execute boundaries remain unchanged.
+- Do not implement scheduler, API, Web UI, background workers, NFO, or Phase 18.
 
 ## Required tests
 
-- Subtitle extension/language/forced/SDH preservation.
-- NFO, poster, fanart, trailer and disabled/unknown files.
-- Same-stem boundaries, Unicode and case-insensitive extensions.
-- Deterministic ordering and no content reads.
-- Safe target naming and collision/traversal rejection.
-- DryRun zero mutation for the complete file set.
-- Local MOVE/COPY/LINK attachment execution.
-- Cross-storage attachment COPY/MOVE using existing Storage behavior.
-- Partial execution records completed attachment steps and preserves unknown files.
-- Configuration validation/default-disabled behavior.
-- RecognitionType C and all existing Phase 15 regressions.
+- Runtime construction for SMB, AWS S3, R2, and generic S3-compatible definitions using fakes.
+- Environment secret resolution, missing environment values, and redaction.
+- Invalid provider/endpoint/bucket/share/port/timeout/concurrency/multipart/env-name cases.
+- Config validation requires no secret values and makes zero Storage/network calls.
+- Storage list makes zero adapter/network calls.
+- Storage check success/failure isolation, capability output, unknown ID, and zero mutation.
+- Optional real SMB/S3/R2 tests remain environment-gated.
+- All Parser through Phase 16, Storage, Task, conflict, attachment, and DryRun regressions.
 
 ## Documentation
 
-Update README, configuration examples, architecture, progress, and roadmap. Document supported
-attachment forms, opt-in behavior, execution ordering, partial recovery, and limitations.
+Update README, configuration examples, architecture, progress, roadmap, and product status.
 
 ## Validation
 
 Run all tests, formatter, linter, compile check, dependency check, wheel build, configuration
-validation, FFprobe/FFmpeg audit, and diff check. Fix every Phase 16 failure before PASS.
+validation, FFprobe/FFmpeg audit, and diff check. Fix every Phase 17 failure before PASS.
 
 ## Final report
 
-## Phase 16 Result
+## Phase 17 Result
 
 PASS / FAIL
 
-## Attachment Discovery
+## Runtime Adapters
 
-## Planning and Execution
+## Storage Preflight
 
-## Safety
+## Security
 
 ## Regression
 

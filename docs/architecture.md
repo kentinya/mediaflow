@@ -106,6 +106,16 @@ image download, fallback, or implicit overwrite.
 
 ## Important interfaces
 
+Phase 17 completes RuntimeConfiguration construction for SMB and the normalized S3 variants
+(`s3`, `r2`, and `s3-compatible`) using the existing infrastructure adapters. JSON stores only
+environment-variable names; values are resolved at adapter construction and remain redacted.
+Configuration validation uses secret placeholders only inside immutable config value objects and
+does not contact Storage.
+
+`mediaflow storage list` renders configured identity and declared capabilities without adapter
+construction. `storage check` constructs only selected adapters and invokes existing health checks
+or a root listing. Failures are isolated, and no write probe is permitted.
+
 - `Storage` exposes read/write concepts and explicit capabilities. Business logic targets this
   protocol rather than filesystem APIs.
 - `Scanner` and `Parser` are read-only/local-information boundaries.

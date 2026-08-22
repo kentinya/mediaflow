@@ -2,8 +2,8 @@
 
 The same JSON document is now the Phase 13 runtime configuration. It includes `storages`,
 `resourceLibraries`, `mediaLibraries`, policy catalogs, metadata settings, and `historyPath`.
-Local and OpenList Storage definitions are constructed by the runtime loader. SMB/S3/R2 adapters
-exist, but their current runtime configuration must be injected by an embedding application.
+Local, OpenList, SMB, AWS S3, Cloudflare R2, and generic S3-compatible Storage definitions are
+constructed by the runtime loader.
 Passwords, tokens, and access keys remain environment-owned and never appear in strategy JSON.
 
 ```json
@@ -113,8 +113,41 @@ ResourceLibrary and MediaLibrary paths referencing this Storage remain relative 
 OpenList supports Move/Copy/Delete but not hard or symbolic links. Within one OpenList Storage, a
 MOVE changing both parent and filename uses native server-side Move followed by Rename. Rename
 failure triggers a best-effort Move back to the source. Cross-storage MOVE streams Copy, verifies
-the destination size, and deletes the source only afterward. SMB and S3/R2 continue to use
-externally injected adapters; their secrets are never part of strategy JSON.
+the destination size, and deletes the source only afterward.
+
+SMB runtime example:
+
+```json
+{"id":"nas","type":"smb","host":"nas.example.com","share":"Media",
+ "rootPath":"Incoming","usernameEnv":"SMB_USERNAME","passwordEnv":"SMB_PASSWORD",
+ "domain":"WORKGROUP","port":445,"readOnly":true}
+```
+
+AWS S3, Cloudflare R2, and generic S3-compatible examples:
+
+```json
+{"id":"aws","type":"s3","bucket":"media","rootPath":"incoming",
+ "accessKeyEnv":"S3_ACCESS_KEY","secretKeyEnv":"S3_SECRET_KEY","region":"ap-east-1"}
+{"id":"r2","type":"r2","bucket":"media","rootPath":"incoming",
+ "endpoint":"https://ACCOUNT_ID.r2.cloudflarestorage.com",
+ "accessKeyEnv":"R2_ACCESS_KEY","secretKeyEnv":"R2_SECRET_KEY"}
+{"id":"minio","type":"s3-compatible","bucket":"media","rootPath":"incoming",
+ "endpoint":"https://minio.example.com","forcePathStyle":true,
+ "accessKeyEnv":"MINIO_ACCESS_KEY","secretKeyEnv":"MINIO_SECRET_KEY"}
+```
+
+Optional temporary credentials use `sessionTokenEnv`. Literal `token`, `password`, `accessKey`,
+`secretKey`, and `sessionToken` fields are rejected. Configuration validation checks these shapes
+without requiring environment values or contacting a service.
+
+```bash
+mediaflow storage list
+mediaflow storage check
+mediaflow storage check nas
+```
+
+The list command constructs nothing. Check isolates failures and calls only existing health,
+connect, and list operations; it never creates a write probe.
 
 The loader rejects malformed JSON models, duplicate IDs, missing references, unsafe/unknown naming
 templates, unsupported classification conditions, unsafe classification paths, unknown

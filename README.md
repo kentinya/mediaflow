@@ -37,6 +37,9 @@ mediaflow tasks list
 mediaflow confirmations list
 mediaflow confirmations show CONFIRMATION_ID
 mediaflow confirmations resolve CONFIRMATION_ID --strategy skip
+mediaflow storage list
+mediaflow storage check
+mediaflow storage check STORAGE_ID
 mediaflow tasks show TASK_ID
 mediaflow tasks resume TASK_ID
 mediaflow tasks retry-failed TASK_ID --execute
@@ -85,6 +88,21 @@ For OpenList, install the optional dependency and keep its token outside JSON:
 .venv/bin/pip install -e '.[openlist,tmdb]'
 export OPENLIST_TOKEN='<token>'
 ```
+
+SMB and S3/R2 runtime adapters also use environment-owned credentials:
+
+```bash
+.venv/bin/pip install -e '.[smb,s3]'
+export SMB_USERNAME='<username>'
+export SMB_PASSWORD='<password>'
+export S3_ACCESS_KEY='<access-key>'
+export S3_SECRET_KEY='<secret-key>'
+mediaflow storage list
+mediaflow storage check
+```
+
+`storage list` never constructs adapters. `storage check` performs only health/list operations and
+never writes to Storage.
 
 ## Persistent runtime state
 

@@ -715,3 +715,16 @@ Phase 16 example configuration synchronization (2026-08-22): PASS
 - Expanded the exhaustive MOVE/COPY/HARDLINK/SYMLINK catalog with current attachment controls
 - Kept starter attachment execution disabled by default and documented which example is safe versus
   exhaustive
+
+Phase 17 runtime Storage adapters and read-only preflight (2026-08-22): PASS
+
+- Added JSON Runtime construction for existing SMBStorage and AWS S3/Cloudflare R2/generic
+  S3-compatible adapters without changing adapter or business semantics
+- Credentials resolve only from validated environment-variable names; literal secret fields are
+  rejected and configuration validation needs neither secret values nor network access
+- Added `mediaflow storage list|check`; listing constructs nothing, checks use only existing
+  health/connect/list operations, isolate failures, and perform zero mutation
+- Expanded the exhaustive configuration catalog with Local/OpenList/SMB/S3/R2 examples
+- Full suite: 295 tests, 292 passed, 0 failed, 3 optional real integrations skipped
+- Ruff lint/format, compileall, dependency check, isolated wheel build, configuration validation,
+  FFmpeg/FFprobe runtime audit, and diff checks passed

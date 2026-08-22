@@ -74,6 +74,11 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
     confirmation_resolve.add_argument("--confirm-overwrite", action="store_true")
     confirmation_resolve.add_argument("--actor")
     confirmation_resolve.add_argument("--note")
+    storage_command = commands.add_parser("storage", help="Storage configuration and preflight")
+    storage_commands = storage_command.add_subparsers(dest="storage_command", required=True)
+    storage_commands.add_parser("list", help="list configured Storages without connecting")
+    storage_check = storage_commands.add_parser("check", help="run read-only Storage preflight")
+    storage_check.add_argument("storage_id", nargs="?")
     arguments = parser.parse_args(argv)
     try:
         configuration = _configuration(arguments.config)
@@ -146,6 +151,40 @@ def final_main(argv: list[str], *, stdout: TextIO, stderr: TextIO) -> int:
                         )
                     stdout.write(render_confirmation(value, ()))
             return 0
+        if arguments.command == "storage":
+            if arguments.storage_command == "list":
+                stdout.write(render_storage_definitions(configuration.storage_definitions))
+                return 0
+            selected = (
+                [arguments.storage_id]
+                if arguments.storage_id
+                else [item.storage_id for item in configuration.storage_definitions]
+            )
+            known = {item.storage_id for item in configuration.storage_definitions}
+            unknown = set(selected) - known
+            if unknown:
+                raise ValueError(f"unknown Storage {sorted(unknown)[0]!r}")
+            failures = 0
+            lines = ["", "STORAGE CHECK", ""]
+            for storage_id in selected:
+                storage = None
+                try:
+                    storage = configuration.create_storages(storage_ids={storage_id})[storage_id]
+                    _read_only_storage_check(storage)
+                    lines.append(f"PASS | {storage_id} | read-only preflight succeeded")
+                except Exception as error:
+                    failures += 1
+                    lines.append(f"FAIL | {storage_id} | {_safe_preflight_error(error)}")
+                finally:
+                    close = getattr(storage, "close", None)
+                    if callable(close):
+                        try:
+                            close()
+                        except Exception:
+                            pass
+            lines.extend(("", f"Total: {len(selected)}", f"Failed: {failures}", ""))
+            stdout.write("\n".join(lines))
+            return 1 if failures else 0
 
         storages = configuration.create_storages()
         if arguments.command == "scan":
@@ -424,6 +463,49 @@ def render_confirmation(value, audit) -> str:
     )
     lines.append("")
     return "\n".join(lines)
+
+
+def render_storage_definitions(definitions) -> str:
+    lines = ["", "STORAGES", ""]
+    for value in definitions:
+        capabilities = _declared_capabilities(value.storage_type, value.read_only)
+        lines.append(
+            f"{value.storage_id} | {value.storage_type} | root={value.root_path or '/'} | "
+            f"readOnly={'YES' if value.read_only else 'NO'} | {capabilities}"
+        )
+    lines.extend(("", f"Total: {len(definitions)}", ""))
+    return "\n".join(lines)
+
+
+def _declared_capabilities(storage_type: str, read_only: bool) -> str:
+    if read_only:
+        return "move=NO copy=NO delete=NO hardLink=NO softLink=NO"
+    links = storage_type == "local"
+    return (
+        "move=YES copy=YES delete=YES "
+        f"hardLink={'YES' if links else 'NO'} softLink={'YES' if links else 'NO'}"
+    )
+
+
+def _read_only_storage_check(storage) -> None:
+    health = getattr(storage, "health_check", None)
+    if callable(health):
+        health()
+    else:
+        connect = getattr(storage, "connect", None)
+        if callable(connect):
+            connect()
+        storage.list("")
+
+
+def _safe_preflight_error(error: Exception) -> str:
+    from mediaflow.domain.storage import StorageError
+
+    if isinstance(error, StorageError):
+        return f"{error.code.value}: {error}"
+    if isinstance(error, (ValueError, RuntimeError, OSError)):
+        return str(error)
+    return type(error).__name__
 
 
 def _configuration(path: str | None) -> RuntimeConfiguration:
