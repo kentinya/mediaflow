@@ -965,6 +965,17 @@ These commands construct no Storage/provider/workflow/API/Executor and do not al
 Restore is deliberately absent because selecting and replacing an active production database requires
 a separately designed shutdown, rollback, compatibility, and authorization procedure.
 
+## Release validation boundary
+
+Phase 19.11 adds no runtime service. A least-privilege GitHub Actions matrix repeats the offline
+quality gate for each explicitly supported Python version, followed by a separate wheel job. The
+wheel is inspected before installation and exercised from a temporary working directory and fresh
+virtual environment, preventing an editable checkout from masking missing package files.
+
+The artifact smoke path validates the console entry point, both canonical configurations, and the
+SQLite backup boundary using only temporary local state. Live TMDB/SMB/OpenList/S3/R2 access,
+credentials, media Storage, publishing, deployment, restore, and signing remain outside CI.
+
 ## Runtime strategy catalogs
 
 The Phase 13 runtime boundary loads all strategy content from one JSON document selected by

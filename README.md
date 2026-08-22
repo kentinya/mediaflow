@@ -337,6 +337,22 @@ Runtime database backup uses SQLite's online backup API, validates the snapshot,
 publishes a new non-existing local file. It never overwrites. Verification opens the candidate
 read-only and checks SQLite integrity plus the supported MediaFlow schema marker. Stop services and
 take an additional backup before any future manual restore; automatic restore is intentionally absent.
+
+## Release validation
+
+GitHub Actions runs the offline suite and quality checks on Python 3.11, 3.12, and 3.13, then builds
+and installs the wheel into a fresh isolated environment. Run the same artifact smoke test locally:
+
+```bash
+release_dir=$(mktemp -d /tmp/mediaflow-release.XXXXXX)
+python -m pip wheel . --no-deps --no-build-isolation -w "$release_dir"
+python scripts/wheel_smoke_test.py "$release_dir"/mediaflow-*.whl
+```
+
+The workflow has read-only repository permission and does not use production secrets or live media
+services. See [docs/release.md](docs/release.md) for the complete explicit release checklist. No
+artifact is automatically published or deployed.
+
 Credential check prints only principal ID, roles, environment-variable name, enabled state, and
 SET/UNSET. For rotation, temporarily configure old and new principals with different IDs and
 `tokenEnv` names, restart, migrate clients, then remove the old principal and restart again.

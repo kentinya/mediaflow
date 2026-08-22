@@ -41,6 +41,7 @@
 - Phase 19.8 persistent redacted operational log foundation: PASS
 - Phase 19.9 read-only operational log API and UI: PASS
 - Phase 19.10 safe runtime database backup and verification: PASS
+- Phase 19.11 reproducible release validation and CI baseline: PASS
 
 ## Planned
 
@@ -1004,3 +1005,18 @@ Phase 19.10 safe runtime database backup and verification (2026-08-22): PASS
 - Full suite: 429 tests, 426 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated wheel build, both example validations, FFmpeg/FFprobe
   runtime audit, and diff check passed
+
+Phase 19.11 reproducible release validation and CI baseline (2026-08-22): PASS
+
+- Added a read-only, timeout-bounded GitHub Actions matrix for explicitly supported Python 3.11,
+  3.12, and 3.13 with formatter, lint, offline tests, compile, dependency, configuration, and
+  forbidden-runtime-dependency gates
+- Added a separate wheel gate that rejects packaged tests/user configuration/databases/caches, then
+  installs the artifact into a fresh environment outside the checkout
+- The installed artifact validates its console entry point, both canonical configurations, and a
+  temporary SQLite online backup/verify round trip without production Storage, providers, or secrets
+- Added an explicit maintainer release checklist; artifact upload, tagging, deployment, restore,
+  signing, containers, and live provider/storage CI remain absent
+- Full suite: 432 tests, 429 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated installed-wheel validation, both example validations,
+  FFmpeg/FFprobe runtime audit, and diff check passed

@@ -1,81 +1,76 @@
-# Phase 19.10 — Safe Runtime Database Backup and Verification
+# Phase 19.11 — Reproducible Release Validation and CI Baseline
 
 ## Goal
 
-Protect the production SQLite runtime state introduced through Phases 14–19 with consistent online
-backups and read-only verification. Provide local operator commands only. Do not implement restore or
-touch media Storage.
+Turn the existing local acceptance procedure into a deterministic GitHub Actions quality gate and
+validate the installable wheel in an isolated environment. This phase changes no media behavior and
+does not publish a release.
 
-## 1. Backup adapter
+## 1. Continuous integration
 
-- Add an infrastructure backup service using SQLite's online backup API so WAL/uncommitted file-copy
-  assumptions cannot produce inconsistent snapshots.
-- Back up the configured runtime database to an explicit local destination through a temporary file,
-  verify it, then publish atomically.
-- Refuse source=destination, directories, symlinks, existing targets, unsafe NUL paths, and unsupported
-  parent state. Never overwrite a backup.
-- Clean up only the service-owned temporary file after failure; never delete source or target data.
-- Return a structured result with UTC time, source schema version, byte size, SHA-256, and destination.
+- Add a least-privilege GitHub Actions workflow for pushes and pull requests.
+- Test every supported Python version declared by the project.
+- Install only declared development dependencies; use dependency caching without caching credentials.
+- Run formatter check, lint, full offline unit suite, compile check, dependency check, both canonical
+  configuration validations, and the FFprobe/FFmpeg runtime audit.
+- Unit CI must not require TMDB, SMB, OpenList, S3/R2, API tokens, or other production secrets.
+- Set explicit job timeouts and read-only repository permissions.
 
-## 2. Verification
+## 2. Isolated wheel smoke test
 
-- Open candidate backups read-only and run bounded SQLite integrity/schema checks.
-- Require the runtime schema marker and reject newer-than-supported, missing, malformed, empty,
-  truncated, or non-SQLite files with clear local errors.
-- Verification must not migrate or otherwise modify the candidate.
+- Build the wheel with the declared build backend and no undeclared build dependency assumptions.
+- Install that wheel into a fresh isolated virtual environment, not editable source.
+- Verify the installed `mediaflow` entry point, help output, both example configurations, and a local
+  runtime database backup/verify round trip.
+- Ensure the smoke test imports the installed artifact rather than the repository checkout.
 
-## 3. CLI
+## 3. Release metadata and operator documentation
 
-- Add `mediaflow database backup --output /safe/path/runtime.sqlite3`.
-- Add `mediaflow database verify /safe/path/runtime.sqlite3`.
-- Resolve the source only from configured `persistence.databasePath`; no arbitrary source option.
-- Commands construct no Storage, Provider, Scanner, workflow, Scheduler, Notification worker, API, or
-  OrganizerExecutor and never expose configuration secrets.
+- Audit `pyproject.toml` supported Python metadata, package discovery, console entry point, and wheel
+  contents; make only corrections required for a valid distributable artifact.
+- Document the exact local release-validation commands and CI boundary.
+- Add a release checklist covering clean worktree, tests, wheel smoke test, configuration validation,
+  changelog/version review, database backup, and explicit no-automatic-publish behavior.
 
-## 4. Safety and concurrency
+## 4. Safety and scope
 
-- Existing readers/writers may continue during online backup; snapshot must pass integrity verification.
-- Backup/verify performs zero media Storage mutation and never changes Tasks, Results, audit, logs,
-  FileIndex, execution authorization, or source SQLite state.
-- No API/Web endpoint, scheduled backup, retention deletion, upload, encryption, or restore in this phase.
+- CI and wheel smoke tests use temporary local paths and perform zero production media Storage access.
+- Never inject, print, or require secrets; optional live integration tests remain skipped.
+- Do not add release publishing, GitHub tokens beyond the automatic read-only token, container images,
+  signing, attestations, deployment, database restore, policy/engine changes, or dependency upgrades.
+- Preserve RecognitionType C, DryRun defaults, no-overwrite behavior, and the OrganizerExecutor boundary.
 
 ## Required tests
 
-- Successful online backup includes current schema and representative Task/Result/audit/log records.
-- WAL/concurrent-write snapshot remains internally consistent and source remains usable.
-- SHA-256/size/schema result correctness and deterministic verification output.
-- Existing target, same path, directory, symlink, missing parent/source, NUL, malformed/truncated/empty,
-  missing schema marker, and newer schema rejection.
-- Injected backup/integrity/publish failures leave source intact, never overwrite target, and remove only
-  owned temporary files.
-- Verify is provably read-only (mtime/hash unchanged) and creates no sidecar/WAL files.
-- CLI argument/config errors and output contain no secrets; no Storage/provider/workflow construction.
-- SQLite migration, Task/History, logs, API/UI, Scheduler/Notification, Storage, DryRun, and full regressions.
-- Formatter, lint, compile, dependency/build/configuration, FFprobe/FFmpeg, and diff checks.
+- Workflow syntax and command coverage are asserted without network-backed production integrations.
+- Wheel contains required Python modules and excludes runtime databases, user configuration, caches,
+  tests, local secrets, and media files.
+- Fresh-environment console entry point and example configuration validation pass.
+- Installed-artifact database backup/verify round trip passes using temporary local files.
+- Existing Parser, Recognition, Metadata, Naming, Classification, Planner, Executor, Storage, Task,
+  API/UI, operational log, and database backup regressions pass.
+- Formatter, lint, compile, dependency, wheel, FFprobe/FFmpeg, config, and diff checks pass.
 
 ## Documentation
 
-Update README, requirements, configuration, architecture, progress, and roadmap with commands,
-snapshot semantics, verification, operational procedure, and explicit restore/encryption limitations.
+Update README, requirements, architecture, progress, and roadmap. Add a concise release checklist.
 
 ## Out of scope
 
-Restore, automatic scheduling, backup retention/deletion, remote/object-storage upload, encryption/key
-management, compression, incremental backup, API/UI controls, OIDC, Secret Store, and TLS.
+Artifact publishing, semantic-release automation, Docker/container publication, signing/SBOM,
+deployment, OIDC/Secret Store, TLS termination, database restore, and live provider/storage CI.
 
 ## Final report
 
-## Phase 19.10 Result
+## Phase 19.11 Result
 
 PASS / FAIL
 
-## Backup
+## CI
 
-## Verification
+## Wheel Validation
 
-## CLI
-
-## Safety and Failure Handling
+## Safety
 
 ## Regression
 
