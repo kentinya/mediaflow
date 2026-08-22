@@ -15,6 +15,7 @@ from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.metadata_review import MetadataReviewService
+from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.task_persistence import ConfirmationStatus
@@ -385,6 +386,7 @@ class MediaFlowApi:
                 },
             )
         if parts == ["api", "v1", "schedules"] and method == "GET":
+            self._require_empty_query(environ, "schedule")
             states = {item.schedule_id: item for item in self._repository.list_schedule_states()}
             return self._response(
                 start_response,
@@ -400,11 +402,14 @@ class MediaFlowApi:
                 },
             )
         if parts == ["api", "v1", "notifications"] and method == "GET":
-            values = self._repository.list_deliveries(limit=100)
+            limit, delivery_status = self._notification_query(environ)
+            values = self._repository.list_deliveries(status=delivery_status, limit=limit)
             return self._response(
                 start_response,
                 200,
                 {
+                    "limit": limit,
+                    "status": delivery_status.value if delivery_status else None,
                     "items": [
                         {
                             "deliveryId": item.delivery_id,
@@ -423,7 +428,7 @@ class MediaFlowApi:
                             "responseStatus": item.response_status,
                         }
                         for item in values
-                    ]
+                    ],
                 },
             )
         if (
@@ -435,9 +440,12 @@ class MediaFlowApi:
             known = {item.schedule_id for item in self._schedules}
             if parts[3] not in known:
                 raise LookupError(f"schedule {parts[3]!r} was not found")
-            values = self._repository.list_schedule_audit(parts[3], limit=100)
+            limit = self._single_limit_query(environ, "schedule audit")
+            values = self._repository.list_schedule_audit(parts[3], limit=limit)
             return self._response(
-                start_response, 200, {"items": [self._value(item) for item in values]}
+                start_response,
+                200,
+                {"items": [self._value(item) for item in values], "limit": limit},
             )
         if parts == ["api", "v1", "jobs"]:
             if method == "GET":
@@ -713,6 +721,36 @@ class MediaFlowApi:
         if limit < 1 or limit > 100:
             raise ValueError("classification review limit must be between 1 and 100")
         return limit
+
+    @staticmethod
+    def _require_empty_query(environ: dict, resource: str) -> None:
+        if str(environ.get("QUERY_STRING", "")):
+            raise ValueError(f"{resource} query does not accept fields")
+
+    @staticmethod
+    def _single_limit_query(environ: dict, resource: str) -> int:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
+            raise ValueError(f"{resource} query accepts limit once")
+        return MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], resource)
+
+    @staticmethod
+    def _notification_query(
+        environ: dict,
+    ) -> tuple[int, NotificationDeliveryStatus | None]:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit", "status"}) or any(
+            len(value) != 1 for value in values.values()
+        ):
+            raise ValueError("notification query accepts limit and status once")
+        limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], "notification")
+        raw_status = values.get("status")
+        if raw_status is None or raw_status[0] == "all":
+            return limit, None
+        try:
+            return limit, NotificationDeliveryStatus(raw_status[0])
+        except ValueError as error:
+            raise ValueError("notification status is invalid") from error
 
     @staticmethod
     def _collection_page(environ: dict, resource: str) -> tuple[int, DecodedCursor | None]:

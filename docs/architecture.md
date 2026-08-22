@@ -911,6 +911,21 @@ order; they never enumerate prior rows or use OFFSET. TaskItem and Result cursor
 independently. The UI exposes explicit Previous/Next and first-page refresh; arbitrary jumps, totals,
 and live polling remain deferred.
 
+## Read-only Scheduler and Notification operations
+
+Phase 19.6 extends the same UI adapter without adding an application-service duplicate. Schedule
+definitions remain configuration-owned and are joined with persisted `ScheduleState`; occurrence
+audit reads keep SQLite's newest-first order and apply a caller limit of 1–100. Notification reads
+apply the existing status enum and limit directly in SQLite. Unknown, duplicate, blank, and injected
+query fields fail before repository access.
+
+Only provider-neutral operational fields cross the API: IDs, types/statuses, attempts, safe
+timestamps, categorical failure reason, and numeric HTTP status. Webhook URL, payload/body,
+signature, headers, response body, exception text, media paths, and credentials remain outside the
+transport. The UI uses text nodes, explicit refresh, and no polling. These routes construct no
+Storage, Provider, workflow service, Scheduler tick, delivery worker, or OrganizerExecutor; the only
+persistent side effect is the existing normalized authenticated security audit.
+
 ## Runtime strategy catalogs
 
 The Phase 13 runtime boundary loads all strategy content from one JSON document selected by

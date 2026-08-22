@@ -10,7 +10,18 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
+from mediaflow.application.automation import IntervalScheduler
+from mediaflow.domain.automation import (
+    AutomationCommand,
+    AutomationJob,
+    AutomationJobStatus,
+    CronSchedule,
+)
+from mediaflow.domain.notification import (
+    NotificationDelivery,
+    NotificationDeliveryStatus,
+    NotificationEventType,
+)
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
@@ -138,6 +149,85 @@ class OperatorObservabilityTests(unittest.TestCase):
         self.assertNotIn("/api/v1/tasks/${encodeURIComponent(id)}/resume", script)
         self.assertNotIn("/api/v1/jobs/${encodeURIComponent(id)}/cancel", script)
         self.assertNotIn("/api/v1/jobs', {method: 'POST'", script)
+
+    def test_notifications_are_bounded_filtered_and_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                for rank, delivery_status in enumerate(NotificationDeliveryStatus):
+                    repository.create_delivery(self._delivery(rank, delivery_status))
+                api = self._api(repository)
+                with patch.object(
+                    repository, "list_deliveries", wraps=repository.list_deliveries
+                ) as deliveries:
+                    status, document = request(
+                        api, "/api/v1/notifications", query="limit=2&status=dead-letter"
+                    )
+                self.assertEqual(status, 200)
+                self.assertEqual(document["limit"], 2)
+                self.assertEqual(document["status"], "dead-letter")
+                self.assertEqual(len(document["items"]), 1)
+                deliveries.assert_called_once_with(
+                    status=NotificationDeliveryStatus.DEAD_LETTER, limit=2
+                )
+                encoded = json.dumps(document)
+                self.assertNotIn("secret-body", encoded)
+                self.assertNotIn("url", encoded.lower())
+                self.assertNotIn(
+                    "status=dead-letter", repr(repository.list_security_audit(limit=100))
+                )
+                for delivery_status in (
+                    "all",
+                    *(item.value for item in NotificationDeliveryStatus),
+                ):
+                    with self.subTest(delivery_status=delivery_status):
+                        self.assertEqual(
+                            request(
+                                api,
+                                "/api/v1/notifications",
+                                query=f"limit=1&status={delivery_status}",
+                            )[0],
+                            200,
+                        )
+                for query in (
+                    "limit=0",
+                    "limit=101",
+                    "limit=",
+                    "status=unknown",
+                    "status=",
+                    "status=all&status=pending",
+                    "cursor=injected",
+                ):
+                    with self.subTest(query=query):
+                        self.assertEqual(request(api, "/api/v1/notifications", query=query)[0], 400)
+
+    def test_schedule_audit_query_is_bounded_and_schedule_list_rejects_queries(self) -> None:
+        schedules = (CronSchedule("nightly", "scan", "* * * * *", "UTC"),)
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                IntervalScheduler(repository, schedules).tick(NOW)
+                api = MediaFlowApi(repository, "viewer-token", schedules)
+                status, schedule_list = request(api, "/api/v1/schedules")
+                self.assertEqual(status, 200)
+                self.assertEqual(schedule_list["items"][0]["schedule_id"], "nightly")
+                self.assertIsNotNone(schedule_list["items"][0]["state"])
+                with patch.object(
+                    repository, "list_schedule_audit", wraps=repository.list_schedule_audit
+                ) as audit:
+                    status, document = request(
+                        api, "/api/v1/schedules/nightly/audit", query="limit=1"
+                    )
+                self.assertEqual(status, 200)
+                self.assertEqual(document["limit"], 1)
+                audit.assert_called_once_with("nightly", limit=1)
+                self.assertEqual(request(api, "/api/v1/schedules/missing/audit")[0], 404)
+                for path, query in (
+                    ("/api/v1/schedules", "limit=1"),
+                    ("/api/v1/schedules/nightly/audit", "limit=0"),
+                    ("/api/v1/schedules/nightly/audit", "limit=1&limit=2"),
+                    ("/api/v1/schedules/nightly/audit", "path=/private"),
+                ):
+                    with self.subTest(path=path, query=query):
+                        self.assertEqual(request(api, path, query=query)[0], 400)
 
     def test_task_and_job_cursor_pages_are_stable_with_identical_timestamps(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -510,6 +600,26 @@ class OperatorObservabilityTests(unittest.TestCase):
             "dry_run",
             occurred,
             title=f"Movie {rank}",
+        )
+
+    @staticmethod
+    def _delivery(rank: int, status: NotificationDeliveryStatus) -> NotificationDelivery:
+        occurred = NOW + timedelta(seconds=rank)
+        return NotificationDelivery(
+            f"delivery-{rank}",
+            "ops",
+            f"event-{rank}",
+            NotificationEventType.JOB_FAILED,
+            '{"error":"secret-body"}',
+            status,
+            rank,
+            occurred,
+            occurred,
+            occurred,
+            failure_category="transport"
+            if status is NotificationDeliveryStatus.DEAD_LETTER
+            else None,
+            response_status=503 if status is NotificationDeliveryStatus.DEAD_LETTER else None,
         )
 
 

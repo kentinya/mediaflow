@@ -1,81 +1,77 @@
-# Phase 19.5 — Bidirectional Stable Cursor Pagination
+# Phase 19.6 — Read-only Scheduler and Notification Operations UI
 
 ## Goal
 
-Close the Phase 19.4 forward-only navigation risk by adding stable Previous cursors for Tasks, Jobs,
-TaskItems, and ResultRecords. Preserve keyset memory safety, deterministic ordering, v1 cursor
-compatibility, and the strictly read-only operator UI.
+Close the highest-priority Phase 19 operations-visibility gap by exposing configured schedules,
+bounded schedule occurrence audit, and bounded notification delivery state in the existing secure
+operator UI. Reuse existing repositories and API models; preserve strict read-only behavior.
 
-## 1. Versioned directional cursors
+## 1. Bounded API reads
 
-- Add a v2 opaque cursor with strict `next` or `previous` direction plus existing resource kind,
-  UTC timestamp, and stable ID fields.
-- Continue accepting valid Phase 19.4 v1 cursors as `next` cursors; emit only v2 cursors.
-- Preserve length, Base64, schema, kind, UTC, ID, and query-duplication validation.
-- Direction tampering, unknown versions/fields, and cross-resource use must fail clearly.
-- Cursors contain no media values, errors, credentials, provider/policy data, or secret derivatives.
+- Keep schedule definitions configuration-owned and combine them only with existing persisted state.
+- Add strict optional `limit` validation (1–100) to notification and schedule-audit reads.
+- Add an optional notification status filter using only existing delivery statuses.
+- Reject unknown, duplicate, blank, malformed, or injected query fields.
+- Preserve deterministic repository ordering and apply limits in SQLite; do not enumerate full
+  delivery/audit history and do not add OFFSET or total-count scans.
+- Do not expose webhook URLs, signatures, request bodies, secrets, response bodies, headers, media
+  paths, raw exception text, or credentials.
 
-## 2. Reverse keyset queries
+## 2. Operator UI
 
-- Add mutually exclusive forward/previous repository boundaries for all four record types.
-- Query the nearest previous page by reversing SQL ordering at the boundary, applying limit+1, then
-  restore canonical display order before returning.
-- Never use OFFSET, total-count queries, or full/prior-row enumeration.
-- Task/Job canonical order remains newest-first; TaskItem/Result remains oldest-first.
-- Concurrent inserts must not create duplicates inside an established forward/back navigation path.
+- Add read-only Schedules and Notifications navigation views to the existing same-origin UI.
+- Schedule rows show safe definition/state fields and open a bounded occurrence-audit detail view.
+- Notification rows show safe delivery ID, webhook ID, event type, status, attempts, timestamps,
+  failure category, and numeric response status.
+- Provide a local notification status selector and explicit refresh; no automatic polling.
+- Render exclusively with DOM text nodes; retain CSP, no-store, same-origin, and in-memory token rules.
 
-## 3. API and UI
+## 3. Authorization and safety
 
-- Existing cursor parameters accept either direction without adding a separate direction field.
-- Responses add `previous_cursor`, `previous_item_cursor`, and `previous_result_cursor` alongside
-  existing Next fields.
-- First pages expose no Previous; middle pages expose both; terminal pages expose no Next.
-- UI adds Previous controls for Task/Job lists and independently for TaskItems/Results.
-- First-page refresh remains available by reselecting a navigation tab; no automatic polling.
-
-## 4. Safety and compatibility
-
-- Keep existing no-cursor and v1-next clients working.
-- Pagination constructs no Storage, MetadataProvider, workflow service, or executor and performs no
-  media/persistent business mutation beyond existing redacted API security audit.
-- Do not add Task/Job submit, cancel, resume, retry, authorize, execute, overwrite, or delete controls.
-- Query strings/cursors remain absent from audit records and error responses.
+- Viewer/operator/executor/admin read permissions continue through existing RBAC; auditor behavior
+  remains consistent with current route policy.
+- Access remains covered by normalized security audit without query strings or response data.
+- Construct no Storage, MetadataProvider, Scanner, workflow service, or OrganizerExecutor.
+- Add no notification requeue/deliver, schedule tick/edit, Job submit/cancel/resume/retry, execution
+  authorization, Overwrite, Delete, or arbitrary endpoint controls.
 
 ## Required tests
 
-- v1 forward compatibility and strict v2 direction validation.
-- Task/Job first→middle→last→middle→first traversal with same-timestamp rows, no duplicates, and
-  canonical order on every page.
-- Independent TaskItem/Result backward traversal and SQL-level reverse keyset/limit verification.
-- First/middle/last cursor presence, empty datasets, deletion/insertion boundaries, and page size one.
-- Malformed direction/version/schema/kind/time/ID/oversize/duplicate/injected queries.
-- UI Previous/Next controls, independent detail state, first-page refresh, and absence of writes.
-- Viewer/RBAC/audit, credentials, Dashboard/reviews, Task persistence, Worker, and full regressions.
-- Formatter, lint, compile, dependency/build/configuration, FFprobe/FFmpeg, and diff checks.
+- Schedule list renders interval and Cron definitions with persisted state safely.
+- Known schedule audit is bounded at repository/SQL level; unknown schedule is 404.
+- Notification list is bounded and filters every supported status deterministically.
+- Invalid limits/statuses and unknown/duplicate/injected query fields return safe 400 responses.
+- UI contains Schedules/Notifications views, status filter, refresh, and bounded audit navigation.
+- UI does not contain mutation endpoints or workflow/executor controls; values use `textContent`.
+- Secrets, webhook URLs/bodies/signatures, raw errors, and query strings do not enter API/UI/audit.
+- Empty datasets, viewer/RBAC/audit, Dashboard, pagination, review queues, Worker, Scheduler,
+  Notification, and complete regressions pass.
+- Formatter, lint, compile, dependency/build/configuration, FFprobe/FFmpeg, and diff checks pass.
 
 ## Documentation
 
-Update README, requirements status, configuration, architecture, progress, and roadmap with v1/v2,
-direction, ordering, consistency, and remaining no-jump/no-total limitations.
+Update README, requirements status, configuration, architecture, progress, and roadmap with the new
+read-only views, bounded fields, refresh behavior, and remaining log/live-control limitations.
 
 ## Out of scope
 
-Arbitrary page jumps, page numbers, total-count scans, search/filtering, live polling/SSE/WebSocket,
-Task/Job controls, history export, log/Scheduler/notification UI, OIDC, Secret Store, and TLS.
+Persistent application-log ingestion/search, notification payload/body viewing, delivery requeue or
+manual send, schedule editing/ticking, arbitrary pagination/jumps/totals, live polling/SSE/WebSocket,
+Task/Job controls, OIDC, Secret Store, and TLS termination.
 
 ## Final report
 
-## Phase 19.5 Result
+## Phase 19.6 Result
 
 PASS / FAIL
 
-## Bidirectional Cursors
+## Scheduler Visibility
 
-## Reverse Keyset Queries
+## Notification Visibility
 
 ## Operator UI
 
-## Safety and Compatibility
+## Safety and Authorization
 
 ## Regression
 

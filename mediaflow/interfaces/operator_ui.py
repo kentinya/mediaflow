@@ -19,6 +19,8 @@ INDEX_HTML = b"""<!doctype html>
     <button data-view="dashboard" class="active">Dashboard</button>
     <button data-view="tasks">Tasks</button>
     <button data-view="jobs">Jobs</button>
+    <button data-view="schedules">Schedules</button>
+    <button data-view="notifications">Notifications</button>
     <button data-view="confirmations">Conflicts</button>
     <button data-view="metadata-reviews">Metadata</button>
     <button data-view="classification-reviews">Classification</button>
@@ -173,6 +175,42 @@ APP_JS = b"""(() => {
         () => renderObservability(kind, data.next_cursor));
     }
   }
+  async function renderSchedules() {
+    const data = await api('/api/v1/schedules'); const items = data.items || [];
+    clear(content); content.append(text('h2', 'Schedules'));
+    const rows = items.map(item => [item.schedule_id, item.command,
+      item.expression || `${item.interval_seconds}s`, item.timezone || '-',
+      item.enabled, item.state && item.state.next_run_at || '-',
+      item.state && item.state.last_job_id || '-']);
+    content.append(table(['ID', 'Command', 'Timing', 'Timezone', 'Enabled', 'Next run', 'Last job'],
+      rows, index => showScheduleAudit(items[index].schedule_id)));
+  }
+  async function showScheduleAudit(id) {
+    try {
+      const data = await api(`/api/v1/schedules/${encodeURIComponent(id)}/audit?limit=100`);
+      clear(detailContent); detailContent.append(text('h2', 'Schedule occurrence audit'));
+      const rows = (data.items || []).map(item => [item.audit_id, item.occurrence_at,
+        item.emitted_at, item.command, item.job_id, item.next_run_at]);
+      detailContent.append(table(['Audit ID', 'Occurrence', 'Emitted', 'Command', 'Job', 'Next run'],
+        rows)); detail.hidden = false;
+    } catch (error) { message(error.message, true); }
+  }
+  async function renderNotifications(status = 'all') {
+    const selector = document.createElement('select'); selector.setAttribute('aria-label',
+      'Notification status');
+    ['all', 'pending', 'delivering', 'retry', 'delivered', 'dead-letter'].forEach(value => {
+      const option = text('option', value); option.value = value; option.selected = value === status;
+      selector.append(option);
+    });
+    const refresh = actionButton('Refresh notifications', () => renderNotifications(selector.value));
+    const data = await api(`/api/v1/notifications?limit=100&status=${encodeURIComponent(status)}`);
+    clear(content); content.append(text('h2', 'Notification deliveries'), selector, refresh);
+    const rows = (data.items || []).map(item => [item.deliveryId, item.webhookId, item.eventType,
+      item.status, item.attempts, item.nextAttemptAt, item.updatedAt, item.failureCategory || '-',
+      item.responseStatus || '-']);
+    content.append(table(['Delivery', 'Webhook', 'Event', 'Status', 'Attempts', 'Next attempt',
+      'Updated', 'Failure category', 'HTTP status'], rows));
+  }
   function scalarDetails(data, excluded = []) {
     const list = document.createElement('dl');
     Object.entries(data).filter(([key, value]) => !excluded.includes(key) &&
@@ -264,6 +302,8 @@ APP_JS = b"""(() => {
     try { message('Loading...');
       if (view === 'dashboard') renderDashboard(await api('/api/v1/dashboard?recentLimit=10'));
       else if (view === 'tasks' || view === 'jobs') await renderObservability(view);
+      else if (view === 'schedules') await renderSchedules();
+      else if (view === 'notifications') await renderNotifications();
       else await renderQueue(view); message('Connected.');
     } catch (error) { clear(content); message(error.message, true); }
   }

@@ -939,3 +939,16 @@ Phase 19.5 bidirectional stable cursor pagination (2026-08-22): PASS
 - Full suite: 414 tests, 411 passed, 0 failed, 3 optional real integrations skipped; Ruff,
   compileall, dependency check, isolated wheel build, both example validations, FFmpeg/FFprobe
   runtime audit, and diff check passed
+
+Phase 19.6 read-only Scheduler and Notification operations UI (2026-08-22): PASS
+
+- Added strict 1–100 schedule-audit and notification limits plus existing-status notification filters;
+  malformed, blank, duplicate, unknown, and injected query fields fail before repository reads
+- Added safe Scheduler definition/state and bounded occurrence-audit views to the operator UI
+- Added explicit-refresh Notification delivery visibility without URL, body, signature, headers,
+  response body, raw exception, media path, credentials, requeue, delivery, or worker controls
+- Preserved RBAC/security audit, text-node rendering, no polling, and zero Storage/provider/workflow/
+  Scheduler-tick/notification-worker/Organizer construction boundaries
+- Full suite: 417 tests, 414 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated wheel build, both example validations, FFmpeg/FFprobe
+  runtime audit, and diff check passed

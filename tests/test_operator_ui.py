@@ -85,6 +85,25 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("classification-reviews", script)
         self.assertIn("encodeURIComponent(id)", script)
 
+    def test_scheduler_and_notification_views_are_bounded_and_read_only(self) -> None:
+        html = INDEX_HTML.decode()
+        script = APP_JS.decode()
+        self.assertIn('data-view="schedules"', html)
+        self.assertIn('data-view="notifications"', html)
+        self.assertIn("/api/v1/schedules", script)
+        self.assertIn("/audit?limit=100", script)
+        self.assertIn("/api/v1/notifications?limit=100&status=", script)
+        self.assertIn("Refresh notifications", script)
+        self.assertIn(
+            "['all', 'pending', 'delivering', 'retry', 'delivered', 'dead-letter']", script
+        )
+        self.assertIn("failureCategory", script)
+        self.assertNotIn("notification-worker", script)
+        self.assertNotIn("notifications/requeue", script)
+        self.assertNotIn("scheduler tick", script)
+        self.assertNotIn("webhook" + "Url", script)
+        self.assertNotIn("signature", script.lower())
+
     def test_ui_generates_only_existing_safe_decision_shapes(self) -> None:
         script = APP_JS.decode()
         self.assertIn("['skip', 'rename']", script)

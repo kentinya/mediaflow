@@ -526,6 +526,9 @@ GET /api/v1/tasks/{id}?itemLimit=100&resultLimit=100&itemCursor=...&resultCursor
 GET /api/v1/jobs?limit=100
 GET /api/v1/jobs?limit=100&cursor=OPAQUE_CURSOR
 GET /api/v1/jobs/{id}
+GET /api/v1/schedules
+GET /api/v1/schedules/{id}/audit?limit=100
+GET /api/v1/notifications?limit=100&status=all
 ```
 
 Collection and detail limits are 1–100. Responses include truncation metadata. These UI views never
@@ -538,6 +541,13 @@ URL-safe and resource-specific. They contain only a UTC ordering timestamp and s
 media paths, titles, errors, provider data, or secrets. Do not reuse a cursor across resources.
 Task/Job pages remain newest-first; TaskItem/Result pages remain oldest-first. Pagination uses
 keyset boundaries, not page numbers, total scans, or OFFSET, so arbitrary jumps are intentionally absent.
+
+The Schedules UI combines safe configuration fields with persisted next-run/last-job state. Its
+occurrence audit is newest-first and bounded to 1–100 rows. Notifications accept `all`, `pending`,
+`delivering`, `retry`, `delivered`, or `dead-letter`; the UI provides an explicit status selector and
+refresh button but never polls automatically. Delivery output excludes webhook URLs, payload bodies,
+signatures, headers, response bodies, and secrets. Neither view exposes schedule ticking/editing or
+notification delivery/requeue controls.
 
 Wildcard, LAN, and public binds require `--allow-insecure-remote-http`. The flag only acknowledges
 unencrypted transport; it does not enable TLS. Prefer loopback behind a trusted HTTPS reverse proxy,
