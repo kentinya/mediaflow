@@ -12,6 +12,22 @@
       {"id": "cn-morning-preview", "command": "preview", "cron": "0 8 * * *", "timezone": "Asia/Shanghai", "limit": 20, "enabled": false}
     ]
   },
+  "notifications": {
+    "pollSeconds": 5,
+    "webhooks": [
+      {
+        "id": "operations-webhook",
+        "url": "https://example.invalid/mediaflow/events",
+        "secretEnv": "MEDIAFLOW_WEBHOOK_SECRET",
+        "events": ["job.completed", "job.failed", "job.cancelled", "schedule.emitted"],
+        "timeoutSeconds": 10,
+        "maxAttempts": 5,
+        "baseRetrySeconds": 5,
+        "maxRetrySeconds": 300,
+        "enabled": false
+      }
+    ]
+  },
   "storages": [
     {"id": "source-storage", "name": "Source", "type": "local", "rootPath": "/mnt/HDD_2"},
     {"id": "media-target", "type": "local", "rootPath": "/mnt/HDD_2/Organized"}

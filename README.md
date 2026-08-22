@@ -22,6 +22,7 @@ Provider secrets remain environment variables:
 export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
 export TMDB_ACCESS_TOKEN="<token>"
 export MEDIAFLOW_API_TOKEN="<long-random-development-token>"
+export MEDIAFLOW_WEBHOOK_SECRET="<independent-random-webhook-secret>"
 ```
 
 ## CLI
@@ -54,6 +55,11 @@ mediaflow scheduler tick
 mediaflow scheduler run
 mediaflow scheduler audit
 mediaflow scheduler audit SCHEDULE_ID --limit 100
+mediaflow notifications list --limit 100
+mediaflow notifications list --status dead-letter
+mediaflow notifications requeue DELIVERY_ID
+mediaflow notification-worker run-next
+mediaflow notification-worker run
 mediaflow api serve --host 127.0.0.1 --port 8787
 ```
 
@@ -149,6 +155,14 @@ Cron supports numeric `*`, lists, inclusive ranges, and positive steps. It has n
 macros, shell commands, or catch-up backlog. Nonexistent DST wall times are skipped and an ambiguous
 wall time fires once. Every emission is appended to SQLite schedule audit.
 
+Phase 18.4 adds an asynchronous notification Outbox for terminal Automation Job and Scheduler
+emission events. Enable a configured HTTPS Webhook, set its `secretEnv`, then run
+`mediaflow notification-worker run`. Payloads are HMAC-SHA256 signed over
+`timestamp + "." + exact UTF-8 body`; 429/5xx/transport failures retry with bounded backoff and
+other 4xx responses enter dead-letter. Delivery failures never change completed media work.
+The API exposes authenticated read-only `GET /api/v1/notifications` and never returns payload
+bodies or secrets.
+
 ## Persistent runtime state
 
 Production scan/preview/organize use the configured SQLite database:
@@ -164,6 +178,6 @@ operation history remains compatible.
 
 ## Current milestone
 
-The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries, and
-persistent scan/preview jobs are complete. Scheduler/Cron, notifications, protected remote execute,
-and Web UI remain planned; unattended real organization is not supported.
+The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries,
+persistent scan/preview jobs, Cron schedules, and signed Webhook notifications are complete.
+Protected remote execute and Web UI remain planned; unattended real organization is not supported.

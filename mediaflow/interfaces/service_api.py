@@ -87,6 +87,33 @@ class MediaFlowApi:
                     ]
                 },
             )
+        if parts == ["api", "v1", "notifications"] and method == "GET":
+            values = self._repository.list_deliveries(limit=100)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [
+                        {
+                            "deliveryId": item.delivery_id,
+                            "webhookId": item.webhook_id,
+                            "eventId": item.event_id,
+                            "eventType": item.event_type.value,
+                            "status": item.status.value,
+                            "attempts": item.attempts,
+                            "nextAttemptAt": item.next_attempt_at.isoformat(),
+                            "createdAt": item.created_at.isoformat(),
+                            "updatedAt": item.updated_at.isoformat(),
+                            "deliveredAt": (
+                                item.delivered_at.isoformat() if item.delivered_at else None
+                            ),
+                            "failureCategory": item.failure_category,
+                            "responseStatus": item.response_status,
+                        }
+                        for item in values
+                    ]
+                },
+            )
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "schedules"]

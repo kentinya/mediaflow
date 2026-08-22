@@ -8,6 +8,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 from zoneinfo import ZoneInfo
@@ -22,11 +23,13 @@ from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.cli import render_strategy_result
 from mediaflow.domain.automation import CronSchedule
+from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
@@ -128,6 +131,24 @@ def final_main(
     scheduler_audit.add_argument("--limit", type=int, default=100)
     scheduler_run = scheduler_commands.add_parser("run")
     scheduler_run.add_argument("--poll-seconds", type=float)
+    notifications = commands.add_parser("notifications", help="notification outbox operations")
+    notification_commands = notifications.add_subparsers(dest="notification_command", required=True)
+    notification_list = notification_commands.add_parser("list")
+    notification_list.add_argument(
+        "--status", choices=[item.value for item in NotificationDeliveryStatus]
+    )
+    notification_list.add_argument("--limit", type=int, default=100)
+    notification_requeue = notification_commands.add_parser("requeue")
+    notification_requeue.add_argument("delivery_id")
+    notification_worker = commands.add_parser(
+        "notification-worker", help="deliver signed webhook notifications"
+    )
+    notification_worker_commands = notification_worker.add_subparsers(
+        dest="notification_worker_command", required=True
+    )
+    notification_worker_commands.add_parser("run-next")
+    notification_worker_run = notification_worker_commands.add_parser("run")
+    notification_worker_run.add_argument("--poll-seconds", type=float)
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_serve = api_commands.add_parser("serve")
@@ -146,7 +167,52 @@ def final_main(
                 f"Naming policies: {len(strategy.naming_policies)}\n"
                 f"Classification policies: {len(strategy.classification_policies)}\n"
                 f"Organize policies: {len(strategy.organize_policies)}\n"
+                f"Webhooks: {len(configuration.webhooks)}\n"
             )
+            return 0
+        if arguments.command == "notifications":
+            if arguments.notification_command == "list" and arguments.limit < 1:
+                raise ValueError("notification limit must be positive")
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                if arguments.notification_command == "list":
+                    status = (
+                        NotificationDeliveryStatus(arguments.status) if arguments.status else None
+                    )
+                    stdout.write(
+                        render_notifications(
+                            repository.list_deliveries(status=status, limit=arguments.limit)
+                        )
+                    )
+                else:
+                    stdout.write(
+                        render_notification(
+                            repository.requeue_dead_letter(arguments.delivery_id, datetime.now(UTC))
+                        )
+                    )
+            return 0
+        if arguments.command == "notification-worker":
+            from mediaflow.infrastructure.webhook import UrllibWebhookTransport
+
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                delivery_worker = NotificationWorker(
+                    repository,
+                    configuration.resolve_webhook_targets(),
+                    UrllibWebhookTransport(),
+                )
+                if arguments.notification_worker_command == "run-next":
+                    delivery = delivery_worker.run_next()
+                    if delivery is None:
+                        stdout.write("No due notification deliveries\n")
+                        return 0
+                    stdout.write(render_notification(delivery))
+                    return 0 if delivery.status.value in {"delivered", "retry"} else 1
+                poll = arguments.poll_seconds or configuration.notification_poll_seconds
+                processed = _run_resident(
+                    lambda stop: delivery_worker.run(
+                        stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
+                    )
+                )
+                stdout.write(f"Notification worker stopped; processed={processed}\n")
             return 0
         if arguments.command == "tasks" and arguments.task_command in {"list", "show"}:
             with SQLiteTaskRepository(configuration.database_path) as repository:
@@ -189,7 +255,6 @@ def final_main(
                     item = repository.get_item(value.item_id)
                     if item is not None:
                         from dataclasses import replace
-                        from datetime import UTC, datetime
 
                         repository.upsert_item(
                             replace(
@@ -270,6 +335,7 @@ def final_main(
                 worker_service = AutomationWorker(
                     repository,
                     lambda job, cancelled: _run_queued_workflow(job, arguments.config, cancelled),
+                    NotificationPublisher(repository, configuration.webhooks),
                 )
                 if arguments.worker_command == "run-next":
                     job = worker_service.run_next()
@@ -289,7 +355,9 @@ def final_main(
         if arguments.command == "scheduler":
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 scheduler_service = IntervalScheduler(
-                    repository, configuration.automation_schedules
+                    repository,
+                    configuration.automation_schedules,
+                    NotificationPublisher(repository, configuration.webhooks),
                 )
                 if arguments.scheduler_command == "list":
                     stdout.write(
@@ -680,6 +748,22 @@ def render_job(value) -> str:
             "",
         )
     )
+
+
+def render_notifications(values) -> str:
+    lines = ["", "NOTIFICATION DELIVERIES", ""]
+    for value in values:
+        lines.append(
+            f"{value.delivery_id} | {value.event_type.value} | {value.webhook_id} | "
+            f"{value.status.value} | attempts={value.attempts} | "
+            f"failure={value.failure_category or '-'}"
+        )
+    lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_notification(value) -> str:
+    return render_notifications((value,))
 
 
 def _run_queued_workflow(

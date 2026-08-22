@@ -591,6 +591,21 @@ assert a nested `naming` object and still use fake MetadataProvider candidates t
 production matcher. CLI safety output reports audited Classification execution counts, zero
 Organizer executions, and zero Storage mutations.
 
+## Durable notifications
+
+`NotificationPublisher` converts accepted terminal Automation Job and durable Scheduler emission
+events into canonical provider-neutral JSON and persists one idempotent Outbox delivery per enabled
+subscription. It performs no network or Storage operation. SQLite v7 atomically claims due
+pending/retry deliveries, so concurrent NotificationWorkers cannot claim the same row.
+
+The independent `NotificationWorker` resolves environment-owned secrets only at startup and signs
+`timestamp + "." + exact body` with HMAC-SHA256. Its injected Webhook transport posts only to
+validated HTTPS URLs and does not follow redirects. Success is 2xx; transport/429/5xx failures use
+bounded exponential retry; other 4xx and exhausted attempts become dead-letter. Only explicit CLI
+requeue can reactivate a dead letter. Persisted and displayed failure information is categorical;
+payload bodies and secrets are omitted from CLI/API views. Notification failure never changes Job,
+Schedule, Task, plan, execution, or media Storage state.
+
 ## Classification policies and engine
 
 Classification is the pure “where does this identified media belong?” stage after Naming. The

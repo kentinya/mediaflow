@@ -62,6 +62,26 @@ mediaflow organize --execute --limit 20
 
 Only the last command authorizes mutation.
 
+### Notification Webhooks
+
+Notifications are opt-in and asynchronous. Configuration validation checks structure without
+reading a secret or making a network request:
+
+```json
+{"notifications":{"pollSeconds":5,"webhooks":[{
+  "id":"ops","url":"https://hooks.example.com/mediaflow",
+  "secretEnv":"MEDIAFLOW_WEBHOOK_SECRET",
+  "events":["job.completed","job.failed","job.cancelled","schedule.emitted"],
+  "timeoutSeconds":10,"maxAttempts":5,"baseRetrySeconds":5,
+  "maxRetrySeconds":300,"enabled":true
+}]}}
+```
+
+Only HTTPS URLs without embedded credentials or fragments are accepted. Literal secrets are
+rejected. Set the named environment variable only in the notification worker environment. Use
+`mediaflow notifications list`, `mediaflow notifications requeue DELIVERY_ID`, and
+`mediaflow notification-worker run`. A dead-letter delivery is never reactivated automatically.
+
 ### Path model
 
 The path fields have separate meanings:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import posixpath
 import re
+import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,8 +11,14 @@ from mediaflow.application.strategy_test import (
     StrategyTestConfiguration,
     strategy_runner_from_configuration,
 )
-from mediaflow.domain.automation import AutomationCommand, CronSchedule, IntervalSchedule
+from mediaflow.domain.automation import (
+    AutomationCommand,
+    CronSchedule,
+    IntervalSchedule,
+    ScheduleDefinition,
+)
 from mediaflow.domain.library import DEFAULT_MEDIA_EXTENSIONS, MediaLibrary, ResourceLibrary
+from mediaflow.domain.notification import NotificationEventType, WebhookDefinition
 from mediaflow.domain.storage import Storage
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.openlist_storage import OpenListStorage, OpenListStorageConfig
@@ -40,9 +47,11 @@ class RuntimeConfiguration:
     history_path: str
     database_path: str
     api_token_env: str | None = None
-    automation_schedules: tuple[IntervalSchedule, ...] = ()
+    automation_schedules: tuple[ScheduleDefinition, ...] = ()
     worker_poll_seconds: float = 2.0
     scheduler_poll_seconds: float = 5.0
+    webhooks: tuple[WebhookDefinition, ...] = ()
+    notification_poll_seconds: float = 5.0
 
     def create_storages(
         self,
@@ -149,6 +158,20 @@ class RuntimeConfiguration:
                 )
         return storages
 
+    def resolve_webhook_targets(self) -> dict[str, tuple[WebhookDefinition, str]]:
+        targets = {}
+        for definition in self.webhooks:
+            if not definition.enabled:
+                continue
+            secret = os.environ.get(definition.secret_env)
+            if not secret:
+                raise ValueError(
+                    f"Webhook {definition.webhook_id!r} requires environment variable "
+                    f"{definition.secret_env}"
+                )
+            targets[definition.webhook_id] = (definition, secret)
+        return targets
+
 
 def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     if not isinstance(document, dict):
@@ -229,6 +252,21 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     schedule_ids = [item.schedule_id for item in schedules]
     if len(schedule_ids) != len(set(schedule_ids)):
         raise ValueError("automation schedule IDs must be unique")
+    notifications = document.get("notifications", {})
+    if not isinstance(notifications, dict):
+        raise ValueError("runtime configuration 'notifications' must be an object")
+    notification_poll = _positive_number(
+        notifications.get("pollSeconds", 5), "notification pollSeconds"
+    )
+    raw_webhooks = notifications.get("webhooks", [])
+    if not isinstance(raw_webhooks, list) or not all(
+        isinstance(item, dict) for item in raw_webhooks
+    ):
+        raise ValueError("notification webhooks must be an array of objects")
+    webhooks = tuple(_webhook(item) for item in raw_webhooks)
+    webhook_ids = [item.webhook_id for item in webhooks]
+    if len(webhook_ids) != len(set(webhook_ids)):
+        raise ValueError("notification Webhook IDs must be unique")
     return RuntimeConfiguration(
         loaded.strategy,
         storage_definitions,
@@ -241,6 +279,8 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         schedules,
         worker_poll,
         scheduler_poll,
+        webhooks,
+        notification_poll,
     )
 
 
@@ -461,6 +501,59 @@ def _schedule(value: dict) -> IntervalSchedule | CronSchedule:
         _required(value, "timezone"),
         limit,
         enabled,
+    )
+
+
+def _webhook(value: dict) -> WebhookDefinition:
+    webhook_id = _required(value, "id")
+    url = _required(value, "url")
+    parsed = urllib.parse.urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise ValueError(
+            f"Webhook {webhook_id!r} URL must be HTTPS without credentials or fragment"
+        )
+    secret_env = _required(value, "secretEnv")
+    if not _ENV_NAME.fullmatch(secret_env):
+        raise ValueError("Webhook secretEnv must be a valid environment variable name")
+    raw_events = value.get("events")
+    if not isinstance(raw_events, list) or not raw_events:
+        raise ValueError("Webhook events must be a non-empty array")
+    try:
+        events = tuple(NotificationEventType(item) for item in raw_events)
+    except (TypeError, ValueError) as error:
+        raise ValueError("Webhook contains an unsupported event") from error
+    if len(events) != len(set(events)):
+        raise ValueError("Webhook events must be unique")
+    enabled = value.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("Webhook enabled must be boolean")
+    timeout = _positive_number(value.get("timeoutSeconds", 10), "Webhook timeoutSeconds")
+    max_attempts = value.get("maxAttempts", 5)
+    if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
+        raise ValueError("Webhook maxAttempts must be a positive integer")
+    base_retry = _positive_number(value.get("baseRetrySeconds", 5), "Webhook baseRetrySeconds")
+    max_retry = _positive_number(value.get("maxRetrySeconds", 300), "Webhook maxRetrySeconds")
+    if max_retry < base_retry:
+        raise ValueError("Webhook maxRetrySeconds must be at least baseRetrySeconds")
+    forbidden = {"secret", "token", "authorization", "execute"}.intersection(value)
+    if forbidden:
+        raise ValueError(f"Webhook field {sorted(forbidden)[0]!r} is forbidden")
+    return WebhookDefinition(
+        webhook_id,
+        url,
+        secret_env,
+        events,
+        enabled,
+        timeout,
+        max_attempts,
+        base_retry,
+        max_retry,
     )
 
 

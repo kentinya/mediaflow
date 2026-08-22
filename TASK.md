@@ -1,86 +1,88 @@
-# Phase 18.3 — Cron/Timezone Scheduler + Persistent Schedule Audit
+# Phase 18.4 — Durable Notification Outbox + Signed Webhooks
 
 ## Goal
 
-Extend the accepted Scheduler with deterministic five-field Cron schedules, IANA time zones, and
-persistent immutable emission audit. Preserve interval schedules and the scan/preview-only queue.
-Do not expose real organization execution or add notification delivery.
+Add asynchronous, durable notifications for accepted Automation Job and Scheduler events. Persist
+an Outbox before delivery, send signed Webhooks through a dedicated NotificationWorker, and apply
+bounded retry/dead-letter behavior. Do not block media workflows on network delivery and do not
+expose remote organization execution.
 
-## 1. Cron expression model
+## 1. Notification events and configuration
 
-- Support exactly five fields: minute, hour, day-of-month, month, day-of-week.
-- Support `*`, comma lists, inclusive ranges, and positive `/step` syntax.
-- Validate bounds and reject names, macros, seconds fields, empty fields, reversed ranges, zero
-  steps, and pathological expressions.
-- Define day-of-month/day-of-week combination semantics explicitly and test them.
-- Parsing/evaluation must be deterministic, bounded, and use no shell or external cron process.
+- Support events: `job.completed`, `job.failed`, `job.cancelled`, and `schedule.emitted`.
+- Configure multiple Webhooks with unique ID, HTTPS URL, enabled flag, subscribed events,
+  `secretEnv`, timeout, maximum attempts, and base/max retry delays.
+- Secrets remain environment-owned; config validation checks names but needs no secret value.
+- Reject literal secrets, credentials in URLs, fragments, unsupported schemes/events, duplicate IDs,
+  invalid retry values, and unknown fields that imply execute behavior.
 
-## 2. Time zones and calendar behavior
+## 2. Durable Outbox
 
-- Configure an IANA time-zone ID per Cron schedule and validate it with standard-library zoneinfo.
-- Persist schedule instants in UTC; render both UTC and configured local schedule information.
-- Skip nonexistent local wall times during DST transitions.
-- Emit an ambiguous repeated local wall time once, with documented deterministic fold behavior.
-- Next-run calculation must be bounded and correctly cross month/year/leap-day boundaries.
+- Persist one delivery per matching Webhook/event with deterministic idempotency identity.
+- Statuses: pending, delivering, retry, delivered, dead-letter.
+- Store canonical event JSON, attempts, next-attempt, timestamps, and redacted failure category.
+- Atomically claim due deliveries so multiple NotificationWorkers cannot send the same claim.
+- Existing Job/Schedule success must not be changed by notification availability or delivery failure.
+- Upgrade SQLite compatibly and preserve all accepted Task/Job/Schedule state.
 
-## 3. Scheduler integration and persistence
+## 3. Signed Webhook delivery
 
-- Runtime configuration accepts either `intervalSeconds` or `cron` plus `timezone`, never both.
-- Preserve existing interval behavior and persisted state compatibility.
-- First Cron evaluation queues the current matching minute once or persists the next future match.
-- Atomic tick/restart behavior must prevent duplicate jobs across multiple Scheduler processes.
-- Missed Cron occurrences are coalesced into one current job; do not create unbounded backlog.
-- Upgrade SQLite compatibly and retain existing jobs/schedule states.
+- Send deterministic UTF-8 JSON with content type, event ID/type, UTC timestamp, and delivery ID.
+- Sign `timestamp + '.' + exact body` using HMAC-SHA256 and the configured environment secret.
+- Never persist/log/return the secret, Authorization, response body, cookies, or signed URL data.
+- Treat 2xx as delivered; retry timeout/connection/429/5xx with bounded exponential delay.
+- Treat other 4xx as dead-letter; never retry forever and never follow cross-host redirects.
+- Inject transport in tests; unit tests make no Internet requests.
 
-## 4. Immutable schedule audit
+## 4. Worker, CLI, and API
 
-- Persist every emitted occurrence with audit ID, schedule ID, occurrence UTC, emitted timestamp,
-  job ID, command, and next-run UTC.
-- Audit records are append-only and contain no secrets or Storage access details.
-- Add `mediaflow scheduler audit [SCHEDULE_ID] [--limit N]`.
-- Add authenticated read-only `GET /api/v1/schedules/{id}/audit`.
-- Unknown schedule IDs fail clearly; listing/audit never constructs Storage.
+- Add `mediaflow notifications list [--status ...] [--limit N]`.
+- Add `mediaflow notification-worker run-next` and bounded resident `run` with graceful shutdown.
+- Add explicit dead-letter requeue; no silent automatic resurrection.
+- Add authenticated read-only `GET /api/v1/notifications`.
+- CLI/API output contains delivery metadata and redacted categories only.
 
-## 5. Safety and compatibility
+## 5. Integration and safety
 
-- Cron schedules may queue only scan and preview; organize/execute remains invalid.
-- Scheduler and audit perform zero Storage mutations and no provider/network calls.
-- Preview remains DryRun under interval and Cron scheduling.
+- AutomationWorker publishes a terminal event after durable Job state; Scheduler publishes an event
+  after durable job/audit emission. Publishing only writes the Outbox.
+- Notification delivery never calls Storage, Metadata, strategy engines, Planner, or Executor.
+- Notification failures never authorize, retry, or alter media operations.
 - No implicit overwrite/delete and no remote OrganizerExecutor execute mode.
-- Existing Worker cancellation/stale recovery and RecognitionType C behavior remain unchanged.
+- Existing DryRun, cancellation, scheduling, audit, and RecognitionType C behavior remain unchanged.
 
 ## Required tests
 
-- Cron parser valid/invalid matrix, bounds, lists, ranges, and steps.
-- UTC and non-UTC time zones, day-field semantics, month/year/leap-day transitions.
-- DST nonexistent and ambiguous wall-time behavior.
-- Current-minute, future, missed occurrence coalescing, disabled, restart, and concurrent tick cases.
-- Interval compatibility and SQLite v5-to-v6 migration.
-- Immutable audit ordering/filter/limit, CLI/API serialization, unknown IDs, and zero mutation.
-- All Phase 18.1/18.2 and complete existing regressions.
+- Configuration validation and secret ownership/redaction.
+- Outbox idempotency, persistence, atomic claim, ordering, filter/limit, and v6-to-v7 migration.
+- Exact canonical body/signature/header verification and Unicode payload.
+- 2xx, 4xx, 429, 5xx, timeout/connection, exponential retry cap, maximum attempts/dead-letter.
+- Multiple subscriptions, disabled/unsubscribed Webhooks, terminal Job and schedule events.
+- Resident worker polling/failure isolation/graceful stop and explicit dead-letter requeue.
+- CLI/API visibility, zero Storage mutation/network-free config validation, and full regressions.
 
 ## Documentation and validation
 
-Update README, example/catalog configuration, architecture, progress, roadmap, and product status.
-Run all tests and all configured quality/build/security checks.
+Update all current docs and configuration examples. Run all tests and configured quality, build,
+dependency, configuration, FFprobe/FFmpeg, and diff checks.
 
 ## Out of scope
 
-- Remote organize/execute, Webhooks/notifications, Web UI, user/role/TLS work.
-- Cron names/macros/seconds, holiday calendars, catch-up backlogs, and notification delivery.
+- Remote organize/execute, inbound Webhooks, Web UI, user/role/TLS work.
+- Email/chat-specific providers, templates, notification aggregation, and media-server refresh.
 - Strategy, Storage, Planner, or OrganizerExecutor redesign.
 
 ## Final report
 
-## Phase 18.3 Result
+## Phase 18.4 Result
 
 PASS / FAIL
 
-## Cron and Time Zones
+## Notification Outbox
 
-## Schedule Audit
+## Signed Webhooks
 
-## Scheduler
+## Retry and Dead-letter
 
 ## Security and Safety
 

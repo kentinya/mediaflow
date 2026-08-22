@@ -13,6 +13,11 @@ from mediaflow.domain.automation import (
     ScheduleAuditRecord,
     ScheduleState,
 )
+from mediaflow.domain.notification import (
+    NotificationDelivery,
+    NotificationDeliveryStatus,
+    NotificationEventType,
+)
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     ConflictConfirmation,
@@ -24,7 +29,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class SQLiteTaskRepository:
@@ -483,6 +488,112 @@ class SQLiteTaskRepository:
             for row in rows
         )
 
+    def create_delivery(self, delivery: NotificationDelivery) -> bool:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "INSERT OR IGNORE INTO notification_deliveries VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                self._delivery_values(delivery),
+            )
+        return cursor.rowcount == 1
+
+    def get_delivery(self, delivery_id: str) -> NotificationDelivery | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM notification_deliveries WHERE delivery_id=?", (delivery_id,)
+            ).fetchone()
+        return self._delivery(row) if row else None
+
+    def list_deliveries(
+        self,
+        *,
+        status: NotificationDeliveryStatus | None = None,
+        limit: int | None = None,
+    ) -> tuple[NotificationDelivery, ...]:
+        if limit is not None and limit < 1:
+            raise ValueError("notification limit must be positive")
+        query = "SELECT * FROM notification_deliveries"
+        parameters: list[object] = []
+        if status is not None:
+            query += " WHERE status=?"
+            parameters.append(status.value)
+        query += " ORDER BY created_at DESC, delivery_id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters.append(limit)
+        with self._lock:
+            rows = self._connection.execute(query, tuple(parameters)).fetchall()
+        return tuple(self._delivery(row) for row in rows)
+
+    def claim_next_delivery(self, now: datetime) -> NotificationDelivery | None:
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT delivery_id FROM notification_deliveries "
+                "WHERE status IN (?, ?) AND next_attempt_at<=? "
+                "ORDER BY next_attempt_at, created_at, delivery_id LIMIT 1",
+                (
+                    NotificationDeliveryStatus.PENDING.value,
+                    NotificationDeliveryStatus.RETRY.value,
+                    now.isoformat(),
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            cursor = self._connection.execute(
+                "UPDATE notification_deliveries SET status=?, attempts=attempts+1, updated_at=? "
+                "WHERE delivery_id=? AND status IN (?, ?) AND next_attempt_at<=?",
+                (
+                    NotificationDeliveryStatus.DELIVERING.value,
+                    now.isoformat(),
+                    row["delivery_id"],
+                    NotificationDeliveryStatus.PENDING.value,
+                    NotificationDeliveryStatus.RETRY.value,
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            claimed = self._connection.execute(
+                "SELECT * FROM notification_deliveries WHERE delivery_id=?",
+                (row["delivery_id"],),
+            ).fetchone()
+        return self._delivery(claimed)
+
+    def update_delivery(self, delivery: NotificationDelivery) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE notification_deliveries SET webhook_id=?, event_id=?, event_type=?, "
+                "body=?, status=?, attempts=?, next_attempt_at=?, created_at=?, updated_at=?, "
+                "delivered_at=?, failure_category=?, response_status=? WHERE delivery_id=?",
+                (*self._delivery_values(delivery)[1:], delivery.delivery_id),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"notification delivery {delivery.delivery_id!r} was not found")
+
+    def requeue_dead_letter(self, delivery_id: str, now: datetime) -> NotificationDelivery:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE notification_deliveries SET status=?, attempts=0, next_attempt_at=?, "
+                "updated_at=?, delivered_at=NULL, failure_category=NULL, response_status=NULL "
+                "WHERE delivery_id=? AND status=?",
+                (
+                    NotificationDeliveryStatus.PENDING.value,
+                    now.isoformat(),
+                    now.isoformat(),
+                    delivery_id,
+                    NotificationDeliveryStatus.DEAD_LETTER.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                existing = self.get_delivery(delivery_id)
+                if existing is None:
+                    raise LookupError(f"notification delivery {delivery_id!r} was not found")
+                raise ValueError("only a dead-letter notification can be requeued")
+            row = self._connection.execute(
+                "SELECT * FROM notification_deliveries WHERE delivery_id=?", (delivery_id,)
+            ).fetchone()
+        return self._delivery(row)
+
     def acquire(self, storage_id: str, path: str, task_id: str, acquired_at: datetime) -> bool:
         normalized = self._lock_path(path)
         try:
@@ -599,6 +710,16 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS schedule_audit_schedule_time
                     ON schedule_audit(schedule_id, emitted_at, audit_id);
+                CREATE TABLE IF NOT EXISTS notification_deliveries (
+                    delivery_id TEXT PRIMARY KEY, webhook_id TEXT NOT NULL,
+                    event_id TEXT NOT NULL, event_type TEXT NOT NULL, body TEXT NOT NULL,
+                    status TEXT NOT NULL, attempts INTEGER NOT NULL,
+                    next_attempt_at TEXT NOT NULL, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, delivered_at TEXT, failure_category TEXT,
+                    response_status INTEGER, UNIQUE(webhook_id, event_id)
+                );
+                CREATE INDEX IF NOT EXISTS notification_due
+                    ON notification_deliveries(status, next_attempt_at, created_at);
                 """
             )
             self._connection.execute(
@@ -833,4 +954,40 @@ class SQLiteTaskRepository:
             datetime.fromisoformat(row["next_run_at"]),
             datetime.fromisoformat(row["updated_at"]),
             row["last_job_id"],
+        )
+
+    @staticmethod
+    def _delivery_values(value: NotificationDelivery) -> tuple[object, ...]:
+        return (
+            value.delivery_id,
+            value.webhook_id,
+            value.event_id,
+            value.event_type.value,
+            value.body,
+            value.status.value,
+            value.attempts,
+            value.next_attempt_at.isoformat(),
+            value.created_at.isoformat(),
+            value.updated_at.isoformat(),
+            value.delivered_at.isoformat() if value.delivered_at else None,
+            value.failure_category,
+            value.response_status,
+        )
+
+    @staticmethod
+    def _delivery(row: sqlite3.Row) -> NotificationDelivery:
+        return NotificationDelivery(
+            row["delivery_id"],
+            row["webhook_id"],
+            row["event_id"],
+            NotificationEventType(row["event_type"]),
+            row["body"],
+            NotificationDeliveryStatus(row["status"]),
+            row["attempts"],
+            datetime.fromisoformat(row["next_attempt_at"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            datetime.fromisoformat(row["delivered_at"]) if row["delivered_at"] else None,
+            row["failure_category"],
+            row["response_status"],
         )

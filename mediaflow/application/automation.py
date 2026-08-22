@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from mediaflow.application.notification import NotificationPublisher
 from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationJob,
@@ -16,6 +17,7 @@ from mediaflow.domain.automation import (
     ScheduleDefinition,
 )
 from mediaflow.domain.cron import CronExpression
+from mediaflow.domain.notification import NotificationEvent, NotificationEventType
 
 
 class AutomationCancelled(RuntimeError):
@@ -74,9 +76,11 @@ class AutomationWorker:
         self,
         repository: AutomationJobRepository,
         handler: Callable[[AutomationJob, Callable[[], bool]], str | None],
+        notifications: NotificationPublisher | None = None,
     ) -> None:
         self._repository = repository
         self._handler = handler
+        self._notifications = notifications
 
     def run_next(self) -> AutomationJob | None:
         job = self._repository.claim_next_job(datetime.now(UTC))
@@ -119,6 +123,29 @@ class AutomationWorker:
                 error=None,
             )
         self._repository.update_job(finished)
+        if self._notifications:
+            event_type = {
+                AutomationJobStatus.COMPLETED: NotificationEventType.JOB_COMPLETED,
+                AutomationJobStatus.FAILED: NotificationEventType.JOB_FAILED,
+                AutomationJobStatus.CANCELLED: NotificationEventType.JOB_CANCELLED,
+            }.get(finished.status)
+            if event_type:
+                try:
+                    self._notifications.publish(
+                        NotificationEvent(
+                            f"job:{finished.job_id}:{finished.status.value}",
+                            event_type,
+                            finished.completed_at or finished.updated_at,
+                            {
+                                "command": finished.command.value,
+                                "jobId": finished.job_id,
+                                "status": finished.status.value,
+                                "taskId": finished.task_id,
+                            },
+                        )
+                    )
+                except Exception:
+                    pass
         return finished
 
     def run(
@@ -144,9 +171,11 @@ class IntervalScheduler:
         self,
         repository: AutomationJobRepository,
         schedules: tuple[ScheduleDefinition, ...],
+        notifications: NotificationPublisher | None = None,
     ) -> None:
         self._repository = repository
         self._schedules = schedules
+        self._notifications = notifications
         self._cron = {
             item.schedule_id: CronExpression.parse(item.expression)
             for item in schedules
@@ -185,6 +214,22 @@ class IntervalScheduler:
                 current,
             ):
                 queued.append(job)
+                if self._notifications:
+                    try:
+                        self._notifications.publish(
+                            NotificationEvent(
+                                f"schedule:{schedule.schedule_id}:{job.job_id}",
+                                NotificationEventType.SCHEDULE_EMITTED,
+                                current,
+                                {
+                                    "command": job.command.value,
+                                    "jobId": job.job_id,
+                                    "scheduleId": schedule.schedule_id,
+                                },
+                            )
+                        )
+                    except Exception:
+                        pass
         return tuple(queued)
 
     def _initial_run(self, schedule: ScheduleDefinition, now: datetime) -> datetime:

@@ -766,3 +766,18 @@ Phase 18.3 Cron/time-zone Scheduler and immutable schedule audit (2026-08-22): P
   advancement prevents duplicate concurrent/restart emission and missed occurrences coalesce
 - Added CLI/API schedule audit and UTC/local schedule visibility with zero Storage/provider access
 - Full suite: 329 tests, 326 passed, 0 failed, 3 optional real integrations skipped
+
+Phase 18.4 durable notification Outbox and signed Webhooks (2026-08-22): PASS
+
+- Added SQLite v7 durable, idempotent per-target deliveries with atomic due claiming, bounded retry
+  state, dead-letter, and explicit dead-letter requeue
+- Added environment-secret HMAC-SHA256 Webhook delivery over validated HTTPS URLs; exact canonical
+  UTF-8 bodies are signed and redirects are not followed
+- Automation terminal states and durable Scheduler emissions publish subscribed events without
+  changing successful Job/Schedule state when notification publication or delivery fails
+- Added independent notification Worker, redacted CLI listing/requeue, and authenticated read-only
+  API visibility; no notification path can call Storage or OrganizerExecutor
+- Canonical and exhaustive examples include a disabled safe Webhook template
+- Full suite: 339 tests, 336 passed, 0 failed, 3 optional real integrations skipped; Ruff,
+  compileall, dependency check, isolated-free wheel build, example validation, FFmpeg/FFprobe audit,
+  and diff check passed

@@ -35,7 +35,7 @@ Runtime Configuration
 | Classification | 已完成 | 确定性规则和媒体库选择 | 人工分类确认 |
 | Planner/Executor | 部分完成 | 计划、冲突保护、DryRun、真实执行、跨存储 | 完整冲突策略、附件、Rollback |
 | Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、协作取消、锁、JSONL 历史 | 强制中断、自动恢复 |
-| API/UI/Scheduler | 部分完成 | 只读/DryRun API、interval 调度 | Cron、执行 API、Web UI、权限、通知 |
+| API/UI/Scheduler | 部分完成 | 只读/DryRun API、interval/Cron 调度、签名 Webhook 通知 | 执行 API、Web UI、权限 |
 
 ## 总体阶段计划
 
@@ -94,6 +94,9 @@ interval 调度。调度仅允许 scan/preview；Cron 日历表达式与远程�
 Phase 18.3 已完成五字段 Cron、IANA 时区、DST 确定性语义和不可变调度发出审计。Cron 与
 interval 都只允许 scan/preview；远程真实执行仍未开放。
 
+Phase 18.4 已完成持久通知 Outbox、HMAC 签名 Webhook、受限重试/死信、独立投递 Worker
+和只读通知查询。通知失败不改变作业终态，也不触发任何 Storage 或媒体操作。
+
 ### Phase 19：Web UI 与生产发布
 
 - Dashboard、Storage/Library/Policy 管理、候选确认、冲突处理、任务和历史页面。
@@ -104,11 +107,10 @@ interval 都只允许 scan/preview；远程真实执行仍未开放。
 
 下一任务应限定为 Phase 18，不同时启动 Web UI。优先顺序：
 
-1. 增加 Webhook/通知投递、签名和失败重试，不泄露配置密钥。
-2. 设计独立、可审计的远程 organize execute 授权，不复用普通 API Token。
-3. 增加用户、权限和更完整的审计边界。
-4. 评估节假日日历等高级调度需求，避免扩大 Cron 核心。
-5. 保持 Storage 预检、附件、冲突确认和显式执行授权不变。
+1. 设计独立、可审计的远程 organize execute 授权，不复用普通 API Token。
+2. 增加用户、权限和更完整的审计边界。
+3. 评估节假日日历等高级调度需求，避免扩大 Cron 核心。
+4. 保持 Storage 预检、附件、冲突确认和显式执行授权不变。
 
 Interval/Cron Scheduler 已实现但只允许 scan/preview；仍不支持无人值守定时
 `organize --execute`。
