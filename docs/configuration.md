@@ -780,6 +780,18 @@ Hash evidence never authorizes overwrite/delete or resolves conflicts: a match a
 The loader rejects unknown fields, booleans used as sizes, and out-of-range limits. Hashes are not
 persisted in Phase 20.2.
 
+Failed multi-step Organizer execution can opt into bounded, same-invocation rollback:
+
+```json
+"rollback": {"enabled": false, "cleanupCreatedDirectories": true}
+```
+
+Rollback is disabled by default. When enabled, the Executor journals only targets and directories
+created by that invocation, verifies recorded target evidence before compensation, and reverses
+effects in completion-reverse order. Changed/unknown targets, reappeared sources, non-empty
+directories, or failed compensation produce `PARTIAL` and are left untouched. Rollback cannot be
+combined with overwrite authorization and cannot revert historical executions.
+
 Attachment discovery is separately opt-in on each OrganizePolicy:
 
 ```json

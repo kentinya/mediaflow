@@ -19,6 +19,8 @@ from mediaflow.domain.organizer import (
     OrganizePlan,
     PlanOperation,
     PlanStatus,
+    RollbackStatus,
+    RollbackStep,
     StorageLocation,
 )
 from mediaflow.domain.recognition import RecognitionResult, RecognitionTypePolicy
@@ -33,6 +35,19 @@ class PartialExecutionError(RuntimeError):
     def __init__(self, message: str, completed: tuple[str, ...]) -> None:
         super().__init__(message)
         self.completed = completed
+
+
+@dataclass(frozen=True)
+class _OwnedEffect:
+    action: str
+    source_storage: Storage
+    target_storage: Storage
+    source_path: str | None
+    target_path: str
+    target_size: int | None = None
+    target_modified_at: object | None = None
+    target_entry_type: object | None = None
+    restore_source: bool = False
 
 
 @dataclass(frozen=True)
@@ -230,6 +245,7 @@ class OrganizePlanner:
                 if target and not target.startswith("/") and not _unsafe_relative_path(target)
                 else None
             ),
+            rollback_policy=type_policy.organize_policy.rollback,
         )
 
 
@@ -341,6 +357,16 @@ class OrganizerExecutor:
                 warnings=("dry-run: no Storage mutation was executed",),
                 resolved_destination=display_destination,
             )
+        if plan.rollback_policy.enabled and plan.overwrite_authorized:
+            return self._result(
+                plan,
+                ExecutionStatus.FAILED,
+                started,
+                plan_id,
+                errors=("rollback cannot be combined with overwrite authorization",),
+                resolved_destination=display_destination,
+                rollback_status=RollbackStatus.NOT_NEEDED,
+            )
         validation_error = _storage_validation_error(plan, storages)
         if validation_error:
             status = (
@@ -372,6 +398,7 @@ class OrganizerExecutor:
         parent = posixpath.dirname(storage_target)
         created: list[str] = []
         completed: list[str] = []
+        effects: list[_OwnedEffect] = []
         try:
             if not source_storage.exists(storage_source):
                 return self._result(
@@ -423,20 +450,42 @@ class OrganizerExecutor:
                     attachment.source.path
                 ).size
             if parent and not target_storage.exists(parent):
+                missing_directories = (
+                    _missing_directories(target_storage, parent)
+                    if plan.rollback_policy.enabled
+                    else (parent,)
+                )
                 target_storage.create_directory(parent)
-                created.append(parent)
+                created.extend(missing_directories)
                 completed.append("CREATE_DIRECTORY")
+                if plan.rollback_policy.enabled:
+                    for directory in missing_directories:
+                        directory_entry = target_storage.stat(directory)
+                        effects.append(
+                            _OwnedEffect(
+                                "DELETE_DIRECTORY",
+                                target_storage,
+                                target_storage,
+                                None,
+                                directory,
+                                getattr(directory_entry, "size", None),
+                                getattr(directory_entry, "modified_at", None),
+                                getattr(directory_entry, "entry_type", None),
+                            )
+                        )
             for attachment in plan.attachment_plans:
                 attachment_source = storages[attachment.source.storage_id]
                 attachment_target = storages[attachment.destination.storage_id]
                 marker = f"ATTACHMENT:{attachment.attachment_type.value}:{attachment.source.path}"
                 try:
-                    self._mutate(
+                    self._mutate_and_record(
                         plan,
                         attachment_source,
                         attachment_target,
                         attachment.source.path,
                         attachment.destination.path,
+                        marker,
+                        effects,
                     )
                 except PartialExecutionError as error:
                     raise PartialExecutionError(
@@ -458,7 +507,15 @@ class OrganizerExecutor:
                     raise RuntimeError(
                         f"attachment move verification failed: {attachment.source.path}"
                     )
-            self._mutate(plan, source_storage, target_storage, storage_source, storage_target)
+            self._mutate_and_record(
+                plan,
+                source_storage,
+                target_storage,
+                storage_source,
+                storage_target,
+                plan.operation.value,
+                effects,
+            )
             completed.append(plan.operation.value)
             if not target_storage.exists(storage_target):
                 raise RuntimeError("destination verification failed")
@@ -468,27 +525,26 @@ class OrganizerExecutor:
                 raise RuntimeError("move verification failed: source still exists")
         except PartialExecutionError as error:
             completed.extend(error.completed)
-            return self._result(
+            return self._failure_result(
                 plan,
-                ExecutionStatus.PARTIAL,
                 started,
                 plan_id,
-                tuple(created),
-                tuple(completed),
-                errors=(str(error),),
-                resolved_destination=display_destination,
+                created,
+                completed,
+                effects,
+                str(error),
+                display_destination,
             )
         except (StorageError, RuntimeError, OSError) as error:
-            status = ExecutionStatus.PARTIAL if completed else ExecutionStatus.FAILED
-            return self._result(
+            return self._failure_result(
                 plan,
-                status,
                 started,
                 plan_id,
-                tuple(created),
-                tuple(completed),
-                errors=(str(error),),
-                resolved_destination=display_destination,
+                created,
+                completed,
+                effects,
+                str(error),
+                display_destination,
             )
         return self._result(
             plan,
@@ -541,6 +597,193 @@ class OrganizerExecutor:
         else:
             raise RuntimeError(f"operation {plan.operation.value} is not executable")
 
+    def _mutate_and_record(
+        self,
+        plan: OrganizePlan,
+        source: Storage,
+        target: Storage,
+        storage_source: str,
+        storage_target: str,
+        marker: str,
+        effects: list[_OwnedEffect],
+    ) -> None:
+        if not plan.rollback_policy.enabled:
+            self._mutate(plan, source, target, storage_source, storage_target)
+            return
+        try:
+            self._mutate(plan, source, target, storage_source, storage_target)
+        except (PartialExecutionError, StorageError, RuntimeError, OSError):
+            effect = self._capture_effect(
+                plan, source, target, storage_source, storage_target, marker
+            )
+            if effect is not None:
+                effects.append(effect)
+            raise
+        effect = self._capture_effect(plan, source, target, storage_source, storage_target, marker)
+        if effect is None:
+            raise RuntimeError(f"cannot record owned execution target: {storage_target}")
+        effects.append(effect)
+
+    @staticmethod
+    def _capture_effect(
+        plan: OrganizePlan,
+        source: Storage,
+        target: Storage,
+        storage_source: str,
+        storage_target: str,
+        marker: str,
+    ) -> _OwnedEffect | None:
+        try:
+            if not target.exists(storage_target):
+                return None
+            entry = target.stat(storage_target)
+            source_exists = source.exists(storage_source)
+        except (StorageError, RuntimeError, OSError):
+            return None
+        restore_source = plan.operation is PlanOperation.MOVE and not source_exists
+        return _OwnedEffect(
+            f"ROLLBACK:{marker}",
+            source,
+            target,
+            storage_source,
+            storage_target,
+            entry.size,
+            entry.modified_at,
+            entry.entry_type,
+            restore_source,
+        )
+
+    def _failure_result(
+        self,
+        plan: OrganizePlan,
+        started: float,
+        plan_id: str,
+        created: list[str],
+        completed: list[str],
+        effects: list[_OwnedEffect],
+        error: str,
+        display_destination: str,
+    ) -> ExecutionResult:
+        if not plan.rollback_policy.enabled:
+            return self._result(
+                plan,
+                ExecutionStatus.PARTIAL if completed else ExecutionStatus.FAILED,
+                started,
+                plan_id,
+                tuple(created),
+                tuple(completed),
+                errors=(error,),
+                resolved_destination=display_destination,
+                rollback_status=RollbackStatus.DISABLED,
+            )
+        if not effects:
+            return self._result(
+                plan,
+                ExecutionStatus.FAILED,
+                started,
+                plan_id,
+                tuple(created),
+                tuple(completed),
+                errors=(error,),
+                resolved_destination=display_destination,
+                rollback_status=RollbackStatus.NOT_NEEDED,
+            )
+        steps = self._rollback(effects, plan.rollback_policy.cleanup_created_directories)
+        rollback_ok = all(step.success for step in steps)
+        completed.extend(step.action for step in steps)
+        rollback_errors = tuple(
+            f"rollback {step.action} failed: {step.error}" for step in steps if not step.success
+        )
+        return self._result(
+            plan,
+            ExecutionStatus.FAILED if rollback_ok else ExecutionStatus.PARTIAL,
+            started,
+            plan_id,
+            tuple(created),
+            tuple(completed),
+            warnings=("execution effects were rolled back",) if rollback_ok else (),
+            errors=(error, *rollback_errors),
+            resolved_destination=display_destination,
+            rollback_status=RollbackStatus.SUCCESS if rollback_ok else RollbackStatus.PARTIAL,
+            rollback_steps=tuple(steps),
+        )
+
+    def _rollback(
+        self, effects: list[_OwnedEffect], cleanup_created_directories: bool
+    ) -> list[RollbackStep]:
+        steps: list[RollbackStep] = []
+        for effect in reversed(effects):
+            if effect.action == "DELETE_DIRECTORY" and not cleanup_created_directories:
+                continue
+            try:
+                if effect.action == "DELETE_DIRECTORY":
+                    if effect.target_storage.exists(effect.target_path):
+                        entry = effect.target_storage.stat(effect.target_path)
+                        if getattr(entry, "entry_type", None) != effect.target_entry_type:
+                            raise RuntimeError("owned rollback directory type changed")
+                        if effect.target_storage.list(effect.target_path):
+                            raise RuntimeError("owned rollback directory is not empty")
+                        effect.target_storage.delete(effect.target_path)
+                else:
+                    self._verify_owned_target(effect)
+                    if effect.restore_source:
+                        self._restore_move(effect)
+                    else:
+                        effect.target_storage.delete(effect.target_path)
+                steps.append(
+                    RollbackStep(
+                        effect.action,
+                        effect.target_storage.storage_id,
+                        effect.source_path,
+                        effect.target_path,
+                        True,
+                    )
+                )
+            except (StorageError, RuntimeError, OSError) as error:
+                steps.append(
+                    RollbackStep(
+                        effect.action,
+                        effect.target_storage.storage_id,
+                        effect.source_path,
+                        effect.target_path,
+                        False,
+                        _bounded_error(error),
+                    )
+                )
+        return steps
+
+    @staticmethod
+    def _verify_owned_target(effect: _OwnedEffect) -> None:
+        if not effect.target_storage.exists(effect.target_path):
+            raise RuntimeError("owned rollback target is missing")
+        entry = effect.target_storage.stat(effect.target_path)
+        if (
+            getattr(entry, "size", None) != effect.target_size
+            or getattr(entry, "modified_at", None) != effect.target_modified_at
+            or getattr(entry, "entry_type", None) != effect.target_entry_type
+        ):
+            raise RuntimeError("owned rollback target changed after execution")
+
+    @staticmethod
+    def _restore_move(effect: _OwnedEffect) -> None:
+        assert effect.source_path is not None
+        if effect.source_storage.exists(effect.source_path):
+            raise RuntimeError("move source reappeared; rollback refused")
+        if effect.source_storage is effect.target_storage:
+            effect.target_storage.move(effect.target_path, effect.source_path, overwrite=False)
+        else:
+            with effect.target_storage.read(effect.target_path) as stream:
+                effect.source_storage.write(effect.source_path, stream, overwrite=False)
+            if not effect.source_storage.exists(effect.source_path):
+                raise RuntimeError("cross-storage rollback source restore failed")
+            if effect.source_storage.stat(effect.source_path).size != effect.target_size:
+                raise RuntimeError("cross-storage rollback source size mismatch")
+            effect.target_storage.delete(effect.target_path)
+        if not effect.source_storage.exists(effect.source_path):
+            raise RuntimeError("move rollback source verification failed")
+        if effect.target_storage.exists(effect.target_path):
+            raise RuntimeError("move rollback target cleanup failed")
+
     def _result(
         self,
         plan: OrganizePlan,
@@ -553,6 +796,8 @@ class OrganizerExecutor:
         warnings: tuple[str, ...] = (),
         errors: tuple[str, ...] = (),
         resolved_destination: str | None = None,
+        rollback_status: RollbackStatus = RollbackStatus.NOT_NEEDED,
+        rollback_steps: tuple[RollbackStep, ...] = (),
     ) -> ExecutionResult:
         result = ExecutionResult(
             status,
@@ -566,6 +811,8 @@ class OrganizerExecutor:
             max(0, time.monotonic() - started),
             plan_id=plan_id,
             resolved_destination=resolved_destination or plan.target,
+            rollback_status=rollback_status,
+            rollback_steps=rollback_steps,
         )
         if self._logger:
             self._logger.log(
@@ -580,9 +827,27 @@ class OrganizerExecutor:
                 destination=result.resolved_destination,
                 result=status.value,
                 completed_operations=result.completed_operations,
+                rollback_status=result.rollback_status.value,
+                rollback_steps=tuple((step.action, step.success) for step in result.rollback_steps),
                 error=result.errors,
             )
         return result
+
+
+def _bounded_error(error: Exception) -> str:
+    """Return a stable category without persisting paths or provider messages."""
+    if isinstance(error, StorageError):
+        return f"storage_error:{error.code.value}"
+    if isinstance(error, OSError):
+        return "os_error"
+    return "rollback_safety_error"
+
+
+def _missing_directories(storage: Storage, parent: str) -> tuple[str, ...]:
+    """Return absent ancestors in creation order for invocation ownership evidence."""
+    parts = parent.split("/")
+    candidates = tuple("/".join(parts[:index]) for index in range(1, len(parts) + 1))
+    return tuple(path for path in candidates if not storage.exists(path))
 
 
 def _plan_validation_error(plan: OrganizePlan) -> str | None:

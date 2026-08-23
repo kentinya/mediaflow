@@ -466,3 +466,12 @@ The operational Dashboard and explicit metadata-review resolution are available 
 Database-managed users/login, automatic secret rotation, scheduled execute, and extended Web UI
 remain planned;
 unattended scheduled real organization is not supported.
+
+Organizer rollback is an explicit per-policy option and remains disabled by default:
+
+```json
+"rollback": {"enabled": false, "cleanupCreatedDirectories": true}
+```
+
+It compensates only verified effects created by the same failed invocation. It never overwrites a
+reappeared source, removes a changed target, or reverts an older execution.

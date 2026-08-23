@@ -262,6 +262,7 @@
         "fullMaxFileSize": 1099511627776,
         "chunkSize": 1048576
       },
+      "rollback": {"enabled": false, "cleanupCreatedDirectories": true},
       "attachments": {
         "enabled": true,
         "subtitles": true,
@@ -553,6 +554,7 @@
         "conflictStrategy": "manual",
         "overwrite": false,
         "duplicateDetection": {"mode": "none"},
+        "rollback": {"enabled": false, "cleanupCreatedDirectories": true},
         "attachments": {
           "enabled": true,
           "subtitles": true,
@@ -572,6 +574,7 @@
           "fastSampleBytes": 1048576,
           "chunkSize": 1048576
         },
+        "rollback": {"enabled": false, "cleanupCreatedDirectories": true},
         "attachments": {
           "enabled": true,
           "subtitles": true,
@@ -591,6 +594,7 @@
           "fullMaxFileSize": 1099511627776,
           "chunkSize": 1048576
         },
+        "rollback": {"enabled": false, "cleanupCreatedDirectories": true},
         "attachments": {
           "enabled": true,
           "subtitles": true,
@@ -606,6 +610,7 @@
         "conflictStrategy": "manual",
         "overwrite": false,
         "duplicateDetection": {"mode": "none"},
+        "rollback": {"enabled": false, "cleanupCreatedDirectories": true},
         "attachments": {
           "enabled": false,
           "subtitles": true,

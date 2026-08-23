@@ -1136,6 +1136,18 @@ constructors are isolated compatibility test fixtures, not production fallback c
 RecognitionType C remains the identity while resolving Metadata C and configured Naming,
 Classification, and Organize A.
 
+## Bounded Organizer compensation
+
+Phase 20.3 keeps compensation inside `OrganizerExecutor`, the only mutation boundary. An opt-in
+`RollbackPolicy` journals each successfully observed target and new directory for one invocation.
+On later failure it compensates in strict reverse order and revalidates ownership before mutation.
+COPY/LINK targets are deleted; same-Storage MOVE targets are moved back; cross-Storage MOVE restores
+a deleted source through Storage read/write verification before target deletion.
+
+The original execution remains failed even when compensation succeeds. Reappeared sources,
+changed/unverifiable targets, and non-empty directories fail closed as partial rollback. This is not
+historical rollback or a distributed transaction and cannot be combined with overwrite authorization.
+
 ## Read-only runtime configuration snapshot
 
 Phase 19.16 adds a one-way projection from normalized `RuntimeConfiguration` into an immutable,

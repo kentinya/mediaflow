@@ -24,6 +24,7 @@ from mediaflow.domain.organizer import (
     ConflictStrategy,
     OrganizeOperationType,
     OrganizePolicy,
+    RollbackPolicy,
 )
 from mediaflow.domain.recognition import (
     AtomicCondition,
@@ -350,6 +351,7 @@ def _organize_policy(item: Mapping[str, Any]) -> OrganizePolicy:
         strategy,
         _attachment_policy(item.get("attachments")),
         _hash_policy(item.get("duplicateDetection")),
+        _rollback_policy(item.get("rollback")),
     )
 
 
@@ -396,6 +398,21 @@ def _hash_policy(value: Any) -> HashPolicy:
         _integer(value, "fastSampleBytes", 1_048_576),
         _integer(value, "fullMaxFileSize", 1_099_511_627_776),
         _integer(value, "chunkSize", 1_048_576),
+    )
+
+
+def _rollback_policy(value: Any) -> RollbackPolicy:
+    if value is None:
+        return RollbackPolicy()
+    if not isinstance(value, Mapping):
+        raise ValueError("organize policy rollback must be an object")
+    allowed = {"enabled", "cleanupCreatedDirectories"}
+    unknown = set(value) - allowed
+    if unknown:
+        raise ValueError(f"unknown rollback policy field: {sorted(unknown)[0]}")
+    return RollbackPolicy(
+        _boolean(value, "enabled", False),
+        _boolean(value, "cleanupCreatedDirectories", True),
     )
 
 

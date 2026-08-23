@@ -1,86 +1,91 @@
-# Phase 20.2 — Configurable Read-Only Hash Duplicate Detection
+# Phase 20.3 — Explicit Bounded In-Invocation Organizer Rollback
 
 ## Goal
 
-Add configuration-driven file Hash evidence to duplicate detection without changing the default
-zero-read planning behavior or weakening existing conflict and execution safety.
+Add an opt-in, fail-closed compensation path to OrganizerExecutor so a failed multi-step execution
+can reverse only the effects created and recorded by that same invocation.
 
 ## Scope
 
-### 1. Provider-neutral Hash model and policy
+### 1. Rollback domain policy and evidence
 
-- Add immutable Hash mode, policy, digest/evidence, status, and duplicate comparison result models.
-- Support `NONE`, `FAST`, and `FULL`; default is `NONE`.
-- Configure FAST sample bytes, FULL maximum file size, and streaming chunk size with validated,
-  bounded values. Algorithm/version identifiers must make FAST and FULL evidence unambiguous.
+- Add immutable RollbackPolicy, status, step/evidence and ExecutionResult rollback fields.
+- Rollback defaults disabled. Enabling it is explicit OrganizePolicy configuration.
+- Record attempted action, Storage identities, relative paths, outcome and bounded error category;
+  never record media content, credentials or secret-derived values.
 
-### 2. Storage-only Hash calculation
+### 2. Owned-effect execution journal
 
-- Depend only on the Storage interface; never use concrete adapter or filesystem APIs.
-- `NONE` performs no `stat` or `read`.
-- `FAST` hashes file size plus a bounded leading sample and never claims to be a full-content hash.
-- `FULL` streams the complete object in bounded chunks after enforcing the configured size limit.
-- Detect premature EOF, over-read/inconsistent size, Storage failures, and cancellation explicitly.
-- Hash calculation performs zero Storage mutations and does not cache secrets or log content.
+- OrganizerExecutor records each successfully created target and directory as execution proceeds.
+- Capture a bounded target fingerprint from Storage stat after mutation and verify it again before
+  compensation. A changed/unverifiable target is unknown and must not be deleted or moved.
+- Journal only this invocation. Never infer ownership from historical paths, scan results, naming,
+  or a failed operation that produced no verifiable target.
 
-### 3. Duplicate comparison and planning integration
+### 3. Reverse-order compensation
 
-- Compare source and destination only when configured; size mismatch is `UNIQUE` without content
-  reads, matching size+digest is `DUPLICATE`, and unavailable/incomplete evidence is
-  `INDETERMINATE`, never silently unique or duplicate.
-- Integrate after deterministic OrganizePlan destination calculation and before conflict resolution.
-- A duplicate adds/retains `DUPLICATE_MEDIA`; indeterminate configured Hash adds an explicit
-  fail-closed `UNKNOWN` conflict. Existing destination/provider duplicate conflicts remain intact.
-- Hash evidence must not automatically resolve Skip/Overwrite/Rename/Manual, alter the requested
-  organize operation, delete a source, or execute Storage mutations.
+- COPY/HARDLINK/SYMLINK: delete only the invocation-owned destination.
+- Same-storage MOVE: move the invocation-owned destination back only when source is absent.
+- Cross-storage MOVE: if source still exists after copy/delete failure, remove only the owned target;
+  if source was deleted, restore it by bounded Storage transfer and verification before removing the
+  target. Never overwrite a reappeared source.
+- Roll back attachments and primary in strict reverse completion order, then optionally delete only
+  directories created by this invocation; non-empty/changed directories are left with explicit error.
 
-### 4. Runtime configuration
+### 4. Result and status semantics
 
-- Extend external `organizePolicies` with an optional `duplicateDetection` object containing mode
-  and bounded resource options. Existing configurations load as `NONE` without reads.
-- Reject unknown fields, unsupported modes, booleans masquerading as integers, unsafe limits, and
-  malformed policy values during startup validation.
-- Update example configuration with explicit `NONE` and documented FAST/FULL examples without
-  enabling expensive hashing by default.
+- Original execution failure remains visible. Successful compensation returns FAILED with rollback
+  status SUCCESS; failed/incomplete compensation returns PARTIAL.
+- Failure before an owned mutation returns FAILED with rollback NOT_NEEDED.
+- Successful execution and DryRun never run rollback. DryRun remains zero mutation.
+- Persist rollback operation markers through existing completed-operation/result evidence and emit
+  structured redacted logs without changing Task retry semantics.
 
-### 5. Boundaries
+### 5. Safety/configuration
 
-- Do not modify Scanner incremental semantics or FileIndex schema in this phase.
-- Do not persist Hashes, add background hashing, implement Rollback/retry/pause/empty-directory
-  cleanup, or begin Phase 20.3.
-- Do not call Metadata providers or FFmpeg/FFprobe. RecognitionType C must remain C.
+- Reject rollback-enabled execution with overwrite authorization because the previous destination
+  cannot be reconstructed safely.
+- Add optional `rollback: {"enabled": false, "cleanupCreatedDirectories": true}` to external
+  OrganizePolicy configuration. Validate unknown fields and non-booleans at startup.
+- Only OrganizerExecutor may perform compensation mutations, through Storage interfaces only.
+
+## Boundaries
+
+- No arbitrary historical/manual rollback command, unknown-file cleanup, recursive delete, automatic
+  retry, Task pause/resume, empty source-directory cleanup, or distributed transaction claim.
+- Do not change Parser, Recognition, Metadata, Naming, Classification or Scanner/FileIndex semantics.
+- Do not add FFmpeg/FFprobe and do not begin Phase 20.4.
 
 ## Required Tests
 
-- NONE zero read/stat; FAST bounded prefix; FULL bounded streaming; empty and small files.
-- Same content, different content with same size, size mismatch, premature EOF, excess data,
-  Storage stat/read errors, size limit, cancellation, and deterministic digest/version.
-- Local and fake remote Storage behavior without requiring production services.
-- Configuration default/backward compatibility, FAST/FULL parsing, invalid/unknown values.
-- Planner/MediaOrganizer duplicate and indeterminate conflicts, unchanged operation, DryRun and
-  zero mutation.
-- Cross-storage comparison and RecognitionType C preservation.
+- Default disabled compatibility and DryRun zero mutation.
+- COPY/LINK target compensation, same-storage MOVE restore, cross-storage MOVE copy-failure cleanup
+  and post-delete restore, attachment reverse order and created-directory cleanup.
+- No-effect failure, overwrite rejection, source reappeared, target fingerprint changed, unknown
+  target, rollback mutation failure, non-empty directory and partial rollback.
+- ExecutionResult/log/persistent completed-operation evidence and deterministic bounded errors.
+- LocalStorage integration plus fake Storage fault injection; C identity and prior plan unchanged.
 
 ## Validation
 
-Run Phase 20.2 tests, Organizer/Planner/conflict, runtime configuration, Strategy, Parser/NFO,
-Scanner/FileIndex, all Storage and DryRun regressions, then the full offline suite. Run formatter,
+Run Phase 20.3, Organizer/attachments/conflict/Task persistence, all Storage, DryRun, Strategy,
+Metadata, Recognition, Parser/NFO, Scanner/FileIndex and complete offline regressions. Run formatter,
 lint, compile, configuration validation, dependency/build checks, FFmpeg/FFprobe audit and diff.
 
 Update `README.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/progress.md`,
-`docs/roadmap.md`, and requirements status. Do not claim cryptographic duplicate certainty for FAST.
+`docs/roadmap.md`, and requirements status with exact rollback non-claims.
 
 ## Completion Report
 
-Use the AGENTS.md completion structure and additionally report:
+Use AGENTS.md structure and additionally report:
 
-## Phase 20.2 Result
+## Phase 20.3 Result
 
 PASS / FAIL
 
-## Hash Modes
+## Rollback Semantics
 
-## Duplicate Semantics
+## Compensation Matrix
 
 ## Safety
 

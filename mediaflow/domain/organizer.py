@@ -79,6 +79,29 @@ class AttachmentPolicy:
 
 
 @dataclass(frozen=True)
+class RollbackPolicy:
+    enabled: bool = False
+    cleanup_created_directories: bool = True
+
+
+class RollbackStatus(StrEnum):
+    DISABLED = "disabled"
+    NOT_NEEDED = "not_needed"
+    SUCCESS = "success"
+    PARTIAL = "partial"
+
+
+@dataclass(frozen=True)
+class RollbackStep:
+    action: str
+    storage_id: str
+    source: str | None
+    destination: str | None
+    success: bool
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class DuplicateIdentity:
     provider: str
     provider_id: str
@@ -107,6 +130,7 @@ class OrganizePolicy:
     conflict_strategy: ConflictStrategy = ConflictStrategy.MANUAL
     attachments: AttachmentPolicy = field(default_factory=AttachmentPolicy)
     duplicate_detection: HashPolicy = field(default_factory=HashPolicy)
+    rollback: RollbackPolicy = field(default_factory=RollbackPolicy)
 
 
 @dataclass(frozen=True)
@@ -195,6 +219,7 @@ class OrganizePlan:
     destination_location: StorageLocation | None = None
     overwrite_authorized: bool = False
     attachment_plans: tuple[AttachmentPlan, ...] = ()
+    rollback_policy: RollbackPolicy = field(default_factory=RollbackPolicy)
 
     @property
     def destination(self) -> str:
@@ -215,6 +240,8 @@ class ExecutionResult:
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     plan_id: str = ""
     resolved_destination: str = ""
+    rollback_status: RollbackStatus = RollbackStatus.NOT_NEEDED
+    rollback_steps: tuple[RollbackStep, ...] = ()
 
     @property
     def createdDirectories(self) -> tuple[str, ...]:

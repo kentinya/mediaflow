@@ -132,6 +132,30 @@ class RuntimeStrategyConfigurationTests(unittest.TestCase):
         self.assertEqual(configured.duplicate_detection.full_max_file_size, 8192)
         self.assertEqual(configured.duplicate_detection.chunk_size, 1024)
 
+    def test_rollback_configuration_is_external_and_defaults_disabled(self) -> None:
+        runtime = load_runtime_configuration(self.document)
+        self.assertFalse(runtime.strategy.organize_policies[0].rollback.enabled)
+        self.assertTrue(runtime.strategy.organize_policies[0].rollback.cleanup_created_directories)
+
+        document = copy.deepcopy(self.document)
+        document["organizePolicies"][0]["rollback"] = {
+            "enabled": True,
+            "cleanupCreatedDirectories": False,
+        }
+        configured = load_runtime_configuration(document).strategy.organize_policies[0]
+        self.assertTrue(configured.rollback.enabled)
+        self.assertFalse(configured.rollback.cleanup_created_directories)
+
+        for invalid in (
+            {"enabled": "yes"},
+            {"cleanupCreatedDirectories": 1},
+            {"enabled": True, "unknown": False},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                document = copy.deepcopy(self.document)
+                document["organizePolicies"][0]["rollback"] = invalid
+                load_runtime_configuration(document)
+
     def test_validation_command_performs_no_storage_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "mediaflow.json")

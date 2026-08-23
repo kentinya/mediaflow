@@ -45,7 +45,8 @@
   MinIO S3-compatible lifecycle, transfer, 128-object/128-MiB, and interrupted-stream profiles
 - Phase 20.1 safe read-only NFO Parser and pipeline evidence merge: PASS
 - Phase 20.2 configurable read-only Hash duplicate detection: PASS
-- Current development boundary: Phase 20.3 bounded Rollback is next
+- Phase 20.3 explicit bounded in-invocation Organizer rollback: PASS
+- Current development boundary: Phase 20.4 Task pause/resume is next
 
 ## Planned
 
@@ -1346,3 +1347,19 @@ Phase 20.2 configurable read-only Hash duplicate detection (2026-08-23): PASS
 - Integrated read-only evidence after OrganizePlan destination calculation; no Hash persistence,
   Scanner behavior, automatic resolution, overwrite/delete authorization, or Storage mutation added
 - Full offline suite: 526 tests, 519 passed, 0 failed, 7 explicitly gated real profiles skipped
+
+Phase 20.3 explicit bounded in-invocation Organizer rollback (2026-08-23): PASS
+
+- Added opt-in RollbackPolicy and immutable rollback evidence; existing policies remain disabled
+  and successful/DryRun behavior is unchanged
+- OrganizerExecutor journals only same-invocation targets/directories, verifies owned targets, and
+  compensates COPY/LINK/MOVE plus attachments in reverse completion order
+- Same-Storage MOVE restores by move-back; cross-Storage MOVE removes an owned copy while source is
+  intact or restores a deleted source before target cleanup
+- Changed targets, reappeared sources, non-empty directories, or failed compensation remain
+  untouched and produce PARTIAL with bounded errors; rollback plus overwrite is rejected
+- Historical/crash recovery, automatic retry, Task pause/resume, and empty source cleanup remain out
+  of scope
+- Full offline suite: 539 tests, 532 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  Ruff format/lint, compile, dependency, both example configurations, FFmpeg/FFprobe source audit,
+  diff, and isolated wheel gates passed

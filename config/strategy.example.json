@@ -114,6 +114,7 @@
         "fullMaxFileSize": 1099511627776,
         "chunkSize": 1048576
       },
+      "rollback": {"enabled": false, "cleanupCreatedDirectories": true},
       "attachments": {
         "enabled": false,
         "subtitles": true,
@@ -134,6 +135,7 @@
         "fullMaxFileSize": 1099511627776,
         "chunkSize": 1048576
       },
+      "rollback": {"enabled": false, "cleanupCreatedDirectories": true},
       "attachments": {
         "enabled": false,
         "subtitles": true,
