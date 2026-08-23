@@ -395,4 +395,6 @@ class PersistentTaskCoordinator:
             len(plan.attachment_plans) if plan else 0,
             len(result.retry_events),
             result.retry_events[-1].category.value if result.retry_events else None,
+            execution.cleanup_status.value if execution else None,
+            len(execution.cleanup_steps) if execution else 0,
         )

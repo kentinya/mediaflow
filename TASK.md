@@ -1,89 +1,83 @@
-# Phase 20.5 — Unified Bounded Read-Only Workflow Retry
+# Phase 20.6 — Bounded Safe Source Directory Cleanup
 
 ## Goal
 
-Add one configuration-driven retry policy and reusable application controller for explicitly
-transient pre-execution failures, while forbidding automatic replay of Organizer mutations or
-uncertain execution outcomes.
+Add an opt-in, policy-driven source directory cleanup step after a fully successful MOVE while
+preserving fail-closed boundaries and never deleting unknown content.
 
 ## Scope
 
-### 1. Policy, decision and evidence
+### 1. Cleanup policy and evidence
 
-- Add immutable WorkflowRetryPolicy, RetryCategory, RetryEvent and RetryOutcome models.
-- Configure optional runtime `workflowRetry` with enabled, maximum attempts, bounded exponential
-  backoff, maximum delay and jitter ratio. Default is disabled for backward compatibility.
-- Validate unknown fields, booleans-as-numbers, invalid ranges and unbounded values at startup.
-- Record only stable category, stage, attempt and delay; never raw provider response, URL, path,
-  credential or exception text.
+- Add immutable cleanup policy/mode/result evidence to OrganizePolicy/ExecutionResult.
+- Modes: `none` (default), `empty`, and `ignorable`.
+- Configure a bounded upward directory count and, only for `ignorable`, explicit basename glob
+  patterns. Reject unsafe/unbounded configuration at startup.
 
-### 2. Central retry controller
+### 2. Source boundary semantics
 
-- Implement one reusable controller with injected clock/sleeper/random source for deterministic tests.
-- Retry only errors classified as transient: timeout, connection failure/loss, rate limit, and
-  temporary provider unavailable.
-- Never retry authentication, permission, invalid path/configuration/request, malformed response,
-  not-found, unsupported operation, ambiguity, NeedConfirm, conflict or unknown errors.
-- Respect cancellation and Task pause before every attempt and during bounded waiting.
+- Preserve the ResourceLibrary Storage-relative root in OrganizePlan as a cleanup boundary.
+- Cleanup may inspect only ancestors of the successfully moved primary source, never the source
+  library root itself, Storage root, destination tree, unrelated path, absolute path, or traversal.
+- Stop at the first non-empty, changed, invalid, inaccessible, or unverified directory.
 
-### 3. Production workflow integration
+### 3. OrganizerExecutor-only mutation
 
-- Apply the controller only to the read-only strategy/metadata/NFO portion before planning and before
-  OrganizerExecutor is entered.
-- Do not add a second retry layer around successful adapter/provider internal attempts; workflow retry
-  begins only after those bounded attempts are exhausted and surfaced as normalized errors.
-- Persist retry count in Task result evidence and emit structured redacted operational events.
-- RecognitionType C and all downstream policy mappings remain unchanged across retries.
+- Run cleanup only after MOVE plus attachment transfer and verification fully succeeds, only with
+  explicit execute authority, and only inside OrganizerExecutor.
+- `empty` deletes only a directory proven empty immediately before deletion.
+- `ignorable` may delete only ordinary files whose basenames match configured patterns, with a
+  bounded entry count and stat-before-delete validation; any unknown entry prevents all cleanup in
+  that directory.
+- Cleanup failure produces bounded evidence and PARTIAL rather than hiding failure or replaying the
+  organize operation.
 
-### 4. Fail-closed execution boundary
+### 4. Safety exclusions
 
-- Never automatically retry OrganizerExecutor MOVE/COPY/HARDLINK/SYMLINK, PARTIAL/FAILED execution,
-  rollback failure, conflict resolution, overwrite, source delete, or an outcome that may have
-  mutated Storage.
-- DryRun remains zero mutation. Enabling workflow retry does not grant execute authority and does not
-  schedule background work.
+- COPY/LINK/SKIP/NOOP, DryRun, failed/partial execution, conflicts and rollback never run cleanup.
+- Never follow or delete symlinks, recursively delete, delete a non-empty directory through provider
+  semantics, clean destination directories, silently broaden patterns, or auto retry cleanup.
 
 ## Boundaries
 
-- Do not replace existing provider/adapter-local retry internals in this Phase.
-- No automatic Task requeue, Scheduler execute, dead-letter redesign, historical rollback,
-  empty-directory cleanup, distributed retry claim or Phase 20.6.
-- Do not change Parser, Recognition, Naming, Classification, Planner, Storage adapter or
-  OrganizerExecutor domain semantics.
+- Do not implement historical cleanup, periodic cleanup, orphan discovery, cross-task rollback,
+  Hash persistence, Phase 21 UI/manual correction, or Phase 22 configuration CRUD.
+- Do not change Parser, Recognition, Metadata, Naming, Classification, Storage adapter semantics or
+  execution authorization.
 - Do not add FFmpeg/FFprobe.
 
 ## Required Tests
 
-- Policy validation/default compatibility, deterministic exponential backoff/jitter and maximum bound.
-- Transient Metadata timeout/connection/rate-limit/provider-unavailable retries then succeeds.
-- Transient read-only Storage failure retries; permanent/unknown/configuration/malformed/not-found and
-  ambiguous/NeedConfirm results do not retry.
-- Cancellation/pause stops before next attempt and during wait.
-- Exhaustion persists bounded attempts/category without raw secret-bearing messages.
-- Execute-mode failure/partial/rollback/conflict never auto retries; OrganizerExecutor call count is one.
-- DryRun zero mutation, Task result retry evidence, operational log evidence and C identity regression.
+- Default none and configuration validation, empty and ignorable modes, bounded upward cleanup.
+- Source library root/storage root preservation, traversal/absolute boundary rejection, direct-root
+  source preservation, symlink/unknown/subdirectory refusal and stat/list race failure.
+- MOVE success cleanup, attachment cleanup, COPY/LINK/DryRun/failure/conflict/rollback zero cleanup.
+- Local, fake SMB/OpenList/S3 capability behavior without production services; Storage mutation call
+  accounting and no recursive delete assumption.
+- Persistent Execution/Task evidence, stable bounded errors, C identity preservation and complete
+  existing regressions.
 
 ## Validation
 
-Run Phase 20.5 retry tests, Task pause/resume and persistence, Metadata/TMDB, Storage adapter retry,
-Organizer/rollback, Scanner/FileIndex, DryRun, Strategy/Recognition/Parser/NFO and the full offline
-suite. Run formatter, lint, compile, dependency, both configuration validations, FFmpeg/FFprobe
-audit, wheel build and diff checks.
+Run Phase 20.6, Organizer/rollback, Task/retry, all Storage adapters and isolated acceptance-unit
+profiles, Scanner/FileIndex, DryRun, Strategy/Metadata/Recognition/Parser/NFO and full offline suite.
+Run formatter, lint, compile, dependency, both configuration validations, FFmpeg/FFprobe audit,
+wheel build and diff checks.
 
 Update `README.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/progress.md`,
-`docs/roadmap.md`, requirements status and the product specification with exact non-claims.
+`docs/roadmap.md`, requirements status and product specification with exact non-claims.
 
 ## Completion Report
 
 Use AGENTS.md structure and additionally report:
 
-## Phase 20.5 Result
+## Phase 20.6 Result
 
 PASS / FAIL
 
-## Retry Matrix
+## Cleanup Matrix
 
-## Backoff and Evidence
+## Boundary Evidence
 
 ## Safety
 

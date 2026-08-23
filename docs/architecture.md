@@ -103,6 +103,16 @@ SQLite schema v16 persists retry count and final category. Planner, conflicts, d
 reads and OrganizerExecutor are outside the controller, so Storage mutations and uncertain outcomes
 are never automatically replayed.
 
+Phase 20.6 carries normalized ResourceLibrary `storagePath` into `OrganizePlan` solely as an
+exclusive source-cleanup boundary. `DirectoryCleanupPolicy` defaults to NONE. After attachments and
+the primary MOVE are fully verified, OrganizerExecutor may inspect a bounded number of source
+ancestors. EMPTY deletes only a freshly re-listed empty directory; IGNORABLE validates the entire
+bounded listing as ordinary files with explicit safe basename patterns, stats every entry, deletes
+only those files, re-lists, then deletes the empty directory. It never reaches the configured library
+root or Storage root, follows a link, invokes recursive deletion, touches a destination, or runs for
+DryRun/COPY/LINK/failure/rollback. Unknown content stops safely; a Storage/race failure after the
+successful MOVE yields PARTIAL evidence. SQLite schema v17 persists cleanup status and step count.
+
 ## Attachment file sets
 
 Phase 16 adds `AttachmentDiscovery` as a read-only application service after the primary media has

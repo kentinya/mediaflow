@@ -115,6 +115,12 @@ file's directory through Storage and groups matching subtitles, NFO, artwork, im
 into the same plan. Preview reports `attachments=N`; only explicit execution mutates them. Unknown
 files are never included or cleaned up.
 
+Source directory cleanup is opt-in per OrganizePolicy and defaults to `none`. `empty` removes only
+verified empty ancestors after a fully successful MOVE. `ignorable` additionally permits only
+explicit basename patterns such as `.DS_Store`; unknown files, links, subdirectories, entry limits,
+boundary changes, COPY/LINK, DryRun, failed/partial execution and rollback all prevent cleanup.
+The configured ResourceLibrary `storagePath` is an exclusive boundary and is never deleted.
+
 With no path argument, `scan`, `preview`, and `organize` iterate every enabled configured
 ResourceLibrary. The former path-taking preview/organize forms remain available for compatibility.
 

@@ -276,6 +276,8 @@ class WorkflowRetryTests(unittest.TestCase):
             persisted = repository.list_results(task.task_id)[0]
             self.assertEqual(persisted.retry_attempts, 1)
             self.assertEqual(persisted.retry_category, "timeout")
+            self.assertEqual(persisted.cleanup_status, "disabled")
+            self.assertEqual(persisted.cleanup_step_count, 0)
             self.assertNotIn("must-not-persist", repr(persisted))
             repository.close()
 

@@ -39,7 +39,8 @@
 > 都进入冲突且不执行变更。Phase 20.3 已增加默认关闭、仅限同次调用已记录效果的有界
 > Organizer Rollback。Phase 20.4 已增加持久、协作式 Task pause/resume；Phase 20.5 已增加
 > 默认关闭、仅限执行前只读阶段规范化暂时错误的有界重试，且绝不自动重放 Organizer 变更或
-> 不确定结果。下一边界为 Phase 20.6 安全空目录清理。
+> 不确定结果。Phase 20.6 已完成默认关闭、有界且未知内容失败闭合的安全源目录清理；下一边界
+> 为 Phase 21.0 人工处理闭环的持久决策基线。
 
 ---
 
@@ -2287,6 +2288,12 @@ Behind The Scenes
 ```text
 不删除未知文件
 ```
+
+> 当前实现（Phase 20.6）：OrganizePolicy 可配置 `none`（默认）、`empty` 或 `ignorable`。
+> 仅显式 execute 且主文件与附件 MOVE 全部验证成功后，由 OrganizerExecutor 在
+> ResourceLibrary `storagePath` 排他边界内按最大层数处理。`empty` 只删除即时复核为空的目录；
+> `ignorable` 只删除完整有界列表中匹配显式安全 basename pattern 的普通文件。未知文件、链接、
+> 子目录、竞态、超限和访问失败均停止或 PARTIAL；COPY/LINK/DryRun/失败/Rollback 零清理。
 
 ---
 

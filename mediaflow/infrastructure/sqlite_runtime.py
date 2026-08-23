@@ -60,7 +60,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 class SQLiteTaskRepository:
@@ -339,8 +339,9 @@ class SQLiteTaskRepository:
                     destination_storage_id, destination_path, recognition_type, provider,
                     provider_id, metadata_policy_id, naming_policy_id, classification_policy_id,
                     organize_policy_id, operation, status, created_at, title, error,
-                    completed_operations, attachment_count, retry_attempts, retry_category
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    completed_operations, attachment_count, retry_attempts, retry_category,
+                    cleanup_status, cleanup_step_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     result.result_id,
@@ -366,6 +367,8 @@ class SQLiteTaskRepository:
                     result.attachment_count,
                     result.retry_attempts,
                     result.retry_category,
+                    result.cleanup_status,
+                    result.cleanup_step_count,
                 ),
             )
 
@@ -1739,6 +1742,8 @@ class SQLiteTaskRepository:
                     attachment_count INTEGER NOT NULL DEFAULT 0,
                     retry_attempts INTEGER NOT NULL DEFAULT 0,
                     retry_category TEXT,
+                    cleanup_status TEXT,
+                    cleanup_step_count INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
                     FOREIGN KEY(item_id) REFERENCES task_items(item_id)
                 );
@@ -1928,6 +1933,13 @@ class SQLiteTaskRepository:
                 )
             if "retry_category" not in columns:
                 self._connection.execute("ALTER TABLE task_results ADD COLUMN retry_category TEXT")
+            if "cleanup_status" not in columns:
+                self._connection.execute("ALTER TABLE task_results ADD COLUMN cleanup_status TEXT")
+            if "cleanup_step_count" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE task_results ADD COLUMN cleanup_step_count "
+                    "INTEGER NOT NULL DEFAULT 0"
+                )
             job_columns = {
                 row["name"]
                 for row in self._connection.execute("PRAGMA table_info(automation_jobs)").fetchall()
@@ -2086,6 +2098,8 @@ class SQLiteTaskRepository:
             row["attachment_count"],
             row["retry_attempts"],
             row["retry_category"],
+            row["cleanup_status"],
+            row["cleanup_step_count"],
         )
 
     @staticmethod

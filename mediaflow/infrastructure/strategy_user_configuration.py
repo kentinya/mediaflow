@@ -22,6 +22,8 @@ from mediaflow.domain.naming import (
 from mediaflow.domain.organizer import (
     AttachmentPolicy,
     ConflictStrategy,
+    DirectoryCleanupMode,
+    DirectoryCleanupPolicy,
     OrganizeOperationType,
     OrganizePolicy,
     RollbackPolicy,
@@ -352,6 +354,7 @@ def _organize_policy(item: Mapping[str, Any]) -> OrganizePolicy:
         _attachment_policy(item.get("attachments")),
         _hash_policy(item.get("duplicateDetection")),
         _rollback_policy(item.get("rollback")),
+        _directory_cleanup_policy(item.get("sourceDirectoryCleanup")),
     )
 
 
@@ -413,6 +416,32 @@ def _rollback_policy(value: Any) -> RollbackPolicy:
     return RollbackPolicy(
         _boolean(value, "enabled", False),
         _boolean(value, "cleanupCreatedDirectories", True),
+    )
+
+
+def _directory_cleanup_policy(value: Any) -> DirectoryCleanupPolicy:
+    if value is None:
+        return DirectoryCleanupPolicy()
+    if not isinstance(value, Mapping):
+        raise ValueError("sourceDirectoryCleanup must be an object")
+    allowed = {"mode", "maxParentDirectories", "ignorePatterns", "maxEntries"}
+    if unknown := set(value) - allowed:
+        raise ValueError(f"unknown sourceDirectoryCleanup field: {sorted(unknown)[0]}")
+    raw_mode = value.get("mode", "none")
+    if not isinstance(raw_mode, str):
+        raise ValueError("sourceDirectoryCleanup mode must be none, empty, or ignorable")
+    try:
+        mode = DirectoryCleanupMode(raw_mode.casefold())
+    except ValueError as error:
+        raise ValueError("sourceDirectoryCleanup mode must be none, empty, or ignorable") from error
+    patterns = value.get("ignorePatterns", [])
+    if not isinstance(patterns, list) or not all(isinstance(item, str) for item in patterns):
+        raise ValueError("sourceDirectoryCleanup ignorePatterns must be an array of strings")
+    return DirectoryCleanupPolicy(
+        mode,
+        _integer(value, "maxParentDirectories", 1),
+        tuple(patterns),
+        _integer(value, "maxEntries", 100),
     )
 
 

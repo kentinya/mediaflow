@@ -116,6 +116,7 @@
         "chunkSize": 1048576
       },
       "rollback": {"enabled": false, "cleanupCreatedDirectories": true},
+      "sourceDirectoryCleanup": {"mode": "none", "maxParentDirectories": 1, "ignorePatterns": [], "maxEntries": 100},
       "attachments": {
         "enabled": false,
         "subtitles": true,
@@ -137,6 +138,7 @@
         "chunkSize": 1048576
       },
       "rollback": {"enabled": false, "cleanupCreatedDirectories": true},
+      "sourceDirectoryCleanup": {"mode": "none", "maxParentDirectories": 1, "ignorePatterns": [], "maxEntries": 100},
       "attachments": {
         "enabled": false,
         "subtitles": true,

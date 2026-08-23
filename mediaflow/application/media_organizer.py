@@ -256,6 +256,7 @@ class MediaOrganizerService:
                 source_storage_id=resource_library.storage_id,
                 source=source,
                 source_storage_path=storage_path,
+                source_library_root=resource_library.root_path,
                 recognition=strategy.recognition,
                 type_policy=type_policy,
                 media_library=media_library,

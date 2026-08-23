@@ -48,12 +48,13 @@
 - Phase 20.3 explicit bounded in-invocation Organizer rollback: PASS
 - Phase 20.4 durable cooperative Task pause/resume: PASS
 - Phase 20.5 unified bounded read-only workflow retry: PASS
-- Current development boundary: Phase 20.6 safe empty-directory cleanup is next
+- Phase 20.6 bounded safe source directory cleanup: PASS
+- Current development boundary: Phase 21.0 manual-processing durable decision baseline is next
 
 ## Planned
 
-- Phase 20: unified retry and safe empty-directory cleanup,
-  delivered as separate small phases
+- Phase 20: core engine closure completed in bounded phases; historical recovery remains a separate
+  non-claim
 - Phase 21: complete manual media correction and file/media workflow UI
 - Phase 22: configuration-management architecture decision and configuration CRUD/reference/audit
 - Later: external identity/OIDC and Secret Store evaluation; no weak in-core substitute
@@ -1394,5 +1395,21 @@ Phase 20.5 unified bounded read-only workflow retry (2026-08-23): PASS
 - Existing adapter/provider-local retries remain unchanged; this layer begins only after their
   normalized failure reaches the application workflow
 - Full offline suite: 559 tests, 552 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, both example configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 20.6 bounded safe source directory cleanup (2026-08-23): PASS
+
+- Added externally configured NONE/EMPTY/IGNORABLE cleanup policy with safe pattern, parent-depth and
+  entry-count limits; existing OrganizePolicy behavior remains NONE by default
+- OrganizePlan now preserves the normalized Storage-relative ResourceLibrary root as an exclusive
+  cleanup boundary; Storage root, ResourceLibrary root, destination and unrelated paths are untouched
+- OrganizerExecutor alone cleans only after verified MOVE success; ordinary explicitly ignored files
+  are stat-checked, directories are re-listed before non-recursive delete, and unknown/link/directory/
+  race/limit evidence stops or fails closed
+- COPY/LINK/DryRun/conflict/failure/rollback execute zero cleanup; post-MOVE cleanup infrastructure
+  failure is visible as PARTIAL without replaying the organize operation
+- SQLite schema v17 persists stable cleanup status and bounded step count
+- Full offline suite: 568 tests, 561 passed, 0 failed, 7 explicitly gated real profiles skipped;
   formatter, lint, compile, dependency, both example configuration, FFmpeg/FFprobe source audit,
   diff and isolated wheel gates passed

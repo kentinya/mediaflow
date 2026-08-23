@@ -105,6 +105,8 @@ class PersistentResultRecord:
     attachment_count: int = 0
     retry_attempts: int = 0
     retry_category: str | None = None
+    cleanup_status: str | None = None
+    cleanup_step_count: int = 0
 
 
 class ConfirmationStatus(StrEnum):

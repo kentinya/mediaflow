@@ -474,6 +474,26 @@ errors do not. Pause/cancel interrupts attempts and wait slices. Task results pe
 count and last stable category. OrganizerExecutor is outside the controller and failed, partial,
 rollback or uncertain mutation outcomes require explicit operator action.
 
+## Source directory cleanup
+
+Cleanup belongs to each `organizePolicies` entry and defaults to disabled:
+
+```json
+"sourceDirectoryCleanup": {
+  "mode": "none",
+  "maxParentDirectories": 1,
+  "ignorePatterns": [],
+  "maxEntries": 100
+}
+```
+
+Modes are `none`, `empty`, and `ignorable`. `empty` deletes only directories proven empty after a
+successful MOVE. `ignorable` requires explicit basename glob patterns and may remove only ordinary
+matching files after validating the complete bounded listing. Broad `*`/`**`, path components, more
+than 32 patterns, more than 10 parent directories, and more than 1000 entries are rejected. The
+ResourceLibrary `storagePath` is preserved as the exclusive cleanup boundary. COPY, LINK, DryRun,
+conflict, failure, partial result and rollback do not perform source cleanup.
+
 ## Development API and background DryRun jobs
 
 ```json

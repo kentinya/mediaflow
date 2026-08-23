@@ -246,12 +246,25 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         storage_id = _required(item, "storageId")
         _reference(storage_id, storage_ids, "ResourceLibrary Storage")
         display_root = item.get("displayRootPath", item.get("rootPath"))
+        storage_path = item.get("storagePath", "")
+        if not isinstance(storage_path, str):
+            raise ValueError("ResourceLibrary storagePath must be a string")
+        normalized_storage_path = posixpath.normpath(storage_path) if storage_path else ""
+        if (
+            storage_path.startswith(("/", "\\"))
+            or "\\" in storage_path
+            or "\x00" in storage_path
+            or (storage_path and any(part in {"", ".", ".."} for part in storage_path.split("/")))
+            or normalized_storage_path in {".", ".."}
+            or normalized_storage_path.startswith("../")
+        ):
+            raise ValueError("ResourceLibrary storagePath must be a safe Storage-relative path")
         resources.append(
             ResourceLibrary(
                 _required(item, "id"),
                 str(item.get("name") or item["id"]),
                 storage_id,
-                str(item.get("storagePath", "")),
+                normalized_storage_path,
                 enabled=bool(item.get("enabled", True)),
                 file_extensions=tuple(item.get("extensions", ())) or DEFAULT_MEDIA_EXTENSIONS,
                 max_depth=item.get("maxDepth"),

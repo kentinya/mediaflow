@@ -1,3 +1,4 @@
+import fnmatch
 import hashlib
 import posixpath
 import time
@@ -12,6 +13,9 @@ from mediaflow.domain.naming import NamingResult
 from mediaflow.domain.organizer import (
     Conflict,
     ConflictType,
+    DirectoryCleanupMode,
+    DirectoryCleanupStatus,
+    DirectoryCleanupStep,
     DuplicateIdentity,
     ExecutionResult,
     ExecutionStatus,
@@ -24,7 +28,7 @@ from mediaflow.domain.organizer import (
     StorageLocation,
 )
 from mediaflow.domain.recognition import RecognitionResult, RecognitionTypePolicy
-from mediaflow.domain.storage import Storage, StorageError
+from mediaflow.domain.storage import Storage, StorageEntryType, StorageError
 
 
 class PlanningError(ValueError):
@@ -51,6 +55,13 @@ class _OwnedEffect:
 
 
 @dataclass(frozen=True)
+class _CleanupOutcome:
+    status: DirectoryCleanupStatus
+    steps: tuple[DirectoryCleanupStep, ...] = ()
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class OrganizePlanner:
     """Deterministic planning with optional read-only conflict observations."""
 
@@ -60,6 +71,7 @@ class OrganizePlanner:
         source_storage_id: str,
         source: str,
         source_storage_path: str | None = None,
+        source_library_root: str = "",
         recognition: RecognitionResult,
         type_policy: RecognitionTypePolicy,
         media_library: MediaLibrary,
@@ -104,6 +116,7 @@ class OrganizePlanner:
                 PlanOperation.SKIP,
                 PlanStatus.INVALID,
                 (conflict,),
+                source_library_root=source_library_root,
             )
         relative_destination = posixpath.join(
             classification.relative_path, *naming.directory_segments, naming.filename
@@ -125,6 +138,7 @@ class OrganizePlanner:
                 PlanStatus.NOOP,
                 (),
                 source_storage_path,
+                source_library_root,
             )
         conflicts: list[Conflict] = []
         if target_storage is not None:
@@ -183,6 +197,7 @@ class OrganizePlanner:
             status,
             tuple(conflicts),
             source_storage_path,
+            source_library_root,
         )
 
     @staticmethod
@@ -200,6 +215,7 @@ class OrganizePlanner:
         status,
         conflicts,
         source_storage_path=None,
+        source_library_root="",
     ) -> OrganizePlan:
         # operations intentionally remains empty: Phase 11 plans are never executable command lists.
         return OrganizePlan(
@@ -246,6 +262,8 @@ class OrganizePlanner:
                 else None
             ),
             rollback_policy=type_policy.organize_policy.rollback,
+            source_library_root=_safe_source_library_root(source_library_root),
+            source_directory_cleanup=type_policy.organize_policy.source_directory_cleanup,
         )
 
 
@@ -295,6 +313,15 @@ def _unsafe_relative_path(value: str) -> bool:
 
 def _unsafe_filename(value: str) -> bool:
     return _unsafe_relative_path(value) or "/" in value
+
+
+def _safe_source_library_root(value: str) -> str:
+    if not value:
+        return ""
+    normalized = posixpath.normpath(value.strip("/"))
+    if _unsafe_relative_path(normalized):
+        return ""
+    return normalized
 
 
 def _plan_id(source_storage: str, source: str, target_storage: str, target: str) -> str:
@@ -546,6 +573,21 @@ class OrganizerExecutor:
                 str(error),
                 display_destination,
             )
+        cleanup = self._cleanup_source_directories(plan, source_storage, storage_source)
+        completed.extend(step.action for step in cleanup.steps if step.success)
+        if cleanup.status is DirectoryCleanupStatus.FAILED:
+            return self._result(
+                plan,
+                ExecutionStatus.PARTIAL,
+                started,
+                plan_id,
+                tuple(created),
+                tuple(completed),
+                errors=(cleanup.error or "source directory cleanup failed",),
+                resolved_destination=display_destination,
+                cleanup_status=cleanup.status,
+                cleanup_steps=cleanup.steps,
+            )
         return self._result(
             plan,
             ExecutionStatus.SUCCESS,
@@ -553,7 +595,105 @@ class OrganizerExecutor:
             plan_id,
             tuple(created),
             tuple(completed),
+            warnings=("source directory cleanup stopped safely",)
+            if cleanup.status is DirectoryCleanupStatus.STOPPED
+            else (),
             resolved_destination=display_destination,
+            cleanup_status=cleanup.status,
+            cleanup_steps=cleanup.steps,
+        )
+
+    @staticmethod
+    def _cleanup_source_directories(
+        plan: OrganizePlan, storage: Storage, storage_source: str
+    ) -> _CleanupOutcome:
+        policy = plan.source_directory_cleanup
+        if policy.mode is DirectoryCleanupMode.NONE:
+            return _CleanupOutcome(DirectoryCleanupStatus.DISABLED)
+        if plan.operation is not PlanOperation.MOVE:
+            return _CleanupOutcome(DirectoryCleanupStatus.NOT_APPLICABLE)
+        source = posixpath.normpath(storage_source)
+        root = posixpath.normpath(plan.source_library_root) if plan.source_library_root else ""
+        if (
+            source.startswith("/")
+            or source in {"", ".", ".."}
+            or any(part in {"", ".", ".."} for part in source.split("/"))
+            or (root and source != root and not source.startswith(f"{root}/"))
+        ):
+            return _CleanupOutcome(
+                DirectoryCleanupStatus.FAILED, error="source cleanup boundary is invalid"
+            )
+        candidate = posixpath.dirname(source)
+        if not candidate or candidate == root:
+            return _CleanupOutcome(DirectoryCleanupStatus.NOT_APPLICABLE)
+        steps: list[DirectoryCleanupStep] = []
+        try:
+            for _ in range(policy.max_parent_directories):
+                if not candidate or candidate == root:
+                    break
+                if root and not candidate.startswith(f"{root}/"):
+                    return _CleanupOutcome(
+                        DirectoryCleanupStatus.FAILED,
+                        tuple(steps),
+                        "source cleanup crossed ResourceLibrary root",
+                    )
+                entries = tuple(storage.list(candidate))
+                if len(entries) > policy.max_entries:
+                    steps.append(
+                        DirectoryCleanupStep(
+                            "STOP_DIRECTORY", candidate, False, "entry limit exceeded"
+                        )
+                    )
+                    return _CleanupOutcome(DirectoryCleanupStatus.STOPPED, tuple(steps))
+                ignored = ()
+                if entries:
+                    if policy.mode is DirectoryCleanupMode.EMPTY:
+                        steps.append(
+                            DirectoryCleanupStep(
+                                "STOP_DIRECTORY", candidate, False, "directory is not empty"
+                            )
+                        )
+                        return _CleanupOutcome(DirectoryCleanupStatus.STOPPED, tuple(steps))
+                    if not all(
+                        entry.entry_type is StorageEntryType.FILE
+                        and entry.path == posixpath.join(candidate, entry.name)
+                        and posixpath.basename(entry.name) == entry.name
+                        and any(
+                            fnmatch.fnmatchcase(entry.name, pattern)
+                            for pattern in policy.ignore_patterns
+                        )
+                        for entry in entries
+                    ):
+                        steps.append(
+                            DirectoryCleanupStep(
+                                "STOP_DIRECTORY", candidate, False, "unknown entry present"
+                            )
+                        )
+                        return _CleanupOutcome(DirectoryCleanupStatus.STOPPED, tuple(steps))
+                    ignored = entries
+                for entry in ignored:
+                    observed = storage.stat(entry.path)
+                    if (
+                        observed.entry_type is not StorageEntryType.FILE
+                        or observed.size != entry.size
+                        or observed.modified_at != entry.modified_at
+                    ):
+                        raise RuntimeError("ignored entry changed before cleanup")
+                for entry in ignored:
+                    storage.delete(entry.path)
+                    steps.append(DirectoryCleanupStep("DELETE_IGNORED_FILE", entry.path, True))
+                if storage.list(candidate):
+                    raise RuntimeError("source directory changed before cleanup")
+                storage.delete(candidate)
+                steps.append(DirectoryCleanupStep("DELETE_EMPTY_DIRECTORY", candidate, True))
+                candidate = posixpath.dirname(candidate)
+        except (StorageError, RuntimeError, OSError) as error:
+            return _CleanupOutcome(
+                DirectoryCleanupStatus.FAILED, tuple(steps), _bounded_error(error)
+            )
+        return _CleanupOutcome(
+            DirectoryCleanupStatus.SUCCESS if steps else DirectoryCleanupStatus.NOT_APPLICABLE,
+            tuple(steps),
         )
 
     @staticmethod
@@ -798,6 +938,8 @@ class OrganizerExecutor:
         resolved_destination: str | None = None,
         rollback_status: RollbackStatus = RollbackStatus.NOT_NEEDED,
         rollback_steps: tuple[RollbackStep, ...] = (),
+        cleanup_status: DirectoryCleanupStatus = DirectoryCleanupStatus.DISABLED,
+        cleanup_steps: tuple[DirectoryCleanupStep, ...] = (),
     ) -> ExecutionResult:
         result = ExecutionResult(
             status,
@@ -813,6 +955,8 @@ class OrganizerExecutor:
             resolved_destination=resolved_destination or plan.target,
             rollback_status=rollback_status,
             rollback_steps=rollback_steps,
+            cleanup_status=cleanup_status,
+            cleanup_steps=cleanup_steps,
         )
         if self._logger:
             self._logger.log(

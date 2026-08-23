@@ -261,6 +261,7 @@
     {
       "id": "MOVE",
       "operation": "MOVE",
+      "sourceDirectoryCleanup": {"mode": "none", "maxParentDirectories": 1, "ignorePatterns": [], "maxEntries": 100},
       "conflictStrategy": "manual",
       "overwrite": false,
       "duplicateDetection": {

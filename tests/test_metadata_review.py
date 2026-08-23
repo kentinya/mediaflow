@@ -325,5 +325,5 @@ class MetadataReviewTests(unittest.TestCase):
             connection.commit()
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 16)
+                self.assertEqual(repository.schema_version, 17)
                 self.assertEqual(repository.list_metadata_reviews(), ())

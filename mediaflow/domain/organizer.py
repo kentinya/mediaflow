@@ -84,6 +84,61 @@ class RollbackPolicy:
     cleanup_created_directories: bool = True
 
 
+class DirectoryCleanupMode(StrEnum):
+    NONE = "none"
+    EMPTY = "empty"
+    IGNORABLE = "ignorable"
+
+
+@dataclass(frozen=True)
+class DirectoryCleanupPolicy:
+    mode: DirectoryCleanupMode = DirectoryCleanupMode.NONE
+    max_parent_directories: int = 1
+    ignore_patterns: tuple[str, ...] = ()
+    max_entries: int = 100
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.max_parent_directories, bool)
+            or not 1 <= self.max_parent_directories <= 10
+        ):
+            raise ValueError("cleanup maximum parent directories must be between 1 and 10")
+        if isinstance(self.max_entries, bool) or not 1 <= self.max_entries <= 1000:
+            raise ValueError("cleanup maximum entries must be between 1 and 1000")
+        if len(self.ignore_patterns) > 32:
+            raise ValueError("cleanup supports at most 32 ignore patterns")
+        for pattern in self.ignore_patterns:
+            if (
+                not pattern
+                or len(pattern) > 128
+                or "/" in pattern
+                or "\\" in pattern
+                or "\x00" in pattern
+                or pattern in {"*", "**"}
+            ):
+                raise ValueError("cleanup ignore pattern is unsafe")
+        if self.mode is not DirectoryCleanupMode.IGNORABLE and self.ignore_patterns:
+            raise ValueError("cleanup ignore patterns require ignorable mode")
+        if self.mode is DirectoryCleanupMode.IGNORABLE and not self.ignore_patterns:
+            raise ValueError("ignorable cleanup requires explicit ignore patterns")
+
+
+class DirectoryCleanupStatus(StrEnum):
+    DISABLED = "disabled"
+    NOT_APPLICABLE = "not_applicable"
+    SUCCESS = "success"
+    STOPPED = "stopped"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class DirectoryCleanupStep:
+    action: str
+    path: str
+    success: bool
+    reason: str | None = None
+
+
 class RollbackStatus(StrEnum):
     DISABLED = "disabled"
     NOT_NEEDED = "not_needed"
@@ -131,6 +186,7 @@ class OrganizePolicy:
     attachments: AttachmentPolicy = field(default_factory=AttachmentPolicy)
     duplicate_detection: HashPolicy = field(default_factory=HashPolicy)
     rollback: RollbackPolicy = field(default_factory=RollbackPolicy)
+    source_directory_cleanup: DirectoryCleanupPolicy = field(default_factory=DirectoryCleanupPolicy)
 
 
 @dataclass(frozen=True)
@@ -220,6 +276,8 @@ class OrganizePlan:
     overwrite_authorized: bool = False
     attachment_plans: tuple[AttachmentPlan, ...] = ()
     rollback_policy: RollbackPolicy = field(default_factory=RollbackPolicy)
+    source_library_root: str = ""
+    source_directory_cleanup: DirectoryCleanupPolicy = field(default_factory=DirectoryCleanupPolicy)
 
     @property
     def destination(self) -> str:
@@ -242,6 +300,8 @@ class ExecutionResult:
     resolved_destination: str = ""
     rollback_status: RollbackStatus = RollbackStatus.NOT_NEEDED
     rollback_steps: tuple[RollbackStep, ...] = ()
+    cleanup_status: DirectoryCleanupStatus = DirectoryCleanupStatus.DISABLED
+    cleanup_steps: tuple[DirectoryCleanupStep, ...] = ()
 
     @property
     def createdDirectories(self) -> tuple[str, ...]:
