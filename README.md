@@ -5,15 +5,17 @@ S3/R2. Its production pipeline scans media, parses filenames, recognizes a confi
 identifies metadata, calculates names and classification, plans an operation, and optionally
 executes it. Dry-run is always the default.
 
-The core workflow is complete, but Phase 19 production acceptance is not complete. Real SMB,
-OpenList, and S3/R2 matrices, cross-provider fault injection, and long-running validation remain
-blocking. Fake-client unit tests are not counted as real-service evidence. See the
+The core workflow and the bounded Phase 19 production-release profile are complete. Production
+adapters passed isolated Local, Samba, OpenList, and MinIO lifecycle/transfer matrices plus a
+128-object, 128 MiB streaming and interrupted-transfer profile. This does not certify AWS S3,
+Cloudflare R2, third-party OpenList drivers, remote atomic publication, multi-hour soak, or host
+power-loss behavior. Fake-client tests are never counted as real-service evidence. See the
 [Storage Acceptance Matrix](docs/storage-acceptance.md).
 
-The Phase 19.23 real OpenList suite is destructive only inside an explicitly named
-`mediaflow-acceptance-*` root and requires a fixed confirmation value. It has no default test root
-and never derives consent from runtime or user configuration. The suite proves the root is empty
-before mutation and writes a new non-secret JSON evidence record; see the matrix document for the exact command.
+Real acceptance suites are destructive only inside explicitly named `mediaflow-acceptance-*` roots
+and require a fixed confirmation value. They have no default test root and never derive consent from
+runtime or user configuration. Each suite proves its root is empty before mutation and writes a new
+non-secret JSON evidence record; see the matrix document for exact boundaries and results.
 
 ## Setup
 

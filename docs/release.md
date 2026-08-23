@@ -34,9 +34,11 @@ backup/verify round trip. It never reads configured production Storage or creden
 
 ## Maintainer review
 
-- Review [Storage Acceptance Matrix](storage-acceptance.md). A green unit/CI suite does not satisfy
-  real SMB/OpenList/S3-R2 or cross-provider acceptance; do not label the deployment production-
-  accepted while required rows are `BLOCKED` or `FAIL`.
+- Review [Storage Acceptance Matrix](storage-acceptance.md). The bounded repository release profile
+  is PASS for isolated Local, Samba, OpenList Local driver, and MinIO S3-compatible behavior. A green
+  unit/CI suite alone remains insufficient, and a target deployment must not claim AWS/R2,
+  third-party OpenList-driver, remote-atomic, multi-hour-soak, or power-loss certification without
+  its own evidence. Any required target row marked `BLOCKED` or `FAIL` blocks that deployment claim.
 
 - Confirm the worktree contains only intended release changes; never include local configuration,
   databases, caches, credentials, logs, or media.

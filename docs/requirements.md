@@ -5,7 +5,7 @@
 
 > 当前实现状态与最终产品范围以根目录
 > [《影视媒体资源自动整理系统需求规格说明书》](../影视媒体资源自动整理系统需求规格说明书.md)
-> 为准；分阶段交付计划见 [roadmap.md](roadmap.md)。截至 2026-08-22，核心 CLI、持久任务、
+> 为准；分阶段交付计划见 [roadmap.md](roadmap.md)。截至 2026-08-23，核心 CLI、持久任务、
 > 目标冲突确认、元数据/分类复核、可选附件文件集合和全 Storage JSON Runtime 已完成；
 > 服务 API 已具备 RBAC、审计、凭证运维护栏，以及复核与 Task/Job/Result 只读 Web UI；
 > 大型运行历史、调度审计与通知投递支持稳定有界的双向游标分页；运行日志具备默认关闭、
@@ -29,6 +29,11 @@
 > 包含 command 和可选有界 limit，必须明确显示 DRY_RUN，不能携带 organize/execute 权限。
 > Pending/Running Automation Job 总量必须由配置的持久原子准入上限约束；手工提交、Scheduler
 > 和受保护 organize 共用容量，队列满不得消费执行票据、推进调度状态或删除现有 Job。
+> Phase 19 有界生产发布 profile 已通过隔离 Local、Samba 4.20.6、OpenList v4.2.2 Local
+> driver 和 MinIO S3-compatible 验收，包括 128 文件、128 MiB 流式对象与中断恢复。该结论
+> 不认证 AWS S3、Cloudflare R2、第三方 OpenList driver、远端原子发布、多小时 soak、进程终止
+> 或主机断电；精确证据与非声明边界见 [storage-acceptance.md](storage-acceptance.md)。下一开发
+> 边界为 Phase 20.1 NFO Parser，Phase 20 尚未开始。
 
 ---
 

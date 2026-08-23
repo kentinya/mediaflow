@@ -38,27 +38,20 @@
 
 ## Current
 
-- Phase 19.8 persistent redacted operational log foundation: PASS
-- Phase 19.9 read-only operational log API and UI: PASS
-- Phase 19.10 safe runtime database backup and verification: PASS
-- Phase 19.11 reproducible release validation and CI baseline: PASS
-- Phase 19.12 read-only upgrade preflight and compatibility report: PASS
-- Phase 19.13 non-overwriting offline runtime database restore: PASS
-- Phase 19.14 cooperative runtime maintenance lock: PASS
-- Phase 19.15 isolated runtime schema migration rehearsal: PASS
-- Phase 19.16 read-only configuration and system status API/UI: PASS
-- Phase 19.17 explicit Automation Job cancellation UI: PASS
-- Phase 19.18 explicit DryRun Automation Job submission UI: PASS
-- Phase 19.19 durable active Automation Job admission control: PASS
-- Phase 19.20 read-only stale Running Automation Job visibility: PASS
-- Phase 19.21 fenced cooperative Automation Job heartbeats: PASS
-- Phase 19 overall production acceptance: BLOCKED on real remote Storage matrix, cross-provider
-  fault injection, and long-duration validation
+- Phase 18 service/automation foundation: PASS for its accepted API, Worker, Scheduler, notification,
+  authorization, RBAC, Dashboard, and explicit review scopes
+- Phase 19 minimal secure operator console and production hardening: PASS for its accepted bounded scope
+- Phase 19.22–19.25 Storage release gate: PASS for isolated Local, Samba, OpenList Local driver, and
+  MinIO S3-compatible lifecycle, transfer, 128-object/128-MiB, and interrupted-stream profiles
+- Current development boundary: Phase 20 has not started; Phase 20.1 NFO Parser is next
 
 ## Planned
 
-- Phase 19: Web UI and production release hardening
-- Later: database-managed identities/OIDC, credential rotation, and optional scheduled execution
+- Phase 20: NFO Parser, Hash duplicate policy, bounded Rollback, Task pause/resume, unified retry,
+  and safe empty-directory cleanup, delivered as separate small phases
+- Phase 21: complete manual media correction and file/media workflow UI
+- Phase 22: configuration-management architecture decision and configuration CRUD/reference/audit
+- Later: external identity/OIDC and Secret Store evaluation; no weak in-core substitute
 
 ## Known Issues
 
@@ -72,23 +65,25 @@
   require OS-specific directory-handle APIs for complete hardening.
 - SMB HardLink and SoftLink are unsupported and never fall back to another operation.
 - SMB Copy uses client-side streaming because server-side copy support varies by server.
-- No live SMB integration environment is configured; production connectivity remains environment
-  dependent and was not exercised against a real share.
+- Samba 4.20.6 passed the isolated profile, but target deployments remain connectivity/permission
+  dependent and SMB interrupted writes can expose a detectable partial target; remote atomic
+  publication is not certified.
 - OpenList Copy to a new basename uses a streaming fallback. A same-OpenList Move that changes both
   directory and basename uses native server-side Move then Rename, with best-effort rollback if
   Rename fails. Cross-storage Move remains streamed Copy + verification + source Delete.
 - OpenList upload is streamed with HTTP chunked transfer. Actual maximum object size, direct-upload
   behavior, and backend-specific limits remain dependent on the configured OpenList driver.
-- No live OpenList integration environment is configured; the opt-in test requires
-  `TEST_OPENLIST_URL`, `TEST_OPENLIST_TOKEN`, and optionally a dedicated `TEST_OPENLIST_ROOT`.
+- OpenList v4.2.2 with its Local driver passed the isolated profile; third-party OpenList drivers,
+  backend object limits, direct-upload behavior, and remote atomic publication remain unverified.
 - S3/R2 Move is Copy + target size verification + Delete and is not atomic. Delete failure returns
   an explicit partial error and can leave both objects.
 - Server-side copy above the configured single-copy limit is unsupported. Multipart UploadPartCopy
   is deferred; the adapter never silently downloads a large object as a fallback.
 - S3 logical directories without marker objects can be listed and statted, but an empty implicit
   directory has no remote object to delete. Range Read is deferred because Storage has no range API.
-- No MinIO/S3 or R2 integration environment is configured; opt-in tests only use a unique child
-  under `TEST_S3_ROOT` or `TEST_R2_ROOT` (default `mediaflow-test`).
+- MinIO passed the generic S3-compatible profile including multipart interruption cleanup. AWS S3
+  and Cloudflare R2 service-specific behavior remain unverified and no acceptance suite may use a
+  default destructive Prefix.
 - Scanner incremental detection is metadata-based (path, size, and modification time); hashing and
   filesystem watchers are intentionally deferred.
 - Directory symlinks are not followed. FileIndex has SQLite and in-memory adapters, but database
@@ -1304,3 +1299,17 @@ Phase 19.25 Storage endurance, large-object, and interrupted-transfer acceptance
 - Full offline suite: 499 tests, 492 passed, 0 failed, 7 explicitly gated real profiles skipped;
   explicit isolated endurance profiles: 4 passed. Ruff, format, compile, dependency, both example
   configurations, FFmpeg/FFprobe, diff, and isolated wheel gates passed
+
+Post-Phase 19 requirements and release-document reconciliation (2026-08-23): COMPLETE
+
+- Reconciled the V1.1 product specification implementation baseline with accepted Phase 18/19
+  behavior, removing stale claims that REST API, metadata review, and classification review were
+  unimplemented
+- Recorded the exact bounded Phase 19 evidence and its non-claims: Samba/OpenList/MinIO acceptance
+  is not AWS/R2, third-party driver, remote-atomic, multi-hour, process-kill, or power-loss proof
+- Updated the engineering baseline, roadmap capability/status tables, Storage acceptance wording,
+  README release posture, and maintainer release checklist; Phase 20.1 NFO Parser remains the next
+  development scope and no feature code changed
+- Documentation reconciliation validation: 499 tests passed with 7 explicitly gated real profiles
+  skipped; both example configurations, Ruff format/lint, compile, FFmpeg/FFprobe source audit,
+  diff check, and offline wheel build passed

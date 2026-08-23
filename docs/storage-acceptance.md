@@ -2,8 +2,10 @@
 
 This document is the authoritative Phase 19 Storage acceptance record. Unit tests with fake clients
 prove adapter logic but are not evidence that a real service, account, network, filesystem, or
-permission set works. Phase 19 is not production-accepted until every required deployment row has
-real isolated evidence.
+permission set works. The bounded Phase 19 repository profile is accepted only because every row in
+that explicitly defined Local/Samba/OpenList-Local-driver/MinIO profile has real isolated evidence.
+A target deployment with different services or drivers needs its own required-row evidence before
+claiming equivalent production acceptance.
 
 ## Status vocabulary
 

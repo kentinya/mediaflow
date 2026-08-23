@@ -2,7 +2,8 @@
 
 ## 当前节点
 
-截至 2026-08-21，项目完成了安全优先的核心纵向链路：
+截至 2026-08-23，项目完成了安全优先的核心纵向链路、Phase 18 服务化基础，以及
+Phase 19 有界生产发布验收：
 
 ```text
 Runtime Configuration
@@ -19,23 +20,25 @@ Runtime Configuration
 ```
 
 当前可通过 CLI 扫描配置中的资源库、预览确定性计划，并在显式 `--execute` 时执行。
-计划携带源/目标 Storage 身份，可处理本地与 OpenList 组合。默认不覆盖、不静默删除，DryRun
-零变更。该节点应定义为“核心执行链完成”，而不是“完整产品完成”。
+计划携带源/目标 Storage 身份，可处理 Local、SMB、OpenList、S3-compatible 的同存储与
+跨存储组合。默认不覆盖、不静默删除，DryRun 零变更。隔离 Local/Samba/OpenList/MinIO 已完成
+生命周期、传输、128 文件、128 MiB 流式对象和中断恢复 profile。该节点定义为“核心执行链与
+有界发布硬门完成”，而不是“完整产品完成”。
 
 ## 能力矩阵
 
 | 领域 | 状态 | 当前能力 | 主要缺口 |
 |---|---|---|---|
-| Storage | 已完成 | Local、SMB、OpenList、S3/R2 Adapter 与 JSON Runtime | 更多实机验证 |
+| Storage | 已完成（有界验收） | Local、SMB、OpenList、S3/R2 Adapter、JSON Runtime、隔离 Samba/OpenList/MinIO 矩阵 | AWS/R2、第三方 driver、远端原子与多小时专项验收 |
 | Scanner/FileIndex | 已完成 | 扫描、稳定性、全量/增量、生产 SQLite FileIndex | 后续管理/清理工具 |
 | Parser | 已完成 | 文件名/路径、电影/剧集、多集、标签 | NFO Parser |
 | Recognition | 已完成 | 配置规则、优先级、证据、C 身份保持 | 人工修正流程 |
-| Metadata | 部分完成 | TMDB、缓存、候选评分、本地化标题、年份语义 | 人工候选确认、持久共享缓存管理 |
+| Metadata | 部分完成 | TMDB、缓存、候选评分、本地化标题、年份语义、持久人工候选选择/恢复 | 持久共享缓存管理、自由输入修正交互 |
 | Naming | 已完成 | 安全模板、Unicode、多集、预览 | 用户界面配置体验 |
-| Classification | 已完成 | 确定性规则和媒体库选择 | 人工分类确认 |
-| Planner/Executor | 部分完成 | 计划、冲突保护、DryRun、真实执行、跨存储 | 完整冲突策略、附件、Rollback |
-| Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、协作取消、锁、JSONL 历史 | 强制中断、自动恢复 |
-| API/UI/Scheduler | 部分完成 | API 主体/RBAC/审计、运营 Dashboard、Cron、通知、一次性授权执行 | Web UI、登录/外部身份源 |
+| Classification | 已完成 | 确定性规则、媒体库选择、持久人工规则选择/恢复 | 自由路径修正明确禁止；完整 UI 待做 |
+| Planner/Executor | 部分完成 | 计划、完整冲突策略、附件、DryRun、真实执行、跨存储 | Rollback、Hash、空目录清理 |
+| Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、claim fencing/心跳、锁、JSONL 历史 | 通用 pause/resume、统一重试、不确定执行恢复 |
+| API/UI/Scheduler | 部分完成 | API/RBAC/审计、最小安全操作台、Dashboard、Cron、通知、一次性授权执行 | 文件管理 UI、配置管理、登录/外部身份源 |
 
 ## 总体阶段计划
 
@@ -79,7 +82,7 @@ Runtime Configuration
 验收范围：SMB/S3/R2 JSON Runtime 装配、环境变量密钥、配置校验和只读 Storage 预检已
 完成。持久缓存管理和文件日志轮转将在相应持久后端引入时实现，不提供空操作命令。
 
-### Phase 18：服务化与自动化（进行中）
+### Phase 18：服务化与自动化（已完成当前范围）
 
 - REST API、Task Worker、Scheduler、Cron、Webhook 和通知。
 - API 复用 Application Service，不复制策略引擎或绕过 OrganizerExecutor。
@@ -124,7 +127,7 @@ Phase 18.11 已完成分类复核队列与显式配置规则选择：未分类�
 选择，决策/审计/TaskItem 原子提交；不允许任意媒体库或路径，显式 resume 会重新校验当前
 规则后才进入 Planner。
 
-### Phase 19：Web UI 与生产发布
+### Phase 19：最小安全操作台与生产发布硬门（已完成有界范围）
 
 - Dashboard、Storage/Library/Policy 管理、候选确认、冲突处理、任务和历史页面。
 - 权限、审计、备份恢复、升级指南、可观测性和发布流水线。
@@ -245,25 +248,25 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 进程/主机断电、AWS/R2 服务特性和远端原子发布仍是部署专项限制，不作已认证声明。下一阶段按
 计划进入 Phase 20 核心引擎收口，不继续扩展 Phase 19 操作台。
 
-## 规格差距评估（2026-08-22，基于 Phase 19.22 后状态）
+## 规格差距评估（2026-08-23，基于 Phase 19.25 后状态）
 
 对照《影视媒体资源自动整理系统需求规格说明书》V1.1 全量章节逐项评估：
 
 | 领域 | 完成度 | 主要剩余缺口 |
 |---|---|---|
 | 核心引擎（§1–§79） | ~92% | NFO Parser、Hash 重复检测、整理 Rollback、任务暂停/继续、统一自动重试、空目录清理 |
-| 存储层（§4–§10） | ~90% | SMB/OpenList/S3/R2 实机验收全部 BLOCKED；远端原子发布未认证；Range Read/大对象服务端 Copy 未实现 |
+| 存储层（§4–§10） | ~94% | 有界 Local/Samba/OpenList/MinIO 实机矩阵已通过；AWS/R2、第三方 driver、远端原子发布、Range Read/大对象服务端 Copy 未认证或未实现 |
 | 任务与自动化（§62–§70、§98） | ~88% | 定时缓存/日志清理未实现；claim fencing/心跳已完成 |
 | API 与 Web UI（§93–§96、§102） | ~35% | 仅只读运维操作台；文件列表、搜索筛选、媒体详情、人工修正交互均未实现 |
 | 配置管理（§5、§86–§89） | ~30% | 12 类配置对象 CRUD、引用关系检查、导入导出、凭证加密存储均未实现 |
 | 安全与审计（§99–§101） | ~70% | RBAC/脱敏/安全审计完成；用户体系、配置修改 Before/After 审计未实现 |
 
-整体完成度约 72–75%。规格书本质是两份产品：媒体整理引擎（接近完成）+
+整体完成度约 75–78%。规格书本质是两份产品：媒体整理引擎（接近完成）+
 配置与运维管理系统（刚起步，约占剩余工作量一半）。
 
 ## 剩余实施计划
 
-### 阶段 I：发布硬门（Phase 19.23–19.2x，优先级最高）
+### 阶段 I：发布硬门（Phase 19.23–19.25，已完成有界范围）
 
 本阶段已由 Phase 19.25 关闭；历史执行期间 Phase 19 整体不得提前 PASS，且暂停了一切操作台
 横向增强、OIDC 和高级调度。
@@ -312,7 +315,7 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 
 ### 执行约束
 
-1. 严格按阶段顺序：阶段 I 硬门未关闭前，禁止阶段 III/IV 的任何工作。
+1. 严格按阶段顺序：阶段 I 有界硬门已关闭；现在先完成阶段 II，再进入阶段 III/IV。
 2. 每个 Phase 单一提交粒度，沿用既有验收记录风格（PASS/测试计数/审计）。
 3. 实机验收发现的问题只记录，不在验收 Phase 同一提交中修复。
 4. 持续安全基线不变：默认 DryRun、不覆盖、不静默删除、仅 OrganizerExecutor
