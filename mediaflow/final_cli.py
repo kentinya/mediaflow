@@ -49,6 +49,7 @@ from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     PersistentTask,
     PersistentTaskItem,
+    PersistentTaskStatus,
 )
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.migration_rehearsal import SQLiteMigrationRehearsalService
@@ -97,6 +98,8 @@ def final_main(
     task_list.add_argument("--limit", type=int, default=20)
     task_show = task_commands.add_parser("show")
     task_show.add_argument("task_id")
+    task_pause = task_commands.add_parser("pause")
+    task_pause.add_argument("task_id")
     for name in ("resume", "retry-failed"):
         task_retry = task_commands.add_parser(name)
         task_retry.add_argument("task_id")
@@ -530,14 +533,18 @@ def final_main(
                     render_security_audit(repository.list_security_audit(limit=arguments.limit))
                 )
             return 0
-        if arguments.command == "tasks" and arguments.task_command in {"list", "show"}:
+        if arguments.command == "tasks" and arguments.task_command in {"list", "show", "pause"}:
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 if arguments.task_command == "list":
                     stdout.write(render_tasks(repository.list_tasks(limit=arguments.limit)))
-                else:
+                elif arguments.task_command == "show":
                     task = repository.get_task(arguments.task_id)
                     if task is None:
                         raise LookupError(f"task {arguments.task_id!r} was not found")
+                    stdout.write(render_task(task, repository.list_items(task.task_id)))
+                else:
+                    coordinator = PersistentTaskCoordinator(repository, repository)
+                    task = coordinator.request_pause(arguments.task_id)
                     stdout.write(render_task(task, repository.list_items(task.task_id)))
             return 0
         if arguments.command == "confirmations":
@@ -762,7 +769,9 @@ def final_main(
                     else None
                 )
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("scan", execute_authorized=False)
+                task = coordinator.create(
+                    "scan", execute_authorized=False, item_limit=arguments.limit
+                )
                 discovered = []
 
                 def on_discovered(library, file) -> None:
@@ -775,6 +784,12 @@ def final_main(
                         f"{file.storage_id}:{file.path}",
                     )
 
+                def workflow_stop() -> bool:
+                    return bool(
+                        (cancellation_check and cancellation_check())
+                        or coordinator.pause_requested(task.task_id)
+                    )
+
                 batch = ResourceLibraryScanner(
                     StorageScanner(storages, file_index, logger=operational_logger),
                     configuration.resource_libraries,
@@ -782,12 +797,14 @@ def final_main(
                 ).scan_all(
                     limit=arguments.limit,
                     on_discovered=on_discovered,
-                    cancellation_check=cancellation_check,
+                    cancellation_check=workflow_stop,
                 )
                 errors = tuple(error for result in batch.results for error in result.errors)
                 cancelled = bool(cancellation_check and cancellation_check())
                 if cancelled:
                     coordinator.cancel(task.task_id)
+                elif coordinator.pause_requested(task.task_id):
+                    coordinator.acknowledge_pause(task.task_id)
                 else:
                     coordinator.finish(task.task_id, MediaOrganizerBatchResult((), errors))
                 stdout.write(f"Task ID: {task.task_id}\n")
@@ -796,9 +813,18 @@ def final_main(
         library = display_root = None
         if getattr(arguments, "path", None):
             library, display_root = _resource_library(configuration, arguments.path)
+        resumed_scan = False
+        if arguments.command == "tasks" and arguments.task_command == "resume":
+            with SQLiteTaskRepository(configuration.database_path) as pause_repository:
+                pause_original = pause_repository.get_task(arguments.task_id)
+                resumed_scan = bool(
+                    pause_original
+                    and pause_original.status is PersistentTaskStatus.PAUSED
+                    and pause_original.command == "scan"
+                )
         token = os.environ.get("TMDB_ACCESS_TOKEN") or os.environ.get("TMDB_TOKEN")
         providers = None
-        if not (arguments.command == "analyze" and arguments.offline):
+        if not (arguments.command == "analyze" and arguments.offline) and not resumed_scan:
             if not token:
                 raise ValueError("metadata workflow requires TMDB_ACCESS_TOKEN")
             providers = MetadataProviderRegistry((TMDBProvider(TMDBClient(TMDBConfig(token))),))
@@ -838,8 +864,14 @@ def final_main(
             )
             coordinator = PersistentTaskCoordinator(repository, repository)
             retry_items: tuple[PersistentTaskItem, ...] | None = None
+            paused_resume = False
+            original_items: tuple[PersistentTaskItem, ...] = ()
             if arguments.command == "tasks":
                 original = coordinator.require(arguments.task_id)
+                paused_resume = (
+                    arguments.task_command == "resume"
+                    and original.status is PersistentTaskStatus.PAUSED
+                )
                 if arguments.execute and not original.execute_authorized:
                     raise ValueError(
                         "original task was not execute-authorized; retry cannot enable execute"
@@ -848,15 +880,32 @@ def final_main(
                     original.task_id,
                     failed_only=arguments.task_command == "retry-failed",
                 )
+                original_items = repository.list_items(original.task_id)
                 repository.reclaim_task_locks(original.task_id)
                 execute = bool(arguments.execute and original.execute_authorized)
                 task = coordinator.create(
-                    f"{arguments.task_command}:{original.task_id}",
+                    original.command
+                    if paused_resume
+                    else f"{arguments.task_command}:{original.task_id}",
                     execute_authorized=execute,
+                    scope_path=original.scope_path,
+                    item_limit=original.item_limit,
                 )
             else:
                 execute = arguments.command == "organize" and arguments.execute
-                task = coordinator.create(arguments.command, execute_authorized=execute)
+                task = coordinator.create(
+                    arguments.command,
+                    execute_authorized=execute,
+                    scope_path=arguments.path,
+                    item_limit=arguments.limit,
+                )
+
+            def workflow_stop() -> bool:
+                return bool(
+                    (cancellation_check and cancellation_check())
+                    or coordinator.pause_requested(task.task_id)
+                )
+
             service = MediaOrganizerService(
                 strategy,
                 StorageScanner(storages, file_index, logger=operational_logger),
@@ -925,6 +974,33 @@ def final_main(
                         )
                     )
                 summary = MediaOrganizerBatchResult(tuple(retried))
+                if paused_resume:
+                    already_seen = {
+                        (stored.storage_id, stored.source_path) for stored in original_items
+                    }
+                    remaining_limit = (
+                        max(0, original.item_limit - len(original_items))
+                        if original.item_limit is not None
+                        else None
+                    )
+                    continued = _continue_paused_scope(
+                        service,
+                        configuration,
+                        original,
+                        storages,
+                        file_index,
+                        coordinator,
+                        task.task_id,
+                        execute,
+                        remaining_limit,
+                        already_seen,
+                        workflow_stop,
+                        stdout,
+                    )
+                    summary = MediaOrganizerBatchResult(
+                        summary.items + continued.items,
+                        summary.scan_errors + continued.scan_errors,
+                    )
             elif arguments.path is None:
                 summary = service.process_all_libraries(
                     configuration.resource_libraries,
@@ -933,7 +1009,7 @@ def final_main(
                     progress=lambda done, total, source: stdout.write(
                         f"PROGRESS {done}/{total or '?'} {source}\n"
                     ),
-                    cancellation_check=cancellation_check,
+                    cancellation_check=workflow_stop,
                 )
             else:
                 assert library is not None and display_root is not None
@@ -946,7 +1022,7 @@ def final_main(
                         progress=lambda done, total, source: stdout.write(
                             f"PROGRESS {done}/{total or '?'} {source}\n"
                         ),
-                        cancellation_check=cancellation_check,
+                        cancellation_check=workflow_stop,
                     )
                 else:
                     storage_path = path.relative_to(
@@ -963,11 +1039,14 @@ def final_main(
             cancelled = bool(cancellation_check and cancellation_check())
             if cancelled:
                 coordinator.cancel(task.task_id)
+            elif coordinator.pause_requested(task.task_id):
+                coordinator.acknowledge_pause(task.task_id)
             else:
                 coordinator.finish(task.task_id, summary)
             stdout.write(f"Task ID: {task.task_id}\n")
             stdout.write(render_summary(summary, execute=execute))
-            return 130 if cancelled else 1 if summary.failed else 0
+            paused = coordinator.require(task.task_id).status is PersistentTaskStatus.PAUSED
+            return 130 if cancelled else 75 if paused else 1 if summary.failed else 0
     except (OSError, ValueError, LookupError, RuntimeError) as error:
         stderr.write(f"mediaflow error: {error}\n")
         return 2
@@ -984,6 +1063,95 @@ def _runtime_lease_mode(arguments: argparse.Namespace) -> RuntimeLeaseMode | Non
     if arguments.command == "database" and arguments.database_command == "restore":
         return RuntimeLeaseMode.EXCLUSIVE
     return RuntimeLeaseMode.SHARED
+
+
+def _continue_paused_scope(
+    service: MediaOrganizerService,
+    configuration,
+    original: PersistentTask,
+    storages,
+    file_index,
+    coordinator: PersistentTaskCoordinator,
+    task_id: str,
+    execute: bool,
+    limit: int | None,
+    skip_sources: set[tuple[str, str]],
+    cancellation_check: Callable[[], bool],
+    stdout: TextIO,
+) -> MediaOrganizerBatchResult:
+    if limit == 0:
+        return MediaOrganizerBatchResult(())
+    if original.command == "scan":
+        discovered = []
+
+        def on_discovered(library, file) -> None:
+            discovered.append(file.path)
+            coordinator.record_discovered(
+                task_id,
+                file.storage_id,
+                library.library_id,
+                file.path,
+                f"{file.storage_id}:{file.path}",
+            )
+
+        batch = ResourceLibraryScanner(
+            StorageScanner(storages, file_index),
+            configuration.resource_libraries,
+            storages,
+        ).scan_all(
+            limit=limit,
+            on_discovered=on_discovered,
+            include_discovered=lambda library, file: (
+                (
+                    library.storage_id,
+                    file.path,
+                )
+                not in skip_sources
+            ),
+            cancellation_check=cancellation_check,
+        )
+        errors = tuple(error for result in batch.results for error in result.errors)
+        return MediaOrganizerBatchResult((), errors)
+    if original.command not in {"preview", "organize"}:
+        raise ValueError("paused task command cannot be continued")
+    if original.scope_path is None:
+        return service.process_all_libraries(
+            configuration.resource_libraries,
+            execute=execute,
+            limit=limit,
+            progress=lambda done, total, source: stdout.write(
+                f"PROGRESS {done}/{total or '?'} {source}\n"
+            ),
+            cancellation_check=cancellation_check,
+            skip_sources=skip_sources,
+        )
+    library, display_root = _resource_library(configuration, original.scope_path)
+    path = Path(original.scope_path).resolve(strict=False)
+    if path.is_dir():
+        return service.process_library(
+            library,
+            execute=execute,
+            limit=limit,
+            progress=lambda done, total, source: stdout.write(
+                f"PROGRESS {done}/{total or '?'} {source}\n"
+            ),
+            cancellation_check=cancellation_check,
+            skip_sources=skip_sources,
+        )
+    relative = path.relative_to(Path(display_root).resolve(strict=False)).as_posix()
+    storage_path = _storage_path(library.root_path, relative)
+    if (library.storage_id, storage_path) in skip_sources:
+        return MediaOrganizerBatchResult(())
+    return MediaOrganizerBatchResult(
+        (
+            service.process_file(
+                path.as_posix(),
+                resource_library=library,
+                storage_path=storage_path,
+                execute=execute,
+            ),
+        )
+    )
 
 
 def render_summary(summary: MediaOrganizerBatchResult, *, execute: bool) -> str:
@@ -1045,6 +1213,7 @@ def render_tasks(tasks: tuple[PersistentTask, ...]) -> str:
     for task in tasks:
         lines.append(
             f"{task.task_id} | {task.command} | {task.status.value} | "
+            f"pause_requested={'yes' if task.pause_requested else 'no'} | "
             f"total={task.total_items} completed={task.completed_items} failed={task.failed_items}"
         )
     lines.extend(("", f"Total: {len(tasks)}", ""))
@@ -1059,6 +1228,7 @@ def render_task(task: PersistentTask, items: tuple[PersistentTaskItem, ...]) -> 
         f"ID: {task.task_id}",
         f"Command: {task.command}",
         f"Status: {task.status.value}",
+        f"Pause requested: {'YES' if task.pause_requested else 'NO'}",
         f"Execute authorized: {'YES' if task.execute_authorized else 'NO'}",
         f"Created: {task.created_at.isoformat()}",
         "",

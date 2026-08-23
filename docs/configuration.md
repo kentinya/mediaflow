@@ -433,6 +433,7 @@ mediaflow confirmations show CONFIRMATION_ID
 mediaflow confirmations resolve CONFIRMATION_ID --strategy rename --actor operator
 mediaflow confirmations resolve CONFIRMATION_ID --strategy overwrite --confirm-overwrite
 mediaflow tasks show TASK_ID
+mediaflow tasks pause TASK_ID
 mediaflow tasks resume TASK_ID
 mediaflow tasks retry-failed TASK_ID
 ```
@@ -441,6 +442,13 @@ Resume considers interrupted/pending/failed/partial items; retry-failed selects 
 items. Successful, skipped, and DryRun results are excluded. Retry without `--execute` creates a new
 DryRun task. Execute is accepted only if the original task was execute-authorized and the retry
 command supplies a fresh `--execute` flag.
+
+Pause is a persistent cooperative request. The running workflow observes it before scheduling the
+next media item, acknowledges `paused`, and releases Task-owned source locks. It does not interrupt
+an in-flight provider or Storage call and does not trigger Organizer rollback. Resume replays the
+saved command/scope in a new Task, skips paths already represented by successful/DryRun/skipped
+results, and rescans only to discover the remaining scoped work. Pause/resume control itself does
+not construct Storage or providers.
 
 ## Development API and background DryRun jobs
 

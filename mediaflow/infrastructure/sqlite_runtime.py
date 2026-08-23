@@ -60,7 +60,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 class SQLiteTaskRepository:
@@ -96,7 +96,7 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             self._connection.execute(
                 """
-                INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._task_values(task),
             )
@@ -107,12 +107,40 @@ class SQLiteTaskRepository:
                 """
                 UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?,
                     updated_at=?, started_at=?, completed_at=?, total_items=?, completed_items=?,
-                    failed_items=?, error=? WHERE task_id=?
+                    failed_items=?, error=?, pause_requested=?, scope_path=?, item_limit=?
+                    WHERE task_id=?
                 """,
                 (*self._task_values(task)[1:], task.task_id),
             )
             if cursor.rowcount != 1:
                 raise LookupError(f"task {task.task_id!r} is not configured")
+
+    def request_task_pause(self, task_id: str, updated_at: datetime) -> PersistentTask:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE tasks SET pause_requested=1, updated_at=? WHERE task_id=? AND status=?",
+                (updated_at.isoformat(), task_id, PersistentTaskStatus.RUNNING.value),
+            )
+            if cursor.rowcount != 1:
+                existing = self.get_task(task_id)
+                if existing is None:
+                    raise LookupError(f"task {task_id!r} was not found")
+                if existing.status is PersistentTaskStatus.RUNNING and existing.pause_requested:
+                    return existing
+                raise ValueError("only a running task can be paused")
+            row = self._connection.execute(
+                "SELECT * FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+        return self._task(row)
+
+    def task_pause_requested(self, task_id: str) -> bool:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT pause_requested FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+        if row is None:
+            raise LookupError(f"task {task_id!r} was not found")
+        return bool(row["pause_requested"])
 
     def get_task(self, task_id: str) -> PersistentTask | None:
         with self._lock:
@@ -189,6 +217,7 @@ class SQLiteTaskRepository:
                 partial_success=task_counts.get("partial_success", 0),
                 failed=task_counts.get("failed", 0),
                 cancelled=task_counts.get("cancelled", 0),
+                paused=task_counts.get("paused", 0),
             ),
             jobs=DashboardJobCounts(
                 total=sum(job_counts.values()),
@@ -1682,7 +1711,9 @@ class SQLiteTaskRepository:
                     execute_authorized INTEGER NOT NULL, created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL, started_at TEXT, completed_at TEXT,
                     total_items INTEGER NOT NULL, completed_items INTEGER NOT NULL,
-                    failed_items INTEGER NOT NULL, error TEXT
+                    failed_items INTEGER NOT NULL, error TEXT,
+                    pause_requested INTEGER NOT NULL DEFAULT 0,
+                    scope_path TEXT, item_limit INTEGER
                 );
                 CREATE TABLE IF NOT EXISTS task_items (
                     item_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, storage_id TEXT NOT NULL,
@@ -1865,6 +1896,18 @@ class SQLiteTaskRepository:
                 row["name"]
                 for row in self._connection.execute("PRAGMA table_info(task_results)").fetchall()
             }
+            task_columns = {
+                row["name"]
+                for row in self._connection.execute("PRAGMA table_info(tasks)").fetchall()
+            }
+            if "pause_requested" not in task_columns:
+                self._connection.execute(
+                    "ALTER TABLE tasks ADD COLUMN pause_requested INTEGER NOT NULL DEFAULT 0"
+                )
+            if "scope_path" not in task_columns:
+                self._connection.execute("ALTER TABLE tasks ADD COLUMN scope_path TEXT")
+            if "item_limit" not in task_columns:
+                self._connection.execute("ALTER TABLE tasks ADD COLUMN item_limit INTEGER")
             if "completed_operations" not in columns:
                 self._connection.execute(
                     "ALTER TABLE task_results ADD COLUMN "
@@ -1940,6 +1983,9 @@ class SQLiteTaskRepository:
             task.completed_items,
             task.failed_items,
             task.error,
+            int(task.pause_requested),
+            task.scope_path,
+            task.item_limit,
         )
 
     @staticmethod
@@ -1978,6 +2024,9 @@ class SQLiteTaskRepository:
             row["completed_items"],
             row["failed_items"],
             row["error"],
+            bool(row["pause_requested"]),
+            row["scope_path"],
+            row["item_limit"],
         )
 
     @staticmethod

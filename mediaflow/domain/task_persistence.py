@@ -13,6 +13,7 @@ class PersistentTaskStatus(StrEnum):
     PARTIAL_SUCCESS = "partial_success"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    PAUSED = "paused"
 
 
 class TaskItemStatus(StrEnum):
@@ -27,10 +28,17 @@ class TaskItemStatus(StrEnum):
     WAITING_CONFIRM = "waiting_confirm"
     WAITING_METADATA = "waiting_metadata"
     WAITING_CLASSIFICATION = "waiting_classification"
+    PAUSED = "paused"
 
     @property
     def retryable(self) -> bool:
-        return self in {self.PROCESSING, self.PARTIAL, self.FAILED, self.CANCELLED}
+        return self in {
+            self.PROCESSING,
+            self.PARTIAL,
+            self.FAILED,
+            self.CANCELLED,
+            self.PAUSED,
+        }
 
 
 @dataclass(frozen=True)
@@ -47,6 +55,9 @@ class PersistentTask:
     completed_items: int = 0
     failed_items: int = 0
     error: str | None = None
+    pause_requested: bool = False
+    scope_path: str | None = None
+    item_limit: int | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +146,8 @@ class ConflictDecisionAudit:
 class PersistentTaskRepository(Protocol):
     def create_task(self, task: PersistentTask) -> None: ...
     def update_task(self, task: PersistentTask) -> None: ...
+    def request_task_pause(self, task_id: str, updated_at: datetime) -> PersistentTask: ...
+    def task_pause_requested(self, task_id: str) -> bool: ...
     def get_task(self, task_id: str) -> PersistentTask | None: ...
     def list_tasks(
         self,

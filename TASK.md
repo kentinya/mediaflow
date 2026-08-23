@@ -1,91 +1,85 @@
-# Phase 20.3 — Explicit Bounded In-Invocation Organizer Rollback
+# Phase 20.4 — Durable Cooperative Task Pause and Resume
 
 ## Goal
 
-Add an opt-in, fail-closed compensation path to OrganizerExecutor so a failed multi-step execution
-can reverse only the effects created and recorded by that same invocation.
+Add an explicit, persistent pause request and safe continuation state machine for long-running
+MediaFlow Tasks without interrupting an in-flight media operation or weakening execution authority.
 
 ## Scope
 
-### 1. Rollback domain policy and evidence
+### 1. Persistent state and migration
 
-- Add immutable RollbackPolicy, status, step/evidence and ExecutionResult rollback fields.
-- Rollback defaults disabled. Enabling it is explicit OrganizePolicy configuration.
-- Record attempted action, Storage identities, relative paths, outcome and bounded error category;
-  never record media content, credentials or secret-derived values.
+- Add PAUSED Task/TaskItem states and a durable pause-request flag through a forward-only SQLite
+  migration. Existing databases and records remain readable.
+- Expose repository operations that atomically request pause and inspect the request.
+- Persist the safe checkpoint transition, timestamps and bounded reason without storing secrets.
 
-### 2. Owned-effect execution journal
+### 2. Cooperative safe checkpoints
 
-- OrganizerExecutor records each successfully created target and directory as execution proceeds.
-- Capture a bounded target fingerprint from Storage stat after mutation and verify it again before
-  compensation. A changed/unverifiable target is unknown and must not be deleted or moved.
-- Journal only this invocation. Never infer ownership from historical paths, scan results, naming,
-  or a failed operation that produced no verifiable target.
+- A pause request is observed only before scheduling the next media item or Scanner unit of work.
+- Never interrupt Parser/Metadata/Naming/Classification/Planner or OrganizerExecutor mid-call.
+- An in-flight item may finish normally; no rollback is triggered merely because pause was requested.
+- Once acknowledged, pending/processing work becomes PAUSED, Task locks are released, and the Task
+  becomes PAUSED rather than Completed/Cancelled/Failed.
 
-### 3. Reverse-order compensation
+### 3. Explicit continuation
 
-- COPY/HARDLINK/SYMLINK: delete only the invocation-owned destination.
-- Same-storage MOVE: move the invocation-owned destination back only when source is absent.
-- Cross-storage MOVE: if source still exists after copy/delete failure, remove only the owned target;
-  if source was deleted, restore it by bounded Storage transfer and verification before removing the
-  target. Never overwrite a reappeared source.
-- Roll back attachments and primary in strict reverse completion order, then optionally delete only
-  directories created by this invocation; non-empty/changed directories are left with explicit error.
+- Add `mediaflow tasks pause <task-id>` and preserve `mediaflow tasks resume <task-id>` as the only
+  explicit continuation entry point.
+- Resume accepts PAUSED Tasks, selects only paused/retryable unfinished items, creates a new auditable
+  continuation Task, and never repeats an item with a persisted successful/DryRun/skipped result.
+- Resume never increases execute authority: an original DryRun cannot become execute; an authorized
+  organize continuation still requires a fresh `--execute`.
+- Invalid transitions fail clearly and do not access Storage.
 
-### 4. Result and status semantics
+### 4. Boundary and observability
 
-- Original execution failure remains visible. Successful compensation returns FAILED with rollback
-  status SUCCESS; failed/incomplete compensation returns PARTIAL.
-- Failure before an owned mutation returns FAILED with rollback NOT_NEEDED.
-- Successful execution and DryRun never run rollback. DryRun remains zero mutation.
-- Persist rollback operation markers through existing completed-operation/result evidence and emit
-  structured redacted logs without changing Task retry semantics.
+- Task list/show output displays paused state and pause-request status without exposing claim tokens,
+  paths beyond existing authorized output, or secrets.
+- Pause is distinct from cancellation, retry, rollback, Automation Job cancellation and claim loss.
+- Existing Automation Job claim fencing/heartbeat and Organizer rollback behavior remain unchanged.
 
-### 5. Safety/configuration
+## Safety Boundaries
 
-- Reject rollback-enabled execution with overwrite authorization because the previous destination
-  cannot be reconstructed safely.
-- Add optional `rollback: {"enabled": false, "cleanupCreatedDirectories": true}` to external
-  OrganizePolicy configuration. Validate unknown fields and non-booleans at startup.
-- Only OrganizerExecutor may perform compensation mutations, through Storage interfaces only.
-
-## Boundaries
-
-- No arbitrary historical/manual rollback command, unknown-file cleanup, recursive delete, automatic
-  retry, Task pause/resume, empty source-directory cleanup, or distributed transaction claim.
-- Do not change Parser, Recognition, Metadata, Naming, Classification or Scanner/FileIndex semantics.
-- Do not add FFmpeg/FFprobe and do not begin Phase 20.4.
+- No forced thread/process termination, signal injection, Storage cancellation mid-mutation,
+  automatic retry, unattended execute, historical rollback, empty-directory cleanup or Phase 20.5.
+- No Parser, Recognition, Metadata, Naming, Classification, Planner, Scanner traversal, Storage
+  adapter or OrganizerExecutor semantic redesign.
+- Pause/resume control itself performs zero Storage/network operations and zero media mutations.
+- Do not add FFmpeg/FFprobe.
 
 ## Required Tests
 
-- Default disabled compatibility and DryRun zero mutation.
-- COPY/LINK target compensation, same-storage MOVE restore, cross-storage MOVE copy-failure cleanup
-  and post-delete restore, attachment reverse order and created-directory cleanup.
-- No-effect failure, overwrite rejection, source reappeared, target fingerprint changed, unknown
-  target, rollback mutation failure, non-empty directory and partial rollback.
-- ExecutionResult/log/persistent completed-operation evidence and deterministic bounded errors.
-- LocalStorage integration plus fake Storage fault injection; C identity and prior plan unchanged.
+- SQLite migration, persistence across reopen, atomic/idempotent pause request and invalid transitions.
+- Pause before first item, between items, and request during an in-flight item; the item finishes and
+  no next item starts.
+- Paused item/lock handling, explicit resume selection, successful-result exclusion and attempt count.
+- DryRun authority preservation, authorized execute requiring fresh `--execute`, cancellation
+  distinction, concurrent pause/checkpoint behavior and bounded output.
+- Pause command zero Storage/network mutation; C identity, Organizer rollback and existing Task/Job
+  claim fencing regressions remain unchanged.
 
 ## Validation
 
-Run Phase 20.3, Organizer/attachments/conflict/Task persistence, all Storage, DryRun, Strategy,
-Metadata, Recognition, Parser/NFO, Scanner/FileIndex and complete offline regressions. Run formatter,
-lint, compile, configuration validation, dependency/build checks, FFmpeg/FFprobe audit and diff.
+Run Phase 20.4 Task/CLI/persistence tests, Automation claim/cancellation regressions, Organizer and
+rollback, Scanner/FileIndex, all Storage, DryRun, Strategy/Metadata/Recognition/Parser/NFO and the
+complete offline suite. Run formatter, lint, compile, dependency, both configuration validations,
+FFmpeg/FFprobe audit, wheel build and diff checks.
 
-Update `README.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/progress.md`,
-`docs/roadmap.md`, and requirements status with exact rollback non-claims.
+Update `README.md`, `docs/architecture.md`, `docs/progress.md`, `docs/roadmap.md`, requirements status
+and the product specification with exact pause/resume non-claims.
 
 ## Completion Report
 
 Use AGENTS.md structure and additionally report:
 
-## Phase 20.3 Result
+## Phase 20.4 Result
 
 PASS / FAIL
 
-## Rollback Semantics
+## Pause Semantics
 
-## Compensation Matrix
+## Resume Semantics
 
 ## Safety
 

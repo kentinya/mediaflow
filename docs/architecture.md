@@ -82,8 +82,17 @@ Locks are atomically keyed by `StorageID + normalized Storage-relative source pa
 releases them. Explicit resume/retry reclaims only locks owned by the selected stale task and then
 creates a new auditable task. Execution requires prior authorization plus a fresh `--execute`.
 
-This is a recoverable-task foundation, not a background worker. Live pause/control, scheduler,
-distributed leases, and automatic crash replay remain deferred. See [`docs/roadmap.md`](roadmap.md).
+Phase 20.4 adds a durable `pause_requested` flag and PAUSED Task/TaskItem states. The foreground
+workflow polls only at Scanner/media-item boundaries; an already-entered pipeline or
+OrganizerExecutor call completes normally. Acknowledgement converts unfinished known items to
+PAUSED and releases Task locks. Explicit resume creates a new auditable continuation with the same
+scope/limit, retries paused/retryable items, rescans that scope for work not yet discovered, and
+filters persisted successful/DryRun/skipped results.
+
+Pause is not cancellation, rollback, forced interruption, claim loss, automatic retry, or execution
+authorization. It does not alter Automation Job claim fencing, and an organize continuation requires
+both original execute authorization and a fresh `--execute`. Distributed Task leases and automatic
+crash replay remain deferred. See [`docs/roadmap.md`](roadmap.md).
 
 ## Attachment file sets
 

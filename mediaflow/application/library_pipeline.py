@@ -72,6 +72,7 @@ class ResourceLibraryScanBatch:
 
 
 LibraryDiscoveryCallback = Callable[[ResourceLibrary, DiscoveredFile], None]
+LibraryDiscoveryFilter = Callable[[ResourceLibrary, DiscoveredFile], bool]
 CancellationCheck = Callable[[], bool]
 
 
@@ -102,6 +103,7 @@ class ResourceLibraryScanner:
         *,
         limit: int | None = None,
         on_discovered: LibraryDiscoveryCallback | None = None,
+        include_discovered: LibraryDiscoveryFilter | None = None,
         cancellation_check: CancellationCheck | None = None,
     ) -> ResourceLibraryScanBatch:
         if limit is not None and limit < 1:
@@ -123,6 +125,8 @@ class ResourceLibraryScanner:
                     cancellation.cancel()
                     return
                 if file.status is not FileScanStatus.READY:
+                    return
+                if include_discovered and not include_discovered(library, file):
                     return
                 if limit is not None and discovered >= limit:
                     cancellation.cancel()

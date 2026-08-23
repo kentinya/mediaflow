@@ -37,7 +37,7 @@ Runtime Configuration
 | Naming | 已完成 | 安全模板、Unicode、多集、预览 | 用户界面配置体验 |
 | Classification | 已完成 | 确定性规则、媒体库选择、持久人工规则选择/恢复 | 自由路径修正明确禁止；完整 UI 待做 |
 | Planner/Executor | 部分完成 | 计划、完整冲突策略、附件、可配置 Hash 重复证据、有界同次执行 Rollback、DryRun、真实执行、跨存储 | 历史/崩溃恢复、空目录清理、Hash 持久复用 |
-| Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、claim fencing/心跳、锁、JSONL 历史 | 通用 pause/resume、统一重试、不确定执行恢复 |
+| Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、协作 pause/resume、claim fencing/心跳、锁、JSONL 历史 | 统一重试、不确定执行恢复 |
 | API/UI/Scheduler | 部分完成 | API/RBAC/审计、最小安全操作台、Dashboard、Cron、通知、一次性授权执行 | 文件管理 UI、配置管理、登录/外部身份源 |
 
 ## 总体阶段计划
@@ -254,7 +254,7 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 
 | 领域 | 完成度 | 主要剩余缺口 |
 |---|---|---|
-| 核心引擎（§1–§79） | ~95% | 任务暂停/继续、统一自动重试、空目录清理；历史 Rollback 与 Hash 持久复用留后续 |
+| 核心引擎（§1–§79） | ~96% | 统一自动重试、空目录清理；历史 Rollback 与 Hash 持久复用留后续 |
 | 存储层（§4–§10） | ~94% | 有界 Local/Samba/OpenList/MinIO 实机矩阵已通过；AWS/R2、第三方 driver、远端原子发布、Range Read/大对象服务端 Copy 未认证或未实现 |
 | 任务与自动化（§62–§70、§98） | ~88% | 定时缓存/日志清理未实现；claim fencing/心跳已完成 |
 | API 与 Web UI（§93–§96、§102） | ~35% | 仅只读运维操作台；文件列表、搜索筛选、媒体详情、人工修正交互均未实现 |
@@ -286,7 +286,7 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 - Phase 20.1 NFO Parser 已完成：Storage-only 有界读取、安全 XML、确定性证据合并和生产管线接入。
 - Phase 20.2 Hash 重复检测已完成：不计算/快速/完整，默认不计算；证据只读且失败闭合。
 - 有界整理 Rollback 已完成：只补偿同次调用记录且再次验证的效果，不触碰未知文件；历史/崩溃恢复不在该边界（§49、§69）。
-- 任务暂停/继续语义（§66）与统一自动重试策略（§79）。
+- 任务暂停/继续语义（§66）已完成；统一自动重试策略（§79）留给 Phase 20.5。
 - 空目录清理策略（§61）。
 - 完成后可发布 CLI/API 完整版 v1.0。
 
@@ -326,8 +326,8 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 
 后续任务仍应保持小步推进。优先顺序：
 
-1. 进入 Phase 20.4，实现通用 Task pause/resume 的明确状态、claim 与恢复边界。
-2. 随后按 Phase 20.x 顺序实现 Task pause/resume、统一重试和空目录清理。
+1. 进入 Phase 20.5，实现统一、配置化且有界的自动重试策略。
+2. 随后按 Phase 20.x 顺序实现安全空目录清理。
 3. AWS S3/Cloudflare R2、多小时 soak、服务/主机终止仍作为部署专项验收，不阻塞有界 Phase 19 profile。
 4. Phase 20 收口前不启动 Phase 21/22 的 UI 与配置管理扩展。
 

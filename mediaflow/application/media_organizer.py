@@ -320,6 +320,7 @@ class MediaOrganizerService:
         limit: int | None = None,
         progress: ProgressReporter | None = None,
         cancellation_check: CancellationCheck | None = None,
+        skip_sources: set[tuple[str, str]] | None = None,
     ) -> MediaOrganizerBatchResult:
         items: list[MediaOrganizerItemResult] = []
         cancellation = CancellationToken()
@@ -330,6 +331,8 @@ class MediaOrganizerService:
                 cancellation.cancel()
                 return
             if file.status is not FileScanStatus.READY:
+                return
+            if (library.storage_id, file.path) in (skip_sources or set()):
                 return
             relative_display_path = file.path
             library_root = library.root_path.strip("/")
@@ -370,6 +373,7 @@ class MediaOrganizerService:
         limit: int | None = None,
         progress: ProgressReporter | None = None,
         cancellation_check: CancellationCheck | None = None,
+        skip_sources: set[tuple[str, str]] | None = None,
     ) -> MediaOrganizerBatchResult:
         """Process all enabled configured libraries without local-path assumptions."""
         items: list[MediaOrganizerItemResult] = []
@@ -392,6 +396,13 @@ class MediaOrganizerService:
         batch = ResourceLibraryScanner(self._scanner, libraries, self._storages).scan_all(
             limit=limit,
             on_discovered=discovered,
+            include_discovered=lambda library, file: (
+                (
+                    library.storage_id,
+                    file.path,
+                )
+                not in (skip_sources or set())
+            ),
             cancellation_check=cancellation_check,
         )
         errors = tuple(error for result in batch.results for error in result.errors)

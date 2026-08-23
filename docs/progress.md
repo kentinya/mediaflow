@@ -46,11 +46,12 @@
 - Phase 20.1 safe read-only NFO Parser and pipeline evidence merge: PASS
 - Phase 20.2 configurable read-only Hash duplicate detection: PASS
 - Phase 20.3 explicit bounded in-invocation Organizer rollback: PASS
-- Current development boundary: Phase 20.4 Task pause/resume is next
+- Phase 20.4 durable cooperative Task pause/resume: PASS
+- Current development boundary: Phase 20.5 unified retry policy is next
 
 ## Planned
 
-- Phase 20: bounded Rollback, Task pause/resume, unified retry, and safe empty-directory cleanup,
+- Phase 20: unified retry and safe empty-directory cleanup,
   delivered as separate small phases
 - Phase 21: complete manual media correction and file/media workflow UI
 - Phase 22: configuration-management architecture decision and configuration CRUD/reference/audit
@@ -1363,3 +1364,18 @@ Phase 20.3 explicit bounded in-invocation Organizer rollback (2026-08-23): PASS
 - Full offline suite: 539 tests, 532 passed, 0 failed, 7 explicitly gated real profiles skipped;
   Ruff format/lint, compile, dependency, both example configurations, FFmpeg/FFprobe source audit,
   diff, and isolated wheel gates passed
+
+Phase 20.4 durable cooperative Task pause/resume (2026-08-23): PASS
+
+- Added SQLite schema v15 with PAUSED Task/TaskItem states, durable pause request, exact scope path
+  and item limit; schema v14 records migrate with safe defaults
+- Added atomic/idempotent pause request, item-boundary acknowledgement, paused-item selection and
+  Task-lock release without interrupting an in-flight pipeline or OrganizerExecutor call
+- Added `mediaflow tasks pause TASK_ID`; pause/show requires no Storage/provider construction and
+  task output exposes the bounded request state without claim tokens or saved scope paths
+- Explicit resume creates a new auditable continuation, retries known unfinished items, rescans the
+  saved scope for undiscovered work, and excludes paths already observed by the original Task
+- DryRun cannot gain execute authority; an originally authorized organize continuation still needs
+  a fresh `--execute`. Pause is not cancellation, rollback, automatic retry or claim loss
+- Full offline suite: 550 tests, 543 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  Task/Automation/claim/Organizer/Scanner regressions passed

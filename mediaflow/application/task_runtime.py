@@ -24,6 +24,10 @@ class TaskLockError(RuntimeError):
     pass
 
 
+class TaskPauseRequested(RuntimeError):
+    pass
+
+
 class PersistentTaskCoordinator:
     """Persists orchestration state without owning any media strategy decision."""
 
@@ -35,7 +39,16 @@ class PersistentTaskCoordinator:
         self.repository = repository
         self.locks = locks
 
-    def create(self, command: str, *, execute_authorized: bool) -> PersistentTask:
+    def create(
+        self,
+        command: str,
+        *,
+        execute_authorized: bool,
+        scope_path: str | None = None,
+        item_limit: int | None = None,
+    ) -> PersistentTask:
+        if item_limit is not None and item_limit < 1:
+            raise ValueError("task item limit must be positive")
         now = datetime.now(UTC)
         task = PersistentTask(
             str(uuid4()),
@@ -45,6 +58,8 @@ class PersistentTaskCoordinator:
             now,
             now,
             started_at=now,
+            scope_path=scope_path,
+            item_limit=item_limit,
         )
         self.repository.create_task(task)
         return task
@@ -62,6 +77,7 @@ class PersistentTaskCoordinator:
             updated_at=now,
             completed_at=None,
             error=None,
+            pause_requested=False,
         )
         self.locks.reclaim_task_locks(task_id)
         self.repository.update_task(reopened)
@@ -84,6 +100,8 @@ class PersistentTaskCoordinator:
         task = self.require(task_id)
         if task.status is not PersistentTaskStatus.RUNNING:
             raise RuntimeError(f"task {task_id!r} is not running")
+        if task.pause_requested or self.repository.task_pause_requested(task_id):
+            raise TaskPauseRequested(f"task {task_id!r} pause was requested")
         item_id = str(uuid5(NAMESPACE_URL, f"{task_id}:{storage_id}:{source_path}"))
         previous = self.repository.get_item(item_id)
         now = datetime.now(UTC)
@@ -117,7 +135,11 @@ class PersistentTaskCoordinator:
         task = self.require(task_id)
         now = datetime.now(UTC)
         for item in self.repository.list_items(task_id):
-            if item.status in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}:
+            if item.status in {
+                TaskItemStatus.PENDING,
+                TaskItemStatus.PROCESSING,
+                TaskItemStatus.PAUSED,
+            }:
                 self.repository.upsert_item(
                     replace(
                         item,
@@ -137,6 +159,42 @@ class PersistentTaskCoordinator:
         self.repository.update_task(cancelled)
         self.locks.reclaim_task_locks(task_id)
         return cancelled
+
+    def request_pause(self, task_id: str) -> PersistentTask:
+        return self.repository.request_task_pause(task_id, datetime.now(UTC))
+
+    def pause_requested(self, task_id: str) -> bool:
+        return self.repository.task_pause_requested(task_id)
+
+    def acknowledge_pause(self, task_id: str) -> PersistentTask:
+        task = self.require(task_id)
+        if task.status is PersistentTaskStatus.PAUSED:
+            return task
+        if task.status is not PersistentTaskStatus.RUNNING or not task.pause_requested:
+            raise ValueError("only a running task with a pause request can be paused")
+        now = datetime.now(UTC)
+        for item in self.repository.list_items(task_id):
+            if item.status in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}:
+                self.repository.upsert_item(
+                    replace(
+                        item,
+                        status=TaskItemStatus.PAUSED,
+                        stage="paused",
+                        updated_at=now,
+                        error=None,
+                    )
+                )
+        paused = replace(
+            task,
+            status=PersistentTaskStatus.PAUSED,
+            updated_at=now,
+            completed_at=None,
+            error=None,
+            pause_requested=False,
+        )
+        self.repository.update_task(paused)
+        self.locks.reclaim_task_locks(task_id)
+        return paused
 
     def record_discovered(
         self,
@@ -284,6 +342,7 @@ class PersistentTaskCoordinator:
                 TaskItemStatus.FAILED,
                 TaskItemStatus.PARTIAL,
                 TaskItemStatus.CANCELLED,
+                TaskItemStatus.PAUSED,
             }
         )
         successful_results = {

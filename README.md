@@ -66,6 +66,7 @@ mediaflow storage list
 mediaflow storage check
 mediaflow storage check STORAGE_ID
 mediaflow tasks show TASK_ID
+mediaflow tasks pause TASK_ID
 mediaflow tasks resume TASK_ID
 mediaflow tasks retry-failed TASK_ID --execute
 mediaflow jobs submit scan --limit 20
@@ -475,3 +476,14 @@ Organizer rollback is an explicit per-policy option and remains disabled by defa
 
 It compensates only verified effects created by the same failed invocation. It never overwrites a
 reappeared source, removes a changed target, or reverts an older execution.
+
+Long-running Tasks support durable cooperative pause at media-item boundaries:
+
+```bash
+mediaflow tasks pause TASK_ID
+mediaflow tasks resume TASK_ID
+```
+
+An in-flight item is allowed to finish; pause never interrupts OrganizerExecutor or rolls work back.
+Resume creates a new auditable continuation, excludes already successful/DryRun/skipped results, and
+cannot upgrade execution authority. A real organize continuation still needs a fresh `--execute`.
