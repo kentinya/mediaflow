@@ -485,6 +485,12 @@ operation history remains compatible.
 
 ## Current milestone
 
+Phase 22 configuration management has an internal durable Storage CRUD foundation. It validates the
+supported Local/SMB/OpenList/S3/R2/S3-compatible shapes, keeps credentials environment-owned,
+records optimistic versions and redacted Before/After audits in SQLite, and blocks Storage deletion
+when a Resource/Media Library reference exists. This repository is not yet exposed through JSON
+runtime loading, API/UI/CLI, adapter construction, or media workflows.
+
 The authenticated operator console now includes a read-only **System** tab. It is backed by a
 precomputed `GET /api/v1/system/status` snapshot and shows bounded Storage/library/policy wiring plus
 runtime compatibility. Root paths, display paths, scan-rule values, naming templates,

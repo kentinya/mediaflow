@@ -1433,3 +1433,20 @@ Phase 22.0 establishes that JSON remains the validated runtime input, SQLite wil
 configuration-change/audit store, and credentials remain environment- or Secret Store-owned. A
 minimal domain skeleton classifies configuration object families and defines reference/audit
 models without enabling CRUD yet.
+
+### Phase 22.1 Storage configuration CRUD foundation
+
+Phase 22.1 adds the first durable CRUD slice. `ManagedStorageConfiguration` is separate from the
+runtime loader's `StorageDefinition`; validation covers Local, SMB, OpenList, AWS S3, Cloudflare R2,
+and generic S3-compatible shapes without constructing an adapter or contacting a service. It accepts
+only environment-variable names for credentials and rejects literal or nested secret-like fields.
+
+`StorageConfigurationService` provides create/read/list/update/copy/enable/disable/delete with
+optimistic versions and Before/After audits. `SQLiteConfigurationRepository` persists generic
+configuration-object, reference, and redacted audit records under a separate
+`configuration_management` schema marker. Storage deletion and reference counting run in one SQLite
+write transaction. A Resource/Media Library reference therefore blocks deletion by default.
+
+This repository is deliberately not connected to the production JSON loader, API, Web UI, CLI,
+scheduler, Storage construction, scanning, planning, or organizing. Runtime JSON remains the active
+source of truth, and configuration changes cannot yet be made through an operator interface.

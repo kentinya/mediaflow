@@ -77,14 +77,15 @@
 - Phase 21.25 file detail re-recognize/re-plan Web UI/API: PASS
 - Phase 21.26 file detail Metadata re-match Web UI/API and Phase 21 closure: PASS
 - Phase 22.0 configuration management architecture decision and domain skeleton: PASS
-- Current development boundary: Phase 22.1 configuration CRUD/validation
+- Phase 22.1 durable Storage configuration CRUD foundation: PASS
+- Current development boundary: Phase 22.2 Resource/Media Library configuration CRUD and references
 
 ## Planned
 
 - Phase 20: core engine closure completed in bounded phases; historical recovery remains a separate
   non-claim
 - Phase 21: complete manual media correction and file/media workflow UI
-- Phase 22: configuration-management architecture decision and configuration CRUD/reference/audit
+- Phase 22: remaining configuration CRUD/reference/audit, import/export, and management UI families
 - Later: external identity/OIDC and Secret Store evaluation; no weak in-core substitute
 
 ## Known Issues
@@ -1829,4 +1830,19 @@ Phase 22.0 configuration management architecture decision and domain skeleton (2
   CRUD/reference repository protocol; secret-like fields are structurally redacted
 - Full offline suite: 655 tests, 648 passed, 0 failed, 7 explicitly gated real profiles skipped;
   formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 22.1 durable Storage configuration CRUD foundation (2026-08-23): PASS
+
+- Added the managed Storage configuration model and secret-free validation for Local, SMB, OpenList,
+  AWS S3, Cloudflare R2, and generic S3-compatible definitions
+- Added an internal create/read/list/update/copy/enable/disable/delete service with optimistic
+  versions and Before/After audit records
+- Added a SQLite configuration repository with generic object/reference/audit tables, a separate
+  `configuration_management` schema marker, transactional rollback, and default reference-blocked
+  Storage deletion
+- Kept the new write path disconnected from runtime JSON loading, API/Web UI/CLI, scheduler,
+  Storage construction, scanning, planning, and organizing; no network service was required
+- Full offline suite: 666 tests, 659 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, both example configuration, FFmpeg/FFprobe source audit,
   diff and isolated wheel gates passed

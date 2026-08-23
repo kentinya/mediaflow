@@ -3031,6 +3031,10 @@ System Settings
 
 > 当前实现（Phase 22.0）：已完成配置管理架构决策与领域骨架；JSON 仍为运行时输入，
 > SQLite 将承载配置变更/审计，凭证保持环境或 Secret Store 归属。
+> 当前实现（Phase 22.1）：新增内部 durable Storage 配置模型、校验、CRUD 服务与 SQLite
+> 变更/引用/审计存储；支持 Local/SMB/OpenList/S3/R2/S3-compatible，凭证仅允许环境变量名，
+> 字面与嵌套 secret 字段被拒绝。该写入口尚未接入 JSON 加载、API、Web UI、CLI、调度器、
+> Storage 构造或媒体工作流。
 
 ---
 
@@ -3057,6 +3061,10 @@ A规则
 ↓
 修改为C规则
 ```
+
+> 当前实现（Phase 22.1）：Storage 配置在内部服务/SQLite 仓库层支持新增、读取、列表、编辑、
+> 复制、启用、禁用与删除，并使用乐观版本与 Before/After 审计。`测试` 与操作界面/导入导出
+> 仍是后续范围。
 
 ---
 
@@ -3086,6 +3094,10 @@ RecognitionType C
 ```
 
 默认禁止删除。
+
+> 当前实现（Phase 22.1）：Storage 删除与引用计数在同一 SQLite 写事务内执行；存在
+> Resource/Media Library 引用时默认阻断并保留原对象与审计状态。后续配置族的引用删除提示、
+> 引用清理与完整引用详情仍未实现。
 
 ---
 

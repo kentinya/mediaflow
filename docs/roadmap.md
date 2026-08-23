@@ -356,6 +356,9 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
   下一阶段进入 Phase 22 配置管理系统。
 - Phase 22.0 已完成：配置管理架构决策与领域骨架；JSON 作为运行时输入、SQLite 作为变更/
   审计存储、凭证保持环境或 Secret Store 归属，12+ 配置对象分类与引用/审计模型已建立。
+- Phase 22.1 已完成：第一批 Storage 配置内部 CRUD/校验/乐观版本/Before-After 审计与
+  SQLite 引用阻断；支持六类 Storage 形状并拒绝字面/嵌套 secret。该入口尚未接入运行时
+  JSON、API/UI/CLI、Storage 构造或媒体工作流。
 - 未识别媒体人工指定 RecognitionType（§80）。
 - 批量操作体系（§83）。
 - 文件列表/搜索筛选/媒体详情页（§94–§96），含重新识别/重新匹配/重新生成 Plan。
@@ -388,7 +391,8 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 
 后续任务仍应保持小步推进。优先顺序：
 
-1. 进入 Phase 22.1，开始实现配置对象 CRUD 与引用关系检查的第一批配置族。
+1. 进入 Phase 22.2，实现 Resource/Media Library 配置 CRUD，并复用 Phase 22.1 的 Storage
+   引用登记与事务删除阻断。
 2. 保持历史/崩溃恢复与 Hash 持久复用为后续独立专项边界。
 3. AWS S3/Cloudflare R2、多小时 soak、服务/主机终止仍作为部署专项验收，不阻塞有界 Phase 19 profile。
 4. Phase 20 收口前不启动 Phase 21/22 的 UI 与配置管理扩展。

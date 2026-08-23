@@ -929,6 +929,21 @@ Storage options. The System UI uses the same endpoint and offers explicit refres
 
 The snapshot is not reloaded per request. After a configuration change, continue to run
 `mediaflow config validate`, then restart the API process to publish the newly validated snapshot.
+
+## Durable Storage configuration CRUD foundation
+
+Phase 22.1 adds an internal, durable Storage configuration repository alongside runtime JSON. It
+validates Local, SMB, OpenList, AWS S3, Cloudflare R2, and generic S3-compatible definitions;
+credentials remain referenced by environment-variable names, and literal or nested secret-like
+fields are rejected. Successful create/update/copy/enable/disable/delete operations store optimistic
+versions and redacted Before/After audit records in SQLite. A Resource/Media Library reference
+blocks Storage deletion transactionally.
+
+This foundation has no operator-facing command and is not yet the runtime source of truth. It does
+not construct Storage adapters, test connectivity, import/export JSON, modify runtime configuration,
+or activate any scan/plan/organize workflow. Continue using the documented JSON validation and
+startup-reload process.
+
 ### Metadata NOT_FOUND correction
 
 A tracked `NOT_FOUND` item enters `WAITING_METADATA_CORRECTION`. The correction queue stores only
