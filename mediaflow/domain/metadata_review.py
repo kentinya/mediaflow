@@ -74,6 +74,13 @@ class MetadataReviewDecisionAudit:
 
 
 @dataclass(frozen=True)
+class MetadataReviewBatchResolveRequest:
+    review: MetadataReview
+    audit: MetadataReviewDecisionAudit
+    item: PersistentTaskItem
+
+
+@dataclass(frozen=True)
 class MetadataSelection:
     recognition_type: str
     metadata_policy_id: str
@@ -93,6 +100,9 @@ class MetadataReviewRepository(Protocol):
     def get_metadata_review(self, review_id: str) -> MetadataReview | None: ...
     def get_metadata_review_for_item(self, item_id: str) -> MetadataReview | None: ...
     def list_metadata_reviews(self, *, limit: int = 100) -> tuple[MetadataReview, ...]: ...
+    def list_pending_metadata_reviews(
+        self, *, limit: int = 100, task_id: str | None = None
+    ) -> tuple[MetadataReview, ...]: ...
     def list_metadata_review_candidates(
         self, review_id: str
     ) -> tuple[MetadataReviewCandidate, ...]: ...
@@ -101,6 +111,9 @@ class MetadataReviewRepository(Protocol):
         review: MetadataReview,
         audit: MetadataReviewDecisionAudit,
         item: PersistentTaskItem,
+    ) -> None: ...
+    def resolve_metadata_reviews_batch(
+        self, requests: tuple[MetadataReviewBatchResolveRequest, ...]
     ) -> None: ...
     def list_metadata_review_audit(
         self, review_id: str

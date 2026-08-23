@@ -53,6 +53,13 @@ class MetadataCorrectionDecisionAudit:
 
 
 @dataclass(frozen=True)
+class MetadataCorrectionBatchResolveRequest:
+    review: MetadataCorrectionReview
+    audit: MetadataCorrectionDecisionAudit
+    item: PersistentTaskItem
+
+
+@dataclass(frozen=True)
 class MetadataCorrectionSelection:
     recognition_type: str
     metadata_policy_id: str
@@ -72,11 +79,17 @@ class MetadataCorrectionRepository(Protocol):
     def list_metadata_corrections(
         self, *, limit: int = 100
     ) -> tuple[MetadataCorrectionReview, ...]: ...
+    def list_pending_metadata_corrections(
+        self, *, limit: int = 100, task_id: str | None = None
+    ) -> tuple[MetadataCorrectionReview, ...]: ...
     def resolve_metadata_correction(
         self,
         review: MetadataCorrectionReview,
         audit: MetadataCorrectionDecisionAudit,
         item: PersistentTaskItem,
+    ) -> None: ...
+    def resolve_metadata_corrections_batch(
+        self, requests: tuple[MetadataCorrectionBatchResolveRequest, ...]
     ) -> None: ...
     def list_metadata_correction_audit(
         self, review_id: str

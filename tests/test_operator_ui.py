@@ -77,10 +77,20 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("'Authorization': `Bearer ${token}`", script)
 
     def test_dashboard_and_review_requests_are_bounded(self) -> None:
+        html = INDEX_HTML.decode()
         script = APP_JS.decode()
+        self.assertIn('data-view="files"', html)
         self.assertIn("/api/v1/dashboard?recentLimit=10", script)
         self.assertIn("?status=pending&limit=100", script)
         self.assertIn("?limit=100", script)
+        self.assertIn("/api/v1/files?", script)
+        self.assertIn("limit=100", script)
+        self.assertIn("showDetail('files'", script)
+        self.assertIn("resourceLibrary", script)
+        self.assertIn("recognitionType", script)
+        self.assertIn("providerId", script)
+        self.assertIn("scanStatus", script)
+        self.assertIn("renderFileReMatchForm", script)
         self.assertIn("metadata-reviews", script)
         self.assertIn("classification-reviews", script)
         self.assertIn("encodeURIComponent(id)", script)
@@ -120,7 +130,6 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("'/api/v1/jobs', {method: 'POST'", script)
         self.assertNotIn("/api/v1/tasks/${encodeURIComponent(id)}/resume", script)
         self.assertNotIn("actor", script.lower())
-        self.assertNotIn("providerId", script)
         self.assertNotIn("mediaLibraryId", script)
         self.assertIn("Task was not resumed", script)
 

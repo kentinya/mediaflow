@@ -26,6 +26,10 @@ from mediaflow.application.classification_review import ClassificationReviewServ
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
+from mediaflow.application.file_metadata_correction import FileMetadataCorrectionService
+from mediaflow.application.file_recognition_request import FileRecognitionRequestService
+from mediaflow.application.file_replan_request import FileReplanRequestService
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.manual_ignore import ManualIgnoreService
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
@@ -34,10 +38,12 @@ from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.application.organizer import OrganizerExecutor
+from mediaflow.application.recognition_batch_retry import RecognitionBatchRetryService
 from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.recognition_review import RecognitionReviewService
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
+from mediaflow.application.task_retry import TaskRetryRequestService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.cli import render_strategy_result
 from mediaflow.domain.automation import AutomationCommand, CronSchedule
@@ -54,6 +60,7 @@ from mediaflow.domain.metadata_review import MetadataReviewStatus, MetadataSelec
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.recognition_review import RecognitionReviewStatus, RecognitionSelection
+from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     PersistentTask,
@@ -102,6 +109,13 @@ def final_main(
     organize.add_argument("path", nargs="?")
     organize.add_argument("--limit", type=int)
     organize.add_argument("--execute", action="store_true")
+    batch = commands.add_parser("batch", help="explicit all-ResourceLibrary batch operations")
+    batch_commands = batch.add_subparsers(dest="batch_command", required=True)
+    batch_preview = batch_commands.add_parser("preview")
+    batch_preview.add_argument("--limit", type=int)
+    batch_organize = batch_commands.add_parser("organize")
+    batch_organize.add_argument("--limit", type=int)
+    batch_organize.add_argument("--execute", action="store_true")
     tasks = commands.add_parser("tasks", help="persistent task operations")
     task_commands = tasks.add_subparsers(dest="task_command", required=True)
     task_list = task_commands.add_parser("list")
@@ -115,6 +129,16 @@ def final_main(
     task_ignore.add_argument("item_id")
     task_ignore.add_argument("--actor", required=True)
     task_ignore.add_argument("--note")
+    task_ignore_pending = task_commands.add_parser("ignore-pending")
+    task_ignore_pending.add_argument("--actor", required=True)
+    task_ignore_pending.add_argument("--note")
+    task_ignore_pending.add_argument("--limit", type=int, default=100)
+    task_ignore_pending.add_argument("--task-id")
+    task_retry_request = task_commands.add_parser("retry-request")
+    task_retry_request.add_argument("--actor", required=True)
+    task_retry_request.add_argument("--note")
+    task_retry_request.add_argument("--limit", type=int, default=100)
+    task_retry_request.add_argument("--task-id")
     for name in ("resume", "retry-failed"):
         task_retry = task_commands.add_parser(name)
         task_retry.add_argument("task_id")
@@ -138,6 +162,45 @@ def final_main(
     storage_commands.add_parser("list", help="list configured Storages without connecting")
     storage_check = storage_commands.add_parser("check", help="run read-only Storage preflight")
     storage_check.add_argument("storage_id", nargs="?")
+    files = commands.add_parser("files", help="read-only indexed file catalog")
+    file_commands = files.add_subparsers(dest="file_command", required=True)
+    file_list = file_commands.add_parser("list")
+    file_list.add_argument("--resource-library")
+    file_list.add_argument("--storage")
+    file_list.add_argument("--scan-status", choices=[item.value for item in FileScanStatus])
+    file_list.add_argument("--query")
+    file_list.add_argument("--limit", type=int, default=100)
+    file_list.add_argument("--after")
+    file_list.add_argument("--before")
+    file_list.add_argument("--cursor-file-id")
+    file_list.add_argument("--recognition-type")
+    file_list.add_argument("--provider")
+    file_list.add_argument("--provider-id")
+    file_list.add_argument("--title")
+    file_list.add_argument("--task-id")
+    file_list.add_argument("--year", type=int)
+    file_show = file_commands.add_parser("show")
+    file_show.add_argument("file_id")
+    file_show.add_argument("--resource-library")
+    file_stats = file_commands.add_parser("stats")
+    file_stats.add_argument("--resource-library")
+    file_stats.add_argument("--storage")
+    file_re_recognize = file_commands.add_parser("re-recognize")
+    file_re_recognize.add_argument("file_id")
+    file_re_recognize.add_argument("--actor", required=True)
+    file_re_recognize.add_argument("--note")
+    file_re_match = file_commands.add_parser("re-match")
+    file_re_match.add_argument("file_id")
+    file_re_match.add_argument("--query")
+    file_re_match.add_argument("--year", type=int)
+    file_re_match.add_argument("--media-type", required=True, choices=("movie", "tv"))
+    file_re_match.add_argument("--provider-id")
+    file_re_match.add_argument("--actor", required=True)
+    file_re_match.add_argument("--note")
+    file_re_plan = file_commands.add_parser("re-plan")
+    file_re_plan.add_argument("file_id")
+    file_re_plan.add_argument("--actor", required=True)
+    file_re_plan.add_argument("--note")
     jobs = commands.add_parser("jobs", help="persistent DryRun background jobs")
     job_commands = jobs.add_subparsers(dest="job_command", required=True)
     job_list = job_commands.add_parser("list")
@@ -251,6 +314,12 @@ def final_main(
     metadata_review_resolve.add_argument("--candidate-rank", required=True, type=int)
     metadata_review_resolve.add_argument("--actor")
     metadata_review_resolve.add_argument("--note")
+    metadata_review_batch_resolve = metadata_review_commands.add_parser("resolve-pending")
+    metadata_review_batch_resolve.add_argument("--candidate-rank", required=True, type=int)
+    metadata_review_batch_resolve.add_argument("--actor", required=True)
+    metadata_review_batch_resolve.add_argument("--note")
+    metadata_review_batch_resolve.add_argument("--limit", type=int, default=100)
+    metadata_review_batch_resolve.add_argument("--task-id")
     metadata_corrections = commands.add_parser(
         "metadata-corrections", help="persistent metadata query correction queue"
     )
@@ -269,6 +338,17 @@ def final_main(
     metadata_correction_resolve.add_argument("--provider-id")
     metadata_correction_resolve.add_argument("--actor")
     metadata_correction_resolve.add_argument("--note")
+    metadata_correction_batch_resolve = metadata_correction_commands.add_parser("resolve-pending")
+    metadata_correction_batch_resolve.add_argument("--query")
+    metadata_correction_batch_resolve.add_argument("--year", type=int)
+    metadata_correction_batch_resolve.add_argument(
+        "--media-type", required=True, choices=("movie", "tv")
+    )
+    metadata_correction_batch_resolve.add_argument("--provider-id")
+    metadata_correction_batch_resolve.add_argument("--actor", required=True)
+    metadata_correction_batch_resolve.add_argument("--note")
+    metadata_correction_batch_resolve.add_argument("--limit", type=int, default=100)
+    metadata_correction_batch_resolve.add_argument("--task-id")
     classification_reviews = commands.add_parser(
         "classification-reviews", help="persistent classification review queue"
     )
@@ -303,6 +383,17 @@ def final_main(
     recognition_review_retry.add_argument("review_id")
     recognition_review_retry.add_argument("--actor", required=True)
     recognition_review_retry.add_argument("--note")
+    recognition_review_batch_retry = recognition_review_commands.add_parser("retry-pending")
+    recognition_review_batch_retry.add_argument("--actor", required=True)
+    recognition_review_batch_retry.add_argument("--note")
+    recognition_review_batch_retry.add_argument("--limit", type=int, default=100)
+    recognition_review_batch_retry.add_argument("--task-id")
+    recognition_review_batch_resolve = recognition_review_commands.add_parser("resolve-pending")
+    recognition_review_batch_resolve.add_argument("--recognition-type", required=True)
+    recognition_review_batch_resolve.add_argument("--actor", required=True)
+    recognition_review_batch_resolve.add_argument("--note")
+    recognition_review_batch_resolve.add_argument("--limit", type=int, default=100)
+    recognition_review_batch_resolve.add_argument("--task-id")
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_token = api_commands.add_parser("token", help="cryptographic bearer token operations")
@@ -319,6 +410,9 @@ def final_main(
     api_serve.add_argument("--port", type=int, default=8787)
     api_serve.add_argument("--allow-insecure-remote-http", action="store_true")
     arguments = parser.parse_args(argv)
+    if arguments.command == "batch":
+        arguments.command = arguments.batch_command
+        arguments.path = None
     runtime_lease: RuntimeDatabaseLease | None = None
     try:
         if arguments.command == "api" and arguments.api_command == "token":
@@ -431,6 +525,15 @@ def final_main(
                             repository.list_metadata_review_audit(review.review_id),
                         )
                     )
+                elif arguments.metadata_review_command == "resolve-pending":
+                    reviews = MetadataReviewService(repository).resolve_pending(
+                        arguments.candidate_rank,
+                        actor=arguments.actor,
+                        note=arguments.note,
+                        limit=arguments.limit,
+                        task_id=arguments.task_id,
+                    )
+                    stdout.write(render_metadata_review_batch(reviews))
                 else:
                     review = MetadataReviewService(repository).resolve(
                         arguments.review_id,
@@ -457,6 +560,18 @@ def final_main(
                             repository.list_metadata_corrections(limit=arguments.limit)
                         )
                     )
+                elif arguments.metadata_correction_command == "resolve-pending":
+                    reviews = service.resolve_pending(
+                        query=arguments.query,
+                        year=arguments.year,
+                        media_type=arguments.media_type,
+                        provider_id=arguments.provider_id,
+                        actor=arguments.actor,
+                        note=arguments.note,
+                        limit=arguments.limit,
+                        task_id=arguments.task_id,
+                    )
+                    stdout.write(render_metadata_correction_batch(reviews))
                 else:
                     if arguments.metadata_correction_command == "resolve":
                         service.resolve(
@@ -491,6 +606,23 @@ def final_main(
                             repository.list_recognition_reviews(limit=arguments.limit)
                         )
                     )
+                elif arguments.recognition_review_command == "resolve-pending":
+                    reviews = service.resolve_pending(
+                        arguments.recognition_type,
+                        actor=arguments.actor,
+                        note=arguments.note,
+                        limit=arguments.limit,
+                        task_id=arguments.task_id,
+                    )
+                    stdout.write(render_recognition_batch_resolve(reviews))
+                elif arguments.recognition_review_command == "retry-pending":
+                    decisions = RecognitionBatchRetryService(repository).request_pending(
+                        actor=arguments.actor,
+                        note=arguments.note,
+                        limit=arguments.limit,
+                        task_id=arguments.task_id,
+                    )
+                    stdout.write(render_recognition_batch_retry(decisions))
                 else:
                     if arguments.recognition_review_command == "resolve":
                         service.resolve(
@@ -663,6 +795,8 @@ def final_main(
             "show",
             "pause",
             "ignore-item",
+            "ignore-pending",
+            "retry-request",
         }:
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 if arguments.task_command == "list":
@@ -676,6 +810,22 @@ def final_main(
                     coordinator = PersistentTaskCoordinator(repository, repository)
                     task = coordinator.request_pause(arguments.task_id)
                     stdout.write(render_task(task, repository.list_items(task.task_id)))
+                elif arguments.task_command == "ignore-pending":
+                    decisions = ManualIgnoreService(repository).ignore_pending(
+                        actor=arguments.actor,
+                        note=arguments.note,
+                        limit=arguments.limit,
+                        task_id=arguments.task_id,
+                    )
+                    stdout.write(render_manual_ignore_batch(decisions))
+                elif arguments.task_command == "retry-request":
+                    decisions = TaskRetryRequestService(repository).request(
+                        actor=arguments.actor,
+                        note=arguments.note,
+                        limit=arguments.limit,
+                        task_id=arguments.task_id,
+                    )
+                    stdout.write(render_task_retry_request(decisions))
                 else:
                     decision = ManualIgnoreService(repository).ignore(
                         arguments.task_id,
@@ -721,6 +871,103 @@ def final_main(
                         note=arguments.note,
                     )
                     stdout.write(render_confirmation(value, ()))
+            return 0
+        if arguments.command == "files":
+            library_ids = tuple(
+                item.library_id for item in configuration.resource_libraries if item.enabled
+            )
+            storage_ids = tuple(item.storage_id for item in configuration.storage_definitions)
+            with (
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+                SQLiteTaskRepository(configuration.database_path) as task_repository,
+            ):
+                service = FileCatalogService(
+                    file_index,
+                    library_ids,
+                    storage_ids,
+                    task_repository=task_repository,
+                )
+                if arguments.file_command == "list":
+                    scan_status = (
+                        FileScanStatus(arguments.scan_status)
+                        if arguments.scan_status is not None
+                        else None
+                    )
+                    after = _file_catalog_cursor(
+                        arguments.after,
+                        arguments.cursor_file_id if arguments.after else None,
+                    )
+                    before = _file_catalog_cursor(
+                        arguments.before,
+                        arguments.cursor_file_id if arguments.before else None,
+                    )
+                    records = service.list(
+                        FileCatalogFilter(
+                            resource_library_id=arguments.resource_library,
+                            storage_id=arguments.storage,
+                            scan_status=scan_status,
+                            query=arguments.query,
+                            limit=arguments.limit,
+                            after=after,
+                            before=before,
+                            recognition_type=arguments.recognition_type,
+                            provider=arguments.provider,
+                            provider_id=arguments.provider_id,
+                            title=arguments.title,
+                            task_id=arguments.task_id,
+                            year=arguments.year,
+                        )
+                    )
+                    stdout.write(render_file_catalog(records))
+                elif arguments.file_command == "stats":
+                    stats = service.stats(
+                        resource_library_id=arguments.resource_library,
+                        storage_id=arguments.storage,
+                    )
+                    stdout.write(render_file_catalog_stats(stats))
+                elif arguments.file_command == "re-recognize":
+                    decision = FileRecognitionRequestService(
+                        service,
+                        RecognitionRetryService(task_repository),
+                    ).request(
+                        arguments.file_id,
+                        actor=arguments.actor,
+                        note=arguments.note,
+                    )
+                    stdout.write(render_file_recognition_request(decision))
+                elif arguments.file_command == "re-match":
+                    review = FileMetadataCorrectionService(
+                        service,
+                        MetadataCorrectionService(
+                            task_repository,
+                            configuration.strategy.metadata_policies,
+                        ),
+                    ).resolve(
+                        arguments.file_id,
+                        query=arguments.query,
+                        year=arguments.year,
+                        media_type=arguments.media_type,
+                        provider_id=arguments.provider_id,
+                        actor=arguments.actor,
+                        note=arguments.note,
+                    )
+                    stdout.write(render_file_metadata_re_match(review))
+                elif arguments.file_command == "re-plan":
+                    decision = FileReplanRequestService(
+                        service,
+                        TaskRetryRequestService(task_repository),
+                    ).request(
+                        arguments.file_id,
+                        actor=arguments.actor,
+                        note=arguments.note,
+                    )
+                    stdout.write(render_file_replan_request(decision))
+                else:
+                    detail = service.detail(
+                        arguments.file_id,
+                        resource_library_id=arguments.resource_library,
+                    )
+                    stdout.write(render_file_catalog_detail(detail))
             return 0
         if arguments.command == "storage":
             if arguments.storage_command == "list":
@@ -872,7 +1119,18 @@ def final_main(
             )
             from mediaflow.interfaces.service_api import MediaFlowApi
 
-            with SQLiteTaskRepository(configuration.database_path) as repository:
+            with (
+                SQLiteTaskRepository(configuration.database_path) as repository,
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+            ):
+                file_catalog = FileCatalogService(
+                    file_index,
+                    tuple(
+                        item.library_id for item in configuration.resource_libraries if item.enabled
+                    ),
+                    tuple(item.storage_id for item in configuration.storage_definitions),
+                    task_repository=repository,
+                )
                 app = MediaFlowApi(
                     repository,
                     None,
@@ -891,6 +1149,8 @@ def final_main(
                     maximum_active_jobs=configuration.automation_maximum_active_jobs,
                     stale_job_age_seconds=configuration.automation_stale_job_age_seconds,
                     system_status=build_configuration_snapshot(configuration),
+                    file_catalog=file_catalog,
+                    metadata_policies=configuration.strategy.metadata_policies,
                 )
                 stdout.write(f"MediaFlow API listening on {arguments.host}:{arguments.port}\n")
                 stdout.flush()
@@ -1391,6 +1651,166 @@ def render_tasks(tasks: tuple[PersistentTask, ...]) -> str:
     return "\n".join(lines)
 
 
+def render_file_catalog(records) -> str:
+    lines = ["", "FILE CATALOG", ""]
+    for record in records:
+        lines.append(
+            f"{record.file_id} | {record.storage_id}:{record.resource_library_id}:{record.path} | "
+            f"{record.scan_status.value} | size={record.size} | "
+            f"updated={record.updated_at.isoformat()}"
+        )
+    lines.extend(("", f"Total: {len(records)}", ""))
+    return "\n".join(lines)
+
+
+def render_file_catalog_stats(stats) -> str:
+    lines = [
+        "",
+        "FILE CATALOG STATS",
+        "",
+        f"Total: {stats.total}",
+        "",
+        "BY STATUS",
+        "",
+    ]
+    for status in FileScanStatus:
+        lines.append(f"{status.value}: {stats.by_status.get(status, 0)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_file_recognition_request(decision) -> str:
+    return "\n".join(
+        (
+            "",
+            "FILE RE-RECOGNITION REQUEST",
+            "",
+            f"Decision: {decision.decision_id}",
+            f"Review: {decision.review_id}",
+            f"Task: {decision.task_id}",
+            f"Item: {decision.item_id}",
+            f"Actor: {decision.actor}",
+            "Media mutation: 0",
+            "",
+        )
+    )
+
+
+def render_file_metadata_re_match(review) -> str:
+    return "\n".join(
+        (
+            "",
+            "FILE METADATA RE-MATCH",
+            "",
+            f"Review: {review.review_id}",
+            f"Status: {review.status.value}",
+            f"Corrected query: {review.corrected_query or '-'}",
+            f"Corrected year: {review.corrected_year or '-'}",
+            f"Corrected media type: {review.corrected_media_type or '-'}",
+            f"Direct provider ID: {review.direct_provider_id or '-'}",
+            f"Actor: {review.actor or '-'}",
+            "Media mutation: 0",
+            "",
+        )
+    )
+
+
+def render_file_replan_request(decision) -> str:
+    return "\n".join(
+        (
+            "",
+            "FILE RE-PLAN REQUEST",
+            "",
+            f"Decision: {decision.decision_id}",
+            f"Task: {decision.task_id}",
+            f"Item: {decision.item_id}",
+            f"Actor: {decision.actor}",
+            "Media mutation: 0",
+            "",
+        )
+    )
+
+
+def render_file_catalog_record(record) -> str:
+    return "\n".join(
+        (
+            "",
+            "FILE CATALOG RECORD",
+            "",
+            f"File ID: {record.file_id}",
+            f"Storage: {record.storage_id}",
+            f"ResourceLibrary: {record.resource_library_id}",
+            f"Path: {record.path}",
+            f"Filename: {record.filename}",
+            f"Extension: {record.extension}",
+            f"Size: {record.size}",
+            f"Modified: {record.modified_at.isoformat()}",
+            f"Stable since: {record.stable_since.isoformat() if record.stable_since else '-'}",
+            f"Scan status: {record.scan_status.value}",
+            f"Change: {record.change.value}",
+            f"First seen: {record.first_seen_at.isoformat()}",
+            f"Last seen: {record.last_seen_at.isoformat()}",
+            f"Missing since: {record.missing_since.isoformat() if record.missing_since else '-'}",
+            f"Last scan ID: {record.last_scan_id or '-'}",
+            "",
+        )
+    )
+
+
+def render_file_catalog_detail(detail) -> str:
+    record = detail.record
+    result = detail.latest_result
+    lines = [
+        "",
+        "FILE CATALOG DETAIL",
+        "",
+        f"File ID: {record.file_id}",
+        f"Storage: {record.storage_id}",
+        f"ResourceLibrary: {record.resource_library_id}",
+        f"Path: {record.path}",
+        f"Filename: {record.filename}",
+        f"Extension: {record.extension}",
+        f"Size: {record.size}",
+        f"Modified: {record.modified_at.isoformat()}",
+        f"Stable since: {record.stable_since.isoformat() if record.stable_since else '-'}",
+        f"Scan status: {record.scan_status.value}",
+        f"Change: {record.change.value}",
+        f"First seen: {record.first_seen_at.isoformat()}",
+        f"Last seen: {record.last_seen_at.isoformat()}",
+        f"Missing since: {record.missing_since.isoformat() if record.missing_since else '-'}",
+        f"Last scan ID: {record.last_scan_id or '-'}",
+        "",
+        "LATEST TASK RESULT",
+        "",
+    ]
+    if result is None:
+        lines.extend(("None", ""))
+    else:
+        lines.extend(
+            (
+                f"Task: {result.task_id}",
+                f"Item: {result.item_id}",
+                f"Status: {result.status}",
+                f"RecognitionType: {result.recognition_type or '-'}",
+                f"Provider: {result.provider or '-'}",
+                f"Provider ID: {result.provider_id or '-'}",
+                f"Title: {result.title or '-'}",
+                f"Metadata policy: {result.metadata_policy_id or '-'}",
+                f"Naming policy: {result.naming_policy_id or '-'}",
+                f"Classification policy: {result.classification_policy_id or '-'}",
+                f"Organize policy: {result.organize_policy_id or '-'}",
+                f"Operation: {result.operation or '-'}",
+                f"Target: {result.destination_storage_id or '-'}:{result.destination_path or '-'}",
+                f"Created: {result.created_at.isoformat()}",
+                f"Retry attempts: {result.retry_attempts}",
+                f"Cleanup status: {result.cleanup_status or '-'}",
+                f"Error: {result.error or '-'}",
+                "",
+            )
+        )
+    return "\n".join(lines)
+
+
 def render_task(task: PersistentTask, items: tuple[PersistentTaskItem, ...]) -> str:
     lines = [
         "",
@@ -1433,6 +1853,44 @@ def render_manual_ignore(decision, task, items) -> str:
             render_task(task, items),
         )
     )
+
+
+def render_manual_ignore_batch(decisions) -> str:
+    lines = [
+        "",
+        "BATCH MANUAL IGNORE",
+        "",
+        f"Ignored: {len(decisions)}",
+        "Media mutation: 0",
+        "",
+        "DECISIONS",
+        "",
+    ]
+    lines.extend(
+        f"{item.decision_id} | {item.review_kind.value} | {item.task_id} | "
+        f"{item.item_id} | {item.review_id} | {item.actor}"
+        for item in decisions
+    )
+    lines.extend(("", f"Total: {len(decisions)}", ""))
+    return "\n".join(lines)
+
+
+def render_task_retry_request(decisions) -> str:
+    lines = [
+        "",
+        "BATCH TASK RETRY REQUEST",
+        "",
+        f"Requested: {len(decisions)}",
+        "Media mutation: 0",
+        "",
+        "DECISIONS",
+        "",
+    ]
+    lines.extend(
+        f"{item.decision_id} | {item.task_id} | {item.item_id} | {item.actor}" for item in decisions
+    )
+    lines.extend(("", f"Total: {len(decisions)}", ""))
+    return "\n".join(lines)
 
 
 def render_confirmations(values) -> str:
@@ -1787,6 +2245,27 @@ def render_metadata_correction(review, audit=()) -> str:
     return "\n".join(lines)
 
 
+def render_metadata_correction_batch(reviews) -> str:
+    lines = [
+        "",
+        "BATCH METADATA CORRECTION",
+        "",
+        f"Resolved: {len(reviews)}",
+        "Media mutation: 0",
+        "",
+        "REVIEWS",
+        "",
+    ]
+    lines.extend(
+        f"{item.review_id} | query={item.corrected_query or '-'} | "
+        f"year={item.corrected_year or '-'} | type={item.corrected_media_type or '-'} | "
+        f"providerId={item.direct_provider_id or '-'} | actor={item.actor or '-'}"
+        for item in reviews
+    )
+    lines.extend(("", f"Total: {len(reviews)}", ""))
+    return "\n".join(lines)
+
+
 def render_recognition_reviews(values) -> str:
     lines = ["", "RECOGNITION REVIEWS", ""]
     lines.extend(
@@ -1794,6 +2273,44 @@ def render_recognition_reviews(values) -> str:
         for item in values
     )
     lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_recognition_batch_retry(decisions) -> str:
+    lines = [
+        "",
+        "BATCH RECOGNITION RETRY",
+        "",
+        f"Requested: {len(decisions)}",
+        "Media mutation: 0",
+        "",
+        "DECISIONS",
+        "",
+    ]
+    lines.extend(
+        f"{item.decision_id} | {item.review_id} | {item.item_id} | {item.actor}"
+        for item in decisions
+    )
+    lines.extend(("", f"Total: {len(decisions)}", ""))
+    return "\n".join(lines)
+
+
+def render_recognition_batch_resolve(reviews) -> str:
+    lines = [
+        "",
+        "BATCH RECOGNITION RESOLVE",
+        "",
+        f"Resolved: {len(reviews)}",
+        "Media mutation: 0",
+        "",
+        "REVIEWS",
+        "",
+    ]
+    lines.extend(
+        f"{item.review_id} | {item.selected_recognition_type} | {item.actor or '-'}"
+        for item in reviews
+    )
+    lines.extend(("", f"Total: {len(reviews)}", ""))
     return "\n".join(lines)
 
 
@@ -1864,6 +2381,27 @@ def render_metadata_review(review, candidates, audit=()) -> str:
     if not audit:
         lines.append("None")
     lines.append("")
+    return "\n".join(lines)
+
+
+def render_metadata_review_batch(reviews) -> str:
+    lines = [
+        "",
+        "BATCH METADATA REVIEW",
+        "",
+        f"Resolved: {len(reviews)}",
+        "Media mutation: 0",
+        "",
+        "REVIEWS",
+        "",
+    ]
+    lines.extend(
+        f"{item.review_id} | rank={item.selected_rank or '-'} | "
+        f"{item.selected_provider or '-'}:{item.selected_provider_id or '-'} | "
+        f"{item.selected_media_type or '-'} | {item.actor or '-'}"
+        for item in reviews
+    )
+    lines.extend(("", f"Total: {len(reviews)}", ""))
     return "\n".join(lines)
 
 
@@ -2031,6 +2569,18 @@ def _read_only_storage_check(storage) -> None:
         if callable(connect):
             connect()
         storage.list("")
+
+
+def _file_catalog_cursor(timestamp: str | None, file_id: str | None):
+    if timestamp is None and file_id is None:
+        return None
+    if timestamp is None or file_id is None:
+        raise ValueError("file catalog cursor requires both timestamp and file ID")
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError as error:
+        raise ValueError("file catalog cursor timestamp must be ISO-8601") from error
+    return parsed, file_id
 
 
 def _safe_preflight_error(error: Exception) -> str:

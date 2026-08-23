@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
+from mediaflow.domain.file_catalog import FileCatalogEnrichedRecord
 from mediaflow.domain.file_index import FileIndexRecord, mark_missing
 from mediaflow.domain.scanner import FileChange, FileScanStatus
+from mediaflow.domain.task_persistence import PersistentResultRecord
 
 
 class SQLiteFileIndexRepository:
@@ -92,6 +95,153 @@ class SQLiteFileIndexRepository:
             ).fetchall()
         return tuple(self._record(row) for row in rows)
 
+    def list_catalog(
+        self,
+        resource_library_ids: Sequence[str],
+        *,
+        storage_id: str | None = None,
+        scan_status: FileScanStatus | None = None,
+        query: str | None = None,
+        limit: int = 100,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+    ) -> tuple[FileIndexRecord, ...]:
+        if not resource_library_ids:
+            raise ValueError("file catalog requires at least one ResourceLibrary")
+        if after is not None and before is not None:
+            raise ValueError("file catalog after and before are mutually exclusive")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("file catalog limit must be positive")
+        placeholders = ", ".join("?" for _ in resource_library_ids)
+        sql = f"""
+            SELECT * FROM file_index
+            WHERE resource_library_id IN ({placeholders})
+        """
+        parameters: list[object] = list(resource_library_ids)
+        if storage_id is not None:
+            sql += " AND storage_id = ?"
+            parameters.append(storage_id)
+        if scan_status is not None:
+            sql += " AND scan_status = ?"
+            parameters.append(scan_status.value)
+        if query:
+            normalized = query.lower()
+            sql += " AND (instr(lower(path), ?) > 0 OR instr(lower(filename), ?) > 0)"
+            parameters.extend((normalized, normalized))
+        if after is not None:
+            sql += " AND (updated_at < ? OR (updated_at = ? AND file_id < ?))"
+            parameters.extend((after[0].isoformat(), after[0].isoformat(), after[1]))
+        elif before is not None:
+            sql += " AND (updated_at > ? OR (updated_at = ? AND file_id > ?))"
+            parameters.extend((before[0].isoformat(), before[0].isoformat(), before[1]))
+        sql += " ORDER BY updated_at DESC, file_id DESC LIMIT ?"
+        parameters.append(limit)
+        with self._lock:
+            rows = self._connection.execute(sql, tuple(parameters)).fetchall()
+        return tuple(self._record(row) for row in rows)
+
+    def list_enriched_catalog(
+        self,
+        resource_library_ids: Sequence[str],
+        *,
+        storage_id: str | None = None,
+        scan_status: FileScanStatus | None = None,
+        query: str | None = None,
+        limit: int = 100,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+        recognition_type: str | None = None,
+        provider: str | None = None,
+        provider_id: str | None = None,
+        title: str | None = None,
+        task_id: str | None = None,
+        year: int | None = None,
+    ) -> tuple[FileCatalogEnrichedRecord, ...]:
+        if not resource_library_ids:
+            raise ValueError("file catalog requires at least one ResourceLibrary")
+        if after is not None and before is not None:
+            raise ValueError("file catalog after and before are mutually exclusive")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("file catalog limit must be positive")
+        placeholders = ", ".join("?" for _ in resource_library_ids)
+        sql = f"""
+            SELECT f.*,
+                r.result_id AS r_result_id,
+                r.task_id AS r_task_id,
+                r.item_id AS r_item_id,
+                r.source_storage_id AS r_source_storage_id,
+                r.source_path AS r_source_path,
+                r.destination_storage_id AS r_destination_storage_id,
+                r.destination_path AS r_destination_path,
+                r.recognition_type AS r_recognition_type,
+                r.provider AS r_provider,
+                r.provider_id AS r_provider_id,
+                r.metadata_policy_id AS r_metadata_policy_id,
+                r.naming_policy_id AS r_naming_policy_id,
+                r.classification_policy_id AS r_classification_policy_id,
+                r.organize_policy_id AS r_organize_policy_id,
+                r.operation AS r_operation,
+                r.status AS r_status,
+                r.created_at AS r_created_at,
+                r.title AS r_title,
+                r.error AS r_error,
+                r.completed_operations AS r_completed_operations,
+                r.attachment_count AS r_attachment_count,
+                r.retry_attempts AS r_retry_attempts,
+                r.retry_category AS r_retry_category,
+                r.cleanup_status AS r_cleanup_status,
+                r.cleanup_step_count AS r_cleanup_step_count
+            FROM file_index f
+            LEFT JOIN task_results r ON r.result_id = (
+                SELECT r2.result_id FROM task_results r2
+                WHERE r2.source_storage_id = f.storage_id
+                  AND r2.source_path = f.path
+                ORDER BY r2.created_at DESC, r2.result_id DESC
+                LIMIT 1
+            )
+            WHERE f.resource_library_id IN ({placeholders})
+        """
+        parameters: list[object] = list(resource_library_ids)
+        if storage_id is not None:
+            sql += " AND f.storage_id = ?"
+            parameters.append(storage_id)
+        if scan_status is not None:
+            sql += " AND f.scan_status = ?"
+            parameters.append(scan_status.value)
+        if query:
+            normalized = query.lower()
+            sql += " AND (instr(lower(f.path), ?) > 0 OR instr(lower(f.filename), ?) > 0)"
+            parameters.extend((normalized, normalized))
+        if recognition_type:
+            sql += " AND r.recognition_type = ?"
+            parameters.append(recognition_type)
+        if provider:
+            sql += " AND r.provider = ?"
+            parameters.append(provider)
+        if provider_id:
+            sql += " AND r.provider_id = ?"
+            parameters.append(provider_id)
+        if title:
+            sql += " AND instr(lower(r.title), ?) > 0"
+            parameters.append(title.lower())
+        if task_id:
+            sql += " AND r.task_id = ?"
+            parameters.append(task_id)
+        if year is not None:
+            sql += " AND instr(r.title, ?) > 0"
+            parameters.append(str(year))
+        if after is not None:
+            sql += " AND (f.updated_at < ? OR (f.updated_at = ? AND f.file_id < ?))"
+            parameters.extend((after[0].isoformat(), after[0].isoformat(), after[1]))
+        elif before is not None:
+            sql += " AND (f.updated_at > ? OR (f.updated_at = ? AND f.file_id > ?))"
+            parameters.extend((before[0].isoformat(), before[0].isoformat(), before[1]))
+        sql += " ORDER BY f.updated_at DESC, f.file_id DESC LIMIT ?"
+        parameters.append(limit)
+        with self._lock:
+            rows = self._connection.execute(sql, tuple(parameters)).fetchall()
+        return tuple(self._enriched_record(row) for row in rows)
+
     def reconcile_missing(
         self,
         resource_library_id: str,
@@ -172,3 +322,36 @@ class SQLiteFileIndexRepository:
             missing_since=optional_time(row["missing_since"]),
             last_scan_id=row["last_scan_id"],
         )
+
+    @staticmethod
+    def _enriched_record(row: sqlite3.Row) -> FileCatalogEnrichedRecord:
+        if row["r_result_id"] is None:
+            return FileCatalogEnrichedRecord(SQLiteFileIndexRepository._record(row), None)
+        result = PersistentResultRecord(
+            row["r_result_id"],
+            row["r_task_id"],
+            row["r_item_id"],
+            row["r_source_storage_id"],
+            row["r_source_path"],
+            row["r_destination_storage_id"],
+            row["r_destination_path"],
+            row["r_recognition_type"],
+            row["r_provider"],
+            row["r_provider_id"],
+            row["r_metadata_policy_id"],
+            row["r_naming_policy_id"],
+            row["r_classification_policy_id"],
+            row["r_organize_policy_id"],
+            row["r_operation"],
+            row["r_status"],
+            datetime.fromisoformat(row["r_created_at"]),
+            row["r_title"],
+            row["r_error"],
+            tuple(json.loads(row["r_completed_operations"])),
+            row["r_attachment_count"],
+            row["r_retry_attempts"],
+            row["r_retry_category"],
+            row["r_cleanup_status"],
+            row["r_cleanup_step_count"],
+        )
+        return FileCatalogEnrichedRecord(SQLiteFileIndexRepository._record(row), result)

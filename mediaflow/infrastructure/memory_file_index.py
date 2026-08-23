@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from mediaflow.domain.file_index import FileIndexRecord, mark_missing
+from mediaflow.domain.scanner import FileScanStatus
 
 
 class InMemoryFileIndexRepository:
@@ -34,6 +35,44 @@ class InMemoryFileIndexRepository:
                 for record in self._records.values()
                 if record.resource_library_id == resource_library_id
             )
+
+    def list_catalog(
+        self,
+        resource_library_ids: Sequence[str],
+        *,
+        storage_id: str | None = None,
+        scan_status: FileScanStatus | None = None,
+        query: str | None = None,
+        limit: int = 100,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+    ) -> tuple[FileIndexRecord, ...]:
+        if not resource_library_ids:
+            raise ValueError("file catalog requires at least one ResourceLibrary")
+        if after is not None and before is not None:
+            raise ValueError("file catalog after and before are mutually exclusive")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("file catalog limit must be positive")
+        allowed_libraries = set(resource_library_ids)
+        normalized_query = " ".join(query.split()).lower() if query else None
+        with self._lock:
+            records = list(self._records.values())
+        records = [
+            record
+            for record in records
+            if record.resource_library_id in allowed_libraries
+            and (storage_id is None or record.storage_id == storage_id)
+            and (scan_status is None or record.scan_status is scan_status)
+            and (
+                normalized_query is None
+                or normalized_query in record.path.lower()
+                or normalized_query in record.filename.lower()
+            )
+            and (after is None or (record.updated_at, record.file_id) < after)
+            and (before is None or (record.updated_at, record.file_id) > before)
+        ]
+        records.sort(key=lambda record: (record.updated_at, record.file_id), reverse=True)
+        return tuple(records[:limit])
 
     def reconcile_missing(
         self,

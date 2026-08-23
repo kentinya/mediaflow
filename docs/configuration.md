@@ -412,6 +412,26 @@ source and destination Storage IDs from configuration and supports configured ba
 `organize --execute` grants mutation authority; overwrite, implicit operation fallback, and silent
 delete remain prohibited.
 
+## Read-only file catalog
+
+The durable FileIndex can be inspected without constructing Storage or providers:
+
+```bash
+mediaflow files list --limit 100
+mediaflow files list --resource-library source --scan-status ready --query movie
+mediaflow files list --after 2026-08-23T12:00:00+00:00 --cursor-file-id FILE_ID --limit 100
+mediaflow files list --recognition-type C --provider-id 101 --title Matrix --year 1999 --limit 100
+mediaflow files show FILE_ID
+```
+
+List output is ordered by indexed update time and file ID and exposes only FileIndex fields. Filters
+are bounded; unknown ResourceLibrary/Storage IDs, invalid limits, and missing file IDs fail closed.
+`--after`/`--before` are mutually exclusive keyset cursors and each require `--cursor-file-id`.
+`files show` additionally displays the latest persisted Task result for the same source
+Storage/path when one exists.
+`files list` derived filters use that same latest Task result for RecognitionType, Provider,
+Provider ID, Title, Task ID, and Year.
+
 ## Persistence and recovery
 
 ```json
@@ -445,7 +465,9 @@ defaulting to A:
 mediaflow recognition-reviews list --limit 100
 mediaflow recognition-reviews show REVIEW_ID
 mediaflow recognition-reviews resolve REVIEW_ID --recognition-type C --actor operator --note reviewed
+mediaflow recognition-reviews resolve-pending --recognition-type C --actor operator --limit 100
 mediaflow recognition-reviews retry REVIEW_ID --actor operator --note "rules updated"
+mediaflow recognition-reviews retry-pending --actor operator --note "rules updated" --limit 100
 mediaflow tasks resume ORIGINAL_TASK_ID
 ```
 
@@ -734,6 +756,7 @@ persisted in `persistence.databasePath` and can be inspected with:
 ```bash
 mediaflow metadata-reviews list --limit 100
 mediaflow metadata-reviews show REVIEW_ID
+mediaflow metadata-reviews resolve-pending --candidate-rank 1 --actor operator --limit 100
 ```
 
 The API equivalents are `GET /api/v1/metadata-reviews?limit=N` and
@@ -918,6 +941,7 @@ mediaflow metadata-corrections list --limit 100
 mediaflow metadata-corrections show REVIEW_ID
 mediaflow metadata-corrections resolve REVIEW_ID --query "Correct title" --year 2025 --media-type movie --actor operator
 mediaflow metadata-corrections resolve REVIEW_ID --provider-id 858024 --media-type movie --actor operator
+mediaflow metadata-corrections resolve-pending --query "Correct title" --media-type movie --actor operator --limit 100
 mediaflow tasks resume ORIGINAL_TASK_ID
 ```
 
@@ -934,12 +958,17 @@ or Metadata NOT_FOUND correction:
 ```bash
 mediaflow tasks show TASK_ID
 mediaflow tasks ignore-item TASK_ID ITEM_ID --actor operator --note "not managed"
+mediaflow tasks ignore-pending --actor operator --note "not managed" --limit 100
+mediaflow tasks ignore-pending --task-id TASK_ID --actor operator --limit 20
 ```
 
 The command updates only the runtime database: the matching pending review becomes `ignored`, the
 TaskItem becomes `ignored`, and an immutable bounded audit row records the actor/note. It constructs
 no Storage or provider and does not delete, move, index-suppress, configure an ignore rule, or cause
 future scans to skip that path. Ignored items are terminal and excluded from resume/retry.
+`ignore-pending` applies the same terminal, database-only semantics to a bounded oldest-first
+selection across Recognition/Metadata waits and optionally scopes by `--task-id`; the selection is
+atomic.
 
 ### Re-evaluate an Unrecognized item
 
@@ -948,6 +977,7 @@ operator can request a fresh Recognition evaluation without choosing a type:
 
 ```bash
 mediaflow recognition-reviews retry REVIEW_ID --actor operator --note "rules updated"
+mediaflow recognition-reviews retry-pending --actor operator --note "rules updated" --limit 100
 mediaflow tasks resume ORIGINAL_TASK_ID
 ```
 
@@ -955,3 +985,5 @@ The first command is database-only: it marks the pending review `retry_requested
 to `PENDING`, and appends an immutable bounded audit. The separate resume loads current configuration
 and reruns Parser/Recognition with the original ResourceLibrary context. It injects no manual type,
 does not default to A, and creates a new waiting review in the continuation Task if still unmatched.
+`retry-pending` does the same for a bounded, oldest-first pending set and optionally scopes by
+`--task-id`; the whole selection is atomic.

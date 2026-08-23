@@ -6,6 +6,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from mediaflow.domain.recognition import RecognitionStatus, RecognitionType
 from mediaflow.domain.recognition_review import (
+    RecognitionBatchResolveRequest,
     RecognitionReview,
     RecognitionReviewChoice,
     RecognitionReviewDecisionAudit,
@@ -18,6 +19,7 @@ from mediaflow.domain.task_persistence import PersistentTaskItem, TaskItemStatus
 class RecognitionReviewService:
     MAX_TEXT = 500
     MAX_CHOICES = 100
+    MAX_BATCH_SIZE = 100
 
     def __init__(
         self,
@@ -114,6 +116,77 @@ class RecognitionReviewService:
         )
         self._repository.resolve_recognition_review(resolved, audit, pending)
         return resolved
+
+    def resolve_pending(
+        self,
+        recognition_type_id: str,
+        *,
+        actor: str,
+        note: str | None = None,
+        limit: int = 100,
+        task_id: str | None = None,
+    ) -> tuple[RecognitionReview, ...]:
+        if recognition_type_id not in self._types:
+            raise ValueError("RecognitionType is not enabled or configured")
+        normalized_actor = self._text(actor, 200)
+        if not normalized_actor:
+            raise ValueError("recognition review actor is required")
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= self.MAX_BATCH_SIZE
+        ):
+            raise ValueError(
+                f"recognition resolve batch limit must be between 1 and {self.MAX_BATCH_SIZE}"
+            )
+        reviews = self._repository.list_pending_recognition_reviews(limit=limit, task_id=task_id)
+        if not reviews:
+            raise ValueError("no pending recognition reviews were selected")
+
+        now = datetime.now(UTC)
+        normalized_note = self._text(note, self.MAX_TEXT)
+        requests: list[RecognitionBatchResolveRequest] = []
+        for review in reviews:
+            choice_ids = {
+                item.recognition_type_id
+                for item in self._repository.list_recognition_review_choices(review.review_id)
+            }
+            if recognition_type_id not in choice_ids:
+                raise ValueError("RecognitionType is not present in a review snapshot")
+            item = self._repository.get_item(review.item_id)
+            if (
+                item is None
+                or item.task_id != review.task_id
+                or item.status is not TaskItemStatus.WAITING_RECOGNITION
+            ):
+                raise ValueError("recognition review TaskItem is not waiting")
+            resolved = replace(
+                review,
+                status=RecognitionReviewStatus.RESOLVED,
+                updated_at=now,
+                selected_recognition_type=recognition_type_id,
+                decided_at=now,
+                actor=normalized_actor,
+            )
+            audit = RecognitionReviewDecisionAudit(
+                str(uuid4()),
+                review.review_id,
+                recognition_type_id,
+                now,
+                normalized_actor,
+                normalized_note,
+            )
+            pending = replace(
+                item,
+                status=TaskItemStatus.PENDING,
+                stage="recognition_resolved",
+                updated_at=now,
+                error=None,
+            )
+            requests.append(RecognitionBatchResolveRequest(resolved, audit, pending))
+
+        self._repository.resolve_recognition_reviews_batch(tuple(requests))
+        return tuple(request.review for request in requests)
 
     @staticmethod
     def _text(value: str | None, limit: int) -> str | None:

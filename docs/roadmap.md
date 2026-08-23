@@ -300,6 +300,62 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
   ignored 不计成功且不触碰媒体、索引、规则或未来扫描。
 - Phase 21.3 已完成：Unrecognized 等待项可在外部规则更新后显式请求重新识别，再由独立
   Task resume 使用当前配置重跑真实引擎；无隐藏默认或规则写入。
+- Phase 21.4 已完成：有界、可审计、可选的 Task 范围批量请求重新识别；pending Recognition
+  Review 与匹配 WAITING_RECOGNITION 项在同一事务中最先到期优先处理，仍由独立 Task resume
+  使用当前配置重跑真实引擎；无隐藏默认或规则写入。
+- Phase 21.5 已完成：有界、可审计、可选的 Task 范围批量忽略；Recognition、Metadata 候选和
+  Metadata NOT_FOUND 修正等待项在同一事务中最先到期优先标记为 IGNORED，仍不触碰媒体、索引、
+  规则或未来扫描。
+- Phase 21.6 已完成：有界、可审计、可选的 Task 范围批量人工 RecognitionType 决策；pending
+  RecognitionReview 与匹配 WAITING_RECOGNITION 项在同一事务中最先到期优先以同一启用类型
+  RESOLVED，仍由显式 resume 消费持久 selection；无隐藏默认、不修改规则，C 身份保持。
+- Phase 21.7 已完成：有界、可审计、可选的 Task 范围批量 Metadata NOT_FOUND 修正；pending
+  MetadataCorrectionReview 与匹配 WAITING_METADATA_CORRECTION 项在同一事务中最先到期优先以
+  同一合法 query/year/movie-TV/provider-ID 输入 RESOLVED，仍由显式 resume 消费持久 correction；
+  C 身份保持。
+- Phase 21.8 已完成：有界、可审计、可选的 Task 范围批量 Metadata 候选选择；pending
+  MetadataReview 与匹配 WAITING_METADATA 项在同一事务中最先到期优先以同一持久候选 rank
+  RESOLVED，仍由显式 resume 消费持久 MetadataSelection；C 身份保持。
+- Phase 21.9 已完成：有界只读 FileIndex 文件目录 CLI；可按 ResourceLibrary、Storage、
+  scan status 与 path/filename 查询，稳定排序并显示单项索引记录；不构造 Storage/Provider/
+  工作流，也不读取文件内容。
+- Phase 21.10 已完成：同一文件目录支持稳定 keyset cursor 分页；`--after/--before` 配合
+  `--cursor-file-id` 使用既有 `(updated_at DESC, file_id DESC)` 顺序，不使用 OFFSET。
+- Phase 21.11 已完成：`files show` 为索引文件追加最新持久 Task Result 详情；缺失结果显式
+  显示为空，不伪造历史，也不构造 Storage/Provider/工作流。
+- Phase 21.12 已完成：`files list` 增加 RecognitionType、Provider、Provider ID、Title、
+  Task ID 与 Year 的派生过滤；基于同一 source Storage/path 的最新 Task Result，且仍为只读
+  有界 FileIndex 查询。
+- Phase 21.13 已完成：FileIndex 文件目录基础过滤、cursor 和 limit 下沉到参数化仓储查询；
+  应用层只保留最新 Task Result 派生过滤。
+- Phase 21.14 已完成：最新 Task Result 派生过滤也已下沉为 FileIndex 与 TaskResult 的
+  参数化 join，SQLite 路径不再逐文件查询最新结果。
+- Phase 21.15 已完成：有界批量失败项重试请求；FAILED/PARTIAL TaskItem 可在同一事务中原子
+  回到 PENDING，并由显式 `tasks resume` 执行真正的重试。
+- Phase 21.16 已完成：`files stats` 提供有界只读 FileIndex 状态统计，可按 ResourceLibrary
+  与 Storage 过滤；不构造 Storage/Provider/工作流。
+- Phase 21.17 已完成：文件目录只读 Web UI；认证 API 提供 list/detail/stats，操作台 Files
+  视图支持有界列表与详情查看，不提供写入或执行操作。
+- Phase 21.18 已完成：Files 视图增加只读搜索/筛选控件，可组合 ResourceLibrary、Storage、
+  scan status、path/filename、Recognition/Provider/Title/Task/Year 过滤。
+- Phase 21.19 已完成：显式 `batch preview` / `batch organize` 命令复用无路径全
+  ResourceLibrary 管线，明确批量 DryRun/整理入口。
+- Phase 21.20 已完成：`files show`/Web 详情返回同一 source Storage/path 的关联
+  Recognition/Metadata review 链接，操作员可跳转到对应 Task/复核队列；只读不修改。
+- Phase 21.21 已完成：`files re-recognize` 为存在 pending RecognitionReview 的文件发起
+  重新识别请求；真正重评仍由 `tasks resume` 执行。
+- Phase 21.22 已完成：`files re-match` 为存在 pending MetadataCorrectionReview 的文件执行
+  有界 Metadata 修正/重新匹配；真正 Provider 查找仍由 `tasks resume` 执行。
+- Phase 21.23 已完成：`files re-plan` 为最新 FAILED/PARTIAL 结果的文件发起单项重试请求，
+  原子返回 PENDING；真正重新规划/整理仍由 `tasks resume` 执行。
+- Phase 21.24 已完成：Phase 21 收口 smoke test 与文档一致性核对；CLI/UI 只读边界和
+  禁止依赖审计保持通过。
+- Phase 21.25 已完成：Files 详情 Web UI/API 增加 re-recognize 与 re-plan 请求入口；仅在
+  对应 pending review 或 FAILED/PARTIAL 状态显示，实际执行仍需显式 Task resume。
+- Phase 21.26 已完成：补齐 file re-match 的 Web UI/API；Phase 21 已按当前有界范围收尾，
+  下一阶段进入 Phase 22 配置管理系统。
+- Phase 22.0 已完成：配置管理架构决策与领域骨架；JSON 作为运行时输入、SQLite 作为变更/
+  审计存储、凭证保持环境或 Secret Store 归属，12+ 配置对象分类与引用/审计模型已建立。
 - 未识别媒体人工指定 RecognitionType（§80）。
 - 批量操作体系（§83）。
 - 文件列表/搜索筛选/媒体详情页（§94–§96），含重新识别/重新匹配/重新生成 Plan。
@@ -332,7 +388,7 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 
 后续任务仍应保持小步推进。优先顺序：
 
-1. 进入 Phase 21.4，以单一小范围补齐下一项人工处理闭环，不提前启动完整 UI。
+1. 进入 Phase 22.1，开始实现配置对象 CRUD 与引用关系检查的第一批配置族。
 2. 保持历史/崩溃恢复与 Hash 持久复用为后续独立专项边界。
 3. AWS S3/Cloudflare R2、多小时 soak、服务/主机终止仍作为部署专项验收，不阻塞有界 Phase 19 profile。
 4. Phase 20 收口前不启动 Phase 21/22 的 UI 与配置管理扩展。

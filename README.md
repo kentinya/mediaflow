@@ -48,18 +48,30 @@ mediaflow analyze "/path/to/movie.mkv"
 mediaflow analyze --offline "/path/to/movie.mkv"
 mediaflow config validate
 mediaflow dashboard --recent-limit 10
+mediaflow files list --limit 100
+mediaflow files list --resource-library source --scan-status ready --query movie
+mediaflow files list --after 2026-08-23T12:00:00+00:00 --cursor-file-id FILE_ID --limit 100
+mediaflow files list --recognition-type C --provider-id 101 --title Matrix --year 1999 --limit 100
+mediaflow files show FILE_ID
 mediaflow metadata-reviews list --limit 100
 mediaflow recognition-reviews list --limit 100
 mediaflow recognition-reviews show REVIEW_ID
 mediaflow recognition-reviews resolve REVIEW_ID --recognition-type C --actor operator
+mediaflow recognition-reviews resolve-pending --recognition-type C --actor operator --limit 100
 mediaflow recognition-reviews retry REVIEW_ID --actor operator --note "rules updated"
+mediaflow recognition-reviews retry-pending --actor operator --note "rules updated" --limit 100
+mediaflow recognition-reviews retry-pending --task-id TASK_ID --actor operator --limit 20
 mediaflow metadata-reviews show REVIEW_ID
 mediaflow metadata-reviews resolve REVIEW_ID --candidate-rank 1
+mediaflow metadata-reviews resolve-pending --candidate-rank 1 --actor operator --limit 100
 mediaflow metadata-corrections list --limit 100
 mediaflow metadata-corrections show REVIEW_ID
 mediaflow metadata-corrections resolve REVIEW_ID --query "Correct title" --year 2025 --media-type movie --actor operator
 mediaflow metadata-corrections resolve REVIEW_ID --provider-id 858024 --media-type movie --actor operator
+mediaflow metadata-corrections resolve-pending --query "Correct title" --media-type movie --actor operator --limit 100
 mediaflow tasks ignore-item TASK_ID ITEM_ID --actor operator --note "not managed"
+mediaflow tasks ignore-pending --actor operator --note "not managed" --limit 100
+mediaflow tasks ignore-pending --task-id TASK_ID --actor operator --limit 20
 mediaflow classification-reviews list --limit 100
 mediaflow classification-reviews show REVIEW_ID
 mediaflow classification-reviews resolve REVIEW_ID --choice-rank 1

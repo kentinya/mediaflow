@@ -2802,11 +2802,24 @@ Status = Unrecognized
 
 > 当前实现（Phase 21.2）：上述 Recognition 人工等待项可由操作员显式标记为 `IGNORED`，
 > 同一事务更新 review/TaskItem 并记录 actor/note 审计。该动作不删除或隐藏媒体、不建立规则，
-> 也不影响未来扫描；批量忽略留后续。
+> 也不影响未来扫描；批量忽略见 Phase 21.5。
 
 > 当前实现（Phase 21.3）：可对 pending RecognitionReview 显式记录 `retry_requested`，把
 > WAITING_RECOGNITION 项原子送回 PENDING，再由独立 `tasks resume` 使用当前外部配置和原
 > ResourceLibrary 上下文重跑真实 RecognitionRuleEngine。不注入类型、不默认 A、不写规则。
+
+> 当前实现（Phase 21.4）：上述 `retry_requested` 也可通过有界批量命令
+> `recognition-reviews retry-pending --actor ... [--note ...] [--limit 1..100] [--task-id ...]`
+> 对最早到期的一组 pending 等待项在同一事务中请求重新识别；仍必须显式 `tasks resume`。
+
+> 当前实现（Phase 21.5）：上述 Recognition 等待项也支持有界批量忽略
+> `tasks ignore-pending --actor ... [--note ...] [--limit 1..100] [--task-id ...]`；最早到期的一组
+> pending 项与匹配 review 在同一事务中标记为 `IGNORED`。
+
+> 当前实现（Phase 21.6）：上述 pending RecognitionReview 也支持有界批量人工指定同一启用
+> RecognitionType：
+> `recognition-reviews resolve-pending --recognition-type TYPE --actor ... [--note ...]
+> [--limit 1..100] [--task-id ...]`。每一项仍必须包含在快照中，且整批原子 RESOLVED。
 
 ---
 
@@ -2838,6 +2851,19 @@ Movie / TV切换
 
 > 当前实现（Phase 21.2）：Metadata 候选等待与 MetadataNotFound 修正等待均支持相同的
 > 单项持久忽略语义。Ignored 不计成功、不会 resume/retry，也不执行 Storage 或 Provider。
+
+> 当前实现（Phase 21.5）：上述 Metadata 等待项同样支持有界批量忽略，范围、排序、原子性和
+> 安全边界与 Recognition 批量忽略一致。
+
+> 当前实现（Phase 21.8）：Metadata 候选等待项也支持有界批量候选选择：
+> `metadata-reviews resolve-pending --candidate-rank RANK --actor ... [--note ...]
+> [--limit 1..100] [--task-id ...]`。整批以同一持久候选 rank 原子 RESOLVED，仍由显式
+> `tasks resume` 消费持久 MetadataSelection。
+
+> 当前实现（Phase 21.7）：Metadata NOT_FOUND 修正等待项也支持有界批量修正：
+> `metadata-corrections resolve-pending --media-type movie|tv [--query QUERY | --provider-id
+> PROVIDER_ID] [--year YEAR] --actor ... [--note ...] [--limit 1..100] [--task-id ...]`。
+> 整批使用同一组合法修正输入原子 RESOLVED，仍由显式 `tasks resume` 调用真实 Provider。
 
 ---
 
@@ -2892,6 +2918,12 @@ Target Preview
 
 批量忽略
 ```
+
+> 当前实现（Phase 21.8）：已完成批量重新识别（Recognition retry-pending）、批量忽略
+> （`tasks ignore-pending`）、批量设置 RecognitionType（Recognition resolve-pending）、批量
+> Metadata 修正（Metadata resolve-pending）与批量 Metadata 候选选择（Metadata review
+> resolve-pending）五项有界闭环。这些命令不构造 Storage/Provider/工作流、不修改规则或配置、
+> 不改变执行授权；批量 Dry Run/整理及批量重试仍留后续。
 
 ---
 
@@ -2996,6 +3028,9 @@ Schedule
 
 System Settings
 ```
+
+> 当前实现（Phase 22.0）：已完成配置管理架构决策与领域骨架；JSON 仍为运行时输入，
+> SQLite 将承载配置变更/审计，凭证保持环境或 Secret Store 归属。
 
 ---
 
@@ -3246,6 +3281,12 @@ TMDB等Provider信息
 最近更新时间
 ```
 
+> 当前实现（Phase 21.9）：提供只读 FileIndex CLI 文件列表与单项详情；暂不包含 Recognition/
+> Provider/目标路径等 Pipeline 派生字段，也不读取文件内容。
+
+> 当前实现（Phase 21.10）：文件列表支持稳定 keyset cursor 分页；`--after/--before` 配合
+> `--cursor-file-id` 使用 `(updated_at DESC, file_id DESC)` 顺序，不使用 OFFSET。
+
 ---
 
 # 95. 搜索与筛选
@@ -3272,6 +3313,55 @@ Task ID
 
 时间范围
 ```
+
+> 当前实现（Phase 21.9）：CLI 支持 ResourceLibrary、Storage、scan status 与 path/filename
+> 子串筛选；时间范围筛选仍留后续。
+
+> 当前实现（Phase 21.12）：CLI 进一步支持基于最新 Task Result 的 RecognitionType、Provider、
+> Provider ID、Title、Task ID 与 Year 派生筛选。
+
+> 当前实现（Phase 21.13）：FileIndex 基础过滤/cursor/limit 已下沉到参数化仓储查询，应用层只
+> 处理最新 Task Result 派生筛选。
+
+> 当前实现（Phase 21.14）：SQLite 路径的派生筛选也已下沉为 FileIndex 与最新 Task Result 的
+> 参数化 join，不再逐文件查询最新结果。
+
+> 当前实现（Phase 21.16）：`files stats` 提供 FileIndex 总数与 scan status 分组统计，可按
+> ResourceLibrary/Storage 过滤；不读取文件内容，不构造 Storage/Provider。
+
+> 当前实现（Phase 21.17）：已有 Operator Web UI 新增只读 Files 视图；认证 API 提供
+> list/detail/stats，页面只读，不提供写入或执行操作。
+
+> 当前实现（Phase 21.18）：Files 视图增加只读搜索/筛选控件，可组合 ResourceLibrary、
+> Storage、scan status、path/filename、RecognitionType、Provider、Provider ID、Title、
+> Task ID 与 Year 过滤。
+
+> 当前实现（Phase 21.19）：新增显式 `batch preview` 与 `batch organize` 命令，复用无路径全
+> ResourceLibrary 管线；`batch organize` 默认 DryRun，只有显式 `--execute` 才可进入执行边界。
+
+> 当前实现（Phase 21.20）：File detail/API/Web UI 增加同一 source Storage/path 的关联
+> Recognition/Metadata review 链接；只读导航，不修改 review、不调用 Provider。
+
+> 当前实现（Phase 21.21）：`files re-recognize` 可为存在 pending RecognitionReview 的文件发起
+> 重新识别请求；真正重评仍由 `tasks resume` 执行。
+
+> 当前实现（Phase 21.22）：`files re-match` 可为存在 pending MetadataCorrectionReview 的文件
+> 执行有界 Metadata 修正/重新匹配；真正 Provider 查找仍由 `tasks resume` 执行。
+
+> 当前实现（Phase 21.23）：`files re-plan` 可为最新 FAILED/PARTIAL 结果的文件发起单项重试
+> 请求，原子返回 PENDING；真正重新规划/整理仍由 `tasks resume` 执行。
+
+> 当前实现（Phase 21.24）：Phase 21 收口 smoke test 与文档一致性核对完成；CLI/UI 只读边界
+> 和禁止依赖审计保持通过。
+
+> 当前实现（Phase 21.25）：Files 详情 Web UI/API 增加 re-recognize 与 re-plan 请求入口；仅在
+> 对应 pending review 或 FAILED/PARTIAL 状态显示，实际执行仍需显式 Task resume。
+
+> 当前实现（Phase 21.26）：补齐 file re-match 的 Web UI/API；Phase 21 已按当前有界范围收尾，
+> 下一阶段进入 Phase 22 配置管理系统。
+
+> 当前实现（Phase 21.15）：新增 `tasks retry-request`，可对有界 FAILED/PARTIAL TaskItem
+> 批量原子回到 PENDING；真正的重试仍通过显式 `tasks resume` 执行。
 
 ---
 
@@ -3305,6 +3395,9 @@ Target
 
 错误记录
 ```
+
+> 当前实现（Phase 21.11）：`files show` 在 FileIndex 字段之外追加同一 source Storage/path 的
+> 最新持久 Task Result；缺失历史显式显示为空，不构造 Provider/Storage，也不读取文件内容。
 
 操作：
 

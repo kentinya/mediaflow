@@ -40,6 +40,17 @@ class FileIndexRepository(Protocol):
 
     def batch_upsert(self, records: Sequence[FileIndexRecord]) -> None: ...
     def list_by_resource_library(self, resource_library_id: str) -> Sequence[FileIndexRecord]: ...
+    def list_catalog(
+        self,
+        resource_library_ids: Sequence[str],
+        *,
+        storage_id: str | None = None,
+        scan_status: FileScanStatus | None = None,
+        query: str | None = None,
+        limit: int = 100,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+    ) -> tuple[FileIndexRecord, ...]: ...
 
     def reconcile_missing(
         self,

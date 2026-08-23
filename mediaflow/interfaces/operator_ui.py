@@ -18,6 +18,7 @@ INDEX_HTML = b"""<!doctype html>
   <nav aria-label="Operator views">
     <button data-view="dashboard" class="active">Dashboard</button>
     <button data-view="tasks">Tasks</button>
+    <button data-view="files">Files</button>
     <button data-view="jobs">Jobs</button>
     <button data-view="schedules">Schedules</button>
     <button data-view="notifications">Notifications</button>
@@ -166,6 +167,7 @@ APP_JS = b"""(() => {
   function itemId(kind, item) {
     if (kind === 'confirmations') return item.confirmationId || item.confirmation_id;
     if (kind === 'metadata-reviews') return item.review_id;
+    if (kind === 'files') return item.fileId || item.file_id;
     return item.review_id;
   }
   async function renderQueue(kind) {
@@ -185,6 +187,67 @@ APP_JS = b"""(() => {
       'warning'));
     if (previousCursor) target.append(actionButton(`Previous ${noun}`, previous));
     if (nextCursor) target.append(actionButton(`Next ${noun}`, next));
+  }
+  function renderFileReMatchForm(id) {
+    const query = document.createElement('input'); query.setAttribute('aria-label', 'Corrected query');
+    const media = document.createElement('select'); media.setAttribute('aria-label', 'Media type');
+    ['movie', 'tv'].forEach(value => { const option = text('option', value); option.value = value;
+      media.append(option); });
+    const year = document.createElement('input'); year.type = 'number'; year.min = '1870';
+    year.max = '2100'; year.setAttribute('aria-label', 'Corrected year');
+    const providerId = document.createElement('input');
+    providerId.setAttribute('aria-label', 'Direct provider ID');
+    const controls = text('div', '', 'choices'); controls.append(query, media, year, providerId,
+      actionButton('Request re-match', async () => {
+        const payload = {mediaType: media.value};
+        if (query.value.trim()) payload.query = query.value.trim();
+        if (year.value) payload.year = Number(year.value);
+        if (providerId.value.trim()) payload.providerId = providerId.value.trim();
+        try {
+          await api(`/api/v1/files/${encodeURIComponent(id)}/re-match`,
+            {method: 'POST', body: JSON.stringify(payload)});
+          detail.hidden = true; message('Metadata re-match requested. Task was not resumed.');
+          await load();
+        } catch (error) { message(error.message, true); }
+      }));
+    detailContent.append(text('h3', 'Metadata re-match'), controls);
+  }
+  async function renderFiles() {
+    clear(content); content.append(text('h2', 'File catalog'));
+    const filters = [
+      ['resourceLibrary', 'Resource library'], ['storage', 'Storage'],
+      ['query', 'Path/filename'], ['recognitionType', 'Recognition type'],
+      ['provider', 'Provider'], ['providerId', 'Provider ID'], ['title', 'Title'],
+      ['taskId', 'Task ID'], ['year', 'Year']
+    ].map(([name, label]) => {
+      const labelNode = text('label', label); const input = document.createElement('input');
+      input.setAttribute('aria-label', label); input.name = name; labelNode.append(input);
+      return labelNode;
+    });
+    const status = document.createElement('select'); status.setAttribute('aria-label', 'Scan status');
+    ['', 'discovered', 'unstable', 'ready', 'ignored', 'missing', 'error'].forEach(value => {
+      const option = text('option', value || 'All scan statuses'); option.value = value;
+      status.append(option);
+    });
+    const form = text('div', '', 'choices'); filters.forEach(item => form.append(item));
+    form.append(status);
+    const loadFiles = async () => {
+      const parts = ['limit=100'];
+      filters.forEach(node => {
+        const input = node.querySelector('input');
+        if (input && input.value.trim()) parts.push(`${input.name}=${encodeURIComponent(input.value.trim())}`);
+      });
+      if (status.value) parts.push(`scanStatus=${encodeURIComponent(status.value)}`);
+      const data = await api(`/api/v1/files?${parts.join('&')}`);
+      const items = data.items || [];
+      clear(content); content.append(text('h2', 'File catalog'));
+      const rows = items.map(item => [item.fileId || item.file_id, item.path,
+        item.scanStatus || item.scan_status, item.updatedAt || item.updated_at]);
+      content.append(table(['ID', 'Path', 'Scan status', 'Updated'], rows,
+        index => showDetail('files', items[index].fileId || items[index].file_id)));
+      content.append(actionButton('Refresh files', loadFiles));
+    };
+    content.append(form, actionButton('Search files', loadFiles));
   }
   async function renderObservability(kind, cursor = null) {
     const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
@@ -396,6 +459,31 @@ APP_JS = b"""(() => {
       const list = document.createElement('dl');
       Object.entries(data).filter(([, value]) => !Array.isArray(value) && typeof value !== 'object')
         .forEach(([key, value]) => field(list, key, value)); detailContent.append(list);
+      if (kind === 'files') {
+        if (data.latestResult && data.latestResult.taskId) {
+          detailContent.append(actionButton('Open linked task',
+            () => showTask(data.latestResult.taskId)));
+        }
+        if (data.latestResult && ['failed', 'partial'].includes(data.latestResult.status)) {
+          detailContent.append(actionButton('Request re-plan',
+            () => resolve(`/api/v1/files/${encodeURIComponent(id)}/re-plan`, {})));
+        }
+        if (Array.isArray(data.relatedReviews) && data.relatedReviews.some(item =>
+          item.kind === 'recognition' && item.status === 'pending')) {
+          detailContent.append(actionButton('Request re-recognition',
+            () => resolve(`/api/v1/files/${encodeURIComponent(id)}/re-recognize`, {})));
+        }
+        if (Array.isArray(data.relatedReviews) && data.relatedReviews.some(item =>
+          item.kind === 'metadata_correction' && item.status === 'pending')) {
+          renderFileReMatchForm(id);
+        }
+        if (Array.isArray(data.relatedReviews) && data.relatedReviews.length) {
+          const rows = data.relatedReviews.map(item => [item.kind, item.reviewId,
+            item.status, item.taskId]);
+          detailContent.append(text('h3', 'Related reviews'),
+            table(['Kind', 'Review', 'Status', 'Task'], rows));
+        }
+      }
       if (kind === 'confirmations') renderConflictActions(id);
       if (kind === 'metadata-reviews') renderRankActions(kind, id, data.candidates || [],
         'candidateRank', ['rank', 'title', 'year', 'provider_id']);
@@ -436,6 +524,7 @@ APP_JS = b"""(() => {
       else if (view === 'notifications') await renderNotifications();
       else if (view === 'logs') await renderLogs();
       else if (view === 'system') await renderSystem();
+      else if (view === 'files') await renderFiles();
       else await renderQueue(view); message('Connected.');
     } catch (error) { clear(content); message(error.message, true); }
   }

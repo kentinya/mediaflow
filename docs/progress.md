@@ -53,7 +53,31 @@
 - Phase 21.1 durable manual Metadata NOT_FOUND query/year/Movie-TV/direct-ID correction: PASS
 - Phase 21.2 durable manual ignore decision for Recognition/Metadata waits: PASS
 - Phase 21.3 durable Recognition re-evaluation request: PASS
-- Current development boundary: Phase 21.4 manual workflow scope is next
+- Phase 21.4 bounded batch Recognition re-evaluation request: PASS
+- Phase 21.5 bounded batch manual ignore: PASS
+- Phase 21.6 bounded batch manual RecognitionType decision: PASS
+- Phase 21.7 bounded batch Metadata query correction: PASS
+- Phase 21.8 bounded batch Metadata candidate selection: PASS
+- Phase 21.9 bounded read-only file catalog CLI: PASS
+- Phase 21.10 bounded file catalog cursor pagination: PASS
+- Phase 21.11 bounded file catalog detail enrichment: PASS
+- Phase 21.12 bounded file catalog derived-field filtering: PASS
+- Phase 21.13 repository-native bounded file catalog query: PASS
+- Phase 21.14 derived filter Task Result join pushdown: PASS
+- Phase 21.15 bounded batch failed-item retry request: PASS
+- Phase 21.16 bounded read-only file catalog status counts: PASS
+- Phase 21.17 read-only file catalog Web UI: PASS
+- Phase 21.18 files Web UI search and filter enhancement: PASS
+- Phase 21.19 explicit batch DryRun/organize commands: PASS
+- Phase 21.20 file detail related Task/Review linkage: PASS
+- Phase 21.21 file detail re-recognition request: PASS
+- Phase 21.22 file detail Metadata re-match/correction: PASS
+- Phase 21.23 file detail re-plan/retry request: PASS
+- Phase 21.24 Phase 21 closure regression and documentation consistency: PASS
+- Phase 21.25 file detail re-recognize/re-plan Web UI/API: PASS
+- Phase 21.26 file detail Metadata re-match Web UI/API and Phase 21 closure: PASS
+- Phase 22.0 configuration management architecture decision and domain skeleton: PASS
+- Current development boundary: Phase 22.1 configuration CRUD/validation
 
 ## Planned
 
@@ -1481,5 +1505,328 @@ Phase 21.3 durable Recognition re-evaluation request (2026-08-23): PASS
 - Retry request constructs no Storage/provider/workflow and cannot change execute authorization;
   stale/resolved/ignored/concurrent decisions and injected audit failure roll back safely
 - Full offline suite: 588 tests, 581 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.4 bounded batch Recognition re-evaluation request (2026-08-23): PASS
+
+- Reused the immutable Phase 21.3 `RecognitionRetryDecision` audit and `retry_requested` review
+  status; no SQLite schema bump was needed for the bounded batch operation
+- Added credential-independent `recognition-reviews retry-pending --actor ACTOR [--note NOTE]
+  [--limit N] [--task-id TASK_ID]`; pending reviews plus matching WAITING_RECOGNITION items are
+  selected oldest-first and atomically transitioned back to PENDING as one transaction
+- Optional Task scoping filters only that Task's pending reviews; empty/oversized/invalid selection,
+  wrong-state, stale, concurrent and injected audit failures roll back the complete batch
+- The existing resume selector includes retried items but injects no manual RecognitionType, so the
+  current externally loaded rules and original ResourceLibrary context are evaluated normally
+- Current A/B/C rules resolve normally and C preserves Metadata C plus downstream A reuse; the batch
+  command constructs no Storage/provider/workflow and cannot change execute authorization
+- Full offline suite: 595 tests, 588 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.5 bounded batch manual ignore (2026-08-23): PASS
+
+- Reused the immutable Phase 21.2 `ManualIgnoreDecision` audit and `ManualReviewKind`; no SQLite
+  schema bump was needed for the bounded batch operation
+- Added credential-independent `mediaflow tasks ignore-pending --actor ACTOR [--note NOTE]
+  [--limit N] [--task-id TASK_ID]`; Recognition, Metadata candidate and Metadata NOT_FOUND
+  correction waiting items are selected oldest-first and atomically marked IGNORED in one
+  transaction
+- Optional Task scoping filters only that Task's pending manual-review items; empty/oversized/
+  invalid selection, wrong-state, stale/concurrent changes and injected audit failures roll back the
+  complete batch
+- Ignored items remain terminal, excluded from resume/retry and completed counts, and preserve the
+  PartialSuccess Task summary semantics from Phase 21.2
+- The batch command constructs no Storage/provider/workflow and cannot change execute authority;
+  RecognitionType C and its configured downstream A policy reuse remain unchanged
+- Full offline suite: 602 tests, 595 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.6 bounded batch manual RecognitionType decision (2026-08-23): PASS
+
+- Reused the immutable Phase 21.0 RecognitionReview/choice/decision-audit models; no SQLite schema
+  bump was needed for the bounded batch operation
+- Added credential-independent `mediaflow recognition-reviews resolve-pending --recognition-type
+  TYPE --actor ACTOR [--note NOTE] [--limit N] [--task-id TASK_ID]`; pending reviews plus matching
+  WAITING_RECOGNITION items are selected oldest-first and atomically resolved with the same
+  configured type in one transaction
+- Optional Task scoping filters only that Task's pending reviews; disabled/unknown type, missing
+  snapshot type, empty/oversized selection, wrong-state, stale/concurrent changes and injected audit
+  failures roll back the complete batch
+- Resolved items return to PENDING and are consumed by the existing explicit Task resume as durable
+  RecognitionSelections; C remains C through Metadata C and downstream A policy reuse
+- The batch command constructs no Storage/provider/workflow and cannot change execute authority
+- Full offline suite: 610 tests, 603 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.7 bounded batch Metadata query correction (2026-08-23): PASS
+
+- Reused the immutable Phase 21.1 MetadataCorrectionReview/decision-audit models; no SQLite schema
+  bump was needed for the bounded batch operation
+- Added credential-independent `mediaflow metadata-corrections resolve-pending --media-type
+  movie|tv [--query QUERY | --provider-id PROVIDER_ID] [--year YEAR] --actor ACTOR [--note NOTE]
+  [--limit N] [--task-id TASK_ID]`; pending Metadata NOT_FOUND corrections plus matching
+  WAITING_METADATA_CORRECTION items are selected oldest-first and atomically resolved with the same
+  validated corrected inputs in one transaction
+- Optional Task scoping filters only that Task's pending corrections; disabled/stale policy or
+  provider, invalid query/year/media-type/provider-ID, empty/oversized selection, wrong-state,
+  stale/concurrent changes and injected audit failures roll back the complete batch
+- Resolved items return to PENDING and are consumed by the existing explicit Task resume as durable
+  MetadataCorrectionSelections; C remains C through corrected Metadata and downstream A policy reuse
+- The batch command constructs no Storage/provider/workflow and cannot change execute authority
+- Full offline suite: 618 tests, 611 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.8 bounded batch Metadata candidate selection (2026-08-23): PASS
+
+- Reused the immutable Phase 18.9/18.10 MetadataReview/candidate/decision-audit models; no SQLite
+  schema bump was needed for the bounded batch operation
+- Added credential-independent `mediaflow metadata-reviews resolve-pending --candidate-rank RANK
+  --actor ACTOR [--note NOTE] [--limit N] [--task-id TASK_ID]`; pending NeedConfirm/Ambiguous
+  reviews plus matching WAITING_METADATA items are selected oldest-first and atomically resolved
+  with the same persisted candidate rank in one transaction
+- Optional Task scoping filters only that Task's pending reviews; invalid/absent rank, empty/
+  oversized selection, wrong-state, stale/concurrent changes and injected audit failures roll back
+  the complete batch
+- Resolved items return to PENDING and are consumed by the existing explicit Task resume as durable
+  MetadataSelections; C remains C through Metadata C and downstream A policy reuse
+- The batch command constructs no Storage/provider/workflow and cannot change execute authority
+- Full offline suite: 625 tests, 618 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.9 bounded read-only file catalog CLI (2026-08-23): PASS
+
+- Added a pure `FileCatalogService` that reads the durable FileIndex only through existing
+  `list_by_resource_library` operations; no Storage, Scanner, provider, Planner or Executor is
+  constructed
+- Added credential-independent `mediaflow files list [--resource-library ID] [--storage ID]
+  [--scan-status STATUS] [--query TEXT] [--limit N]` and `mediaflow files show FILE_ID`; ordering
+  is stable by updated time/file ID and limits are bounded
+- ResourceLibrary, Storage, scan-status and path/filename substring filters are applied before
+  truncation; unknown IDs/status, invalid limits, missing IDs and out-of-scope IDs fail closed
+- Output contains only indexed FileIndex fields and never reads file contents, URLs, credentials,
+  provider payloads or raw errors
+- Full offline suite: 629 tests, 622 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.10 bounded file catalog cursor pagination (2026-08-23): PASS
+
+- Extended the Phase 21.9 pure FileCatalogService with mutually exclusive keyset cursors using the
+  same stable `(updated_at DESC, file_id DESC)` order
+- Added `--after ISO_TIMESTAMP --cursor-file-id FILE_ID` and `--before ISO_TIMESTAMP
+  --cursor-file-id FILE_ID` to `mediaflow files list`; cursor components are required together and
+  invalid/mutually-exclusive values fail closed
+- Existing ResourceLibrary/Storage/scan-status/query filters still run before cursor filtering and
+  truncation; no offset pagination, dynamic filters or Storage/provider construction was added
+- Full offline suite: 631 tests, 624 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.11 bounded file catalog detail enrichment (2026-08-23): PASS
+
+- Extended `mediaflow files show` with the latest persisted Task result for the same source Storage
+  and path; indexed fields remain the authoritative file record
+- Added a bounded latest-result repository lookup and an immutable FileCatalogDetail view; missing
+  results render explicitly as `None` rather than being fabricated
+- The detail command still constructs no Storage, Scanner, provider, Planner or OrganizerExecutor,
+  performs zero media mutation and never reads file contents
+- Existing file list filters and cursor pagination remain unchanged
+- Full offline suite: 632 tests, 625 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.12 bounded file catalog derived-field filtering (2026-08-23): PASS
+
+- Extended `mediaflow files list` with latest-Task-result filters for RecognitionType, Provider,
+  Provider ID, Title, Task ID, and Year
+- Existing FileIndex filters, stable cursor pagination and bounded truncation still run in order;
+  records without a matching latest result are excluded when any derived filter is present
+- Derived filters fail closed without a Task repository and year input is bounded to 1870–2100
+- The command still constructs no Storage, Scanner, provider, Planner or OrganizerExecutor,
+  performs zero media mutation and never reads file contents
+- Full offline suite: 633 tests, 626 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.13 repository-native bounded file catalog query (2026-08-23): PASS
+
+- Added a parameterized `FileIndexRepository.list_catalog` query and implemented it in SQLite and
+  in-memory repositories; ResourceLibrary/Storage/scan-status/query/cursor/limit are enforced
+  before records leave the repository
+- Updated `FileCatalogService.list` to use the repository-native query for FileIndex filters and
+  apply only latest-Task-result derived filters in memory
+- Existing cursor, unknown-ID, bounded-limit, list/show and full offline behavior remains unchanged;
+  no SQL identifiers are interpolated
+- Full offline suite: 633 tests, 626 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.14 derived filter Task Result join pushdown (2026-08-23): PASS
+
+- Added an immutable FileCatalogEnrichedRecord and a SQLite joined query that pairs each FileIndex
+  row with its latest TaskResult in one parameterized SQL statement
+- Updated FileCatalogService to use the joined query when derived filters are present and the
+  repository supports it; the previous fallback remains for non-SQLite/unsupported implementations
+- Derived filters no longer perform one latest-result query per FileIndex record on the SQLite path;
+  missing results and non-matching derived values are excluded in SQL
+- Full offline suite: 633 tests, 626 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.15 bounded batch failed-item retry request (2026-08-23): PASS
+
+- Added SQLite schema v22 `task_retry_audit` and an immutable `TaskRetryRequestDecision` model
+- Added credential-independent `mediaflow tasks retry-request --actor ACTOR [--note NOTE]
+  [--limit N] [--task-id TASK_ID]`; FAILED/PARTIAL items are selected oldest-first and atomically
+  transitioned back to PENDING in one transaction
+- Optional Task scoping filters only that Task's failed/partial items; empty/oversized selection,
+  wrong-state, stale/concurrent changes and injected audit failures roll back the complete batch
+- Actual retry remains a separate explicit `tasks resume`; the request cannot grant execute
+  authority or construct Storage/provider/workflow
+- Full offline suite: 638 tests, 631 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.16 bounded read-only file catalog status counts (2026-08-23): PASS
+
+- Added `mediaflow files stats [--resource-library ID] [--storage ID]`; it summarizes the durable
+  FileIndex by total and FileScanStatus
+- Scoping honors configured ResourceLibrary/Storage IDs and unknown IDs fail closed
+- The command constructs no Storage, Scanner, provider, Planner or OrganizerExecutor and performs
+  zero media mutation
+- Full offline suite: 639 tests, 632 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.17 read-only file catalog Web UI (2026-08-23): PASS
+
+- Added authenticated `GET /api/v1/files`, `GET /api/v1/files/{file_id}`, and
+  `GET /api/v1/files/stats` using the same FileCatalogService filters/detail/stats as the CLI
+- Added a read-only Files view to the existing operator UI with bounded list and detail rendering;
+  the UI never submits write/execute endpoints or constructs Storage/provider adapters
+- File detail includes the latest persisted Task result when available; missing history is explicit
+- Full offline suite: 640 tests, 633 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.18 files Web UI search and filter enhancement (2026-08-23): PASS
+
+- Added read-only filter controls to the Files operator view for ResourceLibrary, Storage, scan
+  status, path/filename, Recognition type, Provider, Provider ID, Title, Task ID, and Year
+- The UI builds `/api/v1/files` query strings from only populated controls and preserves file detail
+  navigation
+- API file-catalog query validation continues to reject duplicate/unknown fields and requires READ
+  permission
+- Full offline suite: 640 tests, 633 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.19 explicit batch DryRun/organize commands (2026-08-23): PASS
+
+- Added `mediaflow batch preview [--limit N]` and `mediaflow batch organize [--limit N]
+  [--execute]`, both mapped to the existing no-path all-ResourceLibrary pipeline
+- Batch organize remains DryRun unless `--execute` is present; original-plus-fresh execute authority
+  boundaries are unchanged
+- Full offline suite: 641 tests, 634 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.20 file detail related Task/Review linkage (2026-08-23): PASS
+
+- Extended FileCatalogDetail with bounded related review links for RecognitionReview,
+  MetadataReview and MetadataCorrectionReview records matching the same source Storage/path
+- `GET /api/v1/files/{file_id}` now returns related review kind/review/status/task fields and the
+  Files UI renders linked task/review navigation
+- No review mutation, provider lookup, Storage/Scanner/Planner/OrganizerExecutor construction or
+  file-content access is performed
+- Full offline suite: 641 tests, 634 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.21 file detail re-recognition request (2026-08-23): PASS
+
+- Added `mediaflow files re-recognize FILE_ID --actor ACTOR [--note NOTE]`; it resolves the file,
+  finds a pending RecognitionReview, and requests retry through the existing atomic
+  RecognitionRetryService
+- Missing file, missing pending RecognitionReview, invalid actor/note and concurrent/duplicate
+  requests fail closed
+- The command constructs no Storage/provider/workflow and actual re-evaluation still requires
+  `mediaflow tasks resume ORIGINAL_TASK_ID`
+- Full offline suite: 644 tests, 637 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.22 file detail Metadata re-match/correction (2026-08-23): PASS
+
+- Added `mediaflow files re-match FILE_ID --media-type movie|tv [--query QUERY |
+  --provider-id PROVIDER_ID] [--year YEAR] --actor ACTOR [--note NOTE]`
+- Resolves a pending MetadataCorrectionReview through the existing MetadataCorrectionService and
+  returns the TaskItem to PENDING; actual provider lookup remains a separate Task resume
+- Missing review, invalid query/year/media-type/provider-ID and concurrent changes fail closed
+- The command constructs no Storage/provider/workflow and performs zero media mutation
+- Full offline suite: 647 tests, 640 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.23 file detail re-plan/retry request (2026-08-23): PASS
+
+- Extended TaskRetryRequestService with a single-item retry request method and added
+  `mediaflow files re-plan FILE_ID --actor ACTOR [--note NOTE]`
+- Resolves the file's latest persisted TaskResult and atomically returns its FAILED/PARTIAL
+  TaskItem to PENDING using the existing task retry audit
+- Missing file/result, non-failed/partial result, invalid actor/note and concurrent/duplicate
+  requests fail closed; actual re-planning remains an explicit Task resume
+- Full offline suite: 650 tests, 643 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.24 Phase 21 closure regression and documentation consistency (2026-08-23): PASS
+
+- Added a Phase 21 closure smoke test verifying the top-level CLI command families and read-only
+  Files UI boundaries
+- Reconfirmed FFmpeg/FFprobe absence and reconciled Phase 21 non-claims in documentation
+- Full offline suite: 652 tests, 645 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.25 file detail re-recognize/re-plan Web UI/API (2026-08-23): PASS
+
+- Added authenticated `POST /api/v1/files/{file_id}/re-recognize` and
+  `POST /api/v1/files/{file_id}/re-plan` endpoints using the authenticated principal as actor
+- Files UI shows action buttons only when a pending RecognitionReview exists or the latest result is
+  FAILED/PARTIAL; actual re-evaluation/re-planning remains explicit Task resume
+- No Storage/provider/workflow is constructed and no execute authority is granted
+- Full offline suite: 652 tests, 645 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.26 file detail Metadata re-match Web UI/API and Phase 21 closure (2026-08-23): PASS
+
+- Added authenticated `POST /api/v1/files/{file_id}/re-match` with bounded query/year/mediaType/
+  providerId/note and a read-only Files UI form for pending MetadataCorrectionReview
+- Actual provider lookup remains a separate explicit Task resume
+- Marked the accepted Phase 21 manual workflow scope as closed; remaining non-claims are Phase 22
+  configuration management and deployment-specific certifications
+- Full offline suite: 652 tests, 645 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 22.0 configuration management architecture decision and domain skeleton (2026-08-23): PASS
+
+- Documented the Phase 22 configuration source-of-truth decision: JSON remains validated runtime
+  input, SQLite will be the durable configuration-change/audit store, and credentials remain
+  environment/Secret Store-owned
+- Added ConfigurationObjectKind for Storage, Resource/Media Library, Metadata Provider/Policy,
+  Recognition Rule/Type/TypePolicy, Naming/Classification/Organize Policy, Schedule and System
+  Settings
+- Added immutable ConfigurationReferencePolicy and ConfigurationChangeAudit models plus a future
+  CRUD/reference repository protocol; secret-like fields are structurally redacted
+- Full offline suite: 655 tests, 648 passed, 0 failed, 7 explicitly gated real profiles skipped;
   formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
   diff and isolated wheel gates passed

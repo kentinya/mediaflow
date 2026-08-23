@@ -10,6 +10,7 @@ from mediaflow.domain.metadata import (
 )
 from mediaflow.domain.metadata_review import (
     MetadataReview,
+    MetadataReviewBatchResolveRequest,
     MetadataReviewCandidate,
     MetadataReviewDecisionAudit,
     MetadataReviewRepository,
@@ -25,6 +26,7 @@ class MetadataReviewService:
     MAX_CANDIDATES = 20
     MAX_COMPONENTS = 16
     MAX_TEXT = 500
+    MAX_BATCH_SIZE = 100
 
     def __init__(self, repository: MetadataReviewRepository) -> None:
         self._repository = repository
@@ -134,6 +136,87 @@ class MetadataReviewService:
         )
         self._repository.resolve_metadata_review(resolved, audit, pending)
         return resolved
+
+    def resolve_pending(
+        self,
+        candidate_rank: int,
+        *,
+        actor: str,
+        note: str | None = None,
+        limit: int = 100,
+        task_id: str | None = None,
+    ) -> tuple[MetadataReview, ...]:
+        if isinstance(candidate_rank, bool) or not isinstance(candidate_rank, int):
+            raise ValueError("metadata review candidate rank must be an integer")
+        normalized_actor = self._text(actor, 200)
+        if not normalized_actor:
+            raise ValueError("metadata review actor is required")
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= self.MAX_BATCH_SIZE
+        ):
+            raise ValueError(
+                f"metadata review batch limit must be between 1 and {self.MAX_BATCH_SIZE}"
+            )
+        reviews = self._repository.list_pending_metadata_reviews(limit=limit, task_id=task_id)
+        if not reviews:
+            raise ValueError("no pending metadata reviews were selected")
+
+        now = datetime.now(UTC)
+        normalized_note = self._text(note, self.MAX_TEXT)
+        requests: list[MetadataReviewBatchResolveRequest] = []
+        for review in reviews:
+            candidate = next(
+                (
+                    value
+                    for value in self._repository.list_metadata_review_candidates(review.review_id)
+                    if value.rank == candidate_rank
+                ),
+                None,
+            )
+            if candidate is None:
+                raise ValueError("selected candidate rank is not present in a metadata review")
+            item = self._repository.get_item(review.item_id)
+            if (
+                item is None
+                or item.task_id != review.task_id
+                or item.status is not TaskItemStatus.WAITING_METADATA
+            ):
+                raise ValueError("metadata review TaskItem is not waiting for metadata")
+            resolved = replace(
+                review,
+                status=MetadataReviewStatus.RESOLVED,
+                updated_at=now,
+                selected_rank=candidate.rank,
+                selected_provider=candidate.provider,
+                selected_provider_id=candidate.provider_id,
+                selected_media_type=candidate.media_type,
+                decided_at=now,
+                actor=normalized_actor,
+            )
+            audit = MetadataReviewDecisionAudit(
+                str(uuid4()),
+                review.review_id,
+                candidate.rank,
+                candidate.provider,
+                candidate.provider_id,
+                candidate.media_type,
+                now,
+                normalized_actor,
+                normalized_note,
+            )
+            pending = replace(
+                item,
+                status=TaskItemStatus.PENDING,
+                stage="metadata_resolved",
+                updated_at=now,
+                error=None,
+            )
+            requests.append(MetadataReviewBatchResolveRequest(resolved, audit, pending))
+
+        self._repository.resolve_metadata_reviews_batch(tuple(requests))
+        return tuple(request.review for request in requests)
 
     @staticmethod
     def _text(value: str | None, limit: int) -> str | None:

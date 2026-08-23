@@ -1225,8 +1225,8 @@ stale resolver loses the conditional update and the transaction rolls back.
 IGNORED is neither success nor failure: it is excluded from resume/retry, excluded from completed
 item counts and forces a PartialSuccess Task summary. This database-only decision does not mutate or
 hide the source, edit FileIndex/configuration, create a persistent path rule, invoke a provider, or
-construct Storage/Planner/OrganizerExecutor. Batch ignore, API/UI writes and classification/conflict
-ignore remain outside this phase.
+construct Storage/Planner/OrganizerExecutor. Batch ignore is implemented in Phase 21.5; API/UI
+writes and classification/conflict ignore remain outside this phase.
 
 ## Durable Recognition re-evaluation request
 
@@ -1242,3 +1242,194 @@ externally loaded rules and the original ResourceLibrary context. A current matc
 an unchanged miss creates a new review under the continuation Task. The request command constructs
 no Storage/provider/workflow, edits no rule/configuration, has no hidden A fallback, and cannot grant
 execute authority. A current C match remains C while resolving configured downstream policy reuse.
+
+## Bounded batch Recognition re-evaluation request
+
+Phase 21.4 reuses the same immutable `RecognitionRetryDecision` audit and `retry_requested` review
+status, and adds `RecognitionBatchRetryService` plus a repository transaction that processes a
+bounded, oldest-first selection of pending reviews. Each selected review must still be pending and
+its TaskItem must still be WAITING_RECOGNITION; one conditional update, item update, and audit insert
+is executed per request inside the same database transaction, so a stale/concurrent member or an
+injected audit failure rolls back the complete batch.
+
+The CLI command is
+`mediaflow recognition-reviews retry-pending --actor ACTOR [--note NOTE] [--limit N]
+[--task-id TASK_ID]`. `--limit` is bounded to 1–100 and `--task-id` optionally scopes selection to a
+single Task. The command constructs no Storage/provider/workflow, performs no media mutation, and
+cannot grant execute authority. Resume semantics are identical to Phase 21.3: retried items are
+selected without a `RecognitionSelection`, current rules are evaluated normally, and C preserves
+Metadata C plus downstream A policy reuse.
+
+## Bounded batch manual ignore
+
+Phase 21.5 reuses the immutable `ManualIgnoreDecision` audit and `ManualReviewKind`, and extends
+`ManualIgnoreService` with `ignore_pending`. A repository union query selects a bounded, oldest-first
+set of TaskItems in WAITING_RECOGNITION, WAITING_METADATA or WAITING_METADATA_CORRECTION whose
+matching review is still pending. Each selected review/item transition plus audit insert runs inside
+one database transaction, so a stale/concurrent member or injected audit failure rolls back the
+complete batch.
+
+The CLI command is
+`mediaflow tasks ignore-pending --actor ACTOR [--note NOTE] [--limit N] [--task-id TASK_ID]`.
+`--limit` is bounded to 1–100 and `--task-id` optionally scopes selection to one Task. The command
+constructs no Storage/provider/workflow, performs no media mutation, and cannot grant execute
+authority. Ignored items remain terminal, excluded from resume/retry and completed counts, and
+preserve the Phase 21.2 PartialSuccess Task summary semantics.
+
+## Bounded batch manual RecognitionType decision
+
+Phase 21.6 reuses the existing RecognitionReview snapshot/decision-audit models and extends
+`RecognitionReviewService` with `resolve_pending`. A bounded, oldest-first selection of pending
+reviews is resolved with one currently enabled configured RecognitionType. Every selected review
+must contain that type in its stored snapshot and its TaskItem must still be WAITING_RECOGNITION;
+review/item updates and audit inserts share one transaction, so a disabled/unknown type, missing
+snapshot member, stale/concurrent member, or injected audit failure rolls back the complete batch.
+
+The CLI command is
+`mediaflow recognition-reviews resolve-pending --recognition-type TYPE --actor ACTOR [--note NOTE]
+[--limit N] [--task-id TASK_ID]`. It constructs no Storage/provider/workflow, performs no media
+mutation, and cannot grant execute authority. Resolved items return to PENDING and explicit resume
+loads the durable RecognitionSelection; RecognitionRuleEngine and configuration remain unchanged,
+and C preserves Metadata C plus downstream A policy reuse.
+
+## Bounded batch Metadata query correction
+
+Phase 21.7 reuses the existing MetadataCorrectionReview and decision-audit models and extends
+`MetadataCorrectionService` with `resolve_pending`. A bounded, oldest-first selection of pending
+Metadata NOT_FOUND corrections is resolved with one validated corrected query/year/movie-TV choice
+or direct configured-provider ID. Each selected review must still be pending, its current policy/
+provider must still be enabled and lookup-capable, and its TaskItem must still be
+WAITING_METADATA_CORRECTION; review/item updates and audit inserts share one transaction, so a
+disabled/stale policy or provider, invalid input, stale/concurrent member, or injected audit failure
+rolls back the complete batch.
+
+The CLI command is
+`mediaflow metadata-corrections resolve-pending --media-type movie|tv [--query QUERY |
+--provider-id PROVIDER_ID] [--year YEAR] --actor ACTOR [--note NOTE] [--limit N]
+[--task-id TASK_ID]`. It constructs no Storage/provider/workflow, performs no media mutation, and
+cannot grant execute authority. Explicit resume loads the durable MetadataCorrectionSelection and
+reruns the existing provider path; RecognitionType C remains C while reusing downstream A policy.
+
+## Bounded batch Metadata candidate selection
+
+Phase 21.8 reuses the existing MetadataReview/candidate/decision-audit models and extends
+`MetadataReviewService` with `resolve_pending`. A bounded, oldest-first selection of pending
+NeedConfirm/Ambiguous reviews is resolved with one persisted candidate rank. Every selected review
+must contain that rank and its TaskItem must still be WAITING_METADATA; review/item updates and audit
+inserts share one transaction, so an invalid/absent rank, stale/concurrent member, or injected audit
+failure rolls back the complete batch.
+
+The CLI command is
+`mediaflow metadata-reviews resolve-pending --candidate-rank RANK --actor ACTOR [--note NOTE]
+[--limit N] [--task-id TASK_ID]`. It constructs no Storage/provider/workflow, performs no media
+mutation, and cannot grant execute authority. Explicit resume loads the durable MetadataSelection;
+RecognitionType C remains C while reusing downstream A policy.
+
+## Bounded read-only file catalog CLI
+
+Phase 21.9 adds `FileCatalogService`, a pure FileIndex query service. It accepts configured
+ResourceLibrary and Storage IDs, reads records only through existing `list_by_resource_library`
+ports, applies ResourceLibrary/Storage/scan-status and path/filename substring filters, and returns
+a stable bounded result ordered by updated time and file ID. It never constructs Storage, Scanner,
+provider, Planner or OrganizerExecutor and never reads file contents.
+
+The CLI commands are `mediaflow files list [--resource-library ID] [--storage ID]
+[--scan-status STATUS] [--query TEXT] [--limit N]` and `mediaflow files show FILE_ID
+[--resource-library ID]`. Output is limited to indexed FileIndex fields; URLs, credentials, provider
+payloads and raw errors are structurally excluded.
+
+Phase 21.10 adds stable keyset cursors to `files list` with `--after/--before` plus
+`--cursor-file-id`. Cursor filtering uses the same `(updated_at DESC, file_id DESC)` order as the
+base catalog, after all existing filters, and remains bounded without OFFSET.
+
+Phase 21.11 extends `files show` with the latest persisted Task result for the matching source
+Storage/path. The detail view keeps the FileIndex record authoritative and renders the latest
+result only when it exists; missing history is explicit rather than synthesized. The command still
+constructs no Storage/provider/workflow and never reads file contents.
+
+Phase 21.12 adds derived filters to `files list` for RecognitionType, Provider, Provider ID, Title,
+Task ID, and Year. Existing FileIndex filters run first, then latest-result matching, then cursor
+filtering and truncation. Records without a matching latest result are excluded when derived
+filters are present, and derived filters fail closed without a Task repository.
+
+Phase 21.13 pushes the base FileIndex query into a parameterized `FileIndexRepository.list_catalog`
+method, implemented by both SQLite and in-memory repositories. `FileCatalogService.list` now
+delegates ResourceLibrary/Storage/scan-status/query/cursor/limit filtering to the repository and
+applies only latest-Task-result derived filters in memory.
+
+Phase 21.14 pushes those latest-Task-result derived filters into a SQLite joined query. The
+repository pairs each FileIndex row with its latest TaskResult for the same source Storage/path and
+applies RecognitionType/Provider/Provider ID/Title/Task ID/Year predicates in SQL before cursor and
+limit. The previous fallback remains for non-SQLite or unsupported repositories.
+
+## Bounded batch failed-item retry request
+
+Phase 21.15 adds SQLite schema v22 `task_retry_audit` and `TaskRetryRequestService`. A bounded,
+oldest-first set of FAILED/PARTIAL TaskItems can be atomically returned to PENDING with stage
+`task_retry_requested` and one immutable actor/note audit per item. The command is database-only:
+it constructs no Storage/provider/workflow and cannot grant execute authority. Actual retry still
+uses the existing explicit `mediaflow tasks resume ORIGINAL_TASK_ID` boundary.
+
+## Bounded read-only file catalog status counts
+
+Phase 21.16 adds `FileCatalogService.stats` and `mediaflow files stats`. It aggregates existing
+FileIndex records by scan status after optional ResourceLibrary/Storage scoping, using only the
+existing FileIndex repository read path. The command constructs no Storage/provider/workflow.
+
+## Read-only file catalog Web UI
+
+Phase 21.17 exposes the FileCatalogService through authenticated GET endpoints:
+`/api/v1/files`, `/api/v1/files/{file_id}`, and `/api/v1/files/stats`. The existing operator UI
+gains a Files view that renders bounded file lists and file detail, including the latest persisted
+Task result when present. No UI form submits write/execute endpoints or constructs
+Storage/provider/workflow adapters.
+
+Phase 21.18 adds a read-only search/filter form to the Files view. It builds query parameters for
+the existing `/api/v1/files` endpoint from only populated controls, including FileIndex and derived
+latest-Task-result filters. The API continues to require READ permission and reject duplicate or
+unknown query fields.
+
+## Explicit batch DryRun/organize commands
+
+Phase 21.19 adds `mediaflow batch preview` and `mediaflow batch organize` as explicit entry points
+to the existing no-path all-ResourceLibrary pipeline. They do not introduce new workflow logic;
+`batch organize` remains DryRun without `--execute` and preserves original-plus-fresh execute
+authorization boundaries.
+
+## File detail related Task/Review linkage
+
+Phase 21.20 adds a bounded source-matched review link query for RecognitionReview,
+MetadataReview, and MetadataCorrectionReview records. FileCatalogDetail and the Files API/UI expose
+the latest Task result plus related review kind/review/status/task, allowing navigation without any
+review mutation or provider lookup.
+
+Phase 21.21 adds `mediaflow files re-recognize FILE_ID --actor ACTOR [--note NOTE]`. It resolves the
+file's pending RecognitionReview and delegates to the existing RecognitionRetryService; actual
+re-evaluation remains an explicit Task resume.
+
+Phase 21.22 adds `mediaflow files re-match` for pending MetadataCorrectionReview. It delegates to
+the existing MetadataCorrectionService with bounded validated query/year/media-type/provider-ID
+inputs; actual Provider lookup remains a separate Task resume.
+
+Phase 21.23 adds `mediaflow files re-plan FILE_ID --actor ACTOR [--note NOTE]`. It uses the file's
+latest persisted TaskResult, requests retry for that specific FAILED/PARTIAL TaskItem through the
+existing task retry audit, and leaves actual re-planning/organization to explicit Task resume.
+
+Phase 21.24 adds a focused closure smoke test and documentation reconciliation. It verifies the
+top-level CLI command families and read-only Files UI boundaries without introducing any new
+production feature.
+
+Phase 21.25 adds authenticated file-action POST endpoints for re-recognize and re-plan. The Files UI
+renders these actions only when a pending RecognitionReview exists or the latest result is
+FAILED/PARTIAL; actual work remains explicit Task resume.
+
+Phase 21.26 completes the Phase 21 bounded file-detail actions with `POST /api/v1/files/{file_id}/
+re-match` and a read-only Files UI form for pending MetadataCorrectionReview. The accepted Phase 21
+manual workflow scope is now closed; Phase 22 configuration management is the next boundary.
+
+## Configuration management architecture decision and domain skeleton
+
+Phase 22.0 establishes that JSON remains the validated runtime input, SQLite will become the durable
+configuration-change/audit store, and credentials remain environment- or Secret Store-owned. A
+minimal domain skeleton classifies configuration object families and defines reference/audit
+models without enabling CRUD yet.

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from mediaflow.domain.manual_ignore import (
+    ManualIgnoreBatchRequest,
     ManualIgnoreDecision,
     ManualIgnoreRepository,
     ManualReviewKind,
@@ -18,6 +19,7 @@ from mediaflow.domain.task_persistence import PersistentTaskItem, TaskItemStatus
 class ManualIgnoreService:
     MAX_ACTOR = 200
     MAX_NOTE = 500
+    MAX_BATCH_SIZE = 100
 
     def __init__(self, repository: ManualIgnoreRepository) -> None:
         self._repository = repository
@@ -57,6 +59,53 @@ class ManualIgnoreService:
         )
         self._repository.ignore_waiting_item(decision, ignored)
         return decision
+
+    def ignore_pending(
+        self,
+        *,
+        actor: str,
+        note: str | None = None,
+        limit: int = 100,
+        task_id: str | None = None,
+    ) -> tuple[ManualIgnoreDecision, ...]:
+        normalized_actor = self._text(actor, self.MAX_ACTOR)
+        if not normalized_actor:
+            raise ValueError("ignore actor is required")
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= self.MAX_BATCH_SIZE
+        ):
+            raise ValueError(f"ignore batch limit must be between 1 and {self.MAX_BATCH_SIZE}")
+        candidates = self._repository.list_ignorable_waiting_items(limit=limit, task_id=task_id)
+        if not candidates:
+            raise ValueError("no pending manual review items were selected")
+
+        now = datetime.now(UTC)
+        normalized_note = self._text(note, self.MAX_NOTE)
+        requests: list[ManualIgnoreBatchRequest] = []
+        for candidate in candidates:
+            decision = ManualIgnoreDecision(
+                str(uuid4()),
+                candidate.item.task_id,
+                candidate.item.item_id,
+                candidate.review_kind,
+                candidate.review_id,
+                now,
+                normalized_actor,
+                normalized_note,
+            )
+            ignored = replace(
+                candidate.item,
+                status=TaskItemStatus.IGNORED,
+                stage="ignored_by_operator",
+                updated_at=now,
+                error=None,
+            )
+            requests.append(ManualIgnoreBatchRequest(decision, ignored))
+
+        self._repository.ignore_waiting_items(tuple(requests))
+        return tuple(request.decision for request in requests)
 
     def _pending_review(self, item: PersistentTaskItem):
         mappings = {

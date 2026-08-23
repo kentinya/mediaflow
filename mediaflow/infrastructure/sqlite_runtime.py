@@ -35,15 +35,23 @@ from mediaflow.domain.execution_authorization import (
     ExecutionAuthorizationAudit,
     ExecutionAuthorizationStatus,
 )
+from mediaflow.domain.file_catalog import FileReviewLink
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
-from mediaflow.domain.manual_ignore import ManualIgnoreDecision, ManualReviewKind
+from mediaflow.domain.manual_ignore import (
+    ManualIgnoreBatchRequest,
+    ManualIgnoreCandidate,
+    ManualIgnoreDecision,
+    ManualReviewKind,
+)
 from mediaflow.domain.metadata_correction import (
+    MetadataCorrectionBatchResolveRequest,
     MetadataCorrectionDecisionAudit,
     MetadataCorrectionReview,
     MetadataCorrectionStatus,
 )
 from mediaflow.domain.metadata_review import (
     MetadataReview,
+    MetadataReviewBatchResolveRequest,
     MetadataReviewCandidate,
     MetadataReviewDecisionAudit,
     MetadataReviewScoreComponent,
@@ -55,6 +63,8 @@ from mediaflow.domain.notification import (
     NotificationEventType,
 )
 from mediaflow.domain.recognition_review import (
+    RecognitionBatchResolveRequest,
+    RecognitionRetryBatchRequest,
     RecognitionRetryDecision,
     RecognitionReview,
     RecognitionReviewChoice,
@@ -72,8 +82,9 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     TaskItemStatus,
 )
+from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestDecision
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 
 class SQLiteTaskRepository:
@@ -343,6 +354,122 @@ class SQLiteTaskRepository:
         values = tuple(self._item(row) for row in rows)
         return tuple(reversed(values)) if reverse else values
 
+    def list_failed_items(self, *, limit=100, task_id=None):
+        if not 1 <= limit <= 1000:
+            raise ValueError("task retry limit must be between 1 and 1000")
+        query = """
+            SELECT * FROM task_items
+            WHERE status IN ('failed', 'partial')
+        """
+        parameters: tuple[object, ...] = ()
+        if task_id is not None:
+            query += " AND task_id = ?"
+            parameters += (task_id,)
+        query += " ORDER BY updated_at, item_id LIMIT ?"
+        parameters += (limit,)
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return tuple(self._item(row) for row in rows)
+
+    def request_task_retries(self, requests: tuple[TaskRetryBatchRequest, ...]) -> None:
+        if not requests:
+            raise ValueError("task retry batch must not be empty")
+        with self._lock, self._connection:
+            for request in requests:
+                decision = request.decision
+                item = request.item
+                cursor = self._connection.execute(
+                    """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                    WHERE item_id=? AND task_id=? AND status IN ('failed', 'partial')""",
+                    (
+                        item.status.value,
+                        item.stage,
+                        item.updated_at.isoformat(),
+                        item.item_id,
+                        item.task_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("TaskItem is not failed or partial")
+                self._connection.execute(
+                    "INSERT INTO task_retry_audit VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        decision.decision_id,
+                        decision.task_id,
+                        decision.item_id,
+                        decision.decided_at.isoformat(),
+                        decision.actor,
+                        decision.note,
+                    ),
+                )
+
+    def list_task_retry_audit(self, item_id):
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM task_retry_audit WHERE item_id=?
+                ORDER BY decided_at, decision_id""",
+                (item_id,),
+            ).fetchall()
+        return tuple(
+            TaskRetryRequestDecision(
+                row["decision_id"],
+                row["task_id"],
+                row["item_id"],
+                datetime.fromisoformat(row["decided_at"]),
+                row["actor"],
+                row["note"],
+            )
+            for row in rows
+        )
+
+    def list_ignorable_waiting_items(self, *, limit=100, task_id=None):
+        if not 1 <= limit <= 1000:
+            raise ValueError("manual ignore limit must be between 1 and 1000")
+        query = """
+            SELECT i.*, 'recognition' AS review_kind, r.review_id AS review_id
+            FROM task_items i
+            JOIN recognition_reviews r ON r.item_id = i.item_id AND r.status = 'pending'
+            WHERE i.status = ?
+        """
+        parameters: list[object] = [TaskItemStatus.WAITING_RECOGNITION.value]
+        if task_id is not None:
+            query += " AND i.task_id = ?"
+            parameters.append(task_id)
+        query += """
+            UNION ALL
+            SELECT i.*, 'metadata' AS review_kind, r.review_id AS review_id
+            FROM task_items i
+            JOIN metadata_reviews r ON r.item_id = i.item_id AND r.status = 'pending'
+            WHERE i.status = ?
+        """
+        parameters.append(TaskItemStatus.WAITING_METADATA.value)
+        if task_id is not None:
+            query += " AND i.task_id = ?"
+            parameters.append(task_id)
+        query += """
+            UNION ALL
+            SELECT i.*, 'metadata_correction' AS review_kind, r.review_id AS review_id
+            FROM task_items i
+            JOIN metadata_corrections r ON r.item_id = i.item_id AND r.status = 'pending'
+            WHERE i.status = ?
+        """
+        parameters.append(TaskItemStatus.WAITING_METADATA_CORRECTION.value)
+        if task_id is not None:
+            query += " AND i.task_id = ?"
+            parameters.append(task_id)
+        query += " ORDER BY created_at, item_id LIMIT ?"
+        parameters.append(limit)
+        with self._lock:
+            rows = self._connection.execute(query, tuple(parameters)).fetchall()
+        return tuple(
+            ManualIgnoreCandidate(
+                self._item(row),
+                ManualReviewKind(row["review_kind"]),
+                row["review_id"],
+            )
+            for row in rows
+        )
+
     def ignore_waiting_item(self, decision, item) -> None:
         review_tables = {
             ManualReviewKind.RECOGNITION: (
@@ -400,6 +527,69 @@ class SQLiteTaskRepository:
                     decision.note,
                 ),
             )
+
+    def ignore_waiting_items(self, requests: tuple[ManualIgnoreBatchRequest, ...]) -> None:
+        if not requests:
+            raise ValueError("manual ignore batch must not be empty")
+        review_tables = {
+            ManualReviewKind.RECOGNITION: (
+                "recognition_reviews",
+                TaskItemStatus.WAITING_RECOGNITION,
+            ),
+            ManualReviewKind.METADATA: (
+                "metadata_reviews",
+                TaskItemStatus.WAITING_METADATA,
+            ),
+            ManualReviewKind.METADATA_CORRECTION: (
+                "metadata_corrections",
+                TaskItemStatus.WAITING_METADATA_CORRECTION,
+            ),
+        }
+        with self._lock, self._connection:
+            for request in requests:
+                decision = request.decision
+                item = request.item
+                table, waiting_status = review_tables[decision.review_kind]
+                cursor = self._connection.execute(
+                    f"""UPDATE {table} SET status='ignored', updated_at=?, decided_at=?, actor=?
+                    WHERE review_id=? AND item_id=? AND status='pending'""",
+                    (
+                        decision.decided_at.isoformat(),
+                        decision.decided_at.isoformat(),
+                        decision.actor,
+                        decision.review_id,
+                        decision.item_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("manual review is not pending")
+                cursor = self._connection.execute(
+                    """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                    WHERE item_id=? AND task_id=? AND status=?""",
+                    (
+                        item.status.value,
+                        item.stage,
+                        item.updated_at.isoformat(),
+                        item.item_id,
+                        item.task_id,
+                        waiting_status.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("TaskItem is not in the matching waiting state")
+                self._connection.execute(
+                    "INSERT INTO manual_ignore_audit VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        decision.decision_id,
+                        decision.task_id,
+                        decision.item_id,
+                        decision.review_kind.value,
+                        decision.review_id,
+                        decision.decided_at.isoformat(),
+                        decision.actor,
+                        decision.note,
+                    ),
+                )
 
     def list_manual_ignore_audit(self, item_id):
         with self._lock:
@@ -498,6 +688,42 @@ class SQLiteTaskRepository:
         values = tuple(self._result(row) for row in rows)
         return tuple(reversed(values)) if reverse else values
 
+    def get_latest_result_for_source(
+        self, storage_id: str, path: str
+    ) -> PersistentResultRecord | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM task_results
+                WHERE source_storage_id = ? AND source_path = ?
+                ORDER BY created_at DESC, result_id DESC LIMIT 1""",
+                (storage_id, path),
+            ).fetchone()
+        return self._result(row) if row else None
+
+    def list_file_review_links(self, storage_id: str, path: str) -> tuple[FileReviewLink, ...]:
+        query = """
+            SELECT 'recognition' AS kind, review_id, status, task_id
+            FROM recognition_reviews
+            WHERE source_storage_id=? AND source_path=?
+            UNION ALL
+            SELECT 'metadata', review_id, status, task_id
+            FROM metadata_reviews
+            WHERE source_storage_id=? AND source_path=?
+            UNION ALL
+            SELECT 'metadata_correction', review_id, status, task_id
+            FROM metadata_corrections
+            WHERE source_storage_id=? AND source_path=?
+            ORDER BY kind, review_id
+        """
+        with self._lock:
+            rows = self._connection.execute(
+                query, (storage_id, path, storage_id, path, storage_id, path)
+            ).fetchall()
+        return tuple(
+            FileReviewLink(row["kind"], row["review_id"], row["status"], row["task_id"])
+            for row in rows
+        )
+
     def create_confirmation(self, confirmation: ConflictConfirmation) -> None:
         with self._lock, self._connection:
             self._connection.execute(
@@ -574,6 +800,27 @@ class SQLiteTaskRepository:
             ).fetchall()
         return tuple(self._metadata_correction(row) for row in rows)
 
+    def list_pending_metadata_corrections(self, *, limit=100, task_id=None):
+        if not 1 <= limit <= 1000:
+            raise ValueError("metadata correction limit must be between 1 and 1000")
+        query = """
+            SELECT c.* FROM metadata_corrections c
+            JOIN task_items i ON i.item_id = c.item_id
+            WHERE c.status = ? AND i.status = ?
+        """
+        parameters: tuple[object, ...] = (
+            MetadataCorrectionStatus.PENDING.value,
+            TaskItemStatus.WAITING_METADATA_CORRECTION.value,
+        )
+        if task_id is not None:
+            query += " AND c.task_id = ?"
+            parameters += (task_id,)
+        query += " ORDER BY c.created_at, c.review_id LIMIT ?"
+        parameters += (limit,)
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return tuple(self._metadata_correction(row) for row in rows)
+
     def resolve_metadata_correction(self, review, audit, item) -> None:
         with self._lock, self._connection:
             cursor = self._connection.execute(
@@ -624,6 +871,67 @@ class SQLiteTaskRepository:
                     audit.note,
                 ),
             )
+
+    def resolve_metadata_corrections_batch(
+        self, requests: tuple[MetadataCorrectionBatchResolveRequest, ...]
+    ) -> None:
+        if not requests:
+            raise ValueError("metadata correction resolve batch must not be empty")
+        with self._lock, self._connection:
+            for request in requests:
+                review = request.review
+                audit = request.audit
+                item = request.item
+                cursor = self._connection.execute(
+                    """UPDATE metadata_corrections SET status=?, updated_at=?, corrected_query=?,
+                    corrected_year=?, corrected_media_type=?, direct_provider_id=?,
+                    decided_at=?, actor=?
+                    WHERE review_id=? AND item_id=? AND status=?""",
+                    (
+                        review.status.value,
+                        review.updated_at.isoformat(),
+                        review.corrected_query,
+                        review.corrected_year,
+                        review.corrected_media_type,
+                        review.direct_provider_id,
+                        review.decided_at.isoformat(),
+                        review.actor,
+                        review.review_id,
+                        review.item_id,
+                        MetadataCorrectionStatus.PENDING.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("metadata correction is not pending")
+                cursor = self._connection.execute(
+                    """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                    WHERE item_id=? AND task_id=? AND status=?""",
+                    (
+                        item.status.value,
+                        item.stage,
+                        item.updated_at.isoformat(),
+                        item.item_id,
+                        item.task_id,
+                        TaskItemStatus.WAITING_METADATA_CORRECTION.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("TaskItem is not waiting for metadata correction")
+                self._connection.execute(
+                    """INSERT INTO metadata_correction_decision_audit
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        audit.audit_id,
+                        audit.review_id,
+                        audit.corrected_query,
+                        audit.corrected_year,
+                        audit.corrected_media_type,
+                        audit.direct_provider_id,
+                        audit.decided_at.isoformat(),
+                        audit.actor,
+                        audit.note,
+                    ),
+                )
 
     def list_metadata_correction_audit(self, review_id):
         with self._lock:
@@ -711,6 +1019,27 @@ class SQLiteTaskRepository:
             ).fetchall()
         return tuple(self._recognition_review(row) for row in rows)
 
+    def list_pending_recognition_reviews(self, *, limit=100, task_id=None):
+        if not 1 <= limit <= 1000:
+            raise ValueError("recognition review limit must be between 1 and 1000")
+        query = """
+            SELECT r.* FROM recognition_reviews r
+            JOIN task_items i ON i.item_id = r.item_id
+            WHERE r.status = ? AND i.status = ?
+        """
+        parameters: tuple[object, ...] = (
+            RecognitionReviewStatus.PENDING.value,
+            TaskItemStatus.WAITING_RECOGNITION.value,
+        )
+        if task_id is not None:
+            query += " AND r.task_id = ?"
+            parameters += (task_id,)
+        query += " ORDER BY r.created_at, r.review_id LIMIT ?"
+        parameters += (limit,)
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return tuple(self._recognition_review(row) for row in rows)
+
     def list_recognition_review_choices(self, review_id):
         with self._lock:
             rows = self._connection.execute(
@@ -767,6 +1096,59 @@ class SQLiteTaskRepository:
                     audit.note,
                 ),
             )
+
+    def resolve_recognition_reviews_batch(
+        self, requests: tuple[RecognitionBatchResolveRequest, ...]
+    ) -> None:
+        if not requests:
+            raise ValueError("recognition resolve batch must not be empty")
+        with self._lock, self._connection:
+            for request in requests:
+                review = request.review
+                audit = request.audit
+                item = request.item
+                cursor = self._connection.execute(
+                    """UPDATE recognition_reviews SET status=?, updated_at=?,
+                    selected_recognition_type=?, decided_at=?, actor=?
+                    WHERE review_id=? AND item_id=? AND status=?""",
+                    (
+                        review.status.value,
+                        review.updated_at.isoformat(),
+                        review.selected_recognition_type,
+                        review.decided_at.isoformat(),
+                        review.actor,
+                        review.review_id,
+                        review.item_id,
+                        RecognitionReviewStatus.PENDING.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("recognition review is not pending")
+                cursor = self._connection.execute(
+                    """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                    WHERE item_id=? AND task_id=? AND status=?""",
+                    (
+                        item.status.value,
+                        item.stage,
+                        item.updated_at.isoformat(),
+                        item.item_id,
+                        item.task_id,
+                        TaskItemStatus.WAITING_RECOGNITION.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("recognition review TaskItem is not waiting")
+                self._connection.execute(
+                    "INSERT INTO recognition_review_decision_audit VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        audit.audit_id,
+                        audit.review_id,
+                        audit.recognition_type_id,
+                        audit.decided_at.isoformat(),
+                        audit.actor,
+                        audit.note,
+                    ),
+                )
 
     def list_recognition_review_audit(self, review_id):
         with self._lock:
@@ -830,6 +1212,58 @@ class SQLiteTaskRepository:
                     decision.note,
                 ),
             )
+
+    def request_batch_recognition_retry(
+        self, requests: tuple[RecognitionRetryBatchRequest, ...]
+    ) -> None:
+        if not requests:
+            raise ValueError("recognition retry batch must not be empty")
+        with self._lock, self._connection:
+            for request in requests:
+                review = request.review
+                decision = request.decision
+                item = request.item
+                cursor = self._connection.execute(
+                    """UPDATE recognition_reviews SET status=?, updated_at=?, decided_at=?, actor=?
+                    WHERE review_id=? AND item_id=? AND status=?""",
+                    (
+                        review.status.value,
+                        review.updated_at.isoformat(),
+                        review.decided_at.isoformat(),
+                        review.actor,
+                        review.review_id,
+                        review.item_id,
+                        RecognitionReviewStatus.PENDING.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("recognition review is not pending")
+                cursor = self._connection.execute(
+                    """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                    WHERE item_id=? AND task_id=? AND status=?""",
+                    (
+                        item.status.value,
+                        item.stage,
+                        item.updated_at.isoformat(),
+                        item.item_id,
+                        item.task_id,
+                        TaskItemStatus.WAITING_RECOGNITION.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("recognition retry TaskItem is not waiting")
+                self._connection.execute(
+                    "INSERT INTO recognition_retry_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        decision.decision_id,
+                        decision.review_id,
+                        decision.task_id,
+                        decision.item_id,
+                        decision.decided_at.isoformat(),
+                        decision.actor,
+                        decision.note,
+                    ),
+                )
 
     def list_recognition_retry_audit(self, review_id):
         with self._lock:
@@ -949,6 +1383,27 @@ class SQLiteTaskRepository:
             ).fetchall()
         return tuple(self._metadata_review(row) for row in rows)
 
+    def list_pending_metadata_reviews(self, *, limit=100, task_id=None):
+        if not 1 <= limit <= 1000:
+            raise ValueError("metadata review limit must be between 1 and 1000")
+        query = """
+            SELECT m.* FROM metadata_reviews m
+            JOIN task_items i ON i.item_id = m.item_id
+            WHERE m.status = ? AND i.status = ?
+        """
+        parameters: tuple[object, ...] = (
+            MetadataReviewStatus.PENDING.value,
+            TaskItemStatus.WAITING_METADATA.value,
+        )
+        if task_id is not None:
+            query += " AND m.task_id = ?"
+            parameters += (task_id,)
+        query += " ORDER BY m.created_at, m.review_id LIMIT ?"
+        parameters += (limit,)
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return tuple(self._metadata_review(row) for row in rows)
+
     def list_metadata_review_candidates(
         self, review_id: str
     ) -> tuple[MetadataReviewCandidate, ...]:
@@ -1014,6 +1469,66 @@ class SQLiteTaskRepository:
                     audit.note,
                 ),
             )
+
+    def resolve_metadata_reviews_batch(
+        self, requests: tuple[MetadataReviewBatchResolveRequest, ...]
+    ) -> None:
+        if not requests:
+            raise ValueError("metadata review resolve batch must not be empty")
+        with self._lock, self._connection:
+            for request in requests:
+                review = request.review
+                audit = request.audit
+                item = request.item
+                cursor = self._connection.execute(
+                    """UPDATE metadata_reviews SET status=?, updated_at=?, selected_rank=?,
+                    selected_provider=?, selected_provider_id=?, selected_media_type=?,
+                    decided_at=?, actor=?
+                    WHERE review_id=? AND item_id=? AND status=?""",
+                    (
+                        review.status.value,
+                        review.updated_at.isoformat(),
+                        review.selected_rank,
+                        review.selected_provider,
+                        review.selected_provider_id,
+                        review.selected_media_type,
+                        review.decided_at.isoformat(),
+                        review.actor,
+                        review.review_id,
+                        review.item_id,
+                        MetadataReviewStatus.PENDING.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("metadata review is not pending")
+                cursor = self._connection.execute(
+                    """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                    WHERE item_id=? AND task_id=? AND status=?""",
+                    (
+                        item.status.value,
+                        item.stage,
+                        item.updated_at.isoformat(),
+                        item.item_id,
+                        item.task_id,
+                        TaskItemStatus.WAITING_METADATA.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("metadata review TaskItem is not waiting for metadata")
+                self._connection.execute(
+                    "INSERT INTO metadata_review_decision_audit VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        audit.audit_id,
+                        audit.review_id,
+                        audit.selected_rank,
+                        audit.provider,
+                        audit.provider_id,
+                        audit.media_type,
+                        audit.decided_at.isoformat(),
+                        audit.actor,
+                        audit.note,
+                    ),
+                )
 
     def list_metadata_review_audit(self, review_id: str) -> tuple[MetadataReviewDecisionAudit, ...]:
         with self._lock:
@@ -2177,6 +2692,15 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS manual_ignore_task_decided
                     ON manual_ignore_audit(task_id, decided_at, decision_id);
+                CREATE TABLE IF NOT EXISTS task_retry_audit (
+                    decision_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL UNIQUE, decided_at TEXT NOT NULL,
+                    actor TEXT NOT NULL, note TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(item_id) REFERENCES task_items(item_id)
+                );
+                CREATE INDEX IF NOT EXISTS task_retry_task_decided
+                    ON task_retry_audit(task_id, decided_at, decision_id);
                 CREATE TABLE IF NOT EXISTS task_results (
                     result_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, item_id TEXT NOT NULL,
                     source_storage_id TEXT NOT NULL, source_path TEXT NOT NULL,

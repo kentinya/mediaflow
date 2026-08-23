@@ -14,11 +14,19 @@ from mediaflow.application.classification_review import ClassificationReviewServ
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
+from mediaflow.application.file_metadata_correction import FileMetadataCorrectionService
+from mediaflow.application.file_recognition_request import FileRecognitionRequestService
+from mediaflow.application.file_replan_request import FileReplanRequestService
+from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_review import MetadataReviewService
+from mediaflow.application.recognition_retry import RecognitionRetryService
+from mediaflow.application.task_retry import TaskRetryRequestService
 from mediaflow.domain.automation import AutomationQueueFull
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
+from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.task_persistence import ConfirmationStatus
 from mediaflow.interfaces.operator_ui import ASSETS as OPERATOR_UI_ASSETS
@@ -51,6 +59,8 @@ class MediaFlowApi:
         maximum_active_jobs: int = 100,
         stale_job_age_seconds: int = 3600,
         system_status=None,
+        file_catalog: FileCatalogService | None = None,
+        metadata_policies=(),
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -78,6 +88,8 @@ class MediaFlowApi:
             raise ValueError("stale Job age must be between 60 and 604800 seconds")
         self._stale_job_age_seconds = stale_job_age_seconds
         self._system_status = system_status
+        self._file_catalog = file_catalog
+        self._metadata_policies = tuple(metadata_policies)
         self._schedules = tuple(schedules)
         self._dashboard = DashboardService(
             repository,
@@ -205,6 +217,107 @@ class MediaFlowApi:
                     start_response, 503, "service_unavailable", "system status is unavailable"
                 )
             return self._response(start_response, 200, self._system_status.as_document())
+        if parts == ["api", "v1", "files", "stats"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if self._file_catalog is None:
+                return self._error(
+                    start_response, 503, "service_unavailable", "file catalog is unavailable"
+                )
+            resource_library_id, storage_id = self._file_stats_query(environ)
+            stats = self._file_catalog.stats(
+                resource_library_id=resource_library_id, storage_id=storage_id
+            )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "total": stats.total,
+                    "byStatus": {
+                        status.value: stats.by_status.get(status, 0) for status in FileScanStatus
+                    },
+                },
+            )
+        if parts == ["api", "v1", "files"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if self._file_catalog is None:
+                return self._error(
+                    start_response, 503, "service_unavailable", "file catalog is unavailable"
+                )
+            filters = self._file_catalog_query(environ)
+            values = self._file_catalog.list(filters)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [self._file_catalog_value(item) for item in values],
+                    "limit": filters.limit,
+                },
+            )
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "files"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if self._file_catalog is None:
+                return self._error(
+                    start_response, 503, "service_unavailable", "file catalog is unavailable"
+                )
+            resource_library_id = self._file_resource_query(environ)
+            detail = self._file_catalog.detail(parts[3], resource_library_id=resource_library_id)
+            return self._response(
+                start_response,
+                200,
+                self._file_catalog_detail_value(detail),
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "files"]
+            and parts[4] in {"re-recognize", "re-plan", "re-match"}
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+            if self._file_catalog is None:
+                return self._error(
+                    start_response, 503, "service_unavailable", "file catalog is unavailable"
+                )
+            self._require_empty_query(environ, "file action")
+            document = self._document(environ)
+            if parts[4] == "re-match":
+                allowed = {"query", "year", "mediaType", "providerId", "note"}
+            else:
+                allowed = {"note"}
+            if set(document).difference(allowed):
+                raise ValueError(f"file {parts[4]} request fields are invalid")
+            note = document.get("note")
+            if parts[4] == "re-recognize":
+                decision = FileRecognitionRequestService(
+                    self._file_catalog,
+                    RecognitionRetryService(self._repository),
+                ).request(parts[3], actor=principal.principal_id, note=note)
+                value = self._value(decision)
+            elif parts[4] == "re-match":
+                if document.get("mediaType") not in {"movie", "tv"}:
+                    raise ValueError("file re-match mediaType must be movie or tv")
+                review = FileMetadataCorrectionService(
+                    self._file_catalog,
+                    MetadataCorrectionService(
+                        self._repository,
+                        self._metadata_policies,
+                    ),
+                ).resolve(
+                    parts[3],
+                    query=document.get("query"),
+                    year=document.get("year"),
+                    media_type=document["mediaType"],
+                    provider_id=document.get("providerId"),
+                    actor=principal.principal_id,
+                    note=note,
+                )
+                value = self._value(review)
+            else:
+                decision = FileReplanRequestService(
+                    self._file_catalog,
+                    TaskRetryRequestService(self._repository),
+                ).request(parts[3], actor=principal.principal_id, note=note)
+                value = self._value(decision)
+            return self._response(start_response, 200, value)
         if parts == ["api", "v1", "security-audit"] and method == "GET":
             self._require(principal, ApiPermission.READ_SECURITY_AUDIT)
             return self._response(
@@ -1122,6 +1235,139 @@ class MediaFlowApi:
         if not isinstance(value, dict):
             raise ValueError("request JSON must be an object")
         return value
+
+    @staticmethod
+    def _file_stats_query(environ: dict) -> tuple[str | None, str | None]:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"resourceLibrary", "storage"}
+        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("file stats query accepts resourceLibrary and storage once")
+        return values.get("resourceLibrary", [None])[0], values.get("storage", [None])[0]
+
+    @staticmethod
+    def _file_resource_query(environ: dict) -> str | None:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"resourceLibrary"}) or any(
+            len(value) != 1 for value in values.values()
+        ):
+            raise ValueError("file detail query accepts resourceLibrary once")
+        return values.get("resourceLibrary", [None])[0]
+
+    @staticmethod
+    def _file_catalog_query(environ: dict) -> FileCatalogFilter:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {
+            "resourceLibrary",
+            "storage",
+            "scanStatus",
+            "query",
+            "limit",
+            "after",
+            "before",
+            "cursorFileId",
+            "recognitionType",
+            "provider",
+            "providerId",
+            "title",
+            "taskId",
+            "year",
+        }
+        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("file catalog query fields must be supported and specified once")
+        limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], "file")
+        scan_status = FileScanStatus(values["scanStatus"][0]) if "scanStatus" in values else None
+        after = MediaFlowApi._file_cursor(values.get("after"), values.get("cursorFileId"))
+        before = MediaFlowApi._file_cursor(values.get("before"), values.get("cursorFileId"))
+        year = int(values["year"][0]) if "year" in values else None
+        return FileCatalogFilter(
+            resource_library_id=values.get("resourceLibrary", [None])[0],
+            storage_id=values.get("storage", [None])[0],
+            scan_status=scan_status,
+            query=values.get("query", [None])[0],
+            limit=limit,
+            after=after,
+            before=before,
+            recognition_type=values.get("recognitionType", [None])[0],
+            provider=values.get("provider", [None])[0],
+            provider_id=values.get("providerId", [None])[0],
+            title=values.get("title", [None])[0],
+            task_id=values.get("taskId", [None])[0],
+            year=year,
+        )
+
+    @staticmethod
+    def _file_cursor(timestamp_values, file_id_values):
+        timestamp = timestamp_values[0] if timestamp_values else None
+        file_id = file_id_values[0] if file_id_values else None
+        if timestamp is None and file_id is None:
+            return None
+        if timestamp is None or file_id is None:
+            raise ValueError("file cursor requires after/before and cursorFileId")
+        try:
+            parsed = datetime.fromisoformat(timestamp)
+        except ValueError as error:
+            raise ValueError("file cursor timestamp must be ISO-8601") from error
+        return parsed, file_id
+
+    @staticmethod
+    def _file_catalog_value(record) -> dict:
+        return {
+            "fileId": record.file_id,
+            "storageId": record.storage_id,
+            "resourceLibraryId": record.resource_library_id,
+            "path": record.path,
+            "filename": record.filename,
+            "extension": record.extension,
+            "size": record.size,
+            "modifiedAt": record.modified_at.isoformat(),
+            "stableSince": record.stable_since.isoformat() if record.stable_since else None,
+            "scanStatus": record.scan_status.value,
+            "change": record.change.value,
+            "firstSeenAt": record.first_seen_at.isoformat(),
+            "lastSeenAt": record.last_seen_at.isoformat(),
+            "missingSince": record.missing_since.isoformat() if record.missing_since else None,
+            "lastScanId": record.last_scan_id,
+            "updatedAt": record.updated_at.isoformat(),
+        }
+
+    @classmethod
+    def _file_catalog_detail_value(cls, detail) -> dict:
+        document = cls._file_catalog_value(detail.record)
+        document["relatedReviews"] = [
+            {
+                "kind": item.kind,
+                "reviewId": item.review_id,
+                "status": item.status,
+                "taskId": item.task_id,
+            }
+            for item in detail.related_reviews
+        ]
+        if detail.latest_result is None:
+            document["latestResult"] = None
+            return document
+        result = detail.latest_result
+        document["latestResult"] = {
+            "resultId": result.result_id,
+            "taskId": result.task_id,
+            "itemId": result.item_id,
+            "status": result.status,
+            "recognitionType": result.recognition_type,
+            "provider": result.provider,
+            "providerId": result.provider_id,
+            "title": result.title,
+            "metadataPolicyId": result.metadata_policy_id,
+            "namingPolicyId": result.naming_policy_id,
+            "classificationPolicyId": result.classification_policy_id,
+            "organizePolicyId": result.organize_policy_id,
+            "operation": result.operation,
+            "destinationStorageId": result.destination_storage_id,
+            "destinationPath": result.destination_path,
+            "createdAt": result.created_at.isoformat(),
+            "retryAttempts": result.retry_attempts,
+            "cleanupStatus": result.cleanup_status,
+            "error": result.error,
+        }
+        return document
 
     @classmethod
     def _value(cls, value):

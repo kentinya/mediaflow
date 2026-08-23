@@ -60,6 +60,20 @@ class RecognitionRetryDecision:
 
 
 @dataclass(frozen=True)
+class RecognitionRetryBatchRequest:
+    review: RecognitionReview
+    decision: RecognitionRetryDecision
+    item: PersistentTaskItem
+
+
+@dataclass(frozen=True)
+class RecognitionBatchResolveRequest:
+    review: RecognitionReview
+    audit: RecognitionReviewDecisionAudit
+    item: PersistentTaskItem
+
+
+@dataclass(frozen=True)
 class RecognitionSelection:
     recognition_type_id: str
 
@@ -75,6 +89,9 @@ class RecognitionReviewRepository(Protocol):
     def get_recognition_review(self, review_id: str) -> RecognitionReview | None: ...
     def get_recognition_review_for_item(self, item_id: str) -> RecognitionReview | None: ...
     def list_recognition_reviews(self, *, limit: int = 100) -> tuple[RecognitionReview, ...]: ...
+    def list_pending_recognition_reviews(
+        self, *, limit: int = 100, task_id: str | None = None
+    ) -> tuple[RecognitionReview, ...]: ...
     def list_recognition_review_choices(
         self, review_id: str
     ) -> tuple[RecognitionReviewChoice, ...]: ...
@@ -84,6 +101,9 @@ class RecognitionReviewRepository(Protocol):
         audit: RecognitionReviewDecisionAudit,
         item: PersistentTaskItem,
     ) -> None: ...
+    def resolve_recognition_reviews_batch(
+        self, requests: tuple[RecognitionBatchResolveRequest, ...]
+    ) -> None: ...
     def list_recognition_review_audit(
         self, review_id: str
     ) -> tuple[RecognitionReviewDecisionAudit, ...]: ...
@@ -92,6 +112,9 @@ class RecognitionReviewRepository(Protocol):
         review: RecognitionReview,
         decision: RecognitionRetryDecision,
         item: PersistentTaskItem,
+    ) -> None: ...
+    def request_batch_recognition_retry(
+        self, requests: tuple[RecognitionRetryBatchRequest, ...]
     ) -> None: ...
     def list_recognition_retry_audit(
         self, review_id: str

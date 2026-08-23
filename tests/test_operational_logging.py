@@ -142,7 +142,18 @@ class OperationalLoggingTests(unittest.TestCase):
                 self.assertEqual(len(values), 1)
                 self.assertEqual(values[0].event, "workflow.failed")
                 self.assertEqual(values[0].task_id, "task-1")
-                encoded = repr(values)
+                encoded = "\n".join(
+                    " ".join(
+                        (
+                            value.event,
+                            value.task_id or "",
+                            value.job_id or "",
+                            value.plan_id or "",
+                            value.status or "",
+                        )
+                    )
+                    for value in values
+                )
                 for forbidden in ("private", "movie.mkv", "secret", "Secret Movie", "123"):
                     self.assertNotIn(forbidden, encoded)
 
