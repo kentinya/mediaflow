@@ -283,6 +283,14 @@ only the operation and error category, not credentials or arbitrary SDK exceptio
 `OSError`/`SMBOSError` errno values are classified structurally (`ENOENT`, `EEXIST`, `EACCES`/`EPERM`,
 timeout, and connection errno families); message parsing is not used.
 
+Phase 19 endurance acceptance is implemented as a separately gated test boundary, not a runtime
+workflow or retry service. It drives the production adapters and `OrganizerExecutor` with bounded
+generated streams, observes the actual source-stream read size, injects one deterministic read
+failure, inspects source and target state, and performs a new explicit retry. The harness never loads
+runtime configuration. A partial target may be deleted only because its random run path is
+allowlisted inside a preflight-proven empty acceptance root; production does not gain automatic
+cleanup, rollback, or retry semantics from this test.
+
 ## OpenListStorage adapter
 
 `OpenListStorage` implements `Storage` behind an infrastructure-only `OpenListClient`. Configuration

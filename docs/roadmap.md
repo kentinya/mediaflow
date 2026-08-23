@@ -238,6 +238,13 @@ Phase 19.24.1 已按结构化 errno 修复 Samba `EEXIST` 等错误分类，并�
 范围内关闭；AWS/R2 服务特性与远端原子发布仍未认证。下一任务进入 Phase 19.25 长时间批处理、
 大文件、中断恢复与一致性验证，Phase 19 总体仍为 BLOCKED。
 
+Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、Samba、OpenList 和 MinIO
+上完成统一的 128 文件批次、128 MiB 流式对象、确定性源流中断、MOVE 保源、目标状态检查、显式
+重试和白名单清理。四个 profile 均 ISOLATED PASS，MinIO 无遗留 multipart；SMB 暴露的部分目标
+被明确识别且未被当作成功。Phase 19 的可复现有界发布硬门关闭，整体记为 PASS。多小时 soak、
+进程/主机断电、AWS/R2 服务特性和远端原子发布仍是部署专项限制，不作已认证声明。下一阶段按
+计划进入 Phase 20 核心引擎收口，不继续扩展 Phase 19 操作台。
+
 ## 规格差距评估（2026-08-22，基于 Phase 19.22 后状态）
 
 对照《影视媒体资源自动整理系统需求规格说明书》V1.1 全量章节逐项评估：
@@ -258,7 +265,8 @@ Phase 19.24.1 已按结构化 errno 修复 Samba `EEXIST` 等错误分类，并�
 
 ### 阶段 I：发布硬门（Phase 19.23–19.2x，优先级最高）
 
-完成前 Phase 19 整体不得 PASS，且暂停一切操作台横向增强、OIDC、高级调度。
+本阶段已由 Phase 19.25 关闭；历史执行期间 Phase 19 整体不得提前 PASS，且暂停了一切操作台
+横向增强、OIDC 和高级调度。
 
 - Phase 19.23：隔离真实 OpenList 验收矩阵 + Local↔OpenList / OpenList↔OpenList
   故障注入（roadmap 现行第 1 条）。
@@ -315,10 +323,10 @@ Phase 19.24.1 已按结构化 errno 修复 Samba `EEXIST` 等错误分类，并�
 
 后续任务仍应保持小步推进。优先顺序：
 
-1. 完成长时间批处理、大文件、中断恢复与一致性验证；在此之前 Phase 19 不得整体 PASS。
-2. 补充 OpenList/SMB/S3-compatible 的中断、连接失败和服务端故障注入证据。
-3. AWS S3/Cloudflare R2 仍需专用真实服务凭证与空测试 Prefix 才可获得服务特定认证。
-4. 上述硬门完成后再继续 recovery UI、OIDC/Secret Store 或高级调度。
+1. 进入 Phase 20.1，优先实现 NFO Parser，并保持 Parser 只读和 Provider/Storage 解耦。
+2. 随后按 Phase 20.x 顺序实现 Hash 重复策略、Rollback、Task pause/resume、统一重试和空目录清理。
+3. AWS S3/Cloudflare R2、多小时 soak、服务/主机终止仍作为部署专项验收，不阻塞有界 Phase 19 profile。
+4. Phase 20 收口前不启动 Phase 21/22 的 UI 与配置管理扩展。
 
 Interval/Cron Scheduler 已实现但只允许 scan/preview；仍不支持无人值守定时
 `organize --execute`。

@@ -1,68 +1,97 @@
-# Phase 19.24.1 — SMB errno Mapping, Cleanup Repair, and Rerun
+# Phase 19.25 — Storage Endurance, Large Object, and Interrupted Transfer Acceptance
 
 ## Goal
 
-Repair the real Samba failure recorded in Phase 19.24 by mapping standard
-SMBOSError/OSError errno values to stable SMB domain categories, then redeploy
-the pinned isolated Samba service and complete the full production matrix and
-allowlisted cleanup.
+Close the remaining Phase 19 runtime hard gate with reproducible production-adapter
+evidence for sustained batches, streaming large objects, interrupted writes/transfers,
+explicit retry, and final source/destination consistency on isolated Local, Samba,
+OpenList, and MinIO services.
 
 ## Scope
 
-### 1. Structured errno mapping
+### 1. Fail-closed endurance acceptance harness
 
-- Map `EEXIST` to `ALREADY_EXISTS` for no-overwrite safety.
-- Map `ENOENT` to `NOT_FOUND`; `EACCES`/`EPERM` to `PERMISSION_DENIED`.
-- Map standard timeout and connection errno values to the existing timeout,
-  connection-lost, or connection-failed categories without parsing messages.
-- Preserve subclass and smbprotocol type-name fallbacks where errno is absent.
-- Public errors remain normalized and secret-free.
+- Add a separately gated real acceptance suite; it must never load runtime/user
+  configuration or `config/alist.json`.
+- Require explicit endpoints, dedicated credentials, new empty
+  `mediaflow-acceptance-*` roots, the destructive confirmation phrase, and a new
+  absolute non-overwriting report path for every enabled remote provider.
+- Make batch count and large-object size explicit, bounded acceptance inputs.
+- A missing real environment is `BLOCKED/NOT RUN`, never PASS.
 
-### 2. Cleanup diagnosis
+### 2. Sustained batch and large-object matrix
 
-- Add deterministic unit coverage for errno mapping and delete failures.
-- Rerun the existing allowlisted real cleanup after the no-overwrite assertion.
-- Do not recursively delete or hide unknown objects.
-- If cleanup still fails, record the exact normalized category and stop.
+- Exercise production Storage adapters and OrganizerExecutor, not fake transfer
+  implementations.
+- Cover Local, SMB, OpenList, and generic S3-compatible MinIO with a deterministic
+  multi-file batch, bounded concurrency, exact item counts, byte sizes, and content
+  verification.
+- Stream at least one object large enough to cross the configured S3 multipart
+  threshold without reading the whole object into memory.
+- Record elapsed time as evidence, but do not introduce performance pass/fail claims
+  tied to a particular host.
 
-### 3. Real Samba rerun
+### 3. Interrupted transfer and explicit recovery
 
-- Reuse pinned Samba 4.20.6, loopback-only port, new credentials, temporary
-  Share, and new empty `mediaflow-acceptance-*` root/report.
-- Execute lifecycle/no-overwrite, Local↔SMB COPY/MOVE, SMB↔SMB Organizer
-  COPY/MOVE, content/size/source verification, and allowlisted cleanup.
-- Retain a new non-secret report and destroy container/credentials/backend.
+- Inject a deterministic source-stream failure during a real destination write or
+  cross-storage COPY/MOVE for each provider without killing arbitrary host services.
+- Verify the operation never reports success, MOVE retains the complete source, an
+  incomplete target is never mistaken for a complete target, and owned multipart or
+  stage artifacts are cleaned where the adapter promises that behavior.
+- Retry only through a new explicit operation after inspecting state; verify the retry
+  completes and produces exact content/size. Do not add automatic retry or rollback.
+- Record any exposed partial target honestly. Do not repair a newly discovered adapter
+  defect in this acceptance task; fail and create a later scoped repair task.
 
-### 4. Status
+### 4. Evidence and cleanup
 
-- Phase 19.24 becomes PASS only when the Samba rerun and prior MinIO evidence are
-  both PASS.
-- Do not rerun or alter MinIO production behavior unnecessarily.
-- Do not begin Phase 19.25 until Samba is closed.
+- Produce bounded, secret-free JSON evidence with profile inputs, adapter/version,
+  planned/completed checks, durations, normalized failures, consistency assertions,
+  and cleanup outcome.
+- Cleanup only generated allowlisted objects beneath the approved empty root. Unknown
+  objects stop cleanup and fail acceptance; recursive broad deletion is forbidden.
+- Retain reports outside Git and destroy containers, credentials, buckets/shares,
+  prefixes, temporary local data, and injected payloads after inspection.
+
+### 5. Phase status
+
+- Phase 19.25 PASS requires all four isolated provider profiles and their cleanup to
+  pass. A provider defect is FAIL, not a skipped row.
+- Phase 19 overall may become PASS only if the authoritative acceptance matrix has no
+  remaining release-hard-gate row. AWS S3/R2 service-specific certification and
+  power-loss durability may remain explicit deployment limitations rather than claims.
 
 ## Boundaries
 
 Do not change Parser, Scanner, Recognition, Metadata, Naming, Classification,
-Planner/Organizer policy semantics, S3/OpenList behavior, UI, API, or user
-configuration. Do not use `config/alist.json`.
+policy behavior, API/UI, Scheduler, automatic retry, Rollback, Hash policy, or user
+configuration. Only OrganizerExecutor may perform planned transfer mutations. Do not
+use FFmpeg/FFprobe and do not begin Phase 20.
 
 ## Validation
 
-Run focused SMB real/unit/Organizer/Storage tests, full offline tests, formatter,
-lint, compile, dependency/config checks, FFmpeg/FFprobe audit, isolated wheel
-smoke, and the explicit real Samba matrix.
+Run acceptance-gate unit tests, focused Storage/Organizer/DryRun regressions, the full
+offline suite, formatter, lint, compile, dependency/configuration checks,
+FFmpeg/FFprobe audit, isolated wheel smoke, and explicitly gated isolated Local,
+Samba, OpenList, and MinIO profiles.
 
 ## Completion Report
 
 Finish with:
 
-## Phase 19.24.1 Result
+## Phase 19.25 Result
 
-PASS / FAIL
+PASS / BLOCKED / FAIL
 
-## Errno Mapping
+## Acceptance Profile
 
-## Samba Matrix
+## Sustained Batch
+
+## Large Objects
+
+## Interrupted Transfers
+
+## Recovery and Consistency
 
 ## Evidence
 

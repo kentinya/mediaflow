@@ -1281,3 +1281,26 @@ Phase 19.24.1 SMB errno mapping, cleanup repair, and rerun (2026-08-22): PASS
 - Full offline suite: 493 tests, 490 passed, 0 failed, 3 real integrations skipped; explicit isolated
   Samba matrix: 1 passed; Ruff, format, compile, dependency, both example-configuration,
   FFmpeg/FFprobe, diff, and isolated wheel gates passed
+
+Phase 19.25 Storage endurance, large-object, and interrupted-transfer acceptance (2026-08-23): PASS
+
+- Added a fail-closed, separately gated acceptance harness for Local, SMB, OpenList, and S3 profiles;
+  it requires explicit bounded inputs, dedicated empty roots, destructive confirmation, and new
+  non-overwriting reports and never reads runtime/user configuration
+- Ran each production adapter plus OrganizerExecutor with 128 deterministic batch objects and one
+  128 MiB streaming object; content/size matched and actual maximum source reads remained bounded at
+  1 MiB for Local/SMB/OpenList and 5 MiB for the configured MinIO multipart profile
+- Injected a deterministic source-stream failure during cross-storage MOVE for every provider;
+  every operation avoided SUCCESS and preserved the complete source, followed only by inspected,
+  explicit cleanup of a generated partial target when present and a new successful retry
+- Local/OpenList/MinIO exposed no incomplete target; Samba exposed a smaller partial target that was
+  never accepted as complete. MinIO ended with zero objects and zero orphan multipart uploads
+- All random run roots passed allowlisted cleanup. Three containers, credentials, tokens, temporary
+  shares/bucket/backend data, and superseded reports were destroyed; four corrected secret-free PASS
+  reports remain under `/tmp/mediaflow-phase-19.25-*-128x128m-pass-20260823.json`
+- Phase 19 bounded production-release profile is now PASS. Multi-hour soak, service/host termination,
+  AWS/R2-specific behavior, third-party OpenList drivers, remote atomic publication, and power-loss
+  durability remain explicit non-claims rather than silently inferred acceptance
+- Full offline suite: 499 tests, 492 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  explicit isolated endurance profiles: 4 passed. Ruff, format, compile, dependency, both example
+  configurations, FFmpeg/FFprobe, diff, and isolated wheel gates passed

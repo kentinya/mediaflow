@@ -13,14 +13,14 @@ real isolated evidence.
 - `FAIL`: acceptance was executed and a required assertion failed.
 - `NOT APPLICABLE`: provider capability intentionally does not support the operation.
 
-## Adapter matrix (2026-08-22)
+## Adapter matrix (2026-08-23)
 
 | Adapter | Read/list/stat | Write/copy/move | Fault injection | Atomic publication | Real acceptance |
 |---|---|---|---|---|---|
 | Local | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS for write/copy target visibility | ISOLATED PASS on temporary host filesystem |
-| SMB | ISOLATED PASS | ISOLATED PASS | UNIT PASS | Not certified | Samba 4.20.6 full matrix PASS |
-| OpenList | ISOLATED PASS | ISOLATED PASS | UNIT PASS | Not certified | ISOLATED PASS: self-hosted v4.2.2 with Local driver |
-| S3/R2 | ISOLATED PASS for MinIO | ISOLATED PASS for MinIO | UNIT PASS | Not certified | MinIO PASS; AWS/R2 BLOCKED |
+| SMB | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS: interrupted source | Not certified; partial target observed | Samba 4.20.6 endurance PASS |
+| OpenList | ISOLATED PASS | ISOLATED PASS | ISOLATED PASS: interrupted source | Not certified | ISOLATED PASS: self-hosted v4.2.2 Local driver |
+| S3/R2 | ISOLATED PASS for MinIO | ISOLATED PASS for MinIO | ISOLATED PASS: interrupted multipart | MinIO incomplete multipart cleanup PASS | MinIO PASS; AWS/R2 not certified |
 
 Local `write` and `copy` stage in the target directory and publish atomically. A reader sees the old
 complete target or the new complete target, not the operation-owned stage. This does not certify
@@ -146,9 +146,35 @@ objects, temporary share, and credential were destroyed. Together with the retai
 Phase 19.24 is PASS for self-hosted Samba and generic S3-compatible MinIO. AWS S3, Cloudflare R2,
 provider-specific fault injection, and remote atomic publication are not certified by this result.
 
-## Remaining blocking gates
+### Phase 19.25 endurance and interrupted-transfer result
 
-- AWS S3 and Cloudflare R2 provider-specific real-service matrices (MinIO generic S3 is accepted).
-- Provider-specific interrupted upload/copy/move and reconnect/rate-limit injection.
-- Long-duration and large-object testing.
+On 2026-08-23, new isolated Local, Samba 4.20.6, OpenList v4.2.2 with a Local driver, and MinIO
+instances ran the same production-adapter profile. Each profile copied 128 deterministic objects and
+one 128 MiB object, verified sizes and SHA-256 content, injected a source-stream failure during a
+cross-storage MOVE, proved the source remained complete, inspected the destination, then performed a
+new explicit retry and allowlisted cleanup. S3 used a 5 MiB multipart part size and the observed
+maximum source read was 5 MiB; Local, SMB, and OpenList reads were at most 1 MiB.
+
+All four profiles are `ISOLATED PASS`. Local, OpenList, and MinIO exposed no incomplete destination.
+Samba exposed a target smaller than the source; the harness did not treat it as success, deleted only
+that generated allowlisted partial target, and then retried explicitly. This records real current SMB
+semantics and does not claim remote atomic publication or add production automatic cleanup.
+
+MinIO cleanup left zero objects and zero multipart uploads. All run roots were empty after cleanup;
+containers, temporary backends, and credentials were destroyed. Secret-free reports remain outside
+Git:
+
+- `/tmp/mediaflow-phase-19.25-local-128x128m-pass-20260823.json`
+- `/tmp/mediaflow-phase-19.25-smb-128x128m-pass-20260823.json`
+- `/tmp/mediaflow-phase-19.25-openlist-128x128m-pass-20260823.json`
+- `/tmp/mediaflow-phase-19.25-minio-128x128m-pass-20260823.json`
+
+This closes the bounded Phase 19 release profile. It is not evidence for multi-hour soak behavior,
+service-process termination, host power loss, AWS S3, Cloudflare R2, third-party OpenList drivers,
+or content-hash policy in production.
+
+## Deployment-specific limitations (not Phase 19 profile claims)
+
+- AWS S3 and Cloudflare R2 provider-specific real-service matrices.
+- Service-process termination, reconnect/rate-limit injection, and multi-hour soak tests.
 - Power-loss durability and content-hash verification policy.
