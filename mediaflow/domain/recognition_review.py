@@ -12,6 +12,7 @@ class RecognitionReviewStatus(StrEnum):
     PENDING = "pending"
     RESOLVED = "resolved"
     IGNORED = "ignored"
+    RETRY_REQUESTED = "retry_requested"
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,17 @@ class RecognitionReviewDecisionAudit:
 
 
 @dataclass(frozen=True)
+class RecognitionRetryDecision:
+    decision_id: str
+    review_id: str
+    task_id: str
+    item_id: str
+    decided_at: datetime
+    actor: str
+    note: str | None = None
+
+
+@dataclass(frozen=True)
 class RecognitionSelection:
     recognition_type_id: str
 
@@ -75,3 +87,12 @@ class RecognitionReviewRepository(Protocol):
     def list_recognition_review_audit(
         self, review_id: str
     ) -> tuple[RecognitionReviewDecisionAudit, ...]: ...
+    def request_recognition_retry(
+        self,
+        review: RecognitionReview,
+        decision: RecognitionRetryDecision,
+        item: PersistentTaskItem,
+    ) -> None: ...
+    def list_recognition_retry_audit(
+        self, review_id: str
+    ) -> tuple[RecognitionRetryDecision, ...]: ...

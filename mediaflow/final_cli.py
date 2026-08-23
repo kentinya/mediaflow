@@ -34,6 +34,7 @@ from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.application.organizer import OrganizerExecutor
+from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.recognition_review import RecognitionReviewService
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
@@ -298,6 +299,10 @@ def final_main(
     recognition_review_resolve.add_argument("--recognition-type", required=True)
     recognition_review_resolve.add_argument("--actor")
     recognition_review_resolve.add_argument("--note")
+    recognition_review_retry = recognition_review_commands.add_parser("retry")
+    recognition_review_retry.add_argument("review_id")
+    recognition_review_retry.add_argument("--actor", required=True)
+    recognition_review_retry.add_argument("--note")
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_token = api_commands.add_parser("token", help="cryptographic bearer token operations")
@@ -494,6 +499,12 @@ def final_main(
                             actor=arguments.actor,
                             note=arguments.note,
                         )
+                    elif arguments.recognition_review_command == "retry":
+                        RecognitionRetryService(repository).request(
+                            arguments.review_id,
+                            actor=arguments.actor,
+                            note=arguments.note,
+                        )
                     review = repository.get_recognition_review(arguments.review_id)
                     if review is None:
                         raise LookupError(
@@ -504,6 +515,7 @@ def final_main(
                             review,
                             repository.list_recognition_review_choices(review.review_id),
                             repository.list_recognition_review_audit(review.review_id),
+                            repository.list_recognition_retry_audit(review.review_id),
                         )
                     )
             return 0
@@ -1785,7 +1797,7 @@ def render_recognition_reviews(values) -> str:
     return "\n".join(lines)
 
 
-def render_recognition_review(review, choices, audit=()) -> str:
+def render_recognition_review(review, choices, audit=(), retry_audit=()) -> str:
     lines = [
         "",
         "RECOGNITION REVIEW",
@@ -1807,6 +1819,12 @@ def render_recognition_review(review, choices, audit=()) -> str:
         for item in audit
     )
     if not audit:
+        lines.append("None")
+    lines.extend(("", "RETRY AUDIT", ""))
+    lines.extend(
+        f"{item.decided_at.isoformat()} | retry_requested | {item.actor}" for item in retry_audit
+    )
+    if not retry_audit:
         lines.append("None")
     lines.append("")
     return "\n".join(lines)

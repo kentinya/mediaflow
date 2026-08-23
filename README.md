@@ -52,6 +52,7 @@ mediaflow metadata-reviews list --limit 100
 mediaflow recognition-reviews list --limit 100
 mediaflow recognition-reviews show REVIEW_ID
 mediaflow recognition-reviews resolve REVIEW_ID --recognition-type C --actor operator
+mediaflow recognition-reviews retry REVIEW_ID --actor operator --note "rules updated"
 mediaflow metadata-reviews show REVIEW_ID
 mediaflow metadata-reviews resolve REVIEW_ID --candidate-rank 1
 mediaflow metadata-corrections list --limit 100

@@ -298,6 +298,8 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
   配置 Provider 的直接 ID 修正，保持决策审计 + 显式 resume 和 C 身份。
 - Phase 21.2 已完成：Recognition/Metadata 人工等待项支持显式、持久、可审计的单项忽略；
   ignored 不计成功且不触碰媒体、索引、规则或未来扫描。
+- Phase 21.3 已完成：Unrecognized 等待项可在外部规则更新后显式请求重新识别，再由独立
+  Task resume 使用当前配置重跑真实引擎；无隐藏默认或规则写入。
 - 未识别媒体人工指定 RecognitionType（§80）。
 - 批量操作体系（§83）。
 - 文件列表/搜索筛选/媒体详情页（§94–§96），含重新识别/重新匹配/重新生成 Plan。
@@ -330,7 +332,7 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 
 后续任务仍应保持小步推进。优先顺序：
 
-1. 进入 Phase 21.3，以单一小范围补齐下一项人工处理闭环，不提前启动完整 UI。
+1. 进入 Phase 21.4，以单一小范围补齐下一项人工处理闭环，不提前启动完整 UI。
 2. 保持历史/崩溃恢复与 Hash 持久复用为后续独立专项边界。
 3. AWS S3/Cloudflare R2、多小时 soak、服务/主机终止仍作为部署专项验收，不阻塞有界 Phase 19 profile。
 4. Phase 20 收口前不启动 Phase 21/22 的 UI 与配置管理扩展。

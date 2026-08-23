@@ -42,7 +42,7 @@ class AutomationPersistenceTests(unittest.TestCase):
             )
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 20)
+                self.assertEqual(repository.schema_version, 21)
                 job = AutomationJobService(repository).submit("scan")
                 self.assertFalse(job.cancellation_requested)
                 self.assertEqual(repository.list_schedule_states(), ())

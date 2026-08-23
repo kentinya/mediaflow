@@ -445,6 +445,7 @@ defaulting to A:
 mediaflow recognition-reviews list --limit 100
 mediaflow recognition-reviews show REVIEW_ID
 mediaflow recognition-reviews resolve REVIEW_ID --recognition-type C --actor operator --note reviewed
+mediaflow recognition-reviews retry REVIEW_ID --actor operator --note "rules updated"
 mediaflow tasks resume ORIGINAL_TASK_ID
 ```
 
@@ -939,3 +940,18 @@ The command updates only the runtime database: the matching pending review becom
 TaskItem becomes `ignored`, and an immutable bounded audit row records the actor/note. It constructs
 no Storage or provider and does not delete, move, index-suppress, configure an ignore rule, or cause
 future scans to skip that path. Ignored items are terminal and excluded from resume/retry.
+
+### Re-evaluate an Unrecognized item
+
+After editing the external strategy JSON and successfully running `mediaflow config validate`, an
+operator can request a fresh Recognition evaluation without choosing a type:
+
+```bash
+mediaflow recognition-reviews retry REVIEW_ID --actor operator --note "rules updated"
+mediaflow tasks resume ORIGINAL_TASK_ID
+```
+
+The first command is database-only: it marks the pending review `retry_requested`, returns its item
+to `PENDING`, and appends an immutable bounded audit. The separate resume loads current configuration
+and reruns Parser/Recognition with the original ResourceLibrary context. It injects no manual type,
+does not default to A, and creates a new waiting review in the continuation Task if still unmatched.

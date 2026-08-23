@@ -55,6 +55,7 @@ from mediaflow.domain.notification import (
     NotificationEventType,
 )
 from mediaflow.domain.recognition_review import (
+    RecognitionRetryDecision,
     RecognitionReview,
     RecognitionReviewChoice,
     RecognitionReviewDecisionAudit,
@@ -72,7 +73,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 
 class SQLiteTaskRepository:
@@ -779,6 +780,70 @@ class SQLiteTaskRepository:
                 row["audit_id"],
                 row["review_id"],
                 row["recognition_type_id"],
+                datetime.fromisoformat(row["decided_at"]),
+                row["actor"],
+                row["note"],
+            )
+            for row in rows
+        )
+
+    def request_recognition_retry(self, review, decision, item) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE recognition_reviews SET status=?, updated_at=?, decided_at=?, actor=?
+                WHERE review_id=? AND item_id=? AND status=?""",
+                (
+                    review.status.value,
+                    review.updated_at.isoformat(),
+                    review.decided_at.isoformat(),
+                    review.actor,
+                    review.review_id,
+                    review.item_id,
+                    RecognitionReviewStatus.PENDING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("recognition review is not pending")
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND task_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    item.task_id,
+                    TaskItemStatus.WAITING_RECOGNITION.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("recognition retry TaskItem is not waiting")
+            self._connection.execute(
+                "INSERT INTO recognition_retry_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    decision.decision_id,
+                    decision.review_id,
+                    decision.task_id,
+                    decision.item_id,
+                    decision.decided_at.isoformat(),
+                    decision.actor,
+                    decision.note,
+                ),
+            )
+
+    def list_recognition_retry_audit(self, review_id):
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM recognition_retry_audit WHERE review_id=?
+                ORDER BY decided_at, decision_id""",
+                (review_id,),
+            ).fetchall()
+        return tuple(
+            RecognitionRetryDecision(
+                row["decision_id"],
+                row["review_id"],
+                row["task_id"],
+                row["item_id"],
                 datetime.fromisoformat(row["decided_at"]),
                 row["actor"],
                 row["note"],
@@ -2198,6 +2263,14 @@ class SQLiteTaskRepository:
                     recognition_type_id TEXT NOT NULL, decided_at TEXT NOT NULL,
                     actor TEXT, note TEXT,
                     FOREIGN KEY(review_id) REFERENCES recognition_reviews(review_id)
+                );
+                CREATE TABLE IF NOT EXISTS recognition_retry_audit (
+                    decision_id TEXT PRIMARY KEY, review_id TEXT NOT NULL UNIQUE,
+                    task_id TEXT NOT NULL, item_id TEXT NOT NULL UNIQUE,
+                    decided_at TEXT NOT NULL, actor TEXT NOT NULL, note TEXT,
+                    FOREIGN KEY(review_id) REFERENCES recognition_reviews(review_id),
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(item_id) REFERENCES task_items(item_id)
                 );
                 CREATE INDEX IF NOT EXISTS recognition_reviews_status_created
                     ON recognition_reviews(status, created_at, review_id);

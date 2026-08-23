@@ -52,7 +52,8 @@
 - Phase 21.0 durable manual RecognitionType decision baseline: PASS
 - Phase 21.1 durable manual Metadata NOT_FOUND query/year/Movie-TV/direct-ID correction: PASS
 - Phase 21.2 durable manual ignore decision for Recognition/Metadata waits: PASS
-- Current development boundary: Phase 21.3 manual workflow scope is next
+- Phase 21.3 durable Recognition re-evaluation request: PASS
+- Current development boundary: Phase 21.4 manual workflow scope is next
 
 ## Planned
 
@@ -1465,5 +1466,20 @@ Phase 21.2 durable manual ignore decision (2026-08-23): PASS
 - Ignore commands construct no Storage/provider/workflow services and perform zero media mutation,
   FileIndex deletion, rule/configuration editing or persistent future-scan suppression
 - Full offline suite: 582 tests, 575 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.3 durable Recognition re-evaluation request (2026-08-23): PASS
+
+- Added SQLite schema v21 RecognitionRetryDecision audit and visible `retry_requested` review state
+- Added credential-independent `recognition-reviews retry REVIEW_ID --actor ACTOR [--note NOTE]`;
+  pending review plus WAITING_RECOGNITION item transition atomically back to PENDING
+- Existing explicit Task resume includes the item but injects no manual RecognitionType, so current
+  externally loaded rules and original ResourceLibrary context are evaluated by the production engine
+- Current A/B/C rules resolve normally, C preserves Metadata C plus downstream A reuse, and an
+  unchanged unmatched input remains Unrecognized without hidden A fallback
+- Retry request constructs no Storage/provider/workflow and cannot change execute authorization;
+  stale/resolved/ignored/concurrent decisions and injected audit failure roll back safely
+- Full offline suite: 588 tests, 581 passed, 0 failed, 7 explicitly gated real profiles skipped;
   formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
   diff and isolated wheel gates passed

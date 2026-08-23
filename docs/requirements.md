@@ -2798,11 +2798,15 @@ Status = Unrecognized
 > 当前实现（Phase 21.0）：被 Task 跟踪的 `Unrecognized` 条目持久进入
 > `WAITING_RECOGNITION`，保存启用 RecognitionType 的有界快照并释放源锁。CLI 可显式选择
 > 快照中且当前仍启用的类型，原子记录 actor/note 审计，再通过新的显式 resume 进入正常策略
-> 管线；没有隐藏 A 默认、没有规则/配置修改。C 仍为 C。重新识别和建规则留后续。
+> 管线；没有隐藏 A 默认、没有规则/配置修改。C 仍为 C。建规则留后续。
 
 > 当前实现（Phase 21.2）：上述 Recognition 人工等待项可由操作员显式标记为 `IGNORED`，
 > 同一事务更新 review/TaskItem 并记录 actor/note 审计。该动作不删除或隐藏媒体、不建立规则，
 > 也不影响未来扫描；批量忽略留后续。
+
+> 当前实现（Phase 21.3）：可对 pending RecognitionReview 显式记录 `retry_requested`，把
+> WAITING_RECOGNITION 项原子送回 PENDING，再由独立 `tasks resume` 使用当前外部配置和原
+> ResourceLibrary 上下文重跑真实 RecognitionRuleEngine。不注入类型、不默认 A、不写规则。
 
 ---
 

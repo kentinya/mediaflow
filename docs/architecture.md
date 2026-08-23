@@ -1227,3 +1227,18 @@ item counts and forces a PartialSuccess Task summary. This database-only decisio
 hide the source, edit FileIndex/configuration, create a persistent path rule, invoke a provider, or
 construct Storage/Planner/OrganizerExecutor. Batch ignore, API/UI writes and classification/conflict
 ignore remain outside this phase.
+
+## Durable Recognition re-evaluation request
+
+Phase 21.3 adds a database-only `RecognitionRetryService`. For one pending RecognitionReview whose
+TaskItem is still WAITING_RECOGNITION, SQLite schema v21 atomically records a bounded immutable retry
+audit, marks the review `retry_requested`, and returns the item to PENDING. Conditional review/item
+updates and the audit insert share one transaction, so stale, concurrent and injected failures roll
+back completely.
+
+The existing Task resume selector includes the pending item but supplies no RecognitionSelection.
+The continuation therefore reruns the normal Parser and RecognitionRuleEngine using current
+externally loaded rules and the original ResourceLibrary context. A current match proceeds normally;
+an unchanged miss creates a new review under the continuation Task. The request command constructs
+no Storage/provider/workflow, edits no rule/configuration, has no hidden A fallback, and cannot grant
+execute authority. A current C match remains C while resolving configured downstream policy reuse.
