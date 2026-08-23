@@ -308,7 +308,7 @@ class ApiSecurityTests(unittest.TestCase):
             )
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 19)
+                self.assertEqual(repository.schema_version, 20)
                 self.assertEqual(repository.list_security_audit(), ())
 
 

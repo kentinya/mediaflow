@@ -323,12 +323,16 @@ class PersistentTaskCoordinator:
             TaskItemStatus.WAITING_CLASSIFICATION,
         }
         waiting = sum(item.status in waiting_statuses for item in items)
+        ignored = sum(item.status is TaskItemStatus.IGNORED for item in items)
         completed = sum(
-            not item.status.retryable and item.status not in waiting_statuses for item in items
+            not item.status.retryable
+            and item.status not in waiting_statuses
+            and item.status is not TaskItemStatus.IGNORED
+            for item in items
         )
         status = (
             PersistentTaskStatus.PARTIAL_SUCCESS
-            if waiting or (failed and completed)
+            if waiting or ignored or (failed and completed)
             else PersistentTaskStatus.FAILED
             if failed or batch.scan_errors
             else PersistentTaskStatus.COMPLETED

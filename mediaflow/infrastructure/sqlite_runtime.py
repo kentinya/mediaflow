@@ -36,6 +36,7 @@ from mediaflow.domain.execution_authorization import (
     ExecutionAuthorizationStatus,
 )
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
+from mediaflow.domain.manual_ignore import ManualIgnoreDecision, ManualReviewKind
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionDecisionAudit,
     MetadataCorrectionReview,
@@ -71,7 +72,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 
 class SQLiteTaskRepository:
@@ -340,6 +341,85 @@ class SQLiteTaskRepository:
             rows = self._connection.execute(query, parameters).fetchall()
         values = tuple(self._item(row) for row in rows)
         return tuple(reversed(values)) if reverse else values
+
+    def ignore_waiting_item(self, decision, item) -> None:
+        review_tables = {
+            ManualReviewKind.RECOGNITION: (
+                "recognition_reviews",
+                TaskItemStatus.WAITING_RECOGNITION,
+            ),
+            ManualReviewKind.METADATA: (
+                "metadata_reviews",
+                TaskItemStatus.WAITING_METADATA,
+            ),
+            ManualReviewKind.METADATA_CORRECTION: (
+                "metadata_corrections",
+                TaskItemStatus.WAITING_METADATA_CORRECTION,
+            ),
+        }
+        table, waiting_status = review_tables[decision.review_kind]
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                f"""UPDATE {table} SET status='ignored', updated_at=?, decided_at=?, actor=?
+                WHERE review_id=? AND item_id=? AND status='pending'""",
+                (
+                    decision.decided_at.isoformat(),
+                    decision.decided_at.isoformat(),
+                    decision.actor,
+                    decision.review_id,
+                    decision.item_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("manual review is not pending")
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND task_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    item.task_id,
+                    waiting_status.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("TaskItem is not in the matching waiting state")
+            self._connection.execute(
+                "INSERT INTO manual_ignore_audit VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    decision.decision_id,
+                    decision.task_id,
+                    decision.item_id,
+                    decision.review_kind.value,
+                    decision.review_id,
+                    decision.decided_at.isoformat(),
+                    decision.actor,
+                    decision.note,
+                ),
+            )
+
+    def list_manual_ignore_audit(self, item_id):
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM manual_ignore_audit WHERE item_id=?
+                ORDER BY decided_at, decision_id""",
+                (item_id,),
+            ).fetchall()
+        return tuple(
+            ManualIgnoreDecision(
+                row["decision_id"],
+                row["task_id"],
+                row["item_id"],
+                ManualReviewKind(row["review_kind"]),
+                row["review_id"],
+                datetime.fromisoformat(row["decided_at"]),
+                row["actor"],
+                row["note"],
+            )
+            for row in rows
+        )
 
     def append_result(self, result: PersistentResultRecord) -> None:
         with self._lock, self._connection:
@@ -2022,6 +2102,16 @@ class SQLiteTaskRepository:
                     UNIQUE(task_id, storage_id, source_path),
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
+                CREATE TABLE IF NOT EXISTS manual_ignore_audit (
+                    decision_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL UNIQUE, review_kind TEXT NOT NULL,
+                    review_id TEXT NOT NULL, decided_at TEXT NOT NULL,
+                    actor TEXT NOT NULL, note TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(item_id) REFERENCES task_items(item_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_ignore_task_decided
+                    ON manual_ignore_audit(task_id, decided_at, decision_id);
                 CREATE TABLE IF NOT EXISTS task_results (
                     result_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, item_id TEXT NOT NULL,
                     source_storage_id TEXT NOT NULL, source_path TEXT NOT NULL,

@@ -58,6 +58,7 @@ mediaflow metadata-corrections list --limit 100
 mediaflow metadata-corrections show REVIEW_ID
 mediaflow metadata-corrections resolve REVIEW_ID --query "Correct title" --year 2025 --media-type movie --actor operator
 mediaflow metadata-corrections resolve REVIEW_ID --provider-id 858024 --media-type movie --actor operator
+mediaflow tasks ignore-item TASK_ID ITEM_ID --actor operator --note "not managed"
 mediaflow classification-reviews list --limit 100
 mediaflow classification-reviews show REVIEW_ID
 mediaflow classification-reviews resolve REVIEW_ID --choice-rank 1

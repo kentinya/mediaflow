@@ -27,6 +27,7 @@ from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
+from mediaflow.application.manual_ignore import ManualIgnoreService
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.metadata_correction import MetadataCorrectionService
@@ -57,6 +58,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTask,
     PersistentTaskItem,
     PersistentTaskStatus,
+    TaskItemStatus,
 )
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.migration_rehearsal import SQLiteMigrationRehearsalService
@@ -107,6 +109,11 @@ def final_main(
     task_show.add_argument("task_id")
     task_pause = task_commands.add_parser("pause")
     task_pause.add_argument("task_id")
+    task_ignore = task_commands.add_parser("ignore-item")
+    task_ignore.add_argument("task_id")
+    task_ignore.add_argument("item_id")
+    task_ignore.add_argument("--actor", required=True)
+    task_ignore.add_argument("--note")
     for name in ("resume", "retry-failed"):
         task_retry = task_commands.add_parser(name)
         task_retry.add_argument("task_id")
@@ -639,7 +646,12 @@ def final_main(
                     render_security_audit(repository.list_security_audit(limit=arguments.limit))
                 )
             return 0
-        if arguments.command == "tasks" and arguments.task_command in {"list", "show", "pause"}:
+        if arguments.command == "tasks" and arguments.task_command in {
+            "list",
+            "show",
+            "pause",
+            "ignore-item",
+        }:
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 if arguments.task_command == "list":
                     stdout.write(render_tasks(repository.list_tasks(limit=arguments.limit)))
@@ -648,10 +660,25 @@ def final_main(
                     if task is None:
                         raise LookupError(f"task {arguments.task_id!r} was not found")
                     stdout.write(render_task(task, repository.list_items(task.task_id)))
-                else:
+                elif arguments.task_command == "pause":
                     coordinator = PersistentTaskCoordinator(repository, repository)
                     task = coordinator.request_pause(arguments.task_id)
                     stdout.write(render_task(task, repository.list_items(task.task_id)))
+                else:
+                    decision = ManualIgnoreService(repository).ignore(
+                        arguments.task_id,
+                        arguments.item_id,
+                        actor=arguments.actor,
+                        note=arguments.note,
+                    )
+                    task = repository.get_task(arguments.task_id)
+                    stdout.write(
+                        render_manual_ignore(
+                            decision,
+                            task,
+                            repository.list_items(arguments.task_id),
+                        )
+                    )
             return 0
         if arguments.command == "confirmations":
             with SQLiteTaskRepository(configuration.database_path) as repository:
@@ -1363,6 +1390,7 @@ def render_task(task: PersistentTask, items: tuple[PersistentTaskItem, ...]) -> 
         f"Pause requested: {'YES' if task.pause_requested else 'NO'}",
         f"Execute authorized: {'YES' if task.execute_authorized else 'NO'}",
         f"Created: {task.created_at.isoformat()}",
+        f"Ignored items: {sum(item.status is TaskItemStatus.IGNORED for item in items)}",
         "",
         "ITEMS",
         "",
@@ -1375,6 +1403,24 @@ def render_task(task: PersistentTask, items: tuple[PersistentTaskItem, ...]) -> 
         )
     lines.extend(("", f"Total: {len(items)}", ""))
     return "\n".join(lines)
+
+
+def render_manual_ignore(decision, task, items) -> str:
+    return "\n".join(
+        (
+            "",
+            "MANUAL IGNORE",
+            "",
+            f"Decision: {decision.decision_id}",
+            f"Task: {decision.task_id}",
+            f"Item: {decision.item_id}",
+            f"Review kind: {decision.review_kind.value}",
+            f"Review: {decision.review_id}",
+            f"Actor: {decision.actor}",
+            "Media mutation: 0",
+            render_task(task, items),
+        )
+    )
 
 
 def render_confirmations(values) -> str:

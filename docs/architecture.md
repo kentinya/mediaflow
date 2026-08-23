@@ -1213,3 +1213,17 @@ MetadataIdentificationService: text corrections use real provider search/matchin
 attempt. RecognitionType and all resolved downstream policy references remain immutable, including
 C -> Metadata C / Naming A / Classification A / Organize A. SQLite schema v19 owns this correction
 and audit state; correction commands construct neither Storage nor provider clients.
+
+## Durable manual ignore decision
+
+Phase 21.2 adds a narrow terminal operator outcome for TaskItems in WAITING_RECOGNITION,
+WAITING_METADATA or WAITING_METADATA_CORRECTION. `ManualIgnoreService` resolves the item to IGNORED
+only when the corresponding review is still pending. SQLite schema v20 atomically updates both rows
+and appends a bounded immutable audit containing kind, review ID, actor and note. A concurrent or
+stale resolver loses the conditional update and the transaction rolls back.
+
+IGNORED is neither success nor failure: it is excluded from resume/retry, excluded from completed
+item counts and forces a PartialSuccess Task summary. This database-only decision does not mutate or
+hide the source, edit FileIndex/configuration, create a persistent path rule, invoke a provider, or
+construct Storage/Planner/OrganizerExecutor. Batch ignore, API/UI writes and classification/conflict
+ignore remain outside this phase.

@@ -924,3 +924,18 @@ Resolution does not contact TMDB or construct Storage. Provider access occurs on
 Task resume through the configured MetadataPolicy/provider. Provider switching is not supported;
 Movie/TV correction changes the real search/detail path. Resume is DryRun unless the original task
 and the new invocation both carry valid execute authority.
+
+### Explicitly ignore a waiting item
+
+An operator can terminally ignore one item waiting for Recognition, Metadata candidate selection,
+or Metadata NOT_FOUND correction:
+
+```bash
+mediaflow tasks show TASK_ID
+mediaflow tasks ignore-item TASK_ID ITEM_ID --actor operator --note "not managed"
+```
+
+The command updates only the runtime database: the matching pending review becomes `ignored`, the
+TaskItem becomes `ignored`, and an immutable bounded audit row records the actor/note. It constructs
+no Storage or provider and does not delete, move, index-suppress, configure an ignore rule, or cause
+future scans to skip that path. Ignored items are terminal and excluded from resume/retry.

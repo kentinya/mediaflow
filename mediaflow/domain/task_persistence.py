@@ -31,6 +31,7 @@ class TaskItemStatus(StrEnum):
     WAITING_METADATA_CORRECTION = "waiting_metadata_correction"
     WAITING_CLASSIFICATION = "waiting_classification"
     PAUSED = "paused"
+    IGNORED = "ignored"
 
     @property
     def retryable(self) -> bool:

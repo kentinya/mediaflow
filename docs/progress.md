@@ -51,7 +51,8 @@
 - Phase 20.6 bounded safe source directory cleanup: PASS
 - Phase 21.0 durable manual RecognitionType decision baseline: PASS
 - Phase 21.1 durable manual Metadata NOT_FOUND query/year/Movie-TV/direct-ID correction: PASS
-- Current development boundary: Phase 21.2 manual workflow scope is next
+- Phase 21.2 durable manual ignore decision for Recognition/Metadata waits: PASS
+- Current development boundary: Phase 21.3 manual workflow scope is next
 
 ## Planned
 
@@ -1451,4 +1452,18 @@ Phase 21.1 durable manual metadata query correction (2026-08-23): PASS
   Organize policies; DryRun and explicit execution authority boundaries remain unchanged
 - Full offline suite: 577 tests, 570 passed, 0 failed, 7 explicitly gated real profiles skipped;
   formatter, lint, compile, dependency, both example configurations, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.2 durable manual ignore decision (2026-08-23): PASS
+
+- Added SQLite schema v20 and a unified immutable ManualIgnoreDecision audit for Recognition,
+  Metadata candidate and Metadata NOT_FOUND correction waiting items
+- Added `mediaflow tasks ignore-item TASK_ID ITEM_ID --actor ACTOR [--note NOTE]`; task ownership,
+  supported waiting state, matching pending review and concurrent/stale decisions fail atomically
+- IGNORED is a visible terminal operator outcome, excluded from resume/retry and completed counts;
+  its Task summary remains PartialSuccess rather than silently becoming Completed
+- Ignore commands construct no Storage/provider/workflow services and perform zero media mutation,
+  FileIndex deletion, rule/configuration editing or persistent future-scan suppression
+- Full offline suite: 582 tests, 575 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, example/user configuration, FFmpeg/FFprobe source audit,
   diff and isolated wheel gates passed

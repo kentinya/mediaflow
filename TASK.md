@@ -1,86 +1,83 @@
-# Phase 21.1 — Durable Manual Metadata Query Correction
+# Phase 21.2 — Durable Manual Ignore Decision
 
 ## Goal
 
-Persist a bounded operator correction for Metadata NOT_FOUND, then explicitly resume the existing
-provider pipeline with corrected title/year/media type or a direct configured-provider ID.
+Allow an operator to explicitly and durably ignore one item waiting for Recognition or Metadata
+human input, with an immutable audit record and zero media mutation.
 
 ## Scope
 
-### 1. Correction review and persistence
+### 1. Domain and persistence
 
-- Add immutable MetadataCorrectionReview, MetadataCorrectionSelection and decision-audit models.
-- Add WAITING_METADATA_CORRECTION TaskItem state and SQLite schema/migration.
-- Snapshot RecognitionType, MetadataPolicy ID, configured provider ID, original query/year/media type
-  and bounded outcome; never persist provider payload, credentials or arbitrary MediaIdentity.
+- Add `IGNORED` TaskItem status and immutable bounded `ManualIgnoreDecision` audit evidence.
+- Support only items currently waiting in `WAITING_RECOGNITION`, `WAITING_METADATA`, or
+  `WAITING_METADATA_CORRECTION`.
+- Atomically mark the corresponding pending RecognitionReview, MetadataReview, or
+  MetadataCorrectionReview as ignored and mark the TaskItem ignored.
+- Bump and migrate the SQLite runtime schema without rewriting historical decisions.
 
-### 2. Production waiting flow
+### 2. Operator command
 
-- A tracked Metadata NOT_FOUND outcome creates one pending correction, waits and releases the source
-  lock. Existing NeedConfirm/Ambiguous continues using MetadataReview unchanged.
-- Provider/configuration/transient errors remain errors/retry outcomes and must not be disguised as a
-  query correction.
-- Untracked strategy-test behavior remains unchanged and non-persistent.
+- Add `mediaflow tasks ignore-item TASK_ID ITEM_ID --actor ACTOR [--note NOTE]`.
+- Validate task/item ownership, supported waiting state, matching pending review, bounded actor/note,
+  duplicate/stale decisions and concurrent resolution.
+- Show ignored status in existing Task and review queue output.
 
-### 3. Explicit correction and resume
+### 3. Runtime semantics
 
-- Add `mediaflow metadata-corrections list|show|resolve REVIEW_ID` with bounded `--query`, optional
-  `--year`, required `--media-type movie|tv`, and optional `--provider-id`.
-- Require a non-empty corrected query unless provider ID is supplied. Validate year and ID limits,
-  actor/note, current MetadataPolicy/provider/type availability, pending state and stale decisions.
-- Existing explicit Task resume loads the correction, reruns the real MetadataProvider path, and then
-  continues Naming/Classification/Plan. Direct ID must call existing `identify_by_provider_id`.
-- RecognitionType and RecognitionTypePolicy remain unchanged; C must remain C.
+- Ignored items are terminal operator outcomes: exclude them from resume, retry-failed and blind
+  workflow retry.
+- An ignored item is not success, failure, cancellation or deletion. Batch/Task aggregation remains
+  explicit and must not cause the Task to appear fully completed without surfacing ignored count.
+- RecognitionType, policy configuration and provider results are not modified.
 
 ### 4. Safety
 
-- Correction commands construct no Storage/provider, make no network request and mutate no media.
-- Resume remains DryRun by default; real execution still requires original and fresh execute authority.
-- Persist decision intent, not provider secrets, raw responses, authorization headers or arbitrary
-  output identity.
+- Ignore constructs no Storage, Scanner, MetadataProvider, Planner or OrganizerExecutor.
+- It performs no network request and zero media mutation.
+- No source file deletion, FileIndex deletion, ignore-rule/configuration edit or future automatic
+  suppression of newly scanned files.
 
 ## Boundaries
 
-- No arbitrary provider switching, candidate injection, editing Recognition/Naming/Classification,
-  bulk correction, ignore action, Web UI editing or Phase 21.2.
-- Do not redesign CandidateMatcher, MetadataProvider adapters, policy engines, Planner,
-  OrganizerExecutor, Storage adapters or automation scheduling.
+- No batch ignore, Classification/conflict ignore, Web/API write endpoint, UI editing, rule creation,
+  persistent path suppression or Phase 21.3.
+- Do not redesign existing Recognition, Metadata, Naming, Classification, Planner, Executor,
+  Storage, Scanner or policy engines.
 - Do not add FFmpeg/FFprobe.
 
 ## Required Tests
 
-- NOT_FOUND tracked item creates one bounded pending correction, waits and releases lock.
-- NeedConfirm/Ambiguous remains MetadataReview; provider/configuration/transient error creates no
-  correction. Unresolved correction is excluded from blind retry.
-- Query/year/movie-TV correction reaches the fake provider and changes the result deterministically.
-- Direct Provider ID uses the configured provider detail method and bypasses text-search ambiguity.
-- Invalid/empty/oversized query, invalid year/media type/provider ID, stale policy/provider/type,
-  duplicate resolution and wrong item state fail atomically.
-- CLI list/show/resolve works without Storage/provider credentials; zero network/media mutation.
-- C remains C through corrected Metadata, Naming, Classification and Plan preview.
-- Schema migration and all existing review/Task/retry/Storage/DryRun regressions pass.
+- Recognition, Metadata candidate and Metadata NOT_FOUND correction waits can each be ignored.
+- TaskItem and matching review transition atomically; audit preserves bounded actor/note and kind.
+- Wrong task/item, unsupported state, missing/mismatched review, duplicate/stale/concurrent decisions
+  fail atomically.
+- Ignored items are excluded from resume/retry and remain visible in Task/review output and summary.
+- CLI ignore works without Storage/provider credentials and performs zero network/media mutation.
+- Existing resolve behavior, C preservation, DryRun and execution authorization remain unchanged.
+- Schema migration and full offline regression pass.
 
 ## Validation
 
-Run Phase 21.1 correction, Metadata/CandidateMatcher/TMDB, all review queues, Task pause/resume/retry,
-Strategy/Recognition/Naming/Classification/Planner/Organizer, Scanner/FileIndex, all Storage adapters,
-DryRun and full offline suite. Run formatter, lint, compile, dependency, both configuration
-validations, FFmpeg/FFprobe audit, wheel build and diff checks.
+Run Phase 21.2 tests, all Recognition/Metadata/Correction/Classification/conflict reviews, Task
+pause/resume/retry, Strategy/policy engines, Planner/Organizer, Scanner/FileIndex, every Storage
+adapter, DryRun and the full offline suite. Run formatter, lint, compile, dependency, example/user
+configuration validation, FFmpeg/FFprobe audit, wheel build and diff checks.
 
-Update `README.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/progress.md`,
-`docs/roadmap.md`, requirements status and product specification with exact non-claims.
+Update README, architecture, configuration, progress, roadmap, requirements status and the product
+specification with exact non-claims.
 
 ## Completion Report
 
 Use AGENTS.md structure and additionally report:
 
-## Phase 21.1 Result
+## Phase 21.2 Result
 
 PASS / FAIL
 
-## Correction Workflow
+## Ignore Workflow
 
-## Direct ID and C Preservation
+## Terminal Semantics
 
 ## Safety
 

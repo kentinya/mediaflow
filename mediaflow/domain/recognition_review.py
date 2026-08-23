@@ -11,6 +11,7 @@ from mediaflow.domain.task_persistence import PersistentTaskItem
 class RecognitionReviewStatus(StrEnum):
     PENDING = "pending"
     RESOLVED = "resolved"
+    IGNORED = "ignored"
 
 
 @dataclass(frozen=True)
