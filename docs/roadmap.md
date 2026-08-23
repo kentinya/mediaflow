@@ -31,7 +31,7 @@ Runtime Configuration
 |---|---|---|---|
 | Storage | 已完成（有界验收） | Local、SMB、OpenList、S3/R2 Adapter、JSON Runtime、隔离 Samba/OpenList/MinIO 矩阵 | AWS/R2、第三方 driver、远端原子与多小时专项验收 |
 | Scanner/FileIndex | 已完成 | 扫描、稳定性、全量/增量、生产 SQLite FileIndex | 后续管理/清理工具 |
-| Parser | 已完成 | 文件名/路径、电影/剧集、多集、标签 | NFO Parser |
+| Parser | 已完成 | 文件名/路径/NFO、电影/剧集、多集、标签、受限 XML 与冲突证据合并 | NFO 生成不属于 Parser；更多格式按样本扩展 |
 | Recognition | 已完成 | 配置规则、优先级、证据、C 身份保持 | 人工修正流程 |
 | Metadata | 部分完成 | TMDB、缓存、候选评分、本地化标题、年份语义、持久人工候选选择/恢复 | 持久共享缓存管理、自由输入修正交互 |
 | Naming | 已完成 | 安全模板、Unicode、多集、预览 | 用户界面配置体验 |
@@ -254,7 +254,7 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 
 | 领域 | 完成度 | 主要剩余缺口 |
 |---|---|---|
-| 核心引擎（§1–§79） | ~92% | NFO Parser、Hash 重复检测、整理 Rollback、任务暂停/继续、统一自动重试、空目录清理 |
+| 核心引擎（§1–§79） | ~93% | Hash 重复检测、整理 Rollback、任务暂停/继续、统一自动重试、空目录清理 |
 | 存储层（§4–§10） | ~94% | 有界 Local/Samba/OpenList/MinIO 实机矩阵已通过；AWS/R2、第三方 driver、远端原子发布、Range Read/大对象服务端 Copy 未认证或未实现 |
 | 任务与自动化（§62–§70、§98） | ~88% | 定时缓存/日志清理未实现；claim fencing/心跳已完成 |
 | API 与 Web UI（§93–§96、§102） | ~35% | 仅只读运维操作台；文件列表、搜索筛选、媒体详情、人工修正交互均未实现 |
@@ -283,7 +283,7 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 
 ### 阶段 II：核心引擎收口（Phase 20.x）
 
-- NFO Parser 接入解析信息源（§15）。
+- Phase 20.1 NFO Parser 已完成：Storage-only 有界读取、安全 XML、确定性证据合并和生产管线接入。
 - Hash 重复检测策略：不计算/快速/完整，默认不计算（§57–§58）。
 - 整理 Rollback：失败按计划已记录步骤回滚，不触碰未知文件（§49、§69）。
 - 任务暂停/继续语义（§66）与统一自动重试策略（§79）。
@@ -326,8 +326,8 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 
 后续任务仍应保持小步推进。优先顺序：
 
-1. 进入 Phase 20.1，优先实现 NFO Parser，并保持 Parser 只读和 Provider/Storage 解耦。
-2. 随后按 Phase 20.x 顺序实现 Hash 重复策略、Rollback、Task pause/resume、统一重试和空目录清理。
+1. 进入 Phase 20.2，实现 Hash 重复策略；默认不计算，并明确快速/完整模式的资源边界。
+2. 随后按 Phase 20.x 顺序实现 Rollback、Task pause/resume、统一重试和空目录清理。
 3. AWS S3/Cloudflare R2、多小时 soak、服务/主机终止仍作为部署专项验收，不阻塞有界 Phase 19 profile。
 4. Phase 20 收口前不启动 Phase 21/22 的 UI 与配置管理扩展。
 

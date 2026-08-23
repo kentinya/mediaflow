@@ -33,7 +33,8 @@
 > driver 和 MinIO S3-compatible 验收，包括 128 文件、128 MiB 流式对象与中断恢复。该结论
 > 不认证 AWS S3、Cloudflare R2、第三方 OpenList driver、远端原子发布、多小时 soak、进程终止
 > 或主机断电；精确证据与非声明边界见 [storage-acceptance.md](storage-acceptance.md)。下一开发
-> 边界为 Phase 20.1 NFO Parser，Phase 20 尚未开始。
+> Phase 20.1 NFO Parser 已完成：NFO 通过 Storage 只读有界读取，安全 XML 解析后作为本地证据
+> 合并，不生成 MediaIdentity、不访问网络且不修改 Storage。下一边界为 Phase 20.2 Hash 重复策略。
 
 ---
 

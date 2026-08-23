@@ -451,6 +451,22 @@ produce warnings and invalid filenames produce typed parser errors. Parsing retu
 only: it does not infer media identity, RecognitionType, provider identity, naming, classification,
 or an organize target.
 
+Phase 20.1 adds NFO as a third, explicitly bounded local evidence source. `NfoParser` is a pure XML
+parser over supplied bytes/text. It rejects DTD/entity declarations, unsupported roots, malformed
+XML, and configured byte/depth/element/text/ID/episode limits. It normalizes common movie, TV show,
+and episode title/year/season/episode plus provider/external-ID evidence into domain Parser types;
+provider DTOs and `MediaIdentity` are not created here.
+
+`StorageNfoEnricher` is the only NFO I/O orchestration. It lists one media directory through the
+provider-neutral Storage port, deterministically prefers `<media-stem>.nfo`, then `movie.nfo`, then
+`tvshow.nfo`, and performs at most one bounded read. Missing NFO is a no-op; read or parse failures
+become bounded Parser warnings. Valid NFO semantic evidence takes precedence while conflicting
+filename/path values remain warnings and alternative candidates; technical release tags remain
+filename-derived. Strategy and organizer flows opt into enrichment only when both configured
+Storage identity and Storage-relative source path are available. Synthetic paths preserve the old
+filename/path-only behavior. No NFO write/generation, recursive discovery, network request, or
+Storage mutation is part of this boundary.
+
 ## Recognition rules and type policies
 
 `RecognitionRuleEngine` is a deterministic, pure application service over `RecognitionContext`,

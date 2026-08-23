@@ -802,14 +802,24 @@ def final_main(
             if not token:
                 raise ValueError("metadata workflow requires TMDB_ACCESS_TOKEN")
             providers = MetadataProviderRegistry((TMDBProvider(TMDBClient(TMDBConfig(token))),))
-        strategy = strategy_runner_from_configuration(configuration.strategy, providers)
+        strategy = strategy_runner_from_configuration(
+            configuration.strategy, providers, storages=storages
+        )
         if arguments.command == "analyze":
-            assert library is not None
+            assert library is not None and display_root is not None
             result = strategy.run_path(
                 str(Path(arguments.path).resolve(strict=False)),
                 live_metadata=not arguments.offline,
                 resource_library_id=library.library_id,
                 storage_id=library.storage_id,
+                storage_path=_storage_path(
+                    library.root_path,
+                    str(
+                        Path(arguments.path)
+                        .resolve(strict=False)
+                        .relative_to(Path(display_root).resolve(strict=False))
+                    ),
+                ),
             )
             stdout.write(render_strategy_result(result))
             return 0

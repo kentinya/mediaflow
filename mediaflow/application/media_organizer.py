@@ -161,6 +161,7 @@ class MediaOrganizerService:
                 classification_selection=self._classification_selections.get(
                     (resource_library.storage_id, storage_path)
                 ),
+                storage_path=storage_path,
             )
             self._log(
                 LogLevel.DEBUG,

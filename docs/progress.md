@@ -43,12 +43,13 @@
 - Phase 19 minimal secure operator console and production hardening: PASS for its accepted bounded scope
 - Phase 19.22–19.25 Storage release gate: PASS for isolated Local, Samba, OpenList Local driver, and
   MinIO S3-compatible lifecycle, transfer, 128-object/128-MiB, and interrupted-stream profiles
-- Current development boundary: Phase 20 has not started; Phase 20.1 NFO Parser is next
+- Phase 20.1 safe read-only NFO Parser and pipeline evidence merge: PASS
+- Current development boundary: Phase 20.2 Hash duplicate policy is next
 
 ## Planned
 
-- Phase 20: NFO Parser, Hash duplicate policy, bounded Rollback, Task pause/resume, unified retry,
-  and safe empty-directory cleanup, delivered as separate small phases
+- Phase 20: Hash duplicate policy, bounded Rollback, Task pause/resume, unified retry, and safe
+  empty-directory cleanup, delivered as separate small phases
 - Phase 21: complete manual media correction and file/media workflow UI
 - Phase 22: configuration-management architecture decision and configuration CRUD/reference/audit
 - Later: external identity/OIDC and Secret Store evaluation; no weak in-core substitute
@@ -1313,3 +1314,18 @@ Post-Phase 19 requirements and release-document reconciliation (2026-08-23): COM
 - Documentation reconciliation validation: 499 tests passed with 7 explicitly gated real profiles
   skipped; both example configurations, Ruff format/lint, compile, FFmpeg/FFprobe source audit,
   diff check, and offline wheel build passed
+
+Phase 20.1 safe read-only NFO Parser and pipeline evidence merge (2026-08-23): PASS
+
+- Added immutable provider-neutral NFO result/error/media-type and provider/external-ID evidence;
+  no NFO DTO leaks into Recognition, Metadata, Naming, Classification, or Organizer
+- Added bounded Kodi/Jellyfin-style movie/TV/episode XML parsing with DTD/entity rejection and
+  configurable byte, depth, element, text, ID, episode, numeric, and year limits
+- Added deterministic same-directory Storage discovery (`<stem>.nfo`, `movie.nfo`, `tvshow.nfo`),
+  at most one bounded read, explicit warnings, and zero mutation/network behavior
+- NFO semantic title/year/season/episode evidence takes precedence while filename/path conflicts
+  remain observable; filename technical/release tags remain unchanged
+- Strategy and MediaOrganizer flows pass configured Storage-relative source context; synthetic paths
+  remain filename/path-only; permanent regression proves C stays C while reusing A downstream policy
+- Full offline suite: 511 tests, 504 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  Ruff format/lint passed

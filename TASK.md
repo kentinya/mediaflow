@@ -1,110 +1,90 @@
-# Phase 19.25 — Storage Endurance, Large Object, and Interrupted Transfer Acceptance
+# Phase 20.1 — Safe Read-Only NFO Parser and Pipeline Evidence Merge
 
 ## Goal
 
-Close the remaining Phase 19 runtime hard gate with reproducible production-adapter
-evidence for sustained batches, streaming large objects, interrupted writes/transfers,
-explicit retry, and final source/destination consistency on isolated Local, Samba,
-OpenList, and MinIO services.
+Add NFO as a bounded local parsing information source and feed its normalized evidence into the
+existing Parser → Recognition → Metadata pipeline without changing downstream engine semantics.
 
 ## Scope
 
-### 1. Fail-closed endurance acceptance harness
+### 1. Provider-neutral NFO domain model
 
-- Add a separately gated real acceptance suite; it must never load runtime/user
-  configuration or `config/alist.json`.
-- Require explicit endpoints, dedicated credentials, new empty
-  `mediaflow-acceptance-*` roots, the destructive confirmation phrase, and a new
-  absolute non-overwriting report path for every enabled remote provider.
-- Make batch count and large-object size explicit, bounded acceptance inputs.
-- A missing real environment is `BLOCKED/NOT RUN`, never PASS.
+- Add immutable NFO parse result, warning/error, media-type hint, provider-ID and external-ID
+  evidence models under the Parser boundary.
+- Keep TMDB/Kodi/Jellyfin XML details out of Recognition and CandidateMatcher.
+- RecognitionType remains selected only by RecognitionRuleEngine.
 
-### 2. Sustained batch and large-object matrix
+### 2. Safe XML parser
 
-- Exercise production Storage adapters and OrganizerExecutor, not fake transfer
-  implementations.
-- Cover Local, SMB, OpenList, and generic S3-compatible MinIO with a deterministic
-  multi-file batch, bounded concurrency, exact item counts, byte sizes, and content
-  verification.
-- Stream at least one object large enough to cross the configured S3 multipart
-  threshold without reading the whole object into memory.
-- Record elapsed time as evidence, but do not introduce performance pass/fail claims
-  tied to a particular host.
+- Parse common movie, TV show and episode NFO roots and bounded fields: title, original title,
+  year/premiered date, season, episode(s), provider unique IDs and external IDs.
+- Support common `<uniqueid type="tmdb" default="true">`, `<tmdbid>`, `<imdbid>`, `<id>`,
+  `<season>`, `<episode>` and repeated episode forms deterministically.
+- Reject DTD/entity declarations, malformed XML, excessive input, excessive nesting, unsafe or
+  invalid values, and unsupported roots with typed diagnostics. Never resolve external entities.
+- Normalize Unicode/whitespace and bound all retained text and collection counts.
 
-### 3. Interrupted transfer and explicit recovery
+### 3. Deterministic ParseResult merge
 
-- Inject a deterministic source-stream failure during a real destination write or
-  cross-storage COPY/MOVE for each provider without killing arbitrary host services.
-- Verify the operation never reports success, MOVE retains the complete source, an
-  incomplete target is never mistaken for a complete target, and owned multipart or
-  stage artifacts are cleaned where the adapter promises that behavior.
-- Retry only through a new explicit operation after inspecting state; verify the retry
-  completes and produces exact content/size. Do not add automatic retry or rollback.
-- Record any exposed partial target honestly. Do not repair a newly discovered adapter
-  defect in this acceptance task; fail and create a later scoped repair task.
+- Merge NFO title/year/season/episode evidence with existing filename/path ParseResult.
+- Valid explicit NFO evidence takes precedence for semantic identity hints; conflicting filename
+  or path evidence remains observable as alternatives and structured warnings.
+- Filename-derived technical/release tags remain unchanged.
+- Preserve provider IDs as evidence for later metadata lookup without manufacturing MediaIdentity.
 
-### 4. Evidence and cleanup
+### 4. Storage-only read integration
 
-- Produce bounded, secret-free JSON evidence with profile inputs, adapter/version,
-  planned/completed checks, durations, normalized failures, consistency assertions,
-  and cleanup outcome.
-- Cleanup only generated allowlisted objects beneath the approved empty root. Unknown
-  objects stop cleanup and fail acceptance; recursive broad deletion is forbidden.
-- Retain reports outside Git and destroy containers, credentials, buckets/shares,
-  prefixes, temporary local data, and injected payloads after inspection.
+- Discover only deterministic same-directory NFO candidates through Storage list/read; do not use
+  `os`, `pathlib` writes, or concrete Local/SMB/OpenList/S3 implementation details.
+- Prefer the primary media stem NFO, then conventional `movie.nfo`/`tvshow.nfo`; never recursively
+  search and never read more than a configured maximum.
+- Missing NFO is a normal no-op. Permission/read/malformed failures are explicit bounded warnings
+  and do not mutate Storage.
+- Integrate the enriched ParseResult into production Strategy Test and MediaOrganizer flows where
+  a configured Storage-relative source is available. Synthetic/offline paths without Storage keep
+  existing filename/path behavior.
 
-### 5. Phase status
+### 5. Safety and compatibility
 
-- Phase 19.25 PASS requires all four isolated provider profiles and their cleanup to
-  pass. A provider defect is FAIL, not a skipped row.
-- Phase 19 overall may become PASS only if the authoritative acceptance matrix has no
-  remaining release-hard-gate row. AWS S3/R2 service-specific certification and
-  power-loss durability may remain explicit deployment limitations rather than claims.
+- NFO parsing performs zero Storage mutations and zero network/MetadataProvider calls.
+- Do not generate or rewrite NFO, download images, call FFmpeg/FFprobe, implement Hash/Rollback,
+  or begin Phase 20.2.
+- Preserve all A/B/C policy mappings and specifically RecognitionType C identity.
 
-## Boundaries
+## Required Tests
 
-Do not change Parser, Scanner, Recognition, Metadata, Naming, Classification,
-policy behavior, API/UI, Scheduler, automatic retry, Rollback, Hash policy, or user
-configuration. Only OrganizerExecutor may perform planned transfer mutations. Do not
-use FFmpeg/FFprobe and do not begin Phase 20.
+- Movie, TV show, episode, multi-episode, Unicode and whitespace normalization.
+- Default and non-default provider IDs, IMDb/external IDs, date/year handling.
+- Filename/NFO conflicts, deterministic precedence, missing fields and missing NFO.
+- Malformed XML, DTD/entity rejection, excessive size/depth/text/count and invalid numeric values.
+- Exact-stem/conventional discovery order, bounded reads, Storage errors and no recursive discovery.
+- Full Strategy/organizer integration using fake/read-only Storage.
+- RecognitionType C remains C after NFO enrichment.
+- Read calls are bounded; Write/CreateDirectory/Move/Copy/Delete/HardLink/SoftLink calls are zero.
 
 ## Validation
 
-Run acceptance-gate unit tests, focused Storage/Organizer/DryRun regressions, the full
-offline suite, formatter, lint, compile, dependency/configuration checks,
-FFmpeg/FFprobe audit, isolated wheel smoke, and explicitly gated isolated Local,
-Samba, OpenList, and MinIO profiles.
+Run Phase 20.1 tests, Parser, Recognition, Metadata, Strategy CLI, Scanner/FileIndex, Storage,
+Organizer and DryRun regressions, then the full offline suite. Run formatter, lint, compile,
+configuration validation, dependency/build checks, FFmpeg/FFprobe audit and diff check.
+
+Update `docs/architecture.md`, `docs/progress.md`, `docs/roadmap.md`, and the requirements status
+without claiming NFO generation or future Phase 20 capabilities.
 
 ## Completion Report
 
-Finish with:
+Finish with the AGENTS.md completion structure and additionally report:
 
-## Phase 19.25 Result
+## Phase 20.1 Result
 
-PASS / BLOCKED / FAIL
+PASS / FAIL
 
-## Acceptance Profile
+## NFO Coverage
 
-## Sustained Batch
-
-## Large Objects
-
-## Interrupted Transfers
-
-## Recovery and Consistency
-
-## Evidence
-
-## Cleanup
+## Merge Semantics
 
 ## Safety
 
 ## Regression
-
-## Changed Files
-
-## Remaining Work
-
-## Risks
 
 ## Final Recommendation

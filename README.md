@@ -5,6 +5,10 @@ S3/R2. Its production pipeline scans media, parses filenames, recognizes a confi
 identifies metadata, calculates names and classification, plans an operation, and optionally
 executes it. Dry-run is always the default.
 
+Local parsing accepts filename/path evidence and optional same-directory Kodi/Jellyfin-style NFO
+evidence through a bounded, read-only Storage flow. NFO parsing never generates files or creates a
+metadata identity by itself.
+
 The core workflow and the bounded Phase 19 production-release profile are complete. Production
 adapters passed isolated Local, Samba, OpenList, and MinIO lifecycle/transfer matrices plus a
 128-object, 128 MiB streaming and interrupted-transfer profile. This does not certify AWS S3,

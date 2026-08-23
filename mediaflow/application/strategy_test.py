@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import posixpath
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, BinaryIO
@@ -16,6 +18,7 @@ from mediaflow.application.metadata import (
     MetadataProviderRegistry,
 )
 from mediaflow.application.naming import NamingPolicyRegistry, NamingPreviewService
+from mediaflow.application.nfo_parser import StorageNfoEnricher
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor, PlanningError
 from mediaflow.application.policies import RecognitionTypePolicyResolver
 from mediaflow.application.recognition import RecognitionRuleEngine
@@ -270,6 +273,8 @@ class StrategyDirectoryRunner:
                     show_plan=show_plan,
                     resource_library_id=self._library.library_id,
                     storage_id=self._library.storage_id,
+                    storage_path=file.path,
+                    source_storage=self._storage_guard,
                 )
                 items.append(DirectoryStrategyItem(path, strategy=result))
             except Exception as error:  # isolate a bad media item without losing the scan
@@ -366,6 +371,8 @@ class StrategyTestRunner:
         matcher: CandidateMatcher | None = None,
         storage_guard: ReadOnlyStrategyStorage | None = None,
         classification_policies: ClassificationPolicyRegistry | None = None,
+        storages: Mapping[str, Storage] | None = None,
+        nfo_enricher: StorageNfoEnricher | None = None,
     ) -> None:
         self._parser = parser
         self._recognition = recognition
@@ -377,6 +384,8 @@ class StrategyTestRunner:
         self._matcher = matcher or CandidateMatcher()
         self._storage_guard = storage_guard
         self._classification_policies = classification_policies or ClassificationPolicyRegistry(())
+        self._storages = dict(storages or {})
+        self._nfo_enricher = nfo_enricher or StorageNfoEnricher()
 
     def validate_configuration(
         self,
@@ -437,6 +446,8 @@ class StrategyTestRunner:
         storage_id: str = "strategy-test",
         metadata_selection: MetadataSelection | None = None,
         classification_selection: ClassificationSelection | None = None,
+        storage_path: str | None = None,
+        source_storage: Storage | None = None,
     ) -> StrategyTestResult:
         self.validate_configuration(
             live_metadata=live_metadata,
@@ -450,6 +461,20 @@ class StrategyTestRunner:
             storage_id=storage_id,
         )
         parsed = self._parser.parse(context)
+        storage = source_storage or self._storages.get(storage_id)
+        if storage is not None and storage_path is not None:
+            nfo_context = FileContext(
+                storage_id,
+                resource_library_id,
+                storage_path,
+                context.filename,
+                context.parent_directories,
+                context.extension,
+                posixpath.dirname(storage_path),
+                context.size,
+                context.modified_at,
+            )
+            parsed = self._nfo_enricher.enrich(storage, nfo_context, parsed)
         recognition = self._recognition.recognize(RecognitionContext(context, parsed))
         resolved = (
             self._policy_resolver.resolve(recognition.recognition_type_id)
@@ -802,6 +827,7 @@ def strategy_runner_from_configuration(
     configuration: StrategyTestConfiguration,
     providers: MetadataProviderRegistry | None = None,
     storage_guard: ReadOnlyStrategyStorage | None = None,
+    storages: Mapping[str, Storage] | None = None,
 ) -> StrategyTestRunner:
     metadata_policies = MetadataPolicyRegistry(configuration.metadata_policies)
     naming_policies = NamingPolicyRegistry(configuration.naming_policies)
@@ -822,6 +848,7 @@ def strategy_runner_from_configuration(
         providers,
         storage_guard=storage_guard,
         classification_policies=classification_policies,
+        storages=storages,
     )
 
 
