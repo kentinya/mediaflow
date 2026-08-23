@@ -37,8 +37,9 @@
 > 合并，不生成 MediaIdentity、不访问网络且不修改 Storage。Phase 20.2 Hash 重复策略也已完成：
 > 默认 NONE 零读取，FAST 为有界前缀证据，FULL 为受大小限制的完整流式证据；任何不确定结果
 > 都进入冲突且不执行变更。Phase 20.3 已增加默认关闭、仅限同次调用已记录效果的有界
-> Organizer Rollback。Phase 20.4 已增加持久、协作式 Task pause/resume；下一边界为
-> Phase 20.5 统一重试策略。
+> Organizer Rollback。Phase 20.4 已增加持久、协作式 Task pause/resume；Phase 20.5 已增加
+> 默认关闭、仅限执行前只读阶段规范化暂时错误的有界重试，且绝不自动重放 Organizer 变更或
+> 不确定结果。下一边界为 Phase 20.6 安全空目录清理。
 
 ---
 

@@ -27,6 +27,7 @@ from mediaflow.domain.security import (
     ResolvedApiPrincipal,
 )
 from mediaflow.domain.storage import Storage
+from mediaflow.domain.workflow_retry import WorkflowRetryPolicy
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.openlist_storage import OpenListStorage, OpenListStorageConfig
 from mediaflow.infrastructure.s3_storage import S3Provider, S3Storage, S3StorageConfig
@@ -69,6 +70,7 @@ class RuntimeConfiguration:
     operational_logging_maximum_records: int = 10_000
     automation_maximum_active_jobs: int = 100
     automation_stale_job_age_seconds: int = 3600
+    workflow_retry_policy: WorkflowRetryPolicy = WorkflowRetryPolicy()
 
     def create_storages(
         self,
@@ -406,6 +408,7 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     ):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1 or value > maximum:
             raise ValueError(f"operationalLogging {name} must be between 1 and {maximum}")
+    retry = _workflow_retry(document.get("workflowRetry", {}))
     return RuntimeConfiguration(
         loaded.strategy,
         storage_definitions,
@@ -430,7 +433,37 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         maximum_records,
         maximum_active_jobs,
         stale_job_age_seconds,
+        retry,
     )
+
+
+def _workflow_retry(value: object) -> WorkflowRetryPolicy:
+    if not isinstance(value, dict):
+        raise ValueError("workflowRetry must be an object")
+    allowed = {
+        "enabled",
+        "maxAttempts",
+        "baseDelaySeconds",
+        "maxDelaySeconds",
+        "jitterRatio",
+    }
+    if unknown := set(value).difference(allowed):
+        raise ValueError(f"unknown workflowRetry field {sorted(unknown)[0]!r}")
+    enabled = value.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("workflowRetry enabled must be boolean")
+    numeric = {
+        "max_attempts": value.get("maxAttempts", 3),
+        "base_delay_seconds": value.get("baseDelaySeconds", 1.0),
+        "max_delay_seconds": value.get("maxDelaySeconds", 30.0),
+        "jitter_ratio": value.get("jitterRatio", 0.0),
+    }
+    for name, item in numeric.items():
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            raise ValueError(f"workflowRetry {name} must be numeric")
+    if not isinstance(numeric["max_attempts"], int):
+        raise ValueError("workflowRetry maxAttempts must be an integer")
+    return WorkflowRetryPolicy(enabled=enabled, **numeric)
 
 
 def _api_principal(value: dict) -> ApiPrincipalDefinition:

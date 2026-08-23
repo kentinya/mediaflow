@@ -4,6 +4,13 @@
   "persistence": {
     "databasePath": ".mediaflow/mediaflow.sqlite3"
   },
+  "workflowRetry": {
+    "enabled": false,
+    "maxAttempts": 3,
+    "baseDelaySeconds": 1,
+    "maxDelaySeconds": 30,
+    "jitterRatio": 0.2
+  },
   "operationalLogging": {"enabled": false, "minimumLevel": "INFO", "retentionDays": 30, "maximumRecords": 10000},
   "api": {
     "principals": [

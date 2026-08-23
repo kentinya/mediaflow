@@ -94,6 +94,15 @@ authorization. It does not alter Automation Job claim fencing, and an organize c
 both original execute authorization and a fresh `--execute`. Distributed Task leases and automatic
 crash replay remain deferred. See [`docs/roadmap.md`](roadmap.md).
 
+Phase 20.5 adds `WorkflowRetryController` around only the read-only
+`StrategyTestRunner.run_path` boundary. Its validated policy is disabled by default and uses bounded
+exponential backoff only for normalized timeout, connection, rate-limit and provider-unavailable
+categories after adapter/provider-local attempts are exhausted. Pause/cancel is checked before each
+attempt and in bounded wait slices. Evidence contains only stage, next attempt, category and delay;
+SQLite schema v16 persists retry count and final category. Planner, conflicts, duplicate/attachment
+reads and OrganizerExecutor are outside the controller, so Storage mutations and uncertain outcomes
+are never automatically replayed.
+
 ## Attachment file sets
 
 Phase 16 adds `AttachmentDiscovery` as a read-only application service after the primary media has

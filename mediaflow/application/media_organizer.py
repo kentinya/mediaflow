@@ -11,6 +11,13 @@ from mediaflow.application.duplicates import apply_hash_duplicate_detection
 from mediaflow.application.library_pipeline import MediaLibraryResolver, ResourceLibraryScanner
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
 from mediaflow.application.strategy_test import StrategyTestResult, StrategyTestRunner
+from mediaflow.application.workflow_retry import (
+    RetryExhausted,
+    RetryInterrupted,
+    RetrySignal,
+    WorkflowRetryController,
+    classify_retryable_error,
+)
 from mediaflow.domain.classification import ClassificationStatus
 from mediaflow.domain.classification_review import ClassificationSelection
 from mediaflow.domain.history import OperationHistoryRecord, OperationHistoryRepository
@@ -29,6 +36,7 @@ from mediaflow.domain.organizer import (
 from mediaflow.domain.recognition import RecognitionTypePolicy
 from mediaflow.domain.scanner import CancellationToken, FileScanStatus, ScanError, Scanner
 from mediaflow.domain.storage import Storage
+from mediaflow.domain.workflow_retry import RetryEvent, WorkflowRetryPolicy
 
 if TYPE_CHECKING:
     from mediaflow.application.task_runtime import PersistentTaskCoordinator
@@ -42,6 +50,7 @@ class MediaOrganizerItemResult:
     plan: OrganizePlan | None = None
     execution: ExecutionResult | None = None
     error: str | None = None
+    retry_events: tuple[RetryEvent, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -112,6 +121,9 @@ class MediaOrganizerService:
         conflict_decisions: dict[tuple[str, str], ConflictConfirmation] | None = None,
         metadata_selections: dict[tuple[str, str], MetadataSelection] | None = None,
         classification_selections: dict[tuple[str, str], ClassificationSelection] | None = None,
+        retry_policy: WorkflowRetryPolicy = WorkflowRetryPolicy(),
+        retry_controller: WorkflowRetryController | None = None,
+        retry_cancellation_check: CancellationCheck | None = None,
     ) -> None:
         self._strategy = strategy
         self._scanner = scanner
@@ -130,6 +142,9 @@ class MediaOrganizerService:
         self._conflict_decisions = conflict_decisions or {}
         self._metadata_selections = metadata_selections or {}
         self._classification_selections = classification_selections or {}
+        self._retry_policy = retry_policy
+        self._retry_controller = retry_controller or WorkflowRetryController()
+        self._retry_cancellation_check = retry_cancellation_check
 
     def process_file(
         self,
@@ -149,21 +164,17 @@ class MediaOrganizerService:
                     storage_path,
                     source,
                 )
-            strategy = self._strategy.run_path(
-                source,
-                live_metadata=True,
-                show_naming=True,
-                show_classification=True,
-                resource_library_id=resource_library.library_id,
-                storage_id=resource_library.storage_id,
-                metadata_selection=self._metadata_selections.get(
-                    (resource_library.storage_id, storage_path)
+            retry_outcome = self._retry_controller.execute(
+                lambda: self._run_read_only_strategy(
+                    source, resource_library=resource_library, storage_path=storage_path
                 ),
-                classification_selection=self._classification_selections.get(
-                    (resource_library.storage_id, storage_path)
-                ),
-                storage_path=storage_path,
+                self._retry_policy,
+                stage="strategy",
+                cancellation_check=self._retry_cancellation_check,
+                on_retry=self._log_retry,
             )
+            strategy = retry_outcome.value
+            retry_events = retry_outcome.events
             self._log(
                 LogLevel.DEBUG,
                 "media parsed and recognized",
@@ -182,7 +193,7 @@ class MediaOrganizerService:
                     and self._task_coordinator
                     and tracked_item
                 ):
-                    item = MediaOrganizerItemResult(source, strategy)
+                    item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
                     self._record(item)
                     self._task_coordinator.wait_for_metadata(
                         tracked_item,
@@ -191,11 +202,19 @@ class MediaOrganizerService:
                     )
                     return item
                 return self._failed(
-                    source, strategy, "metadata identity is unavailable", tracked_item
+                    source,
+                    strategy,
+                    "metadata identity is unavailable",
+                    tracked_item,
+                    retry_events,
                 )
             if not strategy.naming:
                 return self._failed(
-                    source, strategy, strategy.naming_error or "naming failed", tracked_item
+                    source,
+                    strategy,
+                    strategy.naming_error or "naming failed",
+                    tracked_item,
+                    retry_events,
                 )
             if not strategy.classification or not strategy.classification.media_library_id:
                 if (
@@ -204,7 +223,7 @@ class MediaOrganizerService:
                     and self._task_coordinator
                     and tracked_item
                 ):
-                    item = MediaOrganizerItemResult(source, strategy)
+                    item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
                     self._record(item)
                     self._task_coordinator.wait_for_classification(
                         tracked_item,
@@ -220,6 +239,7 @@ class MediaOrganizerService:
                     strategy,
                     strategy.classification_error or "classification failed",
                     tracked_item,
+                    retry_events,
                 )
             resolved_library = self._media_library_resolver.resolve(strategy.classification)
             media_library = resolved_library.media_library
@@ -281,7 +301,7 @@ class MediaOrganizerService:
                     plan, type_policy.organize_policy, resolved_library.storage
                 )
             if replacement is None:
-                item = MediaOrganizerItemResult(source, strategy, plan)
+                item = MediaOrganizerItemResult(source, strategy, plan, retry_events=retry_events)
                 self._record(item)
                 if self._task_coordinator and tracked_item:
                     self._task_coordinator.wait_for_confirmation(
@@ -307,10 +327,54 @@ class MediaOrganizerService:
                 destination=plan.target,
                 execution_status=execution.status.value,
             )
-            item = MediaOrganizerItemResult(source, strategy, plan, execution)
+            item = MediaOrganizerItemResult(
+                source, strategy, plan, execution, retry_events=retry_events
+            )
             return self._complete(item, tracked_item)
+        except RetryInterrupted:
+            return MediaOrganizerItemResult(source, error="workflow retry interrupted")
+        except RetryExhausted as error:
+            return self._failed(source, None, str(error), tracked_item, error.events)
         except Exception as error:
             return self._failed(source, None, str(error), tracked_item)
+
+    def _run_read_only_strategy(
+        self, source: str, *, resource_library: ResourceLibrary, storage_path: str
+    ) -> StrategyTestResult:
+        strategy = self._strategy.run_path(
+            source,
+            live_metadata=True,
+            show_naming=True,
+            show_classification=True,
+            resource_library_id=resource_library.library_id,
+            storage_id=resource_library.storage_id,
+            metadata_selection=self._metadata_selections.get(
+                (resource_library.storage_id, storage_path)
+            ),
+            classification_selection=self._classification_selections.get(
+                (resource_library.storage_id, storage_path)
+            ),
+            storage_path=storage_path,
+        )
+        if (
+            strategy.metadata
+            and strategy.metadata.status is MetadataIdentificationStatus.PROVIDER_ERROR
+            and strategy.metadata.error
+        ):
+            category = classify_retryable_error(strategy.metadata.error)
+            if category:
+                raise RetrySignal(category)
+        return strategy
+
+    def _log_retry(self, event: RetryEvent) -> None:
+        self._log(
+            LogLevel.WARN,
+            "read-only workflow retry scheduled",
+            stage=event.stage,
+            attempt=event.attempt,
+            category=event.category.value,
+            delay_seconds=event.delay_seconds,
+        )
 
     def process_library(
         self,
@@ -414,8 +478,9 @@ class MediaOrganizerService:
         strategy: StrategyTestResult | None,
         error: str,
         tracked_item: PersistentTaskItem | None = None,
+        retry_events: tuple[RetryEvent, ...] = (),
     ) -> MediaOrganizerItemResult:
-        item = MediaOrganizerItemResult(source, strategy, error=error)
+        item = MediaOrganizerItemResult(source, strategy, error=error, retry_events=retry_events)
         self._log(LogLevel.ERROR, "media workflow failed", source=source, error=error)
         return self._complete(item, tracked_item)
 

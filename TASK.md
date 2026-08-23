@@ -1,85 +1,89 @@
-# Phase 20.4 — Durable Cooperative Task Pause and Resume
+# Phase 20.5 — Unified Bounded Read-Only Workflow Retry
 
 ## Goal
 
-Add an explicit, persistent pause request and safe continuation state machine for long-running
-MediaFlow Tasks without interrupting an in-flight media operation or weakening execution authority.
+Add one configuration-driven retry policy and reusable application controller for explicitly
+transient pre-execution failures, while forbidding automatic replay of Organizer mutations or
+uncertain execution outcomes.
 
 ## Scope
 
-### 1. Persistent state and migration
+### 1. Policy, decision and evidence
 
-- Add PAUSED Task/TaskItem states and a durable pause-request flag through a forward-only SQLite
-  migration. Existing databases and records remain readable.
-- Expose repository operations that atomically request pause and inspect the request.
-- Persist the safe checkpoint transition, timestamps and bounded reason without storing secrets.
+- Add immutable WorkflowRetryPolicy, RetryCategory, RetryEvent and RetryOutcome models.
+- Configure optional runtime `workflowRetry` with enabled, maximum attempts, bounded exponential
+  backoff, maximum delay and jitter ratio. Default is disabled for backward compatibility.
+- Validate unknown fields, booleans-as-numbers, invalid ranges and unbounded values at startup.
+- Record only stable category, stage, attempt and delay; never raw provider response, URL, path,
+  credential or exception text.
 
-### 2. Cooperative safe checkpoints
+### 2. Central retry controller
 
-- A pause request is observed only before scheduling the next media item or Scanner unit of work.
-- Never interrupt Parser/Metadata/Naming/Classification/Planner or OrganizerExecutor mid-call.
-- An in-flight item may finish normally; no rollback is triggered merely because pause was requested.
-- Once acknowledged, pending/processing work becomes PAUSED, Task locks are released, and the Task
-  becomes PAUSED rather than Completed/Cancelled/Failed.
+- Implement one reusable controller with injected clock/sleeper/random source for deterministic tests.
+- Retry only errors classified as transient: timeout, connection failure/loss, rate limit, and
+  temporary provider unavailable.
+- Never retry authentication, permission, invalid path/configuration/request, malformed response,
+  not-found, unsupported operation, ambiguity, NeedConfirm, conflict or unknown errors.
+- Respect cancellation and Task pause before every attempt and during bounded waiting.
 
-### 3. Explicit continuation
+### 3. Production workflow integration
 
-- Add `mediaflow tasks pause <task-id>` and preserve `mediaflow tasks resume <task-id>` as the only
-  explicit continuation entry point.
-- Resume accepts PAUSED Tasks, selects only paused/retryable unfinished items, creates a new auditable
-  continuation Task, and never repeats an item with a persisted successful/DryRun/skipped result.
-- Resume never increases execute authority: an original DryRun cannot become execute; an authorized
-  organize continuation still requires a fresh `--execute`.
-- Invalid transitions fail clearly and do not access Storage.
+- Apply the controller only to the read-only strategy/metadata/NFO portion before planning and before
+  OrganizerExecutor is entered.
+- Do not add a second retry layer around successful adapter/provider internal attempts; workflow retry
+  begins only after those bounded attempts are exhausted and surfaced as normalized errors.
+- Persist retry count in Task result evidence and emit structured redacted operational events.
+- RecognitionType C and all downstream policy mappings remain unchanged across retries.
 
-### 4. Boundary and observability
+### 4. Fail-closed execution boundary
 
-- Task list/show output displays paused state and pause-request status without exposing claim tokens,
-  paths beyond existing authorized output, or secrets.
-- Pause is distinct from cancellation, retry, rollback, Automation Job cancellation and claim loss.
-- Existing Automation Job claim fencing/heartbeat and Organizer rollback behavior remain unchanged.
+- Never automatically retry OrganizerExecutor MOVE/COPY/HARDLINK/SYMLINK, PARTIAL/FAILED execution,
+  rollback failure, conflict resolution, overwrite, source delete, or an outcome that may have
+  mutated Storage.
+- DryRun remains zero mutation. Enabling workflow retry does not grant execute authority and does not
+  schedule background work.
 
-## Safety Boundaries
+## Boundaries
 
-- No forced thread/process termination, signal injection, Storage cancellation mid-mutation,
-  automatic retry, unattended execute, historical rollback, empty-directory cleanup or Phase 20.5.
-- No Parser, Recognition, Metadata, Naming, Classification, Planner, Scanner traversal, Storage
-  adapter or OrganizerExecutor semantic redesign.
-- Pause/resume control itself performs zero Storage/network operations and zero media mutations.
+- Do not replace existing provider/adapter-local retry internals in this Phase.
+- No automatic Task requeue, Scheduler execute, dead-letter redesign, historical rollback,
+  empty-directory cleanup, distributed retry claim or Phase 20.6.
+- Do not change Parser, Recognition, Naming, Classification, Planner, Storage adapter or
+  OrganizerExecutor domain semantics.
 - Do not add FFmpeg/FFprobe.
 
 ## Required Tests
 
-- SQLite migration, persistence across reopen, atomic/idempotent pause request and invalid transitions.
-- Pause before first item, between items, and request during an in-flight item; the item finishes and
-  no next item starts.
-- Paused item/lock handling, explicit resume selection, successful-result exclusion and attempt count.
-- DryRun authority preservation, authorized execute requiring fresh `--execute`, cancellation
-  distinction, concurrent pause/checkpoint behavior and bounded output.
-- Pause command zero Storage/network mutation; C identity, Organizer rollback and existing Task/Job
-  claim fencing regressions remain unchanged.
+- Policy validation/default compatibility, deterministic exponential backoff/jitter and maximum bound.
+- Transient Metadata timeout/connection/rate-limit/provider-unavailable retries then succeeds.
+- Transient read-only Storage failure retries; permanent/unknown/configuration/malformed/not-found and
+  ambiguous/NeedConfirm results do not retry.
+- Cancellation/pause stops before next attempt and during wait.
+- Exhaustion persists bounded attempts/category without raw secret-bearing messages.
+- Execute-mode failure/partial/rollback/conflict never auto retries; OrganizerExecutor call count is one.
+- DryRun zero mutation, Task result retry evidence, operational log evidence and C identity regression.
 
 ## Validation
 
-Run Phase 20.4 Task/CLI/persistence tests, Automation claim/cancellation regressions, Organizer and
-rollback, Scanner/FileIndex, all Storage, DryRun, Strategy/Metadata/Recognition/Parser/NFO and the
-complete offline suite. Run formatter, lint, compile, dependency, both configuration validations,
-FFmpeg/FFprobe audit, wheel build and diff checks.
+Run Phase 20.5 retry tests, Task pause/resume and persistence, Metadata/TMDB, Storage adapter retry,
+Organizer/rollback, Scanner/FileIndex, DryRun, Strategy/Recognition/Parser/NFO and the full offline
+suite. Run formatter, lint, compile, dependency, both configuration validations, FFmpeg/FFprobe
+audit, wheel build and diff checks.
 
-Update `README.md`, `docs/architecture.md`, `docs/progress.md`, `docs/roadmap.md`, requirements status
-and the product specification with exact pause/resume non-claims.
+Update `README.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/progress.md`,
+`docs/roadmap.md`, requirements status and the product specification with exact non-claims.
 
 ## Completion Report
 
 Use AGENTS.md structure and additionally report:
 
-## Phase 20.4 Result
+## Phase 20.5 Result
 
 PASS / FAIL
 
-## Pause Semantics
+## Retry Matrix
 
-## Resume Semantics
+## Backoff and Evidence
 
 ## Safety
 

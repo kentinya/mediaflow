@@ -393,4 +393,6 @@ class PersistentTaskCoordinator:
             item.error,
             execution.completed_operations if execution else (),
             len(plan.attachment_plans) if plan else 0,
+            len(result.retry_events),
+            result.retry_events[-1].category.value if result.retry_events else None,
         )

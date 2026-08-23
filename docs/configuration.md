@@ -450,6 +450,30 @@ saved command/scope in a new Task, skips paths already represented by successful
 results, and rescans only to discover the remaining scoped work. Pause/resume control itself does
 not construct Storage or providers.
 
+## Read-only workflow retry
+
+`workflowRetry` is optional and defaults to disabled. `maxAttempts` includes the first attempt and
+is limited to 1–10; delays are capped at 300 seconds and `jitterRatio` at 0–1.
+
+```json
+{
+  "workflowRetry": {
+    "enabled": true,
+    "maxAttempts": 3,
+    "baseDelaySeconds": 1,
+    "maxDelaySeconds": 30,
+    "jitterRatio": 0.2
+  }
+}
+```
+
+Only timeout, connection failure/loss, rate limit and temporary provider-unavailable results from
+the read-only strategy/metadata/NFO stage qualify. Authentication, permission, invalid
+configuration/path, not-found, malformed response, ambiguity, NeedConfirm, conflict and unknown
+errors do not. Pause/cancel interrupts attempts and wait slices. Task results persist only retry
+count and last stable category. OrganizerExecutor is outside the controller and failed, partial,
+rollback or uncertain mutation outcomes require explicit operator action.
+
 ## Development API and background DryRun jobs
 
 ```json

@@ -954,6 +954,8 @@ def final_main(
                     and review.selected_media_library_id is not None
                     and review.selected_relative_path is not None
                 },
+                retry_policy=configuration.workflow_retry_policy,
+                retry_cancellation_check=workflow_stop,
             )
             if retry_items is not None:
                 libraries = {item.library_id: item for item in configuration.resource_libraries}

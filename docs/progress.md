@@ -47,7 +47,8 @@
 - Phase 20.2 configurable read-only Hash duplicate detection: PASS
 - Phase 20.3 explicit bounded in-invocation Organizer rollback: PASS
 - Phase 20.4 durable cooperative Task pause/resume: PASS
-- Current development boundary: Phase 20.5 unified retry policy is next
+- Phase 20.5 unified bounded read-only workflow retry: PASS
+- Current development boundary: Phase 20.6 safe empty-directory cleanup is next
 
 ## Planned
 
@@ -1379,3 +1380,19 @@ Phase 20.4 durable cooperative Task pause/resume (2026-08-23): PASS
   a fresh `--execute`. Pause is not cancellation, rollback, automatic retry or claim loss
 - Full offline suite: 550 tests, 543 passed, 0 failed, 7 explicitly gated real profiles skipped;
   Task/Automation/claim/Organizer/Scanner regressions passed
+
+Phase 20.5 unified bounded read-only workflow retry (2026-08-23): PASS
+
+- Added immutable retry policy/category/event/outcome models and a reusable controller with bounded
+  exponential delay, deterministic jitter injection, pause/cancel checks and stable redacted evidence
+- Runtime `workflowRetry` is validated and disabled by default; only normalized timeout, connection,
+  rate-limit and provider-unavailable failures from the read-only strategy stage qualify
+- SQLite schema v16 persists retry count and final stable category without provider payload, path,
+  URL, credential or raw exception text
+- Planner, conflict handling and OrganizerExecutor remain outside the retry boundary; every execution
+  attempt still invokes OrganizerExecutor at most once and DryRun remains zero mutation
+- Existing adapter/provider-local retries remain unchanged; this layer begins only after their
+  normalized failure reaches the application workflow
+- Full offline suite: 559 tests, 552 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, both example configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed

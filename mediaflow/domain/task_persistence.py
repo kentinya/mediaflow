@@ -103,6 +103,8 @@ class PersistentResultRecord:
     error: str | None = None
     completed_operations: tuple[str, ...] = ()
     attachment_count: int = 0
+    retry_attempts: int = 0
+    retry_category: str | None = None
 
 
 class ConfirmationStatus(StrEnum):

@@ -99,6 +99,12 @@ decision flow. Overwrite is rejected unless the OrganizePolicy enables it and th
 fresh `--confirm-overwrite` decision; unresolved conflicts remain non-mutating.
 Silent deletion is not enabled.
 
+Read-only workflow retry is optional and disabled by default. Configure `workflowRetry` with
+`enabled`, `maxAttempts` (1–10), `baseDelaySeconds`, `maxDelaySeconds` (at most 300), and
+`jitterRatio` (0–1). It applies only to normalized timeout, connection, rate-limit, and temporary
+provider-unavailable failures before planning/execution. It never retries OrganizerExecutor
+mutations or uncertain outcomes, and enabling it does not grant `--execute` authority.
+
 OrganizePolicy may optionally compare an existing destination with `none`, bounded `fast`, or
 streaming `full` Hash evidence. The default is `none` and performs zero Hash reads. FAST is explicitly
 prefix evidence rather than full-content certainty; any configured calculation failure blocks as an
