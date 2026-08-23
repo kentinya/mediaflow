@@ -48,6 +48,12 @@ from mediaflow.domain.notification import (
     NotificationDeliveryStatus,
     NotificationEventType,
 )
+from mediaflow.domain.recognition_review import (
+    RecognitionReview,
+    RecognitionReviewChoice,
+    RecognitionReviewDecisionAudit,
+    RecognitionReviewStatus,
+)
 from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
@@ -60,7 +66,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 
 class SQLiteTaskRepository:
@@ -413,6 +419,146 @@ class SQLiteTaskRepository:
                 (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 self._confirmation_values(confirmation),
             )
+
+    def create_recognition_review(self, review, choices, item) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO recognition_reviews VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    review.review_id,
+                    review.task_id,
+                    review.item_id,
+                    review.source_storage_id,
+                    review.source_path,
+                    review.status.value,
+                    review.created_at.isoformat(),
+                    review.updated_at.isoformat(),
+                    review.selected_recognition_type,
+                    review.decided_at.isoformat() if review.decided_at else None,
+                    review.actor,
+                ),
+            )
+            self._connection.executemany(
+                "INSERT INTO recognition_review_choices VALUES (?, ?, ?, ?)",
+                tuple(
+                    (value.review_id, value.recognition_type_id, value.name, value.description)
+                    for value in choices
+                ),
+            )
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    TaskItemStatus.PROCESSING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("recognition review TaskItem is not processing")
+
+    def get_recognition_review(self, review_id):
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM recognition_reviews WHERE review_id=?", (review_id,)
+            ).fetchone()
+        return self._recognition_review(row) if row else None
+
+    def get_recognition_review_for_item(self, item_id):
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM recognition_reviews WHERE item_id=?", (item_id,)
+            ).fetchone()
+        return self._recognition_review(row) if row else None
+
+    def list_recognition_reviews(self, *, limit=100):
+        if not 1 <= limit <= 1000:
+            raise ValueError("recognition review limit must be between 1 and 1000")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM recognition_reviews
+                ORDER BY created_at DESC, review_id DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return tuple(self._recognition_review(row) for row in rows)
+
+    def list_recognition_review_choices(self, review_id):
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM recognition_review_choices WHERE review_id=?
+                ORDER BY recognition_type_id""",
+                (review_id,),
+            ).fetchall()
+        return tuple(
+            RecognitionReviewChoice(
+                row["review_id"], row["recognition_type_id"], row["name"], row["description"]
+            )
+            for row in rows
+        )
+
+    def resolve_recognition_review(self, review, audit, item) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE recognition_reviews SET status=?, updated_at=?,
+                selected_recognition_type=?, decided_at=?, actor=?
+                WHERE review_id=? AND status=?""",
+                (
+                    review.status.value,
+                    review.updated_at.isoformat(),
+                    review.selected_recognition_type,
+                    review.decided_at.isoformat(),
+                    review.actor,
+                    review.review_id,
+                    RecognitionReviewStatus.PENDING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("recognition review is not pending")
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    TaskItemStatus.WAITING_RECOGNITION.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("recognition review TaskItem is not waiting for recognition")
+            self._connection.execute(
+                "INSERT INTO recognition_review_decision_audit VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    audit.audit_id,
+                    audit.review_id,
+                    audit.recognition_type_id,
+                    audit.decided_at.isoformat(),
+                    audit.actor,
+                    audit.note,
+                ),
+            )
+
+    def list_recognition_review_audit(self, review_id):
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM recognition_review_decision_audit WHERE review_id=?
+                ORDER BY decided_at, audit_id""",
+                (review_id,),
+            ).fetchall()
+        return tuple(
+            RecognitionReviewDecisionAudit(
+                row["audit_id"],
+                row["review_id"],
+                row["recognition_type_id"],
+                datetime.fromisoformat(row["decided_at"]),
+                row["actor"],
+                row["note"],
+            )
+            for row in rows
+        )
 
     def create_metadata_review(
         self,
@@ -1774,6 +1920,29 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS confirmations_status
                     ON conflict_confirmations(status, created_at);
+                CREATE TABLE IF NOT EXISTS recognition_reviews (
+                    review_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL UNIQUE, source_storage_id TEXT NOT NULL,
+                    source_path TEXT NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    selected_recognition_type TEXT, decided_at TEXT, actor TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(item_id) REFERENCES task_items(item_id)
+                );
+                CREATE TABLE IF NOT EXISTS recognition_review_choices (
+                    review_id TEXT NOT NULL, recognition_type_id TEXT NOT NULL,
+                    name TEXT NOT NULL, description TEXT NOT NULL,
+                    PRIMARY KEY(review_id, recognition_type_id),
+                    FOREIGN KEY(review_id) REFERENCES recognition_reviews(review_id)
+                );
+                CREATE TABLE IF NOT EXISTS recognition_review_decision_audit (
+                    audit_id TEXT PRIMARY KEY, review_id TEXT NOT NULL,
+                    recognition_type_id TEXT NOT NULL, decided_at TEXT NOT NULL,
+                    actor TEXT, note TEXT,
+                    FOREIGN KEY(review_id) REFERENCES recognition_reviews(review_id)
+                );
+                CREATE INDEX IF NOT EXISTS recognition_reviews_status_created
+                    ON recognition_reviews(status, created_at, review_id);
                 CREATE TABLE IF NOT EXISTS metadata_reviews (
                     review_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
                     item_id TEXT NOT NULL UNIQUE, source_storage_id TEXT NOT NULL,
@@ -2146,6 +2315,22 @@ class SQLiteTaskRepository:
             bool(row["overwrite_authorized"]),
             row["actor"],
             row["note"],
+        )
+
+    @staticmethod
+    def _recognition_review(row: sqlite3.Row) -> RecognitionReview:
+        return RecognitionReview(
+            row["review_id"],
+            row["task_id"],
+            row["item_id"],
+            row["source_storage_id"],
+            row["source_path"],
+            RecognitionReviewStatus(row["status"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["selected_recognition_type"],
+            datetime.fromisoformat(row["decided_at"]) if row["decided_at"] else None,
+            row["actor"],
         )
 
     @staticmethod

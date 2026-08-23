@@ -66,6 +66,7 @@ def main(
         "dashboard",
         "metadata-reviews",
         "classification-reviews",
+        "recognition-reviews",
         "upgrade",
     }
     if Path(sys.argv[0]).name == "mediaflow" or production_commands.intersection(effective_argv):

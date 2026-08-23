@@ -2790,6 +2790,11 @@ Status = Unrecognized
 忽略
 ```
 
+> 当前实现（Phase 21.0）：被 Task 跟踪的 `Unrecognized` 条目持久进入
+> `WAITING_RECOGNITION`，保存启用 RecognitionType 的有界快照并释放源锁。CLI 可显式选择
+> 快照中且当前仍启用的类型，原子记录 actor/note 审计，再通过新的显式 resume 进入正常策略
+> 管线；没有隐藏 A 默认、没有规则/配置修改。C 仍为 C。重新识别、建规则和忽略动作留后续。
+
 ---
 
 # 81. 元数据识别失败

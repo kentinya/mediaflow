@@ -33,7 +33,8 @@ from mediaflow.domain.organizer import (
     PlanOperation,
     PlanStatus,
 )
-from mediaflow.domain.recognition import RecognitionTypePolicy
+from mediaflow.domain.recognition import RecognitionStatus, RecognitionTypePolicy
+from mediaflow.domain.recognition_review import RecognitionSelection
 from mediaflow.domain.scanner import CancellationToken, FileScanStatus, ScanError, Scanner
 from mediaflow.domain.storage import Storage
 from mediaflow.domain.workflow_retry import RetryEvent, WorkflowRetryPolicy
@@ -124,6 +125,7 @@ class MediaOrganizerService:
         retry_policy: WorkflowRetryPolicy = WorkflowRetryPolicy(),
         retry_controller: WorkflowRetryController | None = None,
         retry_cancellation_check: CancellationCheck | None = None,
+        recognition_selections: dict[tuple[str, str], RecognitionSelection] | None = None,
     ) -> None:
         self._strategy = strategy
         self._scanner = scanner
@@ -145,6 +147,7 @@ class MediaOrganizerService:
         self._retry_policy = retry_policy
         self._retry_controller = retry_controller or WorkflowRetryController()
         self._retry_cancellation_check = retry_cancellation_check
+        self._recognition_selections = recognition_selections or {}
 
     def process_file(
         self,
@@ -182,6 +185,19 @@ class MediaOrganizerService:
                 title=strategy.parsed.title_candidate,
                 recognition_type=strategy.recognition.recognition_type_id,
             )
+            if strategy.recognition.status is RecognitionStatus.UNRECOGNIZED:
+                if self._task_coordinator and tracked_item:
+                    item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
+                    self._record(item)
+                    self._task_coordinator.wait_for_recognition(
+                        tracked_item,
+                        strategy.recognition,
+                        tuple(policy.recognition_type for policy in self._type_policies.values()),
+                    )
+                    return item
+                return self._failed(
+                    source, strategy, "recognition type is unavailable", tracked_item, retry_events
+                )
             if not strategy.metadata or not strategy.metadata.identity:
                 if (
                     strategy.metadata
@@ -355,6 +371,9 @@ class MediaOrganizerService:
             classification_selection=self._classification_selections.get(
                 (resource_library.storage_id, storage_path)
             ),
+            recognition_selection=self._recognition_selections.get(
+                (resource_library.storage_id, storage_path)
+            ),
             storage_path=storage_path,
         )
         if (
@@ -525,6 +544,10 @@ class MediaOrganizerService:
                     if item.strategy
                     and item.strategy.classification
                     and item.strategy.classification.status is ClassificationStatus.UNCLASSIFIED
+                    else "WAITING_RECOGNITION"
+                    if item.strategy
+                    and item.strategy.recognition.status is RecognitionStatus.UNRECOGNIZED
+                    and not item.error
                     else "WAITING_CONFIRM"
                     if item.plan and item.plan.conflicts and not item.error
                     else "FAILED"

@@ -438,6 +438,23 @@ mediaflow tasks resume TASK_ID
 mediaflow tasks retry-failed TASK_ID
 ```
 
+Unrecognized tracked media enters a persistent manual RecognitionType review rather than silently
+defaulting to A:
+
+```bash
+mediaflow recognition-reviews list --limit 100
+mediaflow recognition-reviews show REVIEW_ID
+mediaflow recognition-reviews resolve REVIEW_ID --recognition-type C --actor operator --note reviewed
+mediaflow tasks resume ORIGINAL_TASK_ID
+```
+
+Choices are a bounded snapshot of enabled configured RecognitionTypes. Resolution fails if the type
+was not in that snapshot or is no longer enabled/configured. It records an immutable decision audit,
+returns the item to PENDING, and performs no Storage/provider operation. Resume creates a new
+auditable Task and re-enters the normal policy pipeline. A manually selected C remains C while using
+configured Metadata C and Naming/Classification/Organize A. This phase does not edit rules, query
+text/year, media type, Provider ID, candidates, or configuration.
+
 Resume considers interrupted/pending/failed/partial items; retry-failed selects failed/partial
 items. Successful, skipped, and DryRun results are excluded. Retry without `--execute` creates a new
 DryRun task. Execute is accepted only if the original task was execute-authorized and the retry

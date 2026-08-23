@@ -289,6 +289,12 @@ class PersistentTaskCoordinator:
         MetadataReviewService(self.repository).create(item, identification, metadata_policy_id)
         self.locks.release(item.storage_id, item.source_path, item.task_id)
 
+    def wait_for_recognition(self, item, recognition, recognition_types) -> None:
+        from mediaflow.application.recognition_review import RecognitionReviewService
+
+        RecognitionReviewService(self.repository, recognition_types).create(item, recognition)
+        self.locks.release(item.storage_id, item.source_path, item.task_id)
+
     def wait_for_classification(self, item, result, policy, identity) -> None:
         from mediaflow.application.classification_review import ClassificationReviewService
 
@@ -303,6 +309,7 @@ class PersistentTaskCoordinator:
         )
         waiting_statuses = {
             TaskItemStatus.WAITING_CONFIRM,
+            TaskItemStatus.WAITING_RECOGNITION,
             TaskItemStatus.WAITING_METADATA,
             TaskItemStatus.WAITING_CLASSIFICATION,
         }

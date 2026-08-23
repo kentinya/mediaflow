@@ -46,12 +46,15 @@ from mediaflow.domain.organizer import ExecutionResult, OrganizePlan, OrganizePo
 from mediaflow.domain.parser import FileContext, ParseResult
 from mediaflow.domain.recognition import (
     RecognitionContext,
+    RecognitionReason,
     RecognitionResult,
     RecognitionRule,
+    RecognitionStatus,
     RecognitionType,
     RecognitionTypePolicy,
     ResolvedRecognitionPolicy,
 )
+from mediaflow.domain.recognition_review import RecognitionSelection
 from mediaflow.domain.scanner import CancellationToken, FileScanStatus, ScanError, Scanner
 from mediaflow.domain.storage import Storage, StorageCapabilities, StorageEntry, WriteSource
 
@@ -373,6 +376,7 @@ class StrategyTestRunner:
         classification_policies: ClassificationPolicyRegistry | None = None,
         storages: Mapping[str, Storage] | None = None,
         nfo_enricher: StorageNfoEnricher | None = None,
+        recognition_types: tuple[RecognitionType, ...] = (),
     ) -> None:
         self._parser = parser
         self._recognition = recognition
@@ -386,6 +390,7 @@ class StrategyTestRunner:
         self._classification_policies = classification_policies or ClassificationPolicyRegistry(())
         self._storages = dict(storages or {})
         self._nfo_enricher = nfo_enricher or StorageNfoEnricher()
+        self._recognition_types = {item.type_id: item for item in recognition_types}
 
     def validate_configuration(
         self,
@@ -446,6 +451,7 @@ class StrategyTestRunner:
         storage_id: str = "strategy-test",
         metadata_selection: MetadataSelection | None = None,
         classification_selection: ClassificationSelection | None = None,
+        recognition_selection: RecognitionSelection | None = None,
         storage_path: str | None = None,
         source_storage: Storage | None = None,
     ) -> StrategyTestResult:
@@ -476,6 +482,24 @@ class StrategyTestRunner:
             )
             parsed = self._nfo_enricher.enrich(storage, nfo_context, parsed)
         recognition = self._recognition.recognize(RecognitionContext(context, parsed))
+        if recognition_selection is not None:
+            if recognition.status is not RecognitionStatus.UNRECOGNIZED:
+                raise StrategyConfigurationError(
+                    "manual RecognitionType selection requires an Unrecognized result"
+                )
+            selected = self._recognition_types.get(recognition_selection.recognition_type_id)
+            if selected is None or not selected.enabled:
+                raise StrategyConfigurationError(
+                    "manual RecognitionType is no longer enabled or configured"
+                )
+            recognition = RecognitionResult(
+                selected,
+                "manual-review",
+                1.0,
+                RecognitionStatus.MATCHED,
+                score=100,
+                reasons=(RecognitionReason("MANUAL_SELECTION", "Selected by manual review"),),
+            )
         resolved = (
             self._policy_resolver.resolve(recognition.recognition_type_id)
             if recognition.recognition_type_id
@@ -849,6 +873,7 @@ def strategy_runner_from_configuration(
         storage_guard=storage_guard,
         classification_policies=classification_policies,
         storages=storages,
+        recognition_types=configuration.recognition_types,
     )
 
 

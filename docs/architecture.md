@@ -113,6 +113,16 @@ root or Storage root, follows a link, invokes recursive deletion, touches a dest
 DryRun/COPY/LINK/failure/rollback. Unknown content stops safely; a Storage/race failure after the
 successful MOVE yields PARTIAL evidence. SQLite schema v17 persists cleanup status and step count.
 
+Phase 21.0 introduces a durable manual RecognitionType decision before metadata. A tracked
+UNRECOGNIZED result creates one bounded `RecognitionReview`, snapshots only enabled configured
+types, transitions the TaskItem to WAITING_RECOGNITION and releases its source lock. CLI resolution
+atomically records the selected snapshot type plus actor/note audit and returns the item to PENDING.
+Explicit Task resume loads `RecognitionSelection`; `StrategyTestRunner` accepts it only when the new
+rule-engine result is still UNRECOGNIZED and the configured type remains enabled, then constructs a
+visible `manual-review` RecognitionResult and uses the normal policy resolver. It does not mutate a
+RecognitionRule or configuration and has no hidden A fallback. SQLite schema v18 owns review,
+choice and audit tables. Review commands do not construct Storage or providers.
+
 ## Attachment file sets
 
 Phase 16 adds `AttachmentDiscovery` as a read-only application service after the primary media has

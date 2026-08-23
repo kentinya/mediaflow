@@ -49,7 +49,8 @@
 - Phase 20.4 durable cooperative Task pause/resume: PASS
 - Phase 20.5 unified bounded read-only workflow retry: PASS
 - Phase 20.6 bounded safe source directory cleanup: PASS
-- Current development boundary: Phase 21.0 manual-processing durable decision baseline is next
+- Phase 21.0 durable manual RecognitionType decision baseline: PASS
+- Current development boundary: Phase 21.1 manual metadata query correction is next
 
 ## Planned
 
@@ -1411,5 +1412,22 @@ Phase 20.6 bounded safe source directory cleanup (2026-08-23): PASS
   failure is visible as PARTIAL without replaying the organize operation
 - SQLite schema v17 persists stable cleanup status and bounded step count
 - Full offline suite: 568 tests, 561 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, both example configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.0 durable manual RecognitionType decision baseline (2026-08-23): PASS
+
+- Added SQLite schema v18 RecognitionReview, enabled-type snapshot and immutable actor/note decision
+  audit plus WAITING_RECOGNITION TaskItem state
+- Tracked Unrecognized items persist one bounded review and release their source lock; untracked
+  strategy behavior remains Unrecognized and no type silently defaults to A
+- Added credential-independent `recognition-reviews list|show|resolve`; resolution validates both the
+  stored choice and current enabled configuration, returns the item to PENDING and performs zero
+  Storage/provider work
+- Explicit Task resume loads the durable RecognitionSelection and re-enters the existing policy and
+  media pipeline without changing RecognitionRuleEngine or configuration
+- Permanent regression confirms manual C resolves Metadata C plus Naming/Classification/Organize A
+  while RecognitionType and Metadata identity remain C
+- Full offline suite: 572 tests, 565 passed, 0 failed, 7 explicitly gated real profiles skipped;
   formatter, lint, compile, dependency, both example configuration, FFmpeg/FFprobe source audit,
   diff and isolated wheel gates passed

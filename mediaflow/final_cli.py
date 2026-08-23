@@ -32,6 +32,7 @@ from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.application.organizer import OrganizerExecutor
+from mediaflow.application.recognition_review import RecognitionReviewService
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
@@ -45,6 +46,7 @@ from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.metadata_review import MetadataReviewStatus, MetadataSelection
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
+from mediaflow.domain.recognition_review import RecognitionReviewStatus, RecognitionSelection
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     PersistentTask,
@@ -251,6 +253,21 @@ def final_main(
     classification_review_resolve.add_argument("--choice-rank", required=True, type=int)
     classification_review_resolve.add_argument("--actor")
     classification_review_resolve.add_argument("--note")
+    recognition_reviews = commands.add_parser(
+        "recognition-reviews", help="persistent Unrecognized media review queue"
+    )
+    recognition_review_commands = recognition_reviews.add_subparsers(
+        dest="recognition_review_command", required=True
+    )
+    recognition_review_list = recognition_review_commands.add_parser("list")
+    recognition_review_list.add_argument("--limit", type=int, default=100)
+    recognition_review_show = recognition_review_commands.add_parser("show")
+    recognition_review_show.add_argument("review_id")
+    recognition_review_resolve = recognition_review_commands.add_parser("resolve")
+    recognition_review_resolve.add_argument("review_id")
+    recognition_review_resolve.add_argument("--recognition-type", required=True)
+    recognition_review_resolve.add_argument("--actor")
+    recognition_review_resolve.add_argument("--note")
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
     api_token = api_commands.add_parser("token", help="cryptographic bearer token operations")
@@ -391,6 +408,38 @@ def final_main(
                             review,
                             repository.list_metadata_review_candidates(review.review_id),
                             repository.list_metadata_review_audit(review.review_id),
+                        )
+                    )
+            return 0
+        if arguments.command == "recognition-reviews":
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                service = RecognitionReviewService(
+                    repository, configuration.strategy.recognition_types
+                )
+                if arguments.recognition_review_command == "list":
+                    stdout.write(
+                        render_recognition_reviews(
+                            repository.list_recognition_reviews(limit=arguments.limit)
+                        )
+                    )
+                else:
+                    if arguments.recognition_review_command == "resolve":
+                        service.resolve(
+                            arguments.review_id,
+                            arguments.recognition_type,
+                            actor=arguments.actor,
+                            note=arguments.note,
+                        )
+                    review = repository.get_recognition_review(arguments.review_id)
+                    if review is None:
+                        raise LookupError(
+                            f"recognition review {arguments.review_id!r} was not found"
+                        )
+                    stdout.write(
+                        render_recognition_review(
+                            review,
+                            repository.list_recognition_review_choices(review.review_id),
+                            repository.list_recognition_review_audit(review.review_id),
                         )
                     )
             return 0
@@ -953,6 +1002,15 @@ def final_main(
                     and review.selected_rule_id is not None
                     and review.selected_media_library_id is not None
                     and review.selected_relative_path is not None
+                },
+                recognition_selections={
+                    (stored.storage_id, stored.source_path): RecognitionSelection(
+                        review.selected_recognition_type
+                    )
+                    for stored in (retry_items or ())
+                    if (review := repository.get_recognition_review_for_item(stored.item_id))
+                    and review.status is RecognitionReviewStatus.RESOLVED
+                    and review.selected_recognition_type is not None
                 },
                 retry_policy=configuration.workflow_retry_policy,
                 retry_cancellation_check=workflow_stop,
@@ -1549,6 +1607,43 @@ def render_metadata_reviews(values) -> str:
         for item in values
     )
     lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_recognition_reviews(values) -> str:
+    lines = ["", "RECOGNITION REVIEWS", ""]
+    lines.extend(
+        f"{item.review_id} | {item.status.value} | {item.source_storage_id}:{item.source_path}"
+        for item in values
+    )
+    lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_recognition_review(review, choices, audit=()) -> str:
+    lines = [
+        "",
+        "RECOGNITION REVIEW",
+        "",
+        f"ID: {review.review_id}",
+        f"Status: {review.status.value}",
+        f"Source: {review.source_storage_id}:{review.source_path}",
+        f"Selected RecognitionType: {review.selected_recognition_type or '-'}",
+        "",
+        "CHOICES",
+        "",
+    ]
+    lines.extend(
+        f"{item.recognition_type_id} | {item.name} | {item.description}" for item in choices
+    )
+    lines.extend(("", "DECISION AUDIT", ""))
+    lines.extend(
+        f"{item.decided_at.isoformat()} | {item.recognition_type_id} | {item.actor or '-'}"
+        for item in audit
+    )
+    if not audit:
+        lines.append("None")
+    lines.append("")
     return "\n".join(lines)
 
 
