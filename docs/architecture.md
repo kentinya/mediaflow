@@ -1200,3 +1200,16 @@ classification destinations, endpoints, environment-variable identifiers/values,
 credentials, and arbitrary adapter options have no output mapping. This makes omission structural
 rather than dependent on pattern-based redaction. The authenticated System UI renders values only
 through DOM text nodes and exposes refresh but no configuration or workflow controls.
+
+## Durable metadata query correction
+
+Phase 21.1 adds a separate durable `MetadataCorrectionReview` only for tracked Metadata
+`NOT_FOUND`. It snapshots RecognitionType, MetadataPolicy/provider, query/year/media type and moves
+the TaskItem to `WAITING_METADATA_CORRECTION`, releasing its source lock. Resolution records a
+bounded corrected query/year/Movie-TV choice or direct configured-provider ID, audits the intent,
+and returns the item to `PENDING`. Explicit Task resume injects that selection into the existing
+MetadataIdentificationService: text corrections use real provider search/matching; direct IDs use
+`identify_by_provider_id`. The effective Movie/TV policy is changed only for this identification
+attempt. RecognitionType and all resolved downstream policy references remain immutable, including
+C -> Metadata C / Naming A / Classification A / Organize A. SQLite schema v19 owns this correction
+and audit state; correction commands construct neither Storage nor provider clients.

@@ -1,70 +1,70 @@
-# Phase 21.0 — Durable Manual RecognitionType Decision Baseline
+# Phase 21.1 — Durable Manual Metadata Query Correction
 
 ## Goal
 
-Create a persistent, auditable manual-review path for files whose production Recognition result is
-Unrecognized, then resume the existing pipeline with an explicitly selected configured
-RecognitionType without changing RecognitionRuleEngine semantics.
+Persist a bounded operator correction for Metadata NOT_FOUND, then explicitly resume the existing
+provider pipeline with corrected title/year/media type or a direct configured-provider ID.
 
 ## Scope
 
-### 1. Recognition review domain and persistence
+### 1. Correction review and persistence
 
-- Add immutable RecognitionReview, selectable configured type snapshot, selection and decision-audit
-  models plus repository protocol.
-- Add WAITING_RECOGNITION TaskItem state and SQLite persistence/migration.
-- Snapshot only enabled configured RecognitionTypes with bounded stable fields; never infer or default
-  a type and never persist media/provider payload or secrets.
+- Add immutable MetadataCorrectionReview, MetadataCorrectionSelection and decision-audit models.
+- Add WAITING_METADATA_CORRECTION TaskItem state and SQLite schema/migration.
+- Snapshot RecognitionType, MetadataPolicy ID, configured provider ID, original query/year/media type
+  and bounded outcome; never persist provider payload, credentials or arbitrary MediaIdentity.
 
 ### 2. Production waiting flow
 
-- When Recognition status is Unrecognized in a tracked media workflow, persist one idempotent pending
-  review, transition the item to WAITING_RECOGNITION and release its source lock.
-- Ambiguous Recognition remains its existing outcome unless explicitly supported by a future phase.
-- Untracked strategy-test/analyze behavior remains Unrecognized and non-persistent.
+- A tracked Metadata NOT_FOUND outcome creates one pending correction, waits and releases the source
+  lock. Existing NeedConfirm/Ambiguous continues using MetadataReview unchanged.
+- Provider/configuration/transient errors remain errors/retry outcomes and must not be disguised as a
+  query correction.
+- Untracked strategy-test behavior remains unchanged and non-persistent.
 
-### 3. Explicit decision and resume
+### 3. Explicit correction and resume
 
-- Add `mediaflow recognition-reviews list|show|resolve REVIEW_ID --recognition-type TYPE`.
-- Resolution must select an enabled type contained in the stored bounded snapshot, record actor/note,
-  audit atomically, and return the TaskItem to PENDING.
-- Existing explicit `mediaflow tasks resume TASK_ID` loads the resolved selection and re-enters the
-  normal RecognitionTypePolicy → Metadata → Naming → Classification → Planner pipeline.
-- Manual type selection is an application-level override of one Recognition result; do not add a
-  hidden RecognitionRule or mutate configuration. RecognitionType C must remain C.
+- Add `mediaflow metadata-corrections list|show|resolve REVIEW_ID` with bounded `--query`, optional
+  `--year`, required `--media-type movie|tv`, and optional `--provider-id`.
+- Require a non-empty corrected query unless provider ID is supplied. Validate year and ID limits,
+  actor/note, current MetadataPolicy/provider/type availability, pending state and stale decisions.
+- Existing explicit Task resume loads the correction, reruns the real MetadataProvider path, and then
+  continues Naming/Classification/Plan. Direct ID must call existing `identify_by_provider_id`.
+- RecognitionType and RecognitionTypePolicy remain unchanged; C must remain C.
 
-### 4. Safety and observability
+### 4. Safety
 
-- Review list/show/resolve and resume-selection loading construct no Storage/provider and perform zero
-  media mutation. DryRun remains default and execute still needs original plus fresh authorization.
-- Expose bounded review status/choices/decision audit through CLI and existing read-only operational
-  observability where cleanly supported; never expose saved task scope, tokens or secrets.
+- Correction commands construct no Storage/provider, make no network request and mutate no media.
+- Resume remains DryRun by default; real execution still requires original and fresh execute authority.
+- Persist decision intent, not provider secrets, raw responses, authorization headers or arbitrary
+  output identity.
 
 ## Boundaries
 
-- No editing search title/year, Movie/TV switch, direct Provider ID, arbitrary candidate injection,
-  rule creation, bulk actions, Web UI editing or Phase 21.1.
-- Do not change RecognitionRuleEngine matching/scoring, MetadataProvider, Naming, Classification,
-  Planner, OrganizerExecutor, Storage adapter or automation scheduling semantics.
+- No arbitrary provider switching, candidate injection, editing Recognition/Naming/Classification,
+  bulk correction, ignore action, Web UI editing or Phase 21.2.
+- Do not redesign CandidateMatcher, MetadataProvider adapters, policy engines, Planner,
+  OrganizerExecutor, Storage adapters or automation scheduling.
 - Do not add FFmpeg/FFprobe.
 
 ## Required Tests
 
-- Unrecognized tracked file creates one bounded pending review, waits and releases lock.
-- Choices include only enabled configured types; no hidden default; invalid/disabled/stale selection
-  fails atomically; duplicate resolve/create is rejected or idempotent as appropriate.
-- CLI list/show/resolve works without Storage/provider credentials and redacts bounded fields.
-- Explicit resume consumes the stored type and continues the existing pipeline; unresolved review is
-  excluded from blind retry.
-- A/B/C selection mappings work and C remains C through Metadata/Naming/Classification/Plan preview.
-- Untracked Unrecognized behavior unchanged, zero Storage mutation, schema migration and complete
-  existing review/Task/retry regressions.
+- NOT_FOUND tracked item creates one bounded pending correction, waits and releases lock.
+- NeedConfirm/Ambiguous remains MetadataReview; provider/configuration/transient error creates no
+  correction. Unresolved correction is excluded from blind retry.
+- Query/year/movie-TV correction reaches the fake provider and changes the result deterministically.
+- Direct Provider ID uses the configured provider detail method and bypasses text-search ambiguity.
+- Invalid/empty/oversized query, invalid year/media type/provider ID, stale policy/provider/type,
+  duplicate resolution and wrong item state fail atomically.
+- CLI list/show/resolve works without Storage/provider credentials; zero network/media mutation.
+- C remains C through corrected Metadata, Naming, Classification and Plan preview.
+- Schema migration and all existing review/Task/retry/Storage/DryRun regressions pass.
 
 ## Validation
 
-Run Phase 21.0 recognition review, metadata/classification/conflict review, Task pause/resume/retry,
-Strategy/Recognition/Metadata/Naming/Classification/Planner/Organizer, Scanner/FileIndex, all Storage
-adapters, DryRun and full offline suite. Run formatter, lint, compile, dependency, both configuration
+Run Phase 21.1 correction, Metadata/CandidateMatcher/TMDB, all review queues, Task pause/resume/retry,
+Strategy/Recognition/Naming/Classification/Planner/Organizer, Scanner/FileIndex, all Storage adapters,
+DryRun and full offline suite. Run formatter, lint, compile, dependency, both configuration
 validations, FFmpeg/FFprobe audit, wheel build and diff checks.
 
 Update `README.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/progress.md`,
@@ -74,13 +74,13 @@ Update `README.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/progr
 
 Use AGENTS.md structure and additionally report:
 
-## Phase 21.0 Result
+## Phase 21.1 Result
 
 PASS / FAIL
 
-## Review Workflow
+## Correction Workflow
 
-## C Preservation
+## Direct ID and C Preservation
 
 ## Safety
 

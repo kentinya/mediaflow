@@ -255,6 +255,7 @@ class MetadataIdentificationService:
         policy: MetadataPolicy,
         *,
         force_refresh: bool = False,
+        media_type_override: MediaType | None = None,
     ) -> MetadataIdentificationResult:
         if recognition.recognition_type is None:
             raise ValueError("metadata identification requires a resolved recognition type")
@@ -277,18 +278,33 @@ class MetadataIdentificationService:
             remaining_requests -= 1
 
         try:
-            media_type = _expected_media_type(policy) or (
-                MediaType.TV if parsed.season is not None else MediaType.MOVIE
+            media_type = (
+                media_type_override
+                or _expected_media_type(policy)
+                or (MediaType.TV if parsed.season is not None else MediaType.MOVIE)
+            )
+            effective_policy = (
+                replace(
+                    policy,
+                    media_type=media_type,
+                    media_query_type=(
+                        MediaQueryType.TV if media_type is MediaType.TV else MediaQueryType.MOVIE
+                    ),
+                )
+                if media_type_override is not None
+                else policy
             )
             if media_type is MediaType.TV:
                 consume_request()
-                candidates = tuple(provider.search_tv(parsed, policy, force_refresh=force_refresh))
+                candidates = tuple(
+                    provider.search_tv(parsed, effective_policy, force_refresh=force_refresh)
+                )
             else:
                 consume_request()
                 candidates = tuple(
-                    provider.search_movie(parsed, policy, force_refresh=force_refresh)
+                    provider.search_movie(parsed, effective_policy, force_refresh=force_refresh)
                 )
-            match = self._matcher.match(parsed, candidates, policy)
+            match = self._matcher.match(parsed, candidates, effective_policy)
             enriched_identities = {}
             if (
                 match.status is not CandidateMatchStatus.MATCHED
@@ -300,12 +316,12 @@ class MetadataIdentificationService:
                     candidates,
                     parsed,
                     media_type,
-                    policy,
+                    effective_policy,
                     force_refresh,
                     consume_request,
                     lambda: remaining_requests,
                 )
-                match = self._matcher.match(parsed, candidates, policy)
+                match = self._matcher.match(parsed, candidates, effective_policy)
             if match.status is not CandidateMatchStatus.MATCHED or match.best_candidate is None:
                 status = {
                     CandidateMatchStatus.NEED_CONFIRM: MetadataIdentificationStatus.NEED_CONFIRM,
@@ -318,16 +334,16 @@ class MetadataIdentificationService:
             if identity is None and media_type is MediaType.MOVIE:
                 consume_request()
                 identity = provider.get_movie(
-                    match.best_candidate.provider_id, policy, force_refresh=force_refresh
+                    match.best_candidate.provider_id, effective_policy, force_refresh=force_refresh
                 )
             elif identity is None:
                 consume_request()
                 identity = provider.get_tv(
-                    match.best_candidate.provider_id, policy, force_refresh=force_refresh
+                    match.best_candidate.provider_id, effective_policy, force_refresh=force_refresh
                 )
             if media_type is MediaType.TV:
                 identity = self._verify_episodes(
-                    provider, identity, parsed, policy, force_refresh, consume_request
+                    provider, identity, parsed, effective_policy, force_refresh, consume_request
                 )
                 if identity is None:
                     return MetadataIdentificationResult(

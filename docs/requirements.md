@@ -1377,6 +1377,11 @@ MatchedBy
 
 # 31. 人工元数据识别
 
+> 当前实现（Phase 21.1）：Task 跟踪的 Metadata `NOT_FOUND` 项进入持久
+> `WAITING_METADATA_CORRECTION`，可审计地修正查询词、年份、Movie/TV，或输入当前配置
+> Provider 的直接 ID；只有显式 Task resume 才重跑真实 Provider 流程。该实现不允许任意
+> Provider 切换或注入 MediaIdentity，且保持 RecognitionType（包括 C）不变。
+
 当自动识别失败时支持：
 
 ```text

@@ -109,7 +109,7 @@ class CronSchedulerTests(unittest.TestCase):
             )
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 18)
+                self.assertEqual(repository.schema_version, 19)
                 self.assertEqual(repository.list_schedule_audit(), ())
 
     def test_current_future_missed_and_audit(self) -> None:

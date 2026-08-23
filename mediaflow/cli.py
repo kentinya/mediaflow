@@ -65,6 +65,7 @@ def main(
         "security-audit",
         "dashboard",
         "metadata-reviews",
+        "metadata-corrections",
         "classification-reviews",
         "recognition-reviews",
         "upgrade",

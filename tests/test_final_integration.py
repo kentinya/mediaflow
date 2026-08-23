@@ -219,7 +219,7 @@ class FinalIntegrationTests(unittest.TestCase):
             self.assertEqual(2, batch.total)
             self.assertEqual(1, batch.matched)
             self.assertEqual(1, batch.moved)
-            self.assertEqual(1, batch.failed)
+            self.assertEqual(0, batch.failed)
             self.assertEqual(2, len(progress))
             successful = next(item for item in batch.items if item.execution)
             self.assertEqual(ExecutionStatus.SUCCESS, successful.execution.status)
@@ -232,7 +232,7 @@ class FinalIntegrationTests(unittest.TestCase):
             self.assertEqual(persisted.status, PersistentTaskStatus.PARTIAL_SUCCESS)
             self.assertEqual(
                 {item.status for item in task_repository.list_items(task.task_id)},
-                {TaskItemStatus.SUCCESS, TaskItemStatus.FAILED},
+                {TaskItemStatus.SUCCESS, TaskItemStatus.WAITING_METADATA_CORRECTION},
             )
             task_repository.close()
 

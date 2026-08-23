@@ -294,8 +294,8 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 
 - Phase 21.0 已完成：Unrecognized 条目持久等待、启用类型有界快照、显式 RecognitionType
   决策审计和 resume；无隐藏默认、不修改规则，C 身份保持。
-- 人工元数据修正全流程（§31、§81）：修改关键词、年份、Movie/TV 切换、
-  直接输入 Provider ID；保持决策持久化 + 显式 resume 语义。
+- Phase 21.1 已完成：Metadata NOT_FOUND 条目持久等待，支持关键词、年份、Movie/TV、
+  配置 Provider 的直接 ID 修正，保持决策审计 + 显式 resume 和 C 身份。
 - 未识别媒体人工指定 RecognitionType（§80）。
 - 批量操作体系（§83）。
 - 文件列表/搜索筛选/媒体详情页（§94–§96），含重新识别/重新匹配/重新生成 Plan。
@@ -328,7 +328,7 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 
 后续任务仍应保持小步推进。优先顺序：
 
-1. 进入 Phase 21.1，实现人工元数据查询关键词/年份/Movie-TV/Provider-ID 的持久修正与显式 resume。
+1. 进入 Phase 21.2，以单一小范围补齐下一项人工处理闭环，不提前启动完整 UI。
 2. 保持历史/崩溃恢复与 Hash 持久复用为后续独立专项边界。
 3. AWS S3/Cloudflare R2、多小时 soak、服务/主机终止仍作为部署专项验收，不阻塞有界 Phase 19 profile。
 4. Phase 20 收口前不启动 Phase 21/22 的 UI 与配置管理扩展。

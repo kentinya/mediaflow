@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import posixpath
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 from typing import Any, BinaryIO
 
@@ -40,6 +40,7 @@ from mediaflow.domain.metadata import (
     MetadataPolicy,
     ProviderCapabilities,
 )
+from mediaflow.domain.metadata_correction import MetadataCorrectionSelection
 from mediaflow.domain.metadata_review import MetadataSelection
 from mediaflow.domain.naming import NamingContext, NamingError, NamingPolicy, NamingResult
 from mediaflow.domain.organizer import ExecutionResult, OrganizePlan, OrganizePolicy
@@ -450,6 +451,7 @@ class StrategyTestRunner:
         resource_library_id: str = "strategy-test",
         storage_id: str = "strategy-test",
         metadata_selection: MetadataSelection | None = None,
+        metadata_correction: MetadataCorrectionSelection | None = None,
         classification_selection: ClassificationSelection | None = None,
         recognition_selection: RecognitionSelection | None = None,
         storage_path: str | None = None,
@@ -515,15 +517,57 @@ class StrategyTestRunner:
                     f"MetadataPolicy {resolved.metadata_policy_id!r} referenced by "
                     f"RecognitionTypePolicy {resolved.type_policy_id!r} is not configured."
                 ) from error
-        if metadata_selection is not None and not live_metadata:
+        if (
+            metadata_selection is not None or metadata_correction is not None
+        ) and not live_metadata:
             raise StrategyConfigurationError("metadata selection requires live metadata mode")
+        if metadata_selection is not None and metadata_correction is not None:
+            raise StrategyConfigurationError("metadata selection and correction cannot be combined")
         if live_metadata and resolved is not None:
             if self._providers is None:
                 raise StrategyConfigurationError(
                     "live metadata mode requires a configured MetadataProvider registry"
                 )
             identification = MetadataIdentificationService(self._providers, self._matcher)
-            if metadata_selection is not None:
+            if metadata_correction is not None:
+                if metadata_correction.recognition_type != recognition.recognition_type_id:
+                    raise StrategyConfigurationError(
+                        "resolved metadata correction RecognitionType no longer matches"
+                    )
+                if metadata_correction.metadata_policy_id != resolved.metadata_policy_id:
+                    raise StrategyConfigurationError(
+                        "resolved metadata correction MetadataPolicy no longer matches"
+                    )
+                if metadata_correction.provider != metadata_policy.provider_id:
+                    raise StrategyConfigurationError(
+                        "resolved metadata correction provider no longer matches"
+                    )
+                try:
+                    corrected_type = MediaType(metadata_correction.media_type)
+                except ValueError as error:
+                    raise StrategyConfigurationError(
+                        "resolved metadata correction media type is invalid"
+                    ) from error
+                if metadata_correction.provider_id:
+                    metadata = identification.identify_by_provider_id(
+                        recognition,
+                        metadata_correction.provider_id,
+                        corrected_type,
+                        metadata_policy,
+                    )
+                else:
+                    corrected = replace(
+                        parsed,
+                        title_candidate=metadata_correction.query or parsed.title_candidate,
+                        year=metadata_correction.year,
+                    )
+                    metadata = identification.identify(
+                        recognition,
+                        corrected,
+                        metadata_policy,
+                        media_type_override=corrected_type,
+                    )
+            elif metadata_selection is not None:
                 if metadata_selection.recognition_type != recognition.recognition_type_id:
                     raise StrategyConfigurationError(
                         "resolved metadata selection RecognitionType no longer matches"

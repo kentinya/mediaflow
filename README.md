@@ -54,6 +54,10 @@ mediaflow recognition-reviews show REVIEW_ID
 mediaflow recognition-reviews resolve REVIEW_ID --recognition-type C --actor operator
 mediaflow metadata-reviews show REVIEW_ID
 mediaflow metadata-reviews resolve REVIEW_ID --candidate-rank 1
+mediaflow metadata-corrections list --limit 100
+mediaflow metadata-corrections show REVIEW_ID
+mediaflow metadata-corrections resolve REVIEW_ID --query "Correct title" --year 2025 --media-type movie --actor operator
+mediaflow metadata-corrections resolve REVIEW_ID --provider-id 858024 --media-type movie --actor operator
 mediaflow classification-reviews list --limit 100
 mediaflow classification-reviews show REVIEW_ID
 mediaflow classification-reviews resolve REVIEW_ID --choice-rank 1

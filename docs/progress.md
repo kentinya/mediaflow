@@ -50,7 +50,8 @@
 - Phase 20.5 unified bounded read-only workflow retry: PASS
 - Phase 20.6 bounded safe source directory cleanup: PASS
 - Phase 21.0 durable manual RecognitionType decision baseline: PASS
-- Current development boundary: Phase 21.1 manual metadata query correction is next
+- Phase 21.1 durable manual Metadata NOT_FOUND query/year/Movie-TV/direct-ID correction: PASS
+- Current development boundary: Phase 21.2 manual workflow scope is next
 
 ## Planned
 
@@ -1430,4 +1431,24 @@ Phase 21.0 durable manual RecognitionType decision baseline (2026-08-23): PASS
   while RecognitionType and Metadata identity remain C
 - Full offline suite: 572 tests, 565 passed, 0 failed, 7 explicitly gated real profiles skipped;
   formatter, lint, compile, dependency, both example configuration, FFmpeg/FFprobe source audit,
+  diff and isolated wheel gates passed
+
+Phase 21.1 durable manual metadata query correction (2026-08-23): PASS
+
+- Added SQLite schema v19 MetadataCorrectionReview and immutable actor/note decision audit plus
+  WAITING_METADATA_CORRECTION TaskItem state
+- Tracked Metadata NOT_FOUND items persist bounded policy/provider/query/year/media-type context,
+  release their source lock, remain outside blind retry and no longer count as failed media
+- Added credential-independent `metadata-corrections list|show|resolve`; resolution validates current
+  policy/provider, bounded title/year/Movie-TV/direct-ID input, returns the item to PENDING and makes
+  zero Storage/provider calls
+- Explicit Task resume reuses the production MetadataIdentificationService: corrected text uses real
+  search/matcher behavior and direct provider ID uses the existing detail path; provider switching
+  and arbitrary MediaIdentity injection remain prohibited
+- Movie/TV correction applies a per-identification effective query type consistently to search,
+  candidate filtering, enrichment and details; configured thresholds/language/region remain intact
+- Permanent regression confirms C remains C while reusing configured A Naming/Classification/
+  Organize policies; DryRun and explicit execution authority boundaries remain unchanged
+- Full offline suite: 577 tests, 570 passed, 0 failed, 7 explicitly gated real profiles skipped;
+  formatter, lint, compile, dependency, both example configurations, FFmpeg/FFprobe source audit,
   diff and isolated wheel gates passed

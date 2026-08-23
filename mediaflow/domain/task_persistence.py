@@ -28,6 +28,7 @@ class TaskItemStatus(StrEnum):
     WAITING_CONFIRM = "waiting_confirm"
     WAITING_RECOGNITION = "waiting_recognition"
     WAITING_METADATA = "waiting_metadata"
+    WAITING_METADATA_CORRECTION = "waiting_metadata_correction"
     WAITING_CLASSIFICATION = "waiting_classification"
     PAUSED = "paused"
 

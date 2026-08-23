@@ -36,6 +36,11 @@ from mediaflow.domain.execution_authorization import (
     ExecutionAuthorizationStatus,
 )
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
+from mediaflow.domain.metadata_correction import (
+    MetadataCorrectionDecisionAudit,
+    MetadataCorrectionReview,
+    MetadataCorrectionStatus,
+)
 from mediaflow.domain.metadata_review import (
     MetadataReview,
     MetadataReviewCandidate,
@@ -66,7 +71,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 
 class SQLiteTaskRepository:
@@ -419,6 +424,147 @@ class SQLiteTaskRepository:
                 (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 self._confirmation_values(confirmation),
             )
+
+    def create_metadata_correction(self, review, item) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO metadata_corrections VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    review.review_id,
+                    review.task_id,
+                    review.item_id,
+                    review.source_storage_id,
+                    review.source_path,
+                    review.recognition_type,
+                    review.metadata_policy_id,
+                    review.provider_id,
+                    review.original_query,
+                    review.original_year,
+                    review.original_media_type,
+                    review.outcome,
+                    review.status.value,
+                    review.created_at.isoformat(),
+                    review.updated_at.isoformat(),
+                    review.corrected_query,
+                    review.corrected_year,
+                    review.corrected_media_type,
+                    review.direct_provider_id,
+                    review.decided_at.isoformat() if review.decided_at else None,
+                    review.actor,
+                ),
+            )
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    TaskItemStatus.PROCESSING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("metadata correction TaskItem is not processing")
+
+    def get_metadata_correction(self, review_id):
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM metadata_corrections WHERE review_id=?", (review_id,)
+            ).fetchone()
+        return self._metadata_correction(row) if row else None
+
+    def get_metadata_correction_for_item(self, item_id):
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM metadata_corrections WHERE item_id=?", (item_id,)
+            ).fetchone()
+        return self._metadata_correction(row) if row else None
+
+    def list_metadata_corrections(self, *, limit=100):
+        if not 1 <= limit <= 1000:
+            raise ValueError("metadata correction limit must be between 1 and 1000")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM metadata_corrections
+                ORDER BY created_at DESC, review_id DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return tuple(self._metadata_correction(row) for row in rows)
+
+    def resolve_metadata_correction(self, review, audit, item) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE metadata_corrections SET status=?, updated_at=?, corrected_query=?,
+                corrected_year=?, corrected_media_type=?, direct_provider_id=?,
+                decided_at=?, actor=?
+                WHERE review_id=? AND status=?""",
+                (
+                    review.status.value,
+                    review.updated_at.isoformat(),
+                    review.corrected_query,
+                    review.corrected_year,
+                    review.corrected_media_type,
+                    review.direct_provider_id,
+                    review.decided_at.isoformat(),
+                    review.actor,
+                    review.review_id,
+                    MetadataCorrectionStatus.PENDING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("metadata correction is not pending")
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    TaskItemStatus.WAITING_METADATA_CORRECTION.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("TaskItem is not waiting for metadata correction")
+            self._connection.execute(
+                """INSERT INTO metadata_correction_decision_audit
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    audit.audit_id,
+                    audit.review_id,
+                    audit.corrected_query,
+                    audit.corrected_year,
+                    audit.corrected_media_type,
+                    audit.direct_provider_id,
+                    audit.decided_at.isoformat(),
+                    audit.actor,
+                    audit.note,
+                ),
+            )
+
+    def list_metadata_correction_audit(self, review_id):
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM metadata_correction_decision_audit WHERE review_id=?
+                ORDER BY decided_at, audit_id""",
+                (review_id,),
+            ).fetchall()
+        return tuple(
+            MetadataCorrectionDecisionAudit(
+                row["audit_id"],
+                row["review_id"],
+                row["corrected_query"],
+                row["corrected_year"],
+                row["corrected_media_type"],
+                row["direct_provider_id"],
+                datetime.fromisoformat(row["decided_at"]),
+                row["actor"],
+                row["note"],
+            )
+            for row in rows
+        )
 
     def create_recognition_review(self, review, choices, item) -> None:
         with self._lock, self._connection:
@@ -1920,6 +2066,28 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS confirmations_status
                     ON conflict_confirmations(status, created_at);
+                CREATE TABLE IF NOT EXISTS metadata_corrections (
+                    review_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL UNIQUE, source_storage_id TEXT NOT NULL,
+                    source_path TEXT NOT NULL, recognition_type TEXT NOT NULL,
+                    metadata_policy_id TEXT NOT NULL, provider_id TEXT NOT NULL,
+                    original_query TEXT NOT NULL, original_year INTEGER,
+                    original_media_type TEXT NOT NULL, outcome TEXT NOT NULL,
+                    status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    corrected_query TEXT, corrected_year INTEGER, corrected_media_type TEXT,
+                    direct_provider_id TEXT, decided_at TEXT, actor TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(item_id) REFERENCES task_items(item_id)
+                );
+                CREATE TABLE IF NOT EXISTS metadata_correction_decision_audit (
+                    audit_id TEXT PRIMARY KEY, review_id TEXT NOT NULL,
+                    corrected_query TEXT, corrected_year INTEGER,
+                    corrected_media_type TEXT NOT NULL, direct_provider_id TEXT,
+                    decided_at TEXT NOT NULL, actor TEXT, note TEXT,
+                    FOREIGN KEY(review_id) REFERENCES metadata_corrections(review_id)
+                );
+                CREATE INDEX IF NOT EXISTS metadata_corrections_status_created
+                    ON metadata_corrections(status, created_at, review_id);
                 CREATE TABLE IF NOT EXISTS recognition_reviews (
                     review_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
                     item_id TEXT NOT NULL UNIQUE, source_storage_id TEXT NOT NULL,
@@ -2329,6 +2497,32 @@ class SQLiteTaskRepository:
             datetime.fromisoformat(row["created_at"]),
             datetime.fromisoformat(row["updated_at"]),
             row["selected_recognition_type"],
+            datetime.fromisoformat(row["decided_at"]) if row["decided_at"] else None,
+            row["actor"],
+        )
+
+    @staticmethod
+    def _metadata_correction(row: sqlite3.Row) -> MetadataCorrectionReview:
+        return MetadataCorrectionReview(
+            row["review_id"],
+            row["task_id"],
+            row["item_id"],
+            row["source_storage_id"],
+            row["source_path"],
+            row["recognition_type"],
+            row["metadata_policy_id"],
+            row["provider_id"],
+            row["original_query"],
+            row["original_year"],
+            row["original_media_type"],
+            row["outcome"],
+            MetadataCorrectionStatus(row["status"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["corrected_query"],
+            row["corrected_year"],
+            row["corrected_media_type"],
+            row["direct_provider_id"],
             datetime.fromisoformat(row["decided_at"]) if row["decided_at"] else None,
             row["actor"],
         )

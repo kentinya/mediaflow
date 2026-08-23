@@ -29,6 +29,7 @@ from mediaflow.application.execution_authorization import ExecutionAuthorization
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.application.organizer import OrganizerExecutor
@@ -43,6 +44,10 @@ from mediaflow.domain.classification_review import (
     ClassificationSelection,
 )
 from mediaflow.domain.logging import LogLevel
+from mediaflow.domain.metadata_correction import (
+    MetadataCorrectionSelection,
+    MetadataCorrectionStatus,
+)
 from mediaflow.domain.metadata_review import MetadataReviewStatus, MetadataSelection
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
@@ -238,6 +243,24 @@ def final_main(
     metadata_review_resolve.add_argument("--candidate-rank", required=True, type=int)
     metadata_review_resolve.add_argument("--actor")
     metadata_review_resolve.add_argument("--note")
+    metadata_corrections = commands.add_parser(
+        "metadata-corrections", help="persistent metadata query correction queue"
+    )
+    metadata_correction_commands = metadata_corrections.add_subparsers(
+        dest="metadata_correction_command", required=True
+    )
+    metadata_correction_list = metadata_correction_commands.add_parser("list")
+    metadata_correction_list.add_argument("--limit", type=int, default=100)
+    metadata_correction_show = metadata_correction_commands.add_parser("show")
+    metadata_correction_show.add_argument("review_id")
+    metadata_correction_resolve = metadata_correction_commands.add_parser("resolve")
+    metadata_correction_resolve.add_argument("review_id")
+    metadata_correction_resolve.add_argument("--query")
+    metadata_correction_resolve.add_argument("--year", type=int)
+    metadata_correction_resolve.add_argument("--media-type", required=True, choices=("movie", "tv"))
+    metadata_correction_resolve.add_argument("--provider-id")
+    metadata_correction_resolve.add_argument("--actor")
+    metadata_correction_resolve.add_argument("--note")
     classification_reviews = commands.add_parser(
         "classification-reviews", help="persistent classification review queue"
     )
@@ -408,6 +431,40 @@ def final_main(
                             review,
                             repository.list_metadata_review_candidates(review.review_id),
                             repository.list_metadata_review_audit(review.review_id),
+                        )
+                    )
+            return 0
+        if arguments.command == "metadata-corrections":
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                service = MetadataCorrectionService(
+                    repository, configuration.strategy.metadata_policies
+                )
+                if arguments.metadata_correction_command == "list":
+                    stdout.write(
+                        render_metadata_corrections(
+                            repository.list_metadata_corrections(limit=arguments.limit)
+                        )
+                    )
+                else:
+                    if arguments.metadata_correction_command == "resolve":
+                        service.resolve(
+                            arguments.review_id,
+                            query=arguments.query,
+                            year=arguments.year,
+                            media_type=arguments.media_type,
+                            provider_id=arguments.provider_id,
+                            actor=arguments.actor,
+                            note=arguments.note,
+                        )
+                    review = repository.get_metadata_correction(arguments.review_id)
+                    if review is None:
+                        raise LookupError(
+                            f"metadata correction {arguments.review_id!r} was not found"
+                        )
+                    stdout.write(
+                        render_metadata_correction(
+                            review,
+                            repository.list_metadata_correction_audit(review.review_id),
                         )
                     )
             return 0
@@ -987,6 +1044,21 @@ def final_main(
                     and review.selected_provider is not None
                     and review.selected_provider_id is not None
                     and review.selected_media_type is not None
+                },
+                metadata_corrections={
+                    (stored.storage_id, stored.source_path): MetadataCorrectionSelection(
+                        review.recognition_type,
+                        review.metadata_policy_id,
+                        review.provider_id,
+                        review.corrected_query,
+                        review.corrected_year,
+                        review.corrected_media_type,
+                        review.direct_provider_id,
+                    )
+                    for stored in (retry_items or ())
+                    if (review := repository.get_metadata_correction_for_item(stored.item_id))
+                    and review.status is MetadataCorrectionStatus.RESOLVED
+                    and review.corrected_media_type is not None
                 },
                 classification_selections={
                     (stored.storage_id, stored.source_path): ClassificationSelection(
@@ -1607,6 +1679,53 @@ def render_metadata_reviews(values) -> str:
         for item in values
     )
     lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_metadata_corrections(values) -> str:
+    lines = ["", "METADATA CORRECTIONS", ""]
+    lines.extend(
+        f"{item.review_id} | {item.status.value} | "
+        f"{item.source_storage_id}:{item.source_path} | "
+        f"query={item.original_query} | year={item.original_year or '-'} | "
+        f"type={item.original_media_type}"
+        for item in values
+    )
+    lines.extend(("", f"Total: {len(values)}", ""))
+    return "\n".join(lines)
+
+
+def render_metadata_correction(review, audit=()) -> str:
+    lines = [
+        "",
+        "METADATA CORRECTION",
+        "",
+        f"ID: {review.review_id}",
+        f"Status: {review.status.value}",
+        f"Source: {review.source_storage_id}:{review.source_path}",
+        f"RecognitionType: {review.recognition_type}",
+        f"MetadataPolicy: {review.metadata_policy_id}",
+        f"Provider: {review.provider_id}",
+        f"Original query: {review.original_query}",
+        f"Original year: {review.original_year or '-'}",
+        f"Original media type: {review.original_media_type}",
+        f"Corrected query: {review.corrected_query or '-'}",
+        f"Corrected year: {review.corrected_year or '-'}",
+        f"Corrected media type: {review.corrected_media_type or '-'}",
+        f"Direct provider ID: {review.direct_provider_id or '-'}",
+        "",
+        "AUDIT",
+        "",
+    ]
+    lines.extend(
+        f"{item.decided_at.isoformat()} | query={item.corrected_query or '-'} | "
+        f"year={item.corrected_year or '-'} | type={item.corrected_media_type} | "
+        f"providerId={item.direct_provider_id or '-'} | actor={item.actor or '-'}"
+        for item in audit
+    )
+    if not audit:
+        lines.append("None")
+    lines.append("")
     return "\n".join(lines)
 
 

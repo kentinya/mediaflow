@@ -905,3 +905,22 @@ Storage options. The System UI uses the same endpoint and offers explicit refres
 
 The snapshot is not reloaded per request. After a configuration change, continue to run
 `mediaflow config validate`, then restart the API process to publish the newly validated snapshot.
+### Metadata NOT_FOUND correction
+
+A tracked `NOT_FOUND` item enters `WAITING_METADATA_CORRECTION`. The correction queue stores only
+the bounded original query and policy/provider identity; it does not store credentials or provider
+payloads. Correct title/year/media type or use the configured provider's direct ID, then explicitly
+resume the original Task:
+
+```bash
+mediaflow metadata-corrections list --limit 100
+mediaflow metadata-corrections show REVIEW_ID
+mediaflow metadata-corrections resolve REVIEW_ID --query "Correct title" --year 2025 --media-type movie --actor operator
+mediaflow metadata-corrections resolve REVIEW_ID --provider-id 858024 --media-type movie --actor operator
+mediaflow tasks resume ORIGINAL_TASK_ID
+```
+
+Resolution does not contact TMDB or construct Storage. Provider access occurs only on explicit
+Task resume through the configured MetadataPolicy/provider. Provider switching is not supported;
+Movie/TV correction changes the real search/detail path. Resume is DryRun unless the original task
+and the new invocation both carry valid execute authority.

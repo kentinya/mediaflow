@@ -24,6 +24,7 @@ from mediaflow.domain.history import OperationHistoryRecord, OperationHistoryRep
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.logging import Logger, LogLevel
 from mediaflow.domain.metadata import MetadataIdentificationStatus
+from mediaflow.domain.metadata_correction import MetadataCorrectionSelection
 from mediaflow.domain.metadata_review import MetadataSelection
 from mediaflow.domain.organizer import (
     ConflictStrategy,
@@ -126,6 +127,7 @@ class MediaOrganizerService:
         retry_controller: WorkflowRetryController | None = None,
         retry_cancellation_check: CancellationCheck | None = None,
         recognition_selections: dict[tuple[str, str], RecognitionSelection] | None = None,
+        metadata_corrections: dict[tuple[str, str], MetadataCorrectionSelection] | None = None,
     ) -> None:
         self._strategy = strategy
         self._scanner = scanner
@@ -148,6 +150,7 @@ class MediaOrganizerService:
         self._retry_controller = retry_controller or WorkflowRetryController()
         self._retry_cancellation_check = retry_cancellation_check
         self._recognition_selections = recognition_selections or {}
+        self._metadata_corrections = metadata_corrections or {}
 
     def process_file(
         self,
@@ -215,6 +218,22 @@ class MediaOrganizerService:
                         tracked_item,
                         strategy.metadata,
                         strategy.policy.metadata_policy_id,
+                    )
+                    return item
+                if (
+                    strategy.metadata
+                    and strategy.metadata.status is MetadataIdentificationStatus.NOT_FOUND
+                    and strategy.metadata_policy
+                    and self._task_coordinator
+                    and tracked_item
+                ):
+                    item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
+                    self._record(item)
+                    self._task_coordinator.wait_for_metadata_correction(
+                        tracked_item,
+                        strategy.metadata,
+                        strategy.metadata_policy,
+                        strategy.parsed,
                     )
                     return item
                 return self._failed(
@@ -366,6 +385,9 @@ class MediaOrganizerService:
             resource_library_id=resource_library.library_id,
             storage_id=resource_library.storage_id,
             metadata_selection=self._metadata_selections.get(
+                (resource_library.storage_id, storage_path)
+            ),
+            metadata_correction=self._metadata_corrections.get(
                 (resource_library.storage_id, storage_path)
             ),
             classification_selection=self._classification_selections.get(
@@ -540,6 +562,11 @@ class MediaOrganizerService:
                         MetadataIdentificationStatus.NEED_CONFIRM,
                         MetadataIdentificationStatus.AMBIGUOUS,
                     }
+                    else "WAITING_METADATA_CORRECTION"
+                    if item.strategy
+                    and item.strategy.metadata
+                    and item.strategy.metadata.status is MetadataIdentificationStatus.NOT_FOUND
+                    and not item.error
                     else "WAITING_CLASSIFICATION"
                     if item.strategy
                     and item.strategy.classification
