@@ -6,6 +6,7 @@ from typing import Any
 
 from mediaflow.application.strategy_test import StrategyTestConfiguration
 from mediaflow.domain.classification import ClassificationPolicy, ClassificationRule
+from mediaflow.domain.duplicates import HashMode, HashPolicy
 from mediaflow.domain.metadata import (
     CachePolicy,
     MediaQueryType,
@@ -348,6 +349,7 @@ def _organize_policy(item: Mapping[str, Any]) -> OrganizePolicy:
         _organize_operation(_string(item, "operation")),
         strategy,
         _attachment_policy(item.get("attachments")),
+        _hash_policy(item.get("duplicateDetection")),
     )
 
 
@@ -370,6 +372,30 @@ def _attachment_policy(value: Any) -> AttachmentPolicy:
         artwork=value.get("artwork", True),
         trailers=value.get("trailers", True),
         other_same_stem=value.get("otherSameStem", False),
+    )
+
+
+def _hash_policy(value: Any) -> HashPolicy:
+    if value is None:
+        return HashPolicy()
+    if not isinstance(value, Mapping):
+        raise ValueError("organize policy duplicateDetection must be an object")
+    allowed = {"mode", "fastSampleBytes", "fullMaxFileSize", "chunkSize"}
+    unknown = set(value) - allowed
+    if unknown:
+        raise ValueError(f"unknown duplicateDetection field: {sorted(unknown)[0]}")
+    raw_mode = value.get("mode", "none")
+    if not isinstance(raw_mode, str):
+        raise ValueError("duplicateDetection mode must be none, fast, or full")
+    try:
+        mode = HashMode(raw_mode.casefold())
+    except ValueError as error:
+        raise ValueError("duplicateDetection mode must be none, fast, or full") from error
+    return HashPolicy(
+        mode,
+        _integer(value, "fastSampleBytes", 1_048_576),
+        _integer(value, "fullMaxFileSize", 1_099_511_627_776),
+        _integer(value, "chunkSize", 1_048_576),
     )
 
 

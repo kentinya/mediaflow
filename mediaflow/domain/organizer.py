@@ -10,6 +10,8 @@ if TYPE_CHECKING:
     from mediaflow.domain.metadata import MediaIdentity
     from mediaflow.domain.naming import NamingResult
 
+from mediaflow.domain.duplicates import DuplicateComparisonResult, HashPolicy
+
 
 class OrganizeOperationType(StrEnum):
     CREATE_DIRECTORY = "create_directory"
@@ -104,6 +106,7 @@ class OrganizePolicy:
     operation: OrganizeOperationType
     conflict_strategy: ConflictStrategy = ConflictStrategy.MANUAL
     attachments: AttachmentPolicy = field(default_factory=AttachmentPolicy)
+    duplicate_detection: HashPolicy = field(default_factory=HashPolicy)
 
 
 @dataclass(frozen=True)
@@ -188,6 +191,7 @@ class OrganizePlan:
     media_library_root: str = ""
     relative_destination: str = ""
     source_location: StorageLocation | None = None
+    duplicate_comparison: DuplicateComparisonResult | None = None
     destination_location: StorageLocation | None = None
     overwrite_authorized: bool = False
     attachment_plans: tuple[AttachmentPlan, ...] = ()

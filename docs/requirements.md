@@ -34,7 +34,9 @@
 > 不认证 AWS S3、Cloudflare R2、第三方 OpenList driver、远端原子发布、多小时 soak、进程终止
 > 或主机断电；精确证据与非声明边界见 [storage-acceptance.md](storage-acceptance.md)。下一开发
 > Phase 20.1 NFO Parser 已完成：NFO 通过 Storage 只读有界读取，安全 XML 解析后作为本地证据
-> 合并，不生成 MediaIdentity、不访问网络且不修改 Storage。下一边界为 Phase 20.2 Hash 重复策略。
+> 合并，不生成 MediaIdentity、不访问网络且不修改 Storage。Phase 20.2 Hash 重复策略也已完成：
+> 默认 NONE 零读取，FAST 为有界前缀证据，FULL 为受大小限制的完整流式证据；任何不确定结果
+> 都进入冲突且不执行变更。下一边界为 Phase 20.3 有界 Rollback。
 
 ---
 

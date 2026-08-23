@@ -1,87 +1,86 @@
-# Phase 20.1 — Safe Read-Only NFO Parser and Pipeline Evidence Merge
+# Phase 20.2 — Configurable Read-Only Hash Duplicate Detection
 
 ## Goal
 
-Add NFO as a bounded local parsing information source and feed its normalized evidence into the
-existing Parser → Recognition → Metadata pipeline without changing downstream engine semantics.
+Add configuration-driven file Hash evidence to duplicate detection without changing the default
+zero-read planning behavior or weakening existing conflict and execution safety.
 
 ## Scope
 
-### 1. Provider-neutral NFO domain model
+### 1. Provider-neutral Hash model and policy
 
-- Add immutable NFO parse result, warning/error, media-type hint, provider-ID and external-ID
-  evidence models under the Parser boundary.
-- Keep TMDB/Kodi/Jellyfin XML details out of Recognition and CandidateMatcher.
-- RecognitionType remains selected only by RecognitionRuleEngine.
+- Add immutable Hash mode, policy, digest/evidence, status, and duplicate comparison result models.
+- Support `NONE`, `FAST`, and `FULL`; default is `NONE`.
+- Configure FAST sample bytes, FULL maximum file size, and streaming chunk size with validated,
+  bounded values. Algorithm/version identifiers must make FAST and FULL evidence unambiguous.
 
-### 2. Safe XML parser
+### 2. Storage-only Hash calculation
 
-- Parse common movie, TV show and episode NFO roots and bounded fields: title, original title,
-  year/premiered date, season, episode(s), provider unique IDs and external IDs.
-- Support common `<uniqueid type="tmdb" default="true">`, `<tmdbid>`, `<imdbid>`, `<id>`,
-  `<season>`, `<episode>` and repeated episode forms deterministically.
-- Reject DTD/entity declarations, malformed XML, excessive input, excessive nesting, unsafe or
-  invalid values, and unsupported roots with typed diagnostics. Never resolve external entities.
-- Normalize Unicode/whitespace and bound all retained text and collection counts.
+- Depend only on the Storage interface; never use concrete adapter or filesystem APIs.
+- `NONE` performs no `stat` or `read`.
+- `FAST` hashes file size plus a bounded leading sample and never claims to be a full-content hash.
+- `FULL` streams the complete object in bounded chunks after enforcing the configured size limit.
+- Detect premature EOF, over-read/inconsistent size, Storage failures, and cancellation explicitly.
+- Hash calculation performs zero Storage mutations and does not cache secrets or log content.
 
-### 3. Deterministic ParseResult merge
+### 3. Duplicate comparison and planning integration
 
-- Merge NFO title/year/season/episode evidence with existing filename/path ParseResult.
-- Valid explicit NFO evidence takes precedence for semantic identity hints; conflicting filename
-  or path evidence remains observable as alternatives and structured warnings.
-- Filename-derived technical/release tags remain unchanged.
-- Preserve provider IDs as evidence for later metadata lookup without manufacturing MediaIdentity.
+- Compare source and destination only when configured; size mismatch is `UNIQUE` without content
+  reads, matching size+digest is `DUPLICATE`, and unavailable/incomplete evidence is
+  `INDETERMINATE`, never silently unique or duplicate.
+- Integrate after deterministic OrganizePlan destination calculation and before conflict resolution.
+- A duplicate adds/retains `DUPLICATE_MEDIA`; indeterminate configured Hash adds an explicit
+  fail-closed `UNKNOWN` conflict. Existing destination/provider duplicate conflicts remain intact.
+- Hash evidence must not automatically resolve Skip/Overwrite/Rename/Manual, alter the requested
+  organize operation, delete a source, or execute Storage mutations.
 
-### 4. Storage-only read integration
+### 4. Runtime configuration
 
-- Discover only deterministic same-directory NFO candidates through Storage list/read; do not use
-  `os`, `pathlib` writes, or concrete Local/SMB/OpenList/S3 implementation details.
-- Prefer the primary media stem NFO, then conventional `movie.nfo`/`tvshow.nfo`; never recursively
-  search and never read more than a configured maximum.
-- Missing NFO is a normal no-op. Permission/read/malformed failures are explicit bounded warnings
-  and do not mutate Storage.
-- Integrate the enriched ParseResult into production Strategy Test and MediaOrganizer flows where
-  a configured Storage-relative source is available. Synthetic/offline paths without Storage keep
-  existing filename/path behavior.
+- Extend external `organizePolicies` with an optional `duplicateDetection` object containing mode
+  and bounded resource options. Existing configurations load as `NONE` without reads.
+- Reject unknown fields, unsupported modes, booleans masquerading as integers, unsafe limits, and
+  malformed policy values during startup validation.
+- Update example configuration with explicit `NONE` and documented FAST/FULL examples without
+  enabling expensive hashing by default.
 
-### 5. Safety and compatibility
+### 5. Boundaries
 
-- NFO parsing performs zero Storage mutations and zero network/MetadataProvider calls.
-- Do not generate or rewrite NFO, download images, call FFmpeg/FFprobe, implement Hash/Rollback,
-  or begin Phase 20.2.
-- Preserve all A/B/C policy mappings and specifically RecognitionType C identity.
+- Do not modify Scanner incremental semantics or FileIndex schema in this phase.
+- Do not persist Hashes, add background hashing, implement Rollback/retry/pause/empty-directory
+  cleanup, or begin Phase 20.3.
+- Do not call Metadata providers or FFmpeg/FFprobe. RecognitionType C must remain C.
 
 ## Required Tests
 
-- Movie, TV show, episode, multi-episode, Unicode and whitespace normalization.
-- Default and non-default provider IDs, IMDb/external IDs, date/year handling.
-- Filename/NFO conflicts, deterministic precedence, missing fields and missing NFO.
-- Malformed XML, DTD/entity rejection, excessive size/depth/text/count and invalid numeric values.
-- Exact-stem/conventional discovery order, bounded reads, Storage errors and no recursive discovery.
-- Full Strategy/organizer integration using fake/read-only Storage.
-- RecognitionType C remains C after NFO enrichment.
-- Read calls are bounded; Write/CreateDirectory/Move/Copy/Delete/HardLink/SoftLink calls are zero.
+- NONE zero read/stat; FAST bounded prefix; FULL bounded streaming; empty and small files.
+- Same content, different content with same size, size mismatch, premature EOF, excess data,
+  Storage stat/read errors, size limit, cancellation, and deterministic digest/version.
+- Local and fake remote Storage behavior without requiring production services.
+- Configuration default/backward compatibility, FAST/FULL parsing, invalid/unknown values.
+- Planner/MediaOrganizer duplicate and indeterminate conflicts, unchanged operation, DryRun and
+  zero mutation.
+- Cross-storage comparison and RecognitionType C preservation.
 
 ## Validation
 
-Run Phase 20.1 tests, Parser, Recognition, Metadata, Strategy CLI, Scanner/FileIndex, Storage,
-Organizer and DryRun regressions, then the full offline suite. Run formatter, lint, compile,
-configuration validation, dependency/build checks, FFmpeg/FFprobe audit and diff check.
+Run Phase 20.2 tests, Organizer/Planner/conflict, runtime configuration, Strategy, Parser/NFO,
+Scanner/FileIndex, all Storage and DryRun regressions, then the full offline suite. Run formatter,
+lint, compile, configuration validation, dependency/build checks, FFmpeg/FFprobe audit and diff.
 
-Update `docs/architecture.md`, `docs/progress.md`, `docs/roadmap.md`, and the requirements status
-without claiming NFO generation or future Phase 20 capabilities.
+Update `README.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/progress.md`,
+`docs/roadmap.md`, and requirements status. Do not claim cryptographic duplicate certainty for FAST.
 
 ## Completion Report
 
-Finish with the AGENTS.md completion structure and additionally report:
+Use the AGENTS.md completion structure and additionally report:
 
-## Phase 20.1 Result
+## Phase 20.2 Result
 
 PASS / FAIL
 
-## NFO Coverage
+## Hash Modes
 
-## Merge Semantics
+## Duplicate Semantics
 
 ## Safety
 

@@ -841,6 +841,22 @@ claiming the same target, and an already-known provider/provider-ID. These produ
 DESTINATION_EXISTS, TARGET_COLLISION, and DUPLICATE_MEDIA records and remain unresolved; the
 requested operation is preserved for a future confirmation/execution phase.
 
+Phase 20.2 adds an optional read-only Hash evidence step after that destination is known and before
+conflict resolution. `HashPolicy` is part of OrganizePolicy and defaults to `NONE`, which performs
+no Storage `stat` or `read`. `FAST` calculates versioned `sha256-size-prefix-v1` evidence over the
+reported size plus a configured bounded leading sample; it is probabilistic duplicate evidence,
+not a full-content checksum. `FULL` calculates versioned `sha256-full-v1` while streaming the exact
+reported object length in bounded chunks and rejecting premature EOF, excess data, cancellation,
+Storage errors, files above the configured maximum, or changed size/type/modified time on the
+mandatory post-read `stat`.
+
+`HashDuplicateDetector` compares source and destination through provider-neutral Storage ports.
+Different sizes are unique without content reads; matching size and mode-specific digest is a Hash
+duplicate; incomplete evidence is indeterminate. `apply_hash_duplicate_detection` attaches the
+evidence to the immutable plan, adds `DUPLICATE_MEDIA` or fail-closed `UNKNOWN`, and preserves the
+requested operation and all existing conflicts. It never chooses a conflict strategy or calls a
+mutation. Hashes are deliberately not persisted or calculated by Scanner/FileIndex in this phase.
+
 `strategy-test --show-plan` composes the existing Parser, Recognition, Metadata, Naming, and
 Classification services before calling the same planner. It displays the operation, source,
 destination, conflicts, and `Execution: NOT EXECUTED`; it does not calculate conflict resolutions

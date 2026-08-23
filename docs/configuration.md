@@ -761,6 +761,25 @@ Legacy `overwrite: true` maps to `overwrite`, but contradictory values fail vali
 still requires a persistent explicit decision made with `--confirm-overwrite`; configuration alone
 never authorizes mutation. `mediaflow config validate` only validates and never accesses Storage.
 
+Hash-assisted duplicate detection is optional and defaults to zero-I/O `none`:
+
+```json
+"duplicateDetection": {
+  "mode": "none",
+  "fastSampleBytes": 1048576,
+  "fullMaxFileSize": 1099511627776,
+  "chunkSize": 1048576
+}
+```
+
+`mode` is `none`, `fast`, or `full`. `fast` hashes the reported file size and only the configured
+leading sample; it is bounded probabilistic evidence and can treat equal-prefix files as duplicates.
+`full` streams every byte but refuses files above `fullMaxFileSize`. `chunkSize` bounds each read.
+Hash evidence never authorizes overwrite/delete or resolves conflicts: a match adds
+`DUPLICATE_MEDIA`, while a configured calculation that cannot complete adds fail-closed `UNKNOWN`.
+The loader rejects unknown fields, booleans used as sizes, and out-of-range limits. Hashes are not
+persisted in Phase 20.2.
+
 Attachment discovery is separately opt-in on each OrganizePolicy:
 
 ```json

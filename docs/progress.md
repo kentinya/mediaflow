@@ -44,12 +44,13 @@
 - Phase 19.22–19.25 Storage release gate: PASS for isolated Local, Samba, OpenList Local driver, and
   MinIO S3-compatible lifecycle, transfer, 128-object/128-MiB, and interrupted-stream profiles
 - Phase 20.1 safe read-only NFO Parser and pipeline evidence merge: PASS
-- Current development boundary: Phase 20.2 Hash duplicate policy is next
+- Phase 20.2 configurable read-only Hash duplicate detection: PASS
+- Current development boundary: Phase 20.3 bounded Rollback is next
 
 ## Planned
 
-- Phase 20: Hash duplicate policy, bounded Rollback, Task pause/resume, unified retry, and safe
-  empty-directory cleanup, delivered as separate small phases
+- Phase 20: bounded Rollback, Task pause/resume, unified retry, and safe empty-directory cleanup,
+  delivered as separate small phases
 - Phase 21: complete manual media correction and file/media workflow UI
 - Phase 22: configuration-management architecture decision and configuration CRUD/reference/audit
 - Later: external identity/OIDC and Secret Store evaluation; no weak in-core substitute
@@ -87,6 +88,8 @@
   default destructive Prefix.
 - Scanner incremental detection is metadata-based (path, size, and modification time); hashing and
   filesystem watchers are intentionally deferred.
+- Phase 20.2 Hash evidence is calculated on demand during configured duplicate comparison and is not
+  persisted in FileIndex. FAST uses size plus a leading sample and is not full-content certainty.
 - Directory symlinks are not followed. FileIndex has SQLite and in-memory adapters, but database
   migrations beyond this Phase 5 table are deferred to the future persistence layer.
 - Bare episode forms such as E01 cannot infer a season without directory evidence. Unusual fansub
@@ -1329,3 +1332,17 @@ Phase 20.1 safe read-only NFO Parser and pipeline evidence merge (2026-08-23): P
   remain filename/path-only; permanent regression proves C stays C while reusing A downstream policy
 - Full offline suite: 511 tests, 504 passed, 0 failed, 7 explicitly gated real profiles skipped;
   Ruff format/lint passed
+
+Phase 20.2 configurable read-only Hash duplicate detection (2026-08-23): PASS
+
+- Added externally configured NONE/FAST/FULL HashPolicy; existing policies default to NONE and make
+  zero Hash stat/read calls
+- FAST uses versioned size+bounded-prefix SHA-256 evidence; FULL streams exact reported bytes with
+  configurable chunk/maximum-size limits and detects premature EOF, excess data, cancellation and
+  same-size modification through mandatory post-read metadata verification
+- Cross-Storage comparison short-circuits size mismatch without content reads; matches add
+  DUPLICATE_MEDIA and incomplete configured evidence adds fail-closed UNKNOWN without changing the
+  requested operation or resolving any conflict
+- Integrated read-only evidence after OrganizePlan destination calculation; no Hash persistence,
+  Scanner behavior, automatic resolution, overwrite/delete authorization, or Storage mutation added
+- Full offline suite: 526 tests, 519 passed, 0 failed, 7 explicitly gated real profiles skipped

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from mediaflow.application.attachments import AttachmentDiscovery, AttachmentPlanner
 from mediaflow.application.conflict_resolution import ConflictResolver
+from mediaflow.application.duplicates import apply_hash_duplicate_detection
 from mediaflow.application.library_pipeline import MediaLibraryResolver, ResourceLibraryScanner
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
 from mediaflow.application.strategy_test import StrategyTestResult, StrategyTestRunner
@@ -242,6 +243,13 @@ class MediaOrganizerService:
                 classification=strategy.classification,
                 media_identity=strategy.metadata.identity,
                 target_storage=resolved_library.storage,
+            )
+            hash_policy = type_policy.organize_policy.duplicate_detection
+            plan = apply_hash_duplicate_detection(
+                plan,
+                self._storages[resource_library.storage_id],
+                resolved_library.storage,
+                hash_policy,
             )
             attachment_policy = type_policy.organize_policy.attachments
             if attachment_policy.enabled and plan.source_location is not None:

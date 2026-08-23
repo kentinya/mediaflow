@@ -12,6 +12,7 @@ from mediaflow.application.classification import ClassificationEngine
 from mediaflow.application.naming import NamingEngine
 from mediaflow.application.policies import RecognitionTypePolicyResolver
 from mediaflow.domain.classification import ClassificationContext
+from mediaflow.domain.duplicates import HashMode
 from mediaflow.domain.metadata import MediaIdentity, MediaType
 from mediaflow.domain.naming import NamingContext
 from mediaflow.domain.organizer import OrganizeOperationType
@@ -94,9 +95,42 @@ class RuntimeStrategyConfigurationTests(unittest.TestCase):
         operation = copy.deepcopy(self.document)
         operation["organizePolicies"][0]["operation"] = "TELEPORT"
         cases.append(operation)
+        unknown_hash = copy.deepcopy(self.document)
+        unknown_hash["organizePolicies"][0]["duplicateDetection"] = {
+            "mode": "fast",
+            "unknown": 1,
+        }
+        cases.append(unknown_hash)
+        invalid_hash_mode = copy.deepcopy(self.document)
+        invalid_hash_mode["organizePolicies"][0]["duplicateDetection"] = {"mode": "magic"}
+        cases.append(invalid_hash_mode)
+        boolean_hash_limit = copy.deepcopy(self.document)
+        boolean_hash_limit["organizePolicies"][0]["duplicateDetection"] = {
+            "mode": "full",
+            "chunkSize": True,
+        }
+        cases.append(boolean_hash_limit)
         for document in cases:
             with self.subTest(document=document), self.assertRaises((ValueError, LookupError)):
                 load_runtime_configuration(document)
+
+    def test_duplicate_detection_configuration_is_external_and_defaults_to_none(self) -> None:
+        runtime = load_runtime_configuration(self.document)
+        default = runtime.strategy.organize_policies[0].duplicate_detection
+        self.assertEqual(default.mode, HashMode.NONE)
+
+        document = copy.deepcopy(self.document)
+        document["organizePolicies"][0]["duplicateDetection"] = {
+            "mode": "fast",
+            "fastSampleBytes": 4096,
+            "fullMaxFileSize": 8192,
+            "chunkSize": 1024,
+        }
+        configured = load_runtime_configuration(document).strategy.organize_policies[0]
+        self.assertEqual(configured.duplicate_detection.mode, HashMode.FAST)
+        self.assertEqual(configured.duplicate_detection.fast_sample_bytes, 4096)
+        self.assertEqual(configured.duplicate_detection.full_max_file_size, 8192)
+        self.assertEqual(configured.duplicate_detection.chunk_size, 1024)
 
     def test_validation_command_performs_no_storage_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -4,6 +4,7 @@ import io
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from mediaflow.application.media_organizer import MediaOrganizerService
@@ -15,9 +16,10 @@ from mediaflow.application.strategy_test import (
 )
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.cli import main
+from mediaflow.domain.duplicates import DuplicateStatus, HashMode, HashPolicy
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.metadata import MediaCandidate, MediaType
-from mediaflow.domain.organizer import ExecutionStatus
+from mediaflow.domain.organizer import ConflictType, ExecutionStatus
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.local_storage import LocalStorage
@@ -28,6 +30,77 @@ from mediaflow.infrastructure.strategy_configuration import development_strategy
 
 
 class FinalIntegrationTests(unittest.TestCase):
+    def test_configured_full_hash_adds_duplicate_conflict_without_execution(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as source_root,
+            tempfile.TemporaryDirectory() as target_root,
+        ):
+            source_path = Path(source_root, "Spirited.Away.2001.mkv")
+            source_path.write_bytes(b"same-media-content")
+            source_storage = LocalStorage("source", source_root)
+            target_storage = LocalStorage("target", target_root)
+            storages = {"source": source_storage, "target": target_storage}
+            base = development_strategy_configuration()
+            full_hash = HashPolicy(HashMode.FULL, full_max_file_size=1024, chunk_size=4)
+            type_policies = tuple(
+                replace(
+                    item,
+                    organize_policy=replace(item.organize_policy, duplicate_detection=full_hash),
+                )
+                if item.organize_policy.policy_id == "A"
+                else item
+                for item in base.recognition_type_policies
+            )
+            configuration = replace(
+                base,
+                recognition_type_policies=type_policies,
+            )
+            provider = SyntheticMetadataProvider(
+                (
+                    MediaCandidate(
+                        "tmdb",
+                        "129",
+                        MediaType.MOVIE,
+                        "Spirited Away",
+                        year=2001,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                )
+            )
+            service = MediaOrganizerService(
+                strategy_runner_from_configuration(
+                    configuration,
+                    MetadataProviderRegistry((provider,)),
+                    storages=storages,
+                ),
+                StorageScanner(storages, InMemoryFileIndexRepository()),
+                storages,
+                {"movies": MediaLibrary("movies", "Movies", "target", "Movies")},
+                configuration.recognition_type_policies,
+                JsonLinesOperationHistoryRepository(Path(source_root, "history.jsonl")),
+                source_display_roots={"movies": source_root},
+            )
+            library = ResourceLibrary("movies", "Movies", "source", "")
+            initial = service.process_file(
+                source_path.as_posix(), resource_library=library, storage_path=source_path.name
+            )
+            self.assertEqual(initial.execution.status, ExecutionStatus.DRY_RUN)
+            target_path = Path(target_root, initial.plan.target)
+            target_path.parent.mkdir(parents=True)
+            target_path.write_bytes(source_path.read_bytes())
+
+            duplicate = service.process_file(
+                source_path.as_posix(), resource_library=library, storage_path=source_path.name
+            )
+            self.assertIsNone(duplicate.execution)
+            self.assertEqual(duplicate.plan.duplicate_comparison.status, DuplicateStatus.DUPLICATE)
+            self.assertIn(
+                ConflictType.DUPLICATE_MEDIA, {item.type for item in duplicate.plan.conflicts}
+            )
+            self.assertTrue(source_path.exists())
+            self.assertEqual(target_path.read_bytes(), b"same-media-content")
+
     def test_runtime_configuration_and_final_analyze_cli(self) -> None:
         with (
             tempfile.TemporaryDirectory() as source_root,

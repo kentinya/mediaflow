@@ -256,6 +256,12 @@
       "operation": "MOVE",
       "conflictStrategy": "manual",
       "overwrite": false,
+      "duplicateDetection": {
+        "mode": "none",
+        "fastSampleBytes": 1048576,
+        "fullMaxFileSize": 1099511627776,
+        "chunkSize": 1048576
+      },
       "attachments": {
         "enabled": true,
         "subtitles": true,
@@ -546,6 +552,7 @@
         "operation": "MOVE",
         "conflictStrategy": "manual",
         "overwrite": false,
+        "duplicateDetection": {"mode": "none"},
         "attachments": {
           "enabled": true,
           "subtitles": true,
@@ -560,6 +567,11 @@
         "operation": "COPY",
         "conflictStrategy": "skip",
         "overwrite": false,
+        "duplicateDetection": {
+          "mode": "fast",
+          "fastSampleBytes": 1048576,
+          "chunkSize": 1048576
+        },
         "attachments": {
           "enabled": true,
           "subtitles": true,
@@ -574,6 +586,11 @@
         "operation": "HARDLINK",
         "conflictStrategy": "rename",
         "overwrite": false,
+        "duplicateDetection": {
+          "mode": "full",
+          "fullMaxFileSize": 1099511627776,
+          "chunkSize": 1048576
+        },
         "attachments": {
           "enabled": true,
           "subtitles": true,
@@ -588,6 +605,7 @@
         "operation": "SYMLINK",
         "conflictStrategy": "manual",
         "overwrite": false,
+        "duplicateDetection": {"mode": "none"},
         "attachments": {
           "enabled": false,
           "subtitles": true,

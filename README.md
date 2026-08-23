@@ -98,6 +98,11 @@ decision flow. Overwrite is rejected unless the OrganizePolicy enables it and th
 fresh `--confirm-overwrite` decision; unresolved conflicts remain non-mutating.
 Silent deletion is not enabled.
 
+OrganizePolicy may optionally compare an existing destination with `none`, bounded `fast`, or
+streaming `full` Hash evidence. The default is `none` and performs zero Hash reads. FAST is explicitly
+prefix evidence rather than full-content certainty; any configured calculation failure blocks as an
+unknown conflict and never authorizes overwrite or deletion.
+
 Attachment handling is opt-in per OrganizePolicy. When enabled, MediaFlow lists only the primary
 file's directory through Storage and groups matching subtitles, NFO, artwork, images, and trailers
 into the same plan. Preview reports `attachments=N`; only explicit execution mutates them. Unknown

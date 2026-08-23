@@ -108,6 +108,12 @@
       "operation": "MOVE",
       "conflictStrategy": "manual",
       "overwrite": false,
+      "duplicateDetection": {
+        "mode": "none",
+        "fastSampleBytes": 1048576,
+        "fullMaxFileSize": 1099511627776,
+        "chunkSize": 1048576
+      },
       "attachments": {
         "enabled": false,
         "subtitles": true,
@@ -122,6 +128,12 @@
       "operation": "MOVE",
       "conflictStrategy": "manual",
       "overwrite": false,
+      "duplicateDetection": {
+        "mode": "none",
+        "fastSampleBytes": 1048576,
+        "fullMaxFileSize": 1099511627776,
+        "chunkSize": 1048576
+      },
       "attachments": {
         "enabled": false,
         "subtitles": true,
