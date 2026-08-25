@@ -78,15 +78,594 @@
 - Phase 21.26 file detail Metadata re-match Web UI/API and Phase 21 closure: PASS
 - Phase 22.0 configuration management architecture decision and domain skeleton: PASS
 - Phase 22.1 durable Storage configuration CRUD foundation: PASS
-- Current development boundary: Phase 22.2 Resource/Media Library configuration CRUD and references
+- Phase 22.2 Active Configuration Snapshot plus Phase 22.2R-F2 correction: **PASS/CLOSED** after
+  independent review on 2026-08-24. F2 replaces identity-only resident API refresh with one immutable
+  request binding for ID/digest, queue and protected-execute admission, schedules/status/stale-job
+  settings, MetadataPolicy references, and Dashboard counts. Missing, unreadable, digest-corrupt,
+  schema-unsupported, and runtime-invalid saved Job revisions now fail before media workflow
+  construction with durable actionable evidence.
+- Product/UX Rebaseline (documentation only): vertical journey acceptance, CURRENT/TARGET
+  configuration authority, and per-item recovery target are documented; none of those TARGET
+  capabilities is claimed implemented
+- Current development boundary: Phase 22.3R correction of the Storage + ResourceLibrary +
+  MediaLibrary configuration journey. Phase 22.4 has not started.
+- Phase 22.3 independent review: **FIX REQUIRED**. The submitted implementation establishes the
+  canonical managed-object/API/Web/check foundations, but current-scope P1 defects remain in
+  lossless full-section mutation, host-absolute Local root validation, direct-reference and stale/
+  failed check evidence visibility, bounded guarded setup execution, and the combined guided
+  activation → Worker Task/Result acceptance proof.
+
+## Phase 22.3 Implementation Evidence (2026-08-24; not an acceptance decision)
+
+- Implemented the canonical Draft object adapter, direct reference view/atomic delete blocking,
+  redacted remote read-only summaries, persisted Local setup-check evidence (including source and
+  destination relative roots), checked activation, and the existing Preview Job pin path.
+- The embedded Web Configuration view now exposes guided Local object forms, explicit validation and
+  read-only setup check, stale-evidence messaging, checked/unchecked activation labels, and a first
+  DryRun Preview action. Raw JSON remains the advanced compatibility path.
+- Focused journey/API/Web/configuration regressions: 54 passed, 0 failed.
+- Complete offline suite: 716 tests, 709 passed, 7 skipped, 0 failed. The skipped tests are external
+  service gates and are not counted as acceptance.
+- Ruff lint and format, compileall, pip check, wheel build plus isolated install/CLI smoke,
+  documentation link check, FFmpeg/FFprobe production audit, business-filesystem audit, and
+  `git diff --check` passed. Independent review and Phase 22.3 acceptance remain outstanding.
+
+## Phase 22.3 Independent Review (2026-08-24): FIX REQUIRED
+
+- P0: none found inside the declared Task scope.
+- P1 canonical integrity: `ConfigurationObjectService._objects()` applies the 256-item presentation
+  limit to mutation input. Independent reproduction updated one item in a 257-item MediaLibrary
+  section and persisted only 256; the unedited final object was silently lost.
+- P1 path safety: guided Local Storage normalization accepts `relative/root` and `../escape`; runtime
+  then resolves them relative to the service process although the user contract requires a
+  host-absolute root.
+- P1 Web journey: backend reference evidence is returned but never rendered before delete. Persisted
+  failure category/message/next action and exact check identity are not rendered after reload, and
+  stale evidence is hidden when an edit returns the revision to Draft.
+- P1 bounded read-only check: runtime Storage construction occurs before the timeout boundary and
+  selected adapters are not wrapped in the existing fail-fast read-only guard. Repeated blocked
+  constructor/filesystem calls therefore lack the required capacity-limited cancellation boundary.
+- P1 acceptance evidence: the new guided API test stops after Job submission; it does not prove one
+  exact Active/Job/Worker Task/Result pin, and the mandatory failure, raw/guided, structured API
+  concurrency/audit, and field-boundary matrices are incomplete.
+- Independent focused run:
+  `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_configuration_snapshot tests.test_operator_ui`
+  ran 55 tests, all passed. This green result does not cover the reproduced P1 cases.
+- Independent complete offline run: 716 tests, 709 passed, 7 external-service skips, 0 failed.
+- Ruff lint/format, compileall, `pip check`, and `git diff --check` passed before review-only
+  documentation/TASK updates.
+- Current `TASK.md` is Phase 22.3R and is limited to these correction defects. Phase 22.4 remains
+  prohibited until another independent review closes Phase 22.3.
+
+## Phase 22.3R1 Implementation Evidence (2026-08-24; not an acceptance decision)
+
+- Canonical configuration object access is now complete and fail-closed: guided mutation, setup
+  selection, and direct-reference scanning no longer apply the former 256-item presentation limit,
+  silently skip entries, or use redacted presentation copies as mutation input. Missing sections,
+  non-object entries, invalid/missing IDs, and duplicate IDs fail before persistence.
+- Storage, ResourceLibrary, and MediaLibrary sections with 257 objects were updated at first/middle/
+  last positions, created, and deleted without changing ordering or unrelated policy sections. A
+  remote Storage after entry 256 remained byte-equivalent in the canonical Draft and redacted in
+  the guided response.
+- Complete direct-reference scans now find Storage, MediaLibrary, and ResourceLibrary referrers
+  beyond entry 256. Referenced-delete errors expose the exact total and bounded labels with an
+  explicit `referencesTruncated` flag; the Web renders backend-derived referrers without policy
+  traversal in JavaScript.
+- Focused Phase 22.3R1/API/Web tests: 23 passed, 0 failed. Related configuration/snapshot,
+  authorization, audit, runtime, and task regressions: 107 passed, 0 failed.
+- Complete offline suite: 726 tests, 719 passed, 7 skipped, 0 failed. The skipped tests are isolated
+  external-service gates and are not acceptance evidence.
+- Ruff check/format, compileall, `pip check`, wheel build plus isolated wheel/CLI smoke,
+  FFmpeg/FFprobe production audit, business-filesystem boundary audit, and `git diff --check`
+  passed. Independent review of Phase 22.3R1 is still required; Phase 22.3 remains FIX REQUIRED and
+  Phase 22.4 remains prohibited.
+
+## Phase 22.3R1 Independent Review (2026-08-24): FIX REQUIRED
+
+- P0: none found inside the Phase 22.3R1 scope. The original 257-item destructive truncation was
+  independently reproduced as fixed; canonical update/create/delete, ordering, optimistic conflict,
+  atomic audit, and valid-reference scans use the complete managed Draft.
+- P1 bounded evidence: revision detail still returns every reference as a raw array and exposes no
+  per-object exact `total`/`truncated` state. Independent reproduction with 40 referrers returned 40
+  rendered labels, while only the later delete-conflict response was bounded to 32. The Web can
+  therefore show count but cannot show pre-delete truncation, contrary to the Task contract.
+- P1 fail-closed reference integrity: malformed reference-bearing structures are still silently
+  skipped. Independent reproduction imported `classificationPolicies.rules` as an object containing
+  a `mediaLibraryId`; guided deletion removed the referenced MediaLibrary and left the policy still
+  pointing at the deleted ID. This violates the no-silent-skip/fail-closed deletion invariant.
+- Independent focused configuration/API/Web run: 81 passed, 0 failed. Independent complete offline
+  run: 726 collected, 719 passed, 7 isolated external-service skips, 0 failed. These green suites do
+  not cover the two reproduced P1 failures.
+- Ruff lint/format, compileall, `pip check`, and `git diff --check` passed. Current `TASK.md` is the
+  focused Phase 22.3R1-F1 correction; Phase 22.4 remains prohibited.
+
+## Phase 22.3R1-F1 Implementation Evidence (2026-08-25; not an acceptance decision)
+
+- Added one backend-owned bounded direct-reference evidence shape with exact `total`, at most 32
+  structured `section`/`id`/`field` items, and explicit `truncated` state. Revision detail and
+  referenced-delete conflicts now consume the same evidence; compatibility label fields remain
+  bounded where required.
+- Direct-reference scanning now fails closed for malformed supported Storage `storageId`,
+  ClassificationPolicy `rules`/rule/result, and RecognitionRule top-level condition/reference
+  shapes. It reports bounded section/index/field errors before any Draft mutation.
+- The Web renders backend-derived reference totals, bounded items, and truncation state; a guided
+  reference error leaves the independent raw Draft editor available for correction and retry.
+- Focused configuration object/API/Web tests: 29 passed, 0 failed. Related configuration, snapshot,
+  status, runtime, Storage CRUD, and security regressions: 91 passed, 0 failed.
+- Complete offline suite: 732 tests, 725 passed, 7 explicitly gated external-service skips, 0
+  failed. Skips are not acceptance evidence.
+- Ruff check/format, compileall, `pip check`, `git diff --check`, FFmpeg/FFprobe source audit,
+  business-filesystem boundary audit, `pip wheel --no-deps`, isolated wheel CLI smoke, and
+  configuration validation passed. The environment does not provide the optional `build` module;
+  the configured wheel was built and smoke-tested through `pip wheel`.
+- Independent review of Phase 22.3R1-F1 is still required. Phase 22.3 remains FIX REQUIRED and
+  Phase 22.4 remains prohibited; Local absolute-root, bounded setup-check, persisted check-recovery,
+  and combined snapshot-pin defects remain deferred in the current Task boundary.
+
+## Phase 22.3R1-F1 Independent Review (2026-08-25): FIX REQUIRED
+
+- P0: none found. The exact-count/32-item/truncated reference evidence, fail-closed supported-shape
+  parsing, structured delete conflict, Web rendering, and independent raw Draft correction entry
+  point are present. The reproduced malformed ClassificationPolicy deletion from the prior review
+  is blocked before Draft mutation.
+- P1 single-revision consistency: `ConfigurationObjectService.revision_detail()` reads the revision
+  once for its summary/objects and then `references(revision_id)` reads it again. Independent
+  reproduction forced an intervening edit and received visible version 1 with zero ResourceLibrary
+  objects but a reference total of 1 from version 2. `_check_document()` can similarly compare
+  evidence against a later read.
+- P1 Web consistency/recovery: the Web fetches raw revision detail and guided object detail in two
+  requests but does not compare their `revisionId`/`version`/`digest`. A concurrent edit can render
+  raw state from one Draft version with guided objects/references from another. Optimistic mutation
+  still blocks stale writes, so this is not a P0, but dependency impact shown before delete is not a
+  trustworthy view of the visible Draft.
+- P1 acceptance evidence remains incomplete for explicit mandatory cases: 257 actual referrers on
+  a delete conflict, missing/empty Storage references, missing RecognitionRule condition, and the
+  full raw-correct → guided-delete-retry → one-audit recovery path are not directly proven.
+- Independent focused run: 76 passed, 0 failed. Independent complete offline run: 732 collected,
+  725 passed, 7 isolated external-service skips, 0 failed. Ruff lint/format, compileall, `pip check`,
+  and `git diff --check` passed. These green tests do not cover the reproduced mixed-version P1.
+- Current `TASK.md` is the focused Phase 22.3R1-F2 single-revision consistency correction. Phase
+  22.4 remains prohibited.
+
+## Phase 22.3R1-F2 Implementation Evidence (2026-08-25; not an acceptance decision)
+
+- `ConfigurationObjectService.revision_detail()` now captures one immutable managed revision and
+  derives objects, complete bounded direct-reference evidence, and setup-check staleness from that
+  same document/identity. Public `references(revision_id)` also performs one read and delegates to
+  the document projection helper.
+- The operator Web now validates raw/guided `revisionId`/`version`/`digest` identity before guided
+  lists, setup checks, edits, validation, save, or activation are rendered. A mismatch is shown as
+  bounded read-only identity evidence with `Side effects: none` and a user-triggered `Reload this
+  revision`; it does not auto-retry. A malformed guided 400 remains distinct and keeps raw Draft
+  correction available.
+- Added direct-reference acceptance evidence for 257 actual referrers with exact count, 32-item
+  truncation, unchanged Draft/audit state; missing/non-string/empty Storage IDs in both Library
+  sections; missing/non-object RecognitionRule conditions; and raw correction followed by the same
+  guided unreferenced delete with exactly one object-aware successful audit.
+- Focused configuration object/Web tests: 30 passed, 0 failed. Related configuration, snapshot,
+  status, automation-admission, and operator UI tests: 83 passed, 0 failed.
+- Complete offline suite: 733 collected, 726 passed, 7 explicitly gated external-service skips,
+  0 failed. Skips are not acceptance evidence.
+- Ruff check/format, compileall, `pip check`, documentation local-link audit, `git diff --check`,
+  FFmpeg/FFprobe production audit, and business-filesystem boundary audit passed. `pip wheel
+  --no-deps --no-build-isolation` built the wheel and the isolated wheel/CLI smoke passed; the
+  default isolated wheel attempt was blocked by unavailable network access for build dependencies.
+- This is implementation evidence only. Independent review of Phase 22.3R1-F2 is required;
+  Phase 22.3 remains FIX REQUIRED and Phase 22.4 remains prohibited. Local absolute-root,
+  bounded setup-check, persisted check-recovery, and combined snapshot-pin defects remain deferred.
+
+## Phase 22.3R1-F2 Independent Review (2026-08-25): FIX REQUIRED
+
+- P0: none found. Independent sequential-read reproduction confirmed one managed revision read;
+  summary, objects, references, and setup-check staleness stayed on version 1 even when a second
+  read would have returned version 2. Code inspection confirmed the Web compares raw/guided
+  revision ID, numeric version, and digest and currently returns before rendering mixed controls.
+- P1 executable Web acceptance proof: the current asset test checks string ordering but does not
+  assert the mismatch branch's early `return`. Removing that return would expose guided edit/delete/
+  setup controls while the test still passed; the test also does not prove the mismatch renderer
+  contains only the safe Reload action and no mutation call.
+- P1 same-target recovery proof: the malformed-guided test receives a 400 only from guided detail,
+  then adds a new unreferenced MediaLibrary and deletes that new object. It does not prove the
+  required same DELETE target fails closed, remains durable/audit-unchanged, is corrected through
+  raw JSON, and succeeds once on retry. Independent manual reproduction of that exact path passed,
+  so this is an automated acceptance gap rather than a reproduced production defect.
+- Independent focused configuration/snapshot/status/admission/Web run: 83 passed, 0 failed.
+  Independent complete offline run: 733 collected, 726 passed, 7 isolated external-service skips,
+  0 failed. Ruff lint/format, compileall, `pip check`, and `git diff --check` passed. The green suite
+  does not close the two mandatory proof gaps above.
+- Current `TASK.md` is narrowed to these two acceptance-test corrections only. Phase 22.3 remains
+  FIX REQUIRED and Phase 22.4 remains prohibited.
+
+## Phase 22.3R1-F2-FIX Implementation Evidence (2026-08-25; not an acceptance decision)
+
+- Strengthened the operator Web asset contract so it isolates the identity-mismatch renderer and
+  proves its sole action is `Reload this revision`, with no API/mutation/activation helper call.
+  The test now requires the mismatch branch's explicit `return` before normal revision detail,
+  guided lists, setup-check, raw editor, validate/save/activate, and DryRun queue controls.
+- Corrected the malformed-reference recovery regression to use one pre-existing MediaLibrary and
+  the identical DELETE endpoint before and after raw correction. The initial 400 preserves version,
+  digest, document, and audit count; raw PUT advances once, the same-target delete advances once,
+  removes that target, and writes exactly one target-specific object-aware `guided_delete` audit.
+- No production, persistence, API, Web runtime, Storage, policy-engine, Task, Worker, Planner, or
+  OrganizerExecutor implementation changed in this correction.
+- Focused configuration object/Web tests: 31 passed, 0 failed. Related configuration, snapshot,
+  status, automation-admission, and operator UI tests: 84 passed, 0 failed.
+- Complete offline suite: 734 collected, 727 passed, 7 explicitly gated external-service skips,
+  0 failed. Skips are not acceptance evidence.
+- Ruff check/format, compileall, `pip check`, `git diff --check`, documentation local-link audit,
+  FFmpeg/FFprobe production audit, and business-filesystem boundary audit passed.
+- This is implementation evidence only. Independent review is still required; Phase 22.3 is not
+  declared closed and Phase 22.4 remains prohibited.
+
+## Phase 22.3R1-F2-FIX Independent Review (2026-08-25): PASS / CLOSED
+
+- The review found no P0/P1 defect inside this focused acceptance-proof Task. Production behavior
+  was unchanged: the raw/guided identity mismatch still returns before every normal configuration
+  control, and the mismatch renderer exposes bounded identity evidence, `Side effects: none`, and
+  exactly one explicit Reload action without a mutating API/helper call.
+- An independent mutation-sensitivity check removed the guarded early `return` from the inspected
+  asset in memory and confirmed that the strengthened contract assertion then fails. The automated
+  proof therefore detects the unsafe control-flow regression it is intended to prevent.
+- The malformed-reference regression uses one pre-existing MediaLibrary and the identical DELETE
+  URL before and after raw correction. The first 400 preserves version, digest, document, and audit
+  count; reload confirms the same target; the retry removes it and produces exactly one
+  target-specific object-aware `guided_delete` audit.
+- Independent focused run: 31 passed, 0 failed. Independent related configuration/snapshot/status/
+  admission/Web run: 84 passed, 0 failed. Independent complete offline run: 734 collected,
+  727 passed, 7 explicitly gated external-service skips, 0 failed; skips are not acceptance
+  evidence.
+- Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation local-link audit,
+  FFmpeg/FFprobe production audit, and the business-filesystem boundary scan passed.
+- This closes only Phase 22.3R1-F2-FIX. Phase 22.3 remains open: host-absolute Local root
+  validation, bounded guarded setup checks, persisted check recovery, and combined snapshot-pin
+  acceptance remain separate Phase 22.3 slices. Phase 22.4 remains prohibited.
+
+## Phase 22.3R2 Implementation Evidence (2026-08-25; not an acceptance decision)
+
+- Guided Local Storage create/update now validates `rootPath` once at the existing application
+  normalization boundary using host-native absolute-path semantics and a lexical parent-traversal
+  check. Accepted strings are preserved; validation does not resolve paths, follow symlinks,
+  inspect existence, construct Storage, or access media/filesystem state.
+- Empty, non-string, NUL-containing, relative, and absolute traversal-bearing roots return the
+  existing actionable 400 `invalid_request` contract before Draft persistence. Tests prove version,
+  digest, document, and configuration-change audit count remain unchanged across every rejection.
+- The same guided form/object can then submit a corrected absolute root with the current optimistic
+  version. The saved value is visible after reload and the recovery produces exactly one
+  target-specific object-aware `guided_update` audit; the failed submissions produce none.
+- The Web keeps the existing form/input closure on API failure: it displays the backend error and
+  only hides/reloads the detail after a successful awaited mutation. Remote Storage remains
+  redacted/read-only, and raw whole-document compatibility semantics are unchanged.
+- Focused configuration object/Web tests: 35 passed, 0 failed. Related configuration, snapshot,
+  status, admission, and Web tests: 88 passed, 0 failed. Complete offline suite: 738 discovered,
+  731 passed, 7 explicitly gated external-service skips, 0 failed; skips are not acceptance
+  evidence.
+- Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation local-link audit,
+  FFmpeg/FFprobe production audit, and business-filesystem mutation boundary audit passed.
+- This is implementation evidence only. Independent review is required; Phase 22.3 remains open,
+  setup-check hardening/recovery and combined snapshot-pin acceptance remain deferred, and Phase
+  22.4 remains prohibited.
+
+## Phase 22.3R2 Independent Review (2026-08-25): PASS / CLOSED
+
+- No P0/P1 defect was found inside this focused Task. Guided Local create/update uses the shared
+  application normalization boundary, accepts host-native absolute roots unchanged, and rejects
+  empty, non-string, NUL, relative, and lexical parent-traversal values before Draft mutation.
+- Independent API inspection and focused execution confirmed every rejected update returns
+  actionable `invalid_request` evidence while preserving version, digest, document, and
+  configuration-change audit count. Correcting the same form/object succeeds with the current
+  optimistic version and writes exactly one target-specific `guided_update` audit.
+- The Web mutation helper awaits the API before its success-only hide/reload path; its failure
+  handler only displays the bounded backend error, leaving the same fields and object identity
+  available. Remote Storage remains redacted/read-only and raw whole-document compatibility is
+  unchanged.
+- The validation is pure lexical `PurePath` handling. Fail-fast tests prove no Runtime/Storage
+  construction, `resolve`, stat, list, or directory creation; no media path is accessed.
+- Independent Task-critical run: 5 passed, 0 failed. Independent complete offline run: 738
+  discovered, 731 passed, 7 explicitly gated external-service skips, 0 failed; skips are not
+  acceptance evidence. Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation
+  local-link, FFmpeg/FFprobe production, and business-filesystem mutation audits passed.
+- This closes only Phase 22.3R2. Phase 22.3 remains open for bounded guarded setup-check execution,
+  persisted failed/stale check recovery, and combined Active/Worker pin acceptance. Phase 22.4
+  remains prohibited.
+
+## Phase 22.3R3 Implementation Evidence (2026-08-25; not an acceptance decision)
+
+- The explicit Local setup check now admits one in-flight operation per
+  `ConfigurationObjectService`. One worker and one overall deadline cover managed/runtime loader
+  selection, selected Storage construction, and source/destination Exists/Stat; saturated requests
+  fail immediately without submitting or queuing another worker.
+- Timeout does not claim cancellation. A two-condition capacity lease releases only after the worker
+  actually exits and the request's evidence persistence finishes. Late worker results have no
+  persistence/activation path, and transient capacity rejection does not overwrite the in-flight
+  timeout evidence. After capacity returns, only an explicit operator retry can publish success.
+- Extracted the existing Strategy Test mutation guard into one provider-neutral
+  `ReadOnlyStorageGuard`; Strategy Test preserves its established exception contract. Selected setup
+  adapters are forced read-only and wrapped before probing. Write, CreateDirectory, Move, Copy,
+  Delete, HardLink, and SoftLink all fail before the underlying adapter and produce zero successful
+  mutations; the setup success path calls only Exists/Stat.
+- `LocalSetupCheckEvidence.document()` now exposes invariant, non-persisted
+  `sideEffects=none`/`retrySafe=true` semantics without a schema migration. Timeout/capacity use
+  bounded categories and next actions. The existing Web action displays message, next action, side
+  effects, and retry safety without automatic retry or activation.
+- Focused configuration/API/Web/Strategy tests: 61 passed, 0 failed. Related configuration,
+  snapshot, status, admission, Strategy, Naming, and Classification tests: 141 passed, 0 failed.
+  Complete offline suite: 744 discovered, 737 passed, 7 explicitly gated external-service skips,
+  0 failed; skips are not acceptance evidence.
+- Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation local-link,
+  FFmpeg/FFprobe production, and business-filesystem mutation audits passed.
+- This is implementation evidence only. Independent review is required; Phase 22.3 remains open for
+  persisted failed/stale setup-check Web recovery and combined Active/Worker pin acceptance. Phase
+  22.4 remains prohibited.
+
+## Phase 22.3R3 Independent Review (2026-08-25): FIX REQUIRED
+
+- P0: none found inside the focused R3 scope. Independent inspection confirmed the production API
+  owns one persistent `ConfigurationObjectService`, and the submitted success, blocked-stage,
+  timeout, saturation, late-result, exact-identity, and read-only guard tests pass.
+- P1 exception safety: a Validated configuration with a 5000-character Storage-relative source
+  path reaches the setup Worker, but `LocalSetupCheckEvidence` rejects that path while the Worker is
+  building its result. Independent reproduction observed a raw `ValueError`, no persisted setup
+  evidence, and `setup_checks_in_flight == 1` after the Worker had exited. The response side of the
+  lease is outside an all-path `finally`, so every later check on that service is permanently
+  rejected. This violates R3's bounded actionable evidence and capacity-recovery contract.
+- Existing tests do not cover evidence-construction/Future exceptions or persistence failure lease
+  cleanup. Independent focused run: 61 passed, 0 failed. Independent complete offline run: 744
+  collected, 737 passed, 7 explicitly gated external-service skips, 0 failed; these green results
+  do not detect the reproduced P1. Ruff lint/format and compileall passed.
+- Current `TASK.md` is the minimal Phase 22.3R3-F1 correction for evidence bounds and exception-safe
+  capacity release. Persisted reload recovery, combined Worker pin proof, remote Storage, and Phase
+  22.4 remain deferred.
+
+## Phase 22.3R3-F1 Implementation Evidence (2026-08-25; not an acceptance decision)
+
+- Setup-check source/destination evidence paths now use the domain evidence limit before any
+  `Exists`/`Stat` probe. An unrepresentable path returns persisted `invalid_path` evidence with no
+  raw path, probe, mutation, or activation; safe Storage-relative paths remain unchanged.
+- The admitted request now has one outer response-completion `finally` around Future result,
+  normalized Worker failure, evidence construction, and repository save. Ordinary Worker exceptions
+  become redacted persisted `unavailable` evidence. Repository-save failure still surfaces but no
+  longer strands capacity. The overall wait uses the remaining original deadline budget.
+- Guided/raw edits now accept Draft or Validated revisions and always use the existing
+  `edit_draft()` transition back to Draft. Active/Superseded revisions remain immutable. This closes
+  the actual setup-failure recovery path: correct the same revision, revalidate, then explicitly
+  rerun the check; there is no automatic retry or activation.
+- The exact independent 5000-character reproduction now returns HTTP 200 structured failed evidence
+  with `failureCategory=invalid_path`, `sideEffects=none`, `retrySafe=true`, durable evidence, and
+  `setup_checks_in_flight == 0`.
+- Focused configuration object/API/Web tests: 46 passed, 0 failed. Related configuration object,
+  snapshot, status, admission, and Web tests: 99 passed, 0 failed. Complete offline suite: 749
+  collected, 742 passed, 7 explicitly gated external-service skips, 0 failed; skips are not
+  acceptance evidence.
+- Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation local-link,
+  FFmpeg/FFprobe production, and business-filesystem mutation audits passed. Independent review is
+  required; Phase 22.3 remains open for persisted failed/stale Web reload recovery and combined
+  Worker pin acceptance. Phase 22.4 remains prohibited.
+
+## Phase 22.3R3-F1 Independent Review (2026-08-25): PASS / CLOSED
+
+- No P0/P1 defect was found inside the focused F1 scope. The shared evidence path limit rejects an
+  unrepresentable source/destination before `Exists`/`Stat`, preserves exact safe paths, and returns
+  bounded `invalid_path` evidence without exposing the rejected path.
+- Independent production-API reproduction of the original 5000-character case returned HTTP 200,
+  `status=failed`, `failureCategory=invalid_path`, `sideEffects=none`, and `retrySafe=true`; evidence
+  was durable, no probe ran, `setup_checks_in_flight` returned to zero, and Active remained empty.
+- Independent API recovery updated that same Validated revision through the guided object endpoint,
+  observed the existing transition to Draft version 2, revalidated it, and explicitly reran the
+  check. The retry passed with only the corrected source and destination Exists/Stat calls, and the
+  persisted evidence advanced to the exact new version.
+- Code inspection confirmed the response-completion `finally` now covers Future result,
+  normalization and repository save, while the lease still waits for actual Worker completion.
+  Focused tests also prove redacted unexpected-Worker evidence and capacity release after a forced
+  repository-save failure. Active/Superseded immutability and no-auto-retry/activation remain intact.
+- Independent focused run: 46 passed, 0 failed. Independent related configuration object/snapshot/
+  status/admission/Web run: 99 passed, 0 failed. Independent complete offline run: 749 collected,
+  742 passed, 7 explicitly gated external-service skips, 0 failed; skips are not acceptance
+  evidence. Ruff lint/format, compileall, and `pip check` passed.
+- This closes only Phase 22.3R3-F1. Phase 22.3 remains open for persisted failed/stale setup-check
+  recovery after Web reload and the combined Active/Preview/Worker Task/Result pin acceptance.
+  Phase 22.4 remains prohibited.
+
+## Phase 22.3R4 Implementation Evidence (2026-08-25; not an acceptance decision)
+
+- The Configuration revision view now renders the existing persisted latest Local setup-check
+  evidence independently of Draft/Validated state after a full API/Web reload. It shows exact
+  evidence revision ID/version/digest, current/stale state, bounded category/message/operations,
+  source/destination roots, duration, side effects, retry safety, and next action. Missing or
+  malformed optional fields fail closed to bounded placeholders and DOM `textContent` rendering.
+- Evidence is considered current only when `stale=false` and its revision ID, version, and digest
+  exactly match the loaded revision. A Draft keeps stale evidence visible and directs correction
+  followed by Validate without a runnable check. A revalidated revision exposes one explicit setup
+  check action, while stale evidence cannot enable checked activation. Exact current passed evidence
+  enables checked activation but does not activate until the operator explicitly clicks it.
+- A production API persistence regression stores failed evidence, closes and reconstructs the
+  SQLite configuration repository and API, verifies the durable failure contract, edits the same
+  revision back to Draft, observes stale evidence after reload and revalidation, and verifies that an
+  explicit successful rerun advances evidence to the current identity while Active remains empty.
+- Focused Configuration Object/API/Web tests: 50 passed, 0 failed. Related configuration object,
+  snapshot, status, admission, and Web tests: 103 passed, 0 failed. Complete offline suite: 753
+  collected, 746 passed, 7 explicitly gated external-service skips, 0 failed; skips are not
+  acceptance evidence.
+- Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation local-link,
+  FFmpeg/FFprobe production, and business-filesystem mutation audits passed. This is implementation
+  evidence only: independent review is required, Phase 22.3 is not closed, the combined
+  Active/Preview/Worker Task/Result pin acceptance remains deferred, and Phase 22.4 remains
+  prohibited.
+
+## Phase 22.3R4 Independent Review (2026-08-25): FIX REQUIRED
+
+- No P0 was found. The persisted API evidence, reload presentation, exact revision identity check,
+  Draft/Validated stale recovery guidance, and current-passed checked-activation gate satisfy the
+  R4 evidence-recovery scope.
+- One P1 remains in the explicit Task action-eligibility requirement. The Web predicate shows **Run
+  Local setup check** when any unrelated Local Storage exists and the ResourceLibrary/MediaLibrary
+  arrays are merely non-empty. Disabled-only or remote-backed libraries can therefore display the
+  action even though the handler has no compatible enabled Local source/destination to submit. An
+  independent reproduction produced `run_button_visible=true` with both selected libraries empty;
+  clicking this path can overwrite useful recovery evidence with an avoidable
+  `invalid_configuration` failure.
+- Independent focused run: 50 passed, 0 failed. Independent related configuration object/snapshot/
+  status/admission/Web run: 103 passed, 0 failed. Independent complete offline run: 753 collected,
+  746 passed, 7 externally gated skips, 0 failed. The green suite does not cover the incorrect
+  disabled/remote/unrelated-Local eligibility case.
+- Current `TASK.md` is Phase 22.3R4-F1 and is restricted to deriving one compatible enabled
+  Local-backed ResourceLibrary/MediaLibrary selection, sharing it between visibility and submitted
+  IDs, providing correction guidance when unavailable, and adding focused regressions. No backend,
+  persistence, remote setup, combined Worker pin, or Phase 22.4 work is included.
+
+## Phase 22.3R4-F1 Implementation Evidence (2026-08-25; not an acceptance decision)
+
+- The Web action boundary now derives one shared Local setup selection: Local Storage IDs are
+  collected once, then ResourceLibraries and MediaLibraries are filtered to enabled entries whose
+  `storageId` references that set. The same selected objects control Run-action visibility and the
+  exact submitted IDs, so the predicate and request body cannot drift.
+- A Draft remains non-runnable. A Validated revision without both compatible selections now shows
+  bounded correction guidance and returns before constructing an action or API call. Disabled-only,
+  remote-backed, missing-reference, and unrelated-Local states therefore cannot replace persisted
+  recovery evidence with an avoidable check failure. Mixed lists deterministically use the first
+  compatible Local-backed entries.
+- Focused operator UI/configuration-object tests: 51 passed, 0 failed. Related configuration object,
+  snapshot, status, admission, and Web tests: 104 passed, 0 failed. Complete offline suite: 754
+  collected, 747 passed, 7 explicitly gated external-service skips, 0 failed; skips are not
+  acceptance evidence.
+- Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation local-link,
+  FFmpeg/FFprobe production, and business-filesystem mutation audits passed. This is implementation
+  evidence only: R4-F1 requires independent review, Phase 22.3 remains open, the combined
+  Active/Preview/Worker Task/Result pin acceptance remains deferred, and Phase 22.4 remains
+  prohibited.
+
+## Phase 22.3R4-F1 Independent Review (2026-08-25): PASS / CLOSED
+
+- The previous P1 is closed. One shared `localSetupSelection()` derives enabled Local-backed source
+  and destination libraries; the same objects gate Run-action visibility and supply the exact API
+  IDs. Disabled, remote-backed, missing-reference, and unrelated-Local states return with actionable
+  guidance before any setup-check action or API request can be created.
+- Code inspection confirmed Draft remains non-runnable, mixed lists select the first compatible
+  Local-backed entries, persisted R4 evidence remains visible, and exact current passed evidence
+  continues to gate checked activation. No backend, persistence, setup-check worker, Storage, or
+  runtime authority behavior changed.
+- Independent focused run: 51 passed, 0 failed. Independent related configuration object/snapshot/
+  status/admission/Web run: 104 passed, 0 failed. Independent complete offline run: 754 collected,
+  747 passed, 7 externally gated skips, 0 failed. Ruff lint/format, compileall, `pip check`,
+  `git diff --check`, documentation local-link, FFmpeg/FFprobe production, and business-filesystem
+  mutation audits passed.
+- This closes Phase 22.3R4-F1 only. No Task-scope P0/P1 remains. Phase 22.3 remains open for the
+  combined checked Active → Preview Job → Worker → Task/Result immutable-pin acceptance proof;
+  Phase 22.4 remains prohibited.
 
 ## Planned
 
-- Phase 20: core engine closure completed in bounded phases; historical recovery remains a separate
-  non-claim
-- Phase 21: complete manual media correction and file/media workflow UI
-- Phase 22: remaining configuration CRUD/reference/audit, import/export, and management UI families
-- Later: external identity/OIDC and Secret Store evaluation; no weak in-core substitute
+- Phase 22.4: Recognition configuration + Strategy Test journey; then deliver vertical journeys in
+  order: Metadata configuration/correction; Naming/Classification/Organize configuration
+- Follow with TaskItem Processing Checkpoint/stage-aware recovery, complete Files/Media detail and
+  manual organize, then automation/final production hardening
+- External identity/OIDC and Secret Store remain explicit later architecture decisions; no weak
+  in-core substitute
+
+## Phase 22.2R-F2 Implementation Submission Evidence (2026-08-24)
+
+- Resident API configuration refresh now builds and publishes one immutable binding containing the
+  Active ID/digest, maximum active Job limit, protected-execute enablement/TTL/admission, schedules,
+  stale-job threshold, status snapshot, MetadataPolicy references, and Dashboard counts. Each request
+  captures one binding; serialized refresh prevents mixed or out-of-order publication.
+- Increasing `maximumActiveJobs` from 1 to 2 admits two new Jobs pinned to the new revision; decreasing
+  it rejects excess work. Disabling protected execute denies before consuming the one-time token;
+  re-enabling under a later revision accepts and pins that exact revision.
+- Worker resolves a claimed Job's saved published revision once before workflow construction.
+  Missing, unreadable payload, digest corruption, unsupported schema, and runtime-invalid saved
+  revisions persist bounded category/state/side-effect/retry/next-action evidence, create no Task,
+  construct no Storage/Provider, and never switch to current Active.
+- Permanent regressions include true multi-connection concurrent imports, edits, activations;
+  activation/request binding races; same-revision API schedule/status/policy views; actual `/ui/` and
+  `/ui/app.js`; recovery-started API replacement; production Web lifecycle → Preview → Worker →
+  Task/Result pin continuity; full lifecycle zero-I/O; and bounded secret-free audit evidence.
+- Implementation validation: focused configuration/API/authorization/task/UI regressions 108 passed;
+  complete offline suite 708 tests, 701 passed and 7 skipped. Ruff lint/format, compileall, `pip check`,
+  two example configuration validations, documentation links, offline wheel build/smoke,
+  FFmpeg/FFprobe source audit, business-filesystem boundary audit, and diff check passed. This section
+  records implementation evidence only and does not declare acceptance.
+
+## Latest Independent Review Evidence
+
+Phase 22.2R-F2 independent review (2026-08-24): **PASS/CLOSED**
+
+- Task compliance, Web/API → request binding → Job pin → Worker → Task/Result, unhealthy
+  authority, and saved-revision recovery paths were independently audited against the actual code.
+  No Task-scope P0/P1 defect or core engine/Storage boundary regression was found.
+- Eleven independently selected critical regressions passed: maximum-Job increase/decrease,
+  protected-execute gate and exact pin, activation/request races, true concurrent imports/edits/
+  activations, all actionable saved-revision failures with zero media I/O, valid older pin under an
+  unhealthy new Active, production Web → Worker pin continuity, complete lifecycle zero-I/O, and
+  recovery-started API replacement.
+- Complete offline suite: 708 collected, 701 passed, 7 isolated external/endurance tests skipped,
+  0 failed. The skipped cases were not counted as PASS.
+- Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation links, FFmpeg/FFprobe
+  source audit, business-filesystem boundary audit, wheel build, isolated wheel install, and CLI smoke
+  passed. Review wheel SHA-256:
+  `98a2f08010fdfc54e8a45f96f3e04c787c8909f0f8b4011482294ab74ef1e767`.
+- Active runtime publication is a complete immutable binding per request. Saved Job failures expose
+  bounded category, saved identity, durable state, side effects, retry safety, and recovery action;
+  they do not silently rebind to current Active. Phase 22.3 may now begin.
+
+Phase 22.2R-F1 independent review (2026-08-24): **FIX REQUIRED**
+
+- Focused configuration snapshot/status/admission suites: 43 passed, 0 failed.
+- Complete offline suite: 698 collected, 691 passed, 7 isolated external/endurance tests skipped,
+  0 failed.
+- Ruff lint and format check, compileall, `pip check`, isolated-disabled wheel build plus installed
+  wheel smoke, and `git diff --check` passed.
+- Independent runtime-state reproduction: Active A used `maximumActiveJobs=1`; after activating B
+  with `maximumActiveJobs=2`, the first API Job was pinned to B but the second was rejected using A's
+  stale limit. The reverse transition can retain a less restrictive old admission boundary. Active
+  identity therefore does not yet equal resident API runtime behavior.
+- Independent saved-revision reproduction: a Job pinned to a deleted older published revision did not
+  switch to current Active and created no Task, but persisted only `workflow failed (RuntimeError)`;
+  it omitted the configuration failure category, saved durable state, side-effect status, retry
+  safety, and recovery action required by the Task.
+- Code/test audit found no true concurrent managed import/edit/activate regression, no missing/corrupt
+  saved-revision Worker matrix, no protected execute snapshot-pin regression, and no complete
+  lifecycle zero-I/O matrix. These were explicit Required Tests, so a green full suite is not closure
+  evidence for the omitted semantics.
+- No Parser, Recognition, Metadata, Naming, Classification, Planner, OrganizerExecutor, or Storage
+  adapter regression was found. Phase 22.3 remains blocked pending Phase 22.2R-F2 independent review.
+
+Phase 22.2R independent review (2026-08-24): **FIX REQUIRED**
+
+- Focused managed snapshot suite: 19 passed.
+- Related configuration/API/Web/Scheduler/Worker/Task suites: 94 passed.
+- Complete offline suite: 685 collected, 678 passed, 7 skipped, 0 failed.
+- Ruff lint, Ruff format check, compileall, `pip check`, wheel build through `pip wheel`, forbidden
+  FFmpeg/FFprobe production audit, business-layer filesystem mutation audit, and `git diff --check`
+  passed. The optional `python -m build` frontend is not installed; the equivalent isolated-disabled
+  `pip wheel` build succeeded.
+- Independent runtime-invalid Active reproduction: first API Job submission returned `503`; the
+  second returned `202` and one Job was persisted. This is a safety/authority blocker not covered by
+  the 685-test suite.
+- Independent optimistic-edit reproduction: the first Draft edit returned `200`; a stale second edit
+  returned generic `500 internal_error` instead of an actionable conflict.
+- Static architecture audit confirmed the resident Scheduler retains constructor-time schedule
+  definitions while resolving only a new identity, and Worker startup resolves current Active before
+  it can select a queued Job's saved snapshot. API recovery startup also still normalizes the full
+  JSON workflow document after an unavailable Active instead of depending only on the immutable
+  database locator plus the approved management-authentication boundary.
+
+## Phase 22.2R-F1 Implementation Submission Evidence (2026-08-24)
+
+The implementer submitted the focused repair for independent review. The submitted focused suite runs 32 tests
+(32 passed, 0 failed). The related configuration/API/Web/Scheduler/Worker/Task regression set runs 73
+tests (73 passed, 0 failed), and the final complete offline suite runs 698 tests (691 passed, 0 failed,
+7 skipped). Evidence covers
+repeated runtime-invalid requests with zero Jobs, structured stale Draft conflicts, missing/corrupt
+Active recovery from the locator, same-revision Scheduler definitions and identity, reload failure with
+no state advance, schema/digest/bootstrap-locator invalid Active handling, a Worker continuing an older
+pinned snapshot while the newer Active is unhealthy, legacy unpinned Job rejection after managed
+activation, managed Task pin enforcement, and a real API → Worker → Task/Result DryRun path with one
+snapshot ID/digest. Configuration lifecycle remains
+Storage/Provider-free; the workflow test uses an injected fake metadata provider and no real external
+service.
+
+This is submission evidence, not acceptance evidence. The later independent review above reproduced
+the stale resident API admission state and actionable pinned-revision recovery gaps and therefore
+supersedes any implied completion claim in this subsection.
 
 ## Known Issues
 

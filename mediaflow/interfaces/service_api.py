@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hmac
 import json
+import threading
 from collections.abc import Callable, Iterable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from urllib.parse import parse_qs
@@ -11,6 +12,8 @@ from uuid import uuid4
 
 from mediaflow.application.automation import AutomationJobService
 from mediaflow.application.classification_review import ClassificationReviewService
+from mediaflow.application.configuration_objects import ConfigurationObjectService
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
@@ -23,6 +26,13 @@ from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.task_retry import TaskRetryRequestService
 from mediaflow.domain.automation import AutomationQueueFull
+from mediaflow.domain.configuration_management import (
+    ConfigurationActivationConflict,
+    ConfigurationObjectKind,
+    ConfigurationObjectReferenced,
+    ConfigurationVersionConflict,
+    RuntimeSnapshotUnavailable,
+)
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
@@ -40,6 +50,22 @@ from mediaflow.interfaces.pagination import (
 
 class ApiPermissionDenied(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class _ApiRuntimeBinding:
+    """One immutable set of config-derived API behavior and its snapshot pin."""
+
+    snapshot_id: str | None
+    snapshot_digest: str | None
+    jobs: AutomationJobService
+    execution_authorizations: ExecutionAuthorizationService
+    remote_execution_enabled: bool
+    stale_job_age_seconds: int
+    system_status: object | None
+    schedules: tuple
+    metadata_policies: tuple
+    dashboard: DashboardService
 
 
 class MediaFlowApi:
@@ -61,6 +87,10 @@ class MediaFlowApi:
         system_status=None,
         file_catalog: FileCatalogService | None = None,
         metadata_policies=(),
+        configuration_service: ManagedConfigurationService | None = None,
+        configuration_snapshot_id: str | None = None,
+        configuration_snapshot_digest: str | None = None,
+        bootstrap_document: object | None = None,
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -72,13 +102,6 @@ class MediaFlowApi:
             raise ValueError("at least one API principal must be configured")
         self._repository = repository
         self._principals = principals
-        self._jobs = AutomationJobService(repository, maximum_active_jobs=maximum_active_jobs)
-        self._execution_authorizations = ExecutionAuthorizationService(
-            repository,
-            maximum_ttl_seconds=remote_execution_maximum_ttl_seconds,
-            maximum_active_jobs=maximum_active_jobs,
-        )
-        self._remote_execution_enabled = remote_execution_enabled
         if (
             isinstance(stale_job_age_seconds, bool)
             or not isinstance(stale_job_age_seconds, int)
@@ -86,13 +109,27 @@ class MediaFlowApi:
             or stale_job_age_seconds > 604_800
         ):
             raise ValueError("stale Job age must be between 60 and 604800 seconds")
-        self._stale_job_age_seconds = stale_job_age_seconds
-        self._system_status = system_status
         self._file_catalog = file_catalog
-        self._metadata_policies = tuple(metadata_policies)
-        self._schedules = tuple(schedules)
-        self._dashboard = DashboardService(
-            repository,
+        self._configuration_service = configuration_service
+        self._configuration_objects = (
+            ConfigurationObjectService(configuration_service)
+            if configuration_service is not None
+            else None
+        )
+        self._bootstrap_document = bootstrap_document
+        self._configuration_snapshot_id = configuration_snapshot_id
+        self._configuration_snapshot_digest = configuration_snapshot_digest
+        self._runtime_binding_lock = threading.RLock()
+        self._runtime_binding = self._build_runtime_binding(
+            snapshot_id=configuration_snapshot_id,
+            snapshot_digest=configuration_snapshot_digest,
+            maximum_active_jobs=maximum_active_jobs,
+            remote_execution_enabled=remote_execution_enabled,
+            remote_execution_maximum_ttl_seconds=remote_execution_maximum_ttl_seconds,
+            stale_job_age_seconds=stale_job_age_seconds,
+            system_status=system_status,
+            schedules=tuple(schedules),
+            metadata_policies=tuple(metadata_policies),
             resource_library_count=dashboard_resource_library_count,
             media_library_count=dashboard_media_library_count,
         )
@@ -159,6 +196,145 @@ class MediaFlowApi:
                 409,
             )
             return self._error(start_response, 409, "queue_full", str(error))
+        except ConfigurationActivationConflict as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "configuration",
+                "conflict",
+                409,
+            )
+            details = {
+                key: value
+                for key, value in {
+                    "revisionId": error.revision_id,
+                    "currentRevisionId": error.current_revision_id,
+                    "currentVersion": error.current_version,
+                    "currentDigest": error.current_digest,
+                    "durableState": (
+                        "draft_preserved_active_unchanged"
+                        if error.current_revision_id
+                        else "draft_preserved"
+                    ),
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "refresh the current Active/Draft, review the diff, and revalidate"
+                    ),
+                }.items()
+                if value is not None
+            }
+            return self._error(
+                start_response,
+                409,
+                "configuration_conflict",
+                str(error),
+                details=details,
+            )
+        except ConfigurationVersionConflict as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "configuration",
+                "conflict",
+                409,
+            )
+            details = {
+                key: value
+                for key, value in {
+                    "revisionId": error.revision_id,
+                    "currentVersion": error.current_version,
+                    "currentDigest": error.current_digest,
+                    "durableState": "draft_preserved",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": ("refresh the Draft, review the current version, and edit again"),
+                }.items()
+                if value is not None
+            }
+            return self._error(
+                start_response,
+                409,
+                "configuration_version_conflict",
+                str(error),
+                details=details,
+            )
+        except ConfigurationObjectReferenced as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "configuration",
+                "conflict",
+                409,
+            )
+            return self._error(
+                start_response,
+                409,
+                "configuration_object_referenced",
+                str(error),
+                details={
+                    "objectKind": error.kind.value,
+                    "objectId": error.object_id,
+                    "referenceCount": error.reference_count,
+                    "references": list(error.references),
+                    "referenceItems": [item.document() for item in error.reference_items],
+                    "referenceEvidence": (
+                        error.reference_evidence.document()
+                        if error.reference_evidence is not None
+                        else {
+                            "total": error.reference_count,
+                            "items": [{"label": label} for label in error.references],
+                            "truncated": error.references_truncated,
+                        }
+                    ),
+                    "referencesTruncated": error.references_truncated,
+                    "durableState": "draft_preserved",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": "update the references or cancel deletion",
+                },
+            )
+        except RuntimeSnapshotUnavailable as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "configuration",
+                "error",
+                503,
+            )
+            details = {
+                key: value
+                for key, value in {
+                    "revisionId": error.revision_id,
+                    "version": error.version,
+                    "digest": error.digest,
+                    "reason": error.reason,
+                    "durableState": "managed_active_unavailable",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": "inspect configuration status and stage a replacement Draft",
+                }.items()
+                if value is not None
+            }
+            return self._error(
+                start_response,
+                503,
+                "configuration_unavailable",
+                str(error),
+                details=details,
+            )
         except LookupError as error:
             self._safe_audit(
                 environ,
@@ -198,6 +374,12 @@ class MediaFlowApi:
                 start_response, 500, "internal_error", "request failed (details redacted)"
             )
 
+    @property
+    def _system_status(self):
+        """Compatibility diagnostic backed by the current atomic binding."""
+
+        return self._runtime_binding.system_status
+
     def _dispatch(
         self,
         method: str,
@@ -207,16 +389,312 @@ class MediaFlowApi:
         principal: ResolvedApiPrincipal,
     ):
         parts = [part for part in path.split("/") if part]
+        configuration_route = parts[:3] == ["api", "v1", "configuration"]
+        binding = self._runtime_binding
+        if not configuration_route:
+            binding = self._refresh_configuration_binding()
+        if parts == ["api", "v1", "configuration"]:
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            return self._response(
+                start_response, 200, self._configuration_service.status_document()
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            return self._response(
+                start_response,
+                200,
+                self._configuration_service.detail(parts[4]),
+            )
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "objects"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            return self._response(
+                start_response,
+                200,
+                self._configuration_objects.revision_detail(parts[4]),
+            )
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "objects"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            kind = self._configuration_object_kind(parts[6])
+            document = self._document(environ)
+            if set(document) != {"object", "expectedVersion"}:
+                raise ValueError(
+                    "configuration object mutation requires object and expectedVersion"
+                )
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            value = document["object"]
+            if not isinstance(value, dict):
+                raise ValueError("configuration object must be an object")
+            revision = self._configuration_objects.mutate(
+                parts[4],
+                kind,
+                object_id=None,
+                value=value,
+                expected_version=expected,
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 200, revision.summary())
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "objects"
+            and method == "PUT"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            kind = self._configuration_object_kind(parts[6])
+            document = self._document(environ)
+            if set(document) != {"object", "expectedVersion"}:
+                raise ValueError("configuration object update requires object and expectedVersion")
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            value = document["object"]
+            if not isinstance(value, dict):
+                raise ValueError("configuration object must be an object")
+            revision = self._configuration_objects.mutate(
+                parts[4],
+                kind,
+                object_id=parts[7],
+                value=value,
+                expected_version=expected,
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 200, revision.summary())
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "objects"
+            and method == "DELETE"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            kind = self._configuration_object_kind(parts[6])
+            document = self._document(environ)
+            if set(document) != {"expectedVersion"}:
+                raise ValueError("configuration object deletion requires expectedVersion")
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            revision = self._configuration_objects.mutate(
+                parts[4],
+                kind,
+                object_id=parts[7],
+                value=None,
+                expected_version=expected,
+                actor=principal.principal_id,
+                delete=True,
+            )
+            return self._response(start_response, 200, revision.summary())
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "local-setup-check"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            allowed = {"expectedVersion", "expectedDigest", "resourceLibraryId", "mediaLibraryId"}
+            if set(document).difference(allowed):
+                raise ValueError("Local setup check contains unsupported fields")
+            expected = document.get("expectedVersion")
+            digest = document.get("expectedDigest")
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            if not isinstance(digest, str):
+                raise ValueError("configuration expectedDigest is required")
+            evidence = self._configuration_objects.local_check(
+                parts[4],
+                expected_version=expected,
+                expected_digest=digest,
+                actor=principal.principal_id,
+                resource_library_id=document.get("resourceLibraryId"),
+                media_library_id=document.get("mediaLibraryId"),
+            )
+            return self._response(start_response, 200, evidence.document())
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and method == "PUT"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            if set(document) != {"document", "expectedVersion"}:
+                raise ValueError("configuration Draft edit requires document and expectedVersion")
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            if not isinstance(document["document"], dict):
+                raise ValueError("configuration Draft document must be an object")
+            revision = self._configuration_service.edit_draft(
+                parts[4],
+                document["document"],
+                expected_version=expected,
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 200, revision.summary())
+        if parts == ["api", "v1", "configuration", "drafts"] and method == "POST":
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            if set(document) == {"source"} and document.get("source") == "current":
+                draft_document = self._configuration_service.current_document(
+                    self._bootstrap_document
+                )
+            elif set(document) == {"document"} and isinstance(document["document"], dict):
+                draft_document = document["document"]
+            else:
+                raise ValueError("configuration Draft import requires a document object")
+            revision = self._configuration_service.import_draft(
+                draft_document, actor=principal.principal_id, source="api"
+            )
+            return self._response(start_response, 201, revision.summary())
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] in {"validate", "activate"}
+            and method == "POST"
+        ):
+            if self._configuration_service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            if parts[5] == "validate":
+                self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+                if document:
+                    raise ValueError("configuration validation does not accept request fields")
+                revision = self._configuration_service.validate(
+                    parts[4], actor=principal.principal_id
+                )
+                return self._response(start_response, 200, revision.summary())
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            allowed = {"expectedVersion", "checked"}
+            if set(document).difference(allowed) or "expectedVersion" not in document:
+                raise ValueError(
+                    "configuration activation requires expectedVersion and optional checked"
+                )
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            checked = document.get("checked", False)
+            if not isinstance(checked, bool):
+                raise ValueError("configuration activation checked must be boolean")
+            if checked:
+                if self._configuration_objects is None:
+                    return self._error(
+                        start_response,
+                        503,
+                        "service_unavailable",
+                        "managed configuration object service is unavailable",
+                    )
+                revision = self._configuration_objects.activate_checked(
+                    parts[4], expected_version=expected, actor=principal.principal_id
+                )
+            else:
+                revision = self._configuration_service.activate(
+                    parts[4], expected_version=expected, actor=principal.principal_id
+                )
+            self._refresh_configuration_binding()
+            return self._response(start_response, 200, revision.summary())
         if parts == ["api", "v1", "system", "status"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
             self._require_empty_query(environ, "system status")
             self._require(principal, ApiPermission.READ)
-            if self._system_status is None:
+            if binding.system_status is None:
                 return self._error(
                     start_response, 503, "service_unavailable", "system status is unavailable"
                 )
-            return self._response(start_response, 200, self._system_status.as_document())
+            return self._response(start_response, 200, binding.system_status.as_document())
         if parts == ["api", "v1", "files", "stats"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._file_catalog is None:
@@ -299,7 +777,7 @@ class MediaFlowApi:
                     self._file_catalog,
                     MetadataCorrectionService(
                         self._repository,
-                        self._metadata_policies,
+                        binding.metadata_policies,
                     ),
                 ).resolve(
                     parts[3],
@@ -330,7 +808,9 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 200,
-                self._value(self._dashboard.snapshot(recent_limit=self._dashboard_limit(environ))),
+                self._value(
+                    binding.dashboard.snapshot(recent_limit=self._dashboard_limit(environ))
+                ),
             )
         if parts == ["api", "v1", "metadata-reviews"] and method == "GET":
             self._require(principal, ApiPermission.READ)
@@ -548,7 +1028,7 @@ class MediaFlowApi:
                             **self._value(item),
                             "state": self._value(states.get(item.schedule_id)),
                         }
-                        for item in self._schedules
+                        for item in binding.schedules
                     ]
                 },
             )
@@ -608,7 +1088,7 @@ class MediaFlowApi:
             and parts[4] == "audit"
             and method == "GET"
         ):
-            known = {item.schedule_id for item in self._schedules}
+            known = {item.schedule_id for item in binding.schedules}
             if parts[3] not in known:
                 raise LookupError(f"schedule {parts[3]!r} was not found")
             limit, cursor = self._scoped_page_query(
@@ -694,11 +1174,11 @@ class MediaFlowApi:
                 start_response,
                 200,
                 {
-                    "threshold_seconds": self._stale_job_age_seconds,
+                    "threshold_seconds": binding.stale_job_age_seconds,
                     "items": [
                         self._stale_job_value(item)
-                        for item in self._jobs.stale(
-                            age_seconds=self._stale_job_age_seconds, limit=limit
+                        for item in binding.jobs.stale(
+                            age_seconds=binding.stale_job_age_seconds, limit=limit
                         )
                     ],
                 },
@@ -737,12 +1217,12 @@ class MediaFlowApi:
                 command = document.get("command", "")
                 if command == "organize":
                     self._require(principal, ApiPermission.REMOTE_EXECUTE)
-                    if not self._remote_execution_enabled:
+                    if not binding.remote_execution_enabled:
                         raise ValueError("remote execution is disabled")
                     if document.get("execute") is not True:
                         raise ValueError("remote organize requires execute=true")
                     token = str(environ.get("HTTP_X_MEDIAFLOW_EXECUTION_TOKEN", ""))
-                    job = self._execution_authorizations.submit_organize(
+                    job = binding.execution_authorizations.submit_organize(
                         token, limit=document.get("limit")
                     )
                 else:
@@ -750,7 +1230,7 @@ class MediaFlowApi:
                     unsupported = set(document).difference({"command", "limit"})
                     if unsupported:
                         raise ValueError(f"unsupported DryRun job field {sorted(unsupported)[0]!r}")
-                    job = self._jobs.submit(command, limit=document.get("limit"))
+                    job = binding.jobs.submit(command, limit=document.get("limit"))
                 return self._response(start_response, 202, self._value(job))
         if len(parts) == 4 and parts[:3] == ["api", "v1", "jobs"] and method == "GET":
             job = self._repository.get_job(parts[3])
@@ -763,7 +1243,7 @@ class MediaFlowApi:
             self._require(principal, ApiPermission.CANCEL_JOB)
             self._require_empty_query(environ, "job cancellation")
             self._require_empty_body(environ, "job cancellation")
-            return self._response(start_response, 200, self._value(self._jobs.cancel(parts[3])))
+            return self._response(start_response, 200, self._value(binding.jobs.cancel(parts[3])))
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "confirmations"]
@@ -828,6 +1308,133 @@ class MediaFlowApi:
     def _require(principal: ResolvedApiPrincipal, permission: ApiPermission) -> None:
         if permission not in principal.permissions:
             raise ApiPermissionDenied(f"principal lacks {permission.value} permission")
+
+    def _refresh_configuration_binding(self) -> _ApiRuntimeBinding:
+        with self._runtime_binding_lock:
+            return self._refresh_configuration_binding_locked()
+
+    def _refresh_configuration_binding_locked(self) -> _ApiRuntimeBinding:
+        if self._configuration_service is None:
+            return self._runtime_binding
+        active = self._configuration_service.active()
+        if active is None and self._configuration_service.has_managed_activation():
+            marker = self._configuration_service.last_known_active()
+            raise RuntimeSnapshotUnavailable(
+                "managed Active configuration is unavailable; runtime is fail-closed",
+                revision_id=marker.get("revisionId") if marker else None,
+                version=(marker.get("revisionSequence", marker.get("version")) if marker else None),
+                digest=marker.get("digest") if marker else None,
+                reason="active_missing",
+            )
+        runtime = None
+        refreshed_status = None
+        if active is not None:
+            self._configuration_service.verify_integrity(active)
+            from mediaflow.infrastructure.configuration_snapshot import build_configuration_snapshot
+            from mediaflow.infrastructure.runtime_configuration import (
+                load_managed_runtime_configuration,
+                with_managed_snapshot,
+            )
+
+            try:
+                runtime = with_managed_snapshot(
+                    load_managed_runtime_configuration(
+                        active.document,
+                        bootstrap_database_path=(
+                            self._configuration_service.bootstrap_database_path
+                            or getattr(
+                                getattr(self._configuration_service, "_repository", None),
+                                "database_path",
+                                "",
+                            )
+                        ),
+                    ),
+                    snapshot_id=active.revision_id,
+                    digest=active.digest,
+                )
+                refreshed_status = build_configuration_snapshot(runtime)
+            except Exception as error:
+                raise RuntimeSnapshotUnavailable(
+                    f"managed Active configuration {active.revision_id!r} is unavailable: "
+                    f"{type(error).__name__}",
+                    revision_id=active.revision_id,
+                    version=active.revision_sequence,
+                    digest=active.digest,
+                    reason="runtime_invalid",
+                ) from error
+        snapshot_id = active.revision_id if active else None
+        digest = active.digest if active else None
+        current = self._runtime_binding
+        if snapshot_id == current.snapshot_id and digest == current.snapshot_digest:
+            return current
+        if runtime is None or refreshed_status is None:
+            return current
+
+        # Construct every config-derived behavior before publishing one pointer.
+        # A request captures this immutable binding and cannot combine a new pin
+        # with admission or execute settings retained from the previous Active.
+        candidate = self._build_runtime_binding(
+            snapshot_id=snapshot_id,
+            snapshot_digest=digest,
+            maximum_active_jobs=runtime.automation_maximum_active_jobs,
+            remote_execution_enabled=runtime.remote_execution_enabled,
+            remote_execution_maximum_ttl_seconds=(runtime.remote_execution_maximum_ttl_seconds),
+            stale_job_age_seconds=runtime.automation_stale_job_age_seconds,
+            system_status=refreshed_status,
+            schedules=runtime.automation_schedules,
+            metadata_policies=runtime.strategy.metadata_policies,
+            resource_library_count=sum(item.enabled for item in runtime.resource_libraries),
+            media_library_count=sum(item.enabled for item in runtime.media_libraries),
+        )
+        self._runtime_binding = candidate
+        # Compatibility diagnostics only; request behavior uses the single
+        # immutable binding above rather than these individual attributes.
+        self._configuration_snapshot_id = snapshot_id
+        self._configuration_snapshot_digest = digest
+        return candidate
+
+    def _build_runtime_binding(
+        self,
+        *,
+        snapshot_id: str | None,
+        snapshot_digest: str | None,
+        maximum_active_jobs: int,
+        remote_execution_enabled: bool,
+        remote_execution_maximum_ttl_seconds: int,
+        stale_job_age_seconds: int,
+        system_status,
+        schedules: tuple,
+        metadata_policies: tuple,
+        resource_library_count: int,
+        media_library_count: int,
+    ) -> _ApiRuntimeBinding:
+        return _ApiRuntimeBinding(
+            snapshot_id,
+            snapshot_digest,
+            AutomationJobService(
+                self._repository,
+                maximum_active_jobs=maximum_active_jobs,
+                configuration_snapshot_id=snapshot_id,
+                configuration_snapshot_digest=snapshot_digest,
+            ),
+            ExecutionAuthorizationService(
+                self._repository,
+                maximum_ttl_seconds=remote_execution_maximum_ttl_seconds,
+                maximum_active_jobs=maximum_active_jobs,
+                configuration_snapshot_id=snapshot_id,
+                configuration_snapshot_digest=snapshot_digest,
+            ),
+            remote_execution_enabled,
+            stale_job_age_seconds,
+            system_status,
+            tuple(schedules),
+            tuple(metadata_policies),
+            DashboardService(
+                self._repository,
+                resource_library_count=resource_library_count,
+                media_library_count=media_library_count,
+            ),
+        )
 
     def _audit(
         self,
@@ -1237,6 +1844,18 @@ class MediaFlowApi:
         return value
 
     @staticmethod
+    def _configuration_object_kind(value: str) -> ConfigurationObjectKind:
+        mapping = {
+            "storages": ConfigurationObjectKind.STORAGE,
+            "resourceLibraries": ConfigurationObjectKind.RESOURCE_LIBRARY,
+            "mediaLibraries": ConfigurationObjectKind.MEDIA_LIBRARY,
+        }
+        try:
+            return mapping[value]
+        except KeyError as error:
+            raise ValueError("unsupported guided configuration object kind") from error
+
+    @staticmethod
     def _file_stats_query(environ: dict) -> tuple[str | None, str | None]:
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
         allowed = {"resourceLibrary", "storage"}
@@ -1392,6 +2011,7 @@ class MediaFlowApi:
         body = json.dumps(document, ensure_ascii=False, sort_keys=True).encode("utf-8")
         labels = {
             200: "OK",
+            201: "Created",
             202: "Accepted",
             400: "Bad Request",
             401: "Unauthorized",
@@ -1416,5 +2036,16 @@ class MediaFlowApi:
         return [body]
 
     @classmethod
-    def _error(cls, start_response: Callable, status: int, code: str, message: str):
-        return cls._response(start_response, status, {"error": {"code": code, "message": message}})
+    def _error(
+        cls,
+        start_response: Callable,
+        status: int,
+        code: str,
+        message: str,
+        *,
+        details: dict[str, object] | None = None,
+    ):
+        error = {"code": code, "message": message}
+        if details:
+            error["details"] = details
+        return cls._response(start_response, status, {"error": error})

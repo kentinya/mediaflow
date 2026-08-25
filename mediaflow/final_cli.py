@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import ipaddress
 import json
@@ -11,6 +12,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
@@ -18,11 +20,16 @@ from zoneinfo import ZoneInfo
 
 from mediaflow.application.automation import (
     AutomationCancelled,
+    AutomationConfigurationUnavailable,
     AutomationJobService,
     AutomationWorker,
     IntervalScheduler,
 )
 from mediaflow.application.classification_review import ClassificationReviewService
+from mediaflow.application.configuration_snapshot import (
+    MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+    ManagedConfigurationService,
+)
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
@@ -46,11 +53,17 @@ from mediaflow.application.strategy_test import strategy_runner_from_configurati
 from mediaflow.application.task_retry import TaskRetryRequestService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.cli import render_strategy_result
-from mediaflow.domain.automation import AutomationCommand, CronSchedule
+from mediaflow.domain.automation import (
+    AutomationCommand,
+    AutomationFailureEvidence,
+    CronSchedule,
+    SchedulerConfigurationSnapshot,
+)
 from mediaflow.domain.classification_review import (
     ClassificationReviewStatus,
     ClassificationSelection,
 )
+from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionSelection,
@@ -72,11 +85,18 @@ from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepos
 from mediaflow.infrastructure.migration_rehearsal import SQLiteMigrationRehearsalService
 from mediaflow.infrastructure.operational_logging import SQLiteOperationalLogger
 from mediaflow.infrastructure.runtime_configuration import (
+    ManagementBootstrapConfiguration,
     RuntimeConfiguration,
+    load_managed_runtime_configuration,
+    load_management_bootstrap,
     load_runtime_configuration,
+    with_managed_snapshot,
 )
 from mediaflow.infrastructure.runtime_lease import RuntimeDatabaseLease, RuntimeLeaseMode
 from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
+)
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
@@ -90,13 +110,30 @@ def final_main(
     stdout: TextIO,
     stderr: TextIO,
     cancellation_check: Callable[[], bool] | None = None,
+    _resolved_configuration: RuntimeConfiguration | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="mediaflow")
     parser.add_argument("--config", help="runtime JSON configuration")
+    parser.add_argument("--configuration-snapshot-id", help=argparse.SUPPRESS)
+    parser.add_argument("--configuration-snapshot-digest", help=argparse.SUPPRESS)
     commands = parser.add_subparsers(dest="command", required=True)
     config = commands.add_parser("config", help="configuration operations")
     config_commands = config.add_subparsers(dest="config_command", required=True)
     config_commands.add_parser("validate", help="validate configuration without processing media")
+    config_commands.add_parser("status", help="show JSON bootstrap/managed Active authority")
+    draft_import = config_commands.add_parser(
+        "draft-import", aliases=("import",), help="import a JSON document as a Draft"
+    )
+    draft_import.add_argument("--file", help="JSON file; defaults to --config")
+    draft_validate = config_commands.add_parser(
+        "draft-validate", aliases=("validate-draft",), help="validate one Draft revision"
+    )
+    draft_validate.add_argument("revision_id")
+    draft_validate.add_argument("--actor", default="local-cli")
+    activate = config_commands.add_parser("activate", help="activate a Validated Draft")
+    activate.add_argument("revision_id")
+    activate.add_argument("--expected-version", type=int, required=True)
+    activate.add_argument("--actor", default="local-cli")
     analyze = commands.add_parser("analyze", help="analyze one file without planning execution")
     analyze.add_argument("path")
     analyze.add_argument("--offline", action="store_true")
@@ -420,7 +457,80 @@ def final_main(
                 raise ValueError("API token bytes must be between 32 and 128")
             stdout.write(f"{secrets.token_urlsafe(arguments.token_bytes)}\n")
             return 0
-        configuration = _configuration(arguments.config)
+        # A resumed/retried workflow must resolve the snapshot pinned to the
+        # original Task before loading the runtime strategy.  Otherwise a
+        # process restart after activation could silently run the old Task
+        # against the new Active configuration.
+        snapshot_id = arguments.configuration_snapshot_id
+        snapshot_digest = arguments.configuration_snapshot_digest
+        if (
+            not snapshot_id
+            and arguments.command == "tasks"
+            and arguments.task_command in {"resume", "retry-failed"}
+        ):
+            pinned = _task_snapshot_identity(arguments.config, arguments.task_id)
+            if pinned is not None:
+                snapshot_id, snapshot_digest = pinned
+
+        # Database backup/restore and upgrade rehearsal/preflight are
+        # intentionally bootstrap-only.  Resolving managed workflow
+        # configuration for them would open the configured runtime database
+        # before the command's own read-only/atomic safety checks run.
+        configuration_management_command = (
+            arguments.command == "config"
+            and arguments.config_command
+            in {
+                "status",
+                "draft-import",
+                "import",
+                "draft-validate",
+                "validate-draft",
+                "activate",
+            }
+        )
+        management_bootstrap_database_path = None
+        if configuration_management_command:
+            # Recovery commands need only the immutable locator.  Do not make
+            # status/import/validate depend on the rest of a broken runtime
+            # document; the service performs the candidate validation later.
+            management_bootstrap_database_path = _bootstrap_database_path(
+                _configuration_document(arguments.config)
+            )
+        managed_command = (
+            arguments.command not in {"database", "upgrade"}
+            and not configuration_management_command
+            and not (arguments.command == "config" and arguments.config_command == "validate")
+        )
+        if _resolved_configuration is not None:
+            configuration = _resolved_configuration
+        elif arguments.command == "worker":
+            # Queue claiming must not resolve the current Active workflow.  The
+            # immutable locator is enough to claim a Job; its saved revision is
+            # loaded only inside _run_queued_workflow after the claim boundary.
+            configuration = load_management_bootstrap(_configuration_document(arguments.config))
+        else:
+            try:
+                configuration = (
+                    None
+                    if configuration_management_command
+                    else _configuration(
+                        arguments.config,
+                        use_managed=managed_command,
+                        snapshot_id=snapshot_id,
+                        snapshot_digest=snapshot_digest,
+                    )
+                )
+            except RuntimeSnapshotUnavailable:
+                # API management must remain available without trusting stale
+                # workflow JSON.  It uses only the immutable locator and
+                # environment-owned management credentials when Active is
+                # unavailable; workflow content is not used for recovery.
+                if arguments.command == "api":
+                    configuration = load_management_bootstrap(
+                        _configuration_document(arguments.config)
+                    )
+                else:
+                    raise
         if (
             arguments.command == "database"
             and arguments.database_command == "restore"
@@ -441,6 +551,60 @@ def final_main(
                 else 1
             )
         if arguments.command == "config":
+            bootstrap_document = _configuration_document(arguments.config)
+            managed_config_command = arguments.config_command in {
+                "status",
+                "draft-import",
+                "import",
+                "draft-validate",
+                "validate-draft",
+                "activate",
+            }
+            if managed_config_command:
+                database_path = management_bootstrap_database_path
+                if database_path is None:
+                    raise RuntimeError("configuration management bootstrap locator is unavailable")
+                with SQLiteConfigurationRepository(database_path) as repository:
+                    service = ManagedConfigurationService(
+                        repository,
+                        bootstrap_database_path=database_path,
+                    )
+                    if arguments.config_command == "status":
+                        stdout.write(
+                            json.dumps(service.status_document(), ensure_ascii=False, indent=2)
+                            + "\n"
+                        )
+                        return 0
+                    if arguments.config_command in {"draft-import", "import"}:
+                        if arguments.file:
+                            document = json.loads(Path(arguments.file).read_text(encoding="utf-8"))
+                        else:
+                            document = service.current_document(bootstrap_document)
+                        revision = service.import_draft(
+                            document,
+                            actor="local-cli",
+                            source="file" if arguments.file else "current",
+                        )
+                        stdout.write(
+                            json.dumps(revision.summary(), ensure_ascii=False, indent=2) + "\n"
+                        )
+                        return 0
+                    if arguments.config_command in {"draft-validate", "validate-draft"}:
+                        revision = service.validate(arguments.revision_id, actor=arguments.actor)
+                        stdout.write(
+                            json.dumps(revision.summary(), ensure_ascii=False, indent=2) + "\n"
+                        )
+                        return 0 if revision.status.value == "validated" else 1
+                    if arguments.config_command == "activate":
+                        revision = service.activate(
+                            arguments.revision_id,
+                            expected_version=arguments.expected_version,
+                            actor=arguments.actor,
+                        )
+                        stdout.write(
+                            json.dumps(revision.summary(), ensure_ascii=False, indent=2) + "\n"
+                        )
+                        return 0
             strategy = configuration.strategy
             stdout.write(
                 "Configuration valid\n"
@@ -749,6 +913,12 @@ def final_main(
                     repository,
                     maximum_ttl_seconds=configuration.remote_execution_maximum_ttl_seconds,
                     maximum_active_jobs=configuration.automation_maximum_active_jobs,
+                    configuration_snapshot_id=getattr(
+                        configuration, "configuration_snapshot_id", None
+                    ),
+                    configuration_snapshot_digest=getattr(
+                        configuration, "configuration_snapshot_digest", None
+                    ),
                 )
                 if arguments.execution_authorization_command == "issue":
                     issued = service.issue(
@@ -1008,6 +1178,8 @@ def final_main(
                 service = AutomationJobService(
                     repository,
                     maximum_active_jobs=configuration.automation_maximum_active_jobs,
+                    configuration_snapshot_id=configuration.configuration_snapshot_id,
+                    configuration_snapshot_digest=configuration.configuration_snapshot_digest,
                 )
                 if arguments.job_command == "list":
                     stdout.write(render_jobs(repository.list_jobs(limit=arguments.limit)))
@@ -1037,7 +1209,12 @@ def final_main(
                 worker_service = AutomationWorker(
                     repository,
                     lambda job, cancelled: _run_queued_workflow(job, arguments.config, cancelled),
-                    NotificationPublisher(repository, configuration.webhooks),
+                    NotificationPublisher(
+                        repository,
+                        configuration.resolve_webhook_targets()
+                        if hasattr(configuration, "resolve_webhook_targets")
+                        else {},
+                    ),
                 )
                 if arguments.worker_command == "run-next":
                     job = worker_service.run_next()
@@ -1046,7 +1223,7 @@ def final_main(
                         return 0
                     stdout.write(render_job(job))
                     return 0 if job.status.value in {"completed", "cancelled"} else 1
-                poll = arguments.poll_seconds or configuration.worker_poll_seconds
+                poll = arguments.poll_seconds or getattr(configuration, "worker_poll_seconds", 5.0)
                 processed = _run_resident(
                     lambda stop: worker_service.run(
                         stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
@@ -1061,6 +1238,11 @@ def final_main(
                     configuration.automation_schedules,
                     NotificationPublisher(repository, configuration.webhooks),
                     maximum_active_jobs=configuration.automation_maximum_active_jobs,
+                    configuration_snapshot_id=configuration.configuration_snapshot_id,
+                    configuration_snapshot_digest=configuration.configuration_snapshot_digest,
+                    configuration_snapshot_resolver=lambda: _managed_scheduler_configuration(
+                        arguments.config
+                    ),
                 )
                 if arguments.scheduler_command == "list":
                     stdout.write(
@@ -1110,6 +1292,7 @@ def final_main(
                     "use a trusted TLS reverse proxy\n"
                 )
             principals = configuration.resolve_api_principals()
+            bootstrap_document = _configuration_document(arguments.config)
             if not 1 <= arguments.port <= 65535:
                 raise ValueError("API port must be between 1 and 65535")
             from wsgiref.simple_server import make_server
@@ -1119,38 +1302,75 @@ def final_main(
             )
             from mediaflow.interfaces.service_api import MediaFlowApi
 
+            file_index_context = (
+                nullcontext(None)
+                if isinstance(configuration, ManagementBootstrapConfiguration)
+                else SQLiteFileIndexRepository(configuration.database_path)
+            )
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+                file_index_context as file_index,
+                SQLiteConfigurationRepository(
+                    configuration.database_path
+                ) as configuration_repository,
             ):
-                file_catalog = FileCatalogService(
-                    file_index,
-                    tuple(
-                        item.library_id for item in configuration.resource_libraries if item.enabled
-                    ),
-                    tuple(item.storage_id for item in configuration.storage_definitions),
-                    task_repository=repository,
+                file_catalog = (
+                    FileCatalogService(
+                        file_index,
+                        tuple(
+                            item.library_id
+                            for item in configuration.resource_libraries
+                            if item.enabled
+                        ),
+                        tuple(item.storage_id for item in configuration.storage_definitions),
+                        task_repository=repository,
+                    )
+                    if file_index is not None
+                    else None
                 )
                 app = MediaFlowApi(
                     repository,
                     None,
-                    configuration.automation_schedules,
+                    getattr(configuration, "automation_schedules", ()),
                     principals=principals,
                     dashboard_resource_library_count=sum(
-                        item.enabled for item in configuration.resource_libraries
+                        item.enabled for item in getattr(configuration, "resource_libraries", ())
                     ),
                     dashboard_media_library_count=sum(
-                        item.enabled for item in configuration.media_libraries
+                        item.enabled for item in getattr(configuration, "media_libraries", ())
                     ),
-                    remote_execution_enabled=configuration.remote_execution_enabled,
+                    remote_execution_enabled=getattr(
+                        configuration, "remote_execution_enabled", False
+                    ),
                     remote_execution_maximum_ttl_seconds=(
-                        configuration.remote_execution_maximum_ttl_seconds
+                        getattr(configuration, "remote_execution_maximum_ttl_seconds", 900)
                     ),
-                    maximum_active_jobs=configuration.automation_maximum_active_jobs,
-                    stale_job_age_seconds=configuration.automation_stale_job_age_seconds,
-                    system_status=build_configuration_snapshot(configuration),
+                    maximum_active_jobs=getattr(
+                        configuration, "automation_maximum_active_jobs", 100
+                    ),
+                    stale_job_age_seconds=getattr(
+                        configuration, "automation_stale_job_age_seconds", 3600
+                    ),
+                    system_status=(
+                        None
+                        if isinstance(configuration, ManagementBootstrapConfiguration)
+                        else build_configuration_snapshot(configuration)
+                    ),
                     file_catalog=file_catalog,
-                    metadata_policies=configuration.strategy.metadata_policies,
+                    metadata_policies=getattr(
+                        getattr(configuration, "strategy", None), "metadata_policies", ()
+                    ),
+                    configuration_service=ManagedConfigurationService(
+                        configuration_repository,
+                        bootstrap_database_path=configuration.database_path,
+                    ),
+                    configuration_snapshot_id=getattr(
+                        configuration, "configuration_snapshot_id", None
+                    ),
+                    configuration_snapshot_digest=getattr(
+                        configuration, "configuration_snapshot_digest", None
+                    ),
+                    bootstrap_document=bootstrap_document,
                 )
                 stdout.write(f"MediaFlow API listening on {arguments.host}:{arguments.port}\n")
                 stdout.flush()
@@ -1175,7 +1395,14 @@ def final_main(
                 )
                 coordinator = PersistentTaskCoordinator(repository, repository)
                 task = coordinator.create(
-                    "scan", execute_authorized=False, item_limit=arguments.limit
+                    "scan",
+                    execute_authorized=False,
+                    item_limit=arguments.limit,
+                    configuration_snapshot_id=configuration.configuration_snapshot_id,
+                    configuration_snapshot_digest=configuration.configuration_snapshot_digest,
+                    require_configuration_snapshot=(
+                        configuration.configuration_authority == "MANAGED"
+                    ),
                 )
                 discovered = []
 
@@ -1295,6 +1522,11 @@ def final_main(
                     execute_authorized=execute,
                     scope_path=original.scope_path,
                     item_limit=original.item_limit,
+                    configuration_snapshot_id=original.configuration_snapshot_id,
+                    configuration_snapshot_digest=original.configuration_snapshot_digest,
+                    require_configuration_snapshot=(
+                        configuration.configuration_authority == "MANAGED"
+                    ),
                 )
             else:
                 execute = arguments.command == "organize" and arguments.execute
@@ -1303,6 +1535,11 @@ def final_main(
                     execute_authorized=execute,
                     scope_path=arguments.path,
                     item_limit=arguments.limit,
+                    configuration_snapshot_id=configuration.configuration_snapshot_id,
+                    configuration_snapshot_digest=configuration.configuration_snapshot_digest,
+                    require_configuration_snapshot=(
+                        configuration.configuration_authority == "MANAGED"
+                    ),
                 )
 
             def workflow_stop() -> bool:
@@ -1645,7 +1882,9 @@ def render_tasks(tasks: tuple[PersistentTask, ...]) -> str:
         lines.append(
             f"{task.task_id} | {task.command} | {task.status.value} | "
             f"pause_requested={'yes' if task.pause_requested else 'no'} | "
-            f"total={task.total_items} completed={task.completed_items} failed={task.failed_items}"
+            f"total={task.total_items} completed={task.completed_items} "
+            f"failed={task.failed_items} | "
+            f"snapshot={task.configuration_snapshot_id or '-'}"
         )
     lines.extend(("", f"Total: {len(tasks)}", ""))
     return "\n".join(lines)
@@ -1821,6 +2060,8 @@ def render_task(task: PersistentTask, items: tuple[PersistentTaskItem, ...]) -> 
         f"Status: {task.status.value}",
         f"Pause requested: {'YES' if task.pause_requested else 'NO'}",
         f"Execute authorized: {'YES' if task.execute_authorized else 'NO'}",
+        f"Configuration snapshot: {task.configuration_snapshot_id or '-'}",
+        f"Configuration digest: {task.configuration_snapshot_digest or '-'}",
         f"Created: {task.created_at.isoformat()}",
         f"Ignored items: {sum(item.status is TaskItemStatus.IGNORED for item in items)}",
         "",
@@ -1955,6 +2196,9 @@ def render_jobs(values) -> str:
 
 
 def render_job(value) -> str:
+    retry_safe = (
+        "-" if value.failure_retry_safe is None else ("YES" if value.failure_retry_safe else "NO")
+    )
     return "\n".join(
         (
             "",
@@ -1969,6 +2213,13 @@ def render_job(value) -> str:
             f"Cancellation requested: {'YES' if value.cancellation_requested else 'NO'}",
             f"Schedule ID: {value.schedule_id or '-'}",
             f"Execute authorized: {'YES' if value.execute_authorized else 'NO'}",
+            f"Configuration snapshot: {value.configuration_snapshot_id or '-'}",
+            f"Configuration digest: {value.configuration_snapshot_digest or '-'}",
+            f"Failure category: {value.failure_category or '-'}",
+            f"Durable state: {value.failure_durable_state or '-'}",
+            f"Side effects: {value.failure_side_effects or '-'}",
+            f"Retry safe: {retry_safe}",
+            f"Next action: {value.failure_next_action or '-'}",
             "",
         )
     )
@@ -2453,10 +2704,25 @@ def render_classification_review(review, choices, audit=()) -> str:
 def _run_queued_workflow(
     job, configured_path: str | None, cancellation_check: Callable[[], bool]
 ) -> str | None:
+    try:
+        _require_queued_job_snapshot(job, configured_path)
+        resolved_configuration = None
+        if job.configuration_snapshot_id:
+            resolved_configuration = _configuration(
+                configured_path,
+                snapshot_id=job.configuration_snapshot_id,
+                snapshot_digest=job.configuration_snapshot_digest,
+            )
+    except RuntimeSnapshotUnavailable as error:
+        raise _automation_configuration_unavailable(error) from error
     args = []
     resolved = configured_path or os.environ.get("MEDIAFLOW_CONFIG")
     if resolved:
         args.extend(("--config", resolved))
+    if job.configuration_snapshot_id:
+        args.extend(("--configuration-snapshot-id", job.configuration_snapshot_id))
+    if job.configuration_snapshot_digest:
+        args.extend(("--configuration-snapshot-digest", job.configuration_snapshot_digest))
     args.append(job.command.value)
     if job.limit is not None:
         args.extend(("--limit", str(job.limit)))
@@ -2467,7 +2733,13 @@ def _run_queued_workflow(
     elif job.execute_authorized:
         raise RuntimeError("non-organize job must not carry execute authorization")
     output, errors = io.StringIO(), io.StringIO()
-    code = final_main(args, stdout=output, stderr=errors, cancellation_check=cancellation_check)
+    code = final_main(
+        args,
+        stdout=output,
+        stderr=errors,
+        cancellation_check=cancellation_check,
+        _resolved_configuration=resolved_configuration,
+    )
     task_id = None
     for line in output.getvalue().splitlines():
         if line.startswith("Task ID: "):
@@ -2478,6 +2750,78 @@ def _run_queued_workflow(
     if code:
         raise RuntimeError("queued workflow returned a failure status")
     return task_id
+
+
+def _automation_configuration_unavailable(
+    error: RuntimeSnapshotUnavailable,
+) -> AutomationConfigurationUnavailable:
+    allowed_categories = {
+        "active_missing",
+        "active_unreadable",
+        "digest_corrupt",
+        "job_snapshot_incomplete",
+        "job_snapshot_missing",
+        "runtime_invalid",
+        "schema_unsupported",
+        "snapshot_digest_mismatch",
+        "snapshot_missing",
+        "snapshot_not_published",
+        "snapshot_unreadable",
+    }
+    category = error.reason if error.reason in allowed_categories else "configuration_unavailable"
+    return AutomationConfigurationUnavailable(
+        AutomationFailureEvidence(
+            category,
+            "saved_configuration_unavailable",
+            "none",
+            False,
+            "restore the saved published revision, or explicitly create new work under "
+            "the current Active configuration",
+        )
+    )
+
+
+def _require_queued_job_snapshot(job, configured_path: str | None) -> None:
+    """Reject legacy unpinned work once managed authority exists.
+
+    The worker command intentionally claims jobs before loading workflow
+    configuration.  A queued row without the immutable pair must therefore be
+    rejected at the handler boundary instead of silently rebinding to the
+    current Active revision.  Before managed activation, JSON bootstrap jobs
+    remain compatible with the pre-managed runtime.
+    """
+
+    snapshot_id = getattr(job, "configuration_snapshot_id", None)
+    snapshot_digest = getattr(job, "configuration_snapshot_digest", None)
+    if bool(snapshot_id) != bool(snapshot_digest):
+        raise RuntimeSnapshotUnavailable(
+            "queued automation Job has an incomplete configuration snapshot pin",
+            revision_id=snapshot_id,
+            digest=snapshot_digest,
+            reason="job_snapshot_incomplete",
+        )
+    if snapshot_id and snapshot_digest:
+        return
+    if not configured_path and not os.environ.get("MEDIAFLOW_CONFIG"):
+        # Direct unit/service invocations may intentionally exercise the
+        # handler without a production bootstrap document.  The production
+        # worker entry point always loads the management bootstrap first, so
+        # this compatibility branch cannot bypass managed authority there.
+        return
+    document = _configuration_document(configured_path)
+    database_path = _bootstrap_database_path(document)
+    with SQLiteConfigurationRepository(database_path) as repository:
+        if not repository.has_managed_activation():
+            return
+        marker = repository.last_known_active()
+    raise RuntimeSnapshotUnavailable(
+        "legacy automation Job has no managed configuration snapshot pin; "
+        "recreate the Job under the current Active revision",
+        revision_id=marker.get("revisionId") if marker else None,
+        version=(marker.get("revisionSequence") if marker else None),
+        digest=marker.get("digest") if marker else None,
+        reason="job_snapshot_missing",
+    )
 
 
 def render_schedules(definitions, states) -> str:
@@ -2593,11 +2937,245 @@ def _safe_preflight_error(error: Exception) -> str:
     return type(error).__name__
 
 
-def _configuration(path: str | None) -> RuntimeConfiguration:
+def _configuration_document(path: str | None) -> object:
     configured = path or os.environ.get("MEDIAFLOW_CONFIG")
     if not configured:
         raise ValueError("--config or MEDIAFLOW_CONFIG is required")
-    return load_runtime_configuration(json.loads(Path(configured).read_text(encoding="utf-8")))
+    try:
+        return json.loads(Path(configured).read_text(encoding="utf-8"))
+    except OSError as error:
+        raise ValueError(f"configuration file could not be read: {error}") from error
+
+
+def _configuration(
+    path: str | None,
+    *,
+    use_managed: bool = True,
+    snapshot_id: str | None = None,
+    snapshot_digest: str | None = None,
+) -> RuntimeConfiguration:
+    raw_document = _configuration_document(path)
+    if not use_managed:
+        return load_runtime_configuration(raw_document)
+    bootstrap_database_path = _bootstrap_database_path(raw_document)
+    try:
+        with SQLiteConfigurationRepository(bootstrap_database_path) as repository:
+            active = (
+                repository.get_revision(snapshot_id)
+                if snapshot_id
+                else repository.get_active_revision()
+            )
+    except RuntimeSnapshotUnavailable:
+        raise
+    except Exception as error:
+        if not snapshot_id:
+            raise
+        raise RuntimeSnapshotUnavailable(
+            f"managed configuration snapshot {snapshot_id!r} is unreadable",
+            revision_id=snapshot_id,
+            digest=snapshot_digest,
+            reason="snapshot_unreadable",
+        ) from error
+    if active is None:
+        if snapshot_id:
+            raise RuntimeSnapshotUnavailable(
+                f"managed configuration snapshot {snapshot_id!r} is unavailable",
+                revision_id=snapshot_id,
+                digest=snapshot_digest,
+                reason="snapshot_missing",
+            )
+        with SQLiteConfigurationRepository(bootstrap_database_path) as repository:
+            if repository.has_managed_activation():
+                marker = repository.last_known_active()
+                raise RuntimeSnapshotUnavailable(
+                    "managed Active configuration is unavailable; "
+                    "restore the last published snapshot or stage a new Draft",
+                    revision_id=marker.get("revisionId") if marker else None,
+                    version=marker.get("revisionSequence") if marker else None,
+                    digest=marker.get("digest") if marker else None,
+                    reason="active_missing",
+                )
+        return load_runtime_configuration(raw_document)
+    if active.schema_version != MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION:
+        raise RuntimeSnapshotUnavailable(
+            f"managed configuration snapshot {active.revision_id!r} schema is unsupported",
+            revision_id=active.revision_id,
+            version=active.revision_sequence,
+            digest=active.digest,
+            reason="schema_unsupported",
+        )
+    if snapshot_id and active.status.value not in {"active", "superseded"}:
+        raise RuntimeSnapshotUnavailable(
+            f"managed configuration snapshot {snapshot_id!r} is not a published revision",
+            revision_id=active.revision_id,
+            version=active.revision_sequence,
+            digest=active.digest,
+            reason="snapshot_not_published",
+        )
+    if snapshot_digest and active.digest != snapshot_digest:
+        raise RuntimeSnapshotUnavailable(
+            f"managed configuration snapshot {active.revision_id!r} digest does not match the Job",
+            revision_id=active.revision_id,
+            version=active.revision_sequence,
+            digest=active.digest,
+            reason="snapshot_digest_mismatch",
+        )
+    canonical = json.dumps(
+        active.document,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    if hashlib.sha256(canonical.encode("utf-8")).hexdigest() != active.digest:
+        raise RuntimeSnapshotUnavailable(
+            f"managed configuration snapshot {active.revision_id!r} digest is corrupt",
+            revision_id=active.revision_id,
+            version=active.revision_sequence,
+            digest=active.digest,
+            reason="digest_corrupt",
+        )
+    try:
+        resolved = load_managed_runtime_configuration(
+            active.document,
+            bootstrap_database_path=bootstrap_database_path,
+        )
+    except Exception as error:
+        raise RuntimeSnapshotUnavailable(
+            f"managed Active configuration {active.revision_id!r} is unavailable: "
+            f"{type(error).__name__}",
+            revision_id=active.revision_id,
+            version=active.revision_sequence,
+            digest=active.digest,
+            reason="runtime_invalid",
+        ) from error
+    return with_managed_snapshot(
+        resolved,
+        snapshot_id=active.revision_id,
+        digest=active.digest,
+    )
+
+
+def _bootstrap_database_path(document: object) -> str:
+    """Read only the bootstrap DB locator before managed authority is known.
+
+    Once an Active revision exists, the rest of the JSON document is not trusted
+    for workflow resolution. This small bootstrap field is needed solely to find
+    the managed revision store and is never treated as active strategy content.
+    """
+    if not isinstance(document, dict):
+        raise RuntimeSnapshotUnavailable("configuration bootstrap is not a JSON object")
+    persistence = document.get("persistence")
+    if not isinstance(persistence, dict):
+        raise RuntimeSnapshotUnavailable("configuration bootstrap persistence is unavailable")
+    value = persistence.get("databasePath", ".mediaflow/mediaflow.sqlite3")
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        raise RuntimeSnapshotUnavailable("configuration bootstrap databasePath is invalid")
+    return value
+
+
+def _task_snapshot_identity(path: str | None, task_id: str) -> tuple[str, str] | None:
+    """Read a persisted Task's configuration pin before workflow bootstrap.
+
+    This is deliberately limited to the two commands that continue existing
+    work.  It does not resolve strategy content or construct Storage/Provider
+    objects; it only preserves the immutable identity already recorded at the
+    Task boundary. Legacy Tasks without a pin fail closed once managed authority
+    has been activated; before activation they remain bootstrap work.
+    """
+    try:
+        document = _configuration_document(path)
+        database_path = _bootstrap_database_path(document)
+        with SQLiteTaskRepository(database_path) as repository:
+            task = repository.get_task(task_id)
+        if task is not None and not task.configuration_snapshot_id:
+            with SQLiteConfigurationRepository(database_path) as configuration_repository:
+                if configuration_repository.has_managed_activation():
+                    raise RuntimeSnapshotUnavailable(
+                        "legacy Task has no managed configuration snapshot pin; "
+                        "recreate the Task under the current Active configuration"
+                    )
+    except RuntimeSnapshotUnavailable:
+        raise
+    except (OSError, ValueError, RuntimeError):
+        return None
+    if task is None or not task.configuration_snapshot_id:
+        return None
+    return task.configuration_snapshot_id, task.configuration_snapshot_digest or ""
+
+
+def _managed_snapshot_identity(path: str | None) -> tuple[str, str] | None:
+    """Resolve the current managed identity for long-lived Job producers."""
+
+    document = _configuration_document(path)
+    database_path = _bootstrap_database_path(document)
+    with SQLiteConfigurationRepository(database_path) as repository:
+        active = repository.get_active_revision()
+        if active is None:
+            if repository.has_managed_activation():
+                raise RuntimeSnapshotUnavailable(
+                    "managed Active configuration is unavailable; scheduler is fail-closed",
+                    reason="active_missing",
+                )
+            return None
+        if active.schema_version != MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION:
+            raise RuntimeSnapshotUnavailable(
+                f"managed Active configuration {active.revision_id!r} schema is unsupported",
+                revision_id=active.revision_id,
+                version=active.revision_sequence,
+                digest=active.digest,
+                reason="schema_unsupported",
+            )
+        if (
+            hashlib.sha256(
+                json.dumps(
+                    active.document,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+            ).hexdigest()
+            != active.digest
+        ):
+            raise RuntimeSnapshotUnavailable(
+                f"managed Active configuration {active.revision_id!r} digest is corrupt",
+                revision_id=active.revision_id,
+                version=active.revision_sequence,
+                digest=active.digest,
+                reason="digest_corrupt",
+            )
+        try:
+            load_managed_runtime_configuration(
+                active.document,
+                bootstrap_database_path=database_path,
+            )
+        except Exception as error:
+            raise RuntimeSnapshotUnavailable(
+                f"managed Active configuration {active.revision_id!r} is unavailable: "
+                f"{type(error).__name__}: {str(error)[:400]}",
+                revision_id=active.revision_id,
+                version=active.revision_sequence,
+                digest=active.digest,
+                reason="runtime_invalid",
+            ) from error
+        return active.revision_id, active.digest
+
+
+def _managed_scheduler_configuration(
+    path: str | None,
+) -> SchedulerConfigurationSnapshot | None:
+    """Resolve schedule definitions and pin from one current runtime revision."""
+
+    configuration = _configuration(path)
+    if not configuration.configuration_snapshot_id:
+        return None
+    return SchedulerConfigurationSnapshot(
+        configuration.configuration_snapshot_id,
+        configuration.configuration_snapshot_digest or "",
+        configuration.automation_schedules,
+        configuration.automation_maximum_active_jobs,
+    )
 
 
 _HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")

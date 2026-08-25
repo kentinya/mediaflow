@@ -61,6 +61,8 @@ class PersistentTask:
     pause_requested: bool = False
     scope_path: str | None = None
     item_limit: int | None = None
+    configuration_snapshot_id: str | None = None
+    configuration_snapshot_digest: str | None = None
 
 
 @dataclass(frozen=True)

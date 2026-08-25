@@ -10,6 +10,7 @@ from mediaflow.application.notification import NotificationPublisher
 from mediaflow.domain.automation import (
     AutomationClaimLost,
     AutomationCommand,
+    AutomationFailureEvidence,
     AutomationJob,
     AutomationJobRepository,
     AutomationJobStatus,
@@ -17,6 +18,7 @@ from mediaflow.domain.automation import (
     CronSchedule,
     IntervalSchedule,
     ScheduleDefinition,
+    SchedulerConfigurationSnapshot,
 )
 from mediaflow.domain.cron import CronExpression
 from mediaflow.domain.notification import NotificationEvent, NotificationEventType
@@ -30,12 +32,27 @@ class AutomationCancelled(RuntimeError):
         self.task_id = task_id
 
 
+class AutomationConfigurationUnavailable(RuntimeError):
+    """Trusted proof that a saved snapshot failed before workflow construction."""
+
+    def __init__(self, evidence: AutomationFailureEvidence) -> None:
+        super().__init__("saved configuration snapshot is unavailable")
+        self.evidence = evidence
+
+
 class AutomationJobService:
     """Queues only the mutation-free workflows admitted by the service boundary."""
 
     def __init__(
-        self, repository: AutomationJobRepository, *, maximum_active_jobs: int = 100
+        self,
+        repository: AutomationJobRepository,
+        *,
+        maximum_active_jobs: int = 100,
+        configuration_snapshot_id: str | None = None,
+        configuration_snapshot_digest: str | None = None,
     ) -> None:
+        if (configuration_snapshot_id is None) != (configuration_snapshot_digest is None):
+            raise ValueError("Job configuration snapshot ID and digest must be provided together")
         if (
             isinstance(maximum_active_jobs, bool)
             or not isinstance(maximum_active_jobs, int)
@@ -45,6 +62,14 @@ class AutomationJobService:
             raise ValueError("maximum active Jobs must be between 1 and 10000")
         self._repository = repository
         self._maximum_active_jobs = maximum_active_jobs
+        self._configuration_snapshot_id = configuration_snapshot_id
+        self._configuration_snapshot_digest = configuration_snapshot_digest
+
+    def bind_configuration_snapshot(self, snapshot_id: str | None, digest: str | None) -> None:
+        if (snapshot_id is None) != (digest is None):
+            raise ValueError("Job configuration snapshot ID and digest must be provided together")
+        self._configuration_snapshot_id = snapshot_id
+        self._configuration_snapshot_digest = digest
 
     def submit(self, command: str, *, limit: int | None = None) -> AutomationJob:
         try:
@@ -64,7 +89,14 @@ class AutomationJobService:
             )
         now = datetime.now(UTC)
         job = AutomationJob(
-            str(uuid4()), parsed, AutomationJobStatus.PENDING, now, now, limit=limit
+            str(uuid4()),
+            parsed,
+            AutomationJobStatus.PENDING,
+            now,
+            now,
+            limit=limit,
+            configuration_snapshot_id=self._configuration_snapshot_id,
+            configuration_snapshot_digest=self._configuration_snapshot_digest,
         )
         if not self._repository.admit_job(job, self._maximum_active_jobs):
             raise AutomationQueueFull(
@@ -132,6 +164,25 @@ class AutomationWorker:
                 completed_at=datetime.now(UTC),
                 task_id=error.task_id,
                 error="workflow cancelled",
+                failure_category=None,
+                failure_durable_state=None,
+                failure_side_effects=None,
+                failure_retry_safe=None,
+                failure_next_action=None,
+            )
+        except AutomationConfigurationUnavailable as error:
+            evidence = error.evidence
+            finished = replace(
+                job,
+                status=AutomationJobStatus.FAILED,
+                updated_at=datetime.now(UTC),
+                completed_at=datetime.now(UTC),
+                error="saved configuration snapshot is unavailable",
+                failure_category=evidence.category,
+                failure_durable_state=evidence.durable_state,
+                failure_side_effects=evidence.side_effects,
+                failure_retry_safe=evidence.retry_safe,
+                failure_next_action=evidence.next_action,
             )
         except Exception as error:
             # External messages may contain credentials. Persist only the exception category.
@@ -141,6 +192,11 @@ class AutomationWorker:
                 updated_at=datetime.now(UTC),
                 completed_at=datetime.now(UTC),
                 error=f"workflow failed ({type(error).__name__})",
+                failure_category=None,
+                failure_durable_state=None,
+                failure_side_effects=None,
+                failure_retry_safe=None,
+                failure_next_action=None,
             )
         else:
             finished = replace(
@@ -150,6 +206,11 @@ class AutomationWorker:
                 completed_at=datetime.now(UTC),
                 task_id=task_id,
                 error=None,
+                failure_category=None,
+                failure_durable_state=None,
+                failure_side_effects=None,
+                failure_retry_safe=None,
+                failure_next_action=None,
             )
         if not self._repository.complete_claimed_job(finished):
             current = self._repository.get_job(job.job_id)
@@ -213,7 +274,14 @@ class IntervalScheduler:
         notifications: NotificationPublisher | None = None,
         *,
         maximum_active_jobs: int = 100,
+        configuration_snapshot_id: str | None = None,
+        configuration_snapshot_digest: str | None = None,
+        configuration_snapshot_resolver: (
+            Callable[[], SchedulerConfigurationSnapshot | tuple[str, str] | None] | None
+        ) = None,
     ) -> None:
+        if (configuration_snapshot_id is None) != (configuration_snapshot_digest is None):
+            raise ValueError("Job configuration snapshot ID and digest must be provided together")
         if (
             isinstance(maximum_active_jobs, bool)
             or not isinstance(maximum_active_jobs, int)
@@ -225,6 +293,9 @@ class IntervalScheduler:
         self._schedules = schedules
         self._notifications = notifications
         self._maximum_active_jobs = maximum_active_jobs
+        self._configuration_snapshot_id = configuration_snapshot_id
+        self._configuration_snapshot_digest = configuration_snapshot_digest
+        self._configuration_snapshot_resolver = configuration_snapshot_resolver
         self._cron = {
             item.schedule_id: CronExpression.parse(item.expression)
             for item in schedules
@@ -233,13 +304,37 @@ class IntervalScheduler:
 
     def tick(self, now: datetime | None = None) -> tuple[AutomationJob, ...]:
         current = now or datetime.now(UTC)
+        resolved = (
+            self._configuration_snapshot_resolver()
+            if self._configuration_snapshot_resolver is not None
+            else (
+                (self._configuration_snapshot_id, self._configuration_snapshot_digest)
+                if self._configuration_snapshot_id and self._configuration_snapshot_digest
+                else None
+            )
+        )
+        schedules = self._schedules
+        maximum_active_jobs = self._maximum_active_jobs
+        snapshot: tuple[str, str] | None
+        if isinstance(resolved, SchedulerConfigurationSnapshot):
+            schedules = resolved.schedules
+            maximum_active_jobs = resolved.maximum_active_jobs
+            snapshot = (resolved.snapshot_id, resolved.snapshot_digest)
+            cron = {
+                item.schedule_id: CronExpression.parse(item.expression)
+                for item in schedules
+                if isinstance(item, CronSchedule)
+            }
+        else:
+            snapshot = resolved
+            cron = self._cron
         queued = []
-        for schedule in self._schedules:
+        for schedule in schedules:
             if not schedule.enabled:
                 continue
             state = self._repository.get_schedule_state(schedule.schedule_id)
             if state is None:
-                initial = self._initial_run(schedule, current)
+                initial = self._initial_run(schedule, current, cron)
                 state = self._repository.initialize_schedule_state(
                     schedule.schedule_id, initial, current
                 )
@@ -253,15 +348,17 @@ class IntervalScheduler:
                 current,
                 limit=schedule.limit,
                 schedule_id=schedule.schedule_id,
+                configuration_snapshot_id=snapshot[0] if snapshot else None,
+                configuration_snapshot_digest=snapshot[1] if snapshot else None,
             )
-            next_run = self._next_run(schedule, current)
+            next_run = self._next_run(schedule, current, cron)
             if self._repository.enqueue_due_schedule(
                 schedule.schedule_id,
                 job,
                 state.next_run_at,
                 next_run,
                 current,
-                self._maximum_active_jobs,
+                maximum_active_jobs,
             ):
                 queued.append(job)
                 if self._notifications:
@@ -282,18 +379,30 @@ class IntervalScheduler:
                         pass
         return tuple(queued)
 
-    def _initial_run(self, schedule: ScheduleDefinition, now: datetime) -> datetime:
+    def _initial_run(
+        self,
+        schedule: ScheduleDefinition,
+        now: datetime,
+        cron: dict[str, CronExpression] | None = None,
+    ) -> datetime:
         if isinstance(schedule, IntervalSchedule):
             return now
         minute = now.astimezone(UTC).replace(second=0, microsecond=0)
-        return self._cron[schedule.schedule_id].next_at_or_after(
+        return (cron or self._cron)[schedule.schedule_id].next_at_or_after(
             minute, ZoneInfo(schedule.timezone)
         )
 
-    def _next_run(self, schedule: ScheduleDefinition, now: datetime) -> datetime:
+    def _next_run(
+        self,
+        schedule: ScheduleDefinition,
+        now: datetime,
+        cron: dict[str, CronExpression] | None = None,
+    ) -> datetime:
         if isinstance(schedule, IntervalSchedule):
             return now + timedelta(seconds=schedule.interval_seconds)
-        return self._cron[schedule.schedule_id].next_after(now, ZoneInfo(schedule.timezone))
+        return (cron or self._cron)[schedule.schedule_id].next_after(
+            now, ZoneInfo(schedule.timezone)
+        )
 
     def run(
         self,

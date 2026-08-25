@@ -1,5 +1,46 @@
 # Strategy recognition configuration
 
+## CURRENT and TARGET configuration authority
+
+**CURRENT (Phase 22.2/22.2R-F2 accepted whole-document slice):** validated JSON selected by
+`MEDIAFLOW_CONFIG` is the compatibility
+`JSON_BOOTSTRAP` authority until an operator explicitly activates a managed revision. The SQLite
+repository now persists canonical whole-document Draft/Validated/Active revisions, validation
+evidence, digest/version identity, and redacted audits. After activation, runtime resolves the
+managed revision and fails closed if it is missing or corrupt; it does not silently fall back to
+JSON. Phase 22.1 Storage CRUD rows remain separate and are not themselves Active workflow config.
+
+The authenticated API and embedded Web Configuration view expose the same lifecycle controls. Configuration
+status and whole-document recovery remain reachable through the bootstrap database locator when a
+managed Active row is missing, corrupt, schema-incompatible, or runtime-invalid; media-work routes
+are intended to fail closed and never fall back to JSON. The Web view can paste/import or edit the complete JSON
+document as a Draft. CLI commands are available for migration/debugging: `config status`, `config
+draft-import`, `config draft-validate REVISION_ID`, and `config activate REVISION_ID --expected-version
+VERSION`.
+
+> Independent review status (2026-08-24): **PASS / CLOSED**. F2
+> publishes resident API identity, queue/execute admission, schedules/status, and config-derived
+> policy views through one immutable request binding. Saved Job revision failures now expose bounded
+> durable state, side effects, retry safety, and recovery action before workflow construction.
+> Independent review reran the Phase 22.2R-F2 code paths and regressions with no Task-scope P0/P1
+> finding. Phase 22.3 then submitted the Local Storage + Library guided slice, but its independent
+> review result is **FIX REQUIRED**. Phase 22.3R now corrects lossless canonical edits, Local
+> absolute-root validation, Web reference/check recovery evidence, and the bounded guarded check.
+
+**TARGET (partially implemented):** Managed Configuration follows Draft → Validate/Test → Validated
+→ Activate → immutable Runtime Snapshot → Engine. Phase 22.2/22.2R implements the whole-document
+slice; Phase 22.3 submitted the bounded Local Storage/Library object slice, and Phase 22.3R is the
+current correction boundary for its independent-review P1 defects;
+remote guided editing/testing, policy object editors, export/import Web workflow, and approved Secret
+Store integration remain future vertical slices. JSON remains bootstrap,
+import/export, migration, and support tooling only after managed activation; it is not a competing
+active authority.
+
+For installations that have not explicitly activated a managed revision, continue using the
+documented JSON bootstrap path below and do not describe Phase 22.1 managed records as active. The
+product journey requirements are in
+[`product-experience.md`](product-experience.md).
+
 The same JSON document is now the Phase 13 runtime configuration. It includes `storages`,
 `resourceLibraries`, `mediaLibraries`, policy catalogs, metadata settings, and `historyPath`.
 Local, OpenList, SMB, AWS S3, Cloudflare R2, and generic S3-compatible Storage definitions are
@@ -35,6 +76,76 @@ Validate the entire reference graph without scanning, provider access, or Storag
 export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
 mediaflow config validate
 ```
+
+### Managed revision lifecycle (Phase 22.2/22.2R-F2 accepted boundary)
+
+The first migration is explicit and reversible at the authority level:
+
+```bash
+mediaflow config status
+mediaflow config draft-import
+mediaflow config draft-validate REVISION_ID
+mediaflow config activate REVISION_ID --expected-version VERSION
+```
+
+The Web Configuration view uses the equivalent authenticated API actions. Import creates a Draft;
+validation runs the same normalized loader and records bounded errors without touching Storage or a
+metadata Provider; activation is an atomic SQLite transaction that supersedes the previous Active
+only after the candidate is Validated. A successful activation displays revision ID, immutable
+`revisionSequence`, optimistic Draft edit `version`, digest, validation/activation times, and changed
+top-level sections. New Tasks, Jobs, and resident Scheduler emissions pin that identity at their
+creation boundary. A Draft edit increments its edit version and invalidates old validation evidence;
+the published sequence never changes.
+
+Validation recomputes the canonical digest and activation recomputes it again immediately before
+publication. The configured `persistence.databasePath` is a bootstrap locator and cannot be changed
+by a managed snapshot. Import, validation, edit, and activation state plus bounded redacted audit
+evidence commit atomically. If Active is unavailable, status and replacement Draft management remain
+available through the bootstrap locator. Missing/corrupt/runtime-invalid current Active cases block
+workflow creation and return durable identity, side-effect, retry-safety, and next-action details.
+Missing/corrupt saved revisions on a claimed Job still collapse to a generic failure and are part of
+F2. A persisted
+unpinned legacy Task is rejected after managed activation rather than silently rebinding to the
+current snapshot.
+
+The configuration-management schema marker is now `4`; the `revision_sequence` column, singleton
+authority pointer, and bounded Local setup-check evidence are additive migrations. The historical
+Runtime schema marker remains unchanged.
+
+If no managed revision has been activated, status reports `JSON_BOOTSTRAP`. Once one has been
+activated, a missing/corrupt Active revision blocks workflow startup and job creation and never falls
+back to the JSON file; authenticated configuration status and replacement recovery remain available.
+Runtime-invalid Active remains unsafe; no media work is created while recovery is pending.
+The whole-document import remains the advanced compatibility path. Phase 22.3 adds Draft-scoped
+guided Local Storage, ResourceLibrary, and MediaLibrary list/create/update/delete/reference views
+below the same revision authority. Guided mutations copy the canonical Draft, preserve all other
+policy sections, use optimistic versions, and refuse referenced deletes. Remote Storage entries are
+redacted/read-only in this slice. The Web check action is deliberately bounded: it uses the existing
+runtime Storage factory with a read-only clone, checks only Exists/Stat for one enabled source and
+destination root, persists exact revision/version/digest evidence, and never lists or creates a root.
+Checked activation requires current successful evidence; raw/admin activation remains a labelled
+backward-compatible unchecked path. After activation the existing `preview` Job endpoint is used,
+so the Job/Worker/Task pin remains the activated revision identity. This implementation is pending
+Phase 22.3R correction and another independent review; remote guided setup, policy editors, and export
+UI remain TARGET.
+
+### Phase 22.3 guided API surface (CURRENT implementation, FIX REQUIRED)
+
+The authenticated API exposes:
+
+```text
+GET    /api/v1/configuration/revisions/{id}/objects
+POST   /api/v1/configuration/revisions/{id}/objects/{storages|resourceLibraries|mediaLibraries}
+PUT    /api/v1/configuration/revisions/{id}/objects/{kind}/{objectId}
+DELETE /api/v1/configuration/revisions/{id}/objects/{kind}/{objectId}
+POST   /api/v1/configuration/revisions/{id}/local-setup-check
+POST   /api/v1/configuration/revisions/{id}/activate  {expectedVersion, checked:true}
+```
+
+Every mutating/check request is authenticated and version-bound. Check evidence is redacted and
+bounded; a stale or failed check cannot authorize checked activation. The embedded Web Configuration
+view uses these endpoints and retains the raw JSON editor as an explicitly advanced compatibility
+path. It does not construct Storage, validate policy semantics, or implement a second runtime.
 
 Configuration-driven discovery uses `ResourceLibrary.storagePath` as the path inside its Storage;
 `displayRootPath` is only the optional local/display binding used by positional-path commands.
@@ -913,8 +1024,10 @@ settings for MOVE, COPY, HARDLINK, and SYMLINK.
 
 ## Read-only configuration visibility
 
-The API builds a secret-free status snapshot once after the production configuration has loaded and
-validated. A Principal with the existing `read` permission can retrieve it at:
+Before managed activation, the API builds a secret-free status snapshot from the validated bootstrap
+configuration. After managed activation, each non-configuration request captures one immutable API
+runtime binding built from the current validated Active revision. A Principal with the existing
+`read` permission can retrieve its status at:
 
 ```text
 GET /api/v1/system/status
@@ -925,10 +1038,15 @@ reports `total` and `truncated`, and returns at most 100 entries. Safe fields in
 operation types, enabled/read-only flags, counts, and downstream policy reference IDs. It never
 contains root/display paths, scan extensions or rule operands, template bodies, classification
 paths, URLs/endpoints, environment-variable names or values, webhook data, credentials, or arbitrary
-Storage options. The System UI uses the same endpoint and offers explicit refresh only.
+Storage options. The System UI uses the same endpoint and offers explicit refresh only. The binding
+also owns the same revision's Job/execute admission, execution-authorization TTL, schedules,
+stale-job threshold, MetadataPolicy references, and Dashboard library counts. Activation validates
+and publishes a complete replacement binding; a request sees either the complete prior binding or
+the complete new binding, never a new ID beside stale admission settings. An unhealthy managed
+Active blocks media work while configuration recovery routes remain available.
 
-The snapshot is not reloaded per request. After a configuration change, continue to run
-`mediaflow config validate`, then restart the API process to publish the newly validated snapshot.
+The whole-document lifecycle remains Draft → Validate → explicit Activate. Editing JSON after
+managed activation does not change Active runtime and restarting is not an activation substitute.
 
 ## Durable Storage configuration CRUD foundation
 

@@ -47,6 +47,10 @@ export MEDIAFLOW_WEBHOOK_SECRET="<independent-random-webhook-secret>"
 mediaflow analyze "/path/to/movie.mkv"
 mediaflow analyze --offline "/path/to/movie.mkv"
 mediaflow config validate
+mediaflow config status
+mediaflow config draft-import
+mediaflow config draft-validate REVISION_ID
+mediaflow config activate REVISION_ID --expected-version VERSION
 mediaflow dashboard --recent-limit 10
 mediaflow files list --limit 100
 mediaflow files list --resource-library source --scan-status ready --query movie
@@ -153,6 +157,22 @@ filename uses native server-side Move followed by Rename; it does not download/u
 Cross-storage MOVE streams Copy, verifies the destination, and only then deletes the source.
 
 The developer strategy inspector remains available as `strategy-test`.
+
+`config draft-import` stages the current JSON as Draft; validation and activation are separate
+explicit steps. Before the first activation, `config status` reports `JSON_BOOTSTRAP`. After
+activation, the managed revision ID/digest is the workflow runtime authority, new Tasks/Jobs and
+resident Scheduler emissions pin that identity, and a missing/corrupt/runtime-invalid Active revision
+fails closed for media work with structured last-known identity, side-effect, retry-safety, and recovery
+details. The resident API captures one immutable Active binding per request, so queue and protected
+execute admission, schedules/status, and Job pins cannot mix revisions. A queued Job whose saved
+published revision is unavailable fails before workflow construction and exposes actionable,
+secret-free recovery evidence in API/Web detail. The Configuration tab in the authenticated Operator UI exposes status, whole-document
+import/edit, validation, diff, activation, and replacement recovery actions through the bootstrap
+database locator. Phase 22.3 now adds Local Storage/ResourceLibrary/MediaLibrary Draft object forms,
+direct reference impact/deletion blocking, redacted remote read-only summaries, bounded read-only
+setup checks, checked activation, and a first Preview Job action. Remote/provider and policy object
+editors remain out of scope and independent review of the Phase 22.3 implementation is pending. The
+F2 atomic-binding and pinned-revision recovery correction passed independent review on 2026-08-24.
 
 ## Configuration and architecture
 
@@ -485,11 +505,21 @@ operation history remains compatible.
 
 ## Current milestone
 
-Phase 22 configuration management has an internal durable Storage CRUD foundation. It validates the
-supported Local/SMB/OpenList/S3/R2/S3-compatible shapes, keeps credentials environment-owned,
-records optimistic versions and redacted Before/After audits in SQLite, and blocks Storage deletion
-when a Resource/Media Library reference exists. This repository is not yet exposed through JSON
-runtime loading, API/UI/CLI, adapter construction, or media workflows.
+Phase 22.3 now adds a bounded guided Local setup slice on top of the managed whole-document
+authority. The authenticated Configuration view/API can edit Local Storage, ResourceLibrary, and
+MediaLibrary objects inside a Draft, show direct references, refuse referenced deletes, preserve and
+redact remote objects, run an exact-version read-only Local Exists/Stat check, and perform checked
+activation. After activation the existing `preview` DryRun Job is queued and carries the same
+revision ID/digest into Worker/Task/Result. Independent review marked the slice **FIX REQUIRED** for
+lossless large-section edits, Local absolute-root validation, Web reference/check recovery visibility,
+and bounded probe execution. Phase 22.3R is the current correction; remote guided editing and policy
+editors remain future work. Phase 22.1's separate Storage CRUD foundation
+is not a competing runtime authority.
+
+For Local guided setup, Storage `rootPath` is host-absolute while ResourceLibrary `storagePath` and
+MediaLibrary `rootPath` are Storage-relative. The Web action never creates roots or calls a Storage
+mutation. Use the raw JSON editor only as the explicitly labelled compatibility path for remote or
+policy changes.
 
 The authenticated operator console now includes a read-only **System** tab. It is backed by a
 precomputed `GET /api/v1/system/status` snapshot and shows bounded Storage/library/policy wiring plus

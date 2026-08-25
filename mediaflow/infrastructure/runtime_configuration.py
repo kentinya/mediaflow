@@ -4,7 +4,7 @@ import os
 import posixpath
 import re
 import urllib.parse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from mediaflow.application.strategy_test import (
@@ -71,6 +71,11 @@ class RuntimeConfiguration:
     automation_maximum_active_jobs: int = 100
     automation_stale_job_age_seconds: int = 3600
     workflow_retry_policy: WorkflowRetryPolicy = WorkflowRetryPolicy()
+    # Configuration authority is explicit so a managed Active snapshot can never
+    # be mistaken for the JSON compatibility bootstrap.
+    configuration_authority: str = "JSON_BOOTSTRAP"
+    configuration_snapshot_id: str | None = None
+    configuration_snapshot_digest: str | None = None
 
     def create_storages(
         self,
@@ -230,6 +235,107 @@ class RuntimeConfiguration:
             )
             for definition in definitions
         )
+
+
+@dataclass(frozen=True)
+class ManagementBootstrapConfiguration:
+    """Minimal recovery authority loaded without workflow configuration.
+
+    This boundary contains only the immutable runtime database locator and the
+    environment-owned API credential definitions.  It deliberately has no
+    Storage, strategy, library, schedule, or provider content.
+    """
+
+    database_path: str
+    api_token_env: str | None = None
+    api_principals: tuple[ApiPrincipalDefinition, ...] = ()
+
+    def resolve_api_principals(self) -> tuple[ResolvedApiPrincipal, ...]:
+        definitions = self.api_principals
+        if not definitions and self.api_token_env:
+            definitions = (
+                ApiPrincipalDefinition("legacy-admin", self.api_token_env, (ApiRole.ADMIN,)),
+            )
+        resolved = []
+        for definition in definitions:
+            if not definition.enabled:
+                continue
+            token = os.environ.get(definition.token_env)
+            if not token:
+                raise ValueError(
+                    f"API principal {definition.principal_id!r} requires environment "
+                    f"variable {definition.token_env}"
+                )
+            resolved.append(
+                ResolvedApiPrincipal(definition.principal_id, token, definition.permissions)
+            )
+        if not resolved:
+            raise ValueError("API requires at least one enabled configured principal")
+        return tuple(resolved)
+
+    def api_credential_statuses(self) -> tuple[ApiCredentialStatus, ...]:
+        definitions = self.api_principals
+        if not definitions and self.api_token_env:
+            definitions = (
+                ApiPrincipalDefinition("legacy-admin", self.api_token_env, (ApiRole.ADMIN,)),
+            )
+        return tuple(
+            ApiCredentialStatus(
+                definition.principal_id,
+                definition.token_env,
+                definition.roles,
+                definition.enabled,
+                bool(os.environ.get(definition.token_env)),
+            )
+            for definition in definitions
+        )
+
+
+def load_management_bootstrap(document: Any) -> ManagementBootstrapConfiguration:
+    """Load only the locator and management credential boundary.
+
+    This function intentionally does not call the complete runtime loader.  It
+    is used only to keep authenticated configuration recovery reachable while a
+    managed Active workflow snapshot is unavailable.
+    """
+
+    if not isinstance(document, dict):
+        raise ValueError("configuration bootstrap must be a JSON object")
+    persistence = document.get("persistence", {})
+    if not isinstance(persistence, dict):
+        raise ValueError("configuration bootstrap persistence must be an object")
+    database_path = persistence.get("databasePath", ".mediaflow/mediaflow.sqlite3")
+    if not isinstance(database_path, str) or not database_path.strip() or "\x00" in database_path:
+        raise ValueError("configuration bootstrap databasePath is invalid")
+    api = document.get("api", {})
+    if not isinstance(api, dict):
+        raise ValueError("configuration bootstrap api must be an object")
+    api_token_env = api.get("tokenEnv")
+    if api_token_env is not None and (
+        not isinstance(api_token_env, str) or not _ENV_NAME.fullmatch(api_token_env)
+    ):
+        raise ValueError("API tokenEnv must be a valid environment variable name")
+    raw_principals = api.get("principals", [])
+    if not isinstance(raw_principals, list) or not all(
+        isinstance(item, dict) for item in raw_principals
+    ):
+        raise ValueError("API principals must be an array of objects")
+    if api_token_env is not None and raw_principals:
+        raise ValueError("API tokenEnv cannot be combined with principals")
+    principals = tuple(_api_principal(item) for item in raw_principals)
+    if len(principals) > 64:
+        raise ValueError("API supports at most 64 principals")
+    principal_ids = [item.principal_id for item in principals]
+    token_envs = [item.token_env for item in principals]
+    if len(principal_ids) != len(set(principal_ids)):
+        raise ValueError("API principal IDs must be unique")
+    if len(token_envs) != len(set(token_envs)):
+        raise ValueError("API principal tokenEnv names must be unique")
+    return ManagementBootstrapConfiguration(
+        database_path,
+        api_token_env,
+        principals,
+    )
 
 
 def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
@@ -447,6 +553,47 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         maximum_active_jobs,
         stale_job_age_seconds,
         retry,
+    )
+
+
+def load_managed_runtime_configuration(
+    document: Any,
+    *,
+    bootstrap_database_path: str,
+) -> RuntimeConfiguration:
+    """Load a managed document and enforce immutable bootstrap locators.
+
+    This is the single validator shared by configuration activation, API
+    refresh, CLI runtime resolution, and resident producers.  It performs
+    normalization/reference validation only; it never constructs Storage or
+    Provider adapters.
+    """
+
+    if not isinstance(bootstrap_database_path, str) or not bootstrap_database_path.strip():
+        raise ValueError("bootstrap databasePath is required")
+    resolved = load_runtime_configuration(document)
+    if resolved.database_path != bootstrap_database_path:
+        raise ValueError(
+            "managed configuration cannot change immutable persistence.databasePath; "
+            f"expected {bootstrap_database_path!r}"
+        )
+    return resolved
+
+
+def with_managed_snapshot(
+    configuration: RuntimeConfiguration,
+    *,
+    snapshot_id: str,
+    digest: str,
+) -> RuntimeConfiguration:
+    """Attach the immutable Active identity consumed by new work."""
+    if not snapshot_id or not digest:
+        raise ValueError("managed configuration snapshot identity is required")
+    return replace(
+        configuration,
+        configuration_authority="MANAGED",
+        configuration_snapshot_id=snapshot_id,
+        configuration_snapshot_digest=digest,
     )
 
 

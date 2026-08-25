@@ -5,9 +5,11 @@
 
 > 当前实现状态与最终产品范围以根目录
 > [《影视媒体资源自动整理系统需求规格说明书》](../影视媒体资源自动整理系统需求规格说明书.md)
-> 为准；分阶段交付计划见 [roadmap.md](roadmap.md)。截至 2026-08-23，核心 CLI、持久任务、
+> 为准；规范化用户旅程见 [product-experience.md](product-experience.md)，分阶段交付计划见
+> [roadmap.md](roadmap.md)。截至 2026-08-24，核心 CLI、持久任务、
 > 目标冲突确认、元数据/分类复核、可选附件文件集合和全 Storage JSON Runtime 已完成；
-> 服务 API 已具备 RBAC、审计、凭证运维护栏，以及复核与 Task/Job/Result 只读 Web UI；
+> 服务 API 已具备 RBAC、审计、凭证运维护栏；Web 已覆盖操作台、文件列表/筛选/详情、
+> 复核与 Task/Job/Result 只读视图，以及 re-recognize/re-match/re-plan 等有界请求入口；
 > 大型运行历史、调度审计与通知投递支持稳定有界的双向游标分页；运行日志具备默认关闭、
 > 结构化脱敏持久化、显式保留清理，以及本地/API/Web 双向游标有界查询；
 > SQLite Runtime 支持不覆盖的在线一致性备份与只读完整性/Schema 校验；安装 wheel 已由
@@ -32,15 +34,80 @@
 > Phase 19 有界生产发布 profile 已通过隔离 Local、Samba 4.20.6、OpenList v4.2.2 Local
 > driver 和 MinIO S3-compatible 验收，包括 128 文件、128 MiB 流式对象与中断恢复。该结论
 > 不认证 AWS S3、Cloudflare R2、第三方 OpenList driver、远端原子发布、多小时 soak、进程终止
-> 或主机断电；精确证据与非声明边界见 [storage-acceptance.md](storage-acceptance.md)。下一开发
-> Phase 20.1 NFO Parser 已完成：NFO 通过 Storage 只读有界读取，安全 XML 解析后作为本地证据
+> 或主机断电；精确证据与非声明边界见 [storage-acceptance.md](storage-acceptance.md)。随后完成的
+> Phase 20.1 NFO Parser 通过 Storage 只读有界读取，安全 XML 解析后作为本地证据
 > 合并，不生成 MediaIdentity、不访问网络且不修改 Storage。Phase 20.2 Hash 重复策略也已完成：
 > 默认 NONE 零读取，FAST 为有界前缀证据，FULL 为受大小限制的完整流式证据；任何不确定结果
 > 都进入冲突且不执行变更。Phase 20.3 已增加默认关闭、仅限同次调用已记录效果的有界
 > Organizer Rollback。Phase 20.4 已增加持久、协作式 Task pause/resume；Phase 20.5 已增加
 > 默认关闭、仅限执行前只读阶段规范化暂时错误的有界重试，且绝不自动重放 Organizer 变更或
-> 不确定结果。Phase 20.6 已完成默认关闭、有界且未知内容失败闭合的安全源目录清理；下一边界
-> 为 Phase 21.0 人工处理闭环的持久决策基线。
+> 不确定结果。Phase 20.6 已完成默认关闭、有界且未知内容失败闭合的安全源目录清理；Phase 21
+> 已完成其有界人工复核、批量请求、文件目录与部分 Web 动作范围。Phase 22.1 已完成内部 Storage
+> Managed Configuration CRUD 基础。Phase 22.2/22.2R-F2 已建立 whole-document Draft/Validated/Active
+> Snapshot 的 API/Web/CLI 生命周期、原子激活、Task/Job 身份字段、fail-closed 运行时刷新、结构化
+> 冲突和恢复基础。F2 将 API identity/admission/gate/status 收敛到同一不可变 binding，并为已保存
+> Job revision 不可用提供可操作证据。2026-08-24 独立验收已 PASS/CLOSED。Phase 22.3 已提交
+> Local Storage + ResourceLibrary + MediaLibrary Draft/API/Web 旅程实现，但独立复核结果为
+> **FIX REQUIRED**：存在目标配置段截断丢失、Local 绝对路径未强制、Web 引用/陈旧与失败
+> check 证据不可见、check 边界不完整等 P1。当前边界是 Phase 22.3R 聚焦修复。
+> 远端/策略对象编辑、Provider 测试和完整配置编辑旅程仍未完成。
+
+---
+
+# UX 需求基线
+
+以下稳定 ID 约束所有面向操作员的需求。详细旅程及 CURRENT/TARGET 解释由
+`docs/product-experience.md` 统一定义，本节不复制其全文。
+
+## UX-001 纵向用户完成
+
+每个用户功能必须覆盖用户目标、入口、可见状态、可用动作、成功、失败和恢复。仅完成 Domain、
+Repository、Application、迁移或内部测试不得标记操作员功能完成。
+
+## UX-002 可操作失败
+
+失败必须显示受影响项、阶段、稳定错误类别、已知副作用、重试安全性和明确恢复动作。仅提供
+“Retry”按钮或原始异常文本不满足恢复要求。
+
+## UX-003 逐项恢复
+
+批处理必须为每个 TaskItem 保留独立状态、检查点、结果、已完成操作和恢复路径。成功项不得重放，
+一个项目的决策不得改变另一个项目，未知真实执行结果不得自动重试。
+
+## UX-004 运行时与配置一致性
+
+界面显示 Active 的配置必须是运行时实际消费的不可变快照，并可识别其版本/摘要和激活时间。
+Draft/Validated/Active 状态不得混淆；激活必须原子，失败时保留旧 Active。
+
+## UX-005 可解释决策
+
+Recognition、Metadata、Naming、Classification、Plan、冲突和执行决策必须提供有界、脱敏、
+可审计的输入证据、匹配规则/评分和结果原因，不得仅展示最终值或隐藏默认。
+
+## UX-006 变更前安全预览
+
+任何可能修改媒体的操作必须先提供与实际计划一致的 Preview/DryRun，默认不覆盖、不删除、不
+隐式回退；真实执行需要独立明确授权，且仅 OrganizerExecutor 可调用 Storage mutation。
+
+## UX-007 Web/API 能力一致性
+
+Web 是 V1 最终主要管理面。Web 与 API 对同一旅程必须复用相同 Application 行为、权限、校验、
+并发控制、状态和审计。CLI-only 不能满足最终 Web 管理需求，但可继续承担管理、调试和自动化。
+
+## UX-008 配置生命周期可见性
+
+Web/API 必须显示 `JSON_BOOTSTRAP` 或 `MANAGED` authority，以及 Draft/Validated/Active revision
+的版本、digest、验证/激活时间和有界错误。Active 只能表示已显式发布且运行时实际消费的快照。
+
+## UX-009 配置激活安全性
+
+导入、验证和激活不得访问媒体 Storage 或 Metadata Provider。激活必须原子、审计、并发安全，
+陈旧或失效验证不得发布，失败保留旧 Active 和可修正 Draft；快照缺失/损坏必须 fail closed。
+
+## UX-010 工作固定快照
+
+新 Task/Job 必须记录创建边界解析出的 configuration snapshot ID/digest；在途工作不得因后续
+激活而静默切换。DryRun/Preview 必须显示同一 pin，队列执行按该身份恢复。
 
 ---
 
@@ -3029,12 +3096,30 @@ Schedule
 System Settings
 ```
 
-> 当前实现（Phase 22.0）：已完成配置管理架构决策与领域骨架；JSON 仍为运行时输入，
-> SQLite 将承载配置变更/审计，凭证保持环境或 Secret Store 归属。
+> 当前实现（Phase 22.0）：已完成配置管理架构决策与领域骨架；JSON 仍为首次激活前的运行时
+> bootstrap 输入，SQLite 承载 managed revision 变更/审计，凭证保持环境或 Secret Store 归属。
 > 当前实现（Phase 22.1）：新增内部 durable Storage 配置模型、校验、CRUD 服务与 SQLite
 > 变更/引用/审计存储；支持 Local/SMB/OpenList/S3/R2/S3-compatible，凭证仅允许环境变量名，
-> 字面与嵌套 secret 字段被拒绝。该写入口尚未接入 JSON 加载、API、Web UI、CLI、调度器、
-> Storage 构造或媒体工作流。
+> 字面与嵌套 secret 字段被拒绝。该对象级写入口仍未接入运行时配置编辑旅程；whole-document
+> Managed Configuration 的 API/Web/CLI 生命周期由 Phase 22.2/22.2R 提供基础。2026-08-24
+> 的独立验收曾发现 pre-F1 implementation 的 repeated-request fail-open、Scheduler 内容/identity
+> 不一致及陈旧编辑恢复缺口；F1 已修复这些具体缺口，但后续独立验收又发现 resident API 在激活
+> 后只更新 snapshot identity、未原子更新准入/execute 行为，以及旧 Job revision 失败不可操作。
+> Phase 22.2R-F2 聚焦修复已经独立验收 PASS/CLOSED；Phase 22.3 是当前开发边界。
+>
+> 当前实现（Phase 22.2/22.2R-F2 已验收，有界 whole-document；Phase 22.3 Local slice
+> 独立复核 FIX REQUIRED）：Managed Configuration
+> 已经经过 Draft → Validate/Test → Validated → 显式 Activate，持久化生成不可变 Runtime Snapshot；
+> resident API 现在按请求获取一个完整不可变 binding，identity、准入、execute gate、schedule/status 和
+> MetadataPolicy 参考不会跨 revision 混用。现有 authority、digest、审计和缺失/损坏/运行时不可消费 Active 的恢复
+> 约束已接入 API/Web/CLI。F1 修复了重复请求 fail-closed、同快照 Scheduler 消费、Pinned
+> Worker 和陈旧 Draft 冲突；F2 进一步修复 API 原子运行时绑定、旧快照 Job 可操作失败并补齐强制
+> 并发/execute pin/零 I/O 证据。Phase 22.3 提交了 Local Storage/Library 对象编辑、引用影响、
+> 有界 setup check 与 checked activation，但当前 Phase 22.3R 仍需修复独立复核发现的截断丢失、
+> 路径及 Web/check 恢复证据 P1；远端/策略对象、Provider 测试和 Secret Store 仍是目标架构。
+>
+> 目标架构（尚未实现）：Managed Activation 建立后，JSON 仅用于 bootstrap、导入导出和迁移，
+> 不再是竞争性的 Active source of truth，并继续扩展为完整配置对象纵向旅程。
 
 ---
 

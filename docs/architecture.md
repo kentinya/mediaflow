@@ -970,8 +970,9 @@ Overwrite requires an overwrite-enabled policy plus a fresh persisted high-risk 
 Only OrganizerExecutor consumes the resulting authorized plan and remains the sole mutation
 boundary. Decision audit records are append-only, and invalid destinations cannot be overridden.
 
-Metadata and classification review/resolution APIs are complete; a graphical UI remains deferred.
-Unresolved conflicts/reviews block execution, and silent delete remains unavailable.
+Metadata and classification review/resolution APIs and bounded operator UI views exist. The complete
+in-context decision → continuation → result/recovery Web journey remains incomplete. Unresolved
+conflicts/reviews block execution, and silent delete remains unavailable.
 
 ## Minimal operator Web UI
 
@@ -1427,12 +1428,13 @@ Phase 21.26 completes the Phase 21 bounded file-detail actions with `POST /api/v
 re-match` and a read-only Files UI form for pending MetadataCorrectionReview. The accepted Phase 21
 manual workflow scope is now closed; Phase 22 configuration management is the next boundary.
 
-## Configuration management architecture decision and domain skeleton
+## Configuration architecture: CURRENT
 
-Phase 22.0 establishes that JSON remains the validated runtime input, SQLite will become the durable
-configuration-change/audit store, and credentials remain environment- or Secret Store-owned. A
-minimal domain skeleton classifies configuration object families and defines reference/audit
-models without enabling CRUD yet.
+Through Phase 22.2/22.2R, JSON remains the compatibility bootstrap until an operator explicitly activates
+the first managed revision. SQLite now also persists canonical managed Draft/Validated/Active
+revisions, validation evidence, immutable digest/version identity, and redacted lifecycle audits.
+Before activation the authority is explicitly `JSON_BOOTSTRAP`; a Phase 22.1 Storage CRUD row is not
+Active. Credentials remain environment- or approved Secret Store-owned.
 
 ### Phase 22.1 Storage configuration CRUD foundation
 
@@ -1447,6 +1449,153 @@ configuration-object, reference, and redacted audit records under a separate
 `configuration_management` schema marker. Storage deletion and reference counting run in one SQLite
 write transaction. A Resource/Media Library reference therefore blocks deletion by default.
 
-This repository is deliberately not connected to the production JSON loader, API, Web UI, CLI,
-scheduler, Storage construction, scanning, planning, or organizing. Runtime JSON remains the active
-source of truth, and configuration changes cannot yet be made through an operator interface.
+The Storage object CRUD remains a separate foundation and is deliberately not treated as the source
+of workflow truth. It is not itself the object-by-object configuration editor.
+
+### Phase 22.2 / 22.2R Active Configuration Snapshot vertical slice
+
+`ManagedConfigurationService` imports a canonical JSON document as Draft, validates it with the
+existing normalized runtime loader without constructing Storage or Providers, and atomically
+publishes one Active revision through `SQLiteConfigurationRepository`. The authenticated
+`/api/v1/configuration` routes and the embedded Configuration view expose authority, lifecycle,
+digest, bounded validation errors, redacted revision detail, diff sections, and explicit actions.
+The local CLI additionally supports `config status`, `config draft-import`, `config draft-validate`,
+and `config activate` for migration/debugging.
+
+Runtime resolution reads the managed revision identity at process/work boundary. A missing or corrupt
+managed revision fails closed; it does not silently fall back to JSON. New PersistentTask and
+AutomationJob rows carry `configuration_snapshot_id` and `configuration_snapshot_digest`, and queued
+Jobs resolve their pinned revision when executed. Activation itself creates no Storage adapter,
+Provider request, scan, plan, or mutation. Full object CRUD and connectivity-test journeys remain
+future vertical slices.
+
+The 22.2R implementation makes the published revision sequence (`revisionSequence`) distinct from the
+optimistic Draft edit token (`version`). SQLite maintains an explicit last-known Active authority
+pointer, and the shared runtime validator checks the immutable bootstrap database locator before
+validation and again immediately before activation. Import, validation, edit, and activation persist
+their lifecycle state and bounded redacted audit evidence in one transaction. Configuration status and
+whole-document recovery use the bootstrap locator when Active is unavailable. The Phase 22.2R-F1
+repair validates the complete runtime before publishing an identity, keeps repeated requests
+fail-closed, returns structured optimistic conflicts, resolves Scheduler definitions and identity from
+one revision, and lets a Worker load a queued Job's saved revision from the immutable locator. The
+production-entry-point Web → Worker → Task/Result pin regression is present. F2 replaces the
+resident API's identity-only refresh with a request-captured immutable binding containing the revision
+ID/digest, queue and protected-execute admission, execution-authorization TTL, stale-job threshold,
+schedules, system status, MetadataPolicy references, and Dashboard counts. Candidate bindings are
+fully normalized before one pointer is published, and refreshes are serialized so concurrent requests
+observe a complete old or new binding. Saved Job revision failures cross the Worker boundary as
+bounded trusted evidence and are persisted for API/Web recovery display. Legacy unpinned work is
+rejected after managed authority exists. F2 passed independent review on 2026-08-24.
+The outer Worker command itself reads only the immutable database locator and management bootstrap
+boundary before claiming; it does not construct Storage or Providers until the claimed Job's saved
+snapshot is selected.
+
+The snapshot identity columns are additive compatibility migrations on the existing Runtime schema;
+the historical runtime schema marker remains `22` so accepted backup/restore and migration evidence
+is not rewritten. Fresh and older databases both receive the columns by presence checks, and Job
+inserts use an explicit column list so historical ALTER-table column order cannot corrupt authority
+fields. The separate configuration-management schema marker is `4`; its revision sequence, singleton
+authority pointer, and bounded Local setup-check evidence are additive and do not rewrite the Runtime
+marker.
+
+### Phase 22.3 Local Storage + Library guided slice (CURRENT implementation; R4-F1 accepted)
+
+`ConfigurationObjectService` is a narrow application adapter over the same managed whole-document
+Draft. It edits only `storages`, `resourceLibraries`, and `mediaLibraries`, preserving all other
+policy/catalog sections through canonical normalization. Local guided Storage accepts `id`, `name`,
+`type=local`, host-absolute `rootPath`, and `readOnly`; ResourceLibrary and MediaLibrary accept only
+runtime-consumed fields and enforce Storage-relative paths. Existing remote Storage values are
+recursively redacted and read-only. Direct inbound references are calculated for Storage <-
+Resource/Media, Media <- Classification result, and Resource <- explicit Recognition condition; delete
+is rejected atomically while references remain.
+
+The Local setup check is an explicit API/Web action bound to the exact Draft revision ID, edit version,
+and digest. It clones selected Local Storage entries to read-only, constructs adapters through the
+existing `RuntimeConfiguration.create_storages` factory, and performs only `Exists`/`Stat` against
+one enabled ResourceLibrary and MediaLibrary root. Phase 22.3R3 places loader selection, Storage
+construction, and all four probes inside one per-service capacity slot and one overall deadline.
+Selected adapters are wrapped by the shared fail-fast read-only guard. Timeout does not claim to
+cancel a running Python/OS call: the slot remains occupied until that worker actually exits and the
+request evidence is durable; saturated requests fail immediately and do not overwrite the in-flight
+check's persisted evidence. Late worker results cannot publish success. The check does not call
+`List`, create roots, or invoke any adapter mutation. Bounded evidence includes invariant
+`sideEffects=none`/`retrySafe=true`, is marked stale after an edit, and is required by checked
+activation. The submitted R3-F1 correction validates evidence paths before probing, normalizes an
+ordinary Future/Worker failure, and completes the response side of the capacity lease from one outer
+`finally`, including repository-save failure. A failed Validated revision can be edited through the
+same guided/raw Web path and returns to Draft for explicit revalidation and retry. Independent R3-F1
+review accepted this exception-safe evidence/capacity correction on 2026-08-25. The submitted R4 Web
+projection reads the existing revision-bound evidence from
+`ConfigurationObjectService.revision_detail()` after reload and renders it independently of revision
+status. Evidence is current only when revision ID, version, digest, and the persisted stale flag all
+agree. Draft cannot run the check; revalidated stale evidence cannot checked-activate; exact current
+passed evidence may enable checked activation. Rendering performs no API mutation or background
+retry. Independent R4-F1 review accepted this persistence/reload boundary and the corrected shared
+Web selection: only enabled libraries referencing Local Storage can expose the Run action, and those
+same objects supply the request IDs. Activation itself remains repository-only; after activation the
+existing Preview Job endpoint carries the immutable snapshot pin. The combined Worker pin acceptance
+proof remains open Phase 22.3 work.
+Remote setup and policy editors remain TARGET.
+
+## Configuration architecture: TARGET (partially implemented; remaining work explicit)
+
+The long-term architecture is a single activation authority:
+
+```text
+Managed Configuration
+→ Draft
+→ Validate / Test
+→ Validated version
+→ Explicit atomic Activate
+→ Immutable Runtime Snapshot
+→ Engine
+```
+
+Managed object edits create a new Draft version and never mutate the Active snapshot. Validation and
+test evidence bind to the exact draft version; any later edit invalidates that evidence. Activation
+validates the complete reference graph, atomically publishes one immutable snapshot, records its
+version/digest and Before/After audit, and leaves the previous Active snapshot intact on failure.
+Runtime components must receive or resolve that snapshot explicitly. Web/API status showing Active
+must be generated from the same snapshot identity actually consumed by engines and workers.
+
+JSON remains supported for bootstrap, import/export, migration, disaster recovery input, and support
+bundles. After managed activation exists, JSON is not a second live authority and editing a
+file cannot silently diverge from or replace Active configuration. Credentials remain outside normal
+configuration payloads and are resolved only at the infrastructure boundary.
+
+Phase 22.2/22.2R implements much of the lifecycle, integrity, recovery boundary, and work-pinning
+foundation for whole-document revisions. F1 fixed repeated invalid-Active bypass, Scheduler
+same-snapshot loading, and valid older pinned continuation. F2 now implements atomic resident API
+binding and actionable missing/corrupt pinned-revision failures and has passed independent review.
+This migration is not the complete configuration product.
+Remote/provider and policy object CRUD, broader dependency impact editing, provider connectivity tests,
+export/import UI, secret-store integration, and user administration remain future work. Until an explicit activation exists, the product labels JSON as
+`JSON_BOOTSTRAP`; after activation the managed snapshot is the sole workflow authority and JSON is
+not consulted for fallback.
+
+## Per-item recovery architecture: CURRENT
+
+Task, TaskItem, stage/status, Result, completed-operation evidence, reviews, conflicts, and several
+explicit retry/resume requests are durable. Recovery remains fragmented across commands and review
+flows. A generic Processing Checkpoint and unified stage-aware recovery strategy are not implemented;
+retry/resume alone must not be described as complete recovery.
+
+## Per-item recovery architecture: TARGET (not implemented)
+
+```text
+Task
+→ TaskItem
+→ Processing Checkpoint
+→ stage-aware Recovery Strategy
+```
+
+Each TaskItem checkpoint records the last durable stage, input/snapshot identity, completed and
+verified effects, uncertain effects, blocking review/conflict, retry safety, and allowed recovery
+actions. A stage-aware strategy chooses among re-evaluate, continue, re-plan, compensate, investigate,
+ignore, or refuse unsafe replay. Batch orchestration operates on items independently and never
+replays successful siblings. Web/API expose the same checkpoint and actions; logs are supporting
+evidence, not the only recovery interface.
+
+This target does not move business logic into Task orchestration and does not authorize automatic
+replay of uncertain Organizer operations. OrganizerExecutor remains the only Storage mutation
+boundary, and explicit authority remains required.

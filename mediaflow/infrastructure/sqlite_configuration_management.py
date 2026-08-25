@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -8,19 +9,25 @@ from datetime import datetime
 from pathlib import Path
 
 from mediaflow.domain.configuration_management import (
+    ConfigurationActivationConflict,
     ConfigurationChangeAudit,
     ConfigurationObjectKind,
     ConfigurationObjectReferenced,
     ConfigurationReference,
     ConfigurationReferencePolicy,
+    ConfigurationSetupCheckStatus,
     ConfigurationVersionConflict,
+    LocalSetupCheckEvidence,
+    ManagedConfigurationRevision,
+    ManagedConfigurationStatus,
     ManagedStorageConfiguration,
+    RuntimeSnapshotUnavailable,
     StorageConfigurationType,
     validate_configuration_object_id,
     validate_storage_configuration,
 )
 
-CONFIGURATION_SCHEMA_VERSION = 1
+CONFIGURATION_SCHEMA_VERSION = 4
 
 
 class SQLiteConfigurationRepository:
@@ -39,6 +46,12 @@ class SQLiteConfigurationRepository:
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._lock = threading.RLock()
         self._initialize()
+
+    @property
+    def database_path(self) -> str:
+        """Return the bootstrap locator used by this configuration store."""
+
+        return str(self._path)
 
     def close(self) -> None:
         with self._lock:
@@ -260,6 +273,492 @@ class SQLiteConfigurationRepository:
             ).fetchall()
         return tuple(self._audit(row) for row in rows)
 
+    def create_revision(
+        self, revision: ManagedConfigurationRevision
+    ) -> ManagedConfigurationRevision:
+        """Persist a new Draft without changing the active workflow authority."""
+        self._validate_revision(revision)
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            created = self._insert_revision(revision)
+        return created
+
+    def create_revision_with_audit(
+        self,
+        revision: ManagedConfigurationRevision,
+        audit: ConfigurationChangeAudit,
+    ) -> ManagedConfigurationRevision:
+        """Create a Draft and its lifecycle audit in one SQLite transaction."""
+
+        self._validate_revision(revision)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                created = self._insert_revision(revision)
+                self._insert_audit(
+                    self._normalize_audit(
+                        audit,
+                        ConfigurationObjectKind.SYSTEM_SETTINGS,
+                        created.revision_id,
+                        audit.before,
+                        {**audit.after, "revisionSequence": created.revision_sequence},
+                    )
+                )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return created
+
+    def _insert_revision(
+        self, revision: ManagedConfigurationRevision
+    ) -> ManagedConfigurationRevision:
+        if self.get_revision(revision.revision_id) is not None:
+            raise ValueError(f"configuration revision {revision.revision_id!r} already exists")
+        latest = self._connection.execute(
+            "SELECT MAX(revision_sequence) AS sequence FROM managed_configuration_revisions"
+        ).fetchone()
+        sequence = int(latest["sequence"]) + 1 if latest["sequence"] is not None else 1
+        created = replace(revision, revision_sequence=sequence)
+        self._connection.execute(
+            """
+            INSERT INTO managed_configuration_revisions
+            (revision_id, revision_sequence, version, status, schema_version, digest, payload,
+             validation_errors, created_at, updated_at, validated_at, activated_at,
+             base_active_revision_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            self._revision_values(created),
+        )
+        return created
+
+    def get_revision(self, revision_id: str) -> ManagedConfigurationRevision | None:
+        if not isinstance(revision_id, str) or not revision_id.strip():
+            raise ValueError("configuration revision ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM managed_configuration_revisions WHERE revision_id=?",
+                (revision_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return self._revision(row)
+        except Exception as error:
+            if row["status"] == ManagedConfigurationStatus.ACTIVE.value:
+                marker = self.last_known_active()
+                raise RuntimeSnapshotUnavailable(
+                    "managed Active configuration is unreadable",
+                    revision_id=marker.get("revisionId") if marker else revision_id,
+                    version=marker.get("revisionSequence") if marker else None,
+                    digest=marker.get("digest") if marker else None,
+                    reason="active_unreadable",
+                ) from error
+            raise
+
+    def list_revisions(self, *, limit: int = 100) -> tuple[ManagedConfigurationRevision, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("configuration revision limit must be between 1 and 500")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM managed_configuration_revisions "
+                "ORDER BY revision_sequence DESC, revision_id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple(self._revision(row) for row in rows)
+
+    def update_revision(
+        self, revision: ManagedConfigurationRevision, expected_version: int
+    ) -> ManagedConfigurationRevision:
+        self._validate_revision(revision)
+        if isinstance(expected_version, bool) or not isinstance(expected_version, int):
+            raise ConfigurationVersionConflict(
+                "expected configuration revision version must be an integer"
+            )
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT * FROM managed_configuration_revisions WHERE revision_id=?",
+                (revision.revision_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(f"configuration revision {revision.revision_id!r} was not found")
+            if int(row["version"]) != expected_version:
+                raise ConfigurationVersionConflict(
+                    f"configuration revision {revision.revision_id!r} was changed by "
+                    "another update",
+                    revision_id=revision.revision_id,
+                    current_version=int(row["version"]),
+                    current_digest=row["digest"],
+                )
+            if row["status"] in {
+                ManagedConfigurationStatus.ACTIVE.value,
+                ManagedConfigurationStatus.SUPERSEDED.value,
+            }:
+                raise ConfigurationVersionConflict(
+                    "published configuration revisions are immutable"
+                )
+            updated = self._update_revision_row(revision, expected_version, row)
+        return updated
+
+    def update_revision_with_audit(
+        self,
+        revision: ManagedConfigurationRevision,
+        expected_version: int,
+        audit: ConfigurationChangeAudit,
+    ) -> ManagedConfigurationRevision:
+        """Update a Draft and its lifecycle audit in one SQLite transaction."""
+
+        self._validate_revision(revision)
+        if isinstance(expected_version, bool) or not isinstance(expected_version, int):
+            raise ConfigurationVersionConflict(
+                "expected configuration revision version must be an integer"
+            )
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    "SELECT * FROM managed_configuration_revisions WHERE revision_id=?",
+                    (revision.revision_id,),
+                ).fetchone()
+                if row is None:
+                    raise LookupError(
+                        f"configuration revision {revision.revision_id!r} was not found"
+                    )
+                updated = self._update_revision_row(revision, expected_version, row)
+                self._insert_audit(
+                    self._normalize_audit(
+                        audit,
+                        ConfigurationObjectKind.SYSTEM_SETTINGS,
+                        revision.revision_id,
+                        audit.before,
+                        {**audit.after, "revisionSequence": updated.revision_sequence},
+                    )
+                )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return updated
+
+    def _update_revision_row(
+        self,
+        revision: ManagedConfigurationRevision,
+        expected_version: int,
+        row: sqlite3.Row,
+    ) -> ManagedConfigurationRevision:
+        if int(row["version"]) != expected_version:
+            raise ConfigurationVersionConflict(
+                f"configuration revision {revision.revision_id!r} was changed by another update",
+                revision_id=revision.revision_id,
+                current_version=int(row["version"]),
+                current_digest=row["digest"],
+            )
+        if row["status"] in {
+            ManagedConfigurationStatus.ACTIVE.value,
+            ManagedConfigurationStatus.SUPERSEDED.value,
+        }:
+            raise ConfigurationVersionConflict("published configuration revisions are immutable")
+        stored_sequence = row["revision_sequence"]
+        candidate = (
+            revision
+            if revision.revision_sequence is not None
+            else replace(revision, revision_sequence=int(stored_sequence))
+        )
+        cursor = self._connection.execute(
+            """
+            UPDATE managed_configuration_revisions
+            SET version=?, status=?, schema_version=?, digest=?, payload=?, validation_errors=?,
+                created_at=?, updated_at=?, validated_at=?, activated_at=?,
+                base_active_revision_id=?, revision_sequence=?
+            WHERE revision_id=? AND version=?
+            """,
+            (
+                *self._revision_values(candidate)[2:],
+                candidate.revision_sequence,
+                candidate.revision_id,
+                expected_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ConfigurationVersionConflict(
+                f"configuration revision {revision.revision_id!r} was changed by another update"
+            )
+        return candidate
+
+    def get_active_revision(self) -> ManagedConfigurationRevision | None:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM managed_configuration_revisions WHERE status=? "
+                "ORDER BY version DESC",
+                (ManagedConfigurationStatus.ACTIVE.value,),
+            ).fetchall()
+        if len(rows) > 1:
+            raise RuntimeError("managed configuration has more than one Active revision")
+        if not rows:
+            return None
+        try:
+            return self._revision(rows[0])
+        except Exception as error:
+            marker = self.last_known_active()
+            raise RuntimeSnapshotUnavailable(
+                "managed Active configuration is unreadable",
+                revision_id=marker.get("revisionId") if marker else None,
+                version=marker.get("revisionSequence") if marker else None,
+                digest=marker.get("digest") if marker else None,
+                reason="active_unreadable",
+            ) from error
+
+    def has_managed_activation(self) -> bool:
+        """Return whether this store has ever published managed authority."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT 1 FROM managed_configuration_authority WHERE singleton=1"
+            ).fetchone()
+        return row is not None
+
+    def last_known_active(self) -> dict[str, object] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT last_active_revision_id, last_active_version, last_active_digest, "
+                "updated_at FROM managed_configuration_authority WHERE singleton=1"
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "revisionId": row["last_active_revision_id"],
+            "version": int(row["last_active_version"]),
+            "revisionSequence": int(row["last_active_version"]),
+            "digest": row["last_active_digest"],
+            "updatedAt": row["updated_at"],
+        }
+
+    def activate_revision(
+        self,
+        revision_id: str,
+        expected_version: int,
+        audit: ConfigurationChangeAudit,
+    ) -> ManagedConfigurationRevision:
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    "SELECT * FROM managed_configuration_revisions WHERE revision_id=?",
+                    (revision_id,),
+                ).fetchone()
+                if row is None:
+                    raise LookupError(f"configuration revision {revision_id!r} was not found")
+                active_rows = self._connection.execute(
+                    "SELECT * FROM managed_configuration_revisions WHERE status=? "
+                    "ORDER BY version DESC",
+                    (ManagedConfigurationStatus.ACTIVE.value,),
+                ).fetchall()
+                if len(active_rows) > 1:
+                    raise RuntimeError("managed configuration has more than one Active revision")
+                current_active = active_rows[0] if active_rows else None
+                if int(row["version"]) != expected_version:
+                    raise ConfigurationActivationConflict(
+                        "configuration revision is stale; refresh the Draft before activation",
+                        revision_id=revision_id,
+                        current_revision_id=current_active["revision_id"]
+                        if current_active
+                        else None,
+                        current_version=int(current_active["version"]) if current_active else None,
+                        current_digest=current_active["digest"] if current_active else None,
+                    )
+                if row["status"] != ManagedConfigurationStatus.VALIDATED.value:
+                    raise ConfigurationActivationConflict(
+                        "only a freshly Validated configuration revision can be activated",
+                        revision_id=revision_id,
+                        current_revision_id=current_active["revision_id"]
+                        if current_active
+                        else None,
+                        current_version=int(current_active["version"]) if current_active else None,
+                        current_digest=current_active["digest"] if current_active else None,
+                    )
+                current_active_usable = bool(
+                    current_active is None or self._row_integrity_valid(current_active)
+                )
+                current_active_id = (
+                    current_active["revision_id"]
+                    if current_active and current_active_usable
+                    else None
+                )
+                if row["base_active_revision_id"] != current_active_id:
+                    raise ConfigurationActivationConflict(
+                        "configuration Draft was based on a different Active revision; "
+                        "refresh and validate it again",
+                        revision_id=revision_id,
+                        current_revision_id=current_active["revision_id"]
+                        if current_active
+                        else None,
+                        current_version=int(current_active["version"]) if current_active else None,
+                        current_digest=current_active["digest"] if current_active else None,
+                    )
+                if current_active and current_active["revision_id"] == revision_id:
+                    raise ConfigurationActivationConflict(
+                        "configuration revision is already Active", revision_id=revision_id
+                    )
+                if current_active:
+                    self._connection.execute(
+                        "UPDATE managed_configuration_revisions SET status=?, updated_at=? "
+                        "WHERE revision_id=? AND status=?",
+                        (
+                            ManagedConfigurationStatus.SUPERSEDED.value,
+                            audit.occurred_at.isoformat(),
+                            current_active["revision_id"],
+                            ManagedConfigurationStatus.ACTIVE.value,
+                        ),
+                    )
+                self._connection.execute(
+                    "UPDATE managed_configuration_revisions "
+                    "SET status=?, updated_at=?, activated_at=? "
+                    "WHERE revision_id=? AND version=?",
+                    (
+                        ManagedConfigurationStatus.ACTIVE.value,
+                        audit.occurred_at.isoformat(),
+                        audit.occurred_at.isoformat(),
+                        revision_id,
+                        expected_version,
+                    ),
+                )
+                normalized_audit = self._normalize_audit(
+                    audit,
+                    ConfigurationObjectKind.SYSTEM_SETTINGS,
+                    revision_id,
+                    audit.before,
+                    {
+                        **audit.after,
+                        "revisionId": revision_id,
+                        "status": ManagedConfigurationStatus.ACTIVE.value,
+                    },
+                )
+                self._insert_audit(normalized_audit)
+                self._connection.execute(
+                    """
+                    INSERT INTO managed_configuration_authority
+                    (singleton, last_active_revision_id, last_active_version,
+                     last_active_digest, updated_at)
+                    VALUES (1, ?, ?, ?, ?)
+                    ON CONFLICT(singleton) DO UPDATE SET
+                        last_active_revision_id=excluded.last_active_revision_id,
+                        last_active_version=excluded.last_active_version,
+                        last_active_digest=excluded.last_active_digest,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        revision_id,
+                        int(row["revision_sequence"]),
+                        row["digest"],
+                        audit.occurred_at.isoformat(),
+                    ),
+                )
+                activated = self._connection.execute(
+                    "SELECT * FROM managed_configuration_revisions WHERE revision_id=?",
+                    (revision_id,),
+                ).fetchone()
+                if activated is None:
+                    raise RuntimeError("activated configuration revision disappeared")
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return self._revision(activated)
+
+    def list_revision_audits(
+        self, revision_id: str, *, limit: int = 50
+    ) -> tuple[ConfigurationChangeAudit, ...]:
+        return self.list_audits(ConfigurationObjectKind.SYSTEM_SETTINGS, revision_id, limit=limit)
+
+    def record_configuration_audit(self, audit: ConfigurationChangeAudit) -> None:
+        normalized = self._normalize_audit(
+            audit,
+            ConfigurationObjectKind.SYSTEM_SETTINGS,
+            audit.object_id,
+            audit.before,
+            audit.after,
+        )
+        with self._lock, self._connection:
+            self._insert_audit(normalized)
+
+    def save_local_setup_check(self, evidence: LocalSetupCheckEvidence) -> LocalSetupCheckEvidence:
+        if not isinstance(evidence, LocalSetupCheckEvidence):
+            raise ValueError("setup check evidence is required")
+        payload = evidence.document()
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO managed_local_setup_checks
+                (revision_id, revision_version, revision_digest, status, checked_at, actor,
+                 storage_ids, resource_library_id, media_library_id, operations, duration_ms,
+                 source_path, destination_path, failure_category, message, next_action)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(revision_id) DO UPDATE SET
+                    revision_version=excluded.revision_version,
+                    revision_digest=excluded.revision_digest,
+                    status=excluded.status,
+                    checked_at=excluded.checked_at,
+                    actor=excluded.actor,
+                    storage_ids=excluded.storage_ids,
+                    resource_library_id=excluded.resource_library_id,
+                    media_library_id=excluded.media_library_id,
+                    operations=excluded.operations,
+                    source_path=excluded.source_path,
+                    destination_path=excluded.destination_path,
+                    duration_ms=excluded.duration_ms,
+                    failure_category=excluded.failure_category,
+                    message=excluded.message,
+                    next_action=excluded.next_action
+                """,
+                (
+                    evidence.revision_id,
+                    evidence.revision_version,
+                    evidence.revision_digest,
+                    evidence.status.value,
+                    evidence.checked_at.isoformat(),
+                    evidence.actor,
+                    self._json(payload["storageIds"]),
+                    evidence.resource_library_id,
+                    evidence.media_library_id,
+                    self._json(payload["operations"]),
+                    evidence.duration_ms,
+                    evidence.source_path,
+                    evidence.destination_path,
+                    evidence.failure_category,
+                    evidence.message,
+                    evidence.next_action,
+                ),
+            )
+        return evidence
+
+    def get_local_setup_check(self, revision_id: str) -> LocalSetupCheckEvidence | None:
+        self._object_id(revision_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM managed_local_setup_checks WHERE revision_id=?",
+                (revision_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return LocalSetupCheckEvidence(
+            row["revision_id"],
+            int(row["revision_version"]),
+            row["revision_digest"],
+            ConfigurationSetupCheckStatus(row["status"]),
+            datetime.fromisoformat(row["checked_at"]),
+            row["actor"],
+            tuple(json.loads(row["storage_ids"])),
+            row["resource_library_id"],
+            row["media_library_id"],
+            row["source_path"],
+            row["destination_path"],
+            tuple(json.loads(row["operations"])),
+            int(row["duration_ms"]),
+            row["failure_category"],
+            row["message"],
+            row["next_action"],
+        )
+
     def _get_row(self, storage_id: str) -> sqlite3.Row | None:
         self._object_id(storage_id)
         with self._lock:
@@ -333,6 +832,21 @@ class SQLiteConfigurationRepository:
             ),
         )
 
+    @staticmethod
+    def _row_integrity_valid(row: sqlite3.Row) -> bool:
+        try:
+            document = json.loads(row["payload"])
+            canonical = json.dumps(
+                document,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest() == row["digest"]
+
     def _raise_version_or_missing(self, storage_id: str) -> None:
         if self._get_row(storage_id) is None:
             raise LookupError(f"Storage configuration {storage_id!r} was not found")
@@ -353,6 +867,47 @@ class SQLiteConfigurationRepository:
         if not audit.action or len(audit.action) > 32:
             raise ValueError("configuration audit action must be a bounded non-empty string")
         return replace(audit, object_kind=kind, object_id=object_id, before=before, after=after)
+
+    @staticmethod
+    def _validate_revision(revision: ManagedConfigurationRevision) -> None:
+        if not isinstance(revision, ManagedConfigurationRevision):
+            raise ValueError("managed configuration revision is required")
+
+    @staticmethod
+    def _revision_values(revision: ManagedConfigurationRevision) -> tuple[object, ...]:
+        return (
+            revision.revision_id,
+            revision.revision_sequence,
+            revision.version,
+            revision.status.value,
+            revision.schema_version,
+            revision.digest,
+            SQLiteConfigurationRepository._json(revision.document),
+            SQLiteConfigurationRepository._json(list(revision.validation_errors)),
+            revision.created_at.isoformat(),
+            revision.updated_at.isoformat(),
+            revision.validated_at.isoformat() if revision.validated_at else None,
+            revision.activated_at.isoformat() if revision.activated_at else None,
+            revision.base_active_revision_id,
+        )
+
+    @staticmethod
+    def _revision(row: sqlite3.Row) -> ManagedConfigurationRevision:
+        return ManagedConfigurationRevision(
+            row["revision_id"],
+            int(row["version"]),
+            ManagedConfigurationStatus(row["status"]),
+            int(row["schema_version"]),
+            row["digest"],
+            json.loads(row["payload"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            tuple(json.loads(row["validation_errors"])),
+            datetime.fromisoformat(row["validated_at"]) if row["validated_at"] else None,
+            datetime.fromisoformat(row["activated_at"]) if row["activated_at"] else None,
+            row["base_active_revision_id"],
+            int(row["revision_sequence"]) if row["revision_sequence"] is not None else None,
+        )
 
     @staticmethod
     def _object_id(value: str) -> str:
@@ -411,6 +966,43 @@ class SQLiteConfigurationRepository:
                 );
                 CREATE INDEX IF NOT EXISTS configuration_audits_object
                     ON configuration_change_audits(object_kind, object_id, occurred_at, sequence);
+                CREATE TABLE IF NOT EXISTS managed_configuration_revisions (
+                    revision_id TEXT PRIMARY KEY,
+                    revision_sequence INTEGER,
+                    version INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    digest TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                validation_errors TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                validated_at TEXT,
+                activated_at TEXT,
+                base_active_revision_id TEXT
+                );
+                CREATE INDEX IF NOT EXISTS managed_configuration_revisions_status
+                    ON managed_configuration_revisions(status, version, revision_id);
+                CREATE TABLE IF NOT EXISTS managed_local_setup_checks (
+                    revision_id TEXT PRIMARY KEY,
+                    revision_version INTEGER NOT NULL,
+                    revision_digest TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    checked_at TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    storage_ids TEXT NOT NULL,
+                    resource_library_id TEXT,
+                    media_library_id TEXT,
+                    operations TEXT NOT NULL,
+                    duration_ms INTEGER NOT NULL,
+                    source_path TEXT,
+                    destination_path TEXT,
+                    failure_category TEXT,
+                    message TEXT,
+                    next_action TEXT
+                );
+                CREATE INDEX IF NOT EXISTS managed_local_setup_checks_status
+                    ON managed_local_setup_checks(status, checked_at);
                 """
             )
             self._connection.execute(
@@ -420,3 +1012,98 @@ class SQLiteConfigurationRepository:
                 """,
                 (CONFIGURATION_SCHEMA_VERSION,),
             )
+            revision_columns = {
+                row["name"]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(managed_configuration_revisions)"
+                ).fetchall()
+            }
+            if "base_active_revision_id" not in revision_columns:
+                self._connection.execute(
+                    "ALTER TABLE managed_configuration_revisions "
+                    "ADD COLUMN base_active_revision_id TEXT"
+                )
+            setup_check_columns = {
+                row["name"]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(managed_local_setup_checks)"
+                ).fetchall()
+            }
+            for column in ("source_path", "destination_path"):
+                if column not in setup_check_columns:
+                    self._connection.execute(
+                        f"ALTER TABLE managed_local_setup_checks ADD COLUMN {column} TEXT"
+                    )
+            if "revision_sequence" not in revision_columns:
+                self._connection.execute(
+                    "ALTER TABLE managed_configuration_revisions "
+                    "ADD COLUMN revision_sequence INTEGER"
+                )
+            self._connection.execute(
+                "UPDATE managed_configuration_revisions SET revision_sequence=rowid "
+                "WHERE revision_sequence IS NULL"
+            )
+            self._connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS managed_configuration_revision_sequence "
+                "ON managed_configuration_revisions(revision_sequence)"
+            )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS managed_configuration_authority (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    last_active_revision_id TEXT NOT NULL,
+                    last_active_version INTEGER NOT NULL,
+                    last_active_digest TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            marker = self._connection.execute(
+                "SELECT 1 FROM managed_configuration_authority WHERE singleton=1"
+            ).fetchone()
+            if marker is None:
+                active = self._connection.execute(
+                    "SELECT revision_id, revision_sequence, digest, activated_at "
+                    "FROM managed_configuration_revisions WHERE status=? "
+                    "ORDER BY revision_sequence DESC LIMIT 1",
+                    (ManagedConfigurationStatus.ACTIVE.value,),
+                ).fetchone()
+                if active is not None:
+                    self._connection.execute(
+                        "INSERT INTO managed_configuration_authority "
+                        "(singleton, last_active_revision_id, last_active_version, "
+                        "last_active_digest, updated_at) VALUES (1, ?, ?, ?, ?)",
+                        (
+                            active["revision_id"],
+                            int(active["revision_sequence"]),
+                            active["digest"],
+                            active["activated_at"] or datetime.utcnow().isoformat(),
+                        ),
+                    )
+                else:
+                    audit = self._connection.execute(
+                        "SELECT after_json, occurred_at FROM configuration_change_audits "
+                        "WHERE object_kind=? AND action='activate' "
+                        "ORDER BY sequence DESC LIMIT 1",
+                        (ConfigurationObjectKind.SYSTEM_SETTINGS.value,),
+                    ).fetchone()
+                    if audit is not None:
+                        after = json.loads(audit["after_json"])
+                        revision_id = after.get("revisionId")
+                        revision = self._connection.execute(
+                            "SELECT revision_sequence, digest FROM managed_configuration_revisions "
+                            "WHERE revision_id=?",
+                            (revision_id,),
+                        ).fetchone()
+                        if revision_id and revision is not None:
+                            self._connection.execute(
+                                "INSERT INTO managed_configuration_authority "
+                                "(singleton, last_active_revision_id, last_active_version, "
+                                "last_active_digest, updated_at) VALUES (1, ?, ?, ?, ?)",
+                                (
+                                    revision_id,
+                                    int(revision["revision_sequence"]),
+                                    revision["digest"],
+                                    audit["occurred_at"],
+                                ),
+                            )

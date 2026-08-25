@@ -2,8 +2,12 @@
 
 ## 当前节点
 
-截至 2026-08-23，项目完成了安全优先的核心纵向链路、Phase 18 服务化基础，以及
-Phase 19 有界生产发布验收：
+截至 2026-08-24，项目完成了安全优先的核心执行链、Phase 21 有界人工/文件管理基础、
+Phase 22.1 内部 Storage 配置 CRUD 基础和 Phase 22.2 whole-document Active authority。当前
+Phase 22.3 的 Local Storage + Library guided implementation 已接入相同 authority，但独立复核
+结果为 **FIX REQUIRED**；当前仅执行 Phase 22.3R 的 canonical 保留、路径、Web 恢复证据与
+有界 check 修复。本次 Product/UX Rebaseline 明确：内部模块完成不等于
+最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 
 ```text
 Runtime Configuration
@@ -32,13 +36,14 @@ Runtime Configuration
 | Storage | 已完成（有界验收） | Local、SMB、OpenList、S3/R2 Adapter、JSON Runtime、隔离 Samba/OpenList/MinIO 矩阵 | AWS/R2、第三方 driver、远端原子与多小时专项验收 |
 | Scanner/FileIndex | 已完成 | 扫描、稳定性、全量/增量、生产 SQLite FileIndex | 后续管理/清理工具 |
 | Parser | 已完成 | 文件名/路径/NFO、电影/剧集、多集、标签、受限 XML 与冲突证据合并 | NFO 生成不属于 Parser；更多格式按样本扩展 |
-| Recognition | 已完成 | 配置规则、优先级、证据、C 身份保持 | 人工修正流程 |
-| Metadata | 部分完成 | TMDB、缓存、候选评分、本地化标题、年份语义、持久人工候选选择/恢复 | 持久共享缓存管理、自由输入修正交互 |
+| Recognition | 部分完成（引擎成熟） | 配置规则、优先级、证据、C 身份保持、持久/批量人工决策和重评请求 | Web 规则配置/测试/激活与完整解释旅程 |
+| Metadata | 部分完成（引擎成熟） | TMDB、缓存、候选评分、本地化标题、年份语义、持久人工候选/查询修正 | Provider 切换、配置激活、同页恢复闭环 |
 | Naming | 已完成 | 安全模板、Unicode、多集、预览 | 用户界面配置体验 |
 | Classification | 已完成 | 确定性规则、媒体库选择、持久人工规则选择/恢复 | 自由路径修正明确禁止；完整 UI 待做 |
-| Planner/Executor | 部分完成 | 计划、完整冲突策略、附件、可配置 Hash 重复证据、有界同次执行 Rollback、DryRun、真实执行、跨存储 | 历史/崩溃恢复、空目录清理、Hash 持久复用 |
-| Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、协作 pause/resume、claim fencing/心跳、锁、JSONL 历史 | 统一重试、不确定执行恢复 |
-| API/UI/Scheduler | 部分完成 | API/RBAC/审计、最小安全操作台、Dashboard、Cron、通知、一次性授权执行 | 文件管理 UI、配置管理、登录/外部身份源 |
+| Planner/Executor | 部分完成 | 计划、冲突、附件、Hash 证据、同次调用 Rollback、空目录清理、DryRun、跨存储执行 | 历史/崩溃恢复、Hash 持久复用、逐项恢复体验 |
+| Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、pause/resume、批量请求、claim fencing/心跳 | 统一 Processing Checkpoint 与 stage-aware recovery |
+| API/UI/Scheduler | 部分完成 | API/RBAC/审计、操作台、Dashboard、Files 列表/筛选/详情/部分动作、Cron/通知 | 完整人工/配置/恢复旅程、登录/外部身份源 |
+| Managed Configuration | Phase 22.3R 聚焦修复 | whole-document authority plus submitted Local Storage/ResourceLibrary/MediaLibrary Draft/API/Web/check foundation | lossless full-section edit, absolute Local root, Web refs/check recovery, bounded guarded check; then remote/policy journeys |
 
 ## 总体阶段计划
 
@@ -248,23 +253,24 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 进程/主机断电、AWS/R2 服务特性和远端原子发布仍是部署专项限制，不作已认证声明。下一阶段按
 计划进入 Phase 20 核心引擎收口，不继续扩展 Phase 19 操作台。
 
-## 规格差距评估（2026-08-23，基于 Phase 19.25 后状态）
+## 规格差距评估（2026-08-24，基于 Phase 22.2R 与 Product/UX Rebaseline）
 
 对照《影视媒体资源自动整理系统需求规格说明书》V1.1 全量章节逐项评估：
 
-| 领域 | 完成度 | 主要剩余缺口 |
+| 领域 | 当前状态 | 主要剩余缺口 |
 |---|---|---|
-| 核心引擎（§1–§79） | ~98% | 历史 Rollback 与 Hash 持久复用留后续专项 |
-| 存储层（§4–§10） | ~94% | 有界 Local/Samba/OpenList/MinIO 实机矩阵已通过；AWS/R2、第三方 driver、远端原子发布、Range Read/大对象服务端 Copy 未认证或未实现 |
-| 任务与自动化（§62–§70、§98） | ~88% | 定时缓存/日志清理未实现；claim fencing/心跳已完成 |
-| API 与 Web UI（§93–§96、§102） | ~35% | 仅只读运维操作台；文件列表、搜索筛选、媒体详情、人工修正交互均未实现 |
-| 配置管理（§5、§86–§89） | ~30% | 12 类配置对象 CRUD、引用关系检查、导入导出、凭证加密存储均未实现 |
-| 安全与审计（§99–§101） | ~70% | RBAC/脱敏/安全审计完成；用户体系、配置修改 Before/After 审计未实现 |
+| 核心引擎（§1–§79） | 引擎成熟、产品闭环部分完成 | 历史/崩溃恢复、Hash 持久复用、Provider 切换与完整人工整理旅程 |
+| 存储层（§4–§10） | 有界发布矩阵 PASS | AWS/R2、第三方 driver、远端原子发布、Range Read/大对象服务端 Copy 仍未认证或未实现 |
+| 任务与自动化（§62–§70、§98） | 持久基础成熟、恢复体验不完整 | 统一 Processing Checkpoint、stage-aware 逐项恢复、定时缓存/日志清理 |
+| API 与 Web UI（§93–§96、§102） | 有界操作台/文件视图/部分动作已实现；配置快照恢复管理已接入 | 决策→继续→结果/逐项恢复闭环、对象级配置管理、手工整理和 Provider 切换 |
+| 配置管理（§5、§86–§89） | Phase 22.2/22.2R whole-document Draft/Validated/Active 及恢复安全边界 | 对象级 Storage/Library/Policy CRUD、依赖影响、连通性测试、Secret Store、完整首次设置旅程 |
+| 安全与审计（§99–§101） | RBAC/脱敏/执行审计成熟 | 用户/外部身份源决策、完整配置激活审计与逐项恢复审计 |
 
-整体完成度约 75–78%。规格书本质是两份产品：媒体整理引擎（接近完成）+
-配置与运维管理系统（刚起步，约占剩余工作量一半）。
+从本次重基线开始，不再用“模块百分比”作为产品完成度。MediaFlow 的核心媒体引擎接近完整，
+但最终 V1 仍缺少配置、恢复和人工处理的完整 Web 用户旅程；内部仓储或命令通过不能提高这些
+旅程的完成状态。
 
-## 剩余实施计划
+## 历史阶段完成状态
 
 ### 阶段 I：发布硬门（Phase 19.23–19.25，已完成有界范围）
 
@@ -281,7 +287,7 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
   真实隔离环境才计 ISOLATED PASS；远端破坏性验收必须专用凭证 + 空测试根 +
   显式操作员确认。
 
-### 阶段 II：核心引擎收口（Phase 20.x）
+### 阶段 II：核心引擎收口（Phase 20.x，已完成有界范围）
 
 - Phase 20.1 NFO Parser 已完成：Storage-only 有界读取、安全 XML、确定性证据合并和生产管线接入。
 - Phase 20.2 Hash 重复检测已完成：不计算/快速/完整，默认不计算；证据只读且失败闭合。
@@ -290,7 +296,7 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 - Phase 20.6 空目录清理已完成：默认关闭、成功 MOVE 后、ResourceLibrary 根排他边界、未知内容失败闭合。
 - 完成后可发布 CLI/API 完整版 v1.0。
 
-### 阶段 III：人工处理闭环（Phase 21.x）
+### 阶段 III：人工处理基础（Phase 21.x，已完成有界范围）
 
 - Phase 21.0 已完成：Unrecognized 条目持久等待、启用类型有界快照、显式 RecognitionType
   决策审计和 resume；无隐藏默认、不修改规则，C 身份保持。
@@ -359,46 +365,104 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 - Phase 22.1 已完成：第一批 Storage 配置内部 CRUD/校验/乐观版本/Before-After 审计与
   SQLite 引用阻断；支持六类 Storage 形状并拒绝字面/嵌套 secret。该入口尚未接入运行时
   JSON、API/UI/CLI、Storage 构造或媒体工作流。
-- 未识别媒体人工指定 RecognitionType（§80）。
-- 批量操作体系（§83）。
-- 文件列表/搜索筛选/媒体详情页（§94–§96），含重新识别/重新匹配/重新生成 Plan。
+- Phase 22.3 当前实现（独立复核 FIX REQUIRED）：在 Managed Draft 中接入 Local Storage、
+  ResourceLibrary、MediaLibrary 的 Web/API 编辑、直接引用影响/阻断、远端脱敏只读、精确版本
+  的只读 Local setup check、checked activation 和首个 Preview Job pin。远端和策略对象仍未纳入
+  本切片。
 
-### 阶段 IV：配置管理系统（Phase 22.x，剩余最大块）
+Phase 21 的上述条目是可复用的持久/API/Web 基础，不代表最终人工处理用户旅程已经完成。
 
-- Phase 22.0 前置架构决策（必须先做）：配置存储选型（JSON vs SQLite）、
-  凭证加密存储方案（§99）、外部 Secret Store 边界、用户体系/OIDC 评估
-  （不在核心自建弱认证）。
-- 12 类配置对象 CRUD（§86–§87）分批实现。
-- 配置引用关系检查（§88）与导入导出（§89）。
-- 存储管理界面（§5）与策略测试工具 Web 化（§84–§85）。
-- 配置修改 Before/After 审计（§101）。
+## Product/UX 纵向实施路线（当前有效）
 
-### 阶段 V：系统完善与正式发布（Phase 23.x）
+后续不再采用“先完成所有 Domain/Repository，再统一补 API/UI”的横向排期。一个配置切片在
+适用时应包含：
 
-- 系统设置界面（§97）、定时缓存/日志清理（§98）、Dashboard 完整指标（§93）。
-- 静态类型检查引入、跨平台最终验收、发布文档。
+```text
+Domain
+→ persistence
+→ Application
+→ API
+→ Web UI
+→ validation / test
+→ activation
+→ user acceptance tests
+```
+
+每个切片都必须明确用户目标、入口、可见状态、动作、成功、失败与恢复；若只完成其中一段，
+报告必须明确仍是 CURRENT 基础而不是产品完成。
+
+### 1. 架构纠正与引擎正确性
+
+- Phase 22.2/22.2R 已建立 whole-document Managed Configuration 的 Draft → Validate → Activate →
+  immutable Runtime Snapshot 单一权威链路，并补齐缺失/损坏 Active 的管理恢复与 fail-closed
+  工作边界；后续切片必须沿用该 authority。
+- Web/API 显示的 Active 必须与新 Task/Job 实际固定并消费的 snapshot ID/digest 一致；在途项目
+  不被静默切换。
+- JSON 只保留明确的 bootstrap/import/export/migration 角色；首次激活前标记 CURRENT
+  `JSON_BOOTSTRAP`，激活后不得制造两个 Active source。
+- 定义 TaskItem Processing Checkpoint 与 stage-aware Recovery 的兼容契约，但恢复旅程在第 6
+  个切片实现，不在架构纠正中假装完成。
+
+### 2. Storage + Library 配置用户旅程（Phase 22.3R，当前聚焦修复）
+
+- 先修复独立复核确认的 P1：大段编辑不得截断丢失、Local root 必须是 host-absolute、
+  Web 必须展示直接引用与陈旧/失败 check 恢复证据、setup check 必须容量受限且受
+  fail-fast read-only guard 保护，并补齐 Active → Job → Worker Task/Result 同 pin 验收。
+- 修复通过前不得标记 PASS；远端 Storage 连通性与能力测试仍是后续范围。
+- 复用 Phase 22.1 基础，不把“补齐 Library repository”单独作为产品完成。
+
+### 3. Recognition 配置 + Strategy Test 用户旅程（Phase 22.4，下一切片）
+
+- 规则/类型/类型策略的编辑、优先级与引用校验、真实或合成路径的零变更 Strategy Test、解释、
+  激活和 C 身份回归在同一切片交付。
+
+### 4. Metadata 配置与修正用户旅程
+
+- Provider/MetadataPolicy 配置、语言/地区/阈值测试、候选解释、Provider 切换、人工修正、显式
+  继续与新 Preview 形成闭环；凭证仍只来自批准的 Secret 边界。
+
+### 5. Naming / Classification / Organize 配置用户旅程
+
+- 模板、分类规则、目标 MediaLibrary 与操作策略联动编辑；显示依赖影响，使用相同引擎预览，
+  验证路径安全/冲突/能力后才允许激活。
+
+### 6. 批处理逐项恢复
+
+- 建立 Task → TaskItem → Processing Checkpoint → stage-aware Recovery Strategy，并在 Web/API
+  提供每项的已知效果、重试安全性和有效恢复动作；成功兄弟项永不重放。
+
+### 7. Files / Media 详情与手工整理
+
+- 在现有文件列表/筛选/详情基础上补齐端到端解释、历史、复核、手工 Preview/Organize 和恢复
+  跳转；用户无需拼接内部 Task/Review 命令。
+
+### 8. 自动化与最终生产加固
+
+- 完善定时维护、Dashboard 指标、跨平台/多小时/云服务专项验收、静态类型检查与发布文档。
+- 是否开放无人值守 `organize --execute` 必须另行完成权限、恢复、幂等和安全验收；当前仍禁止。
 
 ### 执行约束
 
-1. 严格按阶段顺序：阶段 I 有界硬门已关闭；现在先完成阶段 II，再进入阶段 III/IV。
-2. 每个 Phase 单一提交粒度，沿用既有验收记录风格（PASS/测试计数/审计）。
-3. 实机验收发现的问题只记录，不在验收 Phase 同一提交中修复。
-4. 持续安全基线不变：默认 DryRun、不覆盖、不静默删除、仅 OrganizerExecutor
-   执行变更、凭证只来自环境或未来 Secret Store、RecognitionType C 身份保持。
-5. 无人值守定时 organize --execute 仍不支持。
+1. 严格按上述优先顺序推进；不得跳回“所有 Repository 先做完、API/UI 最后补”的横向路线。
+2. 每个 Phase 保持单一可验收用户切片和提交粒度，沿用 PASS/测试计数/审计证据风格。
+3. User acceptance 必须覆盖成功、可操作失败、恢复、并发/陈旧状态及适用的零 mutation。
+4. 实机验收遵循 `docs/storage-acceptance.md`，不得使用生产数据或凭证。
+5. 持续安全基线与引擎边界不因 UX 工作而放宽。
 
 ## 下一步实施建议
 
-后续任务仍应保持小步推进。优先顺序：
+Phase 22.2R-F1 独立验收曾给出 **FIX REQUIRED**；Phase 22.2R-F2 已于 2026-08-24 通过独立验收。
+resident API 使用不可变 request-scoped binding 绑定 snapshot identity、队列/execute 准入和配置
+派生视图；Worker 对缺失、不可读、digest 损坏、schema 不支持和 runtime-invalid 的 saved
+revision 持久化可操作且脱敏的失败证据。独立复核的 11 项关键回归和 708 项完整离线
+套件无失败，本 Task 范围内无 P0/P1 偏离。
 
-1. 进入 Phase 22.2，实现 Resource/Media Library 配置 CRUD，并复用 Phase 22.1 的 Storage
-   引用登记与事务删除阻断。
-2. 保持历史/崩溃恢复与 Hash 持久复用为后续独立专项边界。
-3. AWS S3/Cloudflare R2、多小时 soak、服务/主机终止仍作为部署专项验收，不阻塞有界 Phase 19 profile。
-4. Phase 20 收口前不启动 Phase 21/22 的 UI 与配置管理扩展。
-
-Interval/Cron Scheduler 已实现但只允许 scan/preview；仍不支持无人值守定时
-`organize --execute`。
+当前实施边界是 **Phase 22.3R — Guided Local Setup Integrity and Recovery Correction**。
+独立复核已复现 canonical 对象截断丢失和相对 Local root 被接受，并确认 Web 未展示
+直接引用、陈旧/失败 check 恢复证据及缺少组合 Worker pin 验收。修复重新独立复核通过后，
+下一用户切片才是 **Phase 22.4 —
+Recognition Configuration + Strategy Test Journey**，不得提前开展远端配置、策略 CRUD 或
+更宽的自动化。Interval/Cron 仍只允许 scan/preview；无人值守定时 `organize --execute` 继续不支持。
 
 ## 持续安全基线
 

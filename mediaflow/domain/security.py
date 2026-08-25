@@ -23,6 +23,8 @@ class ApiPermission(StrEnum):
     RESOLVE_CLASSIFICATION_REVIEW = "resolve_classification_review"
     REMOTE_EXECUTE = "remote_execute"
     READ_SECURITY_AUDIT = "read_security_audit"
+    MANAGE_CONFIGURATION = "manage_configuration"
+    ACTIVATE_CONFIGURATION = "activate_configuration"
 
 
 ROLE_PERMISSIONS = {

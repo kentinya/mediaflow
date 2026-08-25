@@ -186,7 +186,7 @@ class AutomationAdmissionTests(unittest.TestCase):
                 self.assertEqual(document["error"]["code"], "queue_full")
                 self.assertEqual(len(repository.list_jobs()), 1)
         script = APP_JS.decode()
-        self.assertIn("catch (error) { message(error.message, true); }", script)
+        self.assertIn("catch (error) { message(errorText(error), true); }", script)
         for forbidden in ("Force queue", "Purge queue", "Bypass limit"):
             self.assertNotIn(forbidden, script)
 

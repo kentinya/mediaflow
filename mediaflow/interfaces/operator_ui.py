@@ -26,6 +26,7 @@ INDEX_HTML = b"""<!doctype html>
     <button data-view="confirmations">Conflicts</button>
     <button data-view="metadata-reviews">Metadata</button>
     <button data-view="classification-reviews">Classification</button>
+    <button data-view="configuration">Configuration</button>
     <button data-view="system">System</button>
   </nav>
   <main>
@@ -57,6 +58,7 @@ th{color:var(--muted)}tr:last-child td{border:0}aside{margin-top:18px;padding:18
 grid-template-columns:minmax(130px,1fr) 3fr;gap:8px 16px}dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
 .choices{display:grid;gap:8px;margin:16px 0}.choice{display:flex;justify-content:space-between;gap:12px;
 align-items:center;border:1px solid var(--line);padding:12px;border-radius:6px}.warning{color:var(--warn)}
+textarea{width:100%;min-height:16rem;font:13px ui-monospace,monospace;resize:vertical}
 @media(max-width:720px){header{align-items:start;flex-direction:column}.auth{width:100%}.auth input{flex:1}
 table{display:block;overflow:auto}dl{grid-template-columns:1fr}}
 """
@@ -83,14 +85,48 @@ APP_JS = b"""(() => {
     notice.textContent = value;
     notice.className = failed ? 'error' : '';
   };
+  const errorText = error => {
+    const details = error && error.details;
+    const fragments = [error && error.message ? error.message : String(error)];
+    if (details && details.currentRevisionId) {
+      fragments.push(`Current Active: ${details.currentRevisionId} ` +
+        `(${details.currentDigest || '-'})`);
+    } else if (details && details.revisionId) {
+      fragments.push(`Revision: ${details.revisionId} (${details.digest || '-'})`);
+    }
+    if (details && details.durableState) fragments.push(`State: ${details.durableState}`);
+    if (details && details.sideEffects) fragments.push(`Side effects: ${details.sideEffects}`);
+    if (details && details.retrySafe !== undefined) {
+      fragments.push(`Retry safe: ${details.retrySafe ? 'YES' : 'NO'}`);
+    }
+    if (details && details.referenceCount !== undefined) {
+      fragments.push(`References: ${details.referenceCount}`);
+      if (details.referencesTruncated) fragments.push('Reference labels truncated; update references first.');
+      const structured = details.referenceEvidence && Array.isArray(details.referenceEvidence.items) ?
+        details.referenceEvidence.items : (Array.isArray(details.referenceItems) ? details.referenceItems : []);
+      if (structured.length) {
+        const labels = structured.map(reference => reference.label ||
+          `${reference.section || 'configuration'}:${reference.id || '-'}.${reference.field || '-'}`);
+        fragments.push(`Referrers: ${labels.join(', ')}`);
+      } else if (Array.isArray(details.references) && details.references.length) {
+        fragments.push(`Referrers: ${details.references.join(', ')}`);
+      }
+    }
+    if (details && details.nextAction) fragments.push(`Next action: ${details.nextAction}`);
+    return fragments.join(' ');
+  };
   async function api(path, options = {}) {
     if (!token) throw new Error('API token is required');
     const headers = {'Authorization': `Bearer ${token}`};
     if (options.body) headers['Content-Type'] = 'application/json';
     const response = await fetch(path, {...options, headers});
     const document = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error((document.error && document.error.message) ||
-      `Request failed (${response.status})`);
+    if (!response.ok) {
+      const error = new Error((document.error && document.error.message) ||
+        `Request failed (${response.status})`);
+      error.details = document.error && document.error.details;
+      throw error;
+    }
     return document;
   }
   const field = (list, label, value) => {
@@ -152,6 +188,359 @@ APP_JS = b"""(() => {
       content.append(table(fields, items.map(item => fields.map(fieldName => item[fieldName]))));
     });
   }
+  async function renderConfiguration() {
+    const data = await api('/api/v1/configuration');
+    clear(content); content.append(text('h2', 'Configuration lifecycle'));
+    const active = data.active || {};
+    content.append(cards([
+      ['Authority', data.authority], ['Active status', active.status || '-'],
+      ['Active version', active.version || '-'], ['Revision sequence', active.revisionSequence || '-'],
+      ['Active digest', active.digest || '-'], ['Health', data.health || '-'],
+      ['Runtime ready', data.runtimeReady === undefined ? '-' : data.runtimeReady]
+    ]));
+    if (data.unavailableReason) content.append(text('p',
+      `${data.unavailableReason}. ${data.lastKnownActive ?
+        `Last known Active: ${data.lastKnownActive.revisionId} / sequence ` +
+        `${data.lastKnownActive.revisionSequence || data.lastKnownActive.version || '-'} / ` +
+        `${data.lastKnownActive.digest}` :
+        'Stage an explicit replacement JSON Draft.'} ` +
+      'No media side effect occurred; inspect the status, then validate and activate a replacement.',
+      'error'));
+    content.append(text('p', 'Activation is explicit and does not scan or mutate Storage.', 'warning'));
+    content.append(text('h3', 'Stage a whole-document JSON Draft'));
+    const editor = document.createElement('textarea');
+    editor.setAttribute('aria-label', 'Configuration JSON draft');
+    editor.placeholder = 'Paste a complete configuration document here. Secrets must remain environment references.';
+    content.append(editor);
+    content.append(actionButton('Import pasted JSON as Draft', async () => {
+      try {
+        const parsed = JSON.parse(editor.value);
+        await api('/api/v1/configuration/drafts',
+          {method: 'POST', body: JSON.stringify({document: parsed})});
+        message('Draft imported. Open the revision, correct any validation errors, then validate.');
+        await renderConfiguration();
+      } catch (error) { message(errorText(error), true); }
+    }));
+    content.append(actionButton('Import current JSON as Draft', async () => {
+      try { await api('/api/v1/configuration/drafts',
+        {method: 'POST', body: JSON.stringify({source: 'current'})});
+        message('Draft imported. Validate it before activation.'); await renderConfiguration();
+      } catch (error) { message(errorText(error), true); }
+    }));
+    const revisions = data.revisions || [];
+    content.append(text('h3', `Revisions (${revisions.length})`));
+    content.append(table(['Revision', 'Status', 'Version', 'Digest', 'Updated'],
+      revisions.map(item => [item.revisionId, item.status, item.version,
+        item.digest, item.updatedAt]), index => showConfigurationRevision(revisions[index])));
+  }
+  function guidedInput(label, value, type = 'text') {
+    const wrapper = text('label', label);
+    const input = document.createElement('input'); input.type = type;
+    input.value = value === null || value === undefined ? '' : String(value);
+    input.setAttribute('aria-label', label); wrapper.append(input);
+    return {wrapper, input};
+  }
+  function guidedObjectFields(kind, item = {}) {
+    const fields = {
+      storages: [['id', 'ID'], ['name', 'Name'], ['rootPath', 'Local root path']],
+      resourceLibraries: [['id', 'ID'], ['name', 'Name'], ['storageId', 'Storage ID'],
+        ['storagePath', 'Storage-relative source path'], ['displayRootPath', 'Display root path'],
+        ['extensions', 'Extensions (comma separated)'], ['maxDepth', 'Maximum depth']],
+      mediaLibraries: [['id', 'ID'], ['name', 'Name'], ['storageId', 'Storage ID'],
+        ['rootPath', 'Storage-relative destination root']]
+    }[kind];
+    const result = {};
+    (fields || []).forEach(([key, label]) => {
+      const initial = key === 'extensions' && Array.isArray(item[key]) ? item[key].join(',') : item[key];
+      const control = guidedInput(label, initial, key === 'maxDepth' ? 'number' : 'text');
+      result[key] = control.input;
+      control.wrapper.dataset.guidedField = key;
+    });
+    const booleans = kind === 'storages' ? [['readOnly', 'Read-only']] : [['enabled', 'Enabled']];
+    booleans.forEach(([key, label]) => {
+      const control = guidedInput(label, item[key] === undefined ? true : item[key], 'checkbox');
+      control.input.checked = item[key] === undefined ? true : Boolean(item[key]);
+      result[key] = control.input;
+      control.wrapper.dataset.guidedField = key;
+    });
+    return result;
+  }
+  function guidedObjectPayload(kind, fields) {
+    const value = {};
+    Object.entries(fields).forEach(([key, input]) => {
+      if (input.type === 'checkbox') value[key] = input.checked;
+      else if (key === 'extensions') value[key] = input.value.split(',').map(item => item.trim()).filter(Boolean);
+      else if (key === 'maxDepth') value[key] = input.value === '' ? null : Number(input.value);
+      else value[key] = input.value;
+    });
+    if (kind === 'resourceLibraries') {
+      if (!value.displayRootPath) delete value.displayRootPath;
+      if (!value.extensions || value.extensions.length === 0) delete value.extensions;
+      if (value.maxDepth === null) delete value.maxDepth;
+    }
+    if (kind === 'storages') value.type = 'local';
+    return value;
+  }
+  async function mutateGuidedObject(revision, kind, objectId, value, method) {
+    const suffix = objectId ? `/${encodeURIComponent(objectId)}` : '';
+    await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/objects/${kind}${suffix}`,
+      {method, body: JSON.stringify(objectId && method === 'DELETE' ?
+        {expectedVersion: revision.version} : {object: value, expectedVersion: revision.version})});
+    message('Guided configuration change saved. Validate the Draft again before activation.');
+    detail.hidden = true; await renderConfiguration();
+  }
+  function configurationRevisionEditable(revision) {
+    return revision.status === 'draft' || revision.status === 'validated';
+  }
+  function renderGuidedObjectList(revision, guided, kind, label) {
+    const values = guided.objects && guided.objects[kind] || [];
+    const referenceKind = {storages: 'storage', resourceLibraries: 'resource_library',
+      mediaLibraries: 'media_library'}[kind] || kind;
+    detailContent.append(text('h3', `${label} (${values.length})`));
+    values.forEach(item => {
+      const row = text('div', '', 'choice');
+      row.append(text('span', `${item.id || '-'} - ${item.name || '-'} - ${item.type || ''}`));
+      const referenceEvidence = guided.references && guided.references[`${referenceKind}:${item.id}`] ||
+        {total: 0, items: [], truncated: false};
+      const references = Array.isArray(referenceEvidence) ? referenceEvidence :
+        (Array.isArray(referenceEvidence.items) ? referenceEvidence.items : []);
+      const referenceTotal = Array.isArray(referenceEvidence) ? references.length :
+        Number.isInteger(referenceEvidence.total) ? referenceEvidence.total : references.length;
+      if (referenceTotal) {
+        const labels = references.map(reference =>
+          `${reference.section || 'configuration'}:${reference.id || '-'}.${reference.field || '-'}`);
+        const suffix = !Array.isArray(referenceEvidence) && referenceEvidence.truncated ?
+          `; showing ${references.length} (truncated)` : '';
+        row.append(text('span', `References (${referenceTotal}${suffix}): ${labels.join(', ')}`, 'warning'));
+      }
+      if (kind === 'storages' && item.type !== 'local') {
+        row.append(text('span', 'Remote/read-only here. Use JSON import for changes.', 'warning'));
+      } else if (configurationRevisionEditable(revision)) {
+        row.append(actionButton('Edit', () => renderGuidedObjectForm(revision, kind, item)));
+        row.append(actionButton('Delete', () => {
+          const confirmation = text('span', '', 'choices');
+          confirmation.append(text('span', `Delete ${label} ${item.id}? References block deletion.`),
+            actionButton('Confirm delete', async () => {
+              try { await mutateGuidedObject(revision, kind, item.id, null, 'DELETE'); }
+              catch (error) { message(errorText(error), true); }
+            }), actionButton('Cancel delete', () => confirmation.remove()));
+          row.append(confirmation);
+        }));
+      }
+      detailContent.append(row);
+    });
+    if (configurationRevisionEditable(revision)) {
+      const singular = {storages: 'Storage', resourceLibraries: 'ResourceLibrary',
+        mediaLibraries: 'MediaLibrary'}[kind] || kind;
+      detailContent.append(actionButton(`Add Local ${singular}`,
+        () => renderGuidedObjectForm(revision, kind, null)));
+    }
+  }
+  function renderGuidedObjectForm(revision, kind, item) {
+    clear(detailContent);
+    detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} Local ${kind === 'storages' ? 'Storage' :
+      kind === 'resourceLibraries' ? 'ResourceLibrary' : 'MediaLibrary'}`));
+    detailContent.append(text('p', 'Only Local objects are editable here. Remote objects remain redacted and read-only.', 'warning'));
+    detailContent.append(text('p', kind === 'storages' ?
+      'Local Storage rootPath is a host-absolute directory. ResourceLibrary storagePath and MediaLibrary rootPath are Storage-relative paths.' :
+      'Use Storage-relative paths for this object; absolute paths and traversal are rejected.', 'warning'));
+    const form = text('div', '', 'choices'); const fields = guidedObjectFields(kind, item || {});
+    Object.values(fields).forEach(input => form.append(input.parentElement)); detailContent.append(form);
+    detailContent.append(actionButton('Save guided object', async () => {
+      try { await mutateGuidedObject(revision, kind, item && item.id, guidedObjectPayload(kind, fields), item ? 'PUT' : 'POST'); }
+      catch (error) { message(errorText(error), true); }
+    }), actionButton('Back to revision', () => showConfigurationRevision(revision)));
+  }
+  function boundedSetupText(value, fallback = '-') {
+    return typeof value === 'string' && value.length > 0 && value.length <= 4096 ? value : fallback;
+  }
+  function setupEvidenceIsCurrent(revision, evidence) {
+    return Boolean(evidence && evidence.stale === false &&
+      evidence.revisionId === revision.revisionId &&
+      evidence.revisionVersion === revision.version &&
+      evidence.revisionDigest === revision.digest);
+  }
+  function renderLocalSetupEvidence(revision, guided) {
+    const evidence = guided.localSetupCheck;
+    detailContent.append(text('h3', 'Local setup check evidence'));
+    if (!evidence || typeof evidence !== 'object') {
+      detailContent.append(text('p', 'Status: not run. No setup-check evidence exists for this revision.', 'warning'));
+      return;
+    }
+    const current = setupEvidenceIsCurrent(revision, evidence);
+    const status = evidence.status === 'passed' || evidence.status === 'failed' ? evidence.status : 'unknown';
+    const operations = Array.isArray(evidence.operations) ? evidence.operations.slice(0, 32)
+      .filter(value => typeof value === 'string' && value.length > 0 && value.length <= 128) : [];
+    const list = document.createElement('dl');
+    field(list, 'Evidence state', current ? 'current' : 'stale');
+    field(list, 'Status', status);
+    field(list, 'Evidence revision ID', boundedSetupText(evidence.revisionId));
+    field(list, 'Evidence version', Number.isInteger(evidence.revisionVersion) ? evidence.revisionVersion : '-');
+    field(list, 'Evidence digest', boundedSetupText(evidence.revisionDigest));
+    field(list, 'Current version', revision.version);
+    field(list, 'Current digest', boundedSetupText(revision.digest));
+    field(list, 'Failure category', boundedSetupText(evidence.failureCategory));
+    field(list, 'Message', boundedSetupText(evidence.message));
+    field(list, 'Source root', boundedSetupText(evidence.sourcePath));
+    field(list, 'Destination root', boundedSetupText(evidence.destinationPath));
+    field(list, 'Completed operations', operations.length ? operations.join(', ') : '-');
+    field(list, 'Duration', Number.isInteger(evidence.durationMs) && evidence.durationMs >= 0 ?
+      `${evidence.durationMs} ms` : '-');
+    field(list, 'Side effects', boundedSetupText(evidence.sideEffects, 'unknown'));
+    field(list, 'Retry safe', typeof evidence.retrySafe === 'boolean' ?
+      (evidence.retrySafe ? 'YES' : 'NO') : 'unknown');
+    field(list, 'Next action', boundedSetupText(evidence.nextAction));
+    detailContent.append(list);
+    if (!current) detailContent.append(text('p', revision.status === 'draft' ?
+      'This evidence is stale. Finish correcting this Draft, then Validate before rerunning the check.' :
+      'This evidence is stale. Run Local setup check again before checked activation.', 'warning'));
+  }
+  function localSetupSelection(guided) {
+    const objects = guided.objects || {};
+    const localBackendIds = new Set((objects.storages || [])
+      .filter(item => item.type === 'local').map(item => item.id));
+    const resources = (objects.resourceLibraries || [])
+      .filter(item => item.enabled !== false && localBackendIds.has(item.storageId));
+    const media = (objects.mediaLibraries || [])
+      .filter(item => item.enabled !== false && localBackendIds.has(item.storageId));
+    return {resource: resources[0] || null, media: media[0] || null};
+  }
+  function renderLocalSetupActions(revision, guided) {
+    const evidence = guided.localSetupCheck;
+    const selection = localSetupSelection(guided);
+    if (revision.status === 'draft') {
+      detailContent.append(text('p', 'Validate this Draft before running Local setup check.', 'warning'));
+      return;
+    }
+    if (revision.status !== 'validated') return;
+    if (!selection.resource || !selection.media) {
+      detailContent.append(text('p',
+        'Configure and enable one Local-backed ResourceLibrary and MediaLibrary, then Validate before running Local setup check.',
+        'warning'));
+      return;
+    }
+    const action = text('div', '', 'choices');
+    action.append(text('p', evidence ? 'Explicitly rerun this bounded read-only check when needed.' :
+      'Run a bounded read-only Local setup check before checked activation.', 'warning'));
+    action.append(actionButton('Run Local setup check', async () => {
+      try {
+        const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/local-setup-check`,
+          {method: 'POST', body: JSON.stringify({expectedVersion: revision.version, expectedDigest: revision.digest,
+            resourceLibraryId: selection.resource.id, mediaLibraryId: selection.media.id})});
+        message(result.status === 'passed' ? 'Local setup check passed. Review the diff, then activate.' :
+          `${result.message || 'Local setup check failed.'} ${result.nextAction || ''} ` +
+          `Side effects: ${result.sideEffects || 'unknown'}. Retry safe: ${result.retrySafe === true ? 'yes' : 'no'}.`,
+          result.status !== 'passed');
+        await showConfigurationRevision(revision);
+      } catch (error) { message(errorText(error), true); }
+    }));
+    if (evidence && evidence.status === 'passed' && setupEvidenceIsCurrent(revision, evidence)) action.append(actionButton('Activate checked Draft',
+      () => activateConfigurationRevision(revision, true)));
+    detailContent.append(action);
+  }
+  async function activateConfigurationRevision(data, checked) {
+    try {
+      await api(`/api/v1/configuration/revisions/${encodeURIComponent(data.revisionId)}/activate`,
+        {method: 'POST', body: JSON.stringify({expectedVersion: data.version, ...(checked ? {checked: true} : {})})});
+      detail.hidden = true; message('Configuration activated. New work will pin this snapshot.');
+      await renderConfiguration();
+    } catch (error) { message(errorText(error), true); }
+  }
+  function configurationIdentity(value) {
+    if (!value || typeof value !== 'object' || typeof value.revisionId !== 'string' ||
+        !value.revisionId || !Number.isInteger(value.version) || typeof value.digest !== 'string' ||
+        !value.digest) return null;
+    return {revisionId: value.revisionId, version: value.version, digest: value.digest};
+  }
+  function configurationIdentityMatches(raw, guided) {
+    const rawIdentity = configurationIdentity(raw);
+    const guidedIdentity = configurationIdentity(guided);
+    return Boolean(rawIdentity && guidedIdentity &&
+      rawIdentity.revisionId === guidedIdentity.revisionId &&
+      rawIdentity.version === guidedIdentity.version && rawIdentity.digest === guidedIdentity.digest);
+  }
+  function renderConfigurationIdentityMismatch(revision, raw, guided) {
+    const rawIdentity = configurationIdentity(raw);
+    const guidedIdentity = configurationIdentity(guided);
+    detailContent.append(text('h2', 'Configuration changed while loading'));
+    detailContent.append(text('p', 'Draft changed while loading; guided actions are withheld until the revision is reloaded.', 'error'));
+    const list = document.createElement('dl');
+    [['Raw revision', rawIdentity], ['Guided revision', guidedIdentity]].forEach(([label, identity]) => {
+      field(list, `${label} ID`, identity && identity.revisionId || '-');
+      field(list, `${label} version`, identity && identity.version === 0 ? 0 : identity && identity.version || '-');
+      field(list, `${label} digest`, identity && identity.digest || '-');
+    });
+    detailContent.append(list);
+    detailContent.append(text('p', 'Side effects: none. Reload to review one complete revision before editing, checking, validating, or activating.', 'warning'));
+    detailContent.append(actionButton('Reload this revision', () => showConfigurationRevision(revision)));
+  }
+  async function showConfigurationRevision(revision) {
+    try {
+      const data = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}`);
+      let guided = null;
+      try { guided = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/objects`); }
+      catch (error) { message(`Guided configuration is unavailable: ${errorText(error)}`, true); }
+      clear(detailContent);
+      if (guided && !configurationIdentityMatches(data, guided)) {
+        renderConfigurationIdentityMismatch(revision, data, guided);
+        detail.hidden = false;
+        return;
+      }
+      detailContent.append(text('h2', 'Configuration revision detail'));
+      const list = document.createElement('dl');
+      Object.entries(data).filter(([, value]) => !Array.isArray(value) && typeof value !== 'object')
+        .forEach(([key, value]) => field(list, key, value)); detailContent.append(list);
+      if (data.diff) detailContent.append(text('p', `Changed sections: ${(data.diff.changedSections || []).join(', ') || 'none'}`));
+      if (Array.isArray(data.validationErrors) && data.validationErrors.length) {
+        detailContent.append(text('h3', 'Validation errors'));
+        data.validationErrors.forEach(error => detailContent.append(text('p', error, 'error')));
+      }
+      if (guided) {
+        detailContent.append(text('h3', 'Guided Local setup'));
+        detailContent.append(text('p', 'Draft edits are version-checked and audited. Activation uses the exact validated revision.', 'warning'));
+        renderGuidedObjectList(data, guided, 'storages', 'Storages');
+        renderGuidedObjectList(data, guided, 'resourceLibraries', 'ResourceLibraries');
+        renderGuidedObjectList(data, guided, 'mediaLibraries', 'MediaLibraries');
+        renderLocalSetupEvidence(data, guided);
+        renderLocalSetupActions(data, guided);
+      }
+      const actions = text('div', '', 'choices');
+      if (data.status === 'draft') actions.append(actionButton('Validate Draft', async () => {
+        try { await api(`/api/v1/configuration/revisions/${encodeURIComponent(data.revisionId)}/validate`,
+          {method: 'POST', body: '{}'}); detail.hidden = true; await renderConfiguration();
+        } catch (error) { message(errorText(error), true); }
+      }));
+      if (configurationRevisionEditable(data)) {
+        const editor = document.createElement('textarea');
+        editor.setAttribute('aria-label', 'Editable configuration JSON');
+        editor.value = JSON.stringify(data.document || {}, null, 2);
+        detailContent.append(text('h3', 'Edit Draft JSON')); detailContent.append(editor);
+        actions.append(actionButton('Save Draft', async () => {
+          try {
+            const parsed = JSON.parse(editor.value);
+            await api(`/api/v1/configuration/revisions/${encodeURIComponent(data.revisionId)}`,
+              {method: 'PUT', body: JSON.stringify({document: parsed, expectedVersion: data.version})});
+            message('Draft saved and returned to Draft state. Validate it again.');
+            detail.hidden = true; await renderConfiguration();
+          } catch (error) { message(errorText(error), true); }
+        }));
+      }
+      if (data.status === 'validated') {
+        const checked = guided && guided.localSetupCheck && guided.localSetupCheck.status === 'passed' &&
+          setupEvidenceIsCurrent(data, guided.localSetupCheck);
+        actions.append(actionButton(checked ? 'Activate checked revision' :
+          (guided ? 'Activate unchecked compatibility revision' : 'Activate revision'),
+          () => activateConfigurationRevision(data, Boolean(checked))));
+        if (!checked && guided) actions.append(text('p', 'Activation is available for compatibility, but Local setup requires a current successful check for the guided safe path.', 'warning'));
+      }
+      if (data.status === 'active') actions.append(actionButton('Queue first DryRun Preview', async () => {
+        try { const job = await api('/api/v1/jobs', {method: 'POST', body: JSON.stringify({command: 'preview'})});
+          message(`DryRun Preview queued: ${job.job_id || job.jobId || '-'}`); }
+        catch (error) { message(errorText(error), true); }
+      }));
+      detailContent.append(actions); detail.hidden = false;
+    } catch (error) { message(errorText(error), true); }
+  }
   function table(headers, rows, onRow) {
     const tableNode = document.createElement('table');
     const head = document.createElement('thead'); const headerRow = document.createElement('tr');
@@ -208,7 +597,7 @@ APP_JS = b"""(() => {
             {method: 'POST', body: JSON.stringify(payload)});
           detail.hidden = true; message('Metadata re-match requested. Task was not resumed.');
           await load();
-        } catch (error) { message(error.message, true); }
+        } catch (error) { message(errorText(error), true); }
       }));
     detailContent.append(text('h3', 'Metadata re-match'), controls);
   }
@@ -319,7 +708,7 @@ APP_JS = b"""(() => {
     try {
       const created = await api('/api/v1/jobs', {method: 'POST', body: JSON.stringify(payload)});
       await renderObservability('jobs'); await showJob(created.job_id); message('DryRun job queued.');
-    } catch (error) { message(error.message, true); }
+          } catch (error) { message(errorText(error), true); }
   }
   async function renderSchedules() {
     const data = await api('/api/v1/schedules'); const items = data.items || [];
@@ -344,7 +733,7 @@ APP_JS = b"""(() => {
         () => showScheduleAudit(id, data.previous_cursor),
         () => showScheduleAudit(id, data.next_cursor));
       detail.hidden = false;
-    } catch (error) { message(error.message, true); }
+        } catch (error) { message(errorText(error), true); }
   }
   async function renderNotifications(status = 'all', cursor = null) {
     const selector = document.createElement('select'); selector.setAttribute('aria-label',
@@ -421,13 +810,19 @@ APP_JS = b"""(() => {
         () => showTask(id, itemCursor, data.previous_result_cursor),
         () => showTask(id, itemCursor, data.next_result_cursor));
       detail.hidden = false;
-    } catch (error) { message(error.message, true); }
+        } catch (error) { message(errorText(error), true); }
   }
   async function showJob(id) {
     try {
       const data = await api(`/api/v1/jobs/${encodeURIComponent(id)}`);
       clear(detailContent); detailContent.append(text('h2', 'Automation job detail'),
         scalarDetails(data));
+      if (data.failure_category) detailContent.append(text('p',
+        `Configuration failure: ${data.failure_category}. ` +
+        `State: ${data.failure_durable_state || '-'}. ` +
+        `Side effects: ${data.failure_side_effects || 'unknown'}. ` +
+        `Retry safe: ${data.failure_retry_safe ? 'YES' : 'NO'}. ` +
+        `Next action: ${data.failure_next_action || 'inspect the saved snapshot'}.`, 'error'));
       if (data.task_id) detailContent.append(actionButton('Open linked task', () => showTask(data.task_id)));
       if (data.status === 'pending' || data.status === 'running') {
         detailContent.append(text('p', data.status === 'running' ?
@@ -437,7 +832,7 @@ APP_JS = b"""(() => {
         detailContent.append(actionButton('Request cancellation', () => confirmJobCancellation(id)));
       }
       detail.hidden = false;
-    } catch (error) { message(error.message, true); }
+    } catch (error) { message(errorText(error), true); }
   }
   function confirmJobCancellation(id) {
     const confirmation = text('div', '', 'choices');
@@ -450,7 +845,7 @@ APP_JS = b"""(() => {
     try {
       await api(`/api/v1/jobs/${encodeURIComponent(id)}/cancel`, {method: 'POST'});
       await renderObservability('jobs'); await showJob(id); message('Cancellation recorded.');
-    } catch (error) { message(error.message, true); }
+    } catch (error) { message(errorText(error), true); }
   }
   async function showDetail(kind, id) {
     try {
@@ -490,7 +885,7 @@ APP_JS = b"""(() => {
       if (kind === 'classification-reviews') renderRankActions(kind, id, data.choices || [],
         'choiceRank', ['rank', 'rule_id', 'media_library_id', 'relative_path']);
       detail.hidden = false;
-    } catch (error) { message(error.message, true); }
+    } catch (error) { message(errorText(error), true); }
   }
   function actionButton(label, action) {
     const button = text('button', label); button.addEventListener('click', action); return button;
@@ -514,7 +909,7 @@ APP_JS = b"""(() => {
   async function resolve(path, payload) {
     try { await api(path, {method: 'POST', body: JSON.stringify(payload)});
       detail.hidden = true; message('Decision saved. Task was not resumed.'); await load();
-    } catch (error) { message(error.message, true); }
+    } catch (error) { message(errorText(error), true); }
   }
   async function load() {
     try { message('Loading...');
@@ -524,9 +919,10 @@ APP_JS = b"""(() => {
       else if (view === 'notifications') await renderNotifications();
       else if (view === 'logs') await renderLogs();
       else if (view === 'system') await renderSystem();
+      else if (view === 'configuration') await renderConfiguration();
       else if (view === 'files') await renderFiles();
       else await renderQueue(view); message('Connected.');
-    } catch (error) { clear(content); message(error.message, true); }
+    } catch (error) { clear(content); message(errorText(error), true); }
   }
   document.getElementById('connect').addEventListener('click', () => {
     token = tokenInput.value; tokenInput.value = ''; load();

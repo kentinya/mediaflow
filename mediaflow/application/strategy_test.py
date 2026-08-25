@@ -4,7 +4,7 @@ import posixpath
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
-from typing import Any, BinaryIO
+from typing import Any
 
 from mediaflow.application.classification import (
     ClassificationPolicyRegistry,
@@ -21,6 +21,10 @@ from mediaflow.application.naming import NamingPolicyRegistry, NamingPreviewServ
 from mediaflow.application.nfo_parser import StorageNfoEnricher
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor, PlanningError
 from mediaflow.application.policies import RecognitionTypePolicyResolver
+from mediaflow.application.read_only_storage import (
+    ReadOnlyStorageGuard,
+    ReadOnlyStorageMutationError,
+)
 from mediaflow.application.recognition import RecognitionRuleEngine
 from mediaflow.domain.classification import (
     ClassificationContext,
@@ -57,10 +61,10 @@ from mediaflow.domain.recognition import (
 )
 from mediaflow.domain.recognition_review import RecognitionSelection
 from mediaflow.domain.scanner import CancellationToken, FileScanStatus, ScanError, Scanner
-from mediaflow.domain.storage import Storage, StorageCapabilities, StorageEntry, WriteSource
+from mediaflow.domain.storage import Storage
 
 
-class StrategyMutationError(RuntimeError):
+class StrategyMutationError(ReadOnlyStorageMutationError):
     pass
 
 
@@ -79,76 +83,11 @@ class StrategyTestConfiguration:
     organize_policies: tuple[OrganizePolicy, ...] = ()
 
 
-class ReadOnlyStrategyStorage:
+class ReadOnlyStrategyStorage(ReadOnlyStorageGuard):
     """Delegates reads but fails immediately on every Storage mutation."""
 
-    def __init__(self, storage: Storage) -> None:
-        self._storage = storage
-        self.mutation_calls = {
-            name: 0
-            for name in (
-                "Write",
-                "CreateDirectory",
-                "Move",
-                "Copy",
-                "Delete",
-                "HardLink",
-                "SoftLink",
-            )
-        }
-
-    @property
-    def storage_id(self) -> str:
-        return self._storage.storage_id
-
-    @property
-    def name(self) -> str:
-        return self._storage.name
-
-    @property
-    def read_only(self) -> bool:
-        return True
-
-    @property
-    def capabilities(self) -> StorageCapabilities:
-        return StorageCapabilities()
-
-    def list(self, path: str):
-        return self._storage.list(path)
-
-    def stat(self, path: str) -> StorageEntry:
-        return self._storage.stat(path)
-
-    def exists(self, path: str) -> bool:
-        return self._storage.exists(path)
-
-    def read(self, path: str) -> BinaryIO:
-        return self._storage.read(path)
-
-    def write(self, path: str, data: WriteSource, *, overwrite: bool = False) -> None:
-        self._reject("Write")
-
-    def create_directory(self, path: str) -> None:
-        self._reject("CreateDirectory")
-
-    def move(self, source: str, target: str, *, overwrite: bool = False) -> None:
-        self._reject("Move")
-
-    def copy(self, source: str, target: str, *, overwrite: bool = False) -> None:
-        self._reject("Copy")
-
-    def delete(self, path: str) -> None:
-        self._reject("Delete")
-
-    def hard_link(self, source: str, target: str) -> None:
-        self._reject("HardLink")
-
-    def soft_link(self, source: str, target: str) -> None:
-        self._reject("SoftLink")
-
-    def _reject(self, operation: str) -> None:
-        self.mutation_calls[operation] += 1
-        raise StrategyMutationError(f"strategy-test forbids Storage mutation: {operation}")
+    def _mutation_error(self, operation: str) -> StrategyMutationError:
+        return StrategyMutationError(f"strategy-test forbids Storage mutation: {operation}")
 
 
 @dataclass(frozen=True)

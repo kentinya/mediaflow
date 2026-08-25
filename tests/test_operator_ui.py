@@ -130,8 +130,248 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("'/api/v1/jobs', {method: 'POST'", script)
         self.assertNotIn("/api/v1/tasks/${encodeURIComponent(id)}/resume", script)
         self.assertNotIn("actor", script.lower())
-        self.assertNotIn("mediaLibraryId", script)
+        self.assertIn("mediaLibraryId", script)
+        self.assertIn("Run Local setup check", script)
+        self.assertIn("Activate checked Draft", script)
+        self.assertIn("Remote/read-only here", script)
+        self.assertIn("guided.references", script)
+        self.assertIn("referenceEvidence", script)
+        self.assertIn("showing ${references.length}", script)
+        self.assertIn("References (", script)
+        self.assertIn("referencesTruncated", script)
+        self.assertIn("configurationIdentityMatches", script)
+        self.assertIn("Draft changed while loading", script)
+        self.assertIn("Reload this revision", script)
+        self.assertIn("Side effects: none", script)
+        guard = script.index("if (guided && !configurationIdentityMatches")
+        guided_render = script.index("renderGuidedObjectList(data, guided", guard)
+        self.assertLess(guard, guided_render)
+        mismatch = script[guard:guided_render]
+        self.assertNotIn("Validate Draft", mismatch)
+        self.assertNotIn("Save Draft", mismatch)
+        self.assertNotIn("Activate", mismatch)
+        self.assertNotIn("classificationPolicies", script)
+        self.assertNotIn("recognitionRules", script)
         self.assertIn("Task was not resumed", script)
+
+    def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
+        script = APP_JS.decode()
+        mismatch_start = script.index("function renderConfigurationIdentityMismatch")
+        show_start = script.index("async function showConfigurationRevision", mismatch_start)
+        table_start = script.index("function table(", show_start)
+        mismatch_renderer = script[mismatch_start:show_start]
+        show_revision = script[show_start:table_start]
+
+        self.assertEqual(mismatch_renderer.count("actionButton("), 1)
+        self.assertIn("actionButton('Reload this revision'", mismatch_renderer)
+        self.assertIn("Raw revision", mismatch_renderer)
+        self.assertIn("Guided revision", mismatch_renderer)
+        self.assertIn("Side effects: none", mismatch_renderer)
+        for forbidden in (
+            "api(",
+            "mutateGuidedObject",
+            "activateConfigurationRevision",
+            "Run Local setup check",
+            "Save Draft",
+            "Validate Draft",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, mismatch_renderer)
+
+        guard = show_revision.index("if (guided && !configurationIdentityMatches")
+        normal_detail = show_revision.index(
+            "detailContent.append(text('h2', 'Configuration revision detail')", guard
+        )
+        guarded_branch = show_revision[guard:normal_detail]
+        self.assertIn("renderConfigurationIdentityMismatch(revision, data, guided)", guarded_branch)
+        self.assertIn("detail.hidden = false", guarded_branch)
+        return_position = show_revision.index("return;", guard, normal_detail)
+        self.assertLess(return_position, normal_detail)
+
+        for normal_control in (
+            "renderGuidedObjectList(data, guided",
+            "renderLocalSetupActions(data, guided)",
+            "actionButton('Validate Draft'",
+            "document.createElement('textarea')",
+            "actionButton('Save Draft'",
+            "activateConfigurationRevision(data",
+            "actionButton('Queue first DryRun Preview'",
+        ):
+            with self.subTest(normal_control=normal_control):
+                self.assertLess(return_position, show_revision.index(normal_control, guard))
+
+    def test_guided_object_form_retains_input_after_api_validation_failure(self) -> None:
+        script = APP_JS.decode()
+        mutation_start = script.index("async function mutateGuidedObject")
+        list_start = script.index("function renderGuidedObjectList", mutation_start)
+        mutation = script[mutation_start:list_start]
+        api_call = mutation.index("await api(")
+        success_hide = mutation.index("detail.hidden = true", api_call)
+        success_reload = mutation.index("await renderConfiguration()", success_hide)
+        self.assertLess(api_call, success_hide)
+        self.assertLess(success_hide, success_reload)
+
+        form_start = script.index("function renderGuidedObjectForm")
+        actions_start = script.index("function renderLocalSetupActions", form_start)
+        form = script[form_start:actions_start]
+        save_start = form.index("actionButton('Save guided object'")
+        back_start = form.index("actionButton('Back to revision'", save_start)
+        save_handler = form[save_start:back_start]
+        self.assertIn("guidedObjectPayload(kind, fields)", save_handler)
+        self.assertIn("item && item.id", save_handler)
+        self.assertIn("catch (error) { message(errorText(error), true); }", save_handler)
+        for destructive_recovery in (
+            "clear(detailContent)",
+            "detail.hidden = true",
+            "renderConfiguration()",
+            "showConfigurationRevision(",
+        ):
+            with self.subTest(destructive_recovery=destructive_recovery):
+                self.assertNotIn(destructive_recovery, save_handler)
+        self.assertIn("Local Storage rootPath is a host-absolute directory", form)
+
+    def test_validated_setup_failure_keeps_same_revision_editable_for_recovery(self) -> None:
+        script = APP_JS.decode()
+        helper_start = script.index("function configurationRevisionEditable")
+        list_start = script.index("function renderGuidedObjectList", helper_start)
+        helper = script[helper_start:list_start]
+        self.assertIn("revision.status === 'draft' || revision.status === 'validated'", helper)
+        self.assertGreaterEqual(script.count("configurationRevisionEditable("), 4)
+        self.assertIn("Save guided object", script)
+        self.assertIn("Save Draft", script)
+        self.assertIn("Validate Draft", script)
+
+    def test_local_setup_check_immediate_failure_is_actionable_without_retry_or_activation(
+        self,
+    ) -> None:
+        script = APP_JS.decode()
+        action_start = script.index("actionButton('Run Local setup check'")
+        activation_gate = script.index("if (evidence && evidence.status === 'passed'", action_start)
+        handler = script[action_start:activation_gate]
+        self.assertIn("result.message", handler)
+        self.assertIn("result.nextAction", handler)
+        self.assertIn("result.sideEffects", handler)
+        self.assertIn("result.retrySafe === true", handler)
+        self.assertIn("Side effects:", handler)
+        self.assertIn("Retry safe:", handler)
+        self.assertNotIn("activateConfigurationRevision", handler)
+        self.assertNotIn("setTimeout", handler)
+        self.assertEqual(handler.count("local-setup-check"), 1)
+
+    def test_persisted_local_setup_evidence_is_complete_bounded_and_read_only(self) -> None:
+        script = APP_JS.decode()
+        renderer_start = script.index("function renderLocalSetupEvidence")
+        actions_start = script.index("function renderLocalSetupActions", renderer_start)
+        renderer = script[renderer_start:actions_start]
+
+        for label in (
+            "Local setup check evidence",
+            "Status: not run",
+            "Evidence state",
+            "Status",
+            "Evidence revision ID",
+            "Evidence version",
+            "Evidence digest",
+            "Current version",
+            "Current digest",
+            "Failure category",
+            "Message",
+            "Source root",
+            "Destination root",
+            "Completed operations",
+            "Duration",
+            "Side effects",
+            "Retry safe",
+            "Next action",
+        ):
+            with self.subTest(label=label):
+                self.assertIn(label, renderer)
+        self.assertIn("boundedSetupText", renderer)
+        self.assertIn(".slice(0, 32)", renderer)
+        self.assertIn("value.length <= 128", renderer)
+        self.assertIn("Finish correcting this Draft, then Validate", renderer)
+        self.assertIn("Run Local setup check again before checked activation", renderer)
+        for forbidden in (
+            "api(",
+            "actionButton(",
+            "activateConfigurationRevision",
+            "setTimeout",
+            "create_storages",
+            "scan",
+            "/api/v1/jobs",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, renderer)
+
+    def test_setup_evidence_currentness_uses_exact_revision_identity(self) -> None:
+        script = APP_JS.decode()
+        helper_start = script.index("function setupEvidenceIsCurrent")
+        renderer_start = script.index("function renderLocalSetupEvidence", helper_start)
+        helper = script[helper_start:renderer_start]
+
+        self.assertIn("evidence.stale === false", helper)
+        self.assertIn("evidence.revisionId === revision.revisionId", helper)
+        self.assertIn("evidence.revisionVersion === revision.version", helper)
+        self.assertIn("evidence.revisionDigest === revision.digest", helper)
+
+    def test_local_setup_selection_uses_enabled_local_backed_libraries(self) -> None:
+        script = APP_JS.decode()
+        helper_start = script.index("function localSetupSelection")
+        actions_start = script.index("function renderLocalSetupActions", helper_start)
+        helper = script[helper_start:actions_start]
+
+        self.assertIn("new Set((objects.storages || [])", helper)
+        self.assertIn(".filter(item => item.type === 'local').map(item => item.id)", helper)
+        self.assertEqual(
+            helper.count("item.enabled !== false && localBackendIds.has(item.storageId)"),
+            2,
+        )
+        self.assertIn("objects.resourceLibraries || []", helper)
+        self.assertIn("objects.mediaLibraries || []", helper)
+        self.assertIn("return {resource: resources[0] || null, media: media[0] || null}", helper)
+        self.assertNotIn("api(", helper)
+        self.assertNotIn("actionButton(", helper)
+
+    def test_reloaded_setup_state_has_explicit_safe_action_matrix(self) -> None:
+        script = APP_JS.decode()
+        actions_start = script.index("function renderLocalSetupActions")
+        activate_start = script.index("async function activateConfigurationRevision", actions_start)
+        actions = script[actions_start:activate_start]
+
+        selection = actions.index("const selection = localSetupSelection(guided)")
+        draft_guard = actions.index("if (revision.status === 'draft')")
+        validated_guard = actions.index("if (revision.status !== 'validated')")
+        unavailable_guard = actions.index("if (!selection.resource || !selection.media)")
+        run_action = actions.index("actionButton('Run Local setup check'")
+        checked_gate = actions.index("setupEvidenceIsCurrent(revision, evidence)")
+        self.assertLess(selection, draft_guard)
+        self.assertLess(draft_guard, validated_guard)
+        self.assertLess(validated_guard, unavailable_guard)
+        self.assertLess(unavailable_guard, run_action)
+        self.assertLess(run_action, checked_gate)
+        self.assertIn("Validate this Draft before running Local setup check", actions)
+        self.assertIn(
+            "Configure and enable one Local-backed ResourceLibrary and MediaLibrary", actions
+        )
+        ineligible_path = actions[unavailable_guard:run_action]
+        self.assertIn("return;", ineligible_path)
+        self.assertNotIn("api(", ineligible_path)
+        self.assertNotIn("actionButton(", ineligible_path)
+        self.assertEqual(actions.count("actionButton('Run Local setup check'"), 1)
+        self.assertEqual(actions.count("local-setup-check"), 1)
+        self.assertIn("resourceLibraryId: selection.resource.id", actions)
+        self.assertIn("mediaLibraryId: selection.media.id", actions)
+        self.assertNotIn("guided.objects.resourceLibraries.filter", actions)
+        self.assertNotIn("guided.objects.mediaLibraries.filter", actions)
+        self.assertNotIn("setTimeout", actions)
+
+        show_start = script.index("async function showConfigurationRevision")
+        table_start = script.index("function table(", show_start)
+        show_revision = script[show_start:table_start]
+        evidence_render = show_revision.index("renderLocalSetupEvidence(data, guided)")
+        action_render = show_revision.index("renderLocalSetupActions(data, guided)")
+        self.assertLess(evidence_render, action_render)
+        self.assertIn("setupEvidenceIsCurrent(data, guided.localSetupCheck)", show_revision)
 
 
 if __name__ == "__main__":

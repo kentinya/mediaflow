@@ -31,7 +31,11 @@ class ExecutionAuthorizationService:
         maximum_active_jobs: int = 100,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         token_factory: Callable[[], str] = lambda: secrets.token_urlsafe(32),
+        configuration_snapshot_id: str | None = None,
+        configuration_snapshot_digest: str | None = None,
     ) -> None:
+        if (configuration_snapshot_id is None) != (configuration_snapshot_digest is None):
+            raise ValueError("Job configuration snapshot ID and digest must be provided together")
         if maximum_ttl_seconds < 1:
             raise ValueError("maximum execution authorization TTL must be positive")
         if (
@@ -46,6 +50,14 @@ class ExecutionAuthorizationService:
         self._maximum_active_jobs = maximum_active_jobs
         self._clock = clock
         self._token_factory = token_factory
+        self._configuration_snapshot_id = configuration_snapshot_id
+        self._configuration_snapshot_digest = configuration_snapshot_digest
+
+    def bind_configuration_snapshot(self, snapshot_id: str | None, digest: str | None) -> None:
+        if (snapshot_id is None) != (digest is None):
+            raise ValueError("Job configuration snapshot ID and digest must be provided together")
+        self._configuration_snapshot_id = snapshot_id
+        self._configuration_snapshot_digest = digest
 
     def issue(
         self,
@@ -100,6 +112,8 @@ class ExecutionAuthorizationService:
             now,
             limit=limit,
             execute_authorized=True,
+            configuration_snapshot_id=self._configuration_snapshot_id,
+            configuration_snapshot_digest=self._configuration_snapshot_digest,
         )
         self._repository.consume_execution_authorization(
             self.digest(token),

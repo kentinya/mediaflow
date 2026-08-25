@@ -84,6 +84,10 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestDecision
 
+# Keep the public runtime schema marker stable for existing Phase 19/22
+# compatibility checks. Snapshot columns are additive and migrated by the
+# presence checks below, so older databases remain readable without a
+# destructive version jump.
 SCHEMA_VERSION = 22
 
 
@@ -120,7 +124,7 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             self._connection.execute(
                 """
-                INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._task_values(task),
             )
@@ -131,7 +135,8 @@ class SQLiteTaskRepository:
                 """
                 UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?,
                     updated_at=?, started_at=?, completed_at=?, total_items=?, completed_items=?,
-                    failed_items=?, error=?, pause_requested=?, scope_path=?, item_limit=?
+                    failed_items=?, error=?, pause_requested=?, scope_path=?, item_limit=?,
+                    configuration_snapshot_id=?, configuration_snapshot_digest=?
                     WHERE task_id=?
                 """,
                 (*self._task_values(task)[1:], task.task_id),
@@ -1833,10 +1838,7 @@ class SQLiteTaskRepository:
 
     def create_job(self, job: AutomationJob) -> None:
         with self._lock, self._connection:
-            self._connection.execute(
-                "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                self._job_values(job),
-            )
+            self._insert_job(job)
 
     def admit_job(self, job: AutomationJob, maximum_active_jobs: int) -> bool:
         with self._lock:
@@ -1845,10 +1847,7 @@ class SQLiteTaskRepository:
                 if not self._has_job_capacity(maximum_active_jobs):
                     self._connection.rollback()
                     return False
-                self._connection.execute(
-                    "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    self._job_values(job),
-                )
+                self._insert_job(job)
                 self._connection.commit()
                 return True
             except Exception:
@@ -1936,7 +1935,10 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE automation_jobs SET command=?, status=?, created_at=?, updated_at=?, "
                 "limit_value=?, started_at=?, completed_at=?, task_id=?, error=?, "
-                "cancellation_requested=?, schedule_id=?, execute_authorized=?, claim_token=? "
+                "cancellation_requested=?, schedule_id=?, execute_authorized=?, claim_token=?, "
+                "configuration_snapshot_id=?, configuration_snapshot_digest=?, "
+                "failure_category=?, failure_durable_state=?, failure_side_effects=?, "
+                "failure_retry_safe=?, failure_next_action=? "
                 "WHERE job_id=?",
                 (*self._job_values(job)[1:], job.job_id),
             )
@@ -2007,10 +2009,14 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE automation_jobs SET command=?, status=?, created_at=?, updated_at=?, "
                 "limit_value=?, started_at=?, completed_at=?, task_id=?, error=?, "
-                "cancellation_requested=?, schedule_id=?, execute_authorized=?, claim_token=NULL "
+                "cancellation_requested=?, schedule_id=?, execute_authorized=?, claim_token=NULL, "
+                "configuration_snapshot_id=?, configuration_snapshot_digest=?, "
+                "failure_category=?, failure_durable_state=?, failure_side_effects=?, "
+                "failure_retry_safe=?, failure_next_action=? "
                 "WHERE job_id=? AND status=? AND claim_token=?",
                 (
-                    *self._job_values(job)[1:-1],
+                    *self._job_values(job)[1:13],
+                    *self._job_values(job)[14:],
                     job.job_id,
                     AutomationJobStatus.RUNNING.value,
                     job.claim_token,
@@ -2036,7 +2042,9 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE automation_jobs SET status=?, updated_at=?, started_at=NULL, "
                 "completed_at=NULL, task_id=NULL, error='explicitly requeued stale job', "
-                "cancellation_requested=0, claim_token=NULL "
+                "cancellation_requested=0, claim_token=NULL, failure_category=NULL, "
+                "failure_durable_state=NULL, failure_side_effects=NULL, "
+                "failure_retry_safe=NULL, failure_next_action=NULL "
                 "WHERE job_id=? AND status=? AND updated_at<?",
                 (
                     AutomationJobStatus.PENDING.value,
@@ -2107,10 +2115,7 @@ class SQLiteTaskRepository:
                 if cursor.rowcount != 1:
                     self._connection.rollback()
                     return False
-                self._connection.execute(
-                    "INSERT INTO automation_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    self._job_values(job),
-                )
+                self._insert_job(job)
                 self._connection.execute(
                     "INSERT INTO schedule_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
@@ -2273,11 +2278,7 @@ class SQLiteTaskRepository:
                     )
                     if cursor.rowcount != 1:
                         raise ValueError("execution authorization was already consumed")
-                    self._connection.execute(
-                        "INSERT INTO automation_jobs VALUES "
-                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        self._job_values(job),
-                    )
+                    self._insert_job(job)
                     self._insert_execution_authorization_audit(
                         replace(audit, authorization_id=value.authorization_id)
                     )
@@ -2670,7 +2671,8 @@ class SQLiteTaskRepository:
                     total_items INTEGER NOT NULL, completed_items INTEGER NOT NULL,
                     failed_items INTEGER NOT NULL, error TEXT,
                     pause_requested INTEGER NOT NULL DEFAULT 0,
-                    scope_path TEXT, item_limit INTEGER
+                    scope_path TEXT, item_limit INTEGER,
+                    configuration_snapshot_id TEXT, configuration_snapshot_digest TEXT
                 );
                 CREATE TABLE IF NOT EXISTS task_items (
                     item_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, storage_id TEXT NOT NULL,
@@ -2864,7 +2866,11 @@ class SQLiteTaskRepository:
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, limit_value INTEGER,
                     started_at TEXT, completed_at TEXT, task_id TEXT, error TEXT,
                     cancellation_requested INTEGER NOT NULL DEFAULT 0, schedule_id TEXT,
-                    execute_authorized INTEGER NOT NULL DEFAULT 0, claim_token TEXT
+                    execute_authorized INTEGER NOT NULL DEFAULT 0, claim_token TEXT,
+                    configuration_snapshot_id TEXT, configuration_snapshot_digest TEXT,
+                    failure_category TEXT, failure_durable_state TEXT,
+                    failure_side_effects TEXT, failure_retry_safe INTEGER,
+                    failure_next_action TEXT
                 );
                 CREATE INDEX IF NOT EXISTS automation_jobs_status_created
                     ON automation_jobs(status, created_at, job_id);
@@ -2941,6 +2947,37 @@ class SQLiteTaskRepository:
                 self._connection.execute("ALTER TABLE tasks ADD COLUMN scope_path TEXT")
             if "item_limit" not in task_columns:
                 self._connection.execute("ALTER TABLE tasks ADD COLUMN item_limit INTEGER")
+            if "configuration_snapshot_id" not in task_columns:
+                self._connection.execute(
+                    "ALTER TABLE tasks ADD COLUMN configuration_snapshot_id TEXT"
+                )
+            if "configuration_snapshot_digest" not in task_columns:
+                self._connection.execute(
+                    "ALTER TABLE tasks ADD COLUMN configuration_snapshot_digest TEXT"
+                )
+            job_columns = {
+                row["name"]
+                for row in self._connection.execute("PRAGMA table_info(automation_jobs)").fetchall()
+            }
+            if "configuration_snapshot_id" not in job_columns:
+                self._connection.execute(
+                    "ALTER TABLE automation_jobs ADD COLUMN configuration_snapshot_id TEXT"
+                )
+            if "configuration_snapshot_digest" not in job_columns:
+                self._connection.execute(
+                    "ALTER TABLE automation_jobs ADD COLUMN configuration_snapshot_digest TEXT"
+                )
+            for column, definition in (
+                ("failure_category", "TEXT"),
+                ("failure_durable_state", "TEXT"),
+                ("failure_side_effects", "TEXT"),
+                ("failure_retry_safe", "INTEGER"),
+                ("failure_next_action", "TEXT"),
+            ):
+                if column not in job_columns:
+                    self._connection.execute(
+                        f"ALTER TABLE automation_jobs ADD COLUMN {column} {definition}"
+                    )
             if "completed_operations" not in columns:
                 self._connection.execute(
                     "ALTER TABLE task_results ADD COLUMN "
@@ -3032,6 +3069,8 @@ class SQLiteTaskRepository:
             int(task.pause_requested),
             task.scope_path,
             task.item_limit,
+            task.configuration_snapshot_id,
+            task.configuration_snapshot_digest,
         )
 
     @staticmethod
@@ -3073,6 +3112,8 @@ class SQLiteTaskRepository:
             bool(row["pause_requested"]),
             row["scope_path"],
             row["item_limit"],
+            row["configuration_snapshot_id"],
+            row["configuration_snapshot_digest"],
         )
 
     @staticmethod
@@ -3319,6 +3360,33 @@ class SQLiteTaskRepository:
             job.schedule_id,
             int(job.execute_authorized),
             job.claim_token,
+            job.configuration_snapshot_id,
+            job.configuration_snapshot_digest,
+            job.failure_category,
+            job.failure_durable_state,
+            job.failure_side_effects,
+            None if job.failure_retry_safe is None else int(job.failure_retry_safe),
+            job.failure_next_action,
+        )
+
+    def _insert_job(self, job: AutomationJob) -> None:
+        """Insert by column name so older migrated databases remain compatible.
+
+        Historical migrations append columns with ALTER TABLE.  Positional
+        INSERTs therefore do not have a stable order across schema versions.
+        The explicit column list keeps the new snapshot fields additive while
+        preserving the legacy job table layout.
+        """
+        self._connection.execute(
+            "INSERT INTO automation_jobs "
+            "(job_id, command, status, created_at, updated_at, limit_value, "
+            "started_at, completed_at, task_id, error, cancellation_requested, "
+            "schedule_id, execute_authorized, claim_token, "
+            "configuration_snapshot_id, configuration_snapshot_digest, failure_category, "
+            "failure_durable_state, failure_side_effects, failure_retry_safe, "
+            "failure_next_action) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            self._job_values(job),
         )
 
     @staticmethod
@@ -3338,6 +3406,13 @@ class SQLiteTaskRepository:
             row["schedule_id"],
             bool(row["execute_authorized"]),
             row["claim_token"],
+            row["configuration_snapshot_id"],
+            row["configuration_snapshot_digest"],
+            row["failure_category"],
+            row["failure_durable_state"],
+            row["failure_side_effects"],
+            None if row["failure_retry_safe"] is None else bool(row["failure_retry_safe"]),
+            row["failure_next_action"],
         )
 
     @staticmethod

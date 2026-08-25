@@ -46,9 +46,18 @@ class PersistentTaskCoordinator:
         execute_authorized: bool,
         scope_path: str | None = None,
         item_limit: int | None = None,
+        configuration_snapshot_id: str | None = None,
+        configuration_snapshot_digest: str | None = None,
+        require_configuration_snapshot: bool = False,
     ) -> PersistentTask:
         if item_limit is not None and item_limit < 1:
             raise ValueError("task item limit must be positive")
+        if (configuration_snapshot_id is None) != (configuration_snapshot_digest is None):
+            raise ValueError("Task configuration snapshot ID and digest must be provided together")
+        if require_configuration_snapshot and (
+            not configuration_snapshot_id or not configuration_snapshot_digest
+        ):
+            raise ValueError("managed Task creation requires a configuration snapshot pin")
         now = datetime.now(UTC)
         task = PersistentTask(
             str(uuid4()),
@@ -60,6 +69,8 @@ class PersistentTaskCoordinator:
             started_at=now,
             scope_path=scope_path,
             item_limit=item_limit,
+            configuration_snapshot_id=configuration_snapshot_id,
+            configuration_snapshot_digest=configuration_snapshot_digest,
         )
         self.repository.create_task(task)
         return task

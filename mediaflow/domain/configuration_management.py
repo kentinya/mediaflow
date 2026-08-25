@@ -27,6 +27,24 @@ class ConfigurationObjectKind(StrEnum):
     SYSTEM_SETTINGS = "system_settings"
 
 
+CONFIGURATION_REFERENCE_EVIDENCE_LIMIT = 32
+CONFIGURATION_SETUP_CHECK_PATH_LIMIT = 4096
+
+
+class ManagedConfigurationStatus(StrEnum):
+    """Lifecycle state of a user-managed, immutable configuration revision."""
+
+    DRAFT = "draft"
+    VALIDATED = "validated"
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+
+
+class ConfigurationAuthority(StrEnum):
+    JSON_BOOTSTRAP = "JSON_BOOTSTRAP"
+    MANAGED = "MANAGED"
+
+
 class StorageConfigurationType(StrEnum):
     LOCAL = "local"
     SMB = "smb"
@@ -163,6 +181,57 @@ class ManagedDocumentRedactor:
 class ConfigurationVersionConflict(RuntimeError):
     """The persisted configuration object changed before an update could commit."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        revision_id: str | None = None,
+        current_version: int | None = None,
+        current_digest: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.revision_id = revision_id
+        self.current_version = current_version
+        self.current_digest = current_digest
+
+
+class ConfigurationActivationConflict(RuntimeError):
+    """A managed revision could not be activated without replacing current state."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        revision_id: str | None = None,
+        current_revision_id: str | None = None,
+        current_version: int | None = None,
+        current_digest: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.revision_id = revision_id
+        self.current_revision_id = current_revision_id
+        self.current_version = current_version
+        self.current_digest = current_digest
+
+
+class RuntimeSnapshotUnavailable(RuntimeError):
+    """The configured managed Active snapshot cannot safely be consumed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        revision_id: str | None = None,
+        version: int | None = None,
+        digest: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.revision_id = revision_id
+        self.version = version
+        self.digest = digest
+        self.reason = reason or message
+
 
 class ConfigurationObjectReferenced(ValueError):
     def __init__(
@@ -170,6 +239,9 @@ class ConfigurationObjectReferenced(ValueError):
         kind: ConfigurationObjectKind,
         object_id: str,
         reference_count: int,
+        references: tuple[str, ...] = (),
+        *,
+        evidence: ConfigurationReferenceEvidence | None = None,
     ) -> None:
         super().__init__(
             f"Configuration {kind.value} {object_id!r} has {reference_count} references"
@@ -177,6 +249,114 @@ class ConfigurationObjectReferenced(ValueError):
         self.kind = kind
         self.object_id = object_id
         self.reference_count = reference_count
+        self.reference_evidence = evidence
+        if evidence is not None:
+            if evidence.total != reference_count:
+                raise ValueError("reference evidence total does not match the exception")
+            self.reference_items = evidence.items
+            self.references = evidence.labels()
+            self.references_truncated = evidence.truncated
+        else:
+            self.reference_items = ()
+            self.references = tuple(references[:CONFIGURATION_REFERENCE_EVIDENCE_LIMIT])
+            self.references_truncated = len(self.references) < reference_count
+
+
+class ConfigurationSetupCheckStatus(StrEnum):
+    PASSED = "passed"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class LocalSetupCheckEvidence:
+    """Bounded read-only setup evidence for one exact managed Draft revision."""
+
+    revision_id: str
+    revision_version: int
+    revision_digest: str
+    status: ConfigurationSetupCheckStatus
+    checked_at: datetime
+    actor: str
+    storage_ids: tuple[str, ...] = ()
+    resource_library_id: str | None = None
+    media_library_id: str | None = None
+    source_path: str | None = None
+    destination_path: str | None = None
+    operations: tuple[str, ...] = ()
+    duration_ms: int = 0
+    failure_category: str | None = None
+    message: str | None = None
+    next_action: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.revision_id, str) or not self.revision_id.strip():
+            raise ValueError("setup check revision ID is required")
+        if isinstance(self.revision_version, bool) or not isinstance(self.revision_version, int):
+            raise ValueError("setup check revision version must be an integer")
+        if self.revision_version < 1:
+            raise ValueError("setup check revision version must be positive")
+        if not isinstance(self.revision_digest, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.revision_digest
+        ):
+            raise ValueError("setup check revision digest must be a SHA-256 hex digest")
+        if not isinstance(self.status, ConfigurationSetupCheckStatus):
+            raise ValueError("setup check status is required")
+        if not isinstance(self.checked_at, datetime) or self.checked_at.tzinfo is None:
+            raise ValueError("setup check time must include a timezone")
+        if not isinstance(self.actor, str) or not self.actor.strip() or len(self.actor) > 200:
+            raise ValueError("setup check actor must be bounded and non-empty")
+        if not isinstance(self.storage_ids, tuple) or len(self.storage_ids) > 32:
+            raise ValueError("setup check Storage IDs must be bounded")
+        if any(
+            not isinstance(value, str) or not value.strip() or len(value) > 128
+            for value in self.storage_ids
+        ):
+            raise ValueError("setup check Storage IDs must be bounded strings")
+        for label, value in (
+            ("source path", self.source_path),
+            ("destination path", self.destination_path),
+        ):
+            if value is not None and (
+                not isinstance(value, str)
+                or len(value) > CONFIGURATION_SETUP_CHECK_PATH_LIMIT
+                or "\x00" in value
+            ):
+                raise ValueError(f"setup check {label} must be bounded and NUL-free")
+        if isinstance(self.duration_ms, bool) or not isinstance(self.duration_ms, int):
+            raise ValueError("setup check duration must be an integer")
+        if self.duration_ms < 0 or self.duration_ms > 86_400_000:
+            raise ValueError("setup check duration is out of bounds")
+        for label, value, maximum in (
+            ("failure category", self.failure_category, 128),
+            ("message", self.message, 500),
+            ("next action", self.next_action, 500),
+        ):
+            if value is not None and (
+                not isinstance(value, str) or not value.strip() or len(value) > maximum
+            ):
+                raise ValueError(f"setup check {label} must be bounded text")
+
+    def document(self) -> dict[str, object]:
+        return {
+            "revisionId": self.revision_id,
+            "revisionVersion": self.revision_version,
+            "revisionDigest": self.revision_digest,
+            "status": self.status.value,
+            "checkedAt": self.checked_at.isoformat(),
+            "actor": self.actor,
+            "storageIds": list(self.storage_ids),
+            "resourceLibraryId": self.resource_library_id,
+            "mediaLibraryId": self.media_library_id,
+            "sourcePath": self.source_path,
+            "destinationPath": self.destination_path,
+            "operations": list(self.operations),
+            "durationMs": self.duration_ms,
+            "failureCategory": self.failure_category,
+            "message": self.message,
+            "nextAction": self.next_action,
+            "sideEffects": "none",
+            "retrySafe": True,
+        }
 
 
 @dataclass(frozen=True)
@@ -185,6 +365,167 @@ class ConfigurationReference:
     source_id: str
     target_kind: ConfigurationObjectKind
     target_id: str
+
+
+@dataclass(frozen=True)
+class ConfigurationReferenceItem:
+    """One safe, structured inbound reference shown to an operator."""
+
+    section: str
+    object_id: str
+    field: str
+
+    def __post_init__(self) -> None:
+        for label, value, maximum in (
+            ("reference section", self.section, 128),
+            ("reference object ID", self.object_id, 128),
+            ("reference field", self.field, 128),
+        ):
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > maximum
+                or "\x00" in value
+            ):
+                raise ValueError(f"{label} must be bounded and non-empty")
+
+    def document(self) -> dict[str, str]:
+        return {
+            "section": self.section,
+            "id": self.object_id,
+            "field": self.field,
+        }
+
+    def label(self) -> str:
+        return f"{self.section}:{self.object_id}.{self.field}"
+
+
+@dataclass(frozen=True)
+class ConfigurationReferenceEvidence:
+    """Exact reference count with a bounded, structured display projection."""
+
+    total: int
+    items: tuple[ConfigurationReferenceItem, ...] = ()
+    truncated: bool = False
+    max_items: int = CONFIGURATION_REFERENCE_EVIDENCE_LIMIT
+
+    def __post_init__(self) -> None:
+        if isinstance(self.total, bool) or not isinstance(self.total, int) or self.total < 0:
+            raise ValueError("reference total must be a non-negative integer")
+        if isinstance(self.max_items, bool) or not isinstance(self.max_items, int):
+            raise ValueError("reference evidence bound must be an integer")
+        if self.max_items < 1 or self.max_items > 256:
+            raise ValueError("reference evidence bound is out of range")
+        if not isinstance(self.items, tuple) or len(self.items) > self.max_items:
+            raise ValueError("reference evidence items exceed the bound")
+        if any(not isinstance(item, ConfigurationReferenceItem) for item in self.items):
+            raise ValueError("reference evidence items are invalid")
+        expected_truncated = self.total > len(self.items)
+        if not isinstance(self.truncated, bool) or self.truncated != expected_truncated:
+            raise ValueError("reference evidence truncation does not match its total")
+
+    @classmethod
+    def empty(
+        cls, *, max_items: int = CONFIGURATION_REFERENCE_EVIDENCE_LIMIT
+    ) -> ConfigurationReferenceEvidence:
+        return cls(total=0, max_items=max_items)
+
+    def document(self) -> dict[str, object]:
+        return {
+            "total": self.total,
+            "items": [item.document() for item in self.items],
+            "truncated": self.truncated,
+        }
+
+    def labels(self) -> tuple[str, ...]:
+        return tuple(item.label() for item in self.items)
+
+
+@dataclass(frozen=True)
+class ManagedConfigurationRevision:
+    """A persisted canonical configuration document and its lifecycle evidence."""
+
+    revision_id: str
+    version: int
+    status: ManagedConfigurationStatus
+    schema_version: int
+    digest: str
+    document: dict[str, object]
+    created_at: datetime
+    updated_at: datetime
+    validation_errors: tuple[str, ...] = ()
+    validated_at: datetime | None = None
+    activated_at: datetime | None = None
+    base_active_revision_id: str | None = None
+    # Immutable sequence assigned when the revision is first persisted.  The
+    # mutable ``version`` remains an optimistic Draft edit token; these two
+    # identities must not be conflated in operator-visible state.
+    revision_sequence: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.revision_id, str) or not self.revision_id.strip():
+            raise ValueError("configuration revision ID is required")
+        if len(self.revision_id) > 128:
+            raise ValueError("configuration revision ID is too long")
+        if isinstance(self.version, bool) or not isinstance(self.version, int) or self.version < 1:
+            raise ValueError("configuration revision version must be positive")
+        if not isinstance(self.status, ManagedConfigurationStatus):
+            raise ValueError("configuration revision status is required")
+        if isinstance(self.schema_version, bool) or not isinstance(self.schema_version, int):
+            raise ValueError("configuration revision schema version must be an integer")
+        if self.schema_version < 1:
+            raise ValueError("configuration revision schema version must be positive")
+        if not isinstance(self.digest, str) or not re.fullmatch(r"[0-9a-f]{64}", self.digest):
+            raise ValueError("configuration revision digest must be a SHA-256 hex digest")
+        if not isinstance(self.document, dict):
+            raise ValueError("configuration revision document must be an object")
+        try:
+            encoded = json.dumps(self.document, allow_nan=False, sort_keys=True)
+        except (TypeError, ValueError) as error:
+            raise ValueError("configuration revision document must be JSON-compatible") from error
+        if len(encoded.encode("utf-8")) > 1024 * 1024:
+            raise ValueError("configuration revision document must be at most 1 MiB")
+        if not isinstance(self.validation_errors, tuple) or len(self.validation_errors) > 64:
+            raise ValueError("configuration revision validation errors must be bounded")
+        for error in self.validation_errors:
+            if not isinstance(error, str) or not error.strip() or len(error) > 500:
+                raise ValueError("configuration revision validation errors must be bounded text")
+        for label, value in (("created_at", self.created_at), ("updated_at", self.updated_at)):
+            if not isinstance(value, datetime) or value.tzinfo is None:
+                raise ValueError(f"configuration revision {label} must include a timezone")
+        for label, value in (
+            ("validated_at", self.validated_at),
+            ("activated_at", self.activated_at),
+        ):
+            if value is not None and (not isinstance(value, datetime) or value.tzinfo is None):
+                raise ValueError(f"configuration revision {label} must include a timezone")
+        if self.base_active_revision_id is not None and (
+            not isinstance(self.base_active_revision_id, str)
+            or not self.base_active_revision_id.strip()
+            or len(self.base_active_revision_id) > 128
+        ):
+            raise ValueError("configuration revision base Active ID must be bounded")
+        if self.revision_sequence is not None and (
+            isinstance(self.revision_sequence, bool)
+            or not isinstance(self.revision_sequence, int)
+            or self.revision_sequence < 1
+        ):
+            raise ValueError("configuration revision sequence must be positive")
+
+    def summary(self) -> dict[str, object]:
+        return {
+            "revisionId": self.revision_id,
+            "version": self.version,
+            "revisionSequence": self.revision_sequence,
+            "status": self.status.value,
+            "schemaVersion": self.schema_version,
+            "digest": self.digest,
+            "createdAt": self.created_at.isoformat(),
+            "updatedAt": self.updated_at.isoformat(),
+            "validatedAt": self.validated_at.isoformat() if self.validated_at else None,
+            "activatedAt": self.activated_at.isoformat() if self.activated_at else None,
+            "validationErrors": list(self.validation_errors),
+        }
 
 
 class StorageConfigurationRepository(Protocol):
@@ -218,6 +559,58 @@ class StorageConfigurationRepository(Protocol):
         *,
         limit: int = 50,
     ) -> tuple[ConfigurationChangeAudit, ...]: ...
+
+
+class ManagedConfigurationRepository(Protocol):
+    def create_revision(
+        self, revision: ManagedConfigurationRevision
+    ) -> ManagedConfigurationRevision: ...
+
+    def create_revision_with_audit(
+        self,
+        revision: ManagedConfigurationRevision,
+        audit: ConfigurationChangeAudit,
+    ) -> ManagedConfigurationRevision: ...
+
+    def get_revision(self, revision_id: str) -> ManagedConfigurationRevision | None: ...
+
+    def list_revisions(self, *, limit: int = 100) -> tuple[ManagedConfigurationRevision, ...]: ...
+
+    def update_revision(
+        self, revision: ManagedConfigurationRevision, expected_version: int
+    ) -> ManagedConfigurationRevision: ...
+
+    def update_revision_with_audit(
+        self,
+        revision: ManagedConfigurationRevision,
+        expected_version: int,
+        audit: ConfigurationChangeAudit,
+    ) -> ManagedConfigurationRevision: ...
+
+    def get_active_revision(self) -> ManagedConfigurationRevision | None: ...
+
+    def has_managed_activation(self) -> bool: ...
+
+    def last_known_active(self) -> dict[str, object] | None: ...
+
+    def activate_revision(
+        self,
+        revision_id: str,
+        expected_version: int,
+        audit: ConfigurationChangeAudit,
+    ) -> ManagedConfigurationRevision: ...
+
+    def list_revision_audits(
+        self, revision_id: str, *, limit: int = 50
+    ) -> tuple[ConfigurationChangeAudit, ...]: ...
+
+    def record_configuration_audit(self, audit: ConfigurationChangeAudit) -> None: ...
+
+    def save_local_setup_check(
+        self, evidence: LocalSetupCheckEvidence
+    ) -> LocalSetupCheckEvidence: ...
+
+    def get_local_setup_check(self, revision_id: str) -> LocalSetupCheckEvidence | None: ...
 
 
 class StorageConfigurationValidator:

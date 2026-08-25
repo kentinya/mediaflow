@@ -135,6 +135,9 @@ class ConfigurationSnapshotTests(unittest.TestCase):
         self.assertIn("/api/v1/system/status", script)
         self.assertIn("Refresh system status", script)
         self.assertIn("secrets are intentionally hidden", script)
+        self.assertIn("Retry safe", script)
+        self.assertIn("Side effects", script)
+        self.assertIn("Next action", script)
         self.assertIn("textContent", script)
         for forbidden in ("Edit configuration", "Apply configuration", "Test storage"):
             self.assertNotIn(forbidden, html + script)
