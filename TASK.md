@@ -1,110 +1,117 @@
-# Phase 22.3R5 — Checked Local Setup to Pinned DryRun Result Acceptance
+# Phase 22.3R5-F1 — Behavioral Snapshot Consumption Evidence Correction
+
+## Independent Review Outcome
+
+Phase 22.3R5 is `FIX REQUIRED` on 2026-08-25.
+
+No P0 was found. One P1 remains inside the declared R5 scope: the combined acceptance test
+changes only `historyPath` in the later Active revision. That field does not affect Preview
+recognition, metadata, naming, classification, planning, or Result content, so the test proves
+propagation of the original Job ID/digest but does not prove that the Worker consumed the original
+configuration document rather than the later Active document.
+
+The production path currently resolves `job.configuration_snapshot_id` and validates the matching
+digest before workflow construction. This correction task must independently prove that behavior
+with a configuration difference that changes the Preview outcome. Do not close Phase 22.3 from the
+implementation report alone.
 
 ## Previous Slice Status
 
-Phase 22.3R4-F1 passed independent review on 2026-08-25. Persisted setup-check recovery and the
-enabled Local-backed Web selection/action boundary are accepted. Do not redesign or repeat them.
+The R5 journey and its API/Worker wiring are otherwise accepted as the current correction baseline:
 
-Phase 22.3 remains open for one final combined acceptance gap: existing tests separately prove
-checked activation, Preview Job pinning, and Web → Worker → Task/Result pinning, but the production
-journey beginning with successful guided Local setup evidence has not been proven through the same
-immutable snapshot chain. Phase 22.4 remains prohibited.
+    Local setup check
+    → checked activation
+    → queued Preview Job
+    → later Active revision
+    → production Worker
+    → Task/Result and API detail
+
+The existing R5 setup-check, activation, persistence, failure/recovery, zero-mutation, and
+optional-dependency isolation tests must remain green. Phase 22.4 remains prohibited.
 
 ## User Problem
 
-After an operator validates and checks a Local setup, they need confidence that the exact checked
-configuration they activate is the one used by the queued DryRun Preview and its eventual Task and
-Result—even if another revision becomes Active before the Worker runs. The UI saying “Active” is not
-enough unless runtime work proves the same identity.
+An operator needs proof that a queued Preview actually executes against the immutable configuration
+document saved on that Job. Seeing the original revision ID/digest in Job and Task fields is
+insufficient if the executed behavior could have come from a later Active revision.
 
-## User Journey
+## Correction Journey
 
-    open one exact Validated Local setup revision
-    → explicitly run Local setup check and receive current passed evidence
-    → review and checked-activate that exact revision
-    → explicitly queue the first DryRun Preview
-    → optionally activate a later valid revision before the Worker claims the queued Job
-    → Worker processes the queued Job using its saved snapshot
-    → operator opens Job/Task detail and sees the checked revision identity and DryRun result
+    checked-activate revision A
+    → queue Preview pinned to A
+    → checked-activate revision B whose behavior differs from A
+    → run the production Worker
+    → inspect Task/Result behavior and saved identity
 
-## User-visible Outcome
+## Required Outcome
 
-- Checked activation, queued Preview Job, Worker-created Task, and Result all belong to the original
-  checked immutable revision.
-- A later Active revision applies only to new work; it cannot silently rebind the queued Preview.
-- Job/Task detail remains inspectable and the Preview result is visibly DryRun.
-- No media mutation or execute authority is introduced.
+- Revision A and revision B have the same valid Local setup roots but a deliberately different,
+  bounded Preview behavior.
+- The queued Job retains A's exact revision ID and digest after B becomes Active.
+- The production Worker produces behavior that can only come from A, not B.
+- Task and Result retain A's exact revision ID/digest and remain linked correctly.
+- Job/Task API detail and the existing Web detail path remain inspectable.
+- Preview remains `dry_run`; `execute_authorized` remains false; source and target media trees
+  remain byte-for-byte unchanged.
 
 ## Failure and Recovery
 
-- Missing, stale, or failed setup evidence cannot checked-activate; preserve existing actionable
-  correction/recheck behavior.
-- If the queued Job's saved revision is missing, corrupt, unsupported, or runtime-invalid, preserve
-  the accepted Phase 22.2 saved-revision failure behavior: fail before workflow construction, persist
-  bounded reason/durable state/side effects/retry safety/next action, and perform no media I/O.
-- A later unhealthy or different Active revision must not change the queued Job's saved identity.
-- Recovery creates explicit new work after configuration repair; it does not rewrite or silently
-  retry the original Job.
+- If the test accidentally uses B's behavior, it must fail with a clear assertion on a
+  configuration-derived Result, TaskItem stage, recognition type, title, classification, naming,
+  or destination field.
+- If A's saved revision is missing, corrupt, unsupported, or runtime-invalid, preserve the existing
+  bounded Worker failure evidence and no-Task/no-media-I/O behavior.
+- No automatic retry, requeue, execute, or repair of the original Job is allowed.
+- Recovery remains explicit new work under a repaired Active revision.
 
-## UX Acceptance Criteria
+## Acceptance Criteria
 
-- [ ] The production API/Web entry path can run a successful Local setup check and checked-activate
-      the exact evidence revision.
-- [ ] Queueing Preview after checked activation stores that revision ID and digest on the Job.
-- [ ] Activating a second revision before Worker claim does not alter the first Job's saved pin.
-- [ ] The production Worker creates a Task with the first Job's exact revision ID and digest.
-- [ ] The resulting item/Result remains associated with that Task and reports `dry_run`.
-- [ ] API/Web Job and Task detail expose enough saved identity/status to explain which configuration
-      ran; no automatic queue, retry, or execute occurs.
-- [ ] Storage mutations and execute authorization remain zero/false throughout this journey.
+- [ ] The later Active revision changes at least one Preview-consumed behavior while remaining
+      valid and setup-checkable.
+- [ ] The combined production-entry test asserts one behavior-derived field that differs between
+      A and B, and proves the Result came from A.
+- [ ] The test still asserts Job → Task → item/Result ID/digest continuity and `dry_run`.
+- [ ] The test still asserts API/Task detail visibility and zero media mutation.
+- [ ] Existing setup/recovery, saved-revision failure, authority, Web, and complete offline tests
+      remain green.
 
 ## Technical Scope
 
-1. Inspect and reuse the existing checked activation endpoint, setup-check evidence repository,
-   Preview Job admission, immutable Job snapshot fields, production Worker saved-revision resolver,
-   Task persistence, Result persistence, and Job/Task Web detail.
-2. Add one production-entry-point integration acceptance test that starts from current passed Local
-   setup evidence, uses checked activation, queues Preview, changes Active before claim, runs the
-   production Worker, and verifies Job → Task → item/Result identity and DryRun behavior.
-3. Add the minimum Web/API contract assertions needed to prove the saved revision/status is visible.
-4. Modify production wiring only if the combined test reveals a current-scope integration defect;
-   use the smallest compatible correction and targeted regression.
+1. Modify only the R5 combined acceptance fixture/test and the minimum test helper or production
+   wiring needed if the behavior-distinction test exposes a real defect.
+2. Prefer a valid recognition-rule or classification/naming change that produces a bounded,
+   deterministic difference without network access or real Storage mutation.
+3. Keep the production Worker, saved-revision resolver, configuration model, Storage adapters,
+   metadata providers, OrganizerExecutor, API permissions, and Web layout unchanged unless the
+   new behavior-distinction test demonstrates an actual defect.
+4. Update `docs/progress.md` with the independent review result and final correction evidence only
+   after the correction passes.
 
 ## Non-goals
 
-- No new configuration model, remote Storage editor/check, policy CRUD, Strategy Test UI, Phase
-  22.4, browser framework, or visual redesign.
-- No change to Scanner, Parser, Recognition, Metadata, Naming, Classification, Planner,
-  OrganizerExecutor, Storage adapters, setup-check capacity/deadline, or saved-revision semantics
-  unless an actual combined-chain defect requires the smallest integration fix.
-- No real execute, overwrite, delete, auto-preview, auto-worker, auto-retry, or mutation authority.
-- Do not duplicate existing Phase 22.2 failure matrices merely to increase test count.
+- No new configuration model, remote Storage editor/check, policy CRUD, Strategy Test UI, browser
+  framework, or Phase 22.4 work.
+- No new runtime authority, real execute, overwrite, delete, automatic retry, or auto-preview.
+- No duplication of the existing saved-revision failure matrix beyond the one regression needed to
+  prove behavior consumption.
+- Do not mark Phase 22.3 closed until a later independent review returns `PASS / CLOSED`.
 
 ## Required Tests
 
-1. Guided Local check passed → checked activate → Preview Job stores exact ID/digest.
-2. Second activation before claim → original Job pin unchanged.
-3. Production Worker → Task pin equals original Job pin, not current Active.
-4. Result is `dry_run`, linked to the pinned Task/item, with zero OrganizerExecutor mutation.
-5. Job/Task API or Web detail exposes the saved identity/status without secret values.
-6. Existing Phase 22.3 setup/recovery/action tests, Phase 22.2 snapshot/authority/saved-revision
-   failure tests, and complete offline suite remain green.
+1. R5 combined journey with behavior-distinct revisions A and B.
+2. Existing production Web/Worker pin continuity test.
+3. Existing saved-revision failure/recovery tests.
+4. Related configuration object/snapshot/status/admission/Web tests.
+5. Complete offline suite and repository validation commands.
 
 ## Validation
 
-Run the focused combined journey, related configuration object/snapshot/status/admission/Web tests,
-and the complete offline suite. Run Ruff lint/format, compileall, `pip check`, `git diff --check`,
-documentation local-link audit, FFmpeg/FFprobe production audit, and the business-filesystem mutation
-boundary audit. Report actual collected/passed/failed/skipped counts.
-
-## Documentation
-
-After implementation passes, update factual CURRENT evidence in `docs/progress.md` and only the
-minimum architecture/product wording made stale by actual results. Do not mark Phase 22.3 closed;
-independent review decides closure. Do not start Phase 22.4.
+Run the focused correction test, related configuration/snapshot/Web tests, and the complete offline
+suite. Run Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation local-link,
+FFmpeg/FFprobe production, and business-filesystem mutation-boundary audits. Report actual counts.
 
 ## Completion Report
 
-Report the exact checked revision, queued Job pin, later Active identity, Worker Task pin, Result
-status, zero-mutation evidence, real tests, deviations, and remaining risk. Do not declare Phase
-CLOSED.
+Report the behavior difference between A and B, the observed A-derived Result/Task fields, exact
+Job/Task pin continuity, API/Web detail evidence, zero-mutation evidence, tests, deviations, and
+remaining risks. Do not declare Phase 22.3 closed.

@@ -53,12 +53,21 @@ def example_document() -> dict:
     return json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
 
 
-def request(api, path, *, method="GET", body=b"", token="admin-token", headers=None):
+def request(
+    api,
+    path,
+    *,
+    method="GET",
+    body=b"",
+    token="admin-token",
+    headers=None,
+    query="",
+):
     statuses = []
     environment = {
         "REQUEST_METHOD": method,
         "PATH_INFO": path,
-        "QUERY_STRING": "",
+        "QUERY_STRING": query,
         "CONTENT_LENGTH": str(len(body)),
         "wsgi.input": io.BytesIO(body),
         "REMOTE_ADDR": "127.0.0.1",
@@ -1801,6 +1810,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 ),
                 patch("wsgiref.simple_server.make_server", side_effect=make_server),
                 patch("mediaflow.final_cli.TMDBProvider", FakeTMDBProvider),
+                patch("mediaflow.final_cli.TMDBClient", return_value=object()),
             ):
                 output, error = io.StringIO(), io.StringIO()
                 api_status = final_main(
@@ -1851,6 +1861,265 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(results[0].task_id, task.task_id)
                 self.assertEqual(results[0].item_id, repository.list_items(task.task_id)[0].item_id)
                 self.assertEqual(results[0].status, "dry_run")
+
+    def test_checked_local_setup_preview_keeps_original_pin_after_second_activation(
+        self,
+    ) -> None:
+        class FakeTMDBProvider:
+            provider_id = "tmdb"
+            capabilities = ProviderCapabilities(can_search_movie=True)
+
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def search_movie(self, _query, _policy=None, **_kwargs):
+                return (
+                    MediaCandidate(
+                        "tmdb",
+                        "4242",
+                        MediaType.MOVIE,
+                        "Example Movie",
+                        year=2024,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                )
+
+            def get_movie(self, provider_id, _policy=None, **_kwargs):
+                return MediaIdentity(
+                    "tmdb",
+                    provider_id,
+                    MediaType.MOVIE,
+                    "Example Movie",
+                    year=2024,
+                    genres=("Animation",),
+                    countries=("JP",),
+                )
+
+        class Server:
+            app = None
+            first_active = None
+            first_check = None
+            first_job = None
+            second_active = None
+            second_check = None
+            job_detail = None
+            task_detail = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def checked_activate(self, document):
+                status, draft = request(
+                    self.app,
+                    "/api/v1/configuration/drafts",
+                    method="POST",
+                    body=json.dumps({"document": document}).encode(),
+                )
+                if status != 201:
+                    raise AssertionError((status, draft))
+                revision_id = draft["revisionId"]
+                status, validated = request(
+                    self.app,
+                    f"/api/v1/configuration/revisions/{revision_id}/validate",
+                    method="POST",
+                    body=b"{}",
+                )
+                if status != 200 or validated["status"] != "validated":
+                    raise AssertionError((status, validated))
+                status, evidence = request(
+                    self.app,
+                    f"/api/v1/configuration/revisions/{revision_id}/local-setup-check",
+                    method="POST",
+                    body=json.dumps(
+                        {
+                            "expectedVersion": validated["version"],
+                            "expectedDigest": validated["digest"],
+                            "resourceLibraryId": "source",
+                            "mediaLibraryId": "movies",
+                        }
+                    ).encode(),
+                )
+                if status != 200 or evidence["status"] != "passed":
+                    raise AssertionError((status, evidence))
+                status, active = request(
+                    self.app,
+                    f"/api/v1/configuration/revisions/{revision_id}/activate",
+                    method="POST",
+                    body=json.dumps(
+                        {"expectedVersion": validated["version"], "checked": True}
+                    ).encode(),
+                )
+                if status != 200 or active["status"] != "active":
+                    raise AssertionError((status, active))
+                return evidence, active
+
+            def serve_forever(self):
+                self.first_check, self.first_active = self.checked_activate(self.first_document)
+                status, self.first_job = request(
+                    self.app,
+                    "/api/v1/jobs",
+                    method="POST",
+                    body=json.dumps({"command": "preview"}).encode(),
+                )
+                if status != 202:
+                    raise AssertionError((status, self.first_job))
+                self.second_check, self.second_active = self.checked_activate(self.second_document)
+                worker_output, worker_error = io.StringIO(), io.StringIO()
+                with patch("mediaflow.final_cli.TMDBClient", return_value=object()):
+                    worker_status = final_main(
+                        ["--config", str(self.config), "worker", "run-next"],
+                        stdout=worker_output,
+                        stderr=worker_error,
+                    )
+                if worker_status != 0:
+                    raise AssertionError(
+                        (worker_status, worker_output.getvalue(), worker_error.getvalue())
+                    )
+                job_id = self.first_job["job_id"]
+                status, self.job_detail = request(self.app, f"/api/v1/jobs/{job_id}")
+                if status != 200:
+                    raise AssertionError((status, self.job_detail))
+                status, self.task_detail = request(
+                    self.app,
+                    f"/api/v1/tasks/{self.job_detail['task_id']}",
+                    query="itemLimit=100&resultLimit=100",
+                )
+                if status != 200:
+                    raise AssertionError((status, self.task_detail))
+
+        def directory_state(root: Path) -> tuple[tuple[str, str, bytes | None], ...]:
+            return tuple(
+                (
+                    path.relative_to(root).as_posix(),
+                    "directory" if path.is_dir() else "file",
+                    None if path.is_dir() else path.read_bytes(),
+                )
+                for path in sorted(root.rglob("*"))
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root = root / "source"
+            target_root = root / "target"
+            (source_root / "电影").mkdir(parents=True)
+            (target_root / "Movies").mkdir(parents=True)
+            (source_root / "电影" / "Example.Movie.2024.mkv").write_bytes(b"movie")
+            runtime = root / "runtime.sqlite3"
+            first_document = example_document()
+            first_document["storages"][0]["rootPath"] = str(source_root)
+            first_document["storages"][1]["rootPath"] = str(target_root)
+            first_document["resourceLibraries"][0]["storagePath"] = ""
+            first_document["resourceLibraries"][0]["displayRootPath"] = str(source_root)
+            first_document["mediaLibraries"][0]["rootPath"] = "Movies"
+            first_document["recognitionRules"][0]["condition"] = {
+                "field": "resource_library_id",
+                "operator": "equals",
+                "value": "source",
+            }
+            first_document["persistence"]["databasePath"] = str(runtime)
+            second_document = json.loads(json.dumps(first_document))
+            second_document["classificationPolicies"][0]["rules"][0]["result"]["path"] = [
+                "Later Active Only"
+            ]
+            first_destination = (
+                "Movies/Anime/Example Movie (2024) [tmdbid-4242]/Example Movie (2024).mkv"
+            )
+            second_destination = (
+                "Movies/Later Active Only/Example Movie (2024) [tmdbid-4242]/"
+                "Example Movie (2024).mkv"
+            )
+            config = root / "bootstrap.json"
+            config.write_text(json.dumps(first_document), encoding="utf-8")
+            server = Server()
+            server.first_document = first_document
+            server.second_document = second_document
+            server.config = str(config)
+
+            def make_server(_host, _port, app):
+                server.app = app
+                return server
+
+            before = (directory_state(source_root), directory_state(target_root))
+            with (
+                patch.dict(
+                    "os.environ",
+                    {"TMDB_ACCESS_TOKEN": "test-token", "MEDIAFLOW_API_TOKEN": "admin-token"},
+                    clear=True,
+                ),
+                patch("wsgiref.simple_server.make_server", side_effect=make_server),
+                patch("mediaflow.final_cli.TMDBProvider", FakeTMDBProvider),
+            ):
+                output, error = io.StringIO(), io.StringIO()
+                api_status = final_main(
+                    ["--config", str(config), "api", "serve"],
+                    stdout=output,
+                    stderr=error,
+                )
+                self.assertEqual(api_status, 0, error.getvalue())
+                first_id = server.first_active["revisionId"]
+                first_digest = server.first_active["digest"]
+                second_id = server.second_active["revisionId"]
+                self.assertNotEqual(first_id, second_id)
+                self.assertEqual(server.first_check["revisionId"], first_id)
+                self.assertEqual(server.first_check["revisionDigest"], first_digest)
+                self.assertEqual(server.second_check["revisionId"], second_id)
+                self.assertEqual(server.first_job["configuration_snapshot_id"], first_id)
+                self.assertEqual(server.first_job["configuration_snapshot_digest"], first_digest)
+                self.assertEqual(
+                    first_document["classificationPolicies"][0]["rules"][0]["result"]["path"],
+                    ["Anime"],
+                )
+                self.assertEqual(
+                    second_document["classificationPolicies"][0]["rules"][0]["result"]["path"],
+                    ["Later Active Only"],
+                )
+
+                self.assertEqual(server.job_detail["status"], "completed")
+                self.assertEqual(server.job_detail["configuration_snapshot_id"], first_id)
+                self.assertEqual(server.job_detail["configuration_snapshot_digest"], first_digest)
+                self.assertFalse(server.job_detail["execute_authorized"])
+                self.assertEqual(server.task_detail["configuration_snapshot_id"], first_id)
+                self.assertEqual(server.task_detail["configuration_snapshot_digest"], first_digest)
+                self.assertFalse(server.task_detail["execute_authorized"])
+                self.assertEqual(len(server.task_detail["items"]), 1)
+                self.assertEqual(
+                    server.task_detail["items"][0]["destination_path"],
+                    first_destination,
+                )
+                self.assertNotEqual(
+                    server.task_detail["items"][0]["destination_path"],
+                    second_destination,
+                )
+                self.assertEqual(
+                    len(server.task_detail["results"]),
+                    1,
+                    repr(server.task_detail),
+                )
+                result = server.task_detail["results"][0]
+                self.assertEqual(result["status"], "dry_run")
+                self.assertEqual(result["recognition_type"], "A")
+                self.assertEqual(result["title"], "Example Movie")
+                self.assertEqual(result["classification_policy_id"], "A")
+                self.assertEqual(result["destination_path"], first_destination)
+                self.assertNotEqual(result["destination_path"], second_destination)
+                self.assertEqual(result["task_id"], server.job_detail["task_id"])
+                self.assertEqual(
+                    result["item_id"],
+                    server.task_detail["items"][0]["item_id"],
+                )
+
+            self.assertEqual(
+                (directory_state(source_root), directory_state(target_root)),
+                before,
+            )
+            with SQLiteConfigurationRepository(runtime) as configuration_repository:
+                current = configuration_repository.get_active_revision()
+                self.assertIsNotNone(current)
+                self.assertEqual(current.revision_id, second_id)
 
     def test_worker_continues_pinned_scan_when_current_active_is_unhealthy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

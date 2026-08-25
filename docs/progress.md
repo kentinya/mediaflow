@@ -552,6 +552,92 @@
   combined checked Active → Preview Job → Worker → Task/Result immutable-pin acceptance proof;
   Phase 22.4 remains prohibited.
 
+## Phase 22.3R5 Implementation Evidence (2026-08-25; not an acceptance decision)
+
+- Added one production-entry-point acceptance journey using the actual `final_main` API and Worker
+  wiring. It imports and validates a Local setup revision, runs the bounded read-only Local setup
+  check through the API, checked-activates the exact passed evidence revision, and queues a Preview
+  Job with that revision ID/digest.
+- The same API session then checks and activates a second valid revision before Worker claim. The
+  production Worker resolves the first Job's saved revision rather than current Active, persists a
+  Task with the first ID/digest, and produces one Result linked to that Task item with
+  `status=dry_run`. Job and Task API detail expose the same saved identity and
+  `execute_authorized=false`; the second revision remains current Active for later work.
+- Source and target directory trees, file bytes, and directory membership are captured before the
+  journey and are byte-for-byte unchanged afterward. Setup check uses only read operations, no
+  execute authority is issued, and no automatic queue, retry, or organize execution is introduced.
+- The existing production-entry Web/Worker pin test now explicitly fakes the optional TMDB client
+  boundary as well as the Provider, so the offline regression does not depend on the optional HTTP
+  package while still exercising the production orchestration wiring.
+- Focused combined journey: 1 passed, 0 failed. Related configuration object/snapshot/status/
+  admission/Web tests: 105 passed, 0 failed. Complete offline suite: 755 run, 748 passed,
+  7 explicitly gated external-service skips, 0 failed; skips are not acceptance evidence.
+- Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation local-link,
+  FFmpeg/FFprobe production, and business-filesystem mutation-boundary audits passed. This is
+  implementation evidence only: independent review is required, Phase 22.3 is not declared CLOSED,
+  and Phase 22.4 remains prohibited.
+
+## Phase 22.3R5 Independent Review (2026-08-25): FIX REQUIRED
+
+- No P0 was found inside the R5 scope.
+- P1: the new combined R5 acceptance test changes only `historyPath` in the second Active
+  revision. The field is not consumed by Preview recognition, metadata, naming, classification,
+  planning, or Result generation. The test therefore proves that the first Job ID/digest is copied
+  into downstream persistence, but it does not prove that the Worker executed the first immutable
+  document rather than the later Active document.
+- Static inspection confirms the production Worker passes the queued Job's saved revision ID/digest
+  into `_configuration` before workflow construction, and existing failure/health tests cover
+  missing, corrupt, unsupported, and invalid saved revisions. Those facts reduce implementation
+  risk but do not replace the missing behavior-distinct acceptance assertion.
+- Review result: `FIX REQUIRED`. `TASK.md` is narrowed to Phase 22.3R5-F1, which must change only
+  the test evidence so revisions A and B produce distinguishable deterministic Preview behavior.
+  Phase 22.4 remains prohibited.
+
+## Phase 22.3R5-F1 Implementation Evidence (2026-08-25; not an acceptance decision)
+
+- Corrected only the combined production-entry acceptance fixture. Revision A keeps the matched
+  Japanese-animation classification path `Anime`; revision B uses `Later Active Only` for that same
+  valid, deterministic rule while retaining the identical checked Local source and destination
+  roots.
+- Both revisions pass the real Local setup check and checked activation. The Preview Job queued
+  under A retains A's exact revision ID/digest after B becomes Active, and the production Worker
+  persists A-derived TaskItem/Result destination
+  `Movies/Anime/Example Movie (2024) [tmdbid-4242]/Example Movie (2024).mkv`, not B's distinct
+  `Movies/Later Active Only/...` destination.
+- The Result also records `recognition_type=A`, `title=Example Movie`,
+  `classification_policy_id=A`, and `status=dry_run`; Job, Task, TaskItem, and Result linkage and
+  API detail identity assertions remain intact. `execute_authorized` remains false.
+- Source and target directory membership and file bytes remain unchanged across setup checks,
+  both activations, Worker processing, and detail reads. No production runtime, Worker resolver,
+  Storage adapter, Provider, policy engine, OrganizerExecutor, API permission, or Web code changed.
+- Focused behavior-distinct combined journey: 1 passed, 0 failed. Related configuration object,
+  snapshot, status, admission, and Web tests: 105 passed, 0 failed. Complete offline suite: 755
+  collected, 748 passed, 7 explicitly gated external-service skips, 0 failed; skips are not
+  acceptance evidence.
+- Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation local-link,
+  FFmpeg/FFprobe production, and business-filesystem mutation-boundary audits passed. This is
+  implementation evidence only: Phase 22.3R5-F1 and Phase 22.3 remain subject to independent
+  review, and Phase 22.4 remains prohibited.
+
+## Phase 22.3R5-F1 Independent Review (2026-08-25): PASS / CLOSED
+
+- No P0/P1 defect was found inside the focused R5-F1 scope. Revision A and B use identical checked
+  Local roots but different Preview-consumed classification paths (`Anime` versus
+  `Later Active Only`); both revisions pass setup check and checked activation.
+- Independent inspection confirmed the production Worker resolves the queued Job's saved revision
+  ID/digest before workflow construction. The combined test observes A-derived TaskItem/Result
+  destination, exact Job/Task pin continuity, `dry_run`, false execute authority, and unchanged
+  source/target trees after B becomes Active.
+- A mutation-sensitivity run forced B's runtime content while spoofing A's snapshot identity. The
+  test failed on the TaskItem destination mismatch, proving the corrected regression detects
+  behavioral rebinding rather than only copied identity fields.
+- Independent focused run: 1 passed. Related configuration object/snapshot/status/admission/Web
+  run: 105 passed. Independent complete offline run: 755 collected, 748 passed, 7 explicitly gated
+  external-service skips, 0 failed; skips are not acceptance evidence.
+- Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation local-link,
+  FFmpeg/FFprobe production, and business-filesystem mutation-boundary audits passed. This closes
+  the current R5-F1 correction slice only; Phase 22.4 was not implemented or reviewed here.
+
 ## Planned
 
 - Phase 22.4: Recognition configuration + Strategy Test journey; then deliver vertical journeys in
