@@ -87,13 +87,268 @@
 - Product/UX Rebaseline (documentation only): vertical journey acceptance, CURRENT/TARGET
   configuration authority, and per-item recovery target are documented; none of those TARGET
   capabilities is claimed implemented
-- Current development boundary: Phase 22.3R correction of the Storage + ResourceLibrary +
-  MediaLibrary configuration journey. Phase 22.4 has not started.
-- Phase 22.3 independent review: **FIX REQUIRED**. The submitted implementation establishes the
-  canonical managed-object/API/Web/check foundations, but current-scope P1 defects remain in
-  lossless full-section mutation, host-absolute Local root validation, direct-reference and stale/
-  failed check evidence visibility, bounded guarded setup execution, and the combined guided
-  activation → Worker Task/Result acceptance proof.
+- Phase 22.3 Local Storage + ResourceLibrary + MediaLibrary configuration journey: **PASS/CLOSED**
+  after the 2026-08-25 Final Closure Audit. All earlier canonical integrity, host-absolute path,
+  Web evidence/recovery, bounded check, eligibility, and behavioral snapshot-pin P1 findings are
+  closed in the combined scope.
+- Phase 22.4 Recognition Configuration + Strategy Test journey: **PASS/CLOSED** after independent
+  review on 2026-08-26. Managed Recognition object editing, exact-revision offline Strategy Test,
+  explainable persisted outcomes, outcome-specific recovery, checked activation, C preservation,
+  and zero-mutation boundaries are accepted.
+- Phase 22.5-A MetadataPolicy Managed Configuration + Offline Resolution Preview: **PASS/CLOSED**
+  after independent review on 2026-08-26.
+- Phase 22.5-B Managed Live Metadata Test + Candidate Explanation and its F1 correction:
+  **PASS/CLOSED** after independent review on 2026-08-26. Phase 22.5-C candidate confirmation is the
+  current implementation/review boundary; Provider switching and free-form correction remain later
+  slices.
+
+## Phase 22.5-B Implementation Evidence (2026-08-26; awaiting independent review)
+
+- Extended the accepted exact-revision Strategy Test with an explicit `liveMetadata` action through
+  Application/API/Web. Omitted/false remains offline and does not construct a Provider; opening or
+  reloading revision evidence remains read-only.
+- Extracted one environment-only production Metadata Provider bootstrap shared by CLI and service.
+  The live service resolves only the Provider ID referenced by the exact effective MetadataPolicy;
+  missing credentials and unsupported/unavailable Provider construction return bounded actionable
+  categories without returning credential values.
+- Persisted a provider-neutral live result projection: policy/query/locale remain in the effective
+  policy, while Metadata status, selected identity/confidence, canonical/regional year and at most
+  five deterministic candidates with at most six score components are retained. Raw Provider DTOs,
+  endpoints, headers, response bodies and Provider exception text are not stored.
+- The Web offers distinct offline and live buttons and renders the outcome, matched title/source,
+  scores, reasons, warnings and recovery guidance with text-only DOM construction. Provider errors
+  are persisted as failed evidence; NotFound, NeedConfirm and Ambiguous retain bounded evidence and
+  remain distinct media outcomes. Existing checked-activation eligibility was not changed.
+- Focused live/offline Metadata Strategy/API/Web/persistence/snapshot regressions: 172 passed,
+  0 failed. Complete offline suite: 771 collected, 764 passed, 7 explicitly gated external-service
+  skips, 0 failed. Ruff lint/format, compileall, dependency check, both example configuration
+  validations, wheel build, diff check, documentation local-link check, FFmpeg/FFprobe production
+  audit, business-filesystem audit, and Strategy Test Storage-mutation audit passed. This is
+  implementation evidence only; Phase 22.5-B remains open pending independent review.
+
+## Phase 22.5-B Independent Review (2026-08-26): FIX REQUIRED
+
+- Independent review re-read the current Task/product/architecture baseline, inspected the actual
+  Application/provider bootstrap/API/Web/persistence code and tests, and independently reran 172
+  focused/related tests plus the complete 771-test offline suite (764 passed, 7 gated external
+  skips, 0 failed). Ruff lint/format, compileall, dependency and diff checks passed. Normal matched,
+  media-outcome, Provider-error, reload, C-preservation and zero-Storage paths are working.
+- P1 runtime-fidelity gap: the production API receives the plain environment factory and invokes it
+  for each live request. Each invocation constructs a new `TMDBProvider` and `MetadataCache`; an
+  independent two-run probe observed two factory calls, so the Task-required existing cache is not
+  reused across Web live-test requests.
+- P1 runtime/config consistency gap: managed MetadataPolicy timeout/retry values are rendered as the
+  effective policy, but `TMDBClient.get` still uses only `TMDBConfig` request timeout/retry defaults.
+  The live journey therefore does not truthfully exercise all request controls it displays.
+- P1 evidence-bound gap: count and character caps do not guarantee the 32 KiB UTF-8 limit. An
+  independent 300-character four-byte-Unicode/12-candidate probe changed the real Ambiguous outcome
+  into failed `invalid_configuration` with `result=None`; the same CJK three-byte probe completed.
+  This violates bounded evidence and loses the promised failure diagnosis.
+- Verdict: **FIX REQUIRED**. Current `TASK.md` is replaced by the focused Phase 22.5-B-F1 correction.
+  Provider switching, manual correction, cache telemetry redesign and later Phase work remain
+  explicitly deferred and are not blockers.
+
+## Phase 22.5-B-F1 Correction Evidence (2026-08-26; awaiting independent re-review)
+
+- Added a thread-safe lazy production Provider-registry factory owned by the API service lifetime.
+  Revision GET/reload and offline Strategy Test construct no Provider; concurrent first use
+  publishes one complete registry, repeated live actions reuse its `TMDBProvider`/`MetadataCache`,
+  unsupported IDs still fail closed, and failed initialization is not cached.
+- TMDB requests now receive immutable per-request effective MetadataPolicy timeout and retry
+  controls. Shared client authentication, connect timeout, concurrency guard, retryable status
+  rules and cache keys remain unchanged; managed retry count/backoff bounds cap 429 `Retry-After`
+  without mutating shared `TMDBConfig` state.
+- Replaced character-only live-result projection with bounded UTF-8 fields plus deterministic
+  result-byte fitting below the existing 32 KiB domain limit. Candidate/component total, projected
+  and truncation state are persisted and rendered; lower-ranked evidence is removed before the
+  highest-ranked title/year score evidence. A 300-four-byte-code-point/12-equal-candidate regression
+  persists and API-reloads the real `ambiguous` outcome rather than recategorizing it as invalid
+  configuration.
+- Focused Metadata/configuration/API/Web tests: 108 passed, 0 failed. Related Metadata, managed
+  configuration, Runtime Snapshot, Strategy, Recognition and policy regressions: 227 passed,
+  0 failed. Complete offline suite: 778 collected, 771 passed, 7 explicitly gated external-service
+  skips, 0 failed.
+- Ruff lint/format, compileall, `pip check`, isolated wheel build/smoke, both example validations,
+  documentation local-link, FFmpeg/FFprobe production, business-filesystem mutation and diff checks
+  passed. This is implementation evidence only; Phase 22.5-B-F1 and Phase 22.5-B remain open pending
+  independent review.
+
+## Phase 22.5-B-F1 Independent Review (2026-08-26): PASS / CLOSED
+
+- Independent review inspected the actual production API bootstrap, service lifetime, TMDB client/
+  Provider request path, evidence projection/domain guard, SQLite reload, API/Web projection and
+  focused tests rather than relying on the implementation report. The three prior P1 findings are
+  closed within this correction slice.
+- Provider/cache lifetime is now truthful: API startup, revision GET/reload and offline testing are
+  Provider-free; concurrent first live use publishes one complete registry; sequential live actions
+  reuse the same `TMDBProvider` and `MetadataCache`; unsupported IDs fail closed after
+  initialization; failed construction is not cached.
+- An independent managed-document probe set timeout 23 and retry count 1 while the client defaults
+  were timeout 2/retry 0. The fake transport observed `(connect=5, request=23)` for both attempts and
+  the effective policy capped a 429 `Retry-After: 99` delay at 2 seconds. Every TMDB Provider HTTP
+  entry uses the immutable per-request controls without changing shared client state.
+- The 300-four-byte-code-point/12-equal-candidate regression persists and API-reloads the true
+  `ambiguous` outcome within the 32 KiB UTF-8 guard. Total/projected/truncated state is explicit and
+  lower-ranked evidence is reduced before the winner and title/year score components.
+- Independent focused tests: 108 passed, 0 failed. Related configuration/Metadata/Strategy/
+  Recognition regressions: 227 passed, 0 failed. Complete offline suite: 778 collected, 771 passed,
+  7 explicitly gated external-service skips, 0 failed. Ruff lint/format, compileall, `pip check` and
+  `git diff --check` passed.
+- Verdict: **PASS / CLOSED** for Phase 22.5-B-F1. This closes the focused correction only; no claim is
+  made for Provider switching, manual Metadata correction, cache telemetry redesign, later Phase
+  22 slices or overall Phase 22 closure.
+
+## Phase 22.5-C Implementation Evidence (2026-08-26; awaiting independent review)
+
+- Added a managed Web/API/Application recovery action for a current live `NeedConfirm`/`Ambiguous`
+  Strategy Test result. The request contains only exact revision version/digest, exact persisted
+  evidence time and a projected 1-based candidate rank; Provider ID/media type are resolved from
+  the latest repository evidence rather than accepted from the client.
+- Confirmation reuses the exact managed runtime, effective MetadataPolicy, service-lifetime
+  Provider registry/cache and existing direct Provider-ID identification path. It performs no
+  repeated search, persists bounded `candidateSelection` context on success or Provider failure,
+  and keeps RecognitionType C plus MetadataPolicy C unchanged.
+- Draft/stale/offline/non-reviewable outcomes, unprojected ranks, malformed evidence and insufficient
+  permission fail closed. The Web exposes confirm actions only for current completed live reviewable
+  evidence and retains explicit live-rerun recovery after a Provider failure.
+- Focused Application/API/Web tests: 75 passed, 0 failed. Related managed configuration/Metadata/
+  Runtime/Strategy regressions: 226 passed, 0 failed. Complete offline suite: 781 collected,
+  774 passed, 7 explicitly gated external-service skips, 0 failed.
+- Ruff lint/format, compileall, `pip check`, wheel build/smoke, both example validations,
+  documentation local-link, FFmpeg/FFprobe production, business-filesystem mutation and diff checks
+  passed. This is implementation evidence only; Phase 22.5-C remains open pending independent
+  review.
+
+## Phase 22.5-C Independent Review (2026-08-26): FIX REQUIRED
+
+- Independent review inspected the Application selection path, unconditional SQLite evidence
+  upsert, API permission/request boundary, Web action conditions and recovery rendering rather than
+  relying on the implementation report. Ordinary success/failure, exact rank/timestamp validation,
+  direct details lookup, C preservation and zero-Storage behavior work.
+- P1 concurrent evidence-loss defect: the operation lock is local to one
+  `ConfigurationObjectService`, while durable evidence replacement has no compare-and-swap. A
+  barrier probe using two service instances submitted rank 1 and rank 2 against the same exact
+  evidence; both returned success, both called details, and the later write silently replaced the
+  other operator's accepted selection.
+- Independent focused tests: 75 passed, 0 failed. Complete offline suite: 781 collected, 774 passed,
+  7 gated external-service skips, 0 failed. Ruff lint/format, compileall, `pip check` and diff checks
+  passed, but the existing suite does not cover the reproduced cross-service race.
+- Verdict: **FIX REQUIRED**. `TASK.md` now contains only Phase 22.5-C-F1 durable evidence CAS,
+  one-winner/one-conflict recovery and its regression. Provider switching, free-form correction and
+  later Phase work remain deferred and are not blockers.
+
+## Phase 22.5-C-F1 Correction Evidence (2026-08-26; awaiting independent re-review)
+
+- Added one durable managed-repository compare-and-swap operation for Strategy Test evidence. Its
+  SQLite `UPDATE` requires exact revision ID/version/digest plus the previous `testedAt`; a changed
+  or replaced row raises the existing bounded configuration-version conflict instead of performing
+  an unconditional upsert.
+- Candidate-confirmation success and Provider-failure results now use that CAS, while ordinary
+  explicit Strategy Test saves retain their accepted behavior. The local lock remains only an
+  optimization; correctness is enforced by SQLite across distinct repository connections.
+- A deterministic barrier regression uses two API/service instances, two SQLite configuration
+  connections and different actors/ranks. For both successful and Provider-timeout details paths it
+  proves exactly one HTTP 200 winner, one actionable HTTP 409 loser, durable winner actor/rank/
+  identity consistency, stale replay rejection, C preservation and zero Storage construction. Ten
+  repeated focused race runs passed.
+- Focused Application/API/Web tests: 76 passed, 0 failed. Related configuration/Metadata/Runtime/
+  Strategy regressions: 227 passed, 0 failed. Complete offline suite: 782 collected, 775 passed,
+  7 explicitly gated external-service skips, 0 failed.
+- Ruff lint/format, compileall, `pip check`, wheel build/smoke, both example validations,
+  documentation local-link, FFmpeg/FFprobe production, business-filesystem mutation and diff checks
+  passed. This is correction evidence only; Phase 22.5-C-F1 remains open pending independent
+  re-review.
+
+## Phase 22.5-C-F2 Correction Evidence (2026-08-26; awaiting independent re-review)
+
+- Extended the candidate-confirmation repository CAS into one `BEGIN IMMEDIATE` transaction that
+  first requires the current managed revision row to retain the expected version/digest and
+  `Validated` status, then conditionally replaces the Strategy Test evidence only when its prior
+  revision identity and `testedAt` also match.
+- If an in-flight Provider details lookup overlaps a Draft edit from another SQLite connection, the
+  confirmation now returns the existing structured `409` conflict with the current Draft identity,
+  `current_draft_and_strategy_evidence_preserved`, `sideEffects=none`, `retrySafe=true`, and explicit
+  reload/review/validate/rerun recovery. The edited Draft and pre-edit evidence remain unchanged.
+- The deterministic barrier regression covers both a successful details result and Provider timeout,
+  uses distinct managed service/repository connections, and proves no stale candidate selection is
+  published. The new race passed 10 repeated runs; the accepted F1 winner/loser race also passed 10
+  repeated runs.
+- Focused F1/F2/Provider-failure tests: 3 passed. Related Phase 22.4/22.5 configuration, Metadata,
+  Strategy, Web and snapshot regressions: 188 passed. Complete offline suite: 783 collected,
+  776 passed, 7 explicitly gated external-service skips, 0 failed.
+- Ruff lint/format, compileall, `pip check`, both example configuration validations, wheel
+  build/smoke, documentation local-link, `git diff --check`, FFmpeg/FFprobe production, and
+  business-filesystem mutation audits passed. Wheel SHA-256:
+  `efd150f93a6ded9f6d7247bd3711dc8140e8cf397310e0c88fce29d13b3ed9c1`.
+- This is correction evidence only. Phase 22.5-C-F2, Phase 22.5-C, and Phase 22 remain open pending
+  independent review.
+
+## Phase 22.5-C-F2 Independent Review (2026-08-26): PASS / CLOSED
+
+- Independent review inspected the actual SQLite repository CAS, Application candidate-confirmation
+  path, API conflict mapping, Web recovery rendering, F1 winner/loser regression, Provider-failure
+  path, and zero-Storage boundary; the implementation report was not used as acceptance evidence.
+- The current-revision race is closed: one `BEGIN IMMEDIATE` transaction verifies the managed
+  revision remains the expected `Validated` version/digest and then conditionally replaces
+  Strategy Test evidence only when its prior revision identity and `testedAt` still match.
+- A distinct-connection barrier regression independently confirmed that an in-flight Provider
+  success or timeout overlapping a Draft edit returns `409`, preserves the edited Draft and
+  pre-edit evidence, and exposes durable-state, side-effect, retry-safety, and
+  reload/validate/rerun recovery details. Repeated F2 and original F1 race runs both passed
+  `20/20`.
+- No current-scope P0/P1 defect remains. Permissions, secret redaction, C preservation, direct
+  Provider-ID lookup, no automatic retry, and zero Storage/media mutation remain intact.
+- Independent evidence: focused F2/F1/Provider-failure tests `3 passed`; related
+  Phase 22.4/22.5 configuration, Metadata, Strategy, Web and snapshot regressions `188 passed`;
+  complete offline suite `783 run, 776 passed, 7 explicitly gated external-service skips, 0 failed`.
+  Ruff, format, compileall, `pip check`, both example validations, wheel build/smoke, documentation
+  links, diff check, FFmpeg/FFprobe audit, and business-filesystem audit all passed.
+- Review result: **PASS / CLOSED** for Phase 22.5-C-F2 only. Phase 22.5-C and Phase 22 remain open;
+  Provider switching, free-form Metadata correction, and later Phase work are not closed by this
+  focused decision.
+
+## Phase 22.5-A Implementation Evidence (2026-08-26; awaiting independent review)
+
+- Extended the existing managed-revision object path through Application/API/Web for bounded
+  `metadataPolicies` CRUD. Supported provider/query/locale/threshold/timeout/retry/candidate/request
+  fields round-trip through the canonical document; optimistic versions, audit, Draft transitions,
+  direct reference evidence, and no-cascade referenced deletion reuse the accepted lifecycle.
+- The runtime loader and `MetadataPolicy` domain validation now share fail-closed supported-field,
+  locale, confidence, timeout, retry, and request-limit semantics. A referenced disabled policy is
+  runtime-invalid rather than a hidden fallback.
+- The existing offline Recognition Strategy Test now persists and returns the exact resolved,
+  provider-neutral effective MetadataPolicy content for a matched outcome. Ambiguous/unrecognized
+  outcomes expose no fabricated policy. The Web renders the bounded fields through text-only DOM;
+  no Provider registry, network client, Storage, scan, plan, Preview, or execution is constructed.
+- A managed revision regression changes A's locale, thresholds, timeout, retry and request bounds,
+  validates and runs it, edits the same Validated revision back to Draft, observes stale evidence,
+  revalidates/reruns, and observes the changed effective policy. The C regression resolves Metadata
+  C while preserving RecognitionType C and reused downstream A policies.
+- Focused Metadata/configuration/snapshot/API/Web/runtime regressions: 161 passed, 0 failed.
+  Complete offline suite: 763 collected, 756 passed, 7 external-service skips, 0 failed.
+- Ruff lint/format, compileall, dependency check, both example configuration validations, `pip wheel`
+  build, diff check, documentation-link check, FFmpeg/FFprobe production audit, and business-layer
+  filesystem-mutation audit passed. `python -m build` is not installed in this environment; the
+  configured `pip wheel --no-build-isolation` build completed successfully.
+- This is implementation evidence, not acceptance. Phase 22.5-A and Phase 22.5 remain open pending
+  independent review; live Provider testing, switching, credentials, candidate matching, and
+  Metadata correction continuation are unchanged future scope.
+
+## Phase 22.5-A Independent Review (2026-08-26): PASS / CLOSED
+
+- Independent review inspected managed MetadataPolicy normalization, runtime-loader validation,
+  direct-reference/delete protection, API authorization, optimistic Draft mutation, exact-revision
+  Strategy evidence, SQLite round-trip, safe Web rendering, C identity, and zero-I/O boundaries.
+- Managed and whole-document paths reject unsupported/credential fields, invalid locale/query/
+  confidence/timeout/request bounds, duplicate IDs, missing references, and referenced disabled
+  policies without hidden defaults. Ambiguous/unrecognized outcomes expose no fabricated effective
+  policy; edits make prior evidence stale and require explicit Validate/rerun recovery.
+- No P0/P1 defect remains in this slice. Independent focused run: 161 passed, 0 failed. Independent
+  complete offline run: 763 collected, 756 passed, 7 gated external-service skips, 0 failed. Ruff
+  lint/format, compileall, dependency check, both example validations, wheel build, diff check, and
+  FFmpeg/FFprobe audit passed.
+- Phase 22.5-A is closed; Phase 22.5 is not closed. Live Provider testing, candidate explanation,
+  Provider switching, and manual Metadata correction remain future slices.
 
 ## Phase 22.3 Implementation Evidence (2026-08-24; not an acceptance decision)
 
@@ -638,10 +893,180 @@
   FFmpeg/FFprobe production, and business-filesystem mutation-boundary audits passed. This closes
   the current R5-F1 correction slice only; Phase 22.4 was not implemented or reviewed here.
 
+## Phase 22.3 Final Closure Audit (2026-08-25): PASS / CLOSED
+
+- R5-F1's focused `PASS / CLOSED` did not itself constitute Phase 22.3 closure under `AGENTS.md`;
+  this separate audit reviewed the combined Phase 22.3/R1-F2-FIX/R2/R3-F1/R4-F1/R5-F1 scope.
+- Canonical whole-document preservation, exact bounded reference impact, malformed-reference
+  fail-closed recovery, host-absolute Local roots, one-revision Web projections, bounded guarded
+  Local setup checks, persisted failed/stale evidence, enabled Local-backed Web action selection,
+  checked activation, and immutable runtime pinning remain connected through Persistence,
+  Application, API, Web, Worker, TaskItem, and Result.
+- The final production-entry journey setup-checks and checked-activates revision A, queues its
+  DryRun Preview, activates behavior-distinct revision B, and observes A-derived TaskItem/Result
+  destination plus A's exact ID/digest. Saved-revision failure remains actionable and fail-closed;
+  no execute authority, automatic retry, Storage mutation, or source/target change occurs.
+- Independent combined focused run: 146 passed, 0 failed. The behavior-distinct production journey
+  passed separately. Current-worktree complete offline run: 757 collected, 750 passed, 7 explicitly
+  gated external-service skips, 0 failed; skips are not acceptance evidence. The accepted
+  `e28a24a` Phase 22.3 baseline previously ran 755 collected, 748 passed, 7 skips, 0 failed.
+- Ruff lint/format, compileall, `pip check`, both example configuration validations,
+  `git diff --check`, documentation local-link, FFmpeg/FFprobe production, and business-filesystem
+  mutation-boundary audits passed. No combined-scope P0/P1 or documentation contradiction remains.
+- Final result: **PASS / CLOSED** for Phase 22.3. The former “Phase 22.4 remains prohibited” guard
+  ended only at this phase-level decision. The existing Phase 22.4 `TASK.md` is now the formal next
+  Task and may be retained without regeneration; Phase 22.4 implementation remains independently
+  reviewable and is not closed by this decision.
+
+## Phase 22.4 Implementation Evidence (2026-08-25; not an acceptance decision)
+
+- Extended the existing managed whole-document revision journey with per-object Web/API CRUD for
+  RecognitionType, RecognitionRule, and RecognitionTypePolicy. Changes are bounded,
+  optimistic-version checked, audited, return the revision to Draft, reject unsafe regex/object
+  shapes, and block RecognitionType deletion while rules or type policies still reference it.
+- Added an exact Validated-revision synthetic Strategy Test. It selects an enabled
+  ResourceLibrary and runs the production Parser, RecognitionRule engine, and
+  RecognitionTypePolicy resolver without constructing Storage, Provider, Scanner, Planner, or
+  OrganizerExecutor. The bounded result exposes parse fields, recognition outcome, matched rule
+  priority/score, alternatives/reasons, policy IDs, and RecognitionType preservation.
+- Added SQLite configuration schema v5 persistence for the latest Strategy Test evidence bound to
+  revision ID/version/digest. Completed and redacted failed outcomes survive Web reload, edited
+  revisions show prior Local/Strategy evidence as stale, and recovery requires explicit correction,
+  validation, rerun, review, and activation.
+- Checked activation now requires both current passed Local setup evidence and current completed
+  Strategy Test evidence. Existing unchecked compatibility activation is unchanged; activation
+  still queues no work and the resident API/Worker continue consuming immutable Active/saved
+  snapshots through the accepted Phase 22.2/22.3 path.
+- The vertical regression creates/updates/deletes recognition objects, proves referenced deletion
+  and unsafe regex fail closed, persists actionable failed evidence for an unknown ResourceLibrary,
+  explicitly recovers, proves a priority-321 C rule wins, and observes type C resolving Naming A and
+  Classification A while remaining C. Source/destination trees remain unchanged. The production
+  checked-activation → Preview → later Active → Worker pin test now runs Strategy Test before each
+  activation rather than bypassing the new gate.
+- Focused recognition/configuration/Web and production pin runs passed. Complete offline suite: 757
+  collected, 750 passed, 7 explicitly gated external-service skips, 0 failed; skips are not
+  acceptance evidence. Ruff lint/format, compileall, `pip check`, both example configuration
+  validations, `git diff --check`, documentation local-link, FFmpeg/FFprobe production, and
+  business-filesystem mutation-boundary audits passed.
+- This is implementation evidence only. Phase 22.4 requires independent review; this report does
+  not declare Phase 22.4 or Phase 22 closed.
+
+## Phase 22.4 Independent Review (2026-08-25): FIX REQUIRED
+
+- Independent review inspected the actual worktree implementation, tests, API route, persisted
+  evidence projection, vanilla Web renderer, production runtime loader, and mutation boundaries;
+  it did not rely on the implementation evidence above.
+- Focused P1 findings:
+  1. `RecognitionStrategyTestEvidence` and the API already persist/project bounded `matchedRules`
+     and `alternatives`, but the Web renderer does not display them and mislabels aggregate
+     score/confidence as `Priority / score`. Ambiguous and multi-match outcomes therefore lack the
+     rule/type priority evidence required for diagnosis without direct API/SQLite inspection.
+  2. The generic revision action uses only current passed Local setup evidence to label and submit
+     `Activate checked revision`. With absent, failed, or stale Strategy evidence, the Web exposes
+     a checked action that can only be rejected by the backend instead of presenting the correct
+     action matrix. The backend remains fail-closed, but the promised checked-activation Web
+     journey is incomplete.
+- No current-scope P0 was found. The reviewed backend CRUD, exact revision/version/digest checks,
+  runtime parser/recognition/policy path, durable stale/failed evidence, checked activation
+  backend gate, C-identity regression, API authentication, and zero-mutation boundary were
+  covered by the focused and complete offline suites.
+- Evidence run: focused configuration/API/Web/snapshot tests `96 passed`; complete offline suite
+  `757 run, 750 passed, 7 explicitly gated external-service skips, 0 failed`; Ruff, format,
+  compileall, `pip check`, `git diff --check`, FFmpeg/FFprobe audit, and business-filesystem
+  mutation-boundary audit passed.
+- Review outcome is **FIX REQUIRED**. Phase 22.4 remains open and must not advance to the next
+  feature Phase. The focused correction is
+  `Task/phase-22.4-f1-web-strategy-evidence-rendering.md`.
+
+## Phase 22.4-F1 Implementation Evidence (2026-08-25; not an acceptance decision)
+
+- The persisted `matchedRules` and `alternatives` are now rendered in the revision Web view as
+  bounded tables with Rule ID, RecognitionType, priority, and score columns. Both tables state the
+  32-entry display bound and warn when the limit is reached. Aggregate score and confidence are now
+  separate fields rather than the previous misleading `Priority / score` label; ambiguous,
+  unrecognized, failed, stale, reason, side-effect, retry-safety, and next-action evidence remains
+  visible and DOM text-only.
+- One shared `checkedActivationEvidenceIsCurrent()` gate now requires both exact current passed Local
+  setup evidence and exact current completed Recognition Strategy Test evidence. The guided and
+  generic checked activation controls use that same gate. Missing, failed, or stale Strategy
+  evidence therefore leaves only the explicitly labelled unchecked compatibility path and its
+  correction/rerun guidance; rendering performs no request or background rerun.
+- A focused production API regression covers multi-rule matched, ambiguous, unrecognized, and
+  failed Strategy evidence, reloads the persisted projection, verifies bounded rule/alternative
+  fields, and fails if Strategy Test constructs Storage. Existing stale/recovery and C-identity
+  regressions remain unchanged.
+- Focused Configuration Object/Web tests: 55 passed, 0 failed. Related Configuration Object/
+  Snapshot/Web tests: 98 passed, 0 failed. Complete offline suite: 759 collected, 752 passed,
+  7 explicitly gated external-service skips, 0 failed; skips are not acceptance evidence.
+- Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation local-link,
+  FFmpeg/FFprobe production, and business-filesystem mutation audits passed. This is implementation
+  evidence only: Phase 22.4-F1 and Phase 22.4 require independent review and are not declared closed.
+
+## Phase 22.4-F1 Independent Review (2026-08-26): FIX REQUIRED
+
+- Independent review confirmed the two submitted F1 corrections: bounded matched-rule and
+  alternative evidence is visible through safe text rendering, and every Web checked-activation
+  entry now requires both exact current passed Local setup evidence and exact current completed
+  Strategy Test evidence. Backend checked activation remains independently fail-closed.
+- One current-scope P1 recovery defect remains. Completed `ambiguous` and `unrecognized` outcomes
+  persist and display the same activation-oriented `nextAction` as a matched result, while existing
+  recognition warnings are not rendered. The operator can diagnose the result but is not given the
+  required correction → Validate → explicit rerun recovery path and is instead directed toward
+  activation.
+- No P0, security regression, duplicate authority, engine semantic change, or media mutation was
+  found. The focused correction is `TASK.md` / Phase 22.4-F2 and must not expand checked-activation
+  semantics or begin later configuration journeys.
+- Independent evidence: 98 focused configuration/API/Web/snapshot tests passed; complete offline
+  suite ran 759 tests with 752 passed, 7 explicitly gated external-service skips, and 0 failures.
+  Ruff lint/format, compileall, `pip check`, and `git diff --check` passed.
+- Review outcome is **FIX REQUIRED**. Phase 22.4 remains open pending the focused F2 recovery-guidance
+  correction and another independent review.
+
+## Phase 22.4-F2 Implementation Evidence (2026-08-26; not an acceptance decision)
+
+- Strategy Test now derives persisted `nextAction` from the real Recognition outcome through the
+  existing application evidence path. `matched` directs explicit review/activation, `ambiguous`
+  directs competing-rule priority/condition correction followed by Validate/rerun, and
+  `unrecognized` directs ResourceLibrary/rule correction followed by Validate/rerun. Unknown future
+  outcomes fail closed instead of inheriting activation guidance.
+- The existing Web Strategy Test surface renders up to 32 persisted warnings through text-only DOM
+  construction. Its immediate completion message displays the actual outcome and the same bounded
+  `nextAction` returned by API; it no longer embeds a generic activation recommendation for every
+  completed outcome. Failed/stale recovery, F1 evidence tables, and the shared dual-evidence checked
+  activation gate are unchanged.
+- The production API/persistence regression now asserts outcome-specific guidance and warnings for
+  matched, ambiguous, unrecognized, and failed cases, then reloads the exact evidence projection;
+  the existing zero-Storage guard remains active. Focused configuration/API/Web/snapshot tests:
+  98 passed, 0 failed. Complete offline suite: 759 run, 752 passed, 7 explicitly gated external-
+  service skips, 0 failed.
+- Ruff lint/format, compileall, `pip check`, wheel build, `git diff --check`, documentation local-link,
+  FFmpeg/FFprobe production, business-filesystem import, and Storage mutation-boundary audits passed.
+  This is implementation evidence only; Phase 22.4-F2 and Phase 22.4 remain open pending independent
+  review.
+
+## Phase 22.4-F2 Independent Review and Phase 22.4 Closure (2026-08-26): PASS / CLOSED
+
+- Independent review inspected the status-specific application evidence path, SQLite round-trip,
+  API reload projection, vanilla Web outcome/warning renderer, F1 dual-evidence activation gate,
+  C-identity coverage, and zero-mutation boundary rather than relying on the implementation report.
+- `matched` retains explicit review/activation guidance; `ambiguous` and `unrecognized` now persist
+  distinct correction → Validate → explicit rerun actions, and the Web immediate message consumes
+  that same persisted guidance. Up to 32 existing warnings render through text-only DOM nodes.
+- Failed/stale recovery, exact revision identity, matched-rule/alternative evidence, unchecked
+  compatibility labeling, checked-activation eligibility, and Recognition engine semantics remain
+  unchanged. No P0/P1 defect remains in the combined declared Phase 22.4 scope.
+- Independent evidence: 98 focused configuration/API/Web/snapshot tests passed; complete offline
+  suite ran 759 tests with 752 passed, 7 explicitly gated external-service skips, and 0 failures.
+  Ruff lint/format, compileall, `pip check`, `git diff --check`, documentation local-link,
+  FFmpeg/FFprobe, business filesystem import, and Storage mutation-boundary audits passed.
+- Final result: **PASS / CLOSED** for Phase 22.4. This does not close Phase 22 overall. The formal next
+  Task is the bounded Phase 22.5-A MetadataPolicy configuration/offline resolution slice; live
+  Provider calls, Provider switching, and wider Metadata correction remain deferred.
+
 ## Planned
 
-- Phase 22.4: Recognition configuration + Strategy Test journey; then deliver vertical journeys in
-  order: Metadata configuration/correction; Naming/Classification/Organize configuration
+- Implement Phase 22.5-B managed live Metadata test and candidate explanation, then continue later
+  Provider switching/correction slices before Naming/Classification/Organize configuration
 - Follow with TaskItem Processing Checkpoint/stage-aware recovery, complete Files/Media detail and
   manual organize, then automation/final production hardening
 - External identity/OIDC and Secret Store remain explicit later architecture decisions; no weak

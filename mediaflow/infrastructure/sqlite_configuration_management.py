@@ -16,18 +16,20 @@ from mediaflow.domain.configuration_management import (
     ConfigurationReference,
     ConfigurationReferencePolicy,
     ConfigurationSetupCheckStatus,
+    ConfigurationStrategyTestStatus,
     ConfigurationVersionConflict,
     LocalSetupCheckEvidence,
     ManagedConfigurationRevision,
     ManagedConfigurationStatus,
     ManagedStorageConfiguration,
+    RecognitionStrategyTestEvidence,
     RuntimeSnapshotUnavailable,
     StorageConfigurationType,
     validate_configuration_object_id,
     validate_storage_configuration,
 )
 
-CONFIGURATION_SCHEMA_VERSION = 4
+CONFIGURATION_SCHEMA_VERSION = 5
 
 
 class SQLiteConfigurationRepository:
@@ -759,6 +761,174 @@ class SQLiteConfigurationRepository:
             row["next_action"],
         )
 
+    def save_recognition_strategy_test(
+        self, evidence: RecognitionStrategyTestEvidence
+    ) -> RecognitionStrategyTestEvidence:
+        if not isinstance(evidence, RecognitionStrategyTestEvidence):
+            raise ValueError("recognition strategy test evidence is required")
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO managed_recognition_strategy_tests
+                (revision_id, revision_version, revision_digest, status, tested_at, actor,
+                 resource_library_id, synthetic_path, result_json, failure_category, message,
+                 next_action)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(revision_id) DO UPDATE SET
+                    revision_version=excluded.revision_version,
+                    revision_digest=excluded.revision_digest,
+                    status=excluded.status,
+                    tested_at=excluded.tested_at,
+                    actor=excluded.actor,
+                    resource_library_id=excluded.resource_library_id,
+                    synthetic_path=excluded.synthetic_path,
+                    result_json=excluded.result_json,
+                    failure_category=excluded.failure_category,
+                    message=excluded.message,
+                    next_action=excluded.next_action
+                """,
+                (
+                    evidence.revision_id,
+                    evidence.revision_version,
+                    evidence.revision_digest,
+                    evidence.status.value,
+                    evidence.tested_at.isoformat(),
+                    evidence.actor,
+                    evidence.resource_library_id,
+                    evidence.synthetic_path,
+                    self._json(evidence.result) if evidence.result is not None else None,
+                    evidence.failure_category,
+                    evidence.message,
+                    evidence.next_action,
+                ),
+            )
+        return evidence
+
+    def replace_recognition_strategy_test(
+        self,
+        evidence: RecognitionStrategyTestEvidence,
+        *,
+        expected_revision_version: int,
+        expected_revision_digest: str,
+        expected_tested_at: datetime,
+    ) -> RecognitionStrategyTestEvidence:
+        if not isinstance(evidence, RecognitionStrategyTestEvidence):
+            raise ValueError("recognition strategy test evidence is required")
+        if (
+            isinstance(expected_revision_version, bool)
+            or not isinstance(expected_revision_version, int)
+            or expected_revision_version < 1
+        ):
+            raise ValueError("expected strategy evidence revision version must be positive")
+        if not isinstance(expected_revision_digest, str) or not expected_revision_digest:
+            raise ValueError("expected strategy evidence revision digest is required")
+        if not isinstance(expected_tested_at, datetime) or expected_tested_at.tzinfo is None:
+            raise ValueError("expected strategy evidence time must include a timezone")
+        if (
+            evidence.revision_version != expected_revision_version
+            or evidence.revision_digest != expected_revision_digest
+        ):
+            raise ValueError("replacement evidence must retain the expected revision identity")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                revision = self._connection.execute(
+                    """
+                    SELECT version, digest, status
+                    FROM managed_configuration_revisions
+                    WHERE revision_id=?
+                    """,
+                    (evidence.revision_id,),
+                ).fetchone()
+                if (
+                    revision is None
+                    or int(revision["version"]) != expected_revision_version
+                    or revision["digest"] != expected_revision_digest
+                    or revision["status"] != ManagedConfigurationStatus.VALIDATED.value
+                ):
+                    raise ConfigurationVersionConflict(
+                        "configuration revision changed while confirming a candidate",
+                        revision_id=evidence.revision_id,
+                        current_version=(
+                            int(revision["version"]) if revision is not None else None
+                        ),
+                        current_digest=revision["digest"] if revision is not None else None,
+                        durable_state="current_draft_and_strategy_evidence_preserved",
+                        next_action=(
+                            "reload the revision, review the current Draft and Strategy Test "
+                            "evidence, then validate and explicitly rerun the live test"
+                        ),
+                    )
+                cursor = self._connection.execute(
+                    """
+                    UPDATE managed_recognition_strategy_tests
+                    SET revision_version=?, revision_digest=?, status=?, tested_at=?, actor=?,
+                        resource_library_id=?, synthetic_path=?, result_json=?, failure_category=?,
+                        message=?, next_action=?
+                    WHERE revision_id=? AND revision_version=? AND revision_digest=? AND tested_at=?
+                    """,
+                    (
+                        evidence.revision_version,
+                        evidence.revision_digest,
+                        evidence.status.value,
+                        evidence.tested_at.isoformat(),
+                        evidence.actor,
+                        evidence.resource_library_id,
+                        evidence.synthetic_path,
+                        self._json(evidence.result) if evidence.result is not None else None,
+                        evidence.failure_category,
+                        evidence.message,
+                        evidence.next_action,
+                        evidence.revision_id,
+                        expected_revision_version,
+                        expected_revision_digest,
+                        expected_tested_at.isoformat(),
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ConfigurationVersionConflict(
+                        "Strategy Test evidence changed; reload before confirming a candidate",
+                        revision_id=evidence.revision_id,
+                        current_version=evidence.revision_version,
+                        current_digest=evidence.revision_digest,
+                        durable_state="current_strategy_evidence_preserved",
+                        next_action=(
+                            "reload the revision, review the current Strategy Test outcome, and "
+                            "explicitly rerun the live test if another candidate must be considered"
+                        ),
+                    )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return evidence
+
+    def get_recognition_strategy_test(
+        self, revision_id: str
+    ) -> RecognitionStrategyTestEvidence | None:
+        self._object_id(revision_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM managed_recognition_strategy_tests WHERE revision_id=?",
+                (revision_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return RecognitionStrategyTestEvidence(
+            row["revision_id"],
+            int(row["revision_version"]),
+            row["revision_digest"],
+            ConfigurationStrategyTestStatus(row["status"]),
+            datetime.fromisoformat(row["tested_at"]),
+            row["actor"],
+            row["resource_library_id"],
+            row["synthetic_path"],
+            json.loads(row["result_json"]) if row["result_json"] is not None else None,
+            row["failure_category"],
+            row["message"],
+            row["next_action"],
+        )
+
     def _get_row(self, storage_id: str) -> sqlite3.Row | None:
         self._object_id(storage_id)
         with self._lock:
@@ -1003,6 +1173,22 @@ class SQLiteConfigurationRepository:
                 );
                 CREATE INDEX IF NOT EXISTS managed_local_setup_checks_status
                     ON managed_local_setup_checks(status, checked_at);
+                CREATE TABLE IF NOT EXISTS managed_recognition_strategy_tests (
+                    revision_id TEXT PRIMARY KEY,
+                    revision_version INTEGER NOT NULL,
+                    revision_digest TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    tested_at TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    resource_library_id TEXT NOT NULL,
+                    synthetic_path TEXT NOT NULL,
+                    result_json TEXT,
+                    failure_category TEXT,
+                    message TEXT,
+                    next_action TEXT
+                );
+                CREATE INDEX IF NOT EXISTS managed_recognition_strategy_tests_status
+                    ON managed_recognition_strategy_tests(status, tested_at);
                 """
             )
             self._connection.execute(

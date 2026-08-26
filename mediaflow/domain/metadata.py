@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -19,6 +21,29 @@ class MediaQueryType(StrEnum):
     TV = "tv"
     AUTO = "auto"
     NONE = "none"
+
+
+METADATA_POLICY_CONFIGURATION_FIELDS = frozenset(
+    {
+        "id",
+        "name",
+        "providerId",
+        "mediaType",
+        "mediaQueryType",
+        "language",
+        "region",
+        "automaticThreshold",
+        "confirmationThreshold",
+        "minimumScoreGap",
+        "timeout",
+        "retryCount",
+        "maxCandidates",
+        "maxSearchPages",
+        "maxProviderRequests",
+        "maxCandidateEnrichments",
+        "enabled",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -162,16 +187,44 @@ class MetadataPolicy:
     enabled: bool = True
 
     def __post_init__(self) -> None:
-        if not self.policy_id or not self.provider_id:
+        if (
+            not isinstance(self.policy_id, str)
+            or not self.policy_id
+            or not isinstance(self.provider_id, str)
+            or not self.provider_id
+            or len(self.policy_id) > 64
+            or len(self.provider_id) > 64
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.provider_id)
+        ):
             raise ValueError("metadata policy identifiers must not be empty")
+        if not isinstance(self.name, str) or len(self.name) > 120:
+            raise ValueError("invalid metadata policy name")
         if not 0 <= self.confirmation_threshold <= self.automatic_threshold <= 100:
             raise ValueError("invalid metadata confidence thresholds")
         if (
-            self.minimum_score_gap < 0
-            or min(self.max_candidates, self.max_search_pages, self.max_provider_requests) < 1
-            or self.max_candidate_enrichments < 0
+            not math.isfinite(self.minimum_score_gap)
+            or not 0 <= self.minimum_score_gap <= 100
+            or not math.isfinite(self.timeout)
+            or not 0 < self.timeout <= 120
+            or not 0 <= self.retry_policy.retry_count <= 10
+            or not 1 <= self.max_candidates <= 100
+            or not 1 <= self.max_search_pages <= 10
+            or not 1 <= self.max_provider_requests <= 100
+            or not 0 <= self.max_candidate_enrichments <= 100
         ):
             raise ValueError("invalid metadata policy limits")
+        if self.language is not None and (
+            not isinstance(self.language, str)
+            or len(self.language) > 35
+            or not re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*", self.language)
+        ):
+            raise ValueError("invalid metadata policy language")
+        if self.region is not None and (
+            not isinstance(self.region, str)
+            or len(self.region) > 3
+            or not re.fullmatch(r"(?:[A-Za-z]{2}|[0-9]{3})", self.region)
+        ):
+            raise ValueError("invalid metadata policy region")
 
     @property
     def query_type(self) -> MediaQueryType:

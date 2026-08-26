@@ -151,7 +151,12 @@ class OperatorUiTests(unittest.TestCase):
         self.assertNotIn("Save Draft", mismatch)
         self.assertNotIn("Activate", mismatch)
         self.assertNotIn("classificationPolicies", script)
-        self.assertNotIn("recognitionRules", script)
+        self.assertIn("recognitionRules", script)
+        self.assertIn("metadataPolicies", script)
+        self.assertIn("Save MetadataPolicy", script)
+        self.assertIn("Effective MetadataPolicy", script)
+        self.assertIn("Provider request / enrichment limits", script)
+        self.assertIn("Run Recognition Strategy Test", script)
         self.assertIn("Task was not resumed", script)
 
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
@@ -246,8 +251,8 @@ class OperatorUiTests(unittest.TestCase):
     ) -> None:
         script = APP_JS.decode()
         action_start = script.index("actionButton('Run Local setup check'")
-        activation_gate = script.index("if (evidence && evidence.status === 'passed'", action_start)
-        handler = script[action_start:activation_gate]
+        handler_end = script.index("function strategyEvidenceIsCurrent", action_start)
+        handler = script[action_start:handler_end]
         self.assertIn("result.message", handler)
         self.assertIn("result.nextAction", handler)
         self.assertIn("result.sideEffects", handler)
@@ -335,20 +340,18 @@ class OperatorUiTests(unittest.TestCase):
     def test_reloaded_setup_state_has_explicit_safe_action_matrix(self) -> None:
         script = APP_JS.decode()
         actions_start = script.index("function renderLocalSetupActions")
-        activate_start = script.index("async function activateConfigurationRevision", actions_start)
-        actions = script[actions_start:activate_start]
+        strategy_helper_start = script.index("function strategyEvidenceIsCurrent", actions_start)
+        actions = script[actions_start:strategy_helper_start]
 
         selection = actions.index("const selection = localSetupSelection(guided)")
         draft_guard = actions.index("if (revision.status === 'draft')")
         validated_guard = actions.index("if (revision.status !== 'validated')")
         unavailable_guard = actions.index("if (!selection.resource || !selection.media)")
         run_action = actions.index("actionButton('Run Local setup check'")
-        checked_gate = actions.index("setupEvidenceIsCurrent(revision, evidence)")
         self.assertLess(selection, draft_guard)
         self.assertLess(draft_guard, validated_guard)
         self.assertLess(validated_guard, unavailable_guard)
         self.assertLess(unavailable_guard, run_action)
-        self.assertLess(run_action, checked_gate)
         self.assertIn("Validate this Draft before running Local setup check", actions)
         self.assertIn(
             "Configure and enable one Local-backed ResourceLibrary and MediaLibrary", actions
@@ -363,6 +366,23 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("mediaLibraryId: selection.media.id", actions)
         self.assertNotIn("guided.objects.resourceLibraries.filter", actions)
         self.assertNotIn("guided.objects.mediaLibraries.filter", actions)
+        self.assertNotIn("activateConfigurationRevision", actions)
+
+        checked_helper_start = script.index("function checkedActivationEvidenceIsCurrent")
+        row_renderer_start = script.index(
+            "function renderStrategyEvidenceRows", checked_helper_start
+        )
+        checked_helper = script[checked_helper_start:row_renderer_start]
+        self.assertIn("local.status === 'passed'", checked_helper)
+        self.assertIn("setupEvidenceIsCurrent(revision, local)", checked_helper)
+        self.assertIn("strategy.status === 'completed'", checked_helper)
+        self.assertIn("strategyEvidenceIsCurrent(revision, strategy)", checked_helper)
+
+        strategy_start = script.index("function renderRecognitionStrategyTest")
+        strategy_end = script.index("async function activateConfigurationRevision", strategy_start)
+        strategy = script[strategy_start:strategy_end]
+        self.assertIn("checkedActivationEvidenceIsCurrent(revision, guided)", strategy)
+        self.assertIn("Activate checked Draft", strategy)
         self.assertNotIn("setTimeout", actions)
 
         show_start = script.index("async function showConfigurationRevision")
@@ -371,7 +391,72 @@ class OperatorUiTests(unittest.TestCase):
         evidence_render = show_revision.index("renderLocalSetupEvidence(data, guided)")
         action_render = show_revision.index("renderLocalSetupActions(data, guided)")
         self.assertLess(evidence_render, action_render)
-        self.assertIn("setupEvidenceIsCurrent(data, guided.localSetupCheck)", show_revision)
+        self.assertIn("checkedActivationEvidenceIsCurrent(data, guided)", show_revision)
+        checked_branch = show_revision[show_revision.index("if (data.status === 'validated')") :]
+        self.assertNotIn("setupEvidenceIsCurrent(data, guided.localSetupCheck)", checked_branch)
+        self.assertIn("current passed Local setup check", checked_branch)
+        self.assertIn("current completed Recognition Strategy Test", checked_branch)
+
+    def test_strategy_evidence_rows_are_bounded_explainable_and_read_only(self) -> None:
+        script = APP_JS.decode()
+        renderer_start = script.index("function renderStrategyEvidenceRows")
+        metadata_start = script.index("function renderMetadataTestEvidence", renderer_start)
+        strategy_start = script.index("function renderRecognitionStrategyTest", metadata_start)
+        renderer = script[renderer_start:metadata_start]
+        strategy_end = script.index("async function activateConfigurationRevision", strategy_start)
+        strategy = script[strategy_start:strategy_end]
+
+        self.assertIn("source.slice(0, 32)", renderer)
+        self.assertIn("display limit 32", renderer)
+        self.assertIn("Evidence display limit reached at 32 entries", renderer)
+        for column in ("Rule ID", "RecognitionType", "Priority", "Score"):
+            with self.subTest(column=column):
+                self.assertIn(column, renderer)
+        self.assertIn("boundedSetupText(item.ruleId)", renderer)
+        self.assertIn("boundedSetupText(item.recognitionType)", renderer)
+        self.assertIn("Number.isFinite(item.priority)", renderer)
+        self.assertIn("Number.isFinite(item.score)", renderer)
+        self.assertNotIn("api(", renderer)
+        self.assertNotIn("actionButton(", renderer)
+
+        self.assertIn(
+            "renderStrategyEvidenceRows('Matched rules', recognition.matchedRules)", strategy
+        )
+        self.assertIn(
+            "renderStrategyEvidenceRows('Alternatives', recognition.alternatives)", strategy
+        )
+        self.assertIn("field(list, 'Aggregate score'", strategy)
+        self.assertIn("field(list, 'Confidence'", strategy)
+        self.assertNotIn("Priority / score", strategy)
+        self.assertIn("Recognition outcome", strategy)
+        self.assertIn("Failure category", strategy)
+        self.assertIn("Next action", strategy)
+        self.assertIn("recognition.warnings.slice(0, 32)", strategy)
+        self.assertIn("`Warning: ${boundedSetupText(warning)}`", strategy)
+        self.assertIn("text('p'", strategy)
+        self.assertNotIn("innerHTML", strategy)
+        self.assertIn("result.result.recognition.status", strategy)
+        self.assertIn("boundedSetupText(result.nextAction", strategy)
+        self.assertIn("Strategy Test completed (", strategy)
+        self.assertIn("Run Recognition Strategy Test (offline)", strategy)
+        self.assertIn("Run live Metadata test", strategy)
+        self.assertIn("liveMetadata", strategy)
+        self.assertIn("renderMetadataTestEvidence", strategy)
+        self.assertIn("Candidate explanation", APP_JS.decode())
+        self.assertIn("Matched title", APP_JS.decode())
+        self.assertIn("Candidates projected / total", APP_JS.decode())
+        self.assertIn("Evidence truncated", APP_JS.decode())
+        self.assertIn("highest-ranked evidence are preserved", APP_JS.decode())
+        self.assertIn("Confirmed candidate rank", APP_JS.decode())
+        self.assertIn("Confirmed Provider / ID", APP_JS.decode())
+        self.assertIn("Identity match method", APP_JS.decode())
+        self.assertIn("Confirm candidate ${index + 1}", APP_JS.decode())
+        self.assertIn("expectedTestedAt: evidence.testedAt", strategy)
+        self.assertIn("candidate-selection", strategy)
+        self.assertIn("metadataMatch.status === 'need_confirm'", strategy)
+        self.assertIn("metadataMatch.status === 'ambiguous'", strategy)
+        self.assertIn("revision.status === 'validated'", strategy)
+        self.assertNotIn("Review its explanation before activation", strategy)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ class ConfigurationObjectKind(StrEnum):
 
 CONFIGURATION_REFERENCE_EVIDENCE_LIMIT = 32
 CONFIGURATION_SETUP_CHECK_PATH_LIMIT = 4096
+CONFIGURATION_STRATEGY_RESULT_LIMIT = 32 * 1024
 
 
 class ManagedConfigurationStatus(StrEnum):
@@ -188,11 +189,15 @@ class ConfigurationVersionConflict(RuntimeError):
         revision_id: str | None = None,
         current_version: int | None = None,
         current_digest: str | None = None,
+        durable_state: str | None = None,
+        next_action: str | None = None,
     ) -> None:
         super().__init__(message)
         self.revision_id = revision_id
         self.current_version = current_version
         self.current_digest = current_digest
+        self.durable_state = durable_state
+        self.next_action = next_action
 
 
 class ConfigurationActivationConflict(RuntimeError):
@@ -265,6 +270,97 @@ class ConfigurationObjectReferenced(ValueError):
 class ConfigurationSetupCheckStatus(StrEnum):
     PASSED = "passed"
     FAILED = "failed"
+
+
+class ConfigurationStrategyTestStatus(StrEnum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class RecognitionStrategyTestEvidence:
+    """Secret-free synthetic recognition evidence for one exact managed revision."""
+
+    revision_id: str
+    revision_version: int
+    revision_digest: str
+    status: ConfigurationStrategyTestStatus
+    tested_at: datetime
+    actor: str
+    resource_library_id: str
+    synthetic_path: str
+    result: dict[str, object] | None = None
+    failure_category: str | None = None
+    message: str | None = None
+    next_action: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.revision_id, str) or not self.revision_id.strip():
+            raise ValueError("strategy test revision ID is required")
+        if isinstance(self.revision_version, bool) or not isinstance(self.revision_version, int):
+            raise ValueError("strategy test revision version must be an integer")
+        if self.revision_version < 1:
+            raise ValueError("strategy test revision version must be positive")
+        if not isinstance(self.revision_digest, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.revision_digest
+        ):
+            raise ValueError("strategy test revision digest must be a SHA-256 hex digest")
+        if not isinstance(self.status, ConfigurationStrategyTestStatus):
+            raise ValueError("strategy test status is required")
+        if not isinstance(self.tested_at, datetime) or self.tested_at.tzinfo is None:
+            raise ValueError("strategy test time must include a timezone")
+        for label, value, maximum in (
+            ("actor", self.actor, 200),
+            ("ResourceLibrary ID", self.resource_library_id, 128),
+            ("synthetic path", self.synthetic_path, CONFIGURATION_SETUP_CHECK_PATH_LIMIT),
+        ):
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > maximum
+                or "\x00" in value
+            ):
+                raise ValueError(f"strategy test {label} must be bounded and non-empty")
+        if self.result is not None:
+            if not isinstance(self.result, dict):
+                raise ValueError("strategy test result must be an object")
+            encoded = json.dumps(
+                self.result,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            if len(encoded.encode("utf-8")) > CONFIGURATION_STRATEGY_RESULT_LIMIT:
+                raise ValueError("strategy test result is too large")
+        for label, value in (
+            ("failure category", self.failure_category),
+            ("message", self.message),
+            ("next action", self.next_action),
+        ):
+            if value is not None and (
+                not isinstance(value, str) or not value.strip() or len(value) > 500
+            ):
+                raise ValueError(f"strategy test {label} must be bounded text")
+        if self.status is ConfigurationStrategyTestStatus.COMPLETED and self.result is None:
+            raise ValueError("completed strategy test requires a result")
+
+    def document(self) -> dict[str, object]:
+        return {
+            "revisionId": self.revision_id,
+            "revisionVersion": self.revision_version,
+            "revisionDigest": self.revision_digest,
+            "status": self.status.value,
+            "testedAt": self.tested_at.isoformat(),
+            "actor": self.actor,
+            "resourceLibraryId": self.resource_library_id,
+            "syntheticPath": self.synthetic_path,
+            "result": copy.deepcopy(self.result),
+            "failureCategory": self.failure_category,
+            "message": self.message,
+            "nextAction": self.next_action,
+            "sideEffects": "none",
+            "retrySafe": True,
+        }
 
 
 @dataclass(frozen=True)
@@ -611,6 +707,23 @@ class ManagedConfigurationRepository(Protocol):
     ) -> LocalSetupCheckEvidence: ...
 
     def get_local_setup_check(self, revision_id: str) -> LocalSetupCheckEvidence | None: ...
+
+    def save_recognition_strategy_test(
+        self, evidence: RecognitionStrategyTestEvidence
+    ) -> RecognitionStrategyTestEvidence: ...
+
+    def replace_recognition_strategy_test(
+        self,
+        evidence: RecognitionStrategyTestEvidence,
+        *,
+        expected_revision_version: int,
+        expected_revision_digest: str,
+        expected_tested_at: datetime,
+    ) -> RecognitionStrategyTestEvidence: ...
+
+    def get_recognition_strategy_test(
+        self, revision_id: str
+    ) -> RecognitionStrategyTestEvidence | None: ...
 
 
 class StorageConfigurationValidator:

@@ -931,6 +931,7 @@ def _reference(value: str, available: set[str], label: str) -> None:
 
 def _validate_strategy_references(strategy: StrategyTestConfiguration) -> None:
     type_ids = {item.type_id for item in strategy.recognition_types}
+    metadata_by_id = {item.policy_id: item for item in strategy.metadata_policies}
     catalogs = {
         "MetadataPolicy": {item.policy_id for item in strategy.metadata_policies},
         "NamingPolicy": {item.policy_id for item in strategy.naming_policies},
@@ -947,6 +948,12 @@ def _validate_strategy_references(strategy: StrategyTestConfiguration) -> None:
                 f"{rule.output_recognition_type_id!r}"
             )
     for policy in strategy.recognition_type_policies:
+        referenced_metadata = metadata_by_id.get(policy.metadata_policy_id)
+        if referenced_metadata is not None and not referenced_metadata.enabled:
+            raise ValueError(
+                f"RecognitionTypePolicy {policy.policy_id!r} references disabled "
+                f"MetadataPolicy {policy.metadata_policy_id!r}"
+            )
         references = (
             ("MetadataPolicy", policy.metadata_policy_id),
             ("NamingPolicy", policy.naming_policy_id),

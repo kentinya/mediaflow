@@ -40,7 +40,6 @@ from mediaflow.application.file_replan_request import FileReplanRequestService
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.manual_ignore import ManualIgnoreService
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
-from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
@@ -82,6 +81,10 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
+from mediaflow.infrastructure.metadata_provider_bootstrap import (
+    LazyMetadataProviderRegistryFactory,
+    metadata_provider_registry_from_environment,
+)
 from mediaflow.infrastructure.migration_rehearsal import SQLiteMigrationRehearsalService
 from mediaflow.infrastructure.operational_logging import SQLiteOperationalLogger
 from mediaflow.infrastructure.runtime_configuration import (
@@ -100,7 +103,6 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-from mediaflow.infrastructure.tmdb import TMDBClient, TMDBConfig, TMDBProvider
 from mediaflow.infrastructure.upgrade_preflight import UpgradePreflightService
 
 
@@ -1371,6 +1373,11 @@ def final_main(
                         configuration, "configuration_snapshot_digest", None
                     ),
                     bootstrap_document=bootstrap_document,
+                    metadata_provider_registry_factory=(
+                        LazyMetadataProviderRegistryFactory(
+                            metadata_provider_registry_from_environment
+                        )
+                    ),
                 )
                 stdout.write(f"MediaFlow API listening on {arguments.host}:{arguments.port}\n")
                 stdout.flush()
@@ -1454,12 +1461,9 @@ def final_main(
                     and pause_original.status is PersistentTaskStatus.PAUSED
                     and pause_original.command == "scan"
                 )
-        token = os.environ.get("TMDB_ACCESS_TOKEN") or os.environ.get("TMDB_TOKEN")
         providers = None
         if not (arguments.command == "analyze" and arguments.offline) and not resumed_scan:
-            if not token:
-                raise ValueError("metadata workflow requires TMDB_ACCESS_TOKEN")
-            providers = MetadataProviderRegistry((TMDBProvider(TMDBClient(TMDBConfig(token))),))
+            providers = metadata_provider_registry_from_environment(("tmdb",))
         strategy = strategy_runner_from_configuration(
             configuration.strategy, providers, storages=storages
         )

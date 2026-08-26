@@ -16,6 +16,7 @@ from mediaflow.domain.metadata import (
     MetadataErrorCode,
     MetadataPolicy,
     ProviderCapabilities,
+    RetryPolicy,
 )
 from mediaflow.domain.parser import ParseResult
 
@@ -113,7 +114,14 @@ class TMDBClient:
         self._sleep = sleeper
         self._semaphore = threading.BoundedSemaphore(config.max_concurrency)
 
-    def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def get(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        request_timeout: float | None = None,
+        retry_policy: RetryPolicy | None = None,
+    ) -> dict[str, Any]:
         if not self.config.enabled:
             raise MetadataError(MetadataErrorCode.PROVIDER_UNAVAILABLE, "TMDB provider is disabled")
         url = self.config.base_url.rstrip("/") + "/" + path.lstrip("/")
@@ -122,8 +130,18 @@ class TMDBClient:
             "Authorization": f"Bearer {self.config.access_token}",
             "Accept": "application/json",
         }
+        effective_timeout = (
+            self.config.request_timeout if request_timeout is None else request_timeout
+        )
+        retry_count = self.config.retry_count if retry_policy is None else retry_policy.retry_count
+        retry_base_delay = (
+            self.config.retry_base_delay if retry_policy is None else retry_policy.base_delay
+        )
+        retry_max_delay = (
+            self.config.retry_max_delay if retry_policy is None else retry_policy.max_delay
+        )
         last_error: MetadataError | None = None
-        for attempt in range(self.config.retry_count + 1):
+        for attempt in range(retry_count + 1):
             try:
                 with self._semaphore:
                     response = self._transport.request(
@@ -131,7 +149,7 @@ class TMDBClient:
                         url,
                         params=safe_params,
                         headers=headers,
-                        timeout=(self.config.connect_timeout, self.config.request_timeout),
+                        timeout=(self.config.connect_timeout, effective_timeout),
                     )
             except (TimeoutError, OSError) as error:
                 code = (
@@ -140,25 +158,32 @@ class TMDBClient:
                     else MetadataErrorCode.CONNECTION_FAILED
                 )
                 last_error = MetadataError(code, "TMDB request failed", cause=error)
-                if attempt >= self.config.retry_count:
+                if attempt >= retry_count:
                     raise last_error from error
-                self._sleep(self._delay(attempt, None))
+                self._sleep(self._delay(attempt, None, retry_base_delay, retry_max_delay))
                 continue
             if response.status_code == 429:
                 last_error = MetadataError(
                     MetadataErrorCode.RATE_LIMITED, "TMDB rate limit exceeded"
                 )
-                if attempt >= self.config.retry_count:
+                if attempt >= retry_count:
                     raise last_error
-                self._sleep(self._delay(attempt, response.headers.get("Retry-After")))
+                self._sleep(
+                    self._delay(
+                        attempt,
+                        response.headers.get("Retry-After"),
+                        retry_base_delay,
+                        retry_max_delay,
+                    )
+                )
                 continue
             if response.status_code in {500, 502, 503, 504}:
                 last_error = MetadataError(
                     MetadataErrorCode.PROVIDER_UNAVAILABLE, "TMDB service is unavailable"
                 )
-                if attempt >= self.config.retry_count:
+                if attempt >= retry_count:
                     raise last_error
-                self._sleep(self._delay(attempt, None))
+                self._sleep(self._delay(attempt, None, retry_base_delay, retry_max_delay))
                 continue
             _raise_status(response.status_code)
             try:
@@ -176,13 +201,19 @@ class TMDBClient:
         assert last_error is not None
         raise last_error
 
-    def _delay(self, attempt: int, retry_after: str | None) -> float:
+    @staticmethod
+    def _delay(
+        attempt: int,
+        retry_after: str | None,
+        retry_base_delay: float,
+        retry_max_delay: float,
+    ) -> float:
         if retry_after:
             try:
-                return min(self.config.retry_max_delay, max(0.0, float(retry_after)))
+                return min(retry_max_delay, max(0.0, float(retry_after)))
             except ValueError:
                 pass
-        return min(self.config.retry_max_delay, self.config.retry_base_delay * (2**attempt))
+        return min(retry_max_delay, retry_base_delay * (2**attempt))
 
 
 class TMDBProvider:
@@ -195,6 +226,16 @@ class TMDBProvider:
     @property
     def provider_id(self) -> str:
         return self._client.config.provider_id
+
+    def _get(
+        self, path: str, params: dict[str, Any] | None, policy: MetadataPolicy
+    ) -> dict[str, Any]:
+        return self._client.get(
+            path,
+            params,
+            request_timeout=policy.timeout,
+            retry_policy=policy.retry_policy,
+        )
 
     def search_movie(
         self,
@@ -248,7 +289,7 @@ class TMDBProvider:
                     params.update({"primary_release_year": year_filter, "region": region})
                 else:
                     params["first_air_date_year"] = query.year
-                payload = self._client.get(f"search/{kind}", params)
+                payload = self._get(f"search/{kind}", params, policy)
                 page_results = payload.get("results")
                 if not isinstance(page_results, list):
                     raise MetadataError(
@@ -298,12 +339,13 @@ class TMDBProvider:
         key = _key(self.provider_id, f"details_{kind}", id=provider_id, language=language)
         if not force_refresh and (cached := self._cache.get(key)) is not None:
             return cached
-        payload = self._client.get(
+        payload = self._get(
             f"{kind}/{provider_id}",
             {
                 "language": language,
                 "append_to_response": "alternative_titles,translations,external_ids",
             },
+            policy,
         )
         identity = _identity(
             payload, MediaType.MOVIE if kind == "movie" else MediaType.TV, self.provider_id
@@ -324,7 +366,7 @@ class TMDBProvider:
         key = _key(self.provider_id, "season", id=provider_id, season=season, language=language)
         if not force_refresh and (cached := self._cache.get(key)) is not None:
             return cached
-        payload = self._client.get(f"tv/{provider_id}/season/{season}", {"language": language})
+        payload = self._get(f"tv/{provider_id}/season/{season}", {"language": language}, policy)
         episodes = payload.get("episodes")
         if not isinstance(episodes, list):
             raise MetadataError(
@@ -363,8 +405,10 @@ class TMDBProvider:
         )
         if not force_refresh and (cached := self._cache.get(key)) is not None:
             return cached
-        payload = self._client.get(
-            f"tv/{provider_id}/season/{season}/episode/{episode}", {"language": language}
+        payload = self._get(
+            f"tv/{provider_id}/season/{season}/episode/{episode}",
+            {"language": language},
+            policy,
         )
         item = _episode(payload)
         identity = MediaIdentity(
@@ -409,8 +453,10 @@ class TMDBProvider:
         key = _key(self.provider_id, "find", source=source, id=external_id, language=language)
         if not force_refresh and (cached := self._cache.get(key)) is not None:
             return cached
-        payload = self._client.get(
-            f"find/{external_id}", {"external_source": source, "language": language}
+        payload = self._get(
+            f"find/{external_id}",
+            {"external_source": source, "language": language},
+            policy,
         )
         candidates = []
         for key_name, media_type in (

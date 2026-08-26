@@ -10,7 +10,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
 
-from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import (
@@ -26,6 +25,9 @@ from mediaflow.application.strategy_test import (
 from mediaflow.domain.library import ResourceLibrary
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
+from mediaflow.infrastructure.metadata_provider_bootstrap import (
+    metadata_provider_registry_from_environment,
+)
 from mediaflow.infrastructure.strategy_configuration import (
     development_strategy_configuration,
     smoke_strategy_configuration,
@@ -35,7 +37,6 @@ from mediaflow.infrastructure.strategy_user_configuration import (
     ResourceLibraryBinding,
     load_strategy_configuration,
 )
-from mediaflow.infrastructure.tmdb import TMDBClient, TMDBConfig, TMDBProvider
 
 
 def main(
@@ -232,11 +233,9 @@ def _load_cli_configuration(path: str | None, *, cases: bool) -> LoadedStrategyC
 def _runner_for_configuration(configuration, live: bool) -> StrategyTestRunner:
     if not live:
         return strategy_runner_from_configuration(configuration)
-    token = os.environ.get("TMDB_ACCESS_TOKEN") or os.environ.get("TMDB_TOKEN")
-    if not token:
-        raise RuntimeError("live metadata requires TMDB_ACCESS_TOKEN")
-    provider = TMDBProvider(TMDBClient(TMDBConfig(token)))
-    return strategy_runner_from_configuration(configuration, MetadataProviderRegistry((provider,)))
+    return strategy_runner_from_configuration(
+        configuration, metadata_provider_registry_from_environment(("tmdb",))
+    )
 
 
 def _configured_runner(live: bool) -> StrategyTestRunner:
