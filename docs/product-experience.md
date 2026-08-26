@@ -139,8 +139,10 @@ configuration and Strategy Test completed independent review as Phase 22.4 on 20
 MetadataPolicy managed editing and exact-revision offline resolution preview completed independent
 review as Phase 22.5-A on the same date. Live Provider testing and candidate explanation, including
 the service-lifetime cache/request-control/evidence-bound correction, completed independent review
-as Phase 22.5-B. Candidate confirmation is the current Phase 22.5-C implementation/review boundary;
-Provider switching remains later Metadata journey work.
+as Phase 22.5-B. Candidate confirmation and its F1/F2 durable concurrency corrections completed the
+Phase 22.5-C boundary and passed final Integration Acceptance. Phase 22.5-D same-Provider managed
+live correction testing is the current Task; Provider switching and Files/Task continuation remain
+later Metadata journey work.
 
 ## A. First-time setup
 

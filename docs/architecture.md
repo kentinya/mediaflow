@@ -1010,7 +1010,8 @@ fields. Provider construction occurs only for an explicit live action, failed in
 cached, and lower-ranked candidates are discarded before winning title/year evidence. This accepted
 F1 boundary does not add Provider switching, manual Metadata correction or cache telemetry.
 
-Phase 22.5-C is the current implementation/review boundary. For the latest persisted, current live
+Phase 22.5-C and its F1/F2 durable concurrency corrections passed final Integration Acceptance on
+2026-08-26. For the latest persisted, current live
 `NeedConfirm`/`Ambiguous` evidence, the Web may submit only exact revision identity, exact evidence
 time and one projected candidate rank. The Application resolves Provider ID/media type from that
 repository evidence, revalidates the effective MetadataPolicy and RecognitionType through the
@@ -1018,7 +1019,9 @@ existing exact-revision Strategy runner, and uses the existing direct Provider-I
 path. A bounded provider-neutral selection explanation is saved with the new outcome. Stale,
 offline, non-reviewable or unprojected selections fail before Provider access; this test-only path
 constructs no Storage and starts no scan, Task, Preview, activation or downstream naming/planning.
-This paragraph records implementation awaiting independent review, not accepted closure.
+Phase 22.5-D is the next implementation boundary: same-Provider query/year/Movie-TV/direct-ID
+correction testing against that exact Validated revision. Provider switching and actual Files/Task
+continuation remain TARGET work.
 
 ## Deferred work
 
@@ -1601,8 +1604,9 @@ Result retain A's ID/digest and A-derived destination while source/target trees 
 Remote setup remains TARGET. Recognition policy editing and offline Strategy Test were subsequently
 accepted in Phase 22.4; MetadataPolicy managed editing/offline resolution was accepted in Phase
 22.5-A. Managed live Provider testing/candidate explanation and its F1 correction were accepted in
-Phase 22.5-B. Candidate confirmation is the current Phase 22.5-C implementation/review boundary,
-while Provider switching remains later work.
+Phase 22.5-B. Candidate confirmation and its F1/F2 corrections were accepted in Phase 22.5-C.
+Phase 22.5-D same-Provider managed live correction testing is next, while Provider switching and
+Files/Task continuation remain later work.
 
 ## Configuration architecture: TARGET (partially implemented; remaining work explicit)
 

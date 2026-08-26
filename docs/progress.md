@@ -29,16 +29,30 @@ remaining boundaries recorded below.
 ### Development Workflow Rules Update
 
 ```text
-Status: READY FOR COMMIT
-Commit SHA: PENDING
-High Audit: PENDING
+Status: PASS / CLOSED
+Commit SHA: 9777ee187972d53f02f6f30d7682535b03f2b447
+High Audit: PASS — 2026-08-26; exact documentation checkpoint, workflow state machine,
+private-config exclusion, example JSON, links, and manifest independently reviewed
 Capability Mode: Git-writable / Full Access
-Push: NOT REQUIRED before High Review; this is not a major Phase closure
+Push: origin/main contains the reviewed SHA
 ```
 
-The current workspace has a writable worktree, Git metadata, and index with unrestricted filesystem
-mode and `never` approval policy. The capable Agent owns the checkpoint after validation. This Task
-cannot close or authorize another Task until that exact SHA passes High Review.
+This closes only the Git capability/workflow rules update. It does not reopen or redefine the
+already accepted Phase checkpoints.
+
+### Phase 22.5-C Managed Live Metadata Candidate Confirmation
+
+```text
+Status: PASS / CLOSED
+Commit SHA: d68a19ddd4bb62bc27e77bab013edb20c9eb53e5
+High Audit: PASS — SAFE TO INTEGRATE — 2026-08-26; final Integration Acceptance covered normal
+confirmation, Provider failure, F1/F2 concurrency, exact-revision recovery, Web/API, C-identity,
+and zero-mutation evidence
+Push: origin/main contains the reviewed SHA
+```
+
+This phase-level closure accepts candidate confirmation only. Provider switching, managed
+free-form correction testing, Files/Task continuation, and later policy journeys remain open.
 
 ## Completed
 
@@ -138,9 +152,11 @@ cannot close or authorize another Task until that exact SHA passes High Review.
 - Phase 22.5-A MetadataPolicy Managed Configuration + Offline Resolution Preview: **PASS/CLOSED**
   after independent review on 2026-08-26.
 - Phase 22.5-B Managed Live Metadata Test + Candidate Explanation and its F1 correction:
-  **PASS/CLOSED** after independent review on 2026-08-26. Phase 22.5-C candidate confirmation is the
-  current implementation/review boundary; Provider switching and free-form correction remain later
-  slices.
+  **PASS/CLOSED** after independent review on 2026-08-26.
+- Phase 22.5-C Managed Live Metadata Candidate Confirmation, including its F1/F2 concurrency
+  corrections: **PASS/CLOSED** after the 2026-08-26 final Integration Acceptance. Phase 22.5-D
+  managed same-Provider Metadata correction testing is the current Task; Provider switching and
+  Files/Task continuation remain later slices.
 
 ## Phase 22.5-B Implementation Evidence (2026-08-26; awaiting independent review)
 
@@ -1105,8 +1121,9 @@ cannot close or authorize another Task until that exact SHA passes High Review.
 
 ## Planned
 
-- Implement Phase 22.5-B managed live Metadata test and candidate explanation, then continue later
-  Provider switching/correction slices before Naming/Classification/Organize configuration
+- Implement Phase 22.5-D same-Provider managed live Metadata correction testing, then continue with
+  Provider switching and Files/Task correction continuation before Naming/Classification/Organize
+  configuration
 - Follow with TaskItem Processing Checkpoint/stage-aware recovery, complete Files/Media detail and
   manual organize, then automation/final production hardening
 - External identity/OIDC and Secret Store remain explicit later architecture decisions; no weak

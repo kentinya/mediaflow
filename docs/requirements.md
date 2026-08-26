@@ -57,8 +57,9 @@
 > 已于 2026-08-26 独立验收 PASS/CLOSED；Phase 22.5-A MetadataPolicy Managed Configuration +
 > Offline Resolution Preview 随后也已独立验收 PASS/CLOSED。Phase 22.5-B Managed Live
 > Metadata Test + Candidate Explanation 及 F1 修复也已独立验收；Phase 22.5-C candidate
-> confirmation 是当前 implementation/review 边界。远端 Storage、Provider switching 和更宽
-> 配置旅程仍未完成。
+> confirmation 及 F1/F2 durable CAS 修复已通过 final Integration Acceptance。Phase 22.5-D
+> same-Provider managed live Metadata correction test 是当前 Task。远端 Storage、Provider
+> switching、Files/Task continuation 和更宽配置旅程仍未完成。
 
 ---
 
@@ -3115,8 +3116,9 @@ System Settings
 > 后只更新 snapshot identity、未原子更新准入/execute 行为，以及旧 Job revision 失败不可操作。
 > Phase 22.2R-F2 聚焦修复已经独立验收 PASS/CLOSED；Phase 22.3 也已于 2026-08-25 通过
 > phase-level Final Closure Audit。Phase 22.4 与 Phase 22.5-A 也已于 2026-08-26 独立验收
-> PASS/CLOSED；Phase 22.5-B/F1 随后也已独立验收，Phase 22.5-C 是当前 implementation/review
-> 边界。
+> PASS/CLOSED；Phase 22.5-B/F1 随后也已独立验收，Phase 22.5-C 及 F1/F2 已通过
+> final Integration Acceptance。Phase 22.5-D same-Provider managed live Metadata correction test
+> 是当前 Task。
 >
 > 当前实现（Phase 22.2/22.2R-F2 whole-document 与 Phase 22.3 Local slice 已验收）：Managed Configuration
 > 已经经过 Draft → Validate/Test → Validated → 显式 Activate，持久化生成不可变 Runtime Snapshot；
