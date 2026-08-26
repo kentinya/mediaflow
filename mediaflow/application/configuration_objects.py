@@ -520,13 +520,22 @@ class ConfigurationObjectService:
             effective = result.get("effectiveMetadataPolicy") if isinstance(result, dict) else None
             if not isinstance(result, dict) or result.get("mode") != "live":
                 raise ValueError("Metadata correction requires current live Metadata evidence")
-            if not isinstance(metadata, dict) or metadata.get("status") not in {
+            correctable_outcomes = {
                 "not_found",
                 "need_confirm",
                 "ambiguous",
-            }:
+            }
+            metadata_status = metadata.get("status") if isinstance(metadata, dict) else None
+            prior_correction = metadata.get("correction") if isinstance(metadata, dict) else None
+            correction_failure = (
+                metadata_status in {"provider_error", "configuration_error"}
+                and isinstance(prior_correction, dict)
+                and prior_correction.get("sourceOutcome") in correctable_outcomes
+            )
+            if metadata_status not in correctable_outcomes and not correction_failure:
                 raise ValueError(
-                    "Metadata correction requires NotFound, NeedConfirm, or Ambiguous evidence"
+                    "Metadata correction requires a current correctable outcome or a persisted "
+                    "correction Provider failure"
                 )
             if not all(isinstance(item, dict) for item in (recognition, policy, effective)):
                 raise ValueError("persisted Metadata correction evidence is malformed")
@@ -539,6 +548,7 @@ class ConfigurationObjectService:
                     for value in (recognition_type, metadata_policy_id, provider)
                 )
                 or effective.get("id") != metadata_policy_id
+                or (correction_failure and prior_correction.get("provider") != provider)
             ):
                 raise ValueError("persisted Metadata correction policy evidence is malformed")
             try:
@@ -588,7 +598,9 @@ class ConfigurationObjectService:
             )
             context: dict[str, object] = {
                 "mode": "direct_provider_id" if normalized_provider_id else "query",
-                "sourceOutcome": metadata["status"],
+                "sourceOutcome": (
+                    prior_correction["sourceOutcome"] if correction_failure else metadata_status
+                ),
                 "mediaType": media_type,
                 "provider": provider,
             }

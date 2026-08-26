@@ -196,8 +196,9 @@ Current checkpoint state:
 
 ```text
 Status: READY FOR COMMIT
-Commit SHA: PENDING
-High Audit: PENDING
+Rejected Commit SHA: 94bcd0c6d545029782c0831a2b5e8869b54d3163
+High Audit: FIX REQUIRED — correction recovery/action visibility mismatch
+Correction Commit SHA: PENDING
 Push: NOT REQUIRED BEFORE HIGH REVIEW; NOT PUSHED
 ```
 

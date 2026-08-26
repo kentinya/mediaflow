@@ -465,6 +465,18 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("Correction mode", APP_JS.decode())
         self.assertIn("Correction query / year", APP_JS.decode())
         self.assertIn("Correction Provider ID", APP_JS.decode())
+        self.assertIn("const correctableMetadataOutcomes", strategy)
+        self.assertIn("const correctionFailure", strategy)
+        self.assertIn(
+            "(correctableMetadataOutcomes.includes(metadataResult.status) || correctionFailure)",
+            strategy,
+        )
+        self.assertIn("['provider_error', 'configuration_error']", strategy)
+        self.assertNotIn(
+            "correctableMetadataOutcomes.includes(metadataResult.status) ||\n"
+            "          correctableMetadataOutcomes.includes(correctionSource)",
+            strategy,
+        )
         self.assertNotIn("providerSwitch", strategy)
         self.assertIn("metadataMatch.status === 'need_confirm'", strategy)
         self.assertIn("metadataMatch.status === 'ambiguous'", strategy)

@@ -173,7 +173,7 @@ free-form correction testing, Files/Task continuation, and later policy journeys
 - Revision-plus-evidence CAS gives concurrent submissions one durable winner and one actionable
   conflict; an in-flight Draft edit preserves both the new Draft and prior evidence. Invalid,
   offline, stale and non-correctable requests fail before Provider access.
-- Acceptance evidence includes query and direct-ID call-count assertions, four Provider failure
+- Acceptance evidence includes query and direct-ID call-count assertions, six Provider failure
   categories, C identity/policy preservation, Web action/payload/reload rendering, and explicit
   zero-Storage construction. The focused Configuration/API/Web set ran 85 tests with 0 failures;
   the complete offline suite ran 791 tests with 784 passed, 7 existing external-service skips, and
@@ -183,6 +183,32 @@ free-form correction testing, Files/Task continuation, and later policy journeys
 - This is implementation evidence only. Phase 22.5-D is not `PASS / CLOSED`; independent High
   Review must inspect the explicit checkpoint SHA. Provider switching, Files/Task continuation,
   activation changes and media execution are not included.
+
+## Phase 22.5-D High Review (2026-08-26): FIX REQUIRED
+
+- Reviewed checkpoint: `94bcd0c6d545029782c0831a2b5e8869b54d3163`.
+- High reproduced a Web/Application state mismatch: correction-origin Provider failures and matched
+  outcomes both exposed the Web form through the prior source outcome, while the Application
+  rejected both current outcomes. This blocked the promised Provider-failure rerun and exposed an
+  invalid action after success.
+- The focused correction must allow an exact current persisted correction Provider failure to be
+  rerun, hide the form for matched outcomes, add recovery/visibility regressions, and correct the
+  Provider-failure test count. Phase 22.5-D remains open and no next Slice is authorized.
+
+## Phase 22.5-D High Correction Implementation (2026-08-26; re-review pending)
+
+- The Application now accepts a rerun only when the exact current failed evidence carries a
+  server-persisted correction whose original source outcome is correctable and whose Provider still
+  matches the effective policy. The original source outcome remains durable across repeated
+  Provider failures.
+- The Web now exposes correction for a current correctable outcome or that bounded correction-origin
+  Provider failure only. A matched result, including one produced by direct ID or candidate
+  confirmation, no longer inherits action visibility from the old source outcome.
+- All six bounded Provider-failure cases now recover through the current evidence timestamp after
+  the Provider environment is repaired. Focused tests remain 85/85 and the complete offline suite
+  remains 791 tests with 784 passed, 7 existing external-service skips, and 0 failures. The full
+  quality, wheel, documentation, safety, and private-configuration gates passed. This correction is
+  not PASS/CLOSED until High re-reviews its new commit SHA.
 
 ## Phase 22.5-B Implementation Evidence (2026-08-26; awaiting independent review)
 

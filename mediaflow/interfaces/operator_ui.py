@@ -620,10 +620,13 @@ APP_JS = b"""(() => {
         canConfirmCandidate ? confirmMetadataCandidate : null);
       const correctionSource = metadataResult && metadataResult.correction &&
         typeof metadataResult.correction === 'object' ? metadataResult.correction.sourceOutcome : null;
+      const correctableMetadataOutcomes = ['not_found', 'need_confirm', 'ambiguous'];
+      const correctionFailure = metadataResult &&
+        ['provider_error', 'configuration_error'].includes(metadataResult.status) &&
+        correctableMetadataOutcomes.includes(correctionSource);
       const canCorrectMetadata = current && revision.status === 'validated' && evidence.result &&
         evidence.result.mode === 'live' && metadataResult &&
-        (['not_found', 'need_confirm', 'ambiguous'].includes(metadataResult.status) ||
-          ['not_found', 'need_confirm', 'ambiguous'].includes(correctionSource));
+        (correctableMetadataOutcomes.includes(metadataResult.status) || correctionFailure);
       if (canCorrectMetadata) {
         const correctionControls = text('div', '', 'choices');
         correctionControls.append(text('h4', 'Run Metadata correction test'));

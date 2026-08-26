@@ -1643,6 +1643,47 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                         self.assertTrue(failed["retrySafe"])
                         self.assertIn("rerun", failed["nextAction"])
                         self.assertNotIn(secret, json.dumps(failed))
+                        calls_before_recovery = provider.searches + provider.details
+                        if direct:
+                            provider.details_error = None
+                            provider.candidates = (
+                                MediaCandidate(
+                                    "tmdb",
+                                    "bad-direct-id",
+                                    MediaType.MOVIE,
+                                    "Recovered",
+                                    year=2024,
+                                ),
+                            )
+                        else:
+                            provider.error = None
+                            provider.candidates = (
+                                MediaCandidate(
+                                    "tmdb", "recovered", MediaType.MOVIE, "Corrected", year=2024
+                                ),
+                            )
+                        recovery_status, recovered = request(
+                            api,
+                            f"{base}/recognition-strategy-test/metadata-correction",
+                            method="POST",
+                            body={
+                                "expectedVersion": validated.version,
+                                "expectedDigest": validated.digest,
+                                "expectedTestedAt": failed["testedAt"],
+                                "mediaType": "movie",
+                                **correction,
+                            },
+                        )
+                        self.assertEqual(recovery_status, 200)
+                        self.assertEqual(recovered["status"], "completed")
+                        self.assertNotEqual(recovered["testedAt"], failed["testedAt"])
+                        self.assertEqual(
+                            recovered["result"]["metadata"]["correction"]["sourceOutcome"],
+                            "not_found",
+                        )
+                        self.assertGreater(
+                            provider.searches + provider.details, calls_before_recovery
+                        )
 
     def test_concurrent_metadata_corrections_have_one_durable_winner(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
