@@ -640,8 +640,9 @@
 
 ## Planned
 
-- Phase 22.4: Recognition configuration + Strategy Test journey; then deliver vertical journeys in
-  order: Metadata configuration/correction; Naming/Classification/Organize configuration
+- Independently review the reconstructed Phase 22.4 Recognition configuration + Strategy Test
+  journey. Only a later High review may record closure or establish the Phase 22.5 implementation
+  boundary.
 - Follow with TaskItem Processing Checkpoint/stage-aware recovery, complete Files/Media detail and
   manual organize, then automation/final production hardening
 - External identity/OIDC and Secret Store remain explicit later architecture decisions; no weak
@@ -2511,3 +2512,26 @@ Phase 22.1 durable Storage configuration CRUD foundation (2026-08-23): PASS
 - Full offline suite: 666 tests, 659 passed, 0 failed, 7 explicitly gated real profiles skipped;
   formatter, lint, compile, dependency, both example configuration, FFmpeg/FFprobe source audit,
   diff and isolated wheel gates passed
+
+Phase 22 Integration Slice 1 — Phase 22.4 semantic reconstruction (2026-08-26): IMPLEMENTATION COMPLETE / REVIEW PENDING
+
+- Reconstructed the final net Phase 22.4 + F1 + F2 implementation from baseline `e28a24a` and
+  recovery snapshot `79b27e5`; no defective intermediate history was reproduced.
+- Added managed RecognitionType, RecognitionRule, and RecognitionTypePolicy operations using the
+  existing whole-document Draft authority, canonical runtime validation, optimistic versions,
+  reference protection, and audit.
+- Added exact-revision, zero-I/O Strategy Test persistence and runtime consumption using the
+  production Parser, Recognition engine, and RecognitionTypePolicy resolver. No Storage or
+  Metadata Provider is constructed.
+- Web/API expose durable matched/ambiguous/unrecognized/failed/stale evidence. Web renders bounded
+  matched rules, alternatives, reasons, warnings, and outcome-specific recovery guidance; checked
+  activation uses both current Local setup and Strategy Test evidence.
+- RecognitionType C preservation remains covered when downstream Naming/Classification policy A is
+  reused.
+- Phase 22.5 MetadataPolicy managed editing, live Metadata, candidate confirmation, and evidence
+  CAS are explicitly absent and deferred.
+- Focused configuration/object/Web/snapshot suite: 98 passed, 0 failed. Complete offline suite:
+  759 tests, 752 passed, 7 explicitly gated external-service skips, 0 failed. Ruff lint/format,
+  compileall, `pip check`, both example validations, documentation local links, wheel build/smoke,
+  FFmpeg/FFprobe production audit, business-filesystem mutation audit, and `git diff --check`
+  passed. Phase 22.4 closure is NOT YET RECORDED; independent High integration review is required.

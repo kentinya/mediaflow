@@ -295,7 +295,8 @@ APP_JS = b"""(() => {
   function renderGuidedObjectList(revision, guided, kind, label) {
     const values = guided.objects && guided.objects[kind] || [];
     const referenceKind = {storages: 'storage', resourceLibraries: 'resource_library',
-      mediaLibraries: 'media_library'}[kind] || kind;
+      mediaLibraries: 'media_library', recognitionTypes: 'recognition_type',
+      recognitionRules: 'recognition_rule', recognitionTypePolicies: 'recognition_type_policy'}[kind] || kind;
     detailContent.append(text('h3', `${label} (${values.length})`));
     values.forEach(item => {
       const row = text('div', '', 'choice');
@@ -331,12 +332,27 @@ APP_JS = b"""(() => {
     });
     if (configurationRevisionEditable(revision)) {
       const singular = {storages: 'Storage', resourceLibraries: 'ResourceLibrary',
-        mediaLibraries: 'MediaLibrary'}[kind] || kind;
-      detailContent.append(actionButton(`Add Local ${singular}`,
+        mediaLibraries: 'MediaLibrary', recognitionTypes: 'RecognitionType',
+        recognitionRules: 'RecognitionRule', recognitionTypePolicies: 'RecognitionTypePolicy'}[kind] || kind;
+      const guidedJson = kind.startsWith('recognition');
+      detailContent.append(actionButton(`${guidedJson ? 'Add' : 'Add Local'} ${singular}`,
         () => renderGuidedObjectForm(revision, kind, null)));
     }
   }
   function renderGuidedObjectForm(revision, kind, item) {
+    if (kind.startsWith('recognition')) {
+      clear(detailContent);
+      detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} recognition object`));
+      detailContent.append(text('p', 'Edit one bounded JSON object. References and rule priority are checked when the Draft is validated; unsafe regex is rejected when saved.', 'warning'));
+      const editor = document.createElement('textarea');
+      editor.setAttribute('aria-label', 'Recognition object JSON');
+      editor.value = JSON.stringify(item || {}, null, 2); detailContent.append(editor);
+      detailContent.append(actionButton('Save recognition object', async () => {
+        try { await mutateGuidedObject(revision, kind, item && item.id, JSON.parse(editor.value), item ? 'PUT' : 'POST'); }
+        catch (error) { message(errorText(error), true); }
+      }), actionButton('Back to revision', () => showConfigurationRevision(revision)));
+      return;
+    }
     clear(detailContent);
     detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} Local ${kind === 'storages' ? 'Storage' :
       kind === 'resourceLibraries' ? 'ResourceLibrary' : 'MediaLibrary'}`));
@@ -434,9 +450,109 @@ APP_JS = b"""(() => {
         await showConfigurationRevision(revision);
       } catch (error) { message(errorText(error), true); }
     }));
-    if (evidence && evidence.status === 'passed' && setupEvidenceIsCurrent(revision, evidence)) action.append(actionButton('Activate checked Draft',
-      () => activateConfigurationRevision(revision, true)));
     detailContent.append(action);
+  }
+  function strategyEvidenceIsCurrent(revision, evidence) {
+    return Boolean(evidence && evidence.stale === false &&
+      evidence.revisionId === revision.revisionId &&
+      evidence.revisionVersion === revision.version && evidence.revisionDigest === revision.digest);
+  }
+  function checkedActivationEvidenceIsCurrent(revision, guided) {
+    const local = guided && guided.localSetupCheck;
+    const strategy = guided && guided.recognitionStrategyTest;
+    return Boolean(local && local.status === 'passed' && setupEvidenceIsCurrent(revision, local) &&
+      strategy && strategy.status === 'completed' && strategyEvidenceIsCurrent(revision, strategy));
+  }
+  function renderStrategyEvidenceRows(label, values) {
+    const source = Array.isArray(values) ? values : [];
+    const bounded = source.slice(0, 32).filter(item => item && typeof item === 'object');
+    detailContent.append(text('h4', `${label} (${bounded.length}; display limit 32)`));
+    if (!bounded.length) {
+      detailContent.append(text('p', 'None recorded.'));
+      return;
+    }
+    detailContent.append(table(['Rule ID', 'RecognitionType', 'Priority', 'Score'],
+      bounded.map(item => [boundedSetupText(item.ruleId), boundedSetupText(item.recognitionType),
+        Number.isFinite(item.priority) ? item.priority : '-', Number.isFinite(item.score) ? item.score : '-'])));
+    if (source.length >= 32) detailContent.append(text('p',
+      'Evidence display limit reached at 32 entries; additional matches may be omitted.', 'warning'));
+  }
+  function renderRecognitionStrategyTest(revision, guided) {
+    const evidence = guided.recognitionStrategyTest;
+    detailContent.append(text('h3', 'Recognition Strategy Test'));
+    if (!evidence) detailContent.append(text('p', 'Status: not run. Test a synthetic path after validation.', 'warning'));
+    else {
+      const current = strategyEvidenceIsCurrent(revision, evidence);
+      const list = document.createElement('dl');
+      field(list, 'Evidence state', current ? 'current' : 'stale');
+      field(list, 'Status', boundedSetupText(evidence.status));
+      field(list, 'Synthetic path', boundedSetupText(evidence.syntheticPath));
+      field(list, 'ResourceLibrary', boundedSetupText(evidence.resourceLibraryId));
+      field(list, 'Evidence version', Number.isInteger(evidence.revisionVersion) ? evidence.revisionVersion : '-');
+      field(list, 'Evidence digest', boundedSetupText(evidence.revisionDigest));
+      const recognition = evidence.result && evidence.result.recognition || {};
+      const policy = evidence.result && evidence.result.policy || {};
+      field(list, 'Recognition outcome', boundedSetupText(recognition.status));
+      field(list, 'RecognitionType', boundedSetupText(recognition.recognitionType));
+      field(list, 'Matched rule', boundedSetupText(recognition.ruleId));
+      field(list, 'Aggregate score', Number.isFinite(recognition.score) ? recognition.score : '-');
+      field(list, 'Confidence', Number.isFinite(recognition.confidence) ? recognition.confidence : '-');
+      field(list, 'Type policy', boundedSetupText(policy.typePolicyId));
+      field(list, 'Metadata / Naming / Classification / Organize',
+        [policy.metadataPolicy, policy.namingPolicy, policy.classificationPolicy, policy.organizePolicy]
+          .map(value => boundedSetupText(value)).join(' / '));
+      field(list, 'RecognitionType preserved', evidence.result && typeof evidence.result.recognitionTypePreserved === 'boolean' ?
+        (evidence.result.recognitionTypePreserved ? 'YES' : 'NO') : '-');
+      field(list, 'Failure category', boundedSetupText(evidence.failureCategory));
+      field(list, 'Message', boundedSetupText(evidence.message));
+      field(list, 'Side effects', boundedSetupText(evidence.sideEffects, 'unknown'));
+      field(list, 'Retry safe', evidence.retrySafe === true ? 'YES' : 'NO');
+      field(list, 'Next action', boundedSetupText(evidence.nextAction));
+      detailContent.append(list);
+      renderStrategyEvidenceRows('Matched rules', recognition.matchedRules);
+      renderStrategyEvidenceRows('Alternatives', recognition.alternatives);
+      const reasons = Array.isArray(recognition.reasons) ? recognition.reasons.slice(0, 32) : [];
+      reasons.forEach(reason => detailContent.append(text('p',
+        `${boundedSetupText(reason.code)}: ${boundedSetupText(reason.message)}`)));
+      const warnings = Array.isArray(recognition.warnings) ? recognition.warnings.slice(0, 32) : [];
+      warnings.forEach(warning => detailContent.append(text('p',
+        `Warning: ${boundedSetupText(warning)}`, 'warning')));
+      if (!current) detailContent.append(text('p', 'Evidence is stale. Validate the current Draft and explicitly rerun Strategy Test.', 'warning'));
+    }
+    if (revision.status === 'draft') {
+      detailContent.append(text('p', 'Validate this Draft before running Strategy Test.', 'warning'));
+      return;
+    }
+    if (revision.status !== 'validated') return;
+    const resources = (guided.objects && guided.objects.resourceLibraries || [])
+      .filter(item => item.enabled !== false);
+    if (!resources.length) {
+      detailContent.append(text('p', 'Configure and enable a ResourceLibrary, then Validate before testing.', 'warning'));
+      return;
+    }
+    const controls = text('div', '', 'choices');
+    const pathControl = guidedInput('Synthetic media path', evidence && evidence.syntheticPath || 'Example.Movie.2024.1080p.mkv');
+    const library = document.createElement('select'); library.setAttribute('aria-label', 'Strategy Test ResourceLibrary');
+    resources.forEach(item => { const option = document.createElement('option'); option.value = item.id; option.textContent = `${item.id} - ${item.name || item.id}`; library.append(option); });
+    controls.append(pathControl.wrapper, library);
+    async function runStrategyTest() {
+      try {
+        const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/recognition-strategy-test`,
+          {method: 'POST', body: JSON.stringify({expectedVersion: revision.version, expectedDigest: revision.digest,
+            resourceLibraryId: library.value, syntheticPath: pathControl.input.value})});
+        const outcome = result.result && result.result.recognition && result.result.recognition.status;
+        message(result.status === 'completed' ?
+          `Strategy Test completed (${boundedSetupText(outcome, 'unknown')}). ` +
+            boundedSetupText(result.nextAction, 'Review the persisted evidence.') :
+          `${result.message || 'Strategy Test failed.'} ${result.nextAction || ''}`, result.status !== 'completed');
+        await showConfigurationRevision(revision);
+      } catch (error) { message(errorText(error), true); }
+    }
+    controls.append(actionButton('Run Recognition Strategy Test', runStrategyTest));
+    if (checkedActivationEvidenceIsCurrent(revision, guided)) {
+      controls.append(actionButton('Activate checked Draft', () => activateConfigurationRevision(revision, true)));
+    }
+    detailContent.append(controls);
   }
   async function activateConfigurationRevision(data, checked) {
     try {
@@ -501,8 +617,12 @@ APP_JS = b"""(() => {
         renderGuidedObjectList(data, guided, 'storages', 'Storages');
         renderGuidedObjectList(data, guided, 'resourceLibraries', 'ResourceLibraries');
         renderGuidedObjectList(data, guided, 'mediaLibraries', 'MediaLibraries');
+        renderGuidedObjectList(data, guided, 'recognitionTypes', 'RecognitionTypes');
+        renderGuidedObjectList(data, guided, 'recognitionRules', 'RecognitionRules');
+        renderGuidedObjectList(data, guided, 'recognitionTypePolicies', 'RecognitionTypePolicies');
         renderLocalSetupEvidence(data, guided);
         renderLocalSetupActions(data, guided);
+        renderRecognitionStrategyTest(data, guided);
       }
       const actions = text('div', '', 'choices');
       if (data.status === 'draft') actions.append(actionButton('Validate Draft', async () => {
@@ -526,12 +646,11 @@ APP_JS = b"""(() => {
         }));
       }
       if (data.status === 'validated') {
-        const checked = guided && guided.localSetupCheck && guided.localSetupCheck.status === 'passed' &&
-          setupEvidenceIsCurrent(data, guided.localSetupCheck);
+        const checked = guided && checkedActivationEvidenceIsCurrent(data, guided);
         actions.append(actionButton(checked ? 'Activate checked revision' :
           (guided ? 'Activate unchecked compatibility revision' : 'Activate revision'),
           () => activateConfigurationRevision(data, Boolean(checked))));
-        if (!checked && guided) actions.append(text('p', 'Activation is available for compatibility, but Local setup requires a current successful check for the guided safe path.', 'warning'));
+        if (!checked && guided) actions.append(text('p', 'Activation is available for compatibility, but the guided safe path requires both a current passed Local setup check and a current completed Recognition Strategy Test.', 'warning'));
       }
       if (data.status === 'active') actions.append(actionButton('Queue first DryRun Preview', async () => {
         try { const job = await api('/api/v1/jobs', {method: 'POST', body: JSON.stringify({command: 'preview'})});

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import posixpath
 import time
 from collections.abc import Callable, Mapping
@@ -16,6 +17,11 @@ from mediaflow.application.read_only_storage import (
     ReadOnlyStorageGuard,
     ReadOnlyStorageMutationError,
 )
+from mediaflow.application.strategy_test import (
+    StrategyConfigurationError,
+    StrategyTestResult,
+    strategy_runner_from_configuration,
+)
 from mediaflow.domain.configuration_management import (
     CONFIGURATION_REFERENCE_EVIDENCE_LIMIT,
     CONFIGURATION_SETUP_CHECK_PATH_LIMIT,
@@ -25,11 +31,21 @@ from mediaflow.domain.configuration_management import (
     ConfigurationReferenceEvidence,
     ConfigurationReferenceItem,
     ConfigurationSetupCheckStatus,
+    ConfigurationStrategyTestStatus,
     ConfigurationVersionConflict,
     LocalSetupCheckEvidence,
     ManagedConfigurationRevision,
     ManagedConfigurationStatus,
     ManagedDocumentRedactor,
+    RecognitionStrategyTestEvidence,
+)
+from mediaflow.domain.recognition import (
+    AtomicCondition,
+    ConditionField,
+    ConditionOperator,
+    LogicalCondition,
+    LogicalOperator,
+    RecognitionStatus,
 )
 from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.infrastructure.runtime_configuration import (
@@ -45,6 +61,9 @@ class ConfigurationObjectService:
         ConfigurationObjectKind.STORAGE: "storages",
         ConfigurationObjectKind.RESOURCE_LIBRARY: "resourceLibraries",
         ConfigurationObjectKind.MEDIA_LIBRARY: "mediaLibraries",
+        ConfigurationObjectKind.RECOGNITION_TYPE: "recognitionTypes",
+        ConfigurationObjectKind.RECOGNITION_RULE: "recognitionRules",
+        ConfigurationObjectKind.RECOGNITION_TYPE_POLICY: "recognitionTypePolicies",
     }
     _MAX_OBJECT_BYTES = 64 * 1024
     _SETUP_CHECK_TIMEOUT_SECONDS = 10.0
@@ -61,6 +80,29 @@ class ConfigurationObjectService:
         "maxDepth",
     }
     _MEDIA_FIELDS = {"id", "name", "storageId", "rootPath", "enabled"}
+    _RECOGNITION_TYPE_FIELDS = {"id", "name", "description", "enabled"}
+    _RECOGNITION_RULE_FIELDS = {
+        "id",
+        "name",
+        "condition",
+        "outputRecognitionType",
+        "enabled",
+        "priority",
+        "score",
+        "stopOnMatch",
+        "description",
+    }
+    _RECOGNITION_TYPE_POLICY_FIELDS = {
+        "id",
+        "name",
+        "recognitionType",
+        "metadataPolicy",
+        "namingPolicy",
+        "classificationPolicy",
+        "organizePolicy",
+        "enabled",
+        "priority",
+    }
 
     def __init__(
         self,
@@ -112,6 +154,7 @@ class ConfigurationObjectService:
     ) -> ManagedConfigurationRevision:
         revision = self._managed.require(revision_id)
         self.require_current_local_check(revision)
+        self.require_current_strategy_test(revision)
         return self._managed.activate(
             revision_id,
             expected_version=expected_version,
@@ -127,12 +170,16 @@ class ConfigurationObjectService:
                 "storages": self._objects(document, "storages", redact_remote=True),
                 "resourceLibraries": self._objects(document, "resourceLibraries"),
                 "mediaLibraries": self._objects(document, "mediaLibraries"),
+                "recognitionTypes": self._objects(document, "recognitionTypes"),
+                "recognitionRules": self._objects(document, "recognitionRules"),
+                "recognitionTypePolicies": self._objects(document, "recognitionTypePolicies"),
             },
             # Keep every versioned projection on the same immutable revision read.
             # Calling the public helpers here would re-read the repository and could
             # combine objects from one Draft with evidence from a concurrent edit.
             "references": self._references_from_document(document),
             "localSetupCheck": self._check_document(revision),
+            "recognitionStrategyTest": self._strategy_test_document(revision),
         }
 
     def references(self, revision_id: str) -> dict[str, dict[str, object]]:
@@ -236,6 +283,185 @@ class ConfigurationObjectService:
                 "after": after,
             },
         )
+
+    def recognition_strategy_test(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        resource_library_id: str,
+        synthetic_path: str,
+    ) -> RecognitionStrategyTestEvidence:
+        revision = self._managed.require(revision_id)
+        if revision.status is not ManagedConfigurationStatus.VALIDATED:
+            raise ConfigurationVersionConflict(
+                "Recognition Strategy Test requires a Validated Draft",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+            )
+        if revision.version != expected_version or revision.digest != expected_digest:
+            raise ConfigurationVersionConflict(
+                "Recognition Strategy Test is stale; validate the current Draft again",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+            )
+        if (
+            not isinstance(resource_library_id, str)
+            or not resource_library_id.strip()
+            or len(resource_library_id) > 128
+            or "\\x00" in resource_library_id
+        ):
+            raise ValueError("Strategy Test ResourceLibrary ID must be bounded and non-empty")
+        if (
+            not isinstance(synthetic_path, str)
+            or not synthetic_path.strip()
+            or len(synthetic_path) > 4096
+            or "\\x00" in synthetic_path
+        ):
+            raise ValueError("Strategy Test path must be bounded, non-empty, and NUL-free")
+        try:
+            runtime = load_managed_runtime_configuration(
+                revision.document,
+                bootstrap_database_path=self._managed.bootstrap_database_path
+                or self._repository.database_path,
+            )
+            library = next(
+                (
+                    item
+                    for item in runtime.resource_libraries
+                    if item.library_id == resource_library_id and item.enabled
+                ),
+                None,
+            )
+            if library is None:
+                raise ValueError("selected ResourceLibrary is unknown or disabled")
+            strategy = strategy_runner_from_configuration(runtime.strategy).run_path(
+                synthetic_path,
+                resource_library_id=library.library_id,
+                storage_id=library.storage_id,
+            )
+            evidence = RecognitionStrategyTestEvidence(
+                revision.revision_id,
+                revision.version,
+                revision.digest,
+                ConfigurationStrategyTestStatus.COMPLETED,
+                datetime.now(UTC),
+                actor,
+                resource_library_id,
+                synthetic_path,
+                self._strategy_result_document(strategy),
+                message=(
+                    "Synthetic path completed through Parser, Recognition, and policy resolution"
+                ),
+                next_action=self._strategy_test_next_action(strategy.recognition.status),
+            )
+        except StrategyConfigurationError:
+            evidence = RecognitionStrategyTestEvidence(
+                revision.revision_id,
+                revision.version,
+                revision.digest,
+                ConfigurationStrategyTestStatus.FAILED,
+                datetime.now(UTC),
+                actor,
+                resource_library_id,
+                synthetic_path,
+                failure_category="invalid_configuration",
+                message="Recognition Strategy Test failed (StrategyConfigurationError)",
+                next_action="correct and validate the Draft, then explicitly rerun Strategy Test",
+            )
+        except Exception as error:
+            evidence = RecognitionStrategyTestEvidence(
+                revision.revision_id,
+                revision.version,
+                revision.digest,
+                ConfigurationStrategyTestStatus.FAILED,
+                datetime.now(UTC),
+                actor,
+                resource_library_id,
+                synthetic_path,
+                failure_category="invalid_configuration",
+                message=f"Recognition Strategy Test failed ({type(error).__name__})",
+                next_action="correct and validate the Draft, then explicitly rerun Strategy Test",
+            )
+        return self._repository.save_recognition_strategy_test(evidence)
+
+    @staticmethod
+    def _strategy_result_document(strategy: StrategyTestResult) -> dict[str, object]:
+        recognition = strategy.recognition
+        policy = strategy.policy
+        return {
+            "parsed": {
+                "titleCandidate": strategy.parsed.title_candidate[:512],
+                "year": strategy.parsed.year,
+                "season": strategy.parsed.season,
+                "episode": strategy.parsed.episode,
+                "episodes": list(strategy.parsed.episodes),
+                "extension": strategy.parsed.extension,
+            },
+            "recognition": {
+                "status": recognition.status.value,
+                "recognitionType": recognition.recognition_type_id,
+                "ruleId": recognition.rule_id or None,
+                "confidence": recognition.confidence,
+                "score": recognition.score,
+                "matchedRules": [
+                    {
+                        "ruleId": item.rule_id,
+                        "recognitionType": item.recognition_type_id,
+                        "priority": item.priority,
+                        "score": item.score,
+                    }
+                    for item in recognition.matched_rules[:32]
+                ],
+                "alternatives": [
+                    {
+                        "recognitionType": item.recognition_type_id,
+                        "priority": item.priority,
+                        "score": item.score,
+                    }
+                    for item in recognition.alternatives[:32]
+                ],
+                "reasons": [
+                    {"code": item.code[:96], "message": item.message[:384]}
+                    for item in recognition.reasons[:32]
+                ],
+                "warnings": [str(item)[:384] for item in recognition.warnings[:32]],
+            },
+            "policy": {
+                "typePolicyId": policy.type_policy_id,
+                "recognitionType": policy.recognition_type_id,
+                "metadataPolicy": policy.metadata_policy_id,
+                "namingPolicy": policy.naming_policy_id,
+                "classificationPolicy": policy.classification_policy_id,
+                "organizePolicy": policy.organize_policy_id,
+            }
+            if policy
+            else None,
+            "recognitionTypePreserved": strategy.recognition_type_preserved,
+        }
+
+    @staticmethod
+    def _strategy_test_next_action(status: RecognitionStatus) -> str:
+        if status is RecognitionStatus.MATCHED:
+            return (
+                "review the matched rules and policy resolution, then explicitly checked-activate "
+                "this revision"
+            )
+        if status is RecognitionStatus.AMBIGUOUS:
+            return (
+                "inspect the competing rules, correct rule priorities or conditions in the Draft, "
+                "Validate, then explicitly rerun Strategy Test"
+            )
+        if status is RecognitionStatus.UNRECOGNIZED:
+            return (
+                "correct the selected ResourceLibrary context or RecognitionRules in the Draft, "
+                "Validate, then explicitly rerun Strategy Test"
+            )
+        raise ValueError("unsupported Recognition Strategy Test outcome")
 
     def local_check(
         self,
@@ -513,6 +739,35 @@ class ConfigurationObjectService:
                 revision_id=revision.revision_id,
             )
 
+    def require_current_strategy_test(self, revision: ManagedConfigurationRevision) -> None:
+        evidence = self._repository.get_recognition_strategy_test(revision.revision_id)
+        if evidence is None or evidence.status is not ConfigurationStrategyTestStatus.COMPLETED:
+            raise ConfigurationActivationConflict(
+                "a completed Recognition Strategy Test is required before checked activation",
+                revision_id=revision.revision_id,
+            )
+        if (
+            evidence.revision_version != revision.version
+            or evidence.revision_digest != revision.digest
+        ):
+            raise ConfigurationActivationConflict(
+                "Recognition Strategy Test is stale; validate and test the Draft again",
+                revision_id=revision.revision_id,
+            )
+
+    def _strategy_test_document(
+        self, revision: ManagedConfigurationRevision
+    ) -> dict[str, object] | None:
+        evidence = self._repository.get_recognition_strategy_test(revision.revision_id)
+        if evidence is None:
+            return None
+        value = evidence.document()
+        value["stale"] = (
+            evidence.revision_version != revision.version
+            or evidence.revision_digest != revision.digest
+        )
+        return value
+
     def _check_document(self, revision: ManagedConfigurationRevision) -> dict[str, object] | None:
         evidence = self._repository.get_local_setup_check(revision.revision_id)
         if evidence is None:
@@ -530,7 +785,7 @@ class ConfigurationObjectService:
             return cls._SECTIONS[kind]
         except KeyError as error:
             raise ValueError(
-                "only Storage, ResourceLibrary, and MediaLibrary are editable"
+                "this configuration object kind is not editable in the current slice"
             ) from error
 
     @classmethod
@@ -602,6 +857,9 @@ class ConfigurationObjectService:
             ConfigurationObjectKind.STORAGE: cls._STORAGE_FIELDS,
             ConfigurationObjectKind.RESOURCE_LIBRARY: cls._RESOURCE_FIELDS,
             ConfigurationObjectKind.MEDIA_LIBRARY: cls._MEDIA_FIELDS,
+            ConfigurationObjectKind.RECOGNITION_TYPE: cls._RECOGNITION_TYPE_FIELDS,
+            ConfigurationObjectKind.RECOGNITION_RULE: cls._RECOGNITION_RULE_FIELDS,
+            ConfigurationObjectKind.RECOGNITION_TYPE_POLICY: cls._RECOGNITION_TYPE_POLICY_FIELDS,
         }[kind]
         unknown = set(value).difference(allowed)
         if unknown:
@@ -615,6 +873,52 @@ class ConfigurationObjectService:
         if not isinstance(name, str) or not name.strip() or len(name) > 120:
             raise ValueError(f"{section} name must be a bounded non-empty string")
         result = {"id": object_id, "name": name}
+        if kind is ConfigurationObjectKind.RECOGNITION_TYPE:
+            description = value.get("description", "")
+            enabled = value.get("enabled", True)
+            if not isinstance(description, str) or len(description) > 1000:
+                raise ValueError("RecognitionType description must be bounded text")
+            if not isinstance(enabled, bool):
+                raise ValueError("RecognitionType enabled must be boolean")
+            result.update({"description": description, "enabled": enabled})
+            return result
+        if kind is ConfigurationObjectKind.RECOGNITION_RULE:
+            output = value.get("outputRecognitionType")
+            if not isinstance(output, str) or not output.strip() or len(output) > 64:
+                raise ValueError("RecognitionRule outputRecognitionType is required")
+            condition = value.get("condition")
+            cls._recognition_condition(condition)
+            result.update(
+                {
+                    "condition": copy.deepcopy(condition),
+                    "outputRecognitionType": output,
+                    "enabled": cls._bool(value, "enabled", True, "RecognitionRule"),
+                    "priority": cls._int(value, "priority", 0, "RecognitionRule"),
+                    "score": cls._number(value, "score", 1, "RecognitionRule"),
+                    "stopOnMatch": cls._bool(value, "stopOnMatch", False, "RecognitionRule"),
+                    "description": cls._text(value, "description", "", 1000, "RecognitionRule"),
+                }
+            )
+            return cls._bounded_object(section, result)
+        if kind is ConfigurationObjectKind.RECOGNITION_TYPE_POLICY:
+            for field in (
+                "recognitionType",
+                "metadataPolicy",
+                "namingPolicy",
+                "classificationPolicy",
+                "organizePolicy",
+            ):
+                reference = value.get(field)
+                if not isinstance(reference, str) or not reference.strip() or len(reference) > 64:
+                    raise ValueError(f"RecognitionTypePolicy {field} is required")
+                result[field] = reference
+            result.update(
+                {
+                    "enabled": cls._bool(value, "enabled", True, "RecognitionTypePolicy"),
+                    "priority": cls._int(value, "priority", 0, "RecognitionTypePolicy"),
+                }
+            )
+            return cls._bounded_object(section, result)
         if kind is ConfigurationObjectKind.STORAGE:
             if str(value.get("type", "")).lower() != "local":
                 raise ValueError("guided Storage editing supports Local type only")
@@ -668,6 +972,85 @@ class ConfigurationObjectService:
         if len(encoded) > cls._MAX_OBJECT_BYTES:
             raise ValueError(f"{section} object is too large")
         return result
+
+    @classmethod
+    def _recognition_condition(cls, value: object, *, depth: int = 0) -> object:
+        if depth > 16 or not isinstance(value, Mapping):
+            raise ValueError("RecognitionRule condition must be a bounded object")
+        if "field" in value:
+            allowed = {"field", "operator", "value", "caseSensitive"}
+            if unknown := set(value).difference(allowed):
+                raise ValueError(
+                    f"RecognitionRule condition has unsupported field {sorted(unknown)[0]!r}"
+                )
+            AtomicCondition(
+                ConditionField(str(value.get("field", ""))),
+                ConditionOperator(str(value.get("operator", ""))),
+                value.get("value"),
+                cls._bool(value, "caseSensitive", False, "RecognitionRule condition"),
+            )
+            return value
+        allowed = {"operator", "children"}
+        if unknown := set(value).difference(allowed):
+            raise ValueError(
+                f"RecognitionRule condition has unsupported field {sorted(unknown)[0]!r}"
+            )
+        raw_children = value.get("children", [])
+        if not isinstance(raw_children, list) or len(raw_children) > 64:
+            raise ValueError("RecognitionRule condition children must be a bounded array")
+        children = tuple(
+            cls._recognition_condition(child, depth=depth + 1) for child in raw_children
+        )
+        # Domain construction enforces always/not/and/or cardinality.
+        LogicalCondition(LogicalOperator(str(value.get("operator", ""))), children)  # type: ignore[arg-type]
+        return value
+
+    @staticmethod
+    def _bool(value: Mapping[str, object], field: str, default: bool, label: str) -> bool:
+        result = value.get(field, default)
+        if not isinstance(result, bool):
+            raise ValueError(f"{label} {field} must be boolean")
+        return result
+
+    @staticmethod
+    def _int(value: Mapping[str, object], field: str, default: int, label: str) -> int:
+        result = value.get(field, default)
+        if (
+            isinstance(result, bool)
+            or not isinstance(result, int)
+            or result < -1_000_000
+            or result > 1_000_000
+        ):
+            raise ValueError(f"{label} {field} must be a bounded integer")
+        return result
+
+    @staticmethod
+    def _number(value: Mapping[str, object], field: str, default: float, label: str) -> float:
+        result = value.get(field, default)
+        if (
+            isinstance(result, bool)
+            or not isinstance(result, int | float)
+            or not math.isfinite(result)
+            or result < 0
+            or result > 1_000_000
+        ):
+            raise ValueError(f"{label} {field} must be a bounded non-negative number")
+        return float(result)
+
+    @staticmethod
+    def _text(
+        value: Mapping[str, object], field: str, default: str, maximum: int, label: str
+    ) -> str:
+        result = value.get(field, default)
+        if not isinstance(result, str) or len(result) > maximum:
+            raise ValueError(f"{label} {field} must be bounded text")
+        return result
+
+    @classmethod
+    def _bounded_object(cls, section: str, value: dict[str, object]) -> dict[str, object]:
+        if len(repr(value).encode("utf-8")) > cls._MAX_OBJECT_BYTES:
+            raise ValueError(f"{section} object is too large")
+        return value
 
     @staticmethod
     def _host_absolute_path(value: object) -> str:
@@ -775,6 +1158,23 @@ class ConfigurationObjectService:
                             field="resourceLibraryId",
                         )
                     )
+        elif kind is ConfigurationObjectKind.RECOGNITION_TYPE:
+            for section, field in (
+                ("recognitionRules", "outputRecognitionType"),
+                ("recognitionTypePolicies", "recognitionType"),
+            ):
+                for index, item in enumerate(cls._canonical_objects(document, section)):
+                    reference = cls._required_reference_id(
+                        item, section=section, index=index, field=field
+                    )
+                    if reference == object_id:
+                        collector.add(
+                            ConfigurationReferenceItem(
+                                section=section,
+                                object_id=str(item["id"]),
+                                field=field,
+                            )
+                        )
         return collector.evidence()
 
     @staticmethod

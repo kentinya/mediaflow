@@ -961,6 +961,24 @@ NamingPolicy catalogs retain the existing configured registries, and every user 
 reference is validated during runner bootstrap. C continues to resolve Metadata C and Naming/
 Classification/Organize A without changing RecognitionType C.
 
+## Phase 22.4 Recognition configuration and Strategy Test (implementation complete; review pending)
+
+Phase 22.4 extends the existing managed whole-document authority with bounded object operations for
+`recognitionTypes`, `recognitionRules`, and `recognitionTypePolicies`. Draft edits remain
+optimistic-version checked and audited; the canonical runtime loader still owns priority and
+cross-reference validation. The exact-revision synthetic Strategy Test reuses the production
+Parser, Recognition engine, and RecognitionTypePolicy resolver without constructing Storage or a
+Metadata Provider.
+
+The configuration repository persists bounded, secret-free Strategy Test evidence against the
+tested revision/version/digest. API and Web project whether that evidence is current or stale, and
+Web renders matched rules, alternatives, reasons, warnings, and outcome-specific recovery guidance.
+Checked activation requires both current passed Local setup evidence and current completed Strategy
+Test evidence. RecognitionType C remains C when it reuses NamingPolicy or ClassificationPolicy A.
+This records the reconstructed Phase 22.4 implementation; independent High integration review and
+Phase closure are still pending. MetadataPolicy managed editing, live Provider testing, candidate
+confirmation, and evidence CAS remain outside this boundary.
+
 ## Deferred work
 
 Phase 15 persists organize conflicts as `waiting_confirm` records in SQLite. `ConflictResolver`
@@ -1534,8 +1552,8 @@ retry. Independent R4-F1 review accepted this persistence/reload boundary and th
 Web selection: only enabled libraries referencing Local Storage can expose the Run action, and those
 same objects supply the request IDs. Activation itself remains repository-only; after activation the
 existing Preview Job endpoint carries the immutable snapshot pin. The combined Worker pin acceptance
-proof remains open Phase 22.3 work.
-Remote setup and policy editors remain TARGET.
+proof was completed by the Phase 22.3 prerequisite baseline. Remote setup and policy editors beyond
+the reconstructed Phase 22.4 Recognition scope remain TARGET.
 
 ## Configuration architecture: TARGET (partially implemented; remaining work explicit)
 

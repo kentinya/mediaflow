@@ -2,11 +2,10 @@
 
 ## 当前节点
 
-截至 2026-08-24，项目完成了安全优先的核心执行链、Phase 21 有界人工/文件管理基础、
-Phase 22.1 内部 Storage 配置 CRUD 基础和 Phase 22.2 whole-document Active authority。当前
-Phase 22.3 的 Local Storage + Library guided implementation 已接入相同 authority，但独立复核
-结果为 **FIX REQUIRED**；当前仅执行 Phase 22.3R 的 canonical 保留、路径、Web 恢复证据与
-有界 check 修复。本次 Product/UX Rebaseline 明确：内部模块完成不等于
+截至 2026-08-26，Phase 22.4 Recognition Configuration + Strategy Test 的最终净实现已从正式
+基线和 recovery snapshot 完成语义重建，包含 F1 Web 证据渲染和 F2 结果恢复指导。当前边界是
+**Phase 22.4 implementation complete / independent High integration review pending**，尚未记录
+Phase 22.4 closure，也未开始 Phase 22.5。本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 
 ```text
@@ -36,14 +35,14 @@ Runtime Configuration
 | Storage | 已完成（有界验收） | Local、SMB、OpenList、S3/R2 Adapter、JSON Runtime、隔离 Samba/OpenList/MinIO 矩阵 | AWS/R2、第三方 driver、远端原子与多小时专项验收 |
 | Scanner/FileIndex | 已完成 | 扫描、稳定性、全量/增量、生产 SQLite FileIndex | 后续管理/清理工具 |
 | Parser | 已完成 | 文件名/路径/NFO、电影/剧集、多集、标签、受限 XML 与冲突证据合并 | NFO 生成不属于 Parser；更多格式按样本扩展 |
-| Recognition | 部分完成（引擎成熟） | 配置规则、优先级、证据、C 身份保持、持久/批量人工决策和重评请求 | Web 规则配置/测试/激活与完整解释旅程 |
+| Recognition | Phase 22.4 实现完成，待独立复核 | 引擎、Managed Web/API 对象编辑、离线 Strategy Test、持久解释/恢复、双证据激活门、C 身份保持 | 独立 High integration review；真实样本扩展不属于当前 blocker |
 | Metadata | 部分完成（引擎成熟） | TMDB、缓存、候选评分、本地化标题、年份语义、持久人工候选/查询修正 | Provider 切换、配置激活、同页恢复闭环 |
 | Naming | 已完成 | 安全模板、Unicode、多集、预览 | 用户界面配置体验 |
 | Classification | 已完成 | 确定性规则、媒体库选择、持久人工规则选择/恢复 | 自由路径修正明确禁止；完整 UI 待做 |
 | Planner/Executor | 部分完成 | 计划、冲突、附件、Hash 证据、同次调用 Rollback、空目录清理、DryRun、跨存储执行 | 历史/崩溃恢复、Hash 持久复用、逐项恢复体验 |
 | Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、pause/resume、批量请求、claim fencing/心跳 | 统一 Processing Checkpoint 与 stage-aware recovery |
 | API/UI/Scheduler | 部分完成 | API/RBAC/审计、操作台、Dashboard、Files 列表/筛选/详情/部分动作、Cron/通知 | 完整人工/配置/恢复旅程、登录/外部身份源 |
-| Managed Configuration | Phase 22.3R 聚焦修复 | whole-document authority plus submitted Local Storage/ResourceLibrary/MediaLibrary Draft/API/Web/check foundation | lossless full-section edit, absolute Local root, Web refs/check recovery, bounded guarded check; then remote/policy journeys |
+| Managed Configuration | Phase 22.4 实现完成，待独立复核 | whole-document authority、Local setup 与 Recognition Draft/API/Web/test/activation glue | Phase 22.4 High review；MetadataPolicy/live Provider 等 Phase 22.5 工作尚未引入 |
 
 ## 总体阶段计划
 
@@ -365,10 +364,12 @@ Phase 19.25 已用生产 Adapter 与 OrganizerExecutor 在全新隔离 Local、S
 - Phase 22.1 已完成：第一批 Storage 配置内部 CRUD/校验/乐观版本/Before-After 审计与
   SQLite 引用阻断；支持六类 Storage 形状并拒绝字面/嵌套 secret。该入口尚未接入运行时
   JSON、API/UI/CLI、Storage 构造或媒体工作流。
-- Phase 22.3 当前实现（独立复核 FIX REQUIRED）：在 Managed Draft 中接入 Local Storage、
-  ResourceLibrary、MediaLibrary 的 Web/API 编辑、直接引用影响/阻断、远端脱敏只读、精确版本
-  的只读 Local setup check、checked activation 和首个 Preview Job pin。远端和策略对象仍未纳入
-  本切片。
+- Phase 22.3 前置基线：在 Managed Draft 中接入 Local Storage、ResourceLibrary、MediaLibrary
+  的 Web/API 编辑、直接引用影响/阻断、远端脱敏只读、精确版本的只读 Local setup check、
+  checked activation 和行为可辨的 Preview Job pin。
+- Phase 22.4 当前 reconstruction：在相同 authority 中接入 Recognition 三类对象、精确 revision
+  的离线 Strategy Test、持久 Web 解释/恢复和双证据 checked activation；独立 High integration
+  review 待执行，Phase 22.5 未开始。
 
 Phase 21 的上述条目是可复用的持久/API/Web 基础，不代表最终人工处理用户旅程已经完成。
 
@@ -403,18 +404,20 @@ Domain
 - 定义 TaskItem Processing Checkpoint 与 stage-aware Recovery 的兼容契约，但恢复旅程在第 6
   个切片实现，不在架构纠正中假装完成。
 
-### 2. Storage + Library 配置用户旅程（Phase 22.3R，当前聚焦修复）
+### 2. Storage + Library 配置用户旅程（Phase 22.3，前置基线）
 
-- 先修复独立复核确认的 P1：大段编辑不得截断丢失、Local root 必须是 host-absolute、
+- 已修复独立复核确认的 P1：大段编辑不得截断丢失、Local root 必须是 host-absolute、
   Web 必须展示直接引用与陈旧/失败 check 恢复证据、setup check 必须容量受限且受
   fail-fast read-only guard 保护，并补齐 Active → Job → Worker Task/Result 同 pin 验收。
-- 修复通过前不得标记 PASS；远端 Storage 连通性与能力测试仍是后续范围。
+- R5-F1 已完成行为可辨的 Worker snapshot pin 证据；远端 Storage 连通性仍是后续范围。
 - 复用 Phase 22.1 基础，不把“补齐 Library repository”单独作为产品完成。
 
-### 3. Recognition 配置 + Strategy Test 用户旅程（Phase 22.4，下一切片）
+### 3. Recognition 配置 + Strategy Test 用户旅程（Phase 22.4，实现完成，待复核）
 
 - 规则/类型/类型策略的编辑、优先级与引用校验、真实或合成路径的零变更 Strategy Test、解释、
   激活和 C 身份回归在同一切片交付。
+- F1/F2 最终净状态补齐 Web matched rule/alternative/warning 渲染、双证据 checked activation
+  和 matched/ambiguous/unrecognized 差异化恢复；独立 High integration review 尚未执行。
 
 ### 4. Metadata 配置与修正用户旅程
 
@@ -457,12 +460,11 @@ resident API 使用不可变 request-scoped binding 绑定 snapshot identity、�
 revision 持久化可操作且脱敏的失败证据。独立复核的 11 项关键回归和 708 项完整离线
 套件无失败，本 Task 范围内无 P0/P1 偏离。
 
-当前实施边界是 **Phase 22.3R — Guided Local Setup Integrity and Recovery Correction**。
-独立复核已复现 canonical 对象截断丢失和相对 Local root 被接受，并确认 Web 未展示
-直接引用、陈旧/失败 check 恢复证据及缺少组合 Worker pin 验收。修复重新独立复核通过后，
-下一用户切片才是 **Phase 22.4 —
-Recognition Configuration + Strategy Test Journey**，不得提前开展远端配置、策略 CRUD 或
-更宽的自动化。Interval/Cron 仍只允许 scan/preview；无人值守定时 `organize --execute` 继续不支持。
+当前实施边界是 **Phase 22.4 — Recognition Configuration + Strategy Test Journey** 的最终净
+实现，状态为 implementation complete / independent High integration review pending。只有该
+审查可以记录 Phase 22.4 closure；Phase 22.5 MetadataPolicy、live Metadata、候选确认及更宽的
+自动化均尚未开始。Interval/Cron 仍只允许 scan/preview；无人值守定时 `organize --execute`
+继续不支持。
 
 ## 持续安全基线
 

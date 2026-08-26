@@ -62,12 +62,25 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
         document["mediaLibraries"][0]["rootPath"] = "Movies"
         return document
 
+    @staticmethod
+    def _strategy_test(objects, revision):
+        return objects.recognition_strategy_test(
+            revision.revision_id,
+            expected_version=revision.version,
+            expected_digest=revision.digest,
+            actor="tester",
+            resource_library_id="source",
+            synthetic_path="Example.Movie.2024.1080p.mkv",
+        )
+
     def test_revision_detail_uses_one_captured_revision_for_all_projections(self) -> None:
         document_v1 = {
             "storages": [{"id": "source", "type": "local", "rootPath": "/source"}],
             "resourceLibraries": [],
             "mediaLibraries": [],
             "recognitionRules": [],
+            "recognitionTypes": [],
+            "recognitionTypePolicies": [],
             "classificationPolicies": [],
         }
         document_v2 = copy.deepcopy(document_v1)
@@ -109,7 +122,10 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
         )
 
         class SequentialManaged:
-            repository = SimpleNamespace(get_local_setup_check=lambda _revision_id: setup_evidence)
+            repository = SimpleNamespace(
+                get_local_setup_check=lambda _revision_id: setup_evidence,
+                get_recognition_strategy_test=lambda _revision_id: None,
+            )
 
             def __init__(self) -> None:
                 self.reads = 0
@@ -432,12 +448,450 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(repository.get_local_setup_check(validated.revision_id), evidence)
                 self.assertEqual(before, {path for path in root.rglob("*") if path.is_dir()})
                 self.assertIsNone(service.active())
+                self._strategy_test(objects, validated)
                 activated = objects.activate_checked(
                     validated.revision_id,
                     expected_version=validated.version,
                     actor="tester",
                 )
                 self.assertEqual(activated.status.value, "active")
+
+    def test_recognition_crud_strategy_evidence_and_c_identity_journey(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "incoming").mkdir(parents=True)
+            (root / "target" / "Movies").mkdir(parents=True)
+            document = self._document(root)
+            before = sorted(
+                (path.relative_to(root).as_posix(), path.is_dir()) for path in root.rglob("*")
+            )
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                service = ManagedConfigurationService(repository)
+                objects = ConfigurationObjectService(service)
+                draft = service.import_draft(document, actor="tester")
+
+                created = objects.mutate(
+                    draft.revision_id,
+                    ConfigurationObjectKind.RECOGNITION_TYPE,
+                    object_id=None,
+                    value={"id": "D", "name": "Temporary", "enabled": True},
+                    expected_version=draft.version,
+                    actor="tester",
+                )
+                deleted = objects.mutate(
+                    created.revision_id,
+                    ConfigurationObjectKind.RECOGNITION_TYPE,
+                    object_id="D",
+                    value=None,
+                    expected_version=created.version,
+                    actor="tester",
+                    delete=True,
+                )
+                with self.assertRaises(ConfigurationObjectReferenced):
+                    objects.mutate(
+                        deleted.revision_id,
+                        ConfigurationObjectKind.RECOGNITION_TYPE,
+                        object_id="C",
+                        value=None,
+                        expected_version=deleted.version,
+                        actor="tester",
+                        delete=True,
+                    )
+                special = next(
+                    item
+                    for item in deleted.document["recognitionRules"]
+                    if item["id"] == "special-library"
+                )
+                special = copy.deepcopy(special)
+                special["priority"] = 321
+                edited = objects.mutate(
+                    deleted.revision_id,
+                    ConfigurationObjectKind.RECOGNITION_RULE,
+                    object_id="special-library",
+                    value=special,
+                    expected_version=deleted.version,
+                    actor="tester",
+                )
+                with self.assertRaises(ValueError):
+                    objects.mutate(
+                        edited.revision_id,
+                        ConfigurationObjectKind.RECOGNITION_RULE,
+                        object_id=None,
+                        value={
+                            "id": "unsafe",
+                            "name": "Unsafe",
+                            "condition": {
+                                "field": "path",
+                                "operator": "regex",
+                                "value": "(a+)+$",
+                            },
+                            "outputRecognitionType": "C",
+                        },
+                        expected_version=edited.version,
+                        actor="tester",
+                    )
+                validated = service.validate(edited.revision_id, actor="tester")
+                objects.local_check(
+                    validated.revision_id,
+                    expected_version=validated.version,
+                    expected_digest=validated.digest,
+                    actor="tester",
+                    resource_library_id="source",
+                    media_library_id="movies",
+                )
+                failed = objects.recognition_strategy_test(
+                    validated.revision_id,
+                    expected_version=validated.version,
+                    expected_digest=validated.digest,
+                    actor="tester",
+                    resource_library_id="missing",
+                    synthetic_path="/C/Special.Movie.2024.mkv",
+                )
+                self.assertEqual(failed.status.value, "failed")
+                self.assertEqual(failed.failure_category, "invalid_configuration")
+                self.assertEqual(failed.document()["sideEffects"], "none")
+                self.assertTrue(failed.document()["retrySafe"])
+                with self.assertRaises(ConfigurationActivationConflict):
+                    objects.activate_checked(
+                        validated.revision_id,
+                        expected_version=validated.version,
+                        actor="tester",
+                    )
+                with patch(
+                    "mediaflow.infrastructure.runtime_configuration."
+                    "RuntimeConfiguration.create_storages",
+                    side_effect=AssertionError("Strategy Test must not construct Storage"),
+                ):
+                    evidence = objects.recognition_strategy_test(
+                        validated.revision_id,
+                        expected_version=validated.version,
+                        expected_digest=validated.digest,
+                        actor="tester",
+                        resource_library_id="source",
+                        synthetic_path="/C/Special.Movie.2024.mkv",
+                    )
+                self.assertEqual(evidence.status.value, "completed")
+                recognition = evidence.result["recognition"]
+                self.assertEqual(recognition["recognitionType"], "C")
+                self.assertEqual(recognition["matchedRules"][0]["priority"], 321)
+                self.assertEqual(evidence.result["policy"]["recognitionType"], "C")
+                self.assertEqual(evidence.result["policy"]["metadataPolicy"], "C")
+                self.assertEqual(evidence.result["policy"]["namingPolicy"], "A")
+                self.assertEqual(evidence.result["policy"]["classificationPolicy"], "A")
+                self.assertTrue(evidence.result["recognitionTypePreserved"])
+                self.assertEqual(
+                    repository.get_recognition_strategy_test(validated.revision_id), evidence
+                )
+                detail = objects.revision_detail(validated.revision_id)
+                self.assertFalse(detail["recognitionStrategyTest"]["stale"])
+                type_c = next(
+                    item for item in validated.document["recognitionTypes"] if item["id"] == "C"
+                )
+                changed_type = copy.deepcopy(type_c)
+                changed_type["description"] = "Reviewed special type"
+                changed = objects.mutate(
+                    validated.revision_id,
+                    ConfigurationObjectKind.RECOGNITION_TYPE,
+                    object_id="C",
+                    value=changed_type,
+                    expected_version=validated.version,
+                    actor="tester",
+                )
+                stale_detail = objects.revision_detail(changed.revision_id)
+                self.assertTrue(stale_detail["recognitionStrategyTest"]["stale"])
+                self.assertTrue(stale_detail["localSetupCheck"]["stale"])
+                revalidated = service.validate(changed.revision_id, actor="tester")
+                objects.local_check(
+                    revalidated.revision_id,
+                    expected_version=revalidated.version,
+                    expected_digest=revalidated.digest,
+                    actor="tester",
+                    resource_library_id="source",
+                    media_library_id="movies",
+                )
+                objects.recognition_strategy_test(
+                    revalidated.revision_id,
+                    expected_version=revalidated.version,
+                    expected_digest=revalidated.digest,
+                    actor="tester",
+                    resource_library_id="source",
+                    synthetic_path="/C/Special.Movie.2024.mkv",
+                )
+                activated = objects.activate_checked(
+                    revalidated.revision_id,
+                    expected_version=revalidated.version,
+                    actor="tester",
+                )
+                self.assertEqual(activated.status.value, "active")
+            after = sorted(
+                (path.relative_to(root).as_posix(), path.is_dir())
+                for path in root.rglob("*")
+                if path.name != "configuration.sqlite3"
+                and not path.name.startswith("configuration.sqlite3-")
+            )
+            self.assertEqual([item for item in before if item[0] != "configuration.sqlite3"], after)
+
+    def test_strategy_test_api_projects_matched_ambiguous_unrecognized_and_failed_evidence(
+        self,
+    ) -> None:
+        always = {"operator": "always", "children": []}
+        cases = (
+            (
+                "matched",
+                [
+                    {
+                        "id": "a-primary",
+                        "name": "A primary",
+                        "condition": always,
+                        "outputRecognitionType": "A",
+                        "priority": 200,
+                        "score": 70,
+                    },
+                    {
+                        "id": "a-secondary",
+                        "name": "A secondary",
+                        "condition": always,
+                        "outputRecognitionType": "A",
+                        "priority": 100,
+                        "score": 20,
+                    },
+                ],
+                "source",
+                "matched",
+                2,
+                1,
+                "review the matched rules and policy resolution",
+                (),
+            ),
+            (
+                "ambiguous",
+                [
+                    {
+                        "id": "a-tie",
+                        "name": "A tie",
+                        "condition": always,
+                        "outputRecognitionType": "A",
+                        "priority": 100,
+                        "score": 50,
+                    },
+                    {
+                        "id": "b-tie",
+                        "name": "B tie",
+                        "condition": always,
+                        "outputRecognitionType": "B",
+                        "priority": 100,
+                        "score": 50,
+                    },
+                ],
+                "source",
+                "ambiguous",
+                2,
+                2,
+                "correct rule priorities or conditions",
+                ("manual recognition is required",),
+            ),
+            (
+                "unrecognized",
+                [
+                    {
+                        "id": "never",
+                        "name": "Never matches",
+                        "condition": {
+                            "field": "path",
+                            "operator": "contains",
+                            "value": "/never/",
+                        },
+                        "outputRecognitionType": "A",
+                        "priority": 100,
+                        "score": 100,
+                    }
+                ],
+                "source",
+                "unrecognized",
+                0,
+                0,
+                "correct the selected ResourceLibrary context or RecognitionRules",
+                (),
+            ),
+            (
+                "failed",
+                None,
+                "missing",
+                None,
+                0,
+                0,
+                "correct and validate the Draft",
+                (),
+            ),
+        )
+        for (
+            label,
+            rules,
+            library_id,
+            outcome,
+            matched_count,
+            alternative_count,
+            next_action,
+            expected_warnings,
+        ) in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                document = self._document(root)
+                if rules is not None:
+                    document["recognitionRules"] = copy.deepcopy(rules)
+                with (
+                    SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository,
+                    SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
+                ):
+                    service = ManagedConfigurationService(repository)
+                    api = MediaFlowApi(
+                        runtime_repository,
+                        None,
+                        principals=(
+                            ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                        ),
+                        configuration_service=service,
+                        bootstrap_document=document,
+                    )
+                    draft = service.import_draft(document, actor="tester")
+                    validated = service.validate(draft.revision_id, actor="tester")
+                    with patch(
+                        "mediaflow.infrastructure.runtime_configuration."
+                        "RuntimeConfiguration.create_storages",
+                        side_effect=AssertionError("Strategy Test must not construct Storage"),
+                    ):
+                        status, evidence = request(
+                            api,
+                            f"/api/v1/configuration/revisions/{validated.revision_id}/"
+                            "recognition-strategy-test",
+                            method="POST",
+                            body={
+                                "expectedVersion": validated.version,
+                                "expectedDigest": validated.digest,
+                                "resourceLibraryId": library_id,
+                                "syntheticPath": "Example.Movie.2024.mkv",
+                            },
+                        )
+                    self.assertEqual(status, 200)
+                    status, detail = request(
+                        api,
+                        f"/api/v1/configuration/revisions/{validated.revision_id}/objects",
+                    )
+                    self.assertEqual(status, 200)
+                    reloaded = detail["recognitionStrategyTest"]
+                    self.assertFalse(reloaded["stale"])
+                    for key, value in evidence.items():
+                        self.assertEqual(reloaded[key], value)
+                    self.assertEqual(evidence["sideEffects"], "none")
+                    self.assertTrue(evidence["retrySafe"])
+                    self.assertIn(next_action, evidence["nextAction"])
+                    if outcome is None:
+                        self.assertEqual(evidence["status"], "failed")
+                        self.assertEqual(evidence["failureCategory"], "invalid_configuration")
+                        self.assertIsNone(evidence["result"])
+                        continue
+                    self.assertEqual(evidence["status"], "completed")
+                    recognition = evidence["result"]["recognition"]
+                    self.assertEqual(recognition["status"], outcome)
+                    self.assertEqual(len(recognition["matchedRules"]), matched_count)
+                    self.assertEqual(len(recognition["alternatives"]), alternative_count)
+                    self.assertEqual(tuple(recognition["warnings"]), expected_warnings)
+                    for item in recognition["matchedRules"]:
+                        self.assertEqual(
+                            set(item), {"ruleId", "recognitionType", "priority", "score"}
+                        )
+                    for item in recognition["alternatives"]:
+                        self.assertEqual(set(item), {"recognitionType", "priority", "score"})
+
+    def test_recognition_object_crud_preserves_reference_ordering(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                service = ManagedConfigurationService(repository)
+                objects = ConfigurationObjectService(service)
+                current = service.import_draft(self._document(root), actor="tester")
+                current = objects.mutate(
+                    current.revision_id,
+                    ConfigurationObjectKind.RECOGNITION_TYPE,
+                    object_id=None,
+                    value={"id": "D", "name": "Documentary", "enabled": True},
+                    expected_version=current.version,
+                    actor="tester",
+                )
+                current = objects.mutate(
+                    current.revision_id,
+                    ConfigurationObjectKind.RECOGNITION_RULE,
+                    object_id=None,
+                    value={
+                        "id": "type-d-rule",
+                        "name": "Documentary catch-all",
+                        "condition": {"operator": "always", "children": []},
+                        "outputRecognitionType": "D",
+                        "priority": -100,
+                        "score": 1,
+                    },
+                    expected_version=current.version,
+                    actor="tester",
+                )
+                current = objects.mutate(
+                    current.revision_id,
+                    ConfigurationObjectKind.RECOGNITION_TYPE_POLICY,
+                    object_id=None,
+                    value={
+                        "id": "type-D",
+                        "name": "Documentary policy",
+                        "recognitionType": "D",
+                        "metadataPolicy": "A",
+                        "namingPolicy": "A",
+                        "classificationPolicy": "A",
+                        "organizePolicy": "A",
+                        "priority": 10,
+                    },
+                    expected_version=current.version,
+                    actor="tester",
+                )
+                with self.assertRaises(ConfigurationObjectReferenced) as blocked:
+                    objects.mutate(
+                        current.revision_id,
+                        ConfigurationObjectKind.RECOGNITION_TYPE,
+                        object_id="D",
+                        value=None,
+                        expected_version=current.version,
+                        actor="tester",
+                        delete=True,
+                    )
+                self.assertEqual(blocked.exception.reference_count, 2)
+                policy = next(
+                    item
+                    for item in current.document["recognitionTypePolicies"]
+                    if item["id"] == "type-D"
+                )
+                policy = copy.deepcopy(policy)
+                policy["priority"] = 11
+                current = objects.mutate(
+                    current.revision_id,
+                    ConfigurationObjectKind.RECOGNITION_TYPE_POLICY,
+                    object_id="type-D",
+                    value=policy,
+                    expected_version=current.version,
+                    actor="tester",
+                )
+                for kind, object_id in (
+                    (ConfigurationObjectKind.RECOGNITION_TYPE_POLICY, "type-D"),
+                    (ConfigurationObjectKind.RECOGNITION_RULE, "type-d-rule"),
+                    (ConfigurationObjectKind.RECOGNITION_TYPE, "D"),
+                ):
+                    current = objects.mutate(
+                        current.revision_id,
+                        kind,
+                        object_id=object_id,
+                        value=None,
+                        expected_version=current.version,
+                        actor="tester",
+                        delete=True,
+                    )
+                validated = service.validate(current.revision_id, actor="tester")
+                self.assertEqual(validated.status.value, "validated")
 
     def test_local_setup_check_calls_only_read_operations(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2445,6 +2899,19 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(evidence["status"], "passed")
+                status, active = request(
+                    api,
+                    f"/api/v1/configuration/revisions/{revision_id}/recognition-strategy-test",
+                    method="POST",
+                    body={
+                        "expectedVersion": validated["version"],
+                        "expectedDigest": validated["digest"],
+                        "resourceLibraryId": "source",
+                        "syntheticPath": "Example.Movie.2024.1080p.mkv",
+                    },
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(active["status"], "completed")
                 status, active = request(
                     api,
                     f"/api/v1/configuration/revisions/{revision_id}/activate",

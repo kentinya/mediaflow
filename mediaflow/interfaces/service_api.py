@@ -583,6 +583,47 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, evidence.document())
         if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "recognition-strategy-test"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            required = {
+                "expectedVersion",
+                "expectedDigest",
+                "resourceLibraryId",
+                "syntheticPath",
+            }
+            if set(document) != required:
+                raise ValueError(
+                    "Recognition Strategy Test requires expectedVersion, expectedDigest, "
+                    "resourceLibraryId, and syntheticPath"
+                )
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            if not isinstance(document["expectedDigest"], str):
+                raise ValueError("configuration expectedDigest is required")
+            evidence = self._configuration_objects.recognition_strategy_test(
+                parts[4],
+                expected_version=expected,
+                expected_digest=document["expectedDigest"],
+                actor=principal.principal_id,
+                resource_library_id=document["resourceLibraryId"],
+                synthetic_path=document["syntheticPath"],
+            )
+            return self._response(start_response, 200, evidence.document())
+        if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "configuration"]
             and parts[3] == "revisions"
@@ -1849,6 +1890,9 @@ class MediaFlowApi:
             "storages": ConfigurationObjectKind.STORAGE,
             "resourceLibraries": ConfigurationObjectKind.RESOURCE_LIBRARY,
             "mediaLibraries": ConfigurationObjectKind.MEDIA_LIBRARY,
+            "recognitionTypes": ConfigurationObjectKind.RECOGNITION_TYPE,
+            "recognitionRules": ConfigurationObjectKind.RECOGNITION_RULE,
+            "recognitionTypePolicies": ConfigurationObjectKind.RECOGNITION_TYPE_POLICY,
         }
         try:
             return mapping[value]

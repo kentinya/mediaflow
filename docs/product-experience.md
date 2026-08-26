@@ -129,9 +129,28 @@ a runnable check; revalidated stale evidence exposes an explicit rerun but canno
 only exact current passed evidence enables checked activation. Independent R4-F1 review accepted the
 remaining action correction: one shared selection now admits only enabled Local-backed source and
 destination libraries, controls both button visibility and submitted IDs, and shows correction
-guidance without a request when unavailable. The combined checked activation through Worker
-Task/Result pin remains the final Phase 22.3 acceptance slice. No policy editor, remote connectivity
-test, or media mutation is part of this slice.
+guidance without a request when unavailable. The later R5-F1 review accepted the behavior-distinct
+checked activation through Worker Task/Result pin, establishing the Phase 22.3 prerequisite for
+this reconstruction. No remote connectivity test or media mutation is part of that slice.
+
+## Phase 22.4 Recognition Strategy slice (implementation complete; review pending)
+
+The Configuration view now supports the bounded RecognitionType, RecognitionRule, and
+RecognitionTypePolicy journey over the same managed Draft authority:
+
+```text
+edit Recognition objects → Validate exact revision → choose enabled ResourceLibrary
+→ run zero-I/O Strategy Test → inspect durable rules/alternatives/reasons/warnings
+→ correct and explicitly rerun when needed → checked Activate only with both current checks
+```
+
+Matched results direct explicit review and activation. Ambiguous and unrecognized results direct
+the operator to correct the relevant rules or ResourceLibrary match, Validate, and explicitly
+rerun; they do not fabricate a winner. Failed and stale evidence remains visible with bounded
+side-effect and retry guidance. The action constructs no Storage or Metadata Provider and starts no
+scan, Preview, or media mutation. This is implementation evidence awaiting independent High
+integration review, not a Phase closure statement. MetadataPolicy editing and live/candidate
+Metadata journeys remain deferred.
 
 ## A. First-time setup
 

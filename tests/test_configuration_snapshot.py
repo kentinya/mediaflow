@@ -1809,8 +1809,14 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     clear=True,
                 ),
                 patch("wsgiref.simple_server.make_server", side_effect=make_server),
-                patch("mediaflow.final_cli.TMDBProvider", FakeTMDBProvider),
-                patch("mediaflow.final_cli.TMDBClient", return_value=object()),
+                patch(
+                    "mediaflow.final_cli.TMDBProvider",
+                    FakeTMDBProvider,
+                ),
+                patch(
+                    "mediaflow.final_cli.TMDBClient",
+                    return_value=object(),
+                ),
             ):
                 output, error = io.StringIO(), io.StringIO()
                 api_status = final_main(
@@ -1945,6 +1951,21 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 if status != 200 or evidence["status"] != "passed":
                     raise AssertionError((status, evidence))
+                status, strategy_evidence = request(
+                    self.app,
+                    f"/api/v1/configuration/revisions/{revision_id}/recognition-strategy-test",
+                    method="POST",
+                    body=json.dumps(
+                        {
+                            "expectedVersion": validated["version"],
+                            "expectedDigest": validated["digest"],
+                            "resourceLibraryId": "source",
+                            "syntheticPath": "/电影/Example.Movie.2024.mkv",
+                        }
+                    ).encode(),
+                )
+                if status != 200 or strategy_evidence["status"] != "completed":
+                    raise AssertionError((status, strategy_evidence))
                 status, active = request(
                     self.app,
                     f"/api/v1/configuration/revisions/{revision_id}/activate",
@@ -1969,7 +1990,10 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     raise AssertionError((status, self.first_job))
                 self.second_check, self.second_active = self.checked_activate(self.second_document)
                 worker_output, worker_error = io.StringIO(), io.StringIO()
-                with patch("mediaflow.final_cli.TMDBClient", return_value=object()):
+                with patch(
+                    "mediaflow.final_cli.TMDBClient",
+                    return_value=object(),
+                ):
                     worker_status = final_main(
                         ["--config", str(self.config), "worker", "run-next"],
                         stdout=worker_output,
@@ -2051,7 +2075,10 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     clear=True,
                 ),
                 patch("wsgiref.simple_server.make_server", side_effect=make_server),
-                patch("mediaflow.final_cli.TMDBProvider", FakeTMDBProvider),
+                patch(
+                    "mediaflow.final_cli.TMDBProvider",
+                    FakeTMDBProvider,
+                ),
             ):
                 output, error = io.StringIO(), io.StringIO()
                 api_status = final_main(
