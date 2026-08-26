@@ -510,8 +510,9 @@ MetadataPolicy offline/live test, and candidate-confirmation slices. Phase 22.5-
 same-Provider Metadata correction test for exact current live evidence: enter corrected
 query/year/Movie-TV or a direct Provider ID, then inspect persisted bounded identity, candidates,
 failure, and recovery evidence. It never activates a revision, starts a scan/Task/Preview, or mutates
-media. This slice awaits independent High Review and is not CLOSED; Provider switching and actual
-Files/Task continuation remain future work.
+media. Independent High re-review accepted this slice. The current Phase 22.5-E boundary is one
+explicit, pinned DryRun continuation for a resolved File correction, with no sibling replay or
+execute authority; Provider switching and generic Task continuation remain future work.
 
 For Local guided setup, Storage `rootPath` is host-absolute while ResourceLibrary `storagePath` and
 MediaLibrary `rootPath` are Storage-relative. The Web action never creates roots or calls a Storage

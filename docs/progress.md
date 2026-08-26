@@ -54,6 +54,19 @@ Push: origin/main contains the reviewed SHA
 This phase-level closure accepts candidate confirmation only. Provider switching, managed
 free-form correction testing, Files/Task continuation, and later policy journeys remain open.
 
+### Phase 22.5-D Managed Live Metadata Correction Test
+
+```text
+Status: PASS / CLOSED
+Commit SHA: 55769be58a75596461879994560a0c58c3a7c9dc
+High Audit: PASS — 2026-08-26; exact correction checkpoint independently re-reviewed, including
+Provider-failure rerun recovery, matched-action hiding, 85 focused tests, and 791 full tests
+Push: NOT REQUIRED BEFORE PHASE 22.5 CLOSURE; local main, not yet pushed
+```
+
+This closure accepts only the same-Provider managed correction-test journey. Provider switching,
+Files/Task continuation, Naming/Classification/Organize configuration, and Phase 22.6 remain open.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration
@@ -155,11 +168,12 @@ free-form correction testing, Files/Task continuation, and later policy journeys
   **PASS/CLOSED** after independent review on 2026-08-26.
 - Phase 22.5-C Managed Live Metadata Candidate Confirmation, including its F1/F2 concurrency
   corrections: **PASS/CLOSED** after the 2026-08-26 final Integration Acceptance.
-- Phase 22.5-D Managed Live Metadata Correction Test: **READY FOR COMMIT / HIGH PENDING**. The
-  same-Provider query/year/Movie-TV and direct-ID correction journey is implemented against exact
-  current live evidence; Provider switching and Files/Task continuation remain later slices.
+- Phase 22.5-D Managed Live Metadata Correction Test: **PASS/CLOSED** after independent correction
+  re-review on 2026-08-26. The accepted journey covers same-Provider query/year/Movie-TV and
+  direct-ID correction against exact current live evidence; Provider switching and Files/Task
+  continuation remain later slices.
 
-## Phase 22.5-D Implementation Evidence (2026-08-26; awaiting independent review)
+## Phase 22.5-D Implementation Evidence (2026-08-26; subsequently accepted)
 
 - Added one authenticated exact-revision Metadata-correction action shared by API and Configuration
   Web. Its request carries expected version/digest/evidence time, required Movie/TV, and exactly one
@@ -180,9 +194,8 @@ free-form correction testing, Files/Task continuation, and later policy journeys
   0 failures. Ruff lint/format, compileall, `pip check`, both example validations, wheel build/smoke,
   documentation links, forbidden dependency/business filesystem/private configuration audits, and
   `git diff --check` passed.
-- This is implementation evidence only. Phase 22.5-D is not `PASS / CLOSED`; independent High
-  Review must inspect the explicit checkpoint SHA. Provider switching, Files/Task continuation,
-  activation changes and media execution are not included.
+- This was the pre-review implementation evidence. Provider switching, Files/Task continuation,
+  activation changes and media execution were not included.
 
 ## Phase 22.5-D High Review (2026-08-26): FIX REQUIRED
 
@@ -195,7 +208,7 @@ free-form correction testing, Files/Task continuation, and later policy journeys
   rerun, hide the form for matched outcomes, add recovery/visibility regressions, and correct the
   Provider-failure test count. Phase 22.5-D remains open and no next Slice is authorized.
 
-## Phase 22.5-D High Correction Implementation (2026-08-26; re-review pending)
+## Phase 22.5-D High Correction Implementation (2026-08-26; subsequently accepted)
 
 - The Application now accepts a rerun only when the exact current failed evidence carries a
   server-persisted correction whose original source outcome is correctable and whose Provider still
@@ -207,8 +220,20 @@ free-form correction testing, Files/Task continuation, and later policy journeys
 - All six bounded Provider-failure cases now recover through the current evidence timestamp after
   the Provider environment is repaired. Focused tests remain 85/85 and the complete offline suite
   remains 791 tests with 784 passed, 7 existing external-service skips, and 0 failures. The full
-  quality, wheel, documentation, safety, and private-configuration gates passed. This correction is
-  not PASS/CLOSED until High re-reviews its new commit SHA.
+  quality, wheel, documentation, safety, and private-configuration gates passed.
+
+## Phase 22.5-D High Re-review and Closure (2026-08-26): PASS / CLOSED
+
+- Reviewed exact correction checkpoint: `55769be58a75596461879994560a0c58c3a7c9dc`.
+- High independently verified that correction-origin Provider failures expose an actionable rerun,
+  rerun from the exact current evidence completes after Provider recovery, and matched evidence no
+  longer exposes the correction form. The Application and Web now share the same bounded state
+  predicate.
+- The correction commit changes only the current Slice's Application/UI behavior and regressions;
+  it adds no Provider switching, Task continuation, activation, or media mutation capability.
+- Independent gates passed: 85 focused Configuration/Application/Web tests; 791 full tests with
+  784 passed and 7 existing external-service skips; Ruff format/check and combined `git diff
+  --check`. No P0/P1 defect remains inside the declared Phase 22.5-D scope.
 
 ## Phase 22.5-B Implementation Evidence (2026-08-26; awaiting independent review)
 
@@ -1173,9 +1198,9 @@ free-form correction testing, Files/Task continuation, and later policy journeys
 
 ## Planned
 
-- Independently review the Phase 22.5-D checkpoint. Only after PASS/CLOSED may planning define the
-  next Provider-switching or Files/Task correction-continuation slice before
-  Naming/Classification/Organize configuration
+- Implement Phase 22.5-E as one bounded Files journey: explicitly continue one resolved Metadata
+  correction into a new pinned DryRun Preview without replaying sibling items or inheriting execute
+  authority. Provider switching remains deferred until a truthful multi-Provider capability exists.
 - Follow with TaskItem Processing Checkpoint/stage-aware recovery, complete Files/Media detail and
   manual organize, then automation/final production hardening
 - External identity/OIDC and Secret Store remain explicit later architecture decisions; no weak

@@ -1,169 +1,167 @@
-# Phase 22.5-D — Managed Live Metadata Correction Test
+# Phase 22.5-E — Single-Item Metadata Correction DryRun Continuation
 
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
+```text
+Status: NEXT TASK
+Preceding reviewed checkpoint: 55769be58a75596461879994560a0c58c3a7c9dc
+Preceding High Audit: PASS — 2026-08-26
+```
+
 ## User Problem
 
-The managed live Metadata test can show `NotFound`, `NeedConfirm`, or `Ambiguous` evidence and can
-confirm one projected candidate, but an operator cannot correct the query, year, Movie/TV choice,
-or enter a direct Provider ID from the same Configuration Web journey. The production
-`MetadataCorrectionSelection` and Strategy runner already support those correction paths, yet using
-them still requires internal composition outside the managed revision UI/API.
+The Files detail journey can persist a manual Metadata correction and move the affected TaskItem
+back to a recoverable pending state, but Web/API deliberately stop before continuing processing.
+The only existing continuation mechanism is broad Task resume behavior, which may retry sibling
+items and therefore is not a safe per-item product action.
 
-This slice makes correction testable against the exact Validated revision and the same effective
-MetadataPolicy/provider. It does not implement Provider switching or resume a media Task.
+This Slice lets an operator explicitly continue exactly one resolved Metadata correction through a
+new DryRun pipeline and inspect a new Preview/Result. It does not switch Provider, resume the whole
+source Task, or authorize media execution.
 
 ## User Journey
 
-This advances `docs/product-experience.md` journey D and the configuration-test segment of journey F:
+This advances `docs/product-experience.md` journey D:
 
 ```text
-Configuration Web revision
-→ inspect current live NotFound / NeedConfirm / Ambiguous evidence
-→ enter corrected query/year/Movie-TV or one direct Provider ID
-→ explicitly run the correction test
-→ production Parser → Recognition → TypePolicy → MetadataPolicy → Provider path runs
-→ inspect corrected identity/candidates or actionable failure evidence
-→ confirm a resulting candidate through the existing Phase 22.5-C action when needed
-→ correct again or explicitly activate only when existing activation evidence permits
+Files detail
+→ inspect one resolved Metadata correction and its source Task/TaskItem
+→ review the immutable source configuration and DryRun-only consequence
+→ explicitly choose Continue as DryRun
+→ queue one durable continuation for that item only
+→ production pipeline consumes the resolved correction and pinned configuration
+→ inspect the new Task/Result/Preview
+→ correct and retry that item again if the new attempt fails
 ```
 
 Entry points:
 
-- authenticated managed Configuration API;
-- existing vanilla Configuration Web revision detail.
-
-The full V1 Metadata failure-correction journey remains incomplete: actual Files/Task continuation
-and Provider switching are later slices.
+- authenticated Files API;
+- existing vanilla Files detail Web view.
 
 ## User-visible Outcome
 
-- Current live `not_found`, `need_confirm`, or `ambiguous` evidence exposes a bounded correction
-  form in Web.
-- The operator may choose exactly one correction mode:
-  - corrected query with optional year and required Movie/TV choice; or
-  - direct Provider ID with required Movie/TV choice.
-- The Provider is not client-selectable in this slice. It is derived from the exact effective
-  MetadataPolicy in the current Validated revision.
-- Success evidence shows the correction input, resulting MediaIdentity, match method, candidates,
-  scores, locale/policy identity, revision identity, side effects, retry safety, and next action.
-- A corrected search that still yields `NeedConfirm` or `Ambiguous` remains compatible with the
-  existing persisted candidate-confirmation action.
-- No correction action automatically validates, activates, scans, resumes a Task, queues Preview,
-  or executes media operations.
+- An eligible resolved Metadata correction exposes one explicit `Continue as DryRun` action.
+- The confirmation states that only the selected item is processed, source media is not mutated,
+  and no execute authority is inherited.
+- Submission returns one durable queued identity and a link or identifier for its new Task/Result.
+- Reloading shows queued/running/completed/failed state without resubmitting.
+- Success produces a new explainable DryRun Preview/Result linked to the source File, review,
+  TaskItem, and exact source configuration snapshot.
+- Source Task state, successful siblings, failed siblings, and source media remain unchanged.
 
 ## Failure and Recovery
 
-- Draft, Active, stale revision/digest, stale `testedAt`, offline evidence, non-correctable outcome,
-  disabled/missing policy, wrong RecognitionType/policy/provider, or malformed correction fails
-  closed before Provider access.
-- Query and direct-ID modes are mutually exclusive. Hidden ignored fields are rejected.
-- Invalid query/year/media type/direct ID returns bounded field guidance and preserves the current
-  evidence.
-- Provider not found, bad direct ID, authentication, rate limit, timeout, unavailable service, and
-  malformed response remain distinct bounded categories. Failure evidence retains the submitted
-  correction context, `sideEffects=none`, retry safety, and an explicit correction/rerun action.
-- Concurrent correction submissions or an in-flight revision/evidence change use the existing
-  durable revision-plus-evidence CAS: at most one result replaces the prior evidence; losers reload
-  and review the durable current outcome.
-- Recovery is explicit: review the persisted input/outcome, adjust the correction or provider
-  environment as indicated, then run the correction test again. Provider switching is not offered
-  as a hidden fallback.
+- Wrong File/review/item linkage, unresolved or superseded correction, ineligible TaskItem state,
+  missing/corrupt source snapshot, stale request identity, or malformed input fails before Provider
+  or Storage access.
+- Duplicate or concurrent submissions for the same resolved correction create at most one active
+  continuation. The loser reloads the durable current continuation.
+- Queue/claim/worker failure remains durable and actionable. The resolved correction and source
+  item are not discarded or falsely marked successful.
+- Provider or downstream analysis failure is recorded on the new single-item attempt with bounded,
+  secret-free recovery guidance. Retrying it must not replay source siblings.
+- Recovery is explicit: inspect the current continuation/result, repair the stated input or runtime
+  condition, then retry only this correction when eligible.
 
 ## UX Acceptance Criteria
 
-- [ ] Web exposes the correction form only for current, exact, live `not_found`, `need_confirm`, or
-      `ambiguous` evidence on a Validated revision.
-- [ ] Corrected query/year/Movie-TV runs the production search/matcher path using the exact effective
-      MetadataPolicy and provider from the revision.
-- [ ] Direct Provider ID runs the existing production direct-details path and records
-      `manual_provider_id` or equivalent bounded explanation.
-- [ ] Correction success, unresolved candidates, Provider failure, stale state, and invalid input
-      are visibly distinct and have explicit recovery.
-- [ ] Correction input and outcome are durable, bounded, secret-free, and reloadable.
-- [ ] Existing candidate confirmation can act on corrected `NeedConfirm`/`Ambiguous` evidence
-      without another search.
-- [ ] API and Web use the same Application behavior, permission, validation, CAS, and evidence.
-- [ ] RecognitionType C remains C and its configured MetadataPolicy/downstream policy references
-      remain unchanged.
-- [ ] No Provider request occurs while merely editing the form or reloading evidence.
-- [ ] All paths perform zero Storage/media mutation and grant no execute authority.
+- [ ] Files detail exposes the action only for the exact current resolved correction whose linked
+      TaskItem is eligible for Metadata continuation.
+- [ ] The action identifies the source Task/item, pinned configuration, selected correction, and
+      DryRun-only effect before submission.
+- [ ] One explicit submission queues exactly one item; no sibling or previously successful item is
+      selected or reprocessed.
+- [ ] The worker consumes the exact immutable configuration snapshot associated with the source
+      Task and the exact resolved correction.
+- [ ] A new Task/Result/Preview is durable, reloadable, and linked back to the source File/review/item.
+- [ ] The new attempt is always DryRun, including when the source Task had execute authorization.
+- [ ] Queued, running, completed, failed, stale, duplicate, and snapshot-unavailable outcomes are
+      visibly distinct and provide an explicit next action.
+- [ ] API and Web use the same Application admission, permission, identity, and idempotency rules.
+- [ ] RecognitionType C remains C and its configured downstream policy references remain unchanged.
+- [ ] Merely viewing/reloading the page performs no Provider request and queues no work.
+- [ ] All paths perform zero media mutation and grant no OrganizerExecutor execute authority.
 
 ## Technical Scope
 
-1. Add one bounded Metadata-correction request shape carrying:
-   - expected revision version/digest;
-   - expected evidence `testedAt`;
-   - `mediaType`;
-   - either corrected `query` with optional `year`, or direct `providerId`.
-2. Extend `ConfigurationObjectService` with one exact-revision correction action that:
-   - reloads and validates current evidence;
-   - derives RecognitionType, MetadataPolicy, Provider, ResourceLibrary, and synthetic path from
-     persisted evidence/current revision;
-   - constructs `MetadataCorrectionSelection`;
-   - invokes the existing production Strategy runner with `live_metadata=True`;
-   - persists bounded correction context on success and failure through the existing
-     revision-plus-evidence CAS.
-3. Add an authenticated API endpoint under the existing revision Strategy Test resource using
-   `MANAGE_CONFIGURATION`.
-4. Add the minimal Web correction form and outcome/recovery rendering using text-only DOM helpers.
-5. Reuse the Phase 22.5-B service-lifetime Provider registry/cache and per-request policy controls.
-6. Reuse Phase 22.5-C candidate confirmation when corrected search evidence remains reviewable.
-7. No database migration is expected unless the existing bounded evidence JSON cannot truthfully
-   represent correction context; do not add a second store.
+1. Add one bounded durable correction-continuation identity that binds:
+   - File ID;
+   - resolved Metadata correction review ID and immutable correction identity/version;
+   - source Task and TaskItem IDs;
+   - source configuration snapshot ID and digest;
+   - DryRun-only execution mode.
+2. Add one Application action that reloads and validates those server-side relationships and queues
+   exactly one eligible item. Client input must not select arbitrary Provider, policy, path,
+   sibling item, snapshot, or execute mode.
+3. Reuse existing Task/Result/Job persistence where it can represent this truthfully. Add the
+   smallest migration only if durable linkage/idempotency cannot be expressed in the existing
+   schema; do not create a parallel task system.
+4. Add one worker command/path that processes only the bound item through the existing production
+   Parser → Recognition → TypePolicy → Metadata → Naming → Classification → Planner path using the
+   resolved `MetadataCorrectionSelection` and exact pinned snapshot.
+5. Persist a new DryRun Task/TaskItem/Result/Preview and bounded source linkage. Preserve the source
+   Task and all source sibling states.
+6. Add an authenticated Files API action using the existing DryRun submission permission. Return
+   bounded conflict/stale/recovery representations from the shared Application behavior.
+7. Add the minimal Files detail Web action and status/result rendering using existing text-only DOM
+   helpers. Do not add a frontend framework.
 
 ## Non-goals
 
-- No Provider switching, MetadataProvider CRUD, credential UI, Secret Store, arbitrary Provider
-  injection, or implicit Provider fallback.
-- No Files/Task correction continuation, Task resume API, new Job command, Preview queue, Naming,
-  Classification, Plan, activation change, or media execution.
-- No free-form destination/path correction, cache redesign, Provider telemetry redesign, frontend
-  framework, or unrelated refactor.
-- Do not begin Naming/Classification/Organize configuration or Phase 22.6.
+- No Provider switching, Provider CRUD, second Provider implementation, credential UI, Secret
+  Store, arbitrary Provider selection, or implicit Provider fallback.
+- No generic Task resume endpoint/UI and no reuse of broad resume semantics that can replay siblings.
+- No organize execution, execute authorization, automatic continuation, automatic retry, or media
+  mutation.
+- No new correction fields, candidate matching redesign, cache redesign, or Provider telemetry.
+- No Naming/Classification/Organize policy editing, destination correction, automation scheduling,
+  Phase 22.6 work, or unrelated refactor.
 
 ## Safety and Architecture Invariants
 
-- Parser, Recognition, Metadata lookup, correction testing, and evidence persistence do not mutate
-  Storage.
-- No Storage adapter is constructed by this correction test.
-- Only the Provider referenced by the exact effective MetadataPolicy may be used.
-- RecognitionType and downstream policy identity are not rewritten by correction input.
-- Direct ID selects identity only; it does not accept arbitrary Provider or policy IDs.
-- Credentials, endpoints, raw Provider DTOs/responses, headers, cookies, and exception text do not
-  enter evidence, API, Web, audit, logs, tests, or commits.
-- Existing checked-activation requirements are unchanged; correction never activates automatically.
+- Parser, Recognition, Metadata, Naming, Classification, Planner, and DryRun continuation do not
+  mutate Storage.
+- Only OrganizerExecutor may mutate Storage, and this Slice never grants it execute authority.
+- Source execute authorization is never copied, inferred, or widened.
+- The exact source snapshot, not current Active configuration, is consumed by the new attempt.
+- RecognitionType is immutable across reuse of Metadata/Naming/Classification policies.
+- One-item continuation cannot select, reset, or replay source siblings.
+- Credentials, endpoints, raw Provider responses, headers, cookies, exception text, and private
+  paths do not enter API, Web, evidence, logs, tests, or commits.
 
 ## Required Tests
 
 Product acceptance:
 
-1. Current live `NotFound` → corrected query/year/Movie succeeds, persists/reloads the matched
-   identity and correction context, with zero Storage construction.
-2. Current live result → direct Provider ID succeeds through the direct-details path, preserves C,
-   and performs no repeated search.
-3. Corrected search remains `NeedConfirm`/`Ambiguous`; persisted corrected candidates can be
-   confirmed by the existing Phase 22.5-C action without another search.
-4. Provider timeout/rate-limit/auth/not-found/malformed response persists bounded correction
-   context and actionable recovery without secrets.
-5. Draft/stale/offline/wrong-outcome/invalid-mode/unprojected or malformed correction is rejected
-   before Provider access and leaves evidence unchanged.
-6. Two concurrent corrections from one evidence timestamp produce one durable winner and one
-   actionable `409`; an in-flight Draft edit also fails closed.
-7. Web action visibility, payload, immediate message, reload evidence, and recovery text match API
-   semantics and do not auto-submit or retry.
+1. A resolved query correction continues exactly one item and produces a linked new DryRun
+   Task/Result/Preview through the production pipeline; source Task/item/siblings remain unchanged.
+2. A resolved direct-ID correction uses the production detail path without an extra search and
+   preserves RecognitionType C plus all configured policy identities.
+3. A source Task with execute authorization still creates a DryRun-only continuation and performs
+   zero Storage mutation.
+4. Changing Active configuration after the source Task does not change the snapshot consumed by
+   continuation; missing/corrupt/unreachable pinned snapshots fail before pipeline construction.
+5. Wrong/stale File-review-item linkage, unresolved/superseded correction, ineligible item state,
+   or malformed request is rejected before Provider/Storage access.
+6. Concurrent duplicate submissions create one durable continuation and one actionable conflict;
+   worker claim fencing/idempotency prevents duplicate execution.
+7. Provider/downstream failure is durable and actionable; retry remains single-item and never
+   replays successful or unrelated siblings.
+8. Web visibility, confirmation, payload, queued/running/completed/failed rendering, and links match
+   API semantics; page view/reload never auto-submits or invokes the Provider.
 
 Regression:
 
-- Phase 22.5-B live Provider/cache/request-control/evidence-bound tests.
-- Phase 22.5-C candidate confirmation F1/F2 concurrency and recovery tests.
-- Phase 22.5-A MetadataPolicy CRUD/offline resolution and Phase 22.4 C-identity tests.
-- Existing Phase 21 durable MetadataCorrection and Task-resume behavior remains unchanged.
+- Phase 21 Metadata correction, Files detail linkage, and CLI Task resume behavior remain unchanged.
+- Phase 22.5-B/C/D live evidence, candidate confirmation, correction, CAS, and recovery remain
+  unchanged.
+- Phase 22.4 RecognitionType C identity and exact snapshot behavior remain unchanged.
 - Complete offline suite and zero-mutation/forbidden-dependency audits.
 
 ## Validation
 
-Run focused correction/Application/API/Web/persistence tests, related Phase 21/22.4/22.5
+Run focused Application/persistence/worker/API/Web tests, the related Phase 21 and Phase 22
 regressions, and the complete offline suite. Run Ruff lint/format, compileall, `pip check`, both
 example configuration validations, wheel build/smoke, documentation local-link validation,
 `git diff --check`, FFmpeg/FFprobe production audit, business-filesystem mutation audit, and private
@@ -171,44 +169,36 @@ configuration checks.
 
 ## Documentation
 
-Update product-experience, requirements/status, architecture CURRENT/TARGET, roadmap, progress, and
-configuration guidance only for behavior actually implemented. Preserve historical audit
-narratives. Keep Provider switching and Files/Task continuation explicitly TARGET.
+Update product experience, requirements/status, architecture CURRENT/TARGET, roadmap, progress,
+and operator guidance only for behavior actually implemented. Preserve historical audit records.
+Keep Provider switching, generic Task resume, and broader per-item checkpoint recovery explicitly
+TARGET.
 
 ## Closure Checklist
 
-- [x] Implementation workspace/session preflight records worktree, `.git`, index, sandbox, and
+- [ ] Implementation workspace/session preflight records worktree, `.git`, index, sandbox, and
       approval mode.
-- [x] Implementation capability mode is classified according to the authoritative workflow.
-- [x] Preceding Phase 22.5-C candidate-confirmation Slice is `PASS / CLOSED`.
-- [x] Reviewed checkpoint `d68a19ddd4bb62bc27e77bab013edb20c9eb53e5` is reachable from
-      `origin/main`.
-- [x] Implementation and required focused/full quality gates pass with actual evidence.
-- [x] Commit manifest contains every required file and no unrelated/private file.
-- [x] `config/alist.json` remains ignored, untracked, unstaged, unread, and uncommitted.
+- [ ] Implementation capability mode is classified according to the authoritative workflow.
+- [x] Preceding Phase 22.5-D checkpoint `55769be58a75596461879994560a0c58c3a7c9dc`
+      is `PASS / CLOSED` after independent High re-review.
+- [ ] No prior accepted implementation or closure record remains uncommitted before implementation
+      begins.
+- [ ] Implementation and required focused/full quality gates pass with actual evidence.
+- [ ] Commit manifest contains every required file and no unrelated/private file.
+- [ ] `config/alist.json` remains ignored, untracked, unstaged, unread, and uncommitted.
 - [ ] Coherent implementation checkpoint created: `Commit SHA: ________________________________`.
 - [ ] High Review inspected that exact SHA: `High Audit: _________________________________`.
 - [ ] Progress and roadmap record final Status / Commit SHA / High Audit.
 - [ ] Next Slice has not started before every gate above is complete.
 - [ ] Required push state is recorded.
 
-Current checkpoint state:
-
-```text
-Status: READY FOR COMMIT
-Rejected Commit SHA: 94bcd0c6d545029782c0831a2b5e8869b54d3163
-High Audit: FIX REQUIRED — correction recovery/action visibility mismatch
-Correction Commit SHA: PENDING
-Push: NOT REQUIRED BEFORE HIGH REVIEW; NOT PUSHED
-```
-
 ## Completion Report
 
 Use the AGENTS.md completion structure and additionally report:
 
-- correction modes and exact request shape;
+- exact one-item admission and idempotency identity;
+- pinned snapshot and correction consumption evidence;
+- source/sibling preservation and zero-mutation evidence;
 - visible success/failure/recovery outcomes;
-- Provider call/search/detail counts;
-- durable evidence/CAS behavior;
-- C-identity and zero-mutation evidence;
-- CURRENT correction-test capability versus remaining Provider switching and Task continuation.
+- Provider search/detail and worker execution counts;
+- CURRENT one-item DryRun continuation versus deferred Provider switching/general recovery.

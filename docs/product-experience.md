@@ -143,9 +143,10 @@ as Phase 22.5-B. Candidate confirmation and its F1/F2 durable concurrency correc
 Phase 22.5-C boundary and passed final Integration Acceptance. Phase 22.5-D now implements the
 same-Provider managed live correction test for exact current `NotFound`/`NeedConfirm`/`Ambiguous`
 evidence: the operator can explicitly submit query/year/Movie-TV or one direct Provider ID, inspect
-durable bounded outcomes, and reuse candidate confirmation. This implementation awaits independent
-High Review and is not CLOSED. Provider switching and Files/Task continuation remain later Metadata
-journey work.
+durable bounded outcomes, and reuse candidate confirmation. Independent High re-review accepted the
+correction checkpoint on 2026-08-26. Phase 22.5-E now adds only the missing explicit continuation
+from one resolved File correction into a new pinned DryRun Preview; it must not replay siblings or
+inherit execute authority. Provider switching remains later Metadata journey work.
 
 ## A. First-time setup
 

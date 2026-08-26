@@ -58,8 +58,9 @@
 > Offline Resolution Preview 随后也已独立验收 PASS/CLOSED。Phase 22.5-B Managed Live
 > Metadata Test + Candidate Explanation 及 F1 修复也已独立验收；Phase 22.5-C candidate
 > confirmation 及 F1/F2 durable CAS 修复已通过 final Integration Acceptance。Phase 22.5-D
-> same-Provider managed live Metadata correction test 已实现并等待独立 High Review，尚未 CLOSED。远端 Storage、Provider
-> switching、Files/Task continuation 和更宽配置旅程仍未完成。
+> same-Provider managed live Metadata correction test 已于 2026-08-26 通过独立 High re-review
+> 并 PASS/CLOSED。Phase 22.5-E 当前只补齐一个 resolved File correction 的显式 pinned DryRun
+> continuation。远端 Storage、Provider switching、通用 Task resume 和更宽配置旅程仍未完成。
 
 ---
 
@@ -3118,7 +3119,8 @@ System Settings
 > phase-level Final Closure Audit。Phase 22.4 与 Phase 22.5-A 也已于 2026-08-26 独立验收
 > PASS/CLOSED；Phase 22.5-B/F1 随后也已独立验收，Phase 22.5-C 及 F1/F2 已通过
 > final Integration Acceptance。Phase 22.5-D same-Provider managed live Metadata correction test
-> 已实现并等待独立 High Review，尚未 CLOSED。
+> 已通过独立 High re-review 并 PASS/CLOSED；Phase 22.5-E 单项 correction DryRun continuation
+> 是当前 Slice。
 >
 > 当前实现（Phase 22.2/22.2R-F2 whole-document 与 Phase 22.3 Local slice 已验收）：Managed Configuration
 > 已经经过 Draft → Validate/Test → Validated → 显式 Activate，持久化生成不可变 Runtime Snapshot；
