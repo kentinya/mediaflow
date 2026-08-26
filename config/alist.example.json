@@ -1,0 +1,17 @@
+{
+  "_comment": "Secret-free OpenList Storage object template; copy the storage object into managed/runtime configuration and provide the token only through OPENLIST_TOKEN.",
+  "storage": {
+    "id": "openlist-example",
+    "name": "OpenList Example",
+    "type": "openlist",
+    "baseUrl": "https://openlist.example.invalid",
+    "tokenEnv": "OPENLIST_TOKEN",
+    "rootPath": "/Media",
+    "readOnly": true,
+    "connectTimeout": 10,
+    "requestTimeout": 60,
+    "maxConcurrency": 4,
+    "maxRetries": 2,
+    "pageSize": 100
+  }
+}

@@ -1,88 +1,90 @@
-# Phase 22.5-C-F2 — Candidate Confirmation Current-Revision CAS
+# Development Workflow Rules Update
 
-## Independent Review Finding
+This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
-Phase 22.5-C-F1 fixed the original cross-service evidence overwrite race: two confirmations
-against one evidence timestamp now produce one winner and one `409`. Independent review found one
-remaining P1 inside the same slice.
+## User Problem
 
-During an in-flight Provider details lookup, another connection can edit the same managed revision
-from `Validated` to a new `Draft`. The candidate-confirmation CAS currently matches only the
-Strategy Test evidence row's old revision version/digest/testedAt. Because the evidence row is not
-updated by the Draft edit, the confirmation can still return `200` and write a candidate selection
-for the old Validated revision. The row is later projected as stale, but the confirmation response
-has already reported success.
+The repository previously allowed tested and reviewed Phase work to accumulate in a writable working
+tree while Git metadata was read-only. Documentation could then say `PASS / CLOSED` without a
+durable commit checkpoint, and later recovery had to reconstruct semantic history. Contributors need
+one enforceable workflow that distinguishes implementation evidence from committed, independently
+accepted work.
 
-The operation must fail closed when the managed revision changes before the durable evidence
-replacement commits.
+## Required Outcome
 
-## User Journey
+- `docs/development-workflow.md` is the sole authoritative implementation/checkpoint/review flow.
+- Environment capability, commit-before-close, and High-PASS-before-next-Phase gates are explicit.
+- Every accepted Phase/Slice records Status, full Commit SHA, and High Audit.
+- Git-writable Agents own the checkpoint; Git-read-only Agents stop at `READY FOR COMMIT`.
+- New workspaces inspect worktree, `.git`, index, sandbox, and approval state before editing.
+- Current/future Task documents carry a closure checklist; historical Task archives remain unchanged.
+- Private `config/alist.json` remains ignored/untracked and has a secret-free
+  `config/alist.example.json` companion.
 
-```text
-current live NeedConfirm/Ambiguous evidence
-→ Provider details lookup is in flight
-→ another operator edits the same revision
-→ candidate confirmation reaches durable commit
-→ confirmation returns a bounded 409
-→ Draft and prior evidence remain intact
-→ operator reloads, validates, and explicitly reruns the live test
-```
+## Scope
 
-## Required Correction
-
-1. Extend the durable candidate-confirmation compare-and-swap so one atomic repository transaction
-   requires both:
-   - the current managed revision row is still the expected `revision_id`, version, digest, and
-     `Validated` status; and
-   - the current Strategy Test evidence row still has the expected revision version/digest and
-     previous `testedAt`.
-2. If either condition fails, raise `ConfigurationVersionConflict` and do not replace the evidence
-   row. Preserve the current Draft and prior evidence.
-3. Apply the same condition to candidate-confirmation success and Provider-failure replacement.
-   Do not cancel or claim to cancel an already-running Provider call.
-4. Keep the existing F1 winner/loser CAS behavior, API request shape, permissions, direct
-   Provider-ID lookup, C preservation, and zero-Storage boundary unchanged.
+- Add `docs/development-workflow.md`.
+- Minimally synchronize `AGENTS.md`, `docs/roadmap.md`, `docs/progress.md`,
+  `docs/requirements.md`, this `TASK.md`, `Task/TEMPLATE.md`, and `.gitignore`.
+- Add the bounded secret-free `config/alist.example.json` template without reading private config.
+- Record the already accepted Phase 22.4 and recovered Phase 22.5 integration checkpoint SHAs.
+- Do not modify product code, tests, historical Task archives, or Git history.
 
 ## Acceptance Criteria
 
-- [ ] A barrier regression blocks Provider details, edits the same revision through a distinct
-      SQLite connection, releases the lookup, and receives `409`, never `200`.
-- [ ] The edited Draft remains durable and the pre-edit evidence remains unchanged; no stale
-      candidate selection is persisted.
-- [ ] The `409` identifies durable state, has `sideEffects=none`, `retrySafe=true`, and directs the
-      operator to reload/revalidate/rerun.
-- [ ] The same fail-closed behavior applies when the in-flight candidate confirmation would have
-      produced Provider-failure evidence.
-- [ ] Existing two-confirmation cross-service winner/loser tests, sequential replay, Provider
-      failure recovery, authorization, secret redaction, C preservation, and zero-Storage tests
-      remain green.
-- [ ] The repository operation is atomic and does not introduce another configuration authority,
-      distributed lock, reservation UI, automatic retry, or later Phase work.
+- [x] The fixed sequence is documented exactly as `Environment Check → Implementation → Tests →
+      Git Checkpoint → High Review → PASS → Record SHA / CLOSED → Next Slice`.
+- [x] The state machine is `IN PROGRESS → READY FOR COMMIT → COMMITTED <SHA> → READY FOR HIGH
+      REVIEW → PASS / CLOSED → NEXT TASK`.
+- [x] “No Commit, No Close” and “No High PASS, No Next Phase” are mandatory gates.
+- [x] `FIX REQUIRED` mandates correction, a new checkpoint, and a new High Review.
+- [x] Commit ownership is capability-based rather than user-based.
+- [x] Major closure/integration push gates prohibit accepted-but-unpushed Phase accumulation.
+- [x] Uncommitted accepted work blocks the next Phase and cannot accumulate across Phases.
+- [x] Roadmap contains only a concise Phase gate reference/state.
+- [x] Progress contains Status / Commit SHA / High Audit records.
+- [x] Requirements references the workflow without duplicating it.
+- [x] The Task template and this Task contain closure checklists.
+- [x] Documentation links and `git diff --check` pass.
+- [x] `config/alist.json` is ignored, untracked, unstaged, unread, and absent from the patch.
+- [x] `config/alist.example.json` contains no token or private endpoint.
+
+## Closure Gate
+
+- [x] Workspace preflight completed.
+- [x] Preceding integration state passed final acceptance.
+- [x] Documentation implementation and validation complete.
+- [ ] Commit created and full SHA recorded.
+- [ ] High Review inspected the committed SHA and returned PASS.
+- [ ] Progress and roadmap record this Task's final checkpoint.
+- [ ] Next Slice authorized.
+
+Current checkpoint state:
+
+```text
+Status: READY FOR COMMIT
+Commit SHA: PENDING
+High Audit: PENDING
+```
+
+Current capability mode is Git-writable / Full Access: worktree, `.git`, and index are writable;
+sandbox filesystem access is unrestricted and approval mode is `never`. The capable Agent will
+create the checkpoint after validation. This is not a major Phase closure, so push is not required
+before High Review.
 
 ## Non-goals
 
-- No Provider switching, free-form Metadata correction, cancellation service, cache redesign,
-  Storage/media mutation, task/preview/activation changes, or Phase 22.6 work.
-- Do not weaken the existing F1 race regression or broaden the client request contract.
-- Do not declare Phase 22.5-C or Phase 22 closed from an implementation report.
+- No product behavior, schema, API, UI, test, or dependency changes.
+- No rewriting historical Task archives or historical audit narratives.
+- No force push, `reset --hard`, accepted-history rewrite, unrelated push, permission change, or
+  sandbox bypass.
 
-## Required Validation
+## Validation
 
-Run the new in-flight revision-edit regression repeatedly, the existing Phase 22.5-C-F1
-winner/loser tests, Phase 22.5-A/B and Phase 22.4 regressions, the complete offline suite, Ruff
-lint/format, compileall, `pip check`, both example validations, wheel build/smoke, documentation
-links, `git diff --check`, FFmpeg/FFprobe audit, and business-filesystem mutation audit.
+Run JSON parsing for the example, documentation local-link validation, targeted terminology/conflict
+searches, `git diff --check`, and final Git/sensitive-file status inspection.
 
 ## Completion Report
 
-Use the AGENTS.md Completion Report structure and additionally report:
-
-## Phase 22.5-C-F2 Result
-
-## Current-Revision Race Evidence
-
-## Durable Recovery
-
-## Security / Zero Mutation
-
-## Regression
+Report changed files, new gates, conflicts found/resolved, validation, checkpoint limitation, and
+whether any later human decision is required.

@@ -1,5 +1,45 @@
 # Development Progress
 
+## Checkpoint Ledger
+
+The record format and closure rules are defined only in
+[development-workflow.md](development-workflow.md).
+
+### Phase 22.4 Recognition Strategy integration Slice
+
+```text
+Status: PASS / CLOSED
+Commit SHA: d95ea2b64a6fce559341d7eb5824977e07794dff
+High Audit: PASS — 2026-08-26; exact committed Slice reviewed
+Push: origin/main contains the reviewed SHA
+```
+
+### Phase 22.5 recovered final implementation integration
+
+```text
+Status: PASS / CLOSED (integration reconstruction checkpoint only)
+Commit SHA: d68a19ddd4bb62bc27e77bab013edb20c9eb53e5
+High Audit: PASS — SAFE TO INTEGRATE — 2026-08-26
+Push: origin/main contains the reviewed SHA
+```
+
+This checkpoint accepts the recovered integration tree; it does not broaden the product claims or
+remaining boundaries recorded below.
+
+### Development Workflow Rules Update
+
+```text
+Status: READY FOR COMMIT
+Commit SHA: PENDING
+High Audit: PENDING
+Capability Mode: Git-writable / Full Access
+Push: NOT REQUIRED before High Review; this is not a major Phase closure
+```
+
+The current workspace has a writable worktree, Git metadata, and index with unrestricted filesystem
+mode and `never` approval policy. The capable Agent owns the checkpoint after validation. This Task
+cannot close or authorize another Task until that exact SHA passes High Review.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration

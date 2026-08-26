@@ -1,5 +1,7 @@
 # Phase X.Y — [Vertical User Journey Slice]
 
+This Task follows [the authoritative development workflow](../docs/development-workflow.md).
+
 ## User Problem
 
 Describe the operator's problem in product language. State why the current experience is incomplete;
@@ -88,6 +90,25 @@ configuration, forbidden-dependency, build, and diff checks. Real service eviden
 Update product-experience, canonical requirements/status, architecture CURRENT/TARGET, roadmap,
 configuration guidance, progress, and README only where facts or user instructions changed. Never
 rewrite historical Phase evidence.
+
+## Closure Checklist
+
+- [ ] Workspace preflight records worktree, `.git`, index, sandbox, and approval mode.
+- [ ] Capability mode is classified as Git-writable / Full Access or Git-read-only / workspace-write.
+- [ ] The preceding dependent Phase/Slice is `PASS / CLOSED` with its commit SHA recorded.
+- [ ] Implementation and all required focused/full quality gates pass with actual evidence.
+- [ ] `git status` and the commit manifest contain every required file and no unrelated/private file.
+- [ ] Private runtime configuration remains ignored/untracked; no secret is staged or committed.
+- [ ] A coherent, buildable commit has been created: `Commit SHA: ________________________________`.
+- [ ] High Review inspected that exact SHA and returned: `High Audit: ___________________________`.
+- [ ] `docs/progress.md` records Status / Commit SHA / High Audit.
+- [ ] `docs/roadmap.md` records the resulting Phase gate.
+- [ ] The next Slice has not started before every preceding gate is complete.
+- [ ] Required major-closure/integration push is recorded, or push is explicitly not required.
+
+If Git metadata or the index is not writable, stop at `READY FOR COMMIT` and hand the exact manifest
+to a Git-capable environment. Commit ownership is capability-based, not user-based. High Review may
+begin only after the handoff identifies an explicit commit SHA.
 
 ## Completion Report
 

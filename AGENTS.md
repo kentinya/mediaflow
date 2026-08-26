@@ -7,6 +7,7 @@ This project is an automated media library organizer.
 Before making any changes, read:
 
 - AGENTS.md
+- docs/development-workflow.md
 - 影视媒体资源自动整理系统需求规格说明书.md (canonical product requirements)
 - docs/product-experience.md
 - docs/requirements.md
@@ -25,13 +26,15 @@ Always implement only the scope specified by the current TASK.md.
 
 Use this hierarchy when interpreting future work:
 
-1. `AGENTS.md` defines permanent safety, architecture, workflow, and scope-control rules.
-2. The root Chinese product requirements specification defines canonical V1 product scope.
-3. `docs/product-experience.md` defines canonical user journeys and product-completion semantics.
-4. `docs/requirements.md` provides stable engineering/UX requirement IDs, while
+1. `AGENTS.md` defines permanent safety, architecture, role, and scope-control rules.
+2. `docs/development-workflow.md` is the sole authority for implementation, commit, review,
+   closure, and next-slice sequencing.
+3. The root Chinese product requirements specification defines canonical V1 product scope.
+4. `docs/product-experience.md` defines canonical user journeys and product-completion semantics.
+5. `docs/requirements.md` provides stable engineering/UX requirement IDs, while
    `docs/architecture.md` distinguishes CURRENT implementation from TARGET design.
-5. `docs/roadmap.md` sets journey priority and sequencing.
-6. `TASK.md` narrows the current implementation slice and is the only scope to implement now.
+6. `docs/roadmap.md` sets journey priority and records Phase gates.
+7. `TASK.md` narrows the current implementation slice and is the only scope to implement now.
 
 A lower document may refine or narrow a higher one but must not silently weaken its safety or user
 outcome. A broad product requirement does not authorize implementation beyond TASK.md, and a TASK
@@ -686,6 +689,8 @@ RecognitionType == C
 # Development Roles and Independent Review Gate
 
 MediaFlow separates planning/review responsibility from implementation responsibility.
+Checkpoint ordering, status vocabulary, commit requirements, and next-slice authorization are
+defined only in `docs/development-workflow.md`.
 
 ## Planning / Architecture / Review Role
 
@@ -738,21 +743,25 @@ Review must verify, where applicable:
 - documentation CURRENT claims match actual behavior;
 - tests genuinely prove the claimed semantics.
 
-The review outcome must be exactly one of:
+The High Review decision must be exactly one of:
 
-- `PASS / CLOSED`
+- `PASS`
 - `FIX REQUIRED`
 - `PARTIAL / DEFERRED`
 
 If the result is `FIX REQUIRED`, create a focused correction TASK and do not proceed to the next feature Phase.
 
-If the result is `PASS / CLOSED`, update factual progress/documentation and define the next TASK according to the current roadmap and product priorities.
+If the result is `PASS`, record the reviewed commit SHA and High Audit as required by
+`docs/development-workflow.md`. Only that completed record changes repository status to
+`PASS / CLOSED`; then update factual progress/documentation and define the next TASK according to
+the current roadmap and product priorities.
 
 ## Phase Closure Authority
 
 Implementation completion is not Phase closure.
 
-A Phase may be considered CLOSED only after independent review confirms:
+A Phase may be considered CLOSED only after the commit/checkpoint requirements in
+`docs/development-workflow.md` are complete and independent review confirms:
 
 1. technical acceptance criteria;
 2. user-experience acceptance criteria;
@@ -767,24 +776,9 @@ A Phase may be considered CLOSED only after independent review confirms:
 
 # Development Workflow
 
-For every TASK.md:
-
-1. Read AGENTS.md.
-2. Read the root Chinese product requirements specification.
-3. Read docs/product-experience.md.
-4. Read docs/requirements.md.
-5. Read docs/architecture.md if present.
-6. Read docs/roadmap.md if present.
-7. Read docs/progress.md if present.
-8. Inspect existing code before editing.
-9. Implement only the current task.
-10. Add/update tests.
-11. Run tests.
-12. Run formatter/linter/type checker where applicable.
-13. Fix failures.
-14. Update factual implementation documentation only when required by TASK.md.
-15. Do not mark the Phase CLOSED.
-16. Submit the Completion Report for independent review.
+Follow `docs/development-workflow.md`. It is the sole authoritative development workflow, including
+workspace preflight, implementation, tests, commit checkpoint, High Review, closure records, and
+next-slice authorization. This file does not define a competing sequence.
 
 ---
 

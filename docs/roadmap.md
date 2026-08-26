@@ -1,5 +1,16 @@
 # MediaFlow 总体实施计划
 
+## Phase Gate
+
+流程与关闭规则仅以 [development-workflow.md](development-workflow.md) 为准；本文件只记录
+Phase gate，不复制测试日志或流程正文。
+
+| Gate | Status | Commit SHA | High Audit / Next boundary |
+|---|---|---|---|
+| Phase 22.4 Recognition integration Slice | PASS / CLOSED | `d95ea2b64a6fce559341d7eb5824977e07794dff` | PASS；已推送 `origin/main`；允许 Phase 22.5 reconstruction |
+| Phase 22.5 recovered integration checkpoint | PASS / CLOSED | `d68a19ddd4bb62bc27e77bab013edb20c9eb53e5` | PASS — SAFE TO INTEGRATE；已推送 `origin/main`；不扩大下文产品边界 |
+| Development Workflow Git Capability Gate | READY FOR COMMIT | `PENDING` | Full Access；checkpoint + High Review 前禁止下一 Task |
+
 ## 当前节点
 
 截至 2026-08-26，项目完成了安全优先的核心执行链、Phase 21 有界人工/文件管理基础、
