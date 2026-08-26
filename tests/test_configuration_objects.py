@@ -59,22 +59,30 @@ class FakeLiveMetadataProvider:
         error=None,
         details_error=None,
         details_barrier: Barrier | None = None,
+        search_barrier: Barrier | None = None,
     ) -> None:
         self.candidates = tuple(candidates)
         self.error = error
         self.details_error = details_error
         self.details_barrier = details_barrier
+        self.search_barrier = search_barrier
         self.searches = 0
         self.details = 0
+        self.search_queries: list[object] = []
+        self.detail_ids: list[str] = []
 
     def search_movie(self, query, policy=None, *, force_refresh=False):
         self.searches += 1
+        self.search_queries.append(query)
+        if self.search_barrier is not None:
+            self.search_barrier.wait(timeout=5)
         if self.error:
             raise self.error
         return self.candidates
 
     def get_movie(self, provider_id, policy=None, *, force_refresh=False):
         self.details += 1
+        self.detail_ids.append(provider_id)
         if self.details_barrier is not None:
             self.details_barrier.wait(timeout=5)
         if self.details_error:
@@ -1166,6 +1174,656 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 reloaded = detail["recognitionStrategyTest"]
                 self.assertEqual(reloaded["failureCategory"], "ambiguous")
                 self.assertEqual(reloaded["result"]["metadata"], metadata)
+
+    def test_api_corrects_live_not_found_by_query_and_persists_context(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self._document(root)
+            provider = FakeLiveMetadataProvider()
+            with (
+                SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository,
+                SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
+            ):
+                service = ManagedConfigurationService(repository)
+                api = MediaFlowApi(
+                    runtime_repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                    ),
+                    configuration_service=service,
+                    bootstrap_document=document,
+                    metadata_provider_registry_factory=lambda _ids: MetadataProviderRegistry(
+                        (provider,)
+                    ),
+                )
+                validated = service.validate(
+                    service.import_draft(document, actor="tester").revision_id,
+                    actor="tester",
+                )
+                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                status, not_found = request(
+                    api,
+                    f"{base}/recognition-strategy-test",
+                    method="POST",
+                    body={
+                        "expectedVersion": validated.version,
+                        "expectedDigest": validated.digest,
+                        "resourceLibraryId": "source",
+                        "syntheticPath": "/C/Wrong.Title.2024.mkv",
+                        "liveMetadata": True,
+                    },
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(not_found["failureCategory"], "not_found")
+                provider.candidates = (
+                    MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct Title", year=2024),
+                )
+                with patch(
+                    "mediaflow.infrastructure.runtime_configuration."
+                    "RuntimeConfiguration.create_storages",
+                    side_effect=AssertionError("Metadata correction must not construct Storage"),
+                ):
+                    status, corrected = request(
+                        api,
+                        f"{base}/recognition-strategy-test/metadata-correction",
+                        method="POST",
+                        body={
+                            "expectedVersion": validated.version,
+                            "expectedDigest": validated.digest,
+                            "expectedTestedAt": not_found["testedAt"],
+                            "query": "  Correct Title  ",
+                            "year": 2024,
+                            "mediaType": "movie",
+                        },
+                    )
+                self.assertEqual(status, 200)
+                self.assertEqual(corrected["status"], "completed")
+                metadata = corrected["result"]["metadata"]
+                self.assertEqual(metadata["status"], "matched")
+                self.assertEqual(metadata["identity"]["providerId"], "42")
+                self.assertEqual(
+                    metadata["correction"],
+                    {
+                        "mode": "query",
+                        "sourceOutcome": "not_found",
+                        "mediaType": "movie",
+                        "provider": "tmdb",
+                        "query": "Correct Title",
+                        "year": 2024,
+                    },
+                )
+                self.assertEqual(corrected["result"]["recognition"]["recognitionType"], "C")
+                self.assertEqual(corrected["result"]["policy"]["metadataPolicy"], "C")
+                self.assertTrue(corrected["result"]["recognitionTypePreserved"])
+                self.assertEqual(provider.search_queries[-1].title_candidate, "Correct Title")
+                self.assertEqual(
+                    repository.get_recognition_strategy_test(validated.revision_id).document(),
+                    corrected,
+                )
+
+    def test_api_direct_id_correction_uses_details_without_repeated_search(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self._document(root)
+            provider = FakeLiveMetadataProvider()
+            with (
+                SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository,
+                SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
+            ):
+                service = ManagedConfigurationService(repository)
+                api = MediaFlowApi(
+                    runtime_repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                    ),
+                    configuration_service=service,
+                    bootstrap_document=document,
+                    metadata_provider_registry_factory=lambda _ids: MetadataProviderRegistry(
+                        (provider,)
+                    ),
+                )
+                validated = service.validate(
+                    service.import_draft(document, actor="tester").revision_id,
+                    actor="tester",
+                )
+                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                _status, not_found = request(
+                    api,
+                    f"{base}/recognition-strategy-test",
+                    method="POST",
+                    body={
+                        "expectedVersion": validated.version,
+                        "expectedDigest": validated.digest,
+                        "resourceLibraryId": "source",
+                        "syntheticPath": "/C/Wrong.Title.2024.mkv",
+                        "liveMetadata": True,
+                    },
+                )
+                searches_before = provider.searches
+                provider.candidates = (
+                    MediaCandidate(
+                        "tmdb", "direct-42", MediaType.MOVIE, "Correct Title", year=2024
+                    ),
+                )
+                status, corrected = request(
+                    api,
+                    f"{base}/recognition-strategy-test/metadata-correction",
+                    method="POST",
+                    body={
+                        "expectedVersion": validated.version,
+                        "expectedDigest": validated.digest,
+                        "expectedTestedAt": not_found["testedAt"],
+                        "providerId": "direct-42",
+                        "mediaType": "movie",
+                    },
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(provider.searches, searches_before)
+                self.assertEqual(provider.detail_ids, ["direct-42"])
+                metadata = corrected["result"]["metadata"]
+                self.assertEqual(metadata["identity"]["matchedBy"], "manual_provider_id")
+                self.assertEqual(metadata["correction"]["mode"], "direct_provider_id")
+                self.assertEqual(metadata["correction"]["providerId"], "direct-42")
+                self.assertEqual(corrected["result"]["recognition"]["recognitionType"], "C")
+
+    def test_metadata_correction_rejects_invalid_or_stale_input_without_provider_access(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self._document(root)
+            provider = FakeLiveMetadataProvider()
+            with (
+                SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository,
+                SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
+            ):
+                service = ManagedConfigurationService(repository)
+                api = MediaFlowApi(
+                    runtime_repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                    ),
+                    configuration_service=service,
+                    bootstrap_document=document,
+                    metadata_provider_registry_factory=lambda _ids: MetadataProviderRegistry(
+                        (provider,)
+                    ),
+                )
+                validated = service.validate(
+                    service.import_draft(document, actor="tester").revision_id,
+                    actor="tester",
+                )
+                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                _status, evidence = request(
+                    api,
+                    f"{base}/recognition-strategy-test",
+                    method="POST",
+                    body={
+                        "expectedVersion": validated.version,
+                        "expectedDigest": validated.digest,
+                        "resourceLibraryId": "source",
+                        "syntheticPath": "/C/Wrong.Title.2024.mkv",
+                        "liveMetadata": True,
+                    },
+                )
+                original = repository.get_recognition_strategy_test(validated.revision_id)
+                calls = provider.searches + provider.details
+                common = {
+                    "expectedVersion": validated.version,
+                    "expectedDigest": validated.digest,
+                    "expectedTestedAt": evidence["testedAt"],
+                    "mediaType": "movie",
+                }
+                for body, expected_status in (
+                    ({**common, "query": "Title", "providerId": "42"}, 400),
+                    ({**common, "query": "Title", "provider": "other"}, 400),
+                    ({**common, "query": "Title", "year": 1800}, 400),
+                    ({**common, "providerId": "bad/id"}, 400),
+                    ({**common, "query": "Title", "expectedTestedAt": "stale"}, 409),
+                ):
+                    with self.subTest(body=body):
+                        status, _result = request(
+                            api,
+                            f"{base}/recognition-strategy-test/metadata-correction",
+                            method="POST",
+                            body=body,
+                        )
+                        self.assertEqual(status, expected_status)
+                self.assertEqual(provider.searches + provider.details, calls)
+                self.assertEqual(
+                    repository.get_recognition_strategy_test(validated.revision_id), original
+                )
+
+    def test_metadata_correction_rejects_offline_matched_and_draft_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self._document(root)
+            provider = FakeLiveMetadataProvider()
+            with (
+                SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository,
+                SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
+            ):
+                service = ManagedConfigurationService(repository)
+                api = MediaFlowApi(
+                    runtime_repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                    ),
+                    configuration_service=service,
+                    bootstrap_document=document,
+                    metadata_provider_registry_factory=lambda _ids: MetadataProviderRegistry(
+                        (provider,)
+                    ),
+                )
+                validated = service.validate(
+                    service.import_draft(document, actor="tester").revision_id,
+                    actor="tester",
+                )
+                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+
+                def run_test(live):
+                    return request(
+                        api,
+                        f"{base}/recognition-strategy-test",
+                        method="POST",
+                        body={
+                            "expectedVersion": validated.version,
+                            "expectedDigest": validated.digest,
+                            "resourceLibraryId": "source",
+                            "syntheticPath": "/C/Exact.2024.mkv",
+                            "liveMetadata": live,
+                        },
+                    )[1]
+
+                def correct(evidence):
+                    return request(
+                        api,
+                        f"{base}/recognition-strategy-test/metadata-correction",
+                        method="POST",
+                        body={
+                            "expectedVersion": validated.version,
+                            "expectedDigest": validated.digest,
+                            "expectedTestedAt": evidence["testedAt"],
+                            "query": "Exact",
+                            "mediaType": "movie",
+                        },
+                    )
+
+                offline = run_test(False)
+                self.assertEqual(correct(offline)[0], 400)
+                self.assertEqual(provider.searches + provider.details, 0)
+                provider.candidates = (
+                    MediaCandidate("tmdb", "42", MediaType.MOVIE, "Exact", year=2024),
+                )
+                matched = run_test(True)
+                self.assertEqual(matched["result"]["metadata"]["status"], "matched")
+                calls = provider.searches + provider.details
+                self.assertEqual(correct(matched)[0], 400)
+                self.assertEqual(provider.searches + provider.details, calls)
+                changed = copy.deepcopy(validated.document)
+                changed["recognitionTypes"][0]["description"] = "Draft"
+                service.edit_draft(
+                    validated.revision_id,
+                    changed,
+                    expected_version=validated.version,
+                    actor="editor",
+                )
+                self.assertEqual(correct(matched)[0], 409)
+                self.assertEqual(provider.searches + provider.details, calls)
+
+    def test_corrected_candidates_reuse_existing_confirmation_without_second_search(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self._document(root)
+            provider = FakeLiveMetadataProvider()
+            with (
+                SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository,
+                SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
+            ):
+                service = ManagedConfigurationService(repository)
+                api = MediaFlowApi(
+                    runtime_repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                    ),
+                    configuration_service=service,
+                    bootstrap_document=document,
+                    metadata_provider_registry_factory=lambda _ids: MetadataProviderRegistry(
+                        (provider,)
+                    ),
+                )
+                validated = service.validate(
+                    service.import_draft(document, actor="tester").revision_id,
+                    actor="tester",
+                )
+                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                _status, not_found = request(
+                    api,
+                    f"{base}/recognition-strategy-test",
+                    method="POST",
+                    body={
+                        "expectedVersion": validated.version,
+                        "expectedDigest": validated.digest,
+                        "resourceLibraryId": "source",
+                        "syntheticPath": "/C/Wrong.2024.mkv",
+                        "liveMetadata": True,
+                    },
+                )
+                provider.candidates = tuple(
+                    MediaCandidate("tmdb", str(index), MediaType.MOVIE, "Correct", year=2024)
+                    for index in (1, 2)
+                )
+                _status, corrected = request(
+                    api,
+                    f"{base}/recognition-strategy-test/metadata-correction",
+                    method="POST",
+                    body={
+                        "expectedVersion": validated.version,
+                        "expectedDigest": validated.digest,
+                        "expectedTestedAt": not_found["testedAt"],
+                        "query": "Correct",
+                        "mediaType": "movie",
+                    },
+                )
+                self.assertIn(
+                    corrected["result"]["metadata"]["status"], {"need_confirm", "ambiguous"}
+                )
+                searches = provider.searches
+                status, selected = request(
+                    api,
+                    f"{base}/recognition-strategy-test/candidate-selection",
+                    method="POST",
+                    body={
+                        "expectedVersion": validated.version,
+                        "expectedDigest": validated.digest,
+                        "expectedTestedAt": corrected["testedAt"],
+                        "candidateRank": 1,
+                    },
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(provider.searches, searches)
+                self.assertEqual(
+                    selected["result"]["metadata"]["candidateSelection"]["providerId"], "1"
+                )
+                self.assertEqual(
+                    selected["result"]["metadata"]["correction"],
+                    corrected["result"]["metadata"]["correction"],
+                )
+
+    def test_metadata_correction_provider_failures_persist_bounded_context(self) -> None:
+        cases = (
+            (MetadataErrorCode.INVALID_REQUEST, "invalid_provider_request"),
+            (MetadataErrorCode.NOT_FOUND, "provider_id_not_found"),
+            (MetadataErrorCode.TIMEOUT, "timeout"),
+            (MetadataErrorCode.RATE_LIMITED, "rate_limited"),
+            (MetadataErrorCode.AUTHENTICATION_FAILED, "authentication_failed"),
+            (MetadataErrorCode.MALFORMED_RESPONSE, "malformed_response"),
+        )
+        for error_code, expected_category in cases:
+            with self.subTest(error_code=error_code):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    document = self._document(root)
+                    provider = FakeLiveMetadataProvider()
+                    with (
+                        SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository,
+                        SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
+                    ):
+                        service = ManagedConfigurationService(repository)
+                        api = MediaFlowApi(
+                            runtime_repository,
+                            None,
+                            principals=(
+                                ResolvedApiPrincipal(
+                                    "admin", "admin-token", frozenset(ApiPermission)
+                                ),
+                            ),
+                            configuration_service=service,
+                            bootstrap_document=document,
+                            metadata_provider_registry_factory=lambda _ids: (
+                                MetadataProviderRegistry((provider,))
+                            ),
+                        )
+                        validated = service.validate(
+                            service.import_draft(document, actor="tester").revision_id,
+                            actor="tester",
+                        )
+                        base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                        _status, not_found = request(
+                            api,
+                            f"{base}/recognition-strategy-test",
+                            method="POST",
+                            body={
+                                "expectedVersion": validated.version,
+                                "expectedDigest": validated.digest,
+                                "resourceLibraryId": "source",
+                                "syntheticPath": "/C/Wrong.2024.mkv",
+                                "liveMetadata": True,
+                            },
+                        )
+                        secret = "provider-secret-must-not-leak"
+                        provider_failure = MetadataError(error_code, f"failure with {secret}")
+                        direct = error_code in {
+                            MetadataErrorCode.INVALID_REQUEST,
+                            MetadataErrorCode.NOT_FOUND,
+                        }
+                        if direct:
+                            provider.details_error = provider_failure
+                        else:
+                            provider.error = provider_failure
+                        correction = (
+                            {"providerId": "bad-direct-id"} if direct else {"query": "Corrected"}
+                        )
+                        status, failed = request(
+                            api,
+                            f"{base}/recognition-strategy-test/metadata-correction",
+                            method="POST",
+                            body={
+                                "expectedVersion": validated.version,
+                                "expectedDigest": validated.digest,
+                                "expectedTestedAt": not_found["testedAt"],
+                                "mediaType": "movie",
+                                **correction,
+                            },
+                        )
+                        self.assertEqual(status, 200)
+                        self.assertEqual(failed["status"], "failed")
+                        self.assertEqual(failed["failureCategory"], expected_category)
+                        context = failed["result"]["metadata"]["correction"]
+                        self.assertEqual(
+                            context["providerId"] if direct else context["query"],
+                            "bad-direct-id" if direct else "Corrected",
+                        )
+                        self.assertEqual(failed["sideEffects"], "none")
+                        self.assertTrue(failed["retrySafe"])
+                        self.assertIn("rerun", failed["nextAction"])
+                        self.assertNotIn(secret, json.dumps(failed))
+
+    def test_concurrent_metadata_corrections_have_one_durable_winner(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self._document(root)
+            configuration_path = root / "configuration.sqlite3"
+            with (
+                SQLiteConfigurationRepository(configuration_path) as repository_one,
+                SQLiteConfigurationRepository(configuration_path) as repository_two,
+                SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
+            ):
+                managed_one = ManagedConfigurationService(repository_one)
+                managed_two = ManagedConfigurationService(repository_two)
+                provider = FakeLiveMetadataProvider()
+
+                def make_api(managed):
+                    return MediaFlowApi(
+                        runtime_repository,
+                        None,
+                        principals=(
+                            ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                        ),
+                        configuration_service=managed,
+                        bootstrap_document=document,
+                        metadata_provider_registry_factory=lambda _ids: MetadataProviderRegistry(
+                            (provider,)
+                        ),
+                    )
+
+                api_one = make_api(managed_one)
+                api_two = make_api(managed_two)
+                validated = managed_one.validate(
+                    managed_one.import_draft(document, actor="tester").revision_id,
+                    actor="tester",
+                )
+                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                _status, not_found = request(
+                    api_one,
+                    f"{base}/recognition-strategy-test",
+                    method="POST",
+                    body={
+                        "expectedVersion": validated.version,
+                        "expectedDigest": validated.digest,
+                        "resourceLibraryId": "source",
+                        "syntheticPath": "/C/Wrong.2024.mkv",
+                        "liveMetadata": True,
+                    },
+                )
+                provider.candidates = (
+                    MediaCandidate("tmdb", "42", MediaType.MOVIE, "Winner", year=2024),
+                )
+                provider.search_barrier = Barrier(2)
+
+                def correct(api, query):
+                    return request(
+                        api,
+                        f"{base}/recognition-strategy-test/metadata-correction",
+                        method="POST",
+                        body={
+                            "expectedVersion": validated.version,
+                            "expectedDigest": validated.digest,
+                            "expectedTestedAt": not_found["testedAt"],
+                            "query": query,
+                            "mediaType": "movie",
+                        },
+                    )
+
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = (
+                        executor.submit(correct, api_one, "Winner"),
+                        executor.submit(correct, api_two, "Winner alternate"),
+                    )
+                    outcomes = tuple(future.result(timeout=10) for future in futures)
+                self.assertEqual(sorted(status for status, _value in outcomes), [200, 409])
+                winner = next(value for status, value in outcomes if status == 200)
+                loser = next(value for status, value in outcomes if status == 409)
+                self.assertEqual(loser["error"]["code"], "configuration_version_conflict")
+                self.assertEqual(
+                    loser["error"]["details"]["durableState"],
+                    "current_strategy_evidence_preserved",
+                )
+                self.assertEqual(loser["error"]["details"]["sideEffects"], "none")
+                self.assertIn("reload", loser["error"]["details"]["nextAction"])
+                stored = repository_one.get_recognition_strategy_test(validated.revision_id)
+                self.assertEqual(stored.document(), winner)
+                self.assertIn(
+                    stored.result["metadata"]["correction"]["query"],
+                    {"Winner", "Winner alternate"},
+                )
+                self.assertEqual(provider.searches, 3)
+
+    def test_metadata_correction_rejects_in_flight_revision_edit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self._document(root)
+            configuration_path = root / "configuration.sqlite3"
+            with (
+                SQLiteConfigurationRepository(configuration_path) as repository_one,
+                SQLiteConfigurationRepository(configuration_path) as repository_two,
+                SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
+            ):
+                managed_one = ManagedConfigurationService(repository_one)
+                managed_two = ManagedConfigurationService(repository_two)
+                provider = FakeLiveMetadataProvider()
+                api = MediaFlowApi(
+                    runtime_repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                    ),
+                    configuration_service=managed_one,
+                    bootstrap_document=document,
+                    metadata_provider_registry_factory=lambda _ids: MetadataProviderRegistry(
+                        (provider,)
+                    ),
+                )
+                validated = managed_one.validate(
+                    managed_one.import_draft(document, actor="tester").revision_id,
+                    actor="tester",
+                )
+                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                _status, not_found = request(
+                    api,
+                    f"{base}/recognition-strategy-test",
+                    method="POST",
+                    body={
+                        "expectedVersion": validated.version,
+                        "expectedDigest": validated.digest,
+                        "resourceLibraryId": "source",
+                        "syntheticPath": "/C/Wrong.2024.mkv",
+                        "liveMetadata": True,
+                    },
+                )
+                original = repository_one.get_recognition_strategy_test(validated.revision_id)
+                provider.candidates = (
+                    MediaCandidate("tmdb", "42", MediaType.MOVIE, "Winner", year=2024),
+                )
+                provider.search_barrier = Barrier(2)
+
+                def correct():
+                    return request(
+                        api,
+                        f"{base}/recognition-strategy-test/metadata-correction",
+                        method="POST",
+                        body={
+                            "expectedVersion": validated.version,
+                            "expectedDigest": validated.digest,
+                            "expectedTestedAt": not_found["testedAt"],
+                            "query": "Winner",
+                            "mediaType": "movie",
+                        },
+                    )
+
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(correct)
+                    for _ in range(500):
+                        if provider.searches == 2:
+                            break
+                        time.sleep(0.002)
+                    self.assertEqual(provider.searches, 2)
+                    changed = copy.deepcopy(validated.document)
+                    changed["recognitionTypes"][0]["description"] = "edited during correction"
+                    edited = managed_two.edit_draft(
+                        validated.revision_id,
+                        changed,
+                        expected_version=validated.version,
+                        actor="editor",
+                    )
+                    provider.search_barrier.wait(timeout=5)
+                    status, conflict = future.result(timeout=10)
+                self.assertEqual(status, 409)
+                self.assertEqual(
+                    conflict["error"]["details"]["durableState"],
+                    "current_draft_and_strategy_evidence_preserved",
+                )
+                self.assertEqual(conflict["error"]["details"]["sideEffects"], "none")
+                self.assertIn("reload", conflict["error"]["details"]["nextAction"])
+                self.assertEqual(repository_one.get_revision(validated.revision_id), edited)
+                self.assertEqual(
+                    repository_one.get_recognition_strategy_test(validated.revision_id), original
+                )
 
     def test_api_confirms_only_persisted_candidate_and_preserves_c(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

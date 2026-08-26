@@ -140,9 +140,12 @@ MetadataPolicy managed editing and exact-revision offline resolution preview com
 review as Phase 22.5-A on the same date. Live Provider testing and candidate explanation, including
 the service-lifetime cache/request-control/evidence-bound correction, completed independent review
 as Phase 22.5-B. Candidate confirmation and its F1/F2 durable concurrency corrections completed the
-Phase 22.5-C boundary and passed final Integration Acceptance. Phase 22.5-D same-Provider managed
-live correction testing is the current Task; Provider switching and Files/Task continuation remain
-later Metadata journey work.
+Phase 22.5-C boundary and passed final Integration Acceptance. Phase 22.5-D now implements the
+same-Provider managed live correction test for exact current `NotFound`/`NeedConfirm`/`Ambiguous`
+evidence: the operator can explicitly submit query/year/Movie-TV or one direct Provider ID, inspect
+durable bounded outcomes, and reuse candidate confirmation. This implementation awaits independent
+High Review and is not CLOSED. Provider switching and Files/Task continuation remain later Metadata
+journey work.
 
 ## A. First-time setup
 

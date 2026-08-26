@@ -435,6 +435,46 @@ class MediaFlowApi:
             len(parts) == 7
             and parts[:3] == ["api", "v1", "configuration"]
             and parts[3] == "revisions"
+            and parts[5:] == ["recognition-strategy-test", "metadata-correction"]
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            required = {"expectedVersion", "expectedDigest", "expectedTestedAt", "mediaType"}
+            allowed = required | {"query", "year", "providerId"}
+            if not required.issubset(document) or set(document).difference(allowed):
+                raise ValueError(
+                    "Metadata correction requires expectedVersion, expectedDigest, "
+                    "expectedTestedAt, mediaType, and exactly one query or providerId"
+                )
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            if not isinstance(document["expectedDigest"], str):
+                raise ValueError("configuration expectedDigest is required")
+            evidence = self._configuration_objects.recognition_strategy_correct_metadata(
+                parts[4],
+                expected_version=expected,
+                expected_digest=document["expectedDigest"],
+                expected_tested_at=document["expectedTestedAt"],
+                media_type=document["mediaType"],
+                query=document.get("query"),
+                year=document.get("year"),
+                provider_id=document.get("providerId"),
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 200, evidence.document())
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
             and parts[5:] == ["recognition-strategy-test", "candidate-selection"]
             and method == "POST"
         ):

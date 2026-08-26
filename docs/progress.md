@@ -154,9 +154,35 @@ free-form correction testing, Files/Task continuation, and later policy journeys
 - Phase 22.5-B Managed Live Metadata Test + Candidate Explanation and its F1 correction:
   **PASS/CLOSED** after independent review on 2026-08-26.
 - Phase 22.5-C Managed Live Metadata Candidate Confirmation, including its F1/F2 concurrency
-  corrections: **PASS/CLOSED** after the 2026-08-26 final Integration Acceptance. Phase 22.5-D
-  managed same-Provider Metadata correction testing is the current Task; Provider switching and
-  Files/Task continuation remain later slices.
+  corrections: **PASS/CLOSED** after the 2026-08-26 final Integration Acceptance.
+- Phase 22.5-D Managed Live Metadata Correction Test: **READY FOR COMMIT / HIGH PENDING**. The
+  same-Provider query/year/Movie-TV and direct-ID correction journey is implemented against exact
+  current live evidence; Provider switching and Files/Task continuation remain later slices.
+
+## Phase 22.5-D Implementation Evidence (2026-08-26; awaiting independent review)
+
+- Added one authenticated exact-revision Metadata-correction action shared by API and Configuration
+  Web. Its request carries expected version/digest/evidence time, required Movie/TV, and exactly one
+  bounded query with optional year or direct Provider ID; arbitrary Provider selection is absent.
+- The Application reloads current live `NotFound`/`NeedConfirm`/`Ambiguous` evidence, derives
+  RecognitionType, MetadataPolicy, Provider, ResourceLibrary and synthetic path, then passes the
+  existing production `MetadataCorrectionSelection` through the live Strategy runner.
+- Success, unresolved candidates and bounded Provider failures retain secret-free correction
+  context in the existing evidence JSON. Corrected candidates reuse the Phase 22.5-C confirmation
+  action without another search and preserve correction provenance.
+- Revision-plus-evidence CAS gives concurrent submissions one durable winner and one actionable
+  conflict; an in-flight Draft edit preserves both the new Draft and prior evidence. Invalid,
+  offline, stale and non-correctable requests fail before Provider access.
+- Acceptance evidence includes query and direct-ID call-count assertions, four Provider failure
+  categories, C identity/policy preservation, Web action/payload/reload rendering, and explicit
+  zero-Storage construction. The focused Configuration/API/Web set ran 85 tests with 0 failures;
+  the complete offline suite ran 791 tests with 784 passed, 7 existing external-service skips, and
+  0 failures. Ruff lint/format, compileall, `pip check`, both example validations, wheel build/smoke,
+  documentation links, forbidden dependency/business filesystem/private configuration audits, and
+  `git diff --check` passed.
+- This is implementation evidence only. Phase 22.5-D is not `PASS / CLOSED`; independent High
+  Review must inspect the explicit checkpoint SHA. Provider switching, Files/Task continuation,
+  activation changes and media execution are not included.
 
 ## Phase 22.5-B Implementation Evidence (2026-08-26; awaiting independent review)
 
@@ -1121,9 +1147,9 @@ free-form correction testing, Files/Task continuation, and later policy journeys
 
 ## Planned
 
-- Implement Phase 22.5-D same-Provider managed live Metadata correction testing, then continue with
-  Provider switching and Files/Task correction continuation before Naming/Classification/Organize
-  configuration
+- Independently review the Phase 22.5-D checkpoint. Only after PASS/CLOSED may planning define the
+  next Provider-switching or Files/Task correction-continuation slice before
+  Naming/Classification/Organize configuration
 - Follow with TaskItem Processing Checkpoint/stage-aware recovery, complete Files/Media detail and
   manual organize, then automation/final production hardening
 - External identity/OIDC and Secret Store remain explicit later architecture decisions; no weak

@@ -52,6 +52,7 @@ from mediaflow.domain.metadata import (
     MetadataPolicy,
     RetryPolicy,
 )
+from mediaflow.domain.metadata_correction import MetadataCorrectionSelection
 from mediaflow.domain.metadata_review import MetadataSelection
 from mediaflow.domain.recognition import (
     AtomicCondition,
@@ -426,6 +427,9 @@ class ConfigurationObjectService:
                 "providerId": provider_id,
                 "mediaType": media_type,
             }
+            correction_context = metadata.get("correction")
+            if correction_context is not None and not isinstance(correction_context, dict):
+                raise ValueError("persisted Metadata correction evidence is malformed")
             return self._run_recognition_strategy_test(
                 revision_id,
                 expected_version=expected_version,
@@ -436,8 +440,188 @@ class ConfigurationObjectService:
                 live_metadata=True,
                 metadata_selection=selection,
                 candidate_selection=selection_document,
+                correction_context=correction_context,
                 expected_evidence_tested_at=evidence.tested_at,
             )
+
+    def recognition_strategy_correct_metadata(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        expected_tested_at: str,
+        media_type: str,
+        query: str | None,
+        year: int | None,
+        provider_id: str | None,
+        actor: str,
+    ) -> RecognitionStrategyTestEvidence:
+        normalized_query = self._correction_text(query, 500, "corrected query")
+        normalized_provider_id = self._correction_text(provider_id, 200, "direct Provider ID")
+        if bool(normalized_query) == bool(normalized_provider_id):
+            raise ValueError("provide exactly one corrected query or direct Provider ID")
+        if normalized_provider_id and not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", normalized_provider_id
+        ):
+            raise ValueError("direct Provider ID is invalid")
+        if year is not None and (
+            normalized_provider_id
+            or isinstance(year, bool)
+            or not isinstance(year, int)
+            or not 1870 <= year <= 2100
+        ):
+            raise ValueError(
+                "corrected year must be between 1870 and 2100 and is valid only with a query"
+            )
+        if not isinstance(media_type, str) or media_type not in {
+            MediaType.MOVIE.value,
+            MediaType.TV.value,
+        }:
+            raise ValueError("corrected media type must be movie or tv")
+        if (
+            not isinstance(expected_tested_at, str)
+            or not expected_tested_at.strip()
+            or len(expected_tested_at) > 64
+            or "\x00" in expected_tested_at
+        ):
+            raise ValueError("expected Strategy Test evidence time is required")
+
+        with self._strategy_test_operation_lock:
+            revision = self._managed.require(revision_id)
+            if (
+                revision.status is not ManagedConfigurationStatus.VALIDATED
+                or revision.version != expected_version
+                or revision.digest != expected_digest
+            ):
+                raise ConfigurationVersionConflict(
+                    "Metadata correction requires the exact current Validated revision",
+                    revision_id=revision_id,
+                    current_version=revision.version,
+                    current_digest=revision.digest,
+                )
+            evidence = self._repository.get_recognition_strategy_test(revision_id)
+            if (
+                evidence is None
+                or evidence.revision_version != revision.version
+                or evidence.revision_digest != revision.digest
+                or evidence.tested_at.isoformat() != expected_tested_at
+            ):
+                raise ConfigurationVersionConflict(
+                    "Strategy Test evidence changed; reload before running Metadata correction",
+                    revision_id=revision_id,
+                    current_version=revision.version,
+                    current_digest=revision.digest,
+                )
+            result = evidence.result
+            metadata = result.get("metadata") if isinstance(result, dict) else None
+            recognition = result.get("recognition") if isinstance(result, dict) else None
+            policy = result.get("policy") if isinstance(result, dict) else None
+            effective = result.get("effectiveMetadataPolicy") if isinstance(result, dict) else None
+            if not isinstance(result, dict) or result.get("mode") != "live":
+                raise ValueError("Metadata correction requires current live Metadata evidence")
+            if not isinstance(metadata, dict) or metadata.get("status") not in {
+                "not_found",
+                "need_confirm",
+                "ambiguous",
+            }:
+                raise ValueError(
+                    "Metadata correction requires NotFound, NeedConfirm, or Ambiguous evidence"
+                )
+            if not all(isinstance(item, dict) for item in (recognition, policy, effective)):
+                raise ValueError("persisted Metadata correction evidence is malformed")
+            recognition_type = recognition.get("recognitionType")
+            metadata_policy_id = policy.get("metadataPolicy")
+            provider = effective.get("providerId")
+            if (
+                not all(
+                    isinstance(value, str) and value
+                    for value in (recognition_type, metadata_policy_id, provider)
+                )
+                or effective.get("id") != metadata_policy_id
+            ):
+                raise ValueError("persisted Metadata correction policy evidence is malformed")
+            try:
+                runtime = load_managed_runtime_configuration(
+                    revision.document,
+                    bootstrap_database_path=self._managed.bootstrap_database_path
+                    or self._repository.database_path,
+                )
+                library = next(
+                    (
+                        item
+                        for item in runtime.resource_libraries
+                        if item.library_id == evidence.resource_library_id and item.enabled
+                    ),
+                    None,
+                )
+                if library is None:
+                    raise ValueError
+                current = strategy_runner_from_configuration(runtime.strategy).run_path(
+                    evidence.synthetic_path,
+                    resource_library_id=library.library_id,
+                    storage_id=library.storage_id,
+                )
+            except (StrategyConfigurationError, ValueError) as error:
+                raise ValueError(
+                    "current revision no longer supports the persisted Metadata correction"
+                ) from error
+            if (
+                current.policy is None
+                or current.metadata_policy is None
+                or current.recognition.recognition_type_id != recognition_type
+                or current.policy.metadata_policy_id != metadata_policy_id
+                or current.metadata_policy.provider_id != provider
+                or current.metadata_policy.query_type is MediaQueryType.NONE
+            ):
+                raise ValueError(
+                    "persisted Metadata correction no longer matches the effective policy"
+                )
+            selection = MetadataCorrectionSelection(
+                recognition_type,
+                metadata_policy_id,
+                provider,
+                normalized_query,
+                year,
+                media_type,
+                normalized_provider_id,
+            )
+            context: dict[str, object] = {
+                "mode": "direct_provider_id" if normalized_provider_id else "query",
+                "sourceOutcome": metadata["status"],
+                "mediaType": media_type,
+                "provider": provider,
+            }
+            if normalized_provider_id:
+                context["providerId"] = normalized_provider_id
+            else:
+                context["query"] = normalized_query
+                context["year"] = year
+            return self._run_recognition_strategy_test(
+                revision_id,
+                expected_version=expected_version,
+                expected_digest=expected_digest,
+                actor=actor,
+                resource_library_id=evidence.resource_library_id,
+                synthetic_path=evidence.synthetic_path,
+                live_metadata=True,
+                metadata_correction=selection,
+                correction_context=context,
+                expected_evidence_tested_at=evidence.tested_at,
+            )
+
+    @staticmethod
+    def _correction_text(value: str | None, maximum: int, label: str) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError(f"{label} must be text")
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if len(normalized) > maximum or "\x00" in normalized:
+            raise ValueError(f"{label} must be bounded and NUL-free")
+        return normalized
 
     def _run_recognition_strategy_test(
         self,
@@ -450,7 +634,9 @@ class ConfigurationObjectService:
         synthetic_path: str,
         live_metadata: bool = False,
         metadata_selection: MetadataSelection | None = None,
+        metadata_correction: MetadataCorrectionSelection | None = None,
         candidate_selection: dict[str, object] | None = None,
+        correction_context: dict[str, object] | None = None,
         expected_evidence_tested_at: datetime | None = None,
     ) -> RecognitionStrategyTestEvidence:
         revision = self._managed.require(revision_id)
@@ -511,7 +697,26 @@ class ConfigurationObjectService:
             result = self._strategy_result_document(strategy, live_metadata=False)
             if live_metadata:
                 result["mode"] = "live"
+            if (
+                live_metadata
+                and metadata_correction is not None
+                and strategy.metadata_policy is None
+            ):
+                raise StrategyConfigurationError(
+                    "persisted Metadata correction no longer resolves an effective policy"
+                )
             if live_metadata and strategy.metadata_policy is not None:
+                if metadata_correction is not None and (
+                    strategy.policy is None
+                    or metadata_correction.recognition_type
+                    != strategy.recognition.recognition_type_id
+                    or metadata_correction.metadata_policy_id != strategy.policy.metadata_policy_id
+                    or metadata_correction.provider != strategy.metadata_policy.provider_id
+                    or strategy.metadata_policy.query_type is MediaQueryType.NONE
+                ):
+                    raise StrategyConfigurationError(
+                        "persisted Metadata correction no longer matches the effective policy"
+                    )
                 if self._metadata_provider_registry_factory is None:
                     raise MetadataProviderBootstrapError(
                         "provider_not_configured",
@@ -528,10 +733,14 @@ class ConfigurationObjectService:
                     resource_library_id=library.library_id,
                     storage_id=library.storage_id,
                     metadata_selection=metadata_selection,
+                    metadata_correction=metadata_correction,
                 )
                 result = self._strategy_result_document(strategy, live_metadata=True)
-                if candidate_selection is not None and isinstance(result.get("metadata"), dict):
-                    result["metadata"]["candidateSelection"] = candidate_selection
+                if isinstance(result.get("metadata"), dict):
+                    if candidate_selection is not None:
+                        result["metadata"]["candidateSelection"] = candidate_selection
+                    if correction_context is not None:
+                        result["metadata"]["correction"] = correction_context
                     result = self._fit_strategy_result_document(result)
             recognition = strategy.recognition
             metadata = strategy.metadata
@@ -545,6 +754,25 @@ class ConfigurationObjectService:
             next_action = self._strategy_test_next_action(recognition.status)
             if live_metadata and metadata is not None:
                 failure_category, message, next_action = self._metadata_outcome_guidance(metadata)
+                if correction_context is not None:
+                    if metadata.status in {
+                        MetadataIdentificationStatus.NEED_CONFIRM,
+                        MetadataIdentificationStatus.AMBIGUOUS,
+                    }:
+                        next_action = (
+                            "review the persisted corrected candidates and explicitly confirm one, "
+                            "or adjust the correction and run the Metadata correction test again"
+                        )
+                    elif metadata.status is MetadataIdentificationStatus.NOT_FOUND:
+                        next_action = (
+                            "review the persisted correction input, adjust it, and explicitly run "
+                            "the Metadata correction test again"
+                        )
+                    elif metadata.status is MetadataIdentificationStatus.PROVIDER_ERROR:
+                        next_action = (
+                            f"{next_action}; preserve or adjust the correction input, then "
+                            "explicitly rerun the Metadata correction test"
+                        )
                 if metadata.status is MetadataIdentificationStatus.PROVIDER_ERROR:
                     status = ConfigurationStrategyTestStatus.FAILED
             evidence = RecognitionStrategyTestEvidence(
@@ -570,6 +798,8 @@ class ConfigurationObjectService:
                 }
                 if candidate_selection is not None:
                     result["metadata"]["candidateSelection"] = candidate_selection
+                if correction_context is not None:
+                    result["metadata"]["correction"] = correction_context
                 result = self._fit_strategy_result_document(result)
             evidence = RecognitionStrategyTestEvidence(
                 revision.revision_id,
@@ -586,6 +816,14 @@ class ConfigurationObjectService:
                 next_action=error.next_action,
             )
         except StrategyConfigurationError:
+            if result is not None and correction_context is not None:
+                result["mode"] = "live"
+                result["metadata"] = {
+                    "status": "configuration_error",
+                    "failureCategory": "provider_not_configured",
+                    "correction": correction_context,
+                }
+                result = self._fit_strategy_result_document(result)
             evidence = RecognitionStrategyTestEvidence(
                 revision.revision_id,
                 revision.version,
@@ -989,6 +1227,18 @@ class ConfigurationObjectService:
             )
         code = metadata.error.code if metadata.error else MetadataErrorCode.UNKNOWN
         category, message, action = {
+            MetadataErrorCode.INVALID_REQUEST: (
+                "invalid_provider_request",
+                "The Metadata Provider rejected the correction request.",
+                "review the correction fields or direct Provider ID, then explicitly rerun the "
+                "Metadata correction test",
+            ),
+            MetadataErrorCode.NOT_FOUND: (
+                "provider_id_not_found",
+                "The Metadata Provider did not find the requested identity.",
+                "review the direct Provider ID and Movie/TV choice, then explicitly rerun the "
+                "Metadata correction test",
+            ),
             MetadataErrorCode.AUTHENTICATION_FAILED: (
                 "authentication_failed",
                 "The Metadata Provider rejected its credential.",

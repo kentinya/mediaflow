@@ -505,16 +505,13 @@ operation history remains compatible.
 
 ## Current milestone
 
-Phase 22.3 now adds a bounded guided Local setup slice on top of the managed whole-document
-authority. The authenticated Configuration view/API can edit Local Storage, ResourceLibrary, and
-MediaLibrary objects inside a Draft, show direct references, refuse referenced deletes, preserve and
-redact remote objects, run an exact-version read-only Local Exists/Stat check, and perform checked
-activation. After activation the existing `preview` DryRun Job is queued and carries the same
-revision ID/digest into Worker/Task/Result. Independent review marked the slice **FIX REQUIRED** for
-lossless large-section edits, Local absolute-root validation, Web reference/check recovery visibility,
-and bounded probe execution. Phase 22.3R is the current correction; remote guided editing and policy
-editors remain future work. Phase 22.1's separate Storage CRUD foundation
-is not a competing runtime authority.
+The managed Configuration view/API now covers the accepted Local setup, Recognition Strategy,
+MetadataPolicy offline/live test, and candidate-confirmation slices. Phase 22.5-D adds an explicit
+same-Provider Metadata correction test for exact current live evidence: enter corrected
+query/year/Movie-TV or a direct Provider ID, then inspect persisted bounded identity, candidates,
+failure, and recovery evidence. It never activates a revision, starts a scan/Task/Preview, or mutates
+media. This slice awaits independent High Review and is not CLOSED; Provider switching and actual
+Files/Task continuation remain future work.
 
 For Local guided setup, Storage `rootPath` is host-absolute while ResourceLibrary `storagePath` and
 MediaLibrary `rootPath` are Storage-relative. The Web action never creates roots or calls a Storage

@@ -177,15 +177,15 @@ narratives. Keep Provider switching and Files/Task continuation explicitly TARGE
 
 ## Closure Checklist
 
-- [ ] Implementation workspace/session preflight records worktree, `.git`, index, sandbox, and
+- [x] Implementation workspace/session preflight records worktree, `.git`, index, sandbox, and
       approval mode.
-- [ ] Implementation capability mode is classified according to the authoritative workflow.
+- [x] Implementation capability mode is classified according to the authoritative workflow.
 - [x] Preceding Phase 22.5-C candidate-confirmation Slice is `PASS / CLOSED`.
 - [x] Reviewed checkpoint `d68a19ddd4bb62bc27e77bab013edb20c9eb53e5` is reachable from
       `origin/main`.
-- [ ] Implementation and required focused/full quality gates pass with actual evidence.
-- [ ] Commit manifest contains every required file and no unrelated/private file.
-- [ ] `config/alist.json` remains ignored, untracked, unstaged, unread, and uncommitted.
+- [x] Implementation and required focused/full quality gates pass with actual evidence.
+- [x] Commit manifest contains every required file and no unrelated/private file.
+- [x] `config/alist.json` remains ignored, untracked, unstaged, unread, and uncommitted.
 - [ ] Coherent implementation checkpoint created: `Commit SHA: ________________________________`.
 - [ ] High Review inspected that exact SHA: `High Audit: _________________________________`.
 - [ ] Progress and roadmap record final Status / Commit SHA / High Audit.
@@ -195,9 +195,10 @@ narratives. Keep Provider switching and Files/Task continuation explicitly TARGE
 Current checkpoint state:
 
 ```text
-Status: IN PROGRESS
+Status: READY FOR COMMIT
 Commit SHA: PENDING
 High Audit: PENDING
+Push: NOT REQUIRED BEFORE HIGH REVIEW; NOT PUSHED
 ```
 
 ## Completion Report

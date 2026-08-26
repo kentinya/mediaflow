@@ -1019,9 +1019,14 @@ existing exact-revision Strategy runner, and uses the existing direct Provider-I
 path. A bounded provider-neutral selection explanation is saved with the new outcome. Stale,
 offline, non-reviewable or unprojected selections fail before Provider access; this test-only path
 constructs no Storage and starts no scan, Task, Preview, activation or downstream naming/planning.
-Phase 22.5-D is the next implementation boundary: same-Provider query/year/Movie-TV/direct-ID
-correction testing against that exact Validated revision. Provider switching and actual Files/Task
-continuation remain TARGET work.
+Phase 22.5-D is now CURRENT implementation awaiting independent review. One authenticated managed
+action validates exact revision and evidence identity, derives RecognitionType/MetadataPolicy/
+Provider from persisted evidence, and passes a bounded query/year/Movie-TV or direct-ID
+`MetadataCorrectionSelection` through the existing live Strategy runner. Its bounded correction
+context is stored in the existing evidence JSON and replacement uses the existing revision-plus-
+evidence CAS. The Web uses the same action and existing candidate confirmation; no second store,
+Storage construction, activation, scan, Task, Preview, or media execution is added. Provider
+switching and actual Files/Task continuation remain TARGET work.
 
 ## Deferred work
 
@@ -1605,8 +1610,8 @@ Remote setup remains TARGET. Recognition policy editing and offline Strategy Tes
 accepted in Phase 22.4; MetadataPolicy managed editing/offline resolution was accepted in Phase
 22.5-A. Managed live Provider testing/candidate explanation and its F1 correction were accepted in
 Phase 22.5-B. Candidate confirmation and its F1/F2 corrections were accepted in Phase 22.5-C.
-Phase 22.5-D same-Provider managed live correction testing is next, while Provider switching and
-Files/Task continuation remain later work.
+Phase 22.5-D same-Provider managed live correction testing is implemented and pending independent
+High Review, while Provider switching and Files/Task continuation remain later work.
 
 ## Configuration architecture: TARGET (partially implemented; remaining work explicit)
 

@@ -503,10 +503,17 @@ APP_JS = b"""(() => {
       `${Number.isInteger(match.candidateProjected) ? match.candidateProjected : '-'} / ${Number.isInteger(match.candidateTotal) ? match.candidateTotal : '-'}`);
     field(summary, 'Evidence truncated', value.truncated === true || match.truncated === true ? 'YES' : 'NO');
     const selection = value.candidateSelection && typeof value.candidateSelection === 'object' ? value.candidateSelection : null;
+    const correction = value.correction && typeof value.correction === 'object' ? value.correction : null;
     field(summary, 'Confirmed candidate rank', selection && Number.isInteger(selection.rank) ? selection.rank : '-');
     field(summary, 'Confirmed Provider / ID', selection ?
       `${boundedSetupText(selection.provider)} / ${boundedSetupText(selection.providerId)}` : '-');
     field(summary, 'Identity match method', boundedSetupText(identity.matchedBy));
+    field(summary, 'Correction mode', correction ? boundedSetupText(correction.mode) : '-');
+    field(summary, 'Correction query / year', correction && correction.mode === 'query' ?
+      `${boundedSetupText(correction.query)} / ${Number.isInteger(correction.year) ? correction.year : '-'}` : '-');
+    field(summary, 'Correction Provider ID', correction && correction.mode === 'direct_provider_id' ?
+      boundedSetupText(correction.providerId) : '-');
+    field(summary, 'Correction media type', correction ? boundedSetupText(correction.mediaType) : '-');
     detailContent.append(summary);
     if (value.truncated === true || match.truncated === true) detailContent.append(text('p',
       'Candidate evidence was reduced to the persisted byte budget; the outcome and highest-ranked evidence are preserved.', 'warning'));
@@ -611,6 +618,60 @@ APP_JS = b"""(() => {
       }
       renderMetadataTestEvidence(metadataResult,
         canConfirmCandidate ? confirmMetadataCandidate : null);
+      const correctionSource = metadataResult && metadataResult.correction &&
+        typeof metadataResult.correction === 'object' ? metadataResult.correction.sourceOutcome : null;
+      const canCorrectMetadata = current && revision.status === 'validated' && evidence.result &&
+        evidence.result.mode === 'live' && metadataResult &&
+        (['not_found', 'need_confirm', 'ambiguous'].includes(metadataResult.status) ||
+          ['not_found', 'need_confirm', 'ambiguous'].includes(correctionSource));
+      if (canCorrectMetadata) {
+        const correctionControls = text('div', '', 'choices');
+        correctionControls.append(text('h4', 'Run Metadata correction test'));
+        const correctionMode = document.createElement('select');
+        correctionMode.setAttribute('aria-label', 'Metadata correction mode');
+        [['query', 'Corrected query'], ['direct_provider_id', 'Direct Provider ID']].forEach(([value, label]) => {
+          const option = document.createElement('option'); option.value = value; option.textContent = label;
+          correctionMode.append(option);
+        });
+        const correctionQuery = guidedInput('Corrected query', metadataResult.query || '');
+        const correctionYear = guidedInput('Corrected year (optional)', '');
+        correctionYear.input.type = 'number'; correctionYear.input.min = '1870'; correctionYear.input.max = '2100';
+        const correctionProviderId = guidedInput('Direct Provider ID', '');
+        const correctionMediaType = document.createElement('select');
+        correctionMediaType.setAttribute('aria-label', 'Corrected media type');
+        [['movie', 'Movie'], ['tv', 'TV']].forEach(([value, label]) => {
+          const option = document.createElement('option'); option.value = value; option.textContent = label;
+          correctionMediaType.append(option);
+        });
+        function updateCorrectionMode() {
+          const direct = correctionMode.value === 'direct_provider_id';
+          correctionQuery.input.disabled = direct; correctionYear.input.disabled = direct;
+          correctionProviderId.input.disabled = !direct;
+        }
+        correctionMode.addEventListener('change', updateCorrectionMode); updateCorrectionMode();
+        correctionControls.append(correctionMode, correctionQuery.wrapper, correctionYear.wrapper,
+          correctionProviderId.wrapper, correctionMediaType);
+        correctionControls.append(actionButton('Run Metadata correction test', async () => {
+          try {
+            const direct = correctionMode.value === 'direct_provider_id';
+            const payload = {expectedVersion: revision.version, expectedDigest: revision.digest,
+              expectedTestedAt: evidence.testedAt, mediaType: correctionMediaType.value};
+            if (direct) payload.providerId = correctionProviderId.input.value;
+            else {
+              payload.query = correctionQuery.input.value;
+              if (correctionYear.input.value !== '') payload.year = Number(correctionYear.input.value);
+            }
+            const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/recognition-strategy-test/metadata-correction`,
+              {method: 'POST', body: JSON.stringify(payload)});
+            message(result.status === 'completed' ?
+              `Metadata correction test completed. ${boundedSetupText(result.nextAction, 'Review persisted evidence.')}` :
+              `${result.message || 'Metadata correction test failed.'} ${result.nextAction || ''}`,
+              result.status !== 'completed');
+            await showConfigurationRevision(revision);
+          } catch (error) { message(errorText(error), true); }
+        }));
+        detailContent.append(correctionControls);
+      }
       renderStrategyEvidenceRows('Matched rules', recognition.matchedRules);
       renderStrategyEvidenceRows('Alternatives', recognition.alternatives);
       const reasons = Array.isArray(recognition.reasons) ? recognition.reasons.slice(0, 32) : [];
