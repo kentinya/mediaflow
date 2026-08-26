@@ -92,11 +92,12 @@ bounded whole-document snapshot journey is accepted; object-level setup remains 
 This is not the full first-time setup journey: remote/provider Storage forms, policy editing, provider
 switching, and generic per-item stage-aware recovery remain TARGET work.
 
-## Phase 22.3 Local setup slice (CURRENT implementation; R4-F1 accepted)
+## Phase 22.3 Local setup slice (CURRENT implementation; PASS / CLOSED)
 
-The Configuration view has the submitted first-setup path over the same managed Draft authority, but
-it is not product-complete: independent review found lossless-edit, absolute-root, reference-display,
-persisted check-recovery visibility, and bounded-probe P1 gaps. Phase 22.3R corrects only these gaps:
+The Configuration view provides the accepted Local first-setup path over the same managed Draft
+authority. Phase 22.3R and its focused corrections closed the independently found lossless-edit,
+absolute-root, reference-display, persisted check-recovery, bounded-probe, Web eligibility, and
+behavioral snapshot-consumption P1 gaps:
 
 ```text
 current Active/bootstrap → Draft → guided Local Storage
@@ -129,28 +130,17 @@ a runnable check; revalidated stale evidence exposes an explicit rerun but canno
 only exact current passed evidence enables checked activation. Independent R4-F1 review accepted the
 remaining action correction: one shared selection now admits only enabled Local-backed source and
 destination libraries, controls both button visibility and submitted IDs, and shows correction
-guidance without a request when unavailable. The later R5-F1 review accepted the behavior-distinct
-checked activation through Worker Task/Result pin, establishing the Phase 22.3 prerequisite for
-this reconstruction. No remote connectivity test or media mutation is part of that slice.
-
-## Phase 22.4 Recognition Strategy slice (implementation complete; review pending)
-
-The Configuration view now supports the bounded RecognitionType, RecognitionRule, and
-RecognitionTypePolicy journey over the same managed Draft authority:
-
-```text
-edit Recognition objects → Validate exact revision → choose enabled ResourceLibrary
-→ run zero-I/O Strategy Test → inspect durable rules/alternatives/reasons/warnings
-→ correct and explicitly rerun when needed → checked Activate only with both current checks
-```
-
-Matched results direct explicit review and activation. Ambiguous and unrecognized results direct
-the operator to correct the relevant rules or ResourceLibrary match, Validate, and explicitly
-rerun; they do not fabricate a winner. Failed and stale evidence remains visible with bounded
-side-effect and retry guidance. The action constructs no Storage or Metadata Provider and starts no
-scan, Preview, or media mutation. This is implementation evidence awaiting independent High
-integration review, not a Phase closure statement. MetadataPolicy editing and live/candidate
-Metadata journeys remain deferred.
+guidance without a request when unavailable. R5-F1 and the 2026-08-25 phase-level Final Closure Audit
+accepted the combined checked activation → DryRun Preview Job → later Active → Worker → Task/Result
+journey: the queued Job consumes the original behavior-distinct immutable revision, preserves exact
+ID/digest through Task/Result, grants no execute authority, and leaves source/target media unchanged.
+No remote connectivity test or media mutation is part of the closed Phase 22.3 scope; Recognition
+configuration and Strategy Test completed independent review as Phase 22.4 on 2026-08-26.
+MetadataPolicy managed editing and exact-revision offline resolution preview completed independent
+review as Phase 22.5-A on the same date. Live Provider testing and candidate explanation, including
+the service-lifetime cache/request-control/evidence-bound correction, completed independent review
+as Phase 22.5-B. Candidate confirmation is the current Phase 22.5-C implementation/review boundary;
+Provider switching remains later Metadata journey work.
 
 ## A. First-time setup
 

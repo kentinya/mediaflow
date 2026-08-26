@@ -961,23 +961,64 @@ NamingPolicy catalogs retain the existing configured registries, and every user 
 reference is validated during runner bootstrap. C continues to resolve Metadata C and Naming/
 Classification/Organize A without changing RecognitionType C.
 
-## Phase 22.4 Recognition configuration and Strategy Test (implementation complete; review pending)
+Phase 22.4 adds a managed Web/API journey without introducing another recognition engine or
+configuration authority. `recognitionTypes`, `recognitionRules`, and `recognitionTypePolicies` are
+edited inside the existing optimistic whole-document Draft; edits are audited and return the
+revision to Draft, while the shared runtime loader remains the canonical priority and reference
+validator. The synthetic Strategy Test is accepted only for an exact Validated revision
+ID/version/digest and enabled ResourceLibrary. It constructs no Storage or Provider: the configured
+production `MediaParserService`, `RecognitionRuleEngine`, and `RecognitionTypePolicyResolver`
+consume the supplied path directly.
 
-Phase 22.4 extends the existing managed whole-document authority with bounded object operations for
-`recognitionTypes`, `recognitionRules`, and `recognitionTypePolicies`. Draft edits remain
-optimistic-version checked and audited; the canonical runtime loader still owns priority and
-cross-reference validation. The exact-revision synthetic Strategy Test reuses the production
-Parser, Recognition engine, and RecognitionTypePolicy resolver without constructing Storage or a
-Metadata Provider.
+The latest bounded, secret-free Strategy Test outcome is persisted beside the managed revision and
+is projected with an explicit current/stale comparison. Matched, ambiguous, and unrecognized are
+engine outcomes rather than hidden defaults; configuration/engine failures retain zero-side-effect,
+retry-safe recovery evidence. Checked activation now requires both current passed Local setup
+evidence and current completed Strategy Test evidence. Activation still starts no scan or Preview,
+and resident API/Worker work continues to consume the immutable Active snapshot through the
+existing snapshot binding and saved-revision resolver.
 
-The configuration repository persists bounded, secret-free Strategy Test evidence against the
-tested revision/version/digest. API and Web project whether that evidence is current or stale, and
-Web renders matched rules, alternatives, reasons, warnings, and outcome-specific recovery guidance.
-Checked activation requires both current passed Local setup evidence and current completed Strategy
-Test evidence. RecognitionType C remains C when it reuses NamingPolicy or ClassificationPolicy A.
-This records the reconstructed Phase 22.4 implementation; independent High integration review and
-Phase closure are still pending. MetadataPolicy managed editing, live Provider testing, candidate
-confirmation, and evidence CAS remain outside this boundary.
+Independent review closed Phase 22.4 on 2026-08-26. The accepted Web projection renders bounded
+matched rules, alternatives, reasons, and warnings. Its persisted `nextAction` is outcome-specific:
+matched permits explicit review/activation, while ambiguous and unrecognized direct Draft
+correction, validation, and explicit rerun. This closure does not add live Provider testing or
+MetadataPolicy editing.
+
+Phase 22.5-A was independently closed on 2026-08-26. `metadataPolicies` now use the same managed
+Draft/API/Web object path, optimistic versioning, audit, direct-reference protection, canonical
+runtime validation, and stale evidence semantics. A matched offline Strategy Test projects the
+provider-neutral effective MetadataPolicy actually resolved from that exact revision; it constructs
+no Provider or Storage and ambiguous/unrecognized outcomes do not fabricate policy content.
+
+Phase 22.5-B, including its F1 correction, was independently closed on 2026-08-26. It adds an explicit live action on that same
+exact-revision Strategy Test. Offline remains the default and constructs no Provider. Live Provider
+bootstrap is shared by CLI/service, receives only the effective policy's Provider ID, and reads its
+credential from the service environment. The production Parser → Recognition → TypePolicy →
+MetadataProvider → CandidateMatcher path produces a bounded provider-neutral evidence projection:
+at most five candidates and six score components per candidate, with normalized identity,
+canonical/regional year and matched-title source. Provider exceptions and transport DTOs do not
+cross the evidence boundary. This is a test journey only: it starts no scan, task, preview,
+activation or storage mutation and does not change checked-activation semantics. Provider
+switching and free-form manual correction continuation remain TARGET work.
+
+Independent review on 2026-08-26 assigned three CURRENT defects to Phase 22.5-B-F1 and subsequently
+closed that focused correction after re-review. The API now owns one thread-safe lazy
+service-lifetime Provider registry/cache; immutable effective-policy timeout/retry controls are
+supplied per TMDB request without mutating the shared client; and the provider-neutral evidence
+projection applies deterministic UTF-8 byte-budget fitting with explicit total/projected/truncated
+fields. Provider construction occurs only for an explicit live action, failed initialization is not
+cached, and lower-ranked candidates are discarded before winning title/year evidence. This accepted
+F1 boundary does not add Provider switching, manual Metadata correction or cache telemetry.
+
+Phase 22.5-C is the current implementation/review boundary. For the latest persisted, current live
+`NeedConfirm`/`Ambiguous` evidence, the Web may submit only exact revision identity, exact evidence
+time and one projected candidate rank. The Application resolves Provider ID/media type from that
+repository evidence, revalidates the effective MetadataPolicy and RecognitionType through the
+existing exact-revision Strategy runner, and uses the existing direct Provider-ID identification
+path. A bounded provider-neutral selection explanation is saved with the new outcome. Stale,
+offline, non-reviewable or unprojected selections fail before Provider access; this test-only path
+constructs no Storage and starts no scan, Task, Preview, activation or downstream naming/planning.
+This paragraph records implementation awaiting independent review, not accepted closure.
 
 ## Deferred work
 
@@ -1512,11 +1553,12 @@ The snapshot identity columns are additive compatibility migrations on the exist
 the historical runtime schema marker remains `22` so accepted backup/restore and migration evidence
 is not rewritten. Fresh and older databases both receive the columns by presence checks, and Job
 inserts use an explicit column list so historical ALTER-table column order cannot corrupt authority
-fields. The separate configuration-management schema marker is `4`; its revision sequence, singleton
-authority pointer, and bounded Local setup-check evidence are additive and do not rewrite the Runtime
-marker.
+fields. Phase 22.3 closed on configuration-management schema marker `4`; Phase 22.4 adds marker `5`
+for revision-bound Recognition Strategy Test evidence. Its revision sequence, singleton authority
+pointer, Local setup-check evidence, and Strategy Test evidence remain additive and do not rewrite
+the Runtime marker.
 
-### Phase 22.3 Local Storage + Library guided slice (CURRENT implementation; R4-F1 accepted)
+### Phase 22.3 Local Storage + Library guided slice (CURRENT implementation; PASS / CLOSED)
 
 `ConfigurationObjectService` is a narrow application adapter over the same managed whole-document
 Draft. It edits only `storages`, `resourceLibraries`, and `mediaLibraries`, preserving all other
@@ -1551,9 +1593,16 @@ passed evidence may enable checked activation. Rendering performs no API mutatio
 retry. Independent R4-F1 review accepted this persistence/reload boundary and the corrected shared
 Web selection: only enabled libraries referencing Local Storage can expose the Run action, and those
 same objects supply the request IDs. Activation itself remains repository-only; after activation the
-existing Preview Job endpoint carries the immutable snapshot pin. The combined Worker pin acceptance
-proof was completed by the Phase 22.3 prerequisite baseline. Remote setup and policy editors beyond
-the reconstructed Phase 22.4 Recognition scope remain TARGET.
+existing Preview Job endpoint carries the immutable snapshot pin. R5-F1 and the 2026-08-25 Final
+Closure Audit accepted the combined production-entry proof: revision A is setup-checked and
+checked-activated, its DryRun Preview Job is queued, behavior-distinct revision B becomes Active,
+and the Worker still loads A's saved document before workflow construction. Job, Task, TaskItem, and
+Result retain A's ID/digest and A-derived destination while source/target trees remain unchanged.
+Remote setup remains TARGET. Recognition policy editing and offline Strategy Test were subsequently
+accepted in Phase 22.4; MetadataPolicy managed editing/offline resolution was accepted in Phase
+22.5-A. Managed live Provider testing/candidate explanation and its F1 correction were accepted in
+Phase 22.5-B. Candidate confirmation is the current Phase 22.5-C implementation/review boundary,
+while Provider switching remains later work.
 
 ## Configuration architecture: TARGET (partially implemented; remaining work explicit)
 

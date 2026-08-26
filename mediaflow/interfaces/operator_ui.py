@@ -296,7 +296,8 @@ APP_JS = b"""(() => {
     const values = guided.objects && guided.objects[kind] || [];
     const referenceKind = {storages: 'storage', resourceLibraries: 'resource_library',
       mediaLibraries: 'media_library', recognitionTypes: 'recognition_type',
-      recognitionRules: 'recognition_rule', recognitionTypePolicies: 'recognition_type_policy'}[kind] || kind;
+      recognitionRules: 'recognition_rule', recognitionTypePolicies: 'recognition_type_policy',
+      metadataPolicies: 'metadata_policy'}[kind] || kind;
     detailContent.append(text('h3', `${label} (${values.length})`));
     values.forEach(item => {
       const row = text('div', '', 'choice');
@@ -333,21 +334,25 @@ APP_JS = b"""(() => {
     if (configurationRevisionEditable(revision)) {
       const singular = {storages: 'Storage', resourceLibraries: 'ResourceLibrary',
         mediaLibraries: 'MediaLibrary', recognitionTypes: 'RecognitionType',
-        recognitionRules: 'RecognitionRule', recognitionTypePolicies: 'RecognitionTypePolicy'}[kind] || kind;
-      const guidedJson = kind.startsWith('recognition');
+        recognitionRules: 'RecognitionRule', recognitionTypePolicies: 'RecognitionTypePolicy',
+        metadataPolicies: 'MetadataPolicy'}[kind] || kind;
+      const guidedJson = kind.startsWith('recognition') || kind === 'metadataPolicies';
       detailContent.append(actionButton(`${guidedJson ? 'Add' : 'Add Local'} ${singular}`,
         () => renderGuidedObjectForm(revision, kind, null)));
     }
   }
   function renderGuidedObjectForm(revision, kind, item) {
-    if (kind.startsWith('recognition')) {
+    if (kind.startsWith('recognition') || kind === 'metadataPolicies') {
+      const metadataPolicy = kind === 'metadataPolicies';
       clear(detailContent);
-      detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} recognition object`));
-      detailContent.append(text('p', 'Edit one bounded JSON object. References and rule priority are checked when the Draft is validated; unsafe regex is rejected when saved.', 'warning'));
+      detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} ${metadataPolicy ? 'MetadataPolicy' : 'recognition object'}`));
+      detailContent.append(text('p', metadataPolicy ?
+        'Edit one bounded MetadataPolicy JSON object. Provider/query/locale/threshold/request settings are validated; credentials and unknown fields are rejected.' :
+        'Edit one bounded JSON object. References and rule priority are checked when the Draft is validated; unsafe regex is rejected when saved.', 'warning'));
       const editor = document.createElement('textarea');
-      editor.setAttribute('aria-label', 'Recognition object JSON');
+      editor.setAttribute('aria-label', metadataPolicy ? 'MetadataPolicy JSON' : 'Recognition object JSON');
       editor.value = JSON.stringify(item || {}, null, 2); detailContent.append(editor);
-      detailContent.append(actionButton('Save recognition object', async () => {
+      detailContent.append(actionButton(metadataPolicy ? 'Save MetadataPolicy' : 'Save recognition object', async () => {
         try { await mutateGuidedObject(revision, kind, item && item.id, JSON.parse(editor.value), item ? 'PUT' : 'POST'); }
         catch (error) { message(errorText(error), true); }
       }), actionButton('Back to revision', () => showConfigurationRevision(revision)));
@@ -477,6 +482,60 @@ APP_JS = b"""(() => {
     if (source.length >= 32) detailContent.append(text('p',
       'Evidence display limit reached at 32 entries; additional matches may be omitted.', 'warning'));
   }
+  function renderMetadataTestEvidence(value, confirmCandidate) {
+    if (!value || typeof value !== 'object') return;
+    detailContent.append(text('h4', 'Live Metadata Result'));
+    const identity = value.identity && typeof value.identity === 'object' ? value.identity : {};
+    const match = value.match && typeof value.match === 'object' ? value.match : {};
+    const summary = document.createElement('dl');
+    field(summary, 'Metadata status', boundedSetupText(value.status));
+    field(summary, 'Query', boundedSetupText(value.query));
+    field(summary, 'Cache', boundedSetupText(value.cacheStatus, 'not reported'));
+    field(summary, 'Selected Provider', boundedSetupText(identity.provider));
+    field(summary, 'Selected Provider ID', boundedSetupText(identity.providerId));
+    field(summary, 'Selected title', boundedSetupText(identity.title));
+    field(summary, 'Canonical / regional year',
+      `${Number.isInteger(identity.canonicalYear) ? identity.canonicalYear : '-'} / ${Number.isInteger(identity.regionalYear) ? identity.regionalYear : '-'}`);
+    field(summary, 'Confidence', Number.isFinite(identity.confidence) ? identity.confidence : '-');
+    field(summary, 'Candidate outcome', boundedSetupText(match.status));
+    field(summary, 'Winning score', Number.isFinite(match.score) ? match.score : '-');
+    field(summary, 'Candidates projected / total',
+      `${Number.isInteger(match.candidateProjected) ? match.candidateProjected : '-'} / ${Number.isInteger(match.candidateTotal) ? match.candidateTotal : '-'}`);
+    field(summary, 'Evidence truncated', value.truncated === true || match.truncated === true ? 'YES' : 'NO');
+    const selection = value.candidateSelection && typeof value.candidateSelection === 'object' ? value.candidateSelection : null;
+    field(summary, 'Confirmed candidate rank', selection && Number.isInteger(selection.rank) ? selection.rank : '-');
+    field(summary, 'Confirmed Provider / ID', selection ?
+      `${boundedSetupText(selection.provider)} / ${boundedSetupText(selection.providerId)}` : '-');
+    field(summary, 'Identity match method', boundedSetupText(identity.matchedBy));
+    detailContent.append(summary);
+    if (value.truncated === true || match.truncated === true) detailContent.append(text('p',
+      'Candidate evidence was reduced to the persisted byte budget; the outcome and highest-ranked evidence are preserved.', 'warning'));
+    const reasons = Array.isArray(match.reasons) ? match.reasons.slice(0, 8) : [];
+    reasons.forEach(reason => detailContent.append(text('p', `Match reason: ${boundedSetupText(reason)}`)));
+    const warnings = Array.isArray(match.warnings) ? match.warnings.slice(0, 8) : [];
+    warnings.forEach(warning => detailContent.append(text('p', `Match warning: ${boundedSetupText(warning)}`, 'warning')));
+    const candidates = Array.isArray(match.candidates) ? match.candidates.slice(0, 5) : [];
+    detailContent.append(text('h4', `Candidate explanation (${candidates.length}; display limit 5)`));
+    if (!candidates.length) {
+      detailContent.append(text('p', 'No scored candidates were recorded.'));
+      return;
+    }
+    detailContent.append(table(
+      ['Provider ID', 'Title', 'Canonical year', 'Score', 'Matched title', 'Title source'],
+      candidates.map(candidate => [boundedSetupText(candidate.providerId), boundedSetupText(candidate.title),
+        Number.isInteger(candidate.canonicalYear) ? candidate.canonicalYear : '-',
+        Number.isFinite(candidate.totalScore) ? candidate.totalScore : '-',
+        boundedSetupText(candidate.matchedProviderTitle), boundedSetupText(candidate.matchedTitleSource)])));
+    candidates.forEach((candidate, index) => {
+      const components = Array.isArray(candidate.components) ? candidate.components.slice(0, 6) : [];
+      detailContent.append(text('p', `Candidate ${boundedSetupText(candidate.providerId)} score components:`));
+      components.forEach(component => detailContent.append(text('p',
+        `${boundedSetupText(component.name)}: ${Number.isFinite(component.score) ? component.score : '-'} - ${boundedSetupText(component.reason)}`)));
+      if (typeof confirmCandidate === 'function') detailContent.append(actionButton(
+        `Confirm candidate ${index + 1}: ${boundedSetupText(candidate.title)}`,
+        () => confirmCandidate(index + 1)));
+    });
+  }
   function renderRecognitionStrategyTest(revision, guided) {
     const evidence = guided.recognitionStrategyTest;
     detailContent.append(text('h3', 'Recognition Strategy Test'));
@@ -486,12 +545,14 @@ APP_JS = b"""(() => {
       const list = document.createElement('dl');
       field(list, 'Evidence state', current ? 'current' : 'stale');
       field(list, 'Status', boundedSetupText(evidence.status));
+      field(list, 'Test mode', boundedSetupText(evidence.result && evidence.result.mode, 'offline'));
       field(list, 'Synthetic path', boundedSetupText(evidence.syntheticPath));
       field(list, 'ResourceLibrary', boundedSetupText(evidence.resourceLibraryId));
       field(list, 'Evidence version', Number.isInteger(evidence.revisionVersion) ? evidence.revisionVersion : '-');
       field(list, 'Evidence digest', boundedSetupText(evidence.revisionDigest));
       const recognition = evidence.result && evidence.result.recognition || {};
       const policy = evidence.result && evidence.result.policy || {};
+      const metadataPolicy = evidence.result && evidence.result.effectiveMetadataPolicy || null;
       field(list, 'Recognition outcome', boundedSetupText(recognition.status));
       field(list, 'RecognitionType', boundedSetupText(recognition.recognitionType));
       field(list, 'Matched rule', boundedSetupText(recognition.ruleId));
@@ -509,6 +570,47 @@ APP_JS = b"""(() => {
       field(list, 'Retry safe', evidence.retrySafe === true ? 'YES' : 'NO');
       field(list, 'Next action', boundedSetupText(evidence.nextAction));
       detailContent.append(list);
+      detailContent.append(text('h4', 'Effective MetadataPolicy'));
+      if (metadataPolicy && typeof metadataPolicy === 'object') {
+        const metadata = document.createElement('dl');
+        field(metadata, 'Policy ID', boundedSetupText(metadataPolicy.id));
+        field(metadata, 'Provider ID', boundedSetupText(metadataPolicy.providerId));
+        field(metadata, 'Media query type', boundedSetupText(metadataPolicy.mediaQueryType));
+        field(metadata, 'Language', boundedSetupText(metadataPolicy.language));
+        field(metadata, 'Region', boundedSetupText(metadataPolicy.region));
+        field(metadata, 'Automatic / confirmation threshold',
+          `${Number.isFinite(metadataPolicy.automaticThreshold) ? metadataPolicy.automaticThreshold : '-'} / ${Number.isFinite(metadataPolicy.confirmationThreshold) ? metadataPolicy.confirmationThreshold : '-'}`);
+        field(metadata, 'Minimum score gap', Number.isFinite(metadataPolicy.minimumScoreGap) ? metadataPolicy.minimumScoreGap : '-');
+        field(metadata, 'Timeout seconds', Number.isFinite(metadataPolicy.timeout) ? metadataPolicy.timeout : '-');
+        field(metadata, 'Retry count', metadataPolicy.retry && Number.isInteger(metadataPolicy.retry.count) ? metadataPolicy.retry.count : '-');
+        field(metadata, 'Candidate / page limits',
+          `${Number.isInteger(metadataPolicy.maxCandidates) ? metadataPolicy.maxCandidates : '-'} / ${Number.isInteger(metadataPolicy.maxSearchPages) ? metadataPolicy.maxSearchPages : '-'}`);
+        field(metadata, 'Provider request / enrichment limits',
+          `${Number.isInteger(metadataPolicy.maxProviderRequests) ? metadataPolicy.maxProviderRequests : '-'} / ${Number.isInteger(metadataPolicy.maxCandidateEnrichments) ? metadataPolicy.maxCandidateEnrichments : '-'}`);
+        field(metadata, 'Enabled', metadataPolicy.enabled === true ? 'YES' : 'NO');
+        detailContent.append(metadata);
+      } else {
+        detailContent.append(text('p', 'No MetadataPolicy resolved for this outcome. Correct Recognition configuration before retrying.', 'warning'));
+      }
+      const metadataResult = evidence.result && evidence.result.metadata || null;
+      const metadataMatch = metadataResult && metadataResult.match || null;
+      const canConfirmCandidate = current && revision.status === 'validated' &&
+        evidence.status === 'completed' && evidence.result && evidence.result.mode === 'live' &&
+        metadataMatch && (metadataMatch.status === 'need_confirm' || metadataMatch.status === 'ambiguous');
+      async function confirmMetadataCandidate(rank) {
+        try {
+          const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/recognition-strategy-test/candidate-selection`,
+            {method: 'POST', body: JSON.stringify({expectedVersion: revision.version,
+              expectedDigest: revision.digest, expectedTestedAt: evidence.testedAt, candidateRank: rank})});
+          message(result.status === 'completed' ?
+            `Candidate confirmed. ${boundedSetupText(result.nextAction, 'Review the persisted identity.')}` :
+            `${result.message || 'Candidate confirmation failed.'} ${result.nextAction || ''}`,
+            result.status !== 'completed');
+          await showConfigurationRevision(revision);
+        } catch (error) { message(errorText(error), true); }
+      }
+      renderMetadataTestEvidence(metadataResult,
+        canConfirmCandidate ? confirmMetadataCandidate : null);
       renderStrategyEvidenceRows('Matched rules', recognition.matchedRules);
       renderStrategyEvidenceRows('Alternatives', recognition.alternatives);
       const reasons = Array.isArray(recognition.reasons) ? recognition.reasons.slice(0, 32) : [];
@@ -535,20 +637,22 @@ APP_JS = b"""(() => {
     const library = document.createElement('select'); library.setAttribute('aria-label', 'Strategy Test ResourceLibrary');
     resources.forEach(item => { const option = document.createElement('option'); option.value = item.id; option.textContent = `${item.id} - ${item.name || item.id}`; library.append(option); });
     controls.append(pathControl.wrapper, library);
-    async function runStrategyTest() {
+    async function runStrategyTest(liveMetadata) {
       try {
         const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/recognition-strategy-test`,
           {method: 'POST', body: JSON.stringify({expectedVersion: revision.version, expectedDigest: revision.digest,
-            resourceLibraryId: library.value, syntheticPath: pathControl.input.value})});
+            resourceLibraryId: library.value, syntheticPath: pathControl.input.value, liveMetadata})});
         const outcome = result.result && result.result.recognition && result.result.recognition.status;
         message(result.status === 'completed' ?
-          `Strategy Test completed (${boundedSetupText(outcome, 'unknown')}). ` +
+          (liveMetadata ? `Live Metadata Test completed (${boundedSetupText(outcome, 'unknown')}). ` :
+            `Strategy Test completed (${boundedSetupText(outcome, 'unknown')}). `) +
             boundedSetupText(result.nextAction, 'Review the persisted evidence.') :
           `${result.message || 'Strategy Test failed.'} ${result.nextAction || ''}`, result.status !== 'completed');
         await showConfigurationRevision(revision);
       } catch (error) { message(errorText(error), true); }
     }
-    controls.append(actionButton('Run Recognition Strategy Test', runStrategyTest));
+    controls.append(actionButton('Run Recognition Strategy Test (offline)', () => runStrategyTest(false)));
+    controls.append(actionButton('Run live Metadata test', () => runStrategyTest(true)));
     if (checkedActivationEvidenceIsCurrent(revision, guided)) {
       controls.append(actionButton('Activate checked Draft', () => activateConfigurationRevision(revision, true)));
     }
@@ -620,6 +724,7 @@ APP_JS = b"""(() => {
         renderGuidedObjectList(data, guided, 'recognitionTypes', 'RecognitionTypes');
         renderGuidedObjectList(data, guided, 'recognitionRules', 'RecognitionRules');
         renderGuidedObjectList(data, guided, 'recognitionTypePolicies', 'RecognitionTypePolicies');
+        renderGuidedObjectList(data, guided, 'metadataPolicies', 'MetadataPolicies');
         renderLocalSetupEvidence(data, guided);
         renderLocalSetupActions(data, guided);
         renderRecognitionStrategyTest(data, guided);

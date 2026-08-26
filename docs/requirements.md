@@ -46,12 +46,17 @@
 > Managed Configuration CRUD 基础。Phase 22.2/22.2R-F2 已建立 whole-document Draft/Validated/Active
 > Snapshot 的 API/Web/CLI 生命周期、原子激活、Task/Job 身份字段、fail-closed 运行时刷新、结构化
 > 冲突和恢复基础。F2 将 API identity/admission/gate/status 收敛到同一不可变 binding，并为已保存
-> Job revision 不可用提供可操作证据。2026-08-24 独立验收已 PASS/CLOSED。Phase 22.3 的后续
-> correction 与 closure 是 Phase 22.4 的正式前置基线。当前重建的 Phase 22.4 实现把
-> RecognitionType、RecognitionRule、RecognitionTypePolicy 编辑及精确 revision 的离线 Strategy
-> Test 接入同一 Managed authority，并提供持久解释、Web 恢复指导和双证据 checked activation。
-> 该实现仍待独立 High integration review，尚未在本切片记录 Phase 22.4 closure。远端 Storage、
-> MetadataPolicy managed 编辑、live Provider/candidate 流程和完整配置旅程仍未完成。
+> Job revision 不可用提供可操作证据。2026-08-24 独立验收已 PASS/CLOSED。Phase 22.3 的
+> Local Storage + ResourceLibrary + MediaLibrary Draft/API/Web、引用影响、只读 setup check、
+> 失败恢复、checked activation 与行为可辨的 Preview Job → Worker → Task/Result immutable-pin
+> 组合旅程，在逐项 correction 独立验收后于 2026-08-25 通过 Final Closure Audit，结论为
+> **PASS / CLOSED**。先前的截断丢失、Local 绝对路径、Web 引用/陈旧失败证据、check
+> 容量/异常安全和组合 pin P1 均已关闭。Phase 22.4 Recognition Configuration + Strategy Test
+> 已于 2026-08-26 独立验收 PASS/CLOSED；Phase 22.5-A MetadataPolicy Managed Configuration +
+> Offline Resolution Preview 随后也已独立验收 PASS/CLOSED。Phase 22.5-B Managed Live
+> Metadata Test + Candidate Explanation 及 F1 修复也已独立验收；Phase 22.5-C candidate
+> confirmation 是当前 implementation/review 边界。远端 Storage、Provider switching 和更宽
+> 配置旅程仍未完成。
 
 ---
 
@@ -3106,18 +3111,21 @@ System Settings
 > 的独立验收曾发现 pre-F1 implementation 的 repeated-request fail-open、Scheduler 内容/identity
 > 不一致及陈旧编辑恢复缺口；F1 已修复这些具体缺口，但后续独立验收又发现 resident API 在激活
 > 后只更新 snapshot identity、未原子更新准入/execute 行为，以及旧 Job revision 失败不可操作。
-> Phase 22.2R-F2 聚焦修复已经独立验收 PASS/CLOSED；Phase 22.3 是当前开发边界。
+> Phase 22.2R-F2 聚焦修复已经独立验收 PASS/CLOSED；Phase 22.3 也已于 2026-08-25 通过
+> phase-level Final Closure Audit。Phase 22.4 与 Phase 22.5-A 也已于 2026-08-26 独立验收
+> PASS/CLOSED；Phase 22.5-B/F1 随后也已独立验收，Phase 22.5-C 是当前 implementation/review
+> 边界。
 >
-> 当前实现（Phase 22.2/22.2R-F2 已验收；Phase 22.3 是当前 reconstruction 的前置基线）：Managed Configuration
+> 当前实现（Phase 22.2/22.2R-F2 whole-document 与 Phase 22.3 Local slice 已验收）：Managed Configuration
 > 已经经过 Draft → Validate/Test → Validated → 显式 Activate，持久化生成不可变 Runtime Snapshot；
 > resident API 现在按请求获取一个完整不可变 binding，identity、准入、execute gate、schedule/status 和
 > MetadataPolicy 参考不会跨 revision 混用。现有 authority、digest、审计和缺失/损坏/运行时不可消费 Active 的恢复
 > 约束已接入 API/Web/CLI。F1 修复了重复请求 fail-closed、同快照 Scheduler 消费、Pinned
 > Worker 和陈旧 Draft 冲突；F2 进一步修复 API 原子运行时绑定、旧快照 Job 可操作失败并补齐强制
-> 并发/execute pin/零 I/O 证据。Phase 22.3 的 correction 最终补齐 Local Storage/Library 对象
-> 完整保留、路径、Web/check 恢复证据及行为可辨的 Worker pin。Phase 22.4 当前实现进一步接入
-> Recognition 三类对象与离线 Strategy Test，但仍待独立 High integration review；远端 Storage、
-> MetadataPolicy managed 编辑、live Provider 和 Secret Store 仍是目标架构。
+> 并发/execute pin/零 I/O 证据。Phase 22.3 的 Local Storage/Library 对象编辑、引用影响、
+> 有界 setup check、失败/陈旧恢复、checked activation 与行为可辨 Worker pin 已完成组合
+> closure；Phase 22.4 在同一 authority 上完成 Recognition 配置与 Strategy Test，未重新定义
+> Active source of truth；远端 Storage、Provider 测试和 Secret Store 仍是目标架构。
 >
 > 目标架构（尚未实现）：Managed Activation 建立后，JSON 仅用于 bootstrap、导入导出和迁移，
 > 不再是竞争性的 Active source of truth，并继续扩展为完整配置对象纵向旅程。

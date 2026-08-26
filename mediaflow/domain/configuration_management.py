@@ -189,11 +189,15 @@ class ConfigurationVersionConflict(RuntimeError):
         revision_id: str | None = None,
         current_version: int | None = None,
         current_digest: str | None = None,
+        durable_state: str | None = None,
+        next_action: str | None = None,
     ) -> None:
         super().__init__(message)
         self.revision_id = revision_id
         self.current_version = current_version
         self.current_digest = current_digest
+        self.durable_state = durable_state
+        self.next_action = next_action
 
 
 class ConfigurationActivationConflict(RuntimeError):
@@ -706,6 +710,15 @@ class ManagedConfigurationRepository(Protocol):
 
     def save_recognition_strategy_test(
         self, evidence: RecognitionStrategyTestEvidence
+    ) -> RecognitionStrategyTestEvidence: ...
+
+    def replace_recognition_strategy_test(
+        self,
+        evidence: RecognitionStrategyTestEvidence,
+        *,
+        expected_revision_version: int,
+        expected_revision_digest: str,
+        expected_tested_at: datetime,
     ) -> RecognitionStrategyTestEvidence: ...
 
     def get_recognition_strategy_test(

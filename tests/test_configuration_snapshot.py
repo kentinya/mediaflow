@@ -704,7 +704,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     side_effect=AssertionError("configuration lifecycle constructed Storage"),
                 ),
                 patch(
-                    "mediaflow.final_cli.TMDBProvider",
+                    "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBProvider",
                     side_effect=AssertionError("configuration lifecycle constructed Provider"),
                 ),
             ):
@@ -1641,7 +1641,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     side_effect=AssertionError("recovery API must not construct Storage"),
                 ),
                 patch(
-                    "mediaflow.final_cli.TMDBProvider",
+                    "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBProvider",
                     side_effect=AssertionError("recovery API must not construct Provider"),
                 ),
             ):
@@ -1810,11 +1810,11 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 ),
                 patch("wsgiref.simple_server.make_server", side_effect=make_server),
                 patch(
-                    "mediaflow.final_cli.TMDBProvider",
+                    "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBProvider",
                     FakeTMDBProvider,
                 ),
                 patch(
-                    "mediaflow.final_cli.TMDBClient",
+                    "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBClient",
                     return_value=object(),
                 ),
             ):
@@ -1991,7 +1991,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.second_check, self.second_active = self.checked_activate(self.second_document)
                 worker_output, worker_error = io.StringIO(), io.StringIO()
                 with patch(
-                    "mediaflow.final_cli.TMDBClient",
+                    "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBClient",
                     return_value=object(),
                 ):
                     worker_status = final_main(
@@ -2076,7 +2076,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 ),
                 patch("wsgiref.simple_server.make_server", side_effect=make_server),
                 patch(
-                    "mediaflow.final_cli.TMDBProvider",
+                    "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBProvider",
                     FakeTMDBProvider,
                 ),
             ):
@@ -2243,7 +2243,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     side_effect=AssertionError("worker bootstrap must not construct Storage"),
                 ),
                 patch(
-                    "mediaflow.final_cli.TMDBProvider",
+                    "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBProvider",
                     side_effect=AssertionError("worker bootstrap must not construct Provider"),
                 ),
             ):
@@ -2395,7 +2395,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                         side_effect=AssertionError("failed snapshot must not construct Storage"),
                     ),
                     patch(
-                        "mediaflow.final_cli.TMDBProvider",
+                        "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBProvider",
                         side_effect=AssertionError("failed snapshot must not construct Provider"),
                     ),
                 ):

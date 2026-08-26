@@ -152,6 +152,10 @@ class OperatorUiTests(unittest.TestCase):
         self.assertNotIn("Activate", mismatch)
         self.assertNotIn("classificationPolicies", script)
         self.assertIn("recognitionRules", script)
+        self.assertIn("metadataPolicies", script)
+        self.assertIn("Save MetadataPolicy", script)
+        self.assertIn("Effective MetadataPolicy", script)
+        self.assertIn("Provider request / enrichment limits", script)
         self.assertIn("Run Recognition Strategy Test", script)
         self.assertIn("Task was not resumed", script)
 
@@ -396,8 +400,9 @@ class OperatorUiTests(unittest.TestCase):
     def test_strategy_evidence_rows_are_bounded_explainable_and_read_only(self) -> None:
         script = APP_JS.decode()
         renderer_start = script.index("function renderStrategyEvidenceRows")
-        strategy_start = script.index("function renderRecognitionStrategyTest", renderer_start)
-        renderer = script[renderer_start:strategy_start]
+        metadata_start = script.index("function renderMetadataTestEvidence", renderer_start)
+        strategy_start = script.index("function renderRecognitionStrategyTest", metadata_start)
+        renderer = script[renderer_start:metadata_start]
         strategy_end = script.index("async function activateConfigurationRevision", strategy_start)
         strategy = script[strategy_start:strategy_end]
 
@@ -433,10 +438,24 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("result.result.recognition.status", strategy)
         self.assertIn("boundedSetupText(result.nextAction", strategy)
         self.assertIn("Strategy Test completed (", strategy)
-        self.assertIn("Run Recognition Strategy Test", strategy)
-        self.assertNotIn("liveMetadata", strategy)
-        self.assertNotIn("candidate-selection", strategy)
-        self.assertIn("revision.status !== 'validated'", strategy)
+        self.assertIn("Run Recognition Strategy Test (offline)", strategy)
+        self.assertIn("Run live Metadata test", strategy)
+        self.assertIn("liveMetadata", strategy)
+        self.assertIn("renderMetadataTestEvidence", strategy)
+        self.assertIn("Candidate explanation", APP_JS.decode())
+        self.assertIn("Matched title", APP_JS.decode())
+        self.assertIn("Candidates projected / total", APP_JS.decode())
+        self.assertIn("Evidence truncated", APP_JS.decode())
+        self.assertIn("highest-ranked evidence are preserved", APP_JS.decode())
+        self.assertIn("Confirmed candidate rank", APP_JS.decode())
+        self.assertIn("Confirmed Provider / ID", APP_JS.decode())
+        self.assertIn("Identity match method", APP_JS.decode())
+        self.assertIn("Confirm candidate ${index + 1}", APP_JS.decode())
+        self.assertIn("expectedTestedAt: evidence.testedAt", strategy)
+        self.assertIn("candidate-selection", strategy)
+        self.assertIn("metadataMatch.status === 'need_confirm'", strategy)
+        self.assertIn("metadataMatch.status === 'ambiguous'", strategy)
+        self.assertIn("revision.status === 'validated'", strategy)
         self.assertNotIn("Review its explanation before activation", strategy)
 
 

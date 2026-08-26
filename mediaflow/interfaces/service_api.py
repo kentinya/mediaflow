@@ -91,6 +91,7 @@ class MediaFlowApi:
         configuration_snapshot_id: str | None = None,
         configuration_snapshot_digest: str | None = None,
         bootstrap_document: object | None = None,
+        metadata_provider_registry_factory=None,
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -112,7 +113,10 @@ class MediaFlowApi:
         self._file_catalog = file_catalog
         self._configuration_service = configuration_service
         self._configuration_objects = (
-            ConfigurationObjectService(configuration_service)
+            ConfigurationObjectService(
+                configuration_service,
+                metadata_provider_registry_factory=metadata_provider_registry_factory,
+            )
             if configuration_service is not None
             else None
         )
@@ -251,10 +255,11 @@ class MediaFlowApi:
                     "revisionId": error.revision_id,
                     "currentVersion": error.current_version,
                     "currentDigest": error.current_digest,
-                    "durableState": "draft_preserved",
+                    "durableState": error.durable_state or "draft_preserved",
                     "sideEffects": "none",
                     "retrySafe": True,
-                    "nextAction": ("refresh the Draft, review the current version, and edit again"),
+                    "nextAction": error.next_action
+                    or "refresh the Draft, review the current version, and edit again",
                 }.items()
                 if value is not None
             }
@@ -426,6 +431,47 @@ class MediaFlowApi:
                 200,
                 self._configuration_service.detail(parts[4]),
             )
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5:] == ["recognition-strategy-test", "candidate-selection"]
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            required = {
+                "expectedVersion",
+                "expectedDigest",
+                "expectedTestedAt",
+                "candidateRank",
+            }
+            if set(document) != required:
+                raise ValueError(
+                    "candidate confirmation requires expectedVersion, expectedDigest, "
+                    "expectedTestedAt, and candidateRank"
+                )
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            if not isinstance(document["expectedDigest"], str):
+                raise ValueError("configuration expectedDigest is required")
+            evidence = self._configuration_objects.recognition_strategy_select_candidate(
+                parts[4],
+                expected_version=expected,
+                expected_digest=document["expectedDigest"],
+                expected_tested_at=document["expectedTestedAt"],
+                candidate_rank=document["candidateRank"],
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 200, evidence.document())
         if (
             len(parts) == 6
             and parts[:3] == ["api", "v1", "configuration"]
@@ -604,16 +650,20 @@ class MediaFlowApi:
                 "resourceLibraryId",
                 "syntheticPath",
             }
-            if set(document) != required:
+            allowed = required | {"liveMetadata"}
+            if not required.issubset(document) or set(document).difference(allowed):
                 raise ValueError(
                     "Recognition Strategy Test requires expectedVersion, expectedDigest, "
-                    "resourceLibraryId, and syntheticPath"
+                    "resourceLibraryId, syntheticPath, and optional liveMetadata"
                 )
             expected = document["expectedVersion"]
             if isinstance(expected, bool) or not isinstance(expected, int):
                 raise ValueError("configuration expectedVersion must be an integer")
             if not isinstance(document["expectedDigest"], str):
                 raise ValueError("configuration expectedDigest is required")
+            live_metadata = document.get("liveMetadata", False)
+            if not isinstance(live_metadata, bool):
+                raise ValueError("Recognition Strategy Test liveMetadata must be a boolean")
             evidence = self._configuration_objects.recognition_strategy_test(
                 parts[4],
                 expected_version=expected,
@@ -621,6 +671,7 @@ class MediaFlowApi:
                 actor=principal.principal_id,
                 resource_library_id=document["resourceLibraryId"],
                 synthetic_path=document["syntheticPath"],
+                live_metadata=live_metadata,
             )
             return self._response(start_response, 200, evidence.document())
         if (
@@ -1893,6 +1944,7 @@ class MediaFlowApi:
             "recognitionTypes": ConfigurationObjectKind.RECOGNITION_TYPE,
             "recognitionRules": ConfigurationObjectKind.RECOGNITION_RULE,
             "recognitionTypePolicies": ConfigurationObjectKind.RECOGNITION_TYPE_POLICY,
+            "metadataPolicies": ConfigurationObjectKind.METADATA_POLICY,
         }
         try:
             return mapping[value]

@@ -27,10 +27,14 @@ from mediaflow.domain.metadata import (
     MetadataIdentificationStatus,
     MetadataPolicy,
     ProviderCapabilities,
+    RetryPolicy,
 )
 from mediaflow.domain.naming import NamingResult
 from mediaflow.domain.parser import ParseResult
 from mediaflow.domain.recognition import RecognitionResult, RecognitionType
+from mediaflow.infrastructure.metadata_provider_bootstrap import (
+    LazyMetadataProviderRegistryFactory,
+)
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.infrastructure.tmdb import TMDBClient, TMDBConfig, TMDBProvider
 
@@ -160,6 +164,54 @@ class TMDBClientTests(unittest.TestCase):
 
 
 class TMDBProviderTests(unittest.TestCase):
+    def test_lazy_service_registry_reuses_the_same_provider_metadata_cache(self) -> None:
+        transport = FakeTransport((FakeResponse(200, {"total_pages": 1, "results": []}),))
+        provider = TMDBProvider(TMDBClient(config(), transport))
+        factory_calls = []
+
+        def builder(provider_ids):
+            factory_calls.append(tuple(provider_ids))
+            return MetadataProviderRegistry((provider,))
+
+        factory = LazyMetadataProviderRegistryFactory(builder)
+        parsed = ParseResult("Cached title")
+        first = factory(("tmdb",)).resolve("tmdb").search_movie(parsed, policy())
+        second = factory(("tmdb",)).resolve("tmdb").search_movie(parsed, policy())
+
+        self.assertEqual(first, second)
+        self.assertEqual(factory_calls, [("tmdb",)])
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_managed_policy_controls_request_timeout_retry_and_retry_after_cap(self) -> None:
+        transport = FakeTransport(
+            (
+                FakeResponse(429, {}, {"Retry-After": "9"}),
+                TimeoutError(),
+                FakeResponse(200, {"total_pages": 1, "results": []}),
+            )
+        )
+        delays = []
+        provider = TMDBProvider(
+            TMDBClient(
+                config(request_timeout=3, retry_count=0, retry_base_delay=0, retry_max_delay=0),
+                transport,
+                delays.append,
+            )
+        )
+
+        result = provider.search_movie(
+            ParseResult("Example"),
+            policy(
+                timeout=17,
+                retry_policy=RetryPolicy(retry_count=2, base_delay=0.4, max_delay=0.5),
+            ),
+        )
+
+        self.assertEqual(result, ())
+        self.assertEqual(len(transport.calls), 3)
+        self.assertEqual([call[4] for call in transport.calls], [(5, 17)] * 3)
+        self.assertEqual(delays, [0.5, 0.5])
+
     def test_region_search_date_is_not_mapped_as_canonical_year(self) -> None:
         transport = FakeTransport(
             (

@@ -8,6 +8,7 @@ from mediaflow.application.strategy_test import StrategyTestConfiguration
 from mediaflow.domain.classification import ClassificationPolicy, ClassificationRule
 from mediaflow.domain.duplicates import HashMode, HashPolicy
 from mediaflow.domain.metadata import (
+    METADATA_POLICY_CONFIGURATION_FIELDS,
     CachePolicy,
     MediaQueryType,
     MediaType,
@@ -262,13 +263,19 @@ def _metadata_policies(document, base, required):
         return base.metadata_policies
     policies = {} if required else {policy.policy_id: policy for policy in base.metadata_policies}  # type: ignore[union-attr]
     for value in overrides:
+        if unknown := set(value).difference(METADATA_POLICY_CONFIGURATION_FIELDS):
+            raise ValueError(f"metadataPolicies contains unsupported field {sorted(unknown)[0]!r}")
         policy_id = _string(value, "id")
+        name = value.get("name", policy_id)
+        if not isinstance(name, str) or not name.strip() or len(name) > 120:
+            raise ValueError("metadataPolicies name must be bounded non-empty text")
         if not required and policy_id in policies:
             current = policies[policy_id]
             media_type = value.get("mediaType")
             query_type = value.get("mediaQueryType")
             policies[policy_id] = replace(
                 current,
+                name=name,
                 provider_id=str(value.get("providerId", current.provider_id)),
                 media_type=MediaType(media_type) if media_type is not None else current.media_type,
                 media_query_type=MediaQueryType(query_type)
@@ -299,7 +306,7 @@ def _metadata_policies(document, base, required):
             MediaType(media_type) if media_type is not None else None,
             _optional_string(value, "language", None),
             _optional_string(value, "region", None),
-            str(value.get("name") or policy_id),
+            name,
             MediaQueryType(query_type) if query_type is not None else None,
             _number(value, "automaticThreshold", 90),
             _number(value, "confirmationThreshold", 70),
