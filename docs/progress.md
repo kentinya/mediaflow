@@ -67,6 +67,33 @@ Push: NOT REQUIRED BEFORE PHASE 22.5 CLOSURE; local main, not yet pushed
 This closure accepts only the same-Provider managed correction-test journey. Provider switching,
 Files/Task continuation, Naming/Classification/Organize configuration, and Phase 22.6 remain open.
 
+### Phase 22.5-E Single-Item Metadata Correction DryRun Continuation
+
+```text
+Status: PASS / CLOSED
+Commit SHA: dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62
+High Audit: PASS — 2026-08-27; the Phase 22.5-E-F1 correction checkpoint was independently
+reviewed, including the reachable Files detail continuation surface, the Web regression that fails
+against the rejected SHA, unchanged API/Application/Worker behavior, and zero-mutation evidence
+Rejected checkpoint: 08dfd4f921728755209b6d52347d28f221121c47 (FIX REQUIRED — 2026-08-27, preserved)
+Push: REQUIRED FOR PHASE 22.5 CLOSURE; local main is ahead of origin/main and awaits explicit
+authorization
+```
+
+### Phase 22.5 Metadata Configuration and Correction Journey
+
+```text
+Status: PASS / CLOSED (Phase 22.5 slices A, B/F1, C/F1/F2, D, E/F1)
+Commit SHA: dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62
+High Audit: PASS — 2026-08-27; Phase-level Final Closure Audit
+Push: REQUIRED; origin/main does not yet contain the reviewed SHA
+```
+
+This phase-level closure accepts the managed MetadataPolicy journey through candidate confirmation,
+same-Provider correction testing, and one-item pinned DryRun continuation. Provider switching,
+generic Task resume, broader per-item checkpoint recovery, and Naming/Classification/Organize
+configuration remain open; Phase 22 overall is not closed.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration
@@ -172,6 +199,14 @@ Files/Task continuation, Naming/Classification/Organize configuration, and Phase
   re-review on 2026-08-26. The accepted journey covers same-Provider query/year/Movie-TV and
   direct-ID correction against exact current live evidence; Provider switching and Files/Task
   continuation remain later slices.
+- Phase 22.5-E Single-Item Metadata Correction DryRun Continuation, including its F1 Files detail
+  rendering correction: **PASS/CLOSED** after independent High re-review on 2026-08-27 of
+  `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62`. One resolved correction can be continued as a pinned,
+  one-item, DryRun-only Job from Files detail with durable identity, bounded status/recovery, linked
+  Job/Task, single-item retry, and explicit stale requeue.
+- Phase 22.5 Metadata Configuration and Correction journey (slices A, B/F1, C/F1/F2, D, E/F1):
+  **PASS/CLOSED** after the 2026-08-27 Final Closure Audit. Provider switching, generic Task resume,
+  and broader per-item checkpoint recovery remain TARGET; Phase 22 as a whole is not closed.
 
 ## Phase 22.5-D Implementation Evidence (2026-08-26; subsequently accepted)
 
@@ -329,6 +364,74 @@ Files/Task continuation, Naming/Classification/Organize configuration, and Phase
   `rename` strategies), and the private `config/alist.json` ignored/untracked checks.
 - This is implementation evidence only. No PASS/CLOSED decision or next Slice authorization is
   recorded here.
+
+## Phase 22.5-E-F1 High Re-review and Closure (2026-08-27): PASS / CLOSED
+
+- Reviewed exact correction checkpoint: `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62`. The rejected
+  `08dfd4f921728755209b6d52347d28f221121c47` and its `FIX REQUIRED` record above remain preserved.
+- The P0 finding is closed. `renderMetadataContinuation` now attaches its section on both branches
+  (`mediaflow/interfaces/operator_ui.py:920` for an existing continuation and
+  `mediaflow/interfaces/operator_ui.py:940` for the not-yet-continued branch), and the reachability
+  chain `showDetail` → `relatedReviews` predicate → `renderMetadataContinuation` → `detailContent`
+  → `detail.hidden = false` was traced in the served asset. The section renders the source
+  Task/TaskItem, correction ID and identity, pinned snapshot ID/digest, `Items selected: 1`,
+  `Authority: DRY_RUN_ONLY`, `Storage mutation: NONE`, the single `Continue as DryRun` control, the
+  queued/running/completed/failed/stale/cancelled status with its next action, bounded failure
+  category/error/recovery text, the always-present linked Job control, the linked Task/Result control
+  exactly when a Task exists, the retry control only for failed/cancelled with `canContinue`, and the
+  requeue control only for the stale display status.
+- The P1 test-strength finding is closed. High independently reproduced the negative control: with
+  `08dfd4f`'s `operator_ui.py` restored, `test_operator_ui_continuation_section_is_attached_to_file_detail`
+  fails with `AssertionError: 0 != 2`; the file was then restored byte-identically. Web↔API key
+  parity was checked field by field against `_file_catalog_detail_value`,
+  `_metadata_correction_continuation_value`, and `_metadata_correction_continuation_next_action`, so
+  every string the renderer reads is actually projected.
+- No accepted Application, API, persistence, or Worker behavior changed: the only production diff
+  since the rejected SHA is in `mediaflow/interfaces/operator_ui.py`. Command restriction to
+  admission, snapshot pinning, `execute_authorized=False`, stale-requeue bounds, and
+  `RecognitionType C` preservation are intact, and rendering issues no request.
+- Independent gates: 13 focused continuation tests passed; 257 combined Phase 22.5 and cross-slice
+  tests passed; 77 broader Phase 21/22 regression tests passed; complete offline suite 804 tests with
+  7 existing external-service skips and 0 failures. Ruff check/format, compileall, `pip check`, both
+  example configuration validations, wheel build plus isolated installed-wheel smoke, 24
+  documentation local links, `git diff --check`, FFmpeg/FFprobe production audit, business-layer
+  filesystem-mutation audit (only Storage-mediated conflict `rename`), and the private
+  `config/alist.json` ignored/untracked checks all passed.
+- Result: **PASS / CLOSED** for Phase 22.5-E. No P0/P1 defect remains inside the declared scope.
+
+## Phase 22.5 Final Closure Audit (2026-08-27): PASS / CLOSED
+
+- The Phase 22.5-E `PASS / CLOSED` above is a Slice decision; this separate audit reviewed the
+  combined Phase 22.5 scope (A, B/F1, C/F1/F2, D and its correction, E/F1) at
+  `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62`.
+- Every Phase 22.5 slice carries a recorded independent High `PASS`, and each records that no P0/P1
+  remains inside its declared scope. No in-scope P0/P1 was found open by this audit.
+- Cross-slice integration is continuous rather than assumed: `MetadataCorrectionService.resolve()`
+  writes the source item back as `PENDING` with stage `metadata_correction_resolved`, which is the
+  exact precondition `FileMetadataCorrectionContinuationService.context()` requires, and the focused
+  tests reach that state through the production service instead of hand-written rows. Managed
+  MetadataPolicy revisions, live test evidence, candidate confirmation, correction testing, and the
+  pinned continuation all consume the same immutable snapshot identity (ID plus digest) rather than
+  current Active configuration.
+- The core journey closes end to end on the operator surface: configure a MetadataPolicy revision →
+  run an exact-revision live test → confirm or correct a candidate → resolve a Metadata correction →
+  continue exactly that item as a pinned DryRun-only Job from Files detail → read status, failure and
+  recovery → open the linked Job and DryRun Task/Result → retry the single item or explicitly requeue
+  a stale continuation.
+- Safety invariants hold across the phase: DryRun and every analysis stage mutate nothing, only
+  OrganizerExecutor may mutate Storage, no continuation path grants execute authority, no
+  FFmpeg/FFprobe dependency exists, and `RecognitionType C` stays C while reusing NamingPolicy and
+  ClassificationPolicy A.
+- Regression and static gates were re-run independently at this SHA with the results recorded in the
+  Slice closure above; the tree is clean and `git diff --check` passes.
+- `docs/requirements.md`, `docs/architecture.md`, `docs/product-experience.md`, `docs/roadmap.md`,
+  `docs/progress.md`, and the archived Task documents were reconciled with the accepted behavior in
+  this closure; Provider switching, generic Task resume, and broader per-item checkpoint recovery
+  remain explicitly TARGET.
+- Result: **PASS / CLOSED** for Phase 22.5. Phase 22.6 (managed Naming / Classification / Organize
+  configuration) is the next authorized Phase and starts with `TASK.md` Phase 22.6-A. Pushing
+  `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` to `origin/main` is the one outstanding non-code closure
+  gate and requires explicit operator authorization.
 
 ## Phase 22.5-B Implementation Evidence (2026-08-26; awaiting independent review)
 
@@ -1293,15 +1396,19 @@ Files/Task continuation, Naming/Classification/Organize configuration, and Phase
 
 ## Planned
 
-- Phase 22.5-E checkpoint `08dfd4f921728755209b6d52347d28f221121c47` received `FIX REQUIRED` on
-  2026-08-27: the Application/API/persistence/Worker journey is accepted, but the Files detail Web
-  continuation section was never attached to the DOM, so the operator-facing half of the journey was
-  unreachable. Phase 22.5-E-F1 attached and proved that surface in a new checkpoint and is awaiting
-  independent High re-review; no next feature Slice is authorized until that re-review records
-  Phase 22.5-E closure. Provider switching remains deferred until a truthful multi-Provider
-  capability exists.
-- Follow with TaskItem Processing Checkpoint/stage-aware recovery, complete Files/Media detail and
-  manual organize, then automation/final production hardening
+- Phase 22.5 is closed at `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62`. The rejected Phase 22.5-E
+  checkpoint `08dfd4f921728755209b6d52347d28f221121c47` and its `FIX REQUIRED` record are preserved
+  above; the F1 correction attached and proved the Files detail continuation surface and was accepted
+  on independent High re-review.
+- Next authorized Phase: Phase 22.6 managed Naming / Classification / Organize configuration and its
+  exact-revision offline preview. It starts with `TASK.md` Phase 22.6-A (managed NamingPolicy CRUD
+  plus offline naming preview) and adds no execute authority and no media mutation.
+- Outstanding non-code gate before Phase 22.6 implementation: pushing
+  `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` to `origin/main` requires explicit operator
+  authorization.
+- Deferred beyond Phase 22.6: Provider switching (until a truthful multi-Provider capability exists),
+  generic Task resume, broader per-item Processing Checkpoint/stage-aware recovery, complete
+  Files/Media detail and manual organize, then automation and final production hardening
 - External identity/OIDC and Secret Store remain explicit later architecture decisions; no weak
   in-core substitute
 

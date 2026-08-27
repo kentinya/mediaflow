@@ -12,24 +12,27 @@ Phase gate，不复制测试日志或流程正文。
 | Development Workflow Git Capability Gate | PASS / CLOSED | `9777ee187972d53f02f6f30d7682535b03f2b447` | PASS；已推送 `origin/main`；不重新打开 |
 | Phase 22.5-C Candidate Confirmation | PASS / CLOSED | `d68a19ddd4bb62bc27e77bab013edb20c9eb53e5` | PASS；允许 Phase 22.5-D same-Provider correction test |
 | Phase 22.5-D Managed Live Metadata Correction Test | PASS / CLOSED | `55769be58a75596461879994560a0c58c3a7c9dc` | PASS；允许 Phase 22.5-E 单项 Metadata correction DryRun continuation；Provider switching 仍后置 |
+| Phase 22.5-E Single-Item Metadata Correction DryRun Continuation | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27，F1 correction checkpoint 独立复审通过；被拒 checkpoint `08dfd4f921728755209b6d52347d28f221121c47`（FIX REQUIRED）保留 |
+| Phase 22.5 Metadata 配置与修正旅程（A/B/C/D/E） | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27 phase-level Final Closure Audit；允许 Phase 22.6 Naming/Classification/Organize 配置旅程；该 SHA 推送 `origin/main` 需显式授权 |
 
 ## 当前节点
 
-截至 2026-08-26，项目完成了安全优先的核心执行链、Phase 21 有界人工/文件管理基础、
+截至 2026-08-27，项目完成了安全优先的核心执行链、Phase 21 有界人工/文件管理基础、
 Phase 22.1 内部 Storage 配置 CRUD 基础、Phase 22.2 whole-document Active authority，以及
 Phase 22.3 Local Storage + Library guided journey。Phase 22.3 的全部 correction slices 和
 phase-level Final Closure Audit 均为 **PASS / CLOSED**；Phase 22.4 Recognition Configuration +
-Strategy Test 也已在 F2 恢复指导修复后独立验收 **PASS / CLOSED**。Phase 22.5-A MetadataPolicy
-Managed Configuration + Offline Resolution Preview 已于 2026-08-26 独立验收 **PASS / CLOSED**；
-Phase 22.5-B Managed Live Metadata Test + Candidate Explanation 及其 F1 修复也已独立验收
-**PASS / CLOSED**。Phase 22.5-C Managed Live Metadata Candidate Confirmation 及其 F1/F2
-并发修复也已通过 final Integration Acceptance。Phase 22.5-D Managed Live Metadata Correction
-Test 的 correction checkpoint 已于 2026-08-26 通过独立 High re-review 并 **PASS / CLOSED**。
-当前合法边界是 Phase 22.5-E 单项 Metadata correction DryRun continuation；该 Slice 的实现
-checkpoint `08dfd4f921728755209b6d52347d28f221121c47` 已于 2026-08-27 被独立 High Review 判定
-**FIX REQUIRED**（Files detail Web continuation section 未挂载到 DOM，操作者侧旅程不可达）。
-Phase 22.5-E-F1 已在新 checkpoint 中把该 section 挂载到 `detailContent` 并补齐可失效的 Web
-回归证据，等待独立 High re-review 决定 Phase 22.5-E 是否 CLOSED；Provider switching 仍后置。
+Strategy Test 也已在 F2 恢复指导修复后独立验收 **PASS / CLOSED**。Phase 22.5 Metadata 配置与
+修正旅程的全部 Slice（22.5-A offline resolution preview、22.5-B live Metadata test + F1、
+22.5-C candidate confirmation + F1/F2、22.5-D same-Provider correction test 及其 correction、
+22.5-E 单项 Metadata correction DryRun continuation + F1）均已独立 High PASS；其中 22.5-E 的
+首个 checkpoint `08dfd4f921728755209b6d52347d28f221121c47` 曾被判定 **FIX REQUIRED**（Files
+detail Web continuation section 未挂载到 DOM），该记录保留不改写，F1 correction checkpoint
+`dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已挂载该 section 并补齐可失效 Web 回归证据，于
+2026-08-27 通过独立 High re-review。同日 phase-level Final Closure Audit 判定 Phase 22.5
+**PASS / CLOSED**。下一合法边界是 Phase 22.6 Naming / Classification / Organize 配置与离线
+预览旅程，起始 Slice 为 Phase 22.6-A；Provider switching、通用 Task resume 与更宽的逐项
+checkpoint 恢复仍为 TARGET。把 `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 推送到
+`origin/main` 是 Phase 22.5 收口唯一剩余的非代码门，需要显式操作员授权。
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 
@@ -67,7 +70,7 @@ Runtime Configuration
 | Planner/Executor | 部分完成 | 计划、冲突、附件、Hash 证据、同次调用 Rollback、空目录清理、DryRun、跨存储执行 | 历史/崩溃恢复、Hash 持久复用、逐项恢复体验 |
 | Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、pause/resume、批量请求、claim fencing/心跳 | 统一 Processing Checkpoint 与 stage-aware recovery |
 | API/UI/Scheduler | 部分完成 | API/RBAC/审计、操作台、Dashboard、Files 列表/筛选/详情/部分动作、Cron/通知 | 完整人工/配置/恢复旅程、登录/外部身份源 |
-| Managed Configuration | Phase 22.3/22.4/22.5-A/B/C/D PASS/CLOSED；Phase 22.5-E-F1 correction pending High re-review | whole-document authority、Local Storage/Library、Recognition、MetadataPolicy offline/live、候选确认与同 Provider correction test、单项 pinned DryRun continuation | Provider switching 与其他策略旅程后置 |
+| Managed Configuration | Phase 22.3/22.4 PASS/CLOSED；Phase 22.5（A/B/C/D/E）PASS/CLOSED | whole-document authority、Local Storage/Library、Recognition、MetadataPolicy offline/live、候选确认与同 Provider correction test、单项 pinned DryRun continuation | Naming/Classification/Organize 配置旅程为 Phase 22.6；Provider switching 与通用 Task resume 后置 |
 
 ## 总体阶段计划
 
@@ -444,7 +447,7 @@ Domain
 - 2026-08-26 独立验收确认 matched/ambiguous/unrecognized 的持久证据、Web 解释和差异化恢复，
   以及 Local check + Strategy Test 双证据激活门；当前范围无 P0/P1。
 
-### 4. Metadata 配置与修正用户旅程
+### 4. Metadata 配置与修正用户旅程（Phase 22.5，PASS / CLOSED）
 
 - Provider/MetadataPolicy 配置、语言/地区/阈值测试、候选解释、Provider 切换、人工修正、显式
   继续与新 Preview 形成闭环；凭证仍只来自批准的 Secret 边界。
@@ -454,15 +457,31 @@ Domain
   Phase 22.5-C 已完成 persisted NeedConfirm/Ambiguous 候选确认及 F1/F2 durable CAS 修复并
   通过 final Integration Acceptance。Phase 22.5-D 的同 Provider query/year/Movie-TV/direct-ID
   correction test 已通过独立 High re-review 并 PASS/CLOSED；不包含 Provider switching、
-  Files/Task continuation 或真实媒体变更。Phase 22.5-E 当前实现只补齐一个已解决 correction
-  的显式单项 DryRun continuation；其首个 checkpoint 因 Files detail Web section 未挂载被判定
-  FIX REQUIRED，Phase 22.5-E-F1 已挂载该 section 并补齐 Web 回归，等待独立 High re-review；
-  不扩大为通用 Task resume。
+  Files/Task continuation 或真实媒体变更。Phase 22.5-E 补齐一个已解决 correction 的显式单项
+  DryRun continuation：Files detail 展示 source Task/TaskItem、correction 身份、固定 snapshot
+  ID/digest、`Items selected: 1`、`Authority: DRY_RUN_ONLY`、`Storage mutation: NONE`，显式
+  确认后生成一项不可执行 Job，并提供 queued/running/completed/failed/stale/cancelled 状态、
+  有界失败/恢复文本、关联 Job 与 DryRun Task/Result、单项重试和显式 stale requeue。其首个
+  checkpoint 因 Web section 未挂载被判定 FIX REQUIRED（记录保留），F1 correction checkpoint
+  `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已于 2026-08-27 独立复审通过。
+- 2026-08-27 phase-level Final Closure Audit 判定 Phase 22.5 **PASS / CLOSED**，组合 scope 内
+  无 P0/P1。Provider switching、通用 Task resume 与更宽的逐项 checkpoint 恢复仍为 TARGET，
+  分别不在该已关闭 scope 内。
 
-### 5. Naming / Classification / Organize 配置用户旅程
+### 5. Naming / Classification / Organize 配置用户旅程（Phase 22.6，当前边界）
 
 - 模板、分类规则、目标 MediaLibrary 与操作策略联动编辑；显示依赖影响，使用相同引擎预览，
   验证路径安全/冲突/能力后才允许激活。
+- Phase 22.6 目标：把 NamingPolicy、ClassificationPolicy、OrganizePolicy 纳入既有 Managed
+  Configuration 权威链路（Draft → Validate → checked Activate → immutable Runtime Snapshot），
+  并对精确 revision 提供零变更的离线预览与可操作恢复。
+- Phase 22.6 边界：沿用 whole-document revision authority、乐观版本、引用影响/阻断、
+  Before/After 审计与 host-absolute/Storage-relative 路径规则；预览必须消费被指定的精确
+  revision 而不是当前 Active，且不构造 Provider、不访问 Storage、不产生媒体变更。
+- Phase 22.6 起始 Slice 为 22.6-A（managed NamingPolicy CRUD + 精确 revision 离线命名预览）；
+  Classification/Organize 对象、冲突与能力预检、激活门在后续 Slice 交付，均不授予 execute 权限。
+- 明确不在 Phase 22.6 范围：Provider switching、通用 Task resume、逐项 Processing Checkpoint
+  恢复（第 6 项）、手工整理旅程（第 7 项）、无人值守 `organize --execute`。
 
 ### 6. 批处理逐项恢复
 
@@ -495,12 +514,14 @@ resident API 使用不可变 request-scoped binding 绑定 snapshot identity、�
 revision 持久化可操作且脱敏的失败证据。独立复核的 11 项关键回归和 708 项完整离线
 套件无失败，本 Task 范围内无 P0/P1 偏离。
 
-Phase 22.3、Phase 22.4 与 Phase 22.5-A/B/C/D 的全部 correction 和独立验收已通过。Phase 22.5-E
-的首个实现 checkpoint 已被独立 High Review 判定 **FIX REQUIRED**，当前正式 Task
-**Phase 22.5-E-F1 — Files Detail Continuation Rendering Correction** 的修正 checkpoint 已完成并
-等待独立 High re-review；Phase 22.5-E 尚未 CLOSED，下一 feature Slice 尚未授权。
-不得借此提前开展 Provider switching、通用 Task resume、兄弟项重放、
-Naming/Classification/Organize 后续旅程或
+Phase 22.3、Phase 22.4 与 Phase 22.5（A/B/C/D/E 及其全部 correction）的独立验收已全部通过。
+Phase 22.5-E 的首个实现 checkpoint 曾被判定 **FIX REQUIRED**，该记录与被拒 SHA 保留不改写；
+correction checkpoint `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已于 2026-08-27 通过独立 High
+re-review，同日 phase-level Final Closure Audit 判定 Phase 22.5 **PASS / CLOSED**。
+下一正式 Task 是 **Phase 22.6-A — Managed NamingPolicy Configuration + Offline Naming Preview**；
+在把 `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 推送到 `origin/main`（需显式授权）之前不开始
+Phase 22.6 实现。不得借此提前开展 Provider switching、通用 Task resume、兄弟项重放、
+逐项 Processing Checkpoint 恢复或
 更宽的自动化。Interval/Cron 仍只允许 scan/preview；
 无人值守定时 `organize --execute` 继续不支持。
 

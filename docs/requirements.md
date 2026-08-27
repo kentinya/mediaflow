@@ -59,9 +59,13 @@
 > Metadata Test + Candidate Explanation 及 F1 修复也已独立验收；Phase 22.5-C candidate
 > confirmation 及 F1/F2 durable CAS 修复已通过 final Integration Acceptance。Phase 22.5-D
 > same-Provider managed live Metadata correction test 已于 2026-08-26 通过独立 High re-review
-> 并 PASS/CLOSED。Phase 22.5-E 当前实现一个 resolved File correction 的显式 pinned DryRun
-> continuation，已完成实现 checkpoint，尚待独立 High Review；远端 Storage、Provider switching、
-> 通用 Task resume 和更宽配置旅程仍未完成。
+> 并 PASS/CLOSED。Phase 22.5-E 一个 resolved File correction 的显式 pinned DryRun continuation
+> 的首个 checkpoint `08dfd4f921728755209b6d52347d28f221121c47` 曾被判定 FIX REQUIRED（Files
+> detail Web section 未挂载），F1 correction checkpoint
+> `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已于 2026-08-27 通过独立 High re-review 并
+> PASS/CLOSED；同日 phase-level Final Closure Audit 判定 Phase 22.5（A/B/C/D/E）
+> **PASS / CLOSED**。远端 Storage、Provider switching、通用 Task resume 和
+> Naming/Classification/Organize 配置旅程（Phase 22.6）仍未完成。
 
 ---
 
@@ -1460,11 +1464,14 @@ MatchedBy
 > Provider 的直接 ID；只有显式 Task resume 才重跑真实 Provider 流程。该实现不允许任意
 > Provider 切换或注入 MediaIdentity，且保持 RecognitionType（包括 C）不变。
 
-> 当前实现（Phase 22.5-E；尚待独立 High Review）：Files detail 可对一个已 `RESOLVED` 的
+> 当前实现（Phase 22.5-E；已于 2026-08-27 通过独立 High re-review，PASS / CLOSED）：Files
+> detail 可对一个已 `RESOLVED` 的
 > Metadata correction 显示 source Task/TaskItem、correction version 与精确 snapshot ID/digest，
 > 通过 API/Web 共用入口显式继续为单项 DryRun。该入口原子创建 continuation 与不可执行 Job；
 > Worker 只重跑该 File 的 Parser → Recognition → TypePolicy → Metadata → Naming →
-> Classification → Planner，并持久化新的 DryRun Task/Item/Result。源文件、源 review、源
+> Classification → Planner，并持久化新的 DryRun Task/Item/Result。Web 侧同时呈现
+> queued/running/completed/failed/stale/cancelled 状态与下一步动作、有界失败与恢复文本、
+> 关联 Job 与 DryRun Task/Result 入口、单项重试和显式 stale requeue。源文件、源 review、源
 > Task 及兄弟项不变；Provider switching、通用 Task resume、执行和自动 continuation retry
 > 仍未实现。
 
@@ -3129,7 +3136,10 @@ System Settings
 > PASS/CLOSED；Phase 22.5-B/F1 随后也已独立验收，Phase 22.5-C 及 F1/F2 已通过
 > final Integration Acceptance。Phase 22.5-D same-Provider managed live Metadata correction test
 > 已通过独立 High re-review 并 PASS/CLOSED；Phase 22.5-E 单项 correction DryRun continuation
-> 的实现 checkpoint 已完成，尚待独立 High Review；本 Slice 不宣告 PASS/CLOSED。
+> 的 F1 correction checkpoint `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已于 2026-08-27 通过
+> 独立 High re-review，其被拒 checkpoint `08dfd4f921728755209b6d52347d28f221121c47` 的
+> FIX REQUIRED 记录保留；同日 phase-level Final Closure Audit 判定 Phase 22.5 PASS / CLOSED。
+> 下一 Phase 22.6 Naming/Classification/Organize 配置旅程尚未实现。
 >
 > 当前实现覆盖：Files detail 中 exact resolved correction/version、source Task/TaskItem 与 snapshot
 > ID/digest 的可见性；API/Web 共用的原子单项 admission；以及 pinned Worker 对新 DryRun

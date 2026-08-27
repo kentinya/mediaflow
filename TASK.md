@@ -1,178 +1,226 @@
-# Phase 22.5-E-F1 — Files Detail Continuation Rendering Correction
+# Phase 22.6-A — Managed NamingPolicy Configuration + Exact-Revision Offline Naming Preview
 
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: READY FOR HIGH RE-REVIEW (focused correction inside Phase 22.5-E)
-Rejected checkpoint: 08dfd4f921728755209b6d52347d28f221121c47
-High Audit: FIX REQUIRED — 2026-08-27
-Preceding closed checkpoint: 55769be58a75596461879994560a0c58c3a7c9dc (Phase 22.5-D PASS / CLOSED)
-Reviewed Phase 22.5-E Task: Task/phase-22.5-e-single-item-metadata-correction-dryrun-continuation.md
+Status: NOT STARTED
+Commit SHA: PENDING
+High Audit: PENDING
+Preceding closed checkpoint: dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62
+  (Phase 22.5-E and Phase 22.5 PASS / CLOSED — 2026-08-27)
+Prerequisite before implementation: dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62 must be pushed to
+  origin/main (major Phase closure push gate); the push needs explicit operator authorization.
+Phase: 22.6 Naming / Classification / Organize configuration journey (roadmap section 5)
 ```
 
-## Review Finding
+## User Problem
 
-Independent High Review of `08dfd4f921728755209b6d52347d28f221121c47` accepted the Application,
-API, persistence, and Worker behavior of the single-item Metadata correction DryRun continuation. It
-rejected the checkpoint because the promised operator-facing surface does not exist at runtime.
+An operator can now manage Storage, ResourceLibrary, MediaLibrary, Recognition objects and
+MetadataPolicy objects inside a managed Draft revision, test them, and activate a checked snapshot.
+Naming is not part of that experience. `namingPolicies` can only be changed by hand-editing the whole
+managed document, nothing shows which RecognitionTypePolicy depends on a template, and no surface
+answers the operator's actual question before activation: *what filename and directory will this
+template produce?*
 
-`renderMetadataContinuation` in `mediaflow/interfaces/operator_ui.py:896` builds its section and
-`return`s it. Its only caller, `mediaflow/interfaces/operator_ui.py:1253`, invokes it as a statement
-and discards the returned node, so nothing is ever attached to `detailContent`. Every sibling
-renderer in that file (for example `renderFileReMatchForm`) appends internally; this one does not.
-
-Consequently the Files detail page never renders the continuation heading, the source
-Task/TaskItem/correction-identity/snapshot cards, the one-item `DRY_RUN_ONLY` /
-`Storage mutation: NONE` disclosure, the `Continue as DryRun` entry point, the queued / running /
-completed / failed / stale / cancelled status text, the failure category, failure, recovery and next
-action text, the linked Job and Task/Result controls, the single-item retry control, or the stale
-requeue control. The only visible trace is one extra `Continuation` column in the Related reviews
-table. `confirmMetadataContinuation` and `confirmStaleMetadataContinuation` are therefore
-unreachable dead code.
-
-The Web half of the journey required by `TASK.md` (Phase 22.5-E) UX acceptance, by
-`docs/product-experience.md` journey D, and by AGENTS.md product rules 5 (Web is the final
-management surface) and 6 (API/Web parity) is not delivered.
-
-The only Web coverage,
-`tests/test_metadata_correction_continuation.py::test_operator_ui_action_is_explicit_and_stateful`,
-asserts substrings that live inside that dead function, so it passes while the section is never
-attached. Required test 8 of Phase 22.5-E is therefore not proven.
-
-This is a focused correction inside Phase 22.5-E. Do not expand the scope, change accepted
-Application/API/persistence/Worker behavior, or begin a later Slice or Phase.
+The consequence is that the first visible proof of a naming mistake is the destination path of a real
+organize run. Naming decides the final media library layout, so the operator needs bounded per-object
+editing plus an explainable, zero-mutation preview of the exact revision they are about to validate.
 
 ## User Journey
 
+`docs/product-experience.md` journey A/B (configuration and policy setup) and roadmap section 5:
+
 ```text
-Files detail
-→ open a File whose Metadata correction is resolved and whose source TaskItem is eligible
-→ see the continuation section with source Task/TaskItem, correction identity, pinned snapshot,
-  one-item scope, DryRun-only authority and zero Storage mutation
-→ explicitly confirm Continue as DryRun
-→ reload and see queued / running / completed / failed / stale / cancelled state with next action
-→ open the linked continuation Job and the new DryRun Task/Result
-→ retry only this correction, or explicitly requeue a stale continuation
+Configuration → open a Draft revision → see its NamingPolicy objects and what references each one
+→ create / edit / copy / delete one NamingPolicy (movie or TV templates, missing-variable strategy)
+→ run an offline naming preview against that exact revision with one bounded sample
+→ see the rendered directory and filename, sanitization, missing-variable handling and warnings
+→ correct the template and re-preview, or Validate the revision
+→ existing checked activation gate is unchanged
 ```
 
-## Required Correction
+Entry points: managed Configuration Web UI and the equivalent authenticated API, sharing one
+Application service. CLI keeps its existing read-only configuration inspection; no new CLI journey is
+part of this slice.
 
-1. Attach the continuation section to the Files detail page. Follow the existing renderer
-   convention in `operator_ui.py`: append inside the render function, or append the returned node at
-   the call site. Both current branches (no continuation yet, and an existing continuation) must
-   reach the page.
-2. Keep the existing visibility predicate unchanged: the section appears only for a
-   `metadata_correction` related review with `status === 'resolved'` and either `canContinue` or an
-   existing `continuation`, using the exact `correctionVersion` supplied by the API.
-3. Keep the already-accepted API payload, permission, identity, and idempotency behavior. The
-   submission must continue to send only `reviewId` and `expectedCorrectionVersion` to
-   `POST /api/v1/files/{fileId}/continue-dry-run`, and the stale action must continue to use
-   `POST /api/v1/jobs/{jobId}/requeue-stale`.
-4. Keep rendering read-only. Opening or reloading the File must not submit, queue, requeue, cancel,
-   or invoke a Provider; the `Continue as DryRun`, retry, and requeue controls must remain behind
-   the existing explicit confirmation step with its keep-unchanged escape.
-5. Keep every existing bounded, secret-free string, the DryRun-only and zero-mutation disclosure,
-   the duplicate/queue-full conflict `details` rendering, and the text-only DOM helpers. Do not add
-   a frontend framework, a second continuation shape, or new API fields.
+Boundary: NamingPolicy objects and naming preview only. ClassificationPolicy and OrganizePolicy
+editing, target-conflict and Storage-capability prechecks, and any activation-gate change belong to
+later Phase 22.6 slices.
 
-## Acceptance Criteria
+## User-visible Outcome
 
-- [x] An eligible resolved correction with no continuation renders the continuation section and one
-      `Continue as DryRun` control on the Files detail page.
-- [x] That section visibly shows the source Task, source item, correction ID, correction identity,
-      configuration snapshot ID and digest, `Items selected: 1`, `Authority: DRY_RUN_ONLY`, and
-      `Storage mutation: NONE` before submission.
-- [x] A queued, running, completed, failed, stale, and cancelled continuation each renders a
-      visibly distinct status line plus its next action, and failure additionally renders the
-      bounded error and recovery text.
-- [x] The linked continuation Job control is always rendered; the linked Task/Result control is
-      rendered exactly when the continuation has a Task.
-- [x] The single-item retry control is rendered only for a failed or cancelled continuation whose
-      review still reports `canContinue`; the requeue control is rendered only for the stale
-      display status.
-- [x] Confirmation for both submission and stale requeue still requires an explicit second click and
-      still offers an explicit keep-unchanged option.
-- [x] Rendering and reloading perform no submission, queue mutation, Provider call, or Storage
-      access; the accepted API and Application semantics are unchanged.
-- [x] Focused Web regression coverage fails if the continuation section is not attached to
-      `detailContent`, and covers the no-continuation, queued/running, completed, failed, stale, and
-      cancelled shapes. A substring-only assertion inside the render function is not sufficient
-      evidence.
-- [x] `tests/test_metadata_correction_continuation.py` and the complete offline suite remain green
-      with no weakened or removed assertion.
-- [x] RecognitionType C remains C, no execute authority is granted, and no media mutation occurs on
-      any path.
+The operator can, entirely inside the managed Draft revision:
+
+- list every NamingPolicy in the revision with its media-type mode, templates and
+  missing-variable strategy;
+- see, per policy, the exact objects that reference it and whether deletion is blocked;
+- create, edit, copy, enable/disable-equivalent naming fields, and delete one policy at a time with
+  optimistic version checking and a Before/After audit record;
+- run an offline naming preview bound to that exact revision ID and version and read the rendered
+  target directory, target filename, applied policy ID, sanitization changes, missing-variable
+  decisions, and bounded warnings;
+- distinguish a current preview from a stale one after the Draft changes, and rerun it.
+
+The full V1 naming journey remains incomplete after this slice: classification target resolution,
+Organize policy editing, conflict/capability prechecks and the combined
+naming-plus-classification activation evidence are later Phase 22.6 work.
+
+## Failure and Recovery
+
+| Failure class | Visible state | Durable state / side effects | Retry safe | Recovery | If recovery also fails |
+|---|---|---|---|---|---|
+| Invalid template (unknown variable, unsafe separator/traversal, empty render, over-long component) | Bounded validation category naming the offending field and token | Draft unchanged; no preview evidence written | Yes | Correct the template field and resubmit | Revision stays Draft; operator may copy a known-good policy |
+| Duplicate or missing object id | Bounded validation error identifying the id | Draft unchanged | Yes | Choose a unique id, or reload the revision | Draft remains editable |
+| Delete a referenced policy | Blocked with the exact referencing objects listed | Draft unchanged | No, not as-is | Remove or repoint the reference first, then delete | Reference evidence stays visible; nothing is silently detached |
+| Optimistic version conflict (concurrent Draft edit) | Bounded conflict showing the current version | One durable winner; the losing edit is not applied | Yes after reload | Reload the revision and reapply the change | Draft content is never merged silently |
+| Preview render failure | Bounded failure category, message and next action | Persisted bounded preview evidence for that exact revision; no Storage or Provider work | Yes | Fix the reported field and rerun the preview | Evidence remains inspectable and clearly failed |
+| Stale preview after the Draft changed | Preview is labelled stale with its original revision identity | Prior evidence retained, not silently reused as current | Yes | Rerun the preview against the current revision | The revision cannot present stale evidence as current |
+| Missing naming variable under the configured strategy | Visible strategy outcome (token omitted, placeholder, or explicit failure) | Preview evidence records the decision | Yes | Change the template or the strategy and rerun | Behaviour stays deterministic and explained |
+
+Retry alone is never the recovery text: each case states what is durable, what is safe to repeat, and
+the single explicit action that continues.
+
+## UX Acceptance Criteria
+
+- [ ] The operator completes NamingPolicy editing and naming preview through the managed
+      Configuration Web UI, not only through the API or by hand-editing JSON.
+- [ ] Each policy's references and delete-blocked state are discoverable from the current revision
+      view before any destructive action.
+- [ ] Preview success, validation failure, render failure and stale states are visibly distinct and
+      each carries one next action.
+- [ ] The rendered directory/filename, applied policy, sanitization and missing-variable decisions
+      are bounded, secret-free explanations of an automated decision.
+- [ ] Preview evidence is bound to the exact revision ID and version it ran against; a changed Draft
+      makes it stale rather than silently current.
+- [ ] Anything presented as Active remains the immutable runtime-consumed snapshot; this slice
+      changes no activation semantics.
+- [ ] API and Web share the same Application service, permissions, validation and state vocabulary.
+- [ ] Preview performs zero Storage, Provider, queue, Task and media work on every path, including
+      failure paths.
+- [ ] Acceptance tests cover success, invalid input, blocked delete, concurrent/stale edit, stale
+      preview, and zero mutation.
+
+Batch per-item independence does not apply: this slice edits one configuration object per request and
+previews one sample per request.
+
+## Technical Scope
+
+Smallest coherent vertical slice, reusing existing components rather than adding new engines:
+
+```text
+ConfigurationObjectKind.NAMING_POLICY → managed document `namingPolicies` section
+→ ConfigurationObjectService.mutate + reference evidence
+→ new exact-revision offline naming preview in the same service
+→ authenticated API route + managed Configuration Web section
+→ persisted bounded preview evidence with revision identity
+→ tests
+```
+
+- Add `NAMING_POLICY` to the editable section map with per-field validation for `mediaTypeMode`,
+  movie/series/season/episode/multi-episode templates and `missingVariableStrategy`, matching the
+  shapes already accepted by `config/strategy.example.json` and the runtime loader.
+- Reuse `NamingPolicyRegistry`, `NamingEngine`, `SafeTemplateRenderer`, `NameSanitizer` and
+  `NamingPreviewService`; do not fork template rendering or sanitization for the Web path.
+- Extend reference evidence so RecognitionTypePolicy references to a naming policy are reported and
+  block deletion exactly like existing reference-protected kinds.
+- Store bounded preview evidence in the existing revision evidence structure with the same
+  current/stale semantics as the Local setup check and Strategy Test evidence.
+- Preview input is one bounded synthetic sample (title, optional year, optional season/episode(s),
+  optional episode title, tags, extension) or one operator-supplied path string parsed by the
+  existing local Parser. No Storage adapter is constructed on any path.
+- No schema migration is expected; if one is required, keep it forward-only and record it.
 
 ## Non-goals
 
-- No change to the accepted admission, idempotency, snapshot pinning, Worker pipeline, persistence
-  schema, or API contract from `08dfd4f921728755209b6d52347d28f221121c47`.
-- No Provider switching, Provider CRUD, credential UI, or Secret Store.
-- No generic Task resume endpoint or UI, sibling replay, or broader per-item checkpoint recovery.
-- No organize execution, execute authorization, automatic continuation, or automatic retry.
-- No frontend framework, unrelated Web refactor, or Phase 22.6 work.
+- No ClassificationPolicy or OrganizePolicy editing, and no MediaLibrary target resolution preview.
+- No conflict-strategy, Storage-capability, or destination-existence precheck.
+- No change to Draft/Validate/Activate semantics, the checked activation gate, or the immutable
+  runtime snapshot contract.
+- No Provider access, Metadata lookup, scan, Task, Job, Preview queueing, or media mutation.
+- No Provider switching, generic Task resume, or broader per-item checkpoint recovery (later Phases).
+- No frontend framework, unrelated Web refactor, remote Storage editing, or Secret Store work.
+- No new CLI journey and no naming preview from production runtime Active configuration.
 
 ## Safety and Architecture Invariants
 
-- Rendering and reloading mutate nothing: no Storage, no queue, no Task, no Provider request.
-- Only OrganizerExecutor may mutate Storage, and this correction grants no execute authority.
-- The exact source configuration snapshot, not current Active configuration, remains the input to a
-  continuation.
-- Credentials, endpoints, raw Provider responses, headers, cookies, exception text, and private
-  paths must not enter Web, API, evidence, logs, tests, or commits.
+- Scanner, Parser, Recognition, Metadata, Naming, Classification, Planner and DryRun mutate nothing;
+  this slice touches only Naming configuration and a pure rendering preview.
+- Only OrganizerExecutor may mutate Storage; this slice grants no execute authority.
+- Naming only computes target directory and filename; it must not resolve MediaLibrary, decide
+  classification, or perform any file operation.
+- Rendered components stay path-safe: no separator injection, traversal, control characters, or
+  silently truncated Unicode.
+- RecognitionType C remains C even when its RecognitionTypePolicy references NamingPolicy A.
+- Anything shown as Active remains the exact immutable snapshot consumed by runtime.
+- Credentials, endpoints, raw Provider responses, headers, cookies, exception text and private paths
+  must not enter Web, API, evidence, logs, tests or commits. `config/alist.json` is never read.
 
 ## Required Tests
 
-1. Focused Web coverage that proves the continuation section is reachable on the Files detail page
-   and that would fail against `08dfd4f921728755209b6d52347d28f221121c47`.
-2. Focused Web coverage for the no-continuation, queued/running, completed, failed, stale, and
-   cancelled control and status shapes, including the retry and requeue visibility rules.
-3. Existing Phase 22.5-E API/Worker/persistence tests remain unchanged and green, including
-   concurrent duplicate admission, snapshot pinning, source/sibling preservation, and zero mutation.
-4. Regression: Phase 21 Metadata correction and Files detail linkage, Phase 22.5-B/C/D evidence and
-   recovery, and Phase 22.4 RecognitionType C snapshot behavior remain unchanged.
-5. Complete offline suite plus the zero-mutation and forbidden-dependency audits.
+Product acceptance first:
+
+1. Web/API journey: create a NamingPolicy in a Draft revision, preview it, see the rendered
+   directory/filename and explanation, correct an invalid template, and preview successfully.
+2. Reference impact: a RecognitionTypePolicy reference is listed and blocks deletion; after the
+   reference is removed the delete succeeds.
+3. Stale/concurrent behavior: an optimistic version conflict yields one durable winner and one
+   actionable conflict; editing the Draft after a preview marks that evidence stale and requires a
+   rerun.
+4. Failure/recovery: unknown variable, unsafe separator/traversal, empty render, over-long component,
+   and each missing-variable strategy produce bounded distinct categories with a next action.
+5. Movie, single-episode TV, and multi-episode TV previews render through the existing engine with
+   the expected components.
+6. Zero-mutation and isolation: no Storage adapter, Provider, queue, Task or Job is constructed on
+   success or failure paths; the destination tree and the runtime Active snapshot are unchanged.
+7. Regression: `RecognitionType C` with NamingPolicy A and ClassificationPolicy A still yields C;
+   Phase 22.3/22.4/22.5 configuration, Strategy Test, MetadataPolicy, correction and continuation
+   behavior remain unchanged; the complete offline suite has no weakened or removed assertion.
 
 ## Validation
 
-Run the focused continuation and Files detail Web/API tests, the related Phase 21 and Phase 22
-regressions, and the complete offline suite. Run Ruff lint/format, compileall, `pip check`, both
-example configuration validations, wheel build/smoke, documentation local-link validation,
-`git diff --check`, the FFmpeg/FFprobe production audit, the business-filesystem mutation audit, and
-the private configuration checks.
+Run the focused Naming configuration/preview tests, the Phase 22.3/22.4/22.5 configuration and
+continuation regressions, the RecognitionType C regression, and the complete offline suite. Run Ruff
+lint/format, `compileall`, `pip check`, both example configuration validations, wheel build plus the
+isolated installed-wheel smoke test, documentation local-link validation, `git diff --check`, the
+FFmpeg/FFprobe production audit, the business-filesystem mutation audit, and the private
+configuration checks. No real Storage, Provider, or production data is used.
 
 ## Documentation
 
-Update `docs/product-experience.md` so the Phase 22.5-E section no longer carries the Web
-`FIX REQUIRED` qualifier once the surface is actually delivered, and record the correction in
-`docs/progress.md` and `docs/roadmap.md`. Preserve the existing `FIX REQUIRED` record and the
-rejected SHA. Keep Provider switching, generic Task resume, and broader per-item checkpoint recovery
-explicitly TARGET.
+Update `docs/product-experience.md` (naming configuration journey CURRENT scope),
+`docs/requirements.md` and `docs/architecture.md` (CURRENT versus TARGET for Naming configuration),
+`docs/roadmap.md` (Phase 22.6 gate and remaining boundary) and `docs/progress.md` (implementation
+evidence, then the closure record after High review). Keep ClassificationPolicy/OrganizePolicy
+editing, conflict/capability prechecks, Provider switching, generic Task resume and broader per-item
+recovery explicitly TARGET. Never rewrite historical Phase evidence, including the preserved
+Phase 22.5-E `FIX REQUIRED` record and its rejected SHA.
 
 ## Closure Checklist
 
-- [x] Implementation workspace/session preflight records worktree, `.git`, index, sandbox, and
-      approval mode.
-- [x] Implementation capability mode is classified according to the authoritative workflow.
-- [x] The rejected Phase 22.5-E checkpoint `08dfd4f921728755209b6d52347d28f221121c47` and its
-      `FIX REQUIRED` audit are recorded in `docs/progress.md` and are not amended or rewritten.
-- [x] No prior accepted implementation or closure record remains uncommitted before implementation
-      begins.
-- [x] Implementation and required focused/full quality gates pass with actual evidence.
-- [x] Commit manifest contains every required file and no unrelated/private file.
-- [x] `config/alist.json` remains ignored, untracked, unstaged, unread, and uncommitted.
-- [ ] Coherent correction checkpoint created: `Commit SHA: ________________________________`.
-- [ ] High Review inspected that exact SHA: `High Audit: _________________________________`.
-- [ ] Progress and roadmap record final Status / Commit SHA / High Audit for Phase 22.5-E closure.
-- [ ] Next Slice has not started before every gate above is complete.
-- [ ] Required push state is recorded.
+- [ ] Workspace preflight records worktree, `.git`, index, sandbox, and approval mode.
+- [ ] Capability mode is classified as Git-writable / Full Access or Git-read-only / workspace-write.
+- [ ] The preceding dependent Phase is `PASS / CLOSED` with its commit SHA recorded
+      (`dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62`, Phase 22.5).
+- [ ] The Phase 22.5 closure push gate is satisfied: `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` is
+      reachable from `origin/main` before this implementation begins.
+- [ ] Implementation and all required focused/full quality gates pass with actual evidence.
+- [ ] `git status` and the commit manifest contain every required file and no unrelated/private file.
+- [ ] Private runtime configuration remains ignored/untracked; no secret is staged or committed.
+- [ ] A coherent, buildable commit has been created: `Commit SHA: ________________________________`.
+- [ ] High Review inspected that exact SHA and returned: `High Audit: ___________________________`.
+- [ ] `docs/progress.md` records Status / Commit SHA / High Audit.
+- [ ] `docs/roadmap.md` records the resulting Phase gate.
+- [ ] The next Slice has not started before every preceding gate is complete.
+- [ ] Required major-closure/integration push is recorded, or push is explicitly not required.
 
 ## Completion Report
 
 Use the AGENTS.md completion structure and additionally report:
 
-- the exact call-site or renderer change that attaches the section, quoted with file and line;
-- the rendered controls and status text for each continuation state;
-- the new Web assertion and proof that it fails against the rejected SHA;
-- confirmation that no accepted Application/API/persistence/Worker behavior changed;
-- zero-mutation, zero-Provider-on-view, and DryRun-only evidence.
+- the user journey result on the Web surface, not only the API;
+- the visible preview outcome for movie, single-episode and multi-episode samples;
+- each failure category with its durable state and recovery action;
+- reference-impact and delete-block evidence;
+- stale-evidence and version-conflict evidence;
+- zero-Storage, zero-Provider and no-execute-authority evidence;
+- CURRENT versus remaining TARGET for the Phase 22.6 journey and the exact next journey gap.

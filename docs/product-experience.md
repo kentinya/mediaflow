@@ -149,7 +149,10 @@ from one resolved File correction into a new pinned DryRun Preview; it must not 
 execute authority. Independent High Review returned `FIX REQUIRED` for checkpoint
 `08dfd4f921728755209b6d52347d28f221121c47` on 2026-08-27 because the Files detail Web surface was
 unreachable; Phase 22.5-E-F1 attached that section to the page and proved it with focused Web
-regression coverage. Provider switching remains later Metadata journey work.
+regression coverage, and independent High re-review accepted the correction checkpoint
+`dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` on 2026-08-27. The same-day phase-level Final Closure
+Audit accepted Phase 22.5 (slices A, B/F1, C/F1/F2, D, E/F1) as `PASS / CLOSED`. Provider switching
+remains later Metadata journey work.
 
 ## Phase 22.5-E single-item correction continuation (CURRENT)
 
@@ -159,6 +162,9 @@ but the Files detail continuation section was built and returned to a caller tha
 the Web entry point, confirmation, state rendering, links, retry, and stale requeue were
 unreachable. Phase 22.5-E-F1 attaches that section to `detailContent` on both branches, so
 everything described below is CURRENT for the Application, API, persistence, Worker, and Web.
+Independent High re-review accepted the correction checkpoint
+`dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` on 2026-08-27, and the phase-level Final Closure Audit
+the same day accepted Phase 22.5 as `PASS / CLOSED`.
 
 The operator goal is to turn exactly one already-resolved File Metadata correction into a fresh,
 read-only DryRun Preview without replaying the source Task or any sibling item. Files detail is the
@@ -189,7 +195,9 @@ admission are durable and idempotent. Source files, the resolved source review, 
 remain unchanged in every DryRun path.
 
 Provider switching, generic Task resume, automatic continuation retry, execution, and a broader
-checkpoint/recovery journey remain deferred.
+checkpoint/recovery journey remain deferred TARGET work and are outside the closed Phase 22.5 scope.
+Managed Naming / Classification / Organize configuration with exact-revision offline preview is the
+next Phase (22.6) and is not claimed here.
 
 ## A. First-time setup
 

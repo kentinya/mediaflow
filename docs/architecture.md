@@ -1026,10 +1026,11 @@ Provider from persisted evidence, and passes a bounded query/year/Movie-TV or di
 context is stored in the existing evidence JSON and replacement uses the existing revision-plus-
 evidence CAS. The Web uses the same action and existing candidate confirmation; no second store,
 Storage construction, activation, scan, Task, Preview, or media execution is added. Provider
-switching remains TARGET work. Phase 22.5-E is the current bounded implementation, awaiting
-independent High Review: queue exactly one resolved File correction as a new DryRun continuation
-pinned to the source Task configuration, without generic Task resume, sibling replay, or execute
-authority.
+switching remains TARGET work. Phase 22.5-E is accepted CURRENT implementation after independent
+High re-review of `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` on 2026-08-27, which also closed
+Phase 22.5 at the phase level: queue exactly one resolved File correction as a new DryRun
+continuation pinned to the source Task configuration, without generic Task resume, sibling replay, or
+execute authority.
 
 The shared API/Web admission service validates the exact File/review/source Task/TaskItem linkage,
 correction version, active capacity, and immutable snapshot ID/digest, then atomically creates the
@@ -1627,9 +1628,10 @@ accepted in Phase 22.4; MetadataPolicy managed editing/offline resolution was ac
 22.5-A. Managed live Provider testing/candidate explanation and its F1 correction were accepted in
 Phase 22.5-B. Candidate confirmation and its F1/F2 corrections were accepted in Phase 22.5-C.
 Phase 22.5-D same-Provider managed live correction testing passed independent High re-review.
-Phase 22.5-E implementation is limited to one resolved correction's pinned DryRun continuation and
-is awaiting independent High Review; Provider switching, generic Task resume, and broader Files/Task
-recovery remain later work.
+Phase 22.5-E is limited to one resolved correction's pinned DryRun continuation and passed
+independent High re-review at `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62`, closing Phase 22.5;
+Provider switching, generic Task resume, broader Files/Task recovery, and managed
+Naming/Classification/Organize configuration (Phase 22.6) remain later work.
 
 ## Configuration architecture: TARGET (partially implemented; remaining work explicit)
 
