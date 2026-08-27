@@ -26,7 +26,9 @@ Phase 22.5-B Managed Live Metadata Test + Candidate Explanation 及其 F1 修复
 并发修复也已通过 final Integration Acceptance。Phase 22.5-D Managed Live Metadata Correction
 Test 的 correction checkpoint 已于 2026-08-26 通过独立 High re-review 并 **PASS / CLOSED**。
 当前合法边界是 Phase 22.5-E 单项 Metadata correction DryRun continuation；该 Slice 的实现
-checkpoint 已完成，尚待独立 High Review；Provider switching 仍后置。本次 Product/UX
+checkpoint `08dfd4f921728755209b6d52347d28f221121c47` 已于 2026-08-27 被独立 High Review 判定
+**FIX REQUIRED**（Files detail Web continuation section 未挂载到 DOM，操作者侧旅程不可达），
+当前唯一授权工作是 Phase 22.5-E-F1 修正；Provider switching 仍后置。本次 Product/UX
 Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 
@@ -491,9 +493,10 @@ resident API 使用不可变 request-scoped binding 绑定 snapshot identity、�
 revision 持久化可操作且脱敏的失败证据。独立复核的 11 项关键回归和 708 项完整离线
 套件无失败，本 Task 范围内无 P0/P1 偏离。
 
-Phase 22.3、Phase 22.4 与 Phase 22.5-A/B/C/D 的全部 correction 和独立验收已通过。当前正式
-Task 是 **Phase 22.5-E — Single-Item Metadata Correction DryRun Continuation**；实现 checkpoint
-已完成并等待独立 High Review，下一 Slice 尚未授权。
+Phase 22.3、Phase 22.4 与 Phase 22.5-A/B/C/D 的全部 correction 和独立验收已通过。Phase 22.5-E
+的实现 checkpoint 已被独立 High Review 判定 **FIX REQUIRED**，当前正式 Task 是
+**Phase 22.5-E-F1 — Files Detail Continuation Rendering Correction**；Phase 22.5-E 尚未 CLOSED，
+下一 feature Slice 尚未授权。
 不得借此提前开展 Provider switching、通用 Task resume、兄弟项重放、
 Naming/Classification/Organize 后续旅程或
 更宽的自动化。Interval/Cron 仍只允许 scan/preview；

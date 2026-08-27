@@ -1,194 +1,169 @@
-# Phase 22.5-E — Single-Item Metadata Correction DryRun Continuation
+# Phase 22.5-E-F1 — Files Detail Continuation Rendering Correction
 
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: NEXT TASK
-Preceding reviewed checkpoint: 55769be58a75596461879994560a0c58c3a7c9dc
-Preceding High Audit: PASS — 2026-08-26
+Status: NEXT TASK (focused correction inside Phase 22.5-E)
+Rejected checkpoint: 08dfd4f921728755209b6d52347d28f221121c47
+High Audit: FIX REQUIRED — 2026-08-27
+Preceding closed checkpoint: 55769be58a75596461879994560a0c58c3a7c9dc (Phase 22.5-D PASS / CLOSED)
+Reviewed Phase 22.5-E Task: Task/phase-22.5-e-single-item-metadata-correction-dryrun-continuation.md
 ```
 
-## User Problem
+## Review Finding
 
-The Files detail journey can persist a manual Metadata correction and move the affected TaskItem
-back to a recoverable pending state, but Web/API deliberately stop before continuing processing.
-The only existing continuation mechanism is broad Task resume behavior, which may retry sibling
-items and therefore is not a safe per-item product action.
+Independent High Review of `08dfd4f921728755209b6d52347d28f221121c47` accepted the Application,
+API, persistence, and Worker behavior of the single-item Metadata correction DryRun continuation. It
+rejected the checkpoint because the promised operator-facing surface does not exist at runtime.
 
-This Slice lets an operator explicitly continue exactly one resolved Metadata correction through a
-new DryRun pipeline and inspect a new Preview/Result. It does not switch Provider, resume the whole
-source Task, or authorize media execution.
+`renderMetadataContinuation` in `mediaflow/interfaces/operator_ui.py:896` builds its section and
+`return`s it. Its only caller, `mediaflow/interfaces/operator_ui.py:1253`, invokes it as a statement
+and discards the returned node, so nothing is ever attached to `detailContent`. Every sibling
+renderer in that file (for example `renderFileReMatchForm`) appends internally; this one does not.
+
+Consequently the Files detail page never renders the continuation heading, the source
+Task/TaskItem/correction-identity/snapshot cards, the one-item `DRY_RUN_ONLY` /
+`Storage mutation: NONE` disclosure, the `Continue as DryRun` entry point, the queued / running /
+completed / failed / stale / cancelled status text, the failure category, failure, recovery and next
+action text, the linked Job and Task/Result controls, the single-item retry control, or the stale
+requeue control. The only visible trace is one extra `Continuation` column in the Related reviews
+table. `confirmMetadataContinuation` and `confirmStaleMetadataContinuation` are therefore
+unreachable dead code.
+
+The Web half of the journey required by `TASK.md` (Phase 22.5-E) UX acceptance, by
+`docs/product-experience.md` journey D, and by AGENTS.md product rules 5 (Web is the final
+management surface) and 6 (API/Web parity) is not delivered.
+
+The only Web coverage,
+`tests/test_metadata_correction_continuation.py::test_operator_ui_action_is_explicit_and_stateful`,
+asserts substrings that live inside that dead function, so it passes while the section is never
+attached. Required test 8 of Phase 22.5-E is therefore not proven.
+
+This is a focused correction inside Phase 22.5-E. Do not expand the scope, change accepted
+Application/API/persistence/Worker behavior, or begin a later Slice or Phase.
 
 ## User Journey
 
-This advances `docs/product-experience.md` journey D:
-
 ```text
 Files detail
-→ inspect one resolved Metadata correction and its source Task/TaskItem
-→ review the immutable source configuration and DryRun-only consequence
-→ explicitly choose Continue as DryRun
-→ queue one durable continuation for that item only
-→ production pipeline consumes the resolved correction and pinned configuration
-→ inspect the new Task/Result/Preview
-→ correct and retry that item again if the new attempt fails
+→ open a File whose Metadata correction is resolved and whose source TaskItem is eligible
+→ see the continuation section with source Task/TaskItem, correction identity, pinned snapshot,
+  one-item scope, DryRun-only authority and zero Storage mutation
+→ explicitly confirm Continue as DryRun
+→ reload and see queued / running / completed / failed / stale / cancelled state with next action
+→ open the linked continuation Job and the new DryRun Task/Result
+→ retry only this correction, or explicitly requeue a stale continuation
 ```
 
-Entry points:
+## Required Correction
 
-- authenticated Files API;
-- existing vanilla Files detail Web view.
+1. Attach the continuation section to the Files detail page. Follow the existing renderer
+   convention in `operator_ui.py`: append inside the render function, or append the returned node at
+   the call site. Both current branches (no continuation yet, and an existing continuation) must
+   reach the page.
+2. Keep the existing visibility predicate unchanged: the section appears only for a
+   `metadata_correction` related review with `status === 'resolved'` and either `canContinue` or an
+   existing `continuation`, using the exact `correctionVersion` supplied by the API.
+3. Keep the already-accepted API payload, permission, identity, and idempotency behavior. The
+   submission must continue to send only `reviewId` and `expectedCorrectionVersion` to
+   `POST /api/v1/files/{fileId}/continue-dry-run`, and the stale action must continue to use
+   `POST /api/v1/jobs/{jobId}/requeue-stale`.
+4. Keep rendering read-only. Opening or reloading the File must not submit, queue, requeue, cancel,
+   or invoke a Provider; the `Continue as DryRun`, retry, and requeue controls must remain behind
+   the existing explicit confirmation step with its keep-unchanged escape.
+5. Keep every existing bounded, secret-free string, the DryRun-only and zero-mutation disclosure,
+   the duplicate/queue-full conflict `details` rendering, and the text-only DOM helpers. Do not add
+   a frontend framework, a second continuation shape, or new API fields.
 
-## User-visible Outcome
+## Acceptance Criteria
 
-- An eligible resolved Metadata correction exposes one explicit `Continue as DryRun` action.
-- The confirmation states that only the selected item is processed, source media is not mutated,
-  and no execute authority is inherited.
-- Submission returns one durable queued identity and a link or identifier for its new Task/Result.
-- Reloading shows queued/running/completed/failed state without resubmitting.
-- Success produces a new explainable DryRun Preview/Result linked to the source File, review,
-  TaskItem, and exact source configuration snapshot.
-- Source Task state, successful siblings, failed siblings, and source media remain unchanged.
-
-## Failure and Recovery
-
-- Wrong File/review/item linkage, unresolved or superseded correction, ineligible TaskItem state,
-  missing/corrupt source snapshot, stale request identity, or malformed input fails before Provider
-  or Storage access.
-- Duplicate or concurrent submissions for the same resolved correction create at most one active
-  continuation. The loser reloads the durable current continuation.
-- Queue/claim/worker failure remains durable and actionable. The resolved correction and source
-  item are not discarded or falsely marked successful.
-- Provider or downstream analysis failure is recorded on the new single-item attempt with bounded,
-  secret-free recovery guidance. Retrying it must not replay source siblings.
-- Recovery is explicit: inspect the current continuation/result, repair the stated input or runtime
-  condition, then retry only this correction when eligible.
-
-## UX Acceptance Criteria
-
-- [ ] Files detail exposes the action only for the exact current resolved correction whose linked
-      TaskItem is eligible for Metadata continuation.
-- [ ] The action identifies the source Task/item, pinned configuration, selected correction, and
-      DryRun-only effect before submission.
-- [ ] One explicit submission queues exactly one item; no sibling or previously successful item is
-      selected or reprocessed.
-- [ ] The worker consumes the exact immutable configuration snapshot associated with the source
-      Task and the exact resolved correction.
-- [ ] A new Task/Result/Preview is durable, reloadable, and linked back to the source File/review/item.
-- [ ] The new attempt is always DryRun, including when the source Task had execute authorization.
-- [ ] Queued, running, completed, failed, stale, duplicate, and snapshot-unavailable outcomes are
-      visibly distinct and provide an explicit next action.
-- [ ] API and Web use the same Application admission, permission, identity, and idempotency rules.
-- [ ] RecognitionType C remains C and its configured downstream policy references remain unchanged.
-- [ ] Merely viewing/reloading the page performs no Provider request and queues no work.
-- [ ] All paths perform zero media mutation and grant no OrganizerExecutor execute authority.
-
-## Technical Scope
-
-1. Add one bounded durable correction-continuation identity that binds:
-   - File ID;
-   - resolved Metadata correction review ID and immutable correction identity/version;
-   - source Task and TaskItem IDs;
-   - source configuration snapshot ID and digest;
-   - DryRun-only execution mode.
-2. Add one Application action that reloads and validates those server-side relationships and queues
-   exactly one eligible item. Client input must not select arbitrary Provider, policy, path,
-   sibling item, snapshot, or execute mode.
-3. Reuse existing Task/Result/Job persistence where it can represent this truthfully. Add the
-   smallest migration only if durable linkage/idempotency cannot be expressed in the existing
-   schema; do not create a parallel task system.
-4. Add one worker command/path that processes only the bound item through the existing production
-   Parser → Recognition → TypePolicy → Metadata → Naming → Classification → Planner path using the
-   resolved `MetadataCorrectionSelection` and exact pinned snapshot.
-5. Persist a new DryRun Task/TaskItem/Result/Preview and bounded source linkage. Preserve the source
-   Task and all source sibling states.
-6. Add an authenticated Files API action using the existing DryRun submission permission. Return
-   bounded conflict/stale/recovery representations from the shared Application behavior.
-7. Add the minimal Files detail Web action and status/result rendering using existing text-only DOM
-   helpers. Do not add a frontend framework.
+- [ ] An eligible resolved correction with no continuation renders the continuation section and one
+      `Continue as DryRun` control on the Files detail page.
+- [ ] That section visibly shows the source Task, source item, correction ID, correction identity,
+      configuration snapshot ID and digest, `Items selected: 1`, `Authority: DRY_RUN_ONLY`, and
+      `Storage mutation: NONE` before submission.
+- [ ] A queued, running, completed, failed, stale, and cancelled continuation each renders a
+      visibly distinct status line plus its next action, and failure additionally renders the
+      bounded error and recovery text.
+- [ ] The linked continuation Job control is always rendered; the linked Task/Result control is
+      rendered exactly when the continuation has a Task.
+- [ ] The single-item retry control is rendered only for a failed or cancelled continuation whose
+      review still reports `canContinue`; the requeue control is rendered only for the stale
+      display status.
+- [ ] Confirmation for both submission and stale requeue still requires an explicit second click and
+      still offers an explicit keep-unchanged option.
+- [ ] Rendering and reloading perform no submission, queue mutation, Provider call, or Storage
+      access; the accepted API and Application semantics are unchanged.
+- [ ] Focused Web regression coverage fails if the continuation section is not attached to
+      `detailContent`, and covers the no-continuation, queued/running, completed, failed, stale, and
+      cancelled shapes. A substring-only assertion inside the render function is not sufficient
+      evidence.
+- [ ] `tests/test_metadata_correction_continuation.py` and the complete offline suite remain green
+      with no weakened or removed assertion.
+- [ ] RecognitionType C remains C, no execute authority is granted, and no media mutation occurs on
+      any path.
 
 ## Non-goals
 
-- No Provider switching, Provider CRUD, second Provider implementation, credential UI, Secret
-  Store, arbitrary Provider selection, or implicit Provider fallback.
-- No generic Task resume endpoint/UI and no reuse of broad resume semantics that can replay siblings.
-- No organize execution, execute authorization, automatic continuation, automatic retry, or media
-  mutation.
-- No new correction fields, candidate matching redesign, cache redesign, or Provider telemetry.
-- No Naming/Classification/Organize policy editing, destination correction, automation scheduling,
-  Phase 22.6 work, or unrelated refactor.
+- No change to the accepted admission, idempotency, snapshot pinning, Worker pipeline, persistence
+  schema, or API contract from `08dfd4f921728755209b6d52347d28f221121c47`.
+- No Provider switching, Provider CRUD, credential UI, or Secret Store.
+- No generic Task resume endpoint or UI, sibling replay, or broader per-item checkpoint recovery.
+- No organize execution, execute authorization, automatic continuation, or automatic retry.
+- No frontend framework, unrelated Web refactor, or Phase 22.6 work.
 
 ## Safety and Architecture Invariants
 
-- Parser, Recognition, Metadata, Naming, Classification, Planner, and DryRun continuation do not
-  mutate Storage.
-- Only OrganizerExecutor may mutate Storage, and this Slice never grants it execute authority.
-- Source execute authorization is never copied, inferred, or widened.
-- The exact source snapshot, not current Active configuration, is consumed by the new attempt.
-- RecognitionType is immutable across reuse of Metadata/Naming/Classification policies.
-- One-item continuation cannot select, reset, or replay source siblings.
+- Rendering and reloading mutate nothing: no Storage, no queue, no Task, no Provider request.
+- Only OrganizerExecutor may mutate Storage, and this correction grants no execute authority.
+- The exact source configuration snapshot, not current Active configuration, remains the input to a
+  continuation.
 - Credentials, endpoints, raw Provider responses, headers, cookies, exception text, and private
-  paths do not enter API, Web, evidence, logs, tests, or commits.
+  paths must not enter Web, API, evidence, logs, tests, or commits.
 
 ## Required Tests
 
-Product acceptance:
-
-1. A resolved query correction continues exactly one item and produces a linked new DryRun
-   Task/Result/Preview through the production pipeline; source Task/item/siblings remain unchanged.
-2. A resolved direct-ID correction uses the production detail path without an extra search and
-   preserves RecognitionType C plus all configured policy identities.
-3. A source Task with execute authorization still creates a DryRun-only continuation and performs
-   zero Storage mutation.
-4. Changing Active configuration after the source Task does not change the snapshot consumed by
-   continuation; missing/corrupt/unreachable pinned snapshots fail before pipeline construction.
-5. Wrong/stale File-review-item linkage, unresolved/superseded correction, ineligible item state,
-   or malformed request is rejected before Provider/Storage access.
-6. Concurrent duplicate submissions create one durable continuation and one actionable conflict;
-   worker claim fencing/idempotency prevents duplicate execution.
-7. Provider/downstream failure is durable and actionable; retry remains single-item and never
-   replays successful or unrelated siblings.
-8. Web visibility, confirmation, payload, queued/running/completed/failed rendering, and links match
-   API semantics; page view/reload never auto-submits or invokes the Provider.
-
-Regression:
-
-- Phase 21 Metadata correction, Files detail linkage, and CLI Task resume behavior remain unchanged.
-- Phase 22.5-B/C/D live evidence, candidate confirmation, correction, CAS, and recovery remain
-  unchanged.
-- Phase 22.4 RecognitionType C identity and exact snapshot behavior remain unchanged.
-- Complete offline suite and zero-mutation/forbidden-dependency audits.
+1. Focused Web coverage that proves the continuation section is reachable on the Files detail page
+   and that would fail against `08dfd4f921728755209b6d52347d28f221121c47`.
+2. Focused Web coverage for the no-continuation, queued/running, completed, failed, stale, and
+   cancelled control and status shapes, including the retry and requeue visibility rules.
+3. Existing Phase 22.5-E API/Worker/persistence tests remain unchanged and green, including
+   concurrent duplicate admission, snapshot pinning, source/sibling preservation, and zero mutation.
+4. Regression: Phase 21 Metadata correction and Files detail linkage, Phase 22.5-B/C/D evidence and
+   recovery, and Phase 22.4 RecognitionType C snapshot behavior remain unchanged.
+5. Complete offline suite plus the zero-mutation and forbidden-dependency audits.
 
 ## Validation
 
-Run focused Application/persistence/worker/API/Web tests, the related Phase 21 and Phase 22
+Run the focused continuation and Files detail Web/API tests, the related Phase 21 and Phase 22
 regressions, and the complete offline suite. Run Ruff lint/format, compileall, `pip check`, both
 example configuration validations, wheel build/smoke, documentation local-link validation,
-`git diff --check`, FFmpeg/FFprobe production audit, business-filesystem mutation audit, and private
-configuration checks.
+`git diff --check`, the FFmpeg/FFprobe production audit, the business-filesystem mutation audit, and
+the private configuration checks.
 
 ## Documentation
 
-Update product experience, requirements/status, architecture CURRENT/TARGET, roadmap, progress,
-and operator guidance only for behavior actually implemented. Preserve historical audit records.
-Keep Provider switching, generic Task resume, and broader per-item checkpoint recovery explicitly
-TARGET.
+Update `docs/product-experience.md` so the Phase 22.5-E section no longer carries the Web
+`FIX REQUIRED` qualifier once the surface is actually delivered, and record the correction in
+`docs/progress.md` and `docs/roadmap.md`. Preserve the existing `FIX REQUIRED` record and the
+rejected SHA. Keep Provider switching, generic Task resume, and broader per-item checkpoint recovery
+explicitly TARGET.
 
 ## Closure Checklist
 
 - [ ] Implementation workspace/session preflight records worktree, `.git`, index, sandbox, and
       approval mode.
 - [ ] Implementation capability mode is classified according to the authoritative workflow.
-- [x] Preceding Phase 22.5-D checkpoint `55769be58a75596461879994560a0c58c3a7c9dc`
-      is `PASS / CLOSED` after independent High re-review.
+- [x] The rejected Phase 22.5-E checkpoint `08dfd4f921728755209b6d52347d28f221121c47` and its
+      `FIX REQUIRED` audit are recorded in `docs/progress.md` and are not amended or rewritten.
 - [ ] No prior accepted implementation or closure record remains uncommitted before implementation
       begins.
 - [ ] Implementation and required focused/full quality gates pass with actual evidence.
 - [ ] Commit manifest contains every required file and no unrelated/private file.
 - [ ] `config/alist.json` remains ignored, untracked, unstaged, unread, and uncommitted.
-- [ ] Coherent implementation checkpoint created: `Commit SHA: ________________________________`.
+- [ ] Coherent correction checkpoint created: `Commit SHA: ________________________________`.
 - [ ] High Review inspected that exact SHA: `High Audit: _________________________________`.
-- [ ] Progress and roadmap record final Status / Commit SHA / High Audit.
+- [ ] Progress and roadmap record final Status / Commit SHA / High Audit for Phase 22.5-E closure.
 - [ ] Next Slice has not started before every gate above is complete.
 - [ ] Required push state is recorded.
 
@@ -196,9 +171,8 @@ TARGET.
 
 Use the AGENTS.md completion structure and additionally report:
 
-- exact one-item admission and idempotency identity;
-- pinned snapshot and correction consumption evidence;
-- source/sibling preservation and zero-mutation evidence;
-- visible success/failure/recovery outcomes;
-- Provider search/detail and worker execution counts;
-- CURRENT one-item DryRun continuation versus deferred Provider switching/general recovery.
+- the exact call-site or renderer change that attaches the section, quoted with file and line;
+- the rendered controls and status text for each continuation state;
+- the new Web assertion and proof that it fails against the rejected SHA;
+- confirmation that no accepted Application/API/persistence/Worker behavior changed;
+- zero-mutation, zero-Provider-on-view, and DryRun-only evidence.

@@ -262,6 +262,33 @@ Files/Task continuation, Naming/Classification/Organize configuration, and Phase
 - This is implementation evidence only. The checkpoint is ready for independent High Review; no
   PASS/CLOSED decision or next Slice authorization is recorded here.
 
+## Phase 22.5-E High Review Result (2026-08-27)
+
+- Status: FIX REQUIRED; Rejected checkpoint SHA:
+  `08dfd4f921728755209b6d52347d28f221121c47`; High Audit: FIX REQUIRED — 2026-08-27.
+  This record is preserved; the rejected SHA is not amended, squashed, or rewritten.
+- Verified accepted at that SHA: durable one-item admission identity and partial unique active
+  index, atomic Job/continuation admission, exact pinned snapshot consumption, DryRun-only new Task,
+  RecognitionType C identity with NamingPolicy/ClassificationPolicy A, source Task/item/sibling
+  preservation, zero media mutation, bounded secret-free failure/recovery text, concurrent duplicate
+  admission yielding one continuation plus one actionable 409, stale/cancel/requeue durability, and
+  the restriction of the new command to admission (Interval/Cron and generic Job submit still accept
+  only scan/preview). Independently re-run: 802 offline tests with 7 existing external-service skips
+  and 0 failures, 11 focused continuation tests, Ruff check/format, `git diff --check`, and the
+  private `config/alist.json` ignore/untracked checks.
+- P0 blocking defect: the Files detail Web surface for this journey is unreachable.
+  `renderMetadataContinuation` in `mediaflow/interfaces/operator_ui.py` builds its section and
+  returns it, and its only caller discards the return value instead of attaching it to
+  `detailContent`. No continuation section, confirmation entry point, status/error/recovery/next
+  action text, linked Task/Job control, retry, or stale requeue control is ever rendered, so the
+  promised Web half of the journey does not exist even though the API is complete.
+- P1 blocking test-strength defect: the only Web coverage asserts substrings inside that dead
+  function, so it passes while the section is never attached. The required Web acceptance is
+  therefore not proven.
+- The Phase remains open. Correction Task `TASK.md` (Phase 22.5-E-F1) is the only authorized next
+  work; the reviewed Phase 22.5-E Task document is archived at
+  `Task/phase-22.5-e-single-item-metadata-correction-dryrun-continuation.md`.
+
 ## Phase 22.5-B Implementation Evidence (2026-08-26; awaiting independent review)
 
 - Extended the accepted exact-revision Strategy Test with an explicit `liveMetadata` action through
@@ -1225,10 +1252,12 @@ Files/Task continuation, Naming/Classification/Organize configuration, and Phase
 
 ## Planned
 
-- Phase 22.5-E implementation checkpoint is ready for independent High Review: one bounded Files
-  journey explicitly continues one resolved Metadata correction into a new pinned DryRun Preview
-  without replaying sibling items or inheriting execute authority. No next Slice is authorized;
-  Provider switching remains deferred until a truthful multi-Provider capability exists.
+- Phase 22.5-E checkpoint `08dfd4f921728755209b6d52347d28f221121c47` received `FIX REQUIRED` on
+  2026-08-27: the Application/API/persistence/Worker journey is accepted, but the Files detail Web
+  continuation section is never attached to the DOM, so the operator-facing half of the journey is
+  unreachable. Phase 22.5-E-F1 must render and prove that surface before the Phase can close. No
+  next feature Slice is authorized; Provider switching remains deferred until a truthful
+  multi-Provider capability exists.
 - Follow with TaskItem Processing Checkpoint/stage-aware recovery, complete Files/Media detail and
   manual organize, then automation/final production hardening
 - External identity/OIDC and Secret Store remain explicit later architecture decisions; no weak
