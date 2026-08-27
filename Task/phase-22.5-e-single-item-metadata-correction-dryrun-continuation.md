@@ -1,6 +1,6 @@
 # Phase 22.5-E — Single-Item Metadata Correction DryRun Continuation
 
-This Task follows [the authoritative development workflow](docs/development-workflow.md).
+This Task follows [the authoritative development workflow](../docs/development-workflow.md).
 
 ```text
 Status: NEXT TASK

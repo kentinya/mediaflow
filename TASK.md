@@ -3,7 +3,7 @@
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: NEXT TASK (focused correction inside Phase 22.5-E)
+Status: READY FOR HIGH RE-REVIEW (focused correction inside Phase 22.5-E)
 Rejected checkpoint: 08dfd4f921728755209b6d52347d28f221121c47
 High Audit: FIX REQUIRED — 2026-08-27
 Preceding closed checkpoint: 55769be58a75596461879994560a0c58c3a7c9dc (Phase 22.5-D PASS / CLOSED)
@@ -77,30 +77,30 @@ Files detail
 
 ## Acceptance Criteria
 
-- [ ] An eligible resolved correction with no continuation renders the continuation section and one
+- [x] An eligible resolved correction with no continuation renders the continuation section and one
       `Continue as DryRun` control on the Files detail page.
-- [ ] That section visibly shows the source Task, source item, correction ID, correction identity,
+- [x] That section visibly shows the source Task, source item, correction ID, correction identity,
       configuration snapshot ID and digest, `Items selected: 1`, `Authority: DRY_RUN_ONLY`, and
       `Storage mutation: NONE` before submission.
-- [ ] A queued, running, completed, failed, stale, and cancelled continuation each renders a
+- [x] A queued, running, completed, failed, stale, and cancelled continuation each renders a
       visibly distinct status line plus its next action, and failure additionally renders the
       bounded error and recovery text.
-- [ ] The linked continuation Job control is always rendered; the linked Task/Result control is
+- [x] The linked continuation Job control is always rendered; the linked Task/Result control is
       rendered exactly when the continuation has a Task.
-- [ ] The single-item retry control is rendered only for a failed or cancelled continuation whose
+- [x] The single-item retry control is rendered only for a failed or cancelled continuation whose
       review still reports `canContinue`; the requeue control is rendered only for the stale
       display status.
-- [ ] Confirmation for both submission and stale requeue still requires an explicit second click and
+- [x] Confirmation for both submission and stale requeue still requires an explicit second click and
       still offers an explicit keep-unchanged option.
-- [ ] Rendering and reloading perform no submission, queue mutation, Provider call, or Storage
+- [x] Rendering and reloading perform no submission, queue mutation, Provider call, or Storage
       access; the accepted API and Application semantics are unchanged.
-- [ ] Focused Web regression coverage fails if the continuation section is not attached to
+- [x] Focused Web regression coverage fails if the continuation section is not attached to
       `detailContent`, and covers the no-continuation, queued/running, completed, failed, stale, and
       cancelled shapes. A substring-only assertion inside the render function is not sufficient
       evidence.
-- [ ] `tests/test_metadata_correction_continuation.py` and the complete offline suite remain green
+- [x] `tests/test_metadata_correction_continuation.py` and the complete offline suite remain green
       with no weakened or removed assertion.
-- [ ] RecognitionType C remains C, no execute authority is granted, and no media mutation occurs on
+- [x] RecognitionType C remains C, no execute authority is granted, and no media mutation occurs on
       any path.
 
 ## Non-goals
@@ -151,16 +151,16 @@ explicitly TARGET.
 
 ## Closure Checklist
 
-- [ ] Implementation workspace/session preflight records worktree, `.git`, index, sandbox, and
+- [x] Implementation workspace/session preflight records worktree, `.git`, index, sandbox, and
       approval mode.
-- [ ] Implementation capability mode is classified according to the authoritative workflow.
+- [x] Implementation capability mode is classified according to the authoritative workflow.
 - [x] The rejected Phase 22.5-E checkpoint `08dfd4f921728755209b6d52347d28f221121c47` and its
       `FIX REQUIRED` audit are recorded in `docs/progress.md` and are not amended or rewritten.
-- [ ] No prior accepted implementation or closure record remains uncommitted before implementation
+- [x] No prior accepted implementation or closure record remains uncommitted before implementation
       begins.
-- [ ] Implementation and required focused/full quality gates pass with actual evidence.
-- [ ] Commit manifest contains every required file and no unrelated/private file.
-- [ ] `config/alist.json` remains ignored, untracked, unstaged, unread, and uncommitted.
+- [x] Implementation and required focused/full quality gates pass with actual evidence.
+- [x] Commit manifest contains every required file and no unrelated/private file.
+- [x] `config/alist.json` remains ignored, untracked, unstaged, unread, and uncommitted.
 - [ ] Coherent correction checkpoint created: `Commit SHA: ________________________________`.
 - [ ] High Review inspected that exact SHA: `High Audit: _________________________________`.
 - [ ] Progress and roadmap record final Status / Commit SHA / High Audit for Phase 22.5-E closure.

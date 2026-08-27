@@ -1004,6 +1004,168 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
         self.assertIn("Next action:", script)
         self.assertIn("Source Task and siblings are unchanged", script)
 
+    def test_operator_ui_continuation_section_is_attached_to_file_detail(self) -> None:
+        script = ASSETS["/ui/app.js"][1].decode("utf-8")
+        body = _js_function_body(script, "renderMetadataContinuation")
+
+        # Both branches must reach the page. Building the section and returning it to a
+        # caller that discards the node leaves the whole journey invisible.
+        self.assertEqual(body.count("detailContent.append(section)"), 2)
+        self.assertNotIn("return section", body)
+        self.assertIn("renderMetadataContinuation(id, continuationReview);", script)
+        self.assertIn(
+            "item.status === 'resolved' && (item.canContinue || item.continuation)",
+            script,
+        )
+
+        # Pre-submission disclosure and the explicit entry point live on the
+        # no-continuation branch.
+        for expected in (
+            "['Source Task', review.taskId]",
+            "['Correction identity', review.correctionVersion]",
+            "['Configuration snapshot', review.configurationSnapshotId || '-']",
+            "['Items selected', '1'], ['Authority', 'DRY_RUN_ONLY'], ['Storage mutation', 'NONE']",
+            "actionButton('Continue as DryRun'",
+        ):
+            self.assertIn(expected, body)
+
+        # Every continuation state renders its own status, recovery and next action.
+        for expected in (
+            "`Continuation status: ${current.status}. `",
+            "if (current.error)",
+            "if (current.recovery)",
+            "if (current.nextAction)",
+            "actionButton('Open continuation job'",
+        ):
+            self.assertIn(expected, body)
+
+        # Control visibility follows the API state, not the operator's guess.
+        self.assertIn("if (current.taskId) {", body)
+        self.assertLess(
+            body.index("actionButton('Open continuation job'"),
+            body.index("if (current.taskId) {"),
+        )
+        self.assertIn(
+            "if ((current.status === 'failed' || current.status === 'cancelled') "
+            "&& review.canContinue) {",
+            body,
+        )
+        self.assertIn("if (current.status === 'stale') {", body)
+
+        # Rendering is read-only: no request, submission or requeue happens on view.
+        self.assertNotIn("api(", body)
+        self.assertNotIn("fetch(", body)
+
+    def test_file_detail_projection_matches_web_continuation_states(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            _source_task, source_item, review = self._seed_resolved_correction(environment)
+            api = self._api(environment)
+
+            link = self._correction_link(api)
+            self.assertTrue(link["canContinue"])
+            self.assertNotIn("continuation", link)
+
+            status, _accepted = api_request(
+                api,
+                "/api/v1/files/file-one/continue-dry-run",
+                method="POST",
+                body={
+                    "reviewId": review.review_id,
+                    "expectedCorrectionVersion": link["correctionVersion"],
+                },
+            )
+            self.assertEqual(status, 202)
+            queued = self._correction_link(api)
+            self.assertFalse(queued["canContinue"])
+            self.assertEqual(queued["continuation"]["status"], "queued")
+            self.assertIsNone(queued["continuation"]["taskId"])
+            self.assertIn("Worker", queued["continuation"]["nextAction"])
+
+            with patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                lambda _ids: MetadataProviderRegistry((FailingSearchProvider(),)),
+            ):
+                code = final_main(
+                    ["--config", str(environment["config"]), "worker", "run-next"],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                )
+            self.assertEqual(code, 1)
+            failed = self._correction_link(api)
+            self.assertTrue(failed["canContinue"])
+            self.assertEqual(failed["continuation"]["status"], "failed")
+            self.assertEqual(failed["continuation"]["executionMode"], "dry_run")
+            self.assertTrue(failed["continuation"]["error"])
+            self.assertTrue(failed["continuation"]["recovery"])
+            self.assertIn("retry", failed["continuation"]["nextAction"])
+            self.assertNotIn("provider unavailable", json.dumps(failed))
+
+            status, _retry = api_request(
+                api,
+                "/api/v1/files/file-one/continue-dry-run",
+                method="POST",
+                body={
+                    "reviewId": review.review_id,
+                    "expectedCorrectionVersion": failed["correctionVersion"],
+                },
+            )
+            self.assertEqual(status, 202)
+            with patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                lambda _ids: MetadataProviderRegistry(
+                    (
+                        DetailCountingProvider(
+                            (
+                                MediaCandidate(
+                                    "tmdb",
+                                    "42",
+                                    MediaType.MOVIE,
+                                    "Correct Title",
+                                    year=2024,
+                                ),
+                            )
+                        ),
+                    )
+                ),
+            ):
+                code = final_main(
+                    ["--config", str(environment["config"]), "worker", "run-next"],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                )
+            self.assertEqual(code, 0)
+            completed = self._correction_link(api)
+            self.assertFalse(completed["canContinue"])
+            self.assertEqual(completed["continuation"]["status"], "completed")
+            self.assertEqual(completed["continuation"]["executionMode"], "dry_run")
+            self.assertTrue(completed["continuation"]["taskId"])
+            self.assertTrue(completed["continuation"]["resultId"])
+            self.assertIn("source remains unchanged", completed["continuation"]["nextAction"])
+
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                self.assertEqual(
+                    repository.get_item(source_item.item_id).status,
+                    TaskItemStatus.PENDING,
+                )
+            self.assertEqual(environment["source_file"].read_bytes(), b"unchanged-source")
+            self.assertFalse(any(environment["target_root"].iterdir()))
+
+
+def _js_function_body(script: str, name: str) -> str:
+    """Return one JS function body from the served asset by brace matching."""
+
+    opening = script.index("{", script.index(f"function {name}("))
+    depth = 0
+    for index in range(opening, len(script)):
+        if script[index] == "{":
+            depth += 1
+        elif script[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return script[opening + 1 : index]
+    raise AssertionError(f"function {name} has an unbalanced body")
+
 
 def _coordinator(repository):
     from mediaflow.application.task_runtime import PersistentTaskCoordinator

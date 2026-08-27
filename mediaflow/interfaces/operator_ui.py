@@ -929,14 +929,15 @@ APP_JS = b"""(() => {
           confirmStaleMetadataContinuation(id, current.jobId)));
       }
       section.append(links);
-      return section;
+      detailContent.append(section);
+      return;
     }
     section.append(text('p',
       'Only this TaskItem will be analyzed. Source media is not modified and no execute authority is inherited.',
       'warning'));
     section.append(actionButton('Continue as DryRun', () =>
       confirmMetadataContinuation(id, review)));
-    return section;
+    detailContent.append(section);
   }
   function confirmMetadataContinuation(id, review) {
     const confirmation = text('div', '', 'choices');

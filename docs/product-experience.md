@@ -146,18 +146,19 @@ evidence: the operator can explicitly submit query/year/Movie-TV or one direct P
 durable bounded outcomes, and reuse candidate confirmation. Independent High re-review accepted the
 correction checkpoint on 2026-08-26. Phase 22.5-E implements only the missing explicit continuation
 from one resolved File correction into a new pinned DryRun Preview; it must not replay siblings or inherit
-execute authority. Independent High Review returned `FIX REQUIRED` for that checkpoint on
-2026-08-27 because the Files detail Web surface is unreachable; Phase 22.5-E-F1 is the authorized
-correction. Provider switching remains later Metadata journey work.
+execute authority. Independent High Review returned `FIX REQUIRED` for checkpoint
+`08dfd4f921728755209b6d52347d28f221121c47` on 2026-08-27 because the Files detail Web surface was
+unreachable; Phase 22.5-E-F1 attached that section to the page and proved it with focused Web
+regression coverage. Provider switching remains later Metadata journey work.
 
-## Phase 22.5-E single-item correction continuation (CURRENT API/Worker; Web FIX REQUIRED)
+## Phase 22.5-E single-item correction continuation (CURRENT)
 
 Independent High Review of checkpoint `08dfd4f921728755209b6d52347d28f221121c47` returned
-`FIX REQUIRED` on 2026-08-27. Everything described below is CURRENT for the Application, API,
-persistence, and Worker. It is NOT yet CURRENT for the Web surface: the Files detail continuation
-section is built but never attached to the page, so the described Web entry point, confirmation,
-state rendering, links, retry, and stale requeue are unreachable. Phase 22.5-E-F1 must deliver and
-prove that surface before this section may be read as a completed journey.
+`FIX REQUIRED` on 2026-08-27: the Application, API, persistence, and Worker behavior was accepted,
+but the Files detail continuation section was built and returned to a caller that discarded it, so
+the Web entry point, confirmation, state rendering, links, retry, and stale requeue were
+unreachable. Phase 22.5-E-F1 attaches that section to `detailContent` on both branches, so
+everything described below is CURRENT for the Application, API, persistence, Worker, and Web.
 
 The operator goal is to turn exactly one already-resolved File Metadata correction into a fresh,
 read-only DryRun Preview without replaying the source Task or any sibling item. Files detail is the

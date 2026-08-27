@@ -289,6 +289,47 @@ Files/Task continuation, Naming/Classification/Organize configuration, and Phase
   work; the reviewed Phase 22.5-E Task document is archived at
   `Task/phase-22.5-e-single-item-metadata-correction-dryrun-continuation.md`.
 
+## Phase 22.5-E-F1 Correction Evidence (2026-08-27; awaiting independent High re-review)
+
+- Status: READY FOR COMMIT (pre-checkpoint); Commit SHA: PENDING; High Audit: PENDING.
+  The rejected checkpoint `08dfd4f921728755209b6d52347d28f221121c47` and its `FIX REQUIRED` record
+  above are preserved unchanged; this correction is a new checkpoint, not an amendment.
+- P0 fix: `renderMetadataContinuation` in `mediaflow/interfaces/operator_ui.py` now ends both
+  branches with `detailContent.append(section);` instead of `return section;`, following the same
+  append-internally convention as `renderFileReMatchForm`. The call site is unchanged. The Files
+  detail page therefore renders the continuation heading, source Task/TaskItem, correction ID and
+  identity, pinned snapshot ID/digest, `Items selected: 1`, `Authority: DRY_RUN_ONLY`,
+  `Storage mutation: NONE`, the single `Continue as DryRun` control, the queued/running/completed/
+  failed/stale/cancelled status and next action, bounded failure category/error/recovery text, the
+  linked Job control, the linked Task/Result control when a Task exists, the single-item retry
+  control for failed/cancelled with `canContinue`, and the stale requeue control.
+- The visibility predicate, API payload, permissions, identity, idempotency, and confirmation flow
+  are unchanged: submission still posts only `reviewId` and `expectedCorrectionVersion` to
+  `POST /api/v1/files/{fileId}/continue-dry-run`, the stale action still uses
+  `POST /api/v1/jobs/{jobId}/requeue-stale`, and both remain behind an explicit second click with a
+  keep-unchanged escape. Rendering issues no request and mutates nothing.
+- P1 test-strength fix: `tests/test_metadata_correction_continuation.py` adds
+  `test_operator_ui_continuation_section_is_attached_to_file_detail`, which extracts the served
+  function body by brace matching and requires two `detailContent.append(section)` attachments, no
+  `return section`, the reachable call site, the unchanged predicate, the disclosure and status
+  strings, the retry/requeue visibility conditions, and the absence of any request helper inside the
+  renderer. `test_file_detail_projection_matches_web_continuation_states` proves the API projection
+  behind those states across no-continuation, queued, failed, retry, and completed while the source
+  item, source bytes, and empty target root stay unchanged. Negative control: with
+  `08dfd4f921728755209b6d52347d28f221121c47`'s `operator_ui.py` restored, the new test fails with
+  `AssertionError: 0 != 2`; the pre-existing substring test still passes there, which is why it was
+  insufficient evidence.
+- No accepted Application, API, persistence, or Worker behavior changed. The only production diff is
+  5 lines in `mediaflow/interfaces/operator_ui.py`; no assertion was weakened or removed.
+- Gates: 13 focused continuation tests passed; complete offline suite 804 tests with 7 existing
+  external-service skips and 0 failures; Ruff check/format, compileall, `pip check`, both example
+  configuration validations, wheel build plus isolated installed-wheel smoke test, 24 relative
+  documentation links, `git diff --check`, FFmpeg/FFprobe production audit (no match in `mediaflow`
+  or `pyproject.toml`), business-layer filesystem-mutation audit (only Storage-mediated conflict
+  `rename` strategies), and the private `config/alist.json` ignored/untracked checks.
+- This is implementation evidence only. No PASS/CLOSED decision or next Slice authorization is
+  recorded here.
+
 ## Phase 22.5-B Implementation Evidence (2026-08-26; awaiting independent review)
 
 - Extended the accepted exact-revision Strategy Test with an explicit `liveMetadata` action through
@@ -1254,10 +1295,11 @@ Files/Task continuation, Naming/Classification/Organize configuration, and Phase
 
 - Phase 22.5-E checkpoint `08dfd4f921728755209b6d52347d28f221121c47` received `FIX REQUIRED` on
   2026-08-27: the Application/API/persistence/Worker journey is accepted, but the Files detail Web
-  continuation section is never attached to the DOM, so the operator-facing half of the journey is
-  unreachable. Phase 22.5-E-F1 must render and prove that surface before the Phase can close. No
-  next feature Slice is authorized; Provider switching remains deferred until a truthful
-  multi-Provider capability exists.
+  continuation section was never attached to the DOM, so the operator-facing half of the journey was
+  unreachable. Phase 22.5-E-F1 attached and proved that surface in a new checkpoint and is awaiting
+  independent High re-review; no next feature Slice is authorized until that re-review records
+  Phase 22.5-E closure. Provider switching remains deferred until a truthful multi-Provider
+  capability exists.
 - Follow with TaskItem Processing Checkpoint/stage-aware recovery, complete Files/Media detail and
   manual organize, then automation/final production hardening
 - External identity/OIDC and Secret Store remain explicit later architecture decisions; no weak
