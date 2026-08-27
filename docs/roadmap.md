@@ -25,8 +25,8 @@ Phase 22.5-B Managed Live Metadata Test + Candidate Explanation 及其 F1 修复
 **PASS / CLOSED**。Phase 22.5-C Managed Live Metadata Candidate Confirmation 及其 F1/F2
 并发修复也已通过 final Integration Acceptance。Phase 22.5-D Managed Live Metadata Correction
 Test 的 correction checkpoint 已于 2026-08-26 通过独立 High re-review 并 **PASS / CLOSED**。
-当前合法边界是 Phase 22.5-E 单项 Metadata correction DryRun continuation；Provider switching
-仍后置。本次 Product/UX
+当前合法边界是 Phase 22.5-E 单项 Metadata correction DryRun continuation；该 Slice 的实现
+checkpoint 已完成，尚待独立 High Review；Provider switching 仍后置。本次 Product/UX
 Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 
@@ -64,7 +64,7 @@ Runtime Configuration
 | Planner/Executor | 部分完成 | 计划、冲突、附件、Hash 证据、同次调用 Rollback、空目录清理、DryRun、跨存储执行 | 历史/崩溃恢复、Hash 持久复用、逐项恢复体验 |
 | Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、pause/resume、批量请求、claim fencing/心跳 | 统一 Processing Checkpoint 与 stage-aware recovery |
 | API/UI/Scheduler | 部分完成 | API/RBAC/审计、操作台、Dashboard、Files 列表/筛选/详情/部分动作、Cron/通知 | 完整人工/配置/恢复旅程、登录/外部身份源 |
-| Managed Configuration | Phase 22.3/22.4/22.5-A/B/C/D PASS/CLOSED；Phase 22.5-E current | whole-document authority、Local Storage/Library、Recognition、MetadataPolicy offline/live、候选确认与同 Provider correction test | 单项修正后的 pinned DryRun continuation；Provider switching 与其他策略旅程后置 |
+| Managed Configuration | Phase 22.3/22.4/22.5-A/B/C/D PASS/CLOSED；Phase 22.5-E implementation pending High Review | whole-document authority、Local Storage/Library、Recognition、MetadataPolicy offline/live、候选确认与同 Provider correction test、单项 pinned DryRun continuation | Provider switching 与其他策略旅程后置 |
 
 ## 总体阶段计划
 
@@ -451,8 +451,9 @@ Domain
   Phase 22.5-C 已完成 persisted NeedConfirm/Ambiguous 候选确认及 F1/F2 durable CAS 修复并
   通过 final Integration Acceptance。Phase 22.5-D 的同 Provider query/year/Movie-TV/direct-ID
   correction test 已通过独立 High re-review 并 PASS/CLOSED；不包含 Provider switching、
-  Files/Task continuation 或真实媒体变更。Phase 22.5-E 只补齐一个已解决 correction 的显式
-  单项 DryRun continuation，不扩大为通用 Task resume。
+Files/Task continuation 或真实媒体变更。Phase 22.5-E 当前实现只补齐一个已解决 correction
+的显式单项 DryRun continuation，已完成实现 checkpoint，尚待独立 High Review；不扩大为
+通用 Task resume。
 
 ### 5. Naming / Classification / Organize 配置用户旅程
 
@@ -491,7 +492,8 @@ revision 持久化可操作且脱敏的失败证据。独立复核的 11 项关�
 套件无失败，本 Task 范围内无 P0/P1 偏离。
 
 Phase 22.3、Phase 22.4 与 Phase 22.5-A/B/C/D 的全部 correction 和独立验收已通过。当前正式
-Task 是 **Phase 22.5-E — Single-Item Metadata Correction DryRun Continuation**。
+Task 是 **Phase 22.5-E — Single-Item Metadata Correction DryRun Continuation**；实现 checkpoint
+已完成并等待独立 High Review，下一 Slice 尚未授权。
 不得借此提前开展 Provider switching、通用 Task resume、兄弟项重放、
 Naming/Classification/Organize 后续旅程或
 更宽的自动化。Interval/Cron 仍只允许 scan/preview；

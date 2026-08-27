@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
@@ -41,6 +42,9 @@ from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.manual_ignore import ManualIgnoreService
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata_correction import MetadataCorrectionService
+from mediaflow.application.metadata_correction_continuation import (
+    MetadataCorrectionContinuationWorkerService,
+)
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.application.organizer import OrganizerExecutor
@@ -2718,7 +2722,15 @@ def _run_queued_workflow(
                 snapshot_digest=job.configuration_snapshot_digest,
             )
     except RuntimeSnapshotUnavailable as error:
+        if job.command is AutomationCommand.FILE_METADATA_CORRECTION:
+            _fail_metadata_correction_continuation_snapshot(job, configured_path)
         raise _automation_configuration_unavailable(error) from error
+    if job.command is AutomationCommand.FILE_METADATA_CORRECTION:
+        if resolved_configuration is None:
+            raise RuntimeError("metadata correction continuation has no resolved configuration")
+        return _run_metadata_correction_continuation(
+            job, resolved_configuration, cancellation_check
+        )
     args = []
     resolved = configured_path or os.environ.get("MEDIAFLOW_CONFIG")
     if resolved:
@@ -2754,6 +2766,161 @@ def _run_queued_workflow(
     if code:
         raise RuntimeError("queued workflow returned a failure status")
     return task_id
+
+
+def _fail_metadata_correction_continuation_snapshot(job, configured_path: str | None) -> None:
+    resolved = configured_path or os.environ.get("MEDIAFLOW_CONFIG")
+    if not resolved:
+        return
+    try:
+        database_path = _bootstrap_database_path(_configuration_document(resolved))
+    except (OSError, ValueError, RuntimeSnapshotUnavailable):
+        return
+    try:
+        with SQLiteTaskRepository(database_path) as repository:
+            MetadataCorrectionContinuationWorkerService(repository).failed(
+                job.job_id, snapshot_unavailable=True, queued=True
+            )
+    except (OSError, LookupError, ValueError, RuntimeError):
+        return
+
+
+def _run_metadata_correction_continuation(
+    job, configuration: RuntimeConfiguration, cancellation_check: Callable[[], bool]
+) -> str | None:
+    with (
+        SQLiteTaskRepository(configuration.database_path) as repository,
+        SQLiteFileIndexRepository(configuration.database_path) as file_index,
+    ):
+        continuation_service = MetadataCorrectionContinuationWorkerService(repository)
+        prepared = None
+        started = False
+        task_id: str | None = None
+        try:
+            if cancellation_check():
+                raise AutomationCancelled()
+            prepared = continuation_service.prepare(job.job_id, file_index=file_index)
+            continuation_service.started(job.job_id)
+            started = True
+            if cancellation_check():
+                continuation_service.cancelled(job.job_id)
+                raise AutomationCancelled()
+            if (
+                configuration.configuration_snapshot_id
+                != prepared.continuation.configuration_snapshot_id
+                or configuration.configuration_snapshot_digest
+                != prepared.continuation.configuration_snapshot_digest
+            ):
+                raise RuntimeError("runtime configuration snapshot does not match continuation")
+            resource = next(
+                (
+                    item
+                    for item in configuration.resource_libraries
+                    if item.library_id == prepared.source_item.resource_library_id
+                ),
+                None,
+            )
+            if resource is None:
+                raise ValueError(
+                    "task item references missing ResourceLibrary "
+                    f"{prepared.source_item.resource_library_id!r}"
+                )
+            providers = metadata_provider_registry_from_environment((prepared.selection.provider,))
+            storages = configuration.create_storages()
+            strategy = strategy_runner_from_configuration(
+                configuration.strategy, providers, storages=storages
+            )
+            operational_logger = (
+                SQLiteOperationalLogger(
+                    repository,
+                    "workflow",
+                    configuration.operational_logging_minimum_level,
+                )
+                if configuration.operational_logging_enabled
+                else None
+            )
+            coordinator = PersistentTaskCoordinator(repository, repository)
+            task = coordinator.create(
+                f"metadata-correction-continuation:{prepared.continuation.continuation_id}",
+                execute_authorized=False,
+                scope_path=prepared.source_item.source_display,
+                item_limit=1,
+                configuration_snapshot_id=prepared.continuation.configuration_snapshot_id,
+                configuration_snapshot_digest=(prepared.continuation.configuration_snapshot_digest),
+                require_configuration_snapshot=True,
+            )
+            task_id = task.task_id
+            repository.bind_metadata_correction_continuation_task(job.job_id, task.task_id)
+
+            def workflow_stop() -> bool:
+                return bool(cancellation_check() or coordinator.pause_requested(task_id or ""))
+
+            service = MediaOrganizerService(
+                strategy,
+                StorageScanner(storages, file_index, logger=operational_logger),
+                storages,
+                {item.library_id: item for item in configuration.media_libraries},
+                configuration.strategy.recognition_type_policies,
+                JsonLinesOperationHistoryRepository(configuration.history_path),
+                executor=OrganizerExecutor(operational_logger),
+                source_display_roots=dict(configuration.resource_display_roots),
+                logger=operational_logger,
+                task_coordinator=coordinator,
+                task_id=task.task_id,
+                metadata_corrections={
+                    (prepared.source_item.storage_id, prepared.source_item.source_path): (
+                        prepared.selection
+                    )
+                },
+                retry_policy=configuration.workflow_retry_policy,
+                retry_cancellation_check=workflow_stop,
+                secret_free_errors=True,
+            )
+            item = service.process_file(
+                prepared.source_item.source_display,
+                resource_library=resource,
+                storage_path=prepared.source_item.source_path,
+                execute=False,
+            )
+            if cancellation_check():
+                coordinator.cancel(task.task_id)
+                continuation_service.cancelled(job.job_id)
+                raise AutomationCancelled(task.task_id)
+            finished = coordinator.finish(task.task_id, MediaOrganizerBatchResult((item,)))
+            task_id = finished.task_id
+            continuation = continuation_service.finish(job.job_id, finished.task_id)
+            if continuation.status.value == "failed":
+                raise RuntimeError("metadata correction continuation failed")
+            return continuation.new_task_id
+        except AutomationCancelled:
+            if task_id is not None:
+                active_task = repository.get_task(task_id)
+                if active_task is not None and active_task.status is PersistentTaskStatus.RUNNING:
+                    coordinator.cancel(task_id)
+            if started:
+                continuation_service.cancelled(job.job_id)
+            elif prepared is not None:
+                continuation_service.cancelled(job.job_id)
+            raise
+        except Exception:
+            if task_id is not None:
+                failed_task = repository.get_task(task_id)
+                if failed_task is not None and failed_task.status is PersistentTaskStatus.RUNNING:
+                    now = datetime.now(UTC)
+                    repository.update_task(
+                        replace(
+                            failed_task,
+                            status=PersistentTaskStatus.FAILED,
+                            updated_at=now,
+                            completed_at=now,
+                            error="continuation failed before Task completion",
+                        )
+                    )
+            if started:
+                continuation_service.failed(job.job_id, task_id=task_id)
+            else:
+                continuation_service.failed(job.job_id, queued=True, preflight=True)
+            raise
 
 
 def _automation_configuration_unavailable(

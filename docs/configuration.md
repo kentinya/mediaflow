@@ -1083,6 +1083,32 @@ Task resume through the configured MetadataPolicy/provider. Provider switching i
 Movie/TV correction changes the real search/detail path. Resume is DryRun unless the original task
 and the new invocation both carry valid execute authority.
 
+### Continue one resolved File correction as DryRun
+
+In Files detail, a resolved Metadata correction exposes its source Task/TaskItem, exact correction
+version, and immutable configuration snapshot ID/digest before the action is enabled. Use the
+explicit `Continue as DryRun` action to submit exactly that review ID and expected correction version:
+
+```http
+POST /api/v1/files/FILE_ID/continue-dry-run
+Content-Type: application/json
+{"reviewId":"REVIEW_ID","expectedCorrectionVersion":"CORRECTION_VERSION"}
+```
+
+The API and Web action creates one durable continuation and one non-executable Job atomically. The
+Worker is advanced with `mediaflow worker run-next`; it creates a new one-item DryRun Task and
+requires its persisted DryRun Result. No source file is moved, copied, deleted, or overwritten; the
+source review, source Task, and sibling items are unchanged. Opening or reloading Files detail does
+not contact a Provider or construct Storage.
+
+The continuation status is visible as queued, running, completed, failed, stale, or cancelled.
+Snapshot-unavailable failures identify the pinned configuration problem and require repair before
+resubmission. Provider/downstream failures retain the new Task/Item/Result evidence and offer retry
+for this correction only. A stale running continuation must be inspected and explicitly requeued with
+`POST /api/v1/jobs/JOB_ID/requeue-stale`; cancellation and duplicate/stale admission are durable.
+Provider switching, generic Task resume, automatic continuation retry, and execution remain outside
+this slice.
+
 ### Explicitly ignore a waiting item
 
 An operator can terminally ignore one item waiting for Recognition, Metadata candidate selection,

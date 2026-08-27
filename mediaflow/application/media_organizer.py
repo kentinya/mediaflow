@@ -23,7 +23,7 @@ from mediaflow.domain.classification_review import ClassificationSelection
 from mediaflow.domain.history import OperationHistoryRecord, OperationHistoryRepository
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.logging import Logger, LogLevel
-from mediaflow.domain.metadata import MetadataIdentificationStatus
+from mediaflow.domain.metadata import MetadataError, MetadataIdentificationStatus
 from mediaflow.domain.metadata_correction import MetadataCorrectionSelection
 from mediaflow.domain.metadata_review import MetadataSelection
 from mediaflow.domain.organizer import (
@@ -37,7 +37,7 @@ from mediaflow.domain.organizer import (
 from mediaflow.domain.recognition import RecognitionStatus, RecognitionTypePolicy
 from mediaflow.domain.recognition_review import RecognitionSelection
 from mediaflow.domain.scanner import CancellationToken, FileScanStatus, ScanError, Scanner
-from mediaflow.domain.storage import Storage
+from mediaflow.domain.storage import Storage, StorageError
 from mediaflow.domain.workflow_retry import RetryEvent, WorkflowRetryPolicy
 
 if TYPE_CHECKING:
@@ -128,6 +128,7 @@ class MediaOrganizerService:
         retry_cancellation_check: CancellationCheck | None = None,
         recognition_selections: dict[tuple[str, str], RecognitionSelection] | None = None,
         metadata_corrections: dict[tuple[str, str], MetadataCorrectionSelection] | None = None,
+        secret_free_errors: bool = False,
     ) -> None:
         self._strategy = strategy
         self._scanner = scanner
@@ -151,6 +152,7 @@ class MediaOrganizerService:
         self._retry_cancellation_check = retry_cancellation_check
         self._recognition_selections = recognition_selections or {}
         self._metadata_corrections = metadata_corrections or {}
+        self._secret_free_errors = secret_free_errors
 
     def process_file(
         self,
@@ -355,6 +357,11 @@ class MediaOrganizerService:
                     else plan.target
                 ),
             )
+            if self._secret_free_errors and execution.errors:
+                execution = replace(
+                    execution,
+                    errors=tuple("workflow execution failed" for _ in execution.errors),
+                )
             self._log(
                 LogLevel.INFO,
                 "organize plan processed",
@@ -370,9 +377,9 @@ class MediaOrganizerService:
         except RetryInterrupted:
             return MediaOrganizerItemResult(source, error="workflow retry interrupted")
         except RetryExhausted as error:
-            return self._failed(source, None, str(error), tracked_item, error.events)
+            return self._failed(source, None, error, tracked_item, error.events)
         except Exception as error:
-            return self._failed(source, None, str(error), tracked_item)
+            return self._failed(source, None, error, tracked_item)
 
     def _run_read_only_strategy(
         self, source: str, *, resource_library: ResourceLibrary, storage_path: str
@@ -518,13 +525,25 @@ class MediaOrganizerService:
         self,
         source: str,
         strategy: StrategyTestResult | None,
-        error: str,
+        error: str | Exception,
         tracked_item: PersistentTaskItem | None = None,
         retry_events: tuple[RetryEvent, ...] = (),
     ) -> MediaOrganizerItemResult:
-        item = MediaOrganizerItemResult(source, strategy, error=error, retry_events=retry_events)
-        self._log(LogLevel.ERROR, "media workflow failed", source=source, error=error)
+        message = self._failure_message(error)
+        item = MediaOrganizerItemResult(source, strategy, error=message, retry_events=retry_events)
+        self._log(LogLevel.ERROR, "media workflow failed", source=source, error=message)
         return self._complete(item, tracked_item)
+
+    def _failure_message(self, error: str | Exception) -> str:
+        if not self._secret_free_errors:
+            return str(error)
+        if isinstance(error, MetadataError):
+            return f"metadata provider error: {error.code.value}"
+        if isinstance(error, StorageError):
+            return f"storage operation error: {error.code.value}"
+        if isinstance(error, RetryExhausted):
+            return f"workflow retry exhausted: {error.category.value}"
+        return "single-item DryRun analysis failed"
 
     def _complete(
         self,

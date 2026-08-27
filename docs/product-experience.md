@@ -144,9 +144,43 @@ Phase 22.5-C boundary and passed final Integration Acceptance. Phase 22.5-D now 
 same-Provider managed live correction test for exact current `NotFound`/`NeedConfirm`/`Ambiguous`
 evidence: the operator can explicitly submit query/year/Movie-TV or one direct Provider ID, inspect
 durable bounded outcomes, and reuse candidate confirmation. Independent High re-review accepted the
-correction checkpoint on 2026-08-26. Phase 22.5-E now adds only the missing explicit continuation
-from one resolved File correction into a new pinned DryRun Preview; it must not replay siblings or
-inherit execute authority. Provider switching remains later Metadata journey work.
+correction checkpoint on 2026-08-26. Phase 22.5-E implements only the missing explicit continuation
+from one resolved File correction into a new pinned DryRun Preview; it must not replay siblings or inherit
+execute authority. The implementation checkpoint is awaiting independent High Review. Provider
+switching remains later Metadata journey work.
+
+## Phase 22.5-E single-item correction continuation (CURRENT implementation; High Review pending)
+
+The operator goal is to turn exactly one already-resolved File Metadata correction into a fresh,
+read-only DryRun Preview without replaying the source Task or any sibling item. Files detail is the
+entry point. Before the action is enabled it shows the source Task and TaskItem, resolved correction
+identity and version, exact immutable configuration snapshot ID/digest, one-item scope,
+`DRY_RUN_ONLY`, and `Storage mutation: NONE`.
+
+The API and Web use the same application admission service. The action accepts only the exact
+review ID and expected correction version. Admission atomically creates a durable continuation and
+a one-item, non-executable Job, enforces the shared active-job capacity, and rejects duplicate or
+stale identity. Viewing or reloading the detail performs no Provider, Storage, queue, or Task work.
+
+The claimed Worker revalidates the File, source Task/TaskItem, resolved correction, correction
+version, and exact snapshot pair before constructing anything external. It loads that pinned
+snapshot, then runs Parser → Recognition → RecognitionTypePolicy → Metadata → Naming →
+Classification → Planner with the correction applied. A new Task is created with `execute=false` and
+one item only; a durable DryRun Result is required before the continuation can be completed. Query
+corrections perform one Provider search followed by one detail lookup in the focused proof; direct
+Provider-ID corrections perform no search and one detail lookup. RecognitionType C remains C even
+when its naming/classification policies reference A.
+
+After reload, the operator can distinguish queued, running, completed, failed, stale, and cancelled
+continuations. Snapshot-unavailable failure identifies the missing/unreadable/invalid snapshot and
+points to repairing the pinned source configuration before resubmission. Provider or downstream
+failure preserves the new Task/Item/Result evidence and points to retrying only this correction.
+A stale running continuation requires inspection and explicit requeue; cancellation and duplicate
+admission are durable and idempotent. Source files, the resolved source review, and sibling items
+remain unchanged in every DryRun path.
+
+Provider switching, generic Task resume, automatic continuation retry, execution, and a broader
+checkpoint/recovery journey remain deferred.
 
 ## A. First-time setup
 

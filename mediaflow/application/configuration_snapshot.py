@@ -479,6 +479,59 @@ class ManagedConfigurationService:
                 reason="digest_corrupt",
             )
 
+    def validate_runtime_snapshot(self, revision_id: str, digest: str) -> None:
+        """Validate an immutable saved snapshot without constructing runtime adapters."""
+
+        try:
+            revision = self.require(revision_id)
+        except LookupError as error:
+            raise RuntimeSnapshotUnavailable(
+                f"managed configuration snapshot {revision_id!r} is unavailable",
+                revision_id=revision_id,
+                digest=digest,
+                reason="snapshot_missing",
+            ) from error
+        except Exception as error:
+            raise RuntimeSnapshotUnavailable(
+                f"managed configuration snapshot {revision_id!r} is unreadable",
+                revision_id=revision_id,
+                digest=digest,
+                reason="snapshot_unreadable",
+            ) from error
+        if revision.status not in {
+            ManagedConfigurationStatus.ACTIVE,
+            ManagedConfigurationStatus.SUPERSEDED,
+        }:
+            raise RuntimeSnapshotUnavailable(
+                f"managed configuration snapshot {revision.revision_id!r} is not published",
+                revision_id=revision.revision_id,
+                version=revision.revision_sequence,
+                digest=revision.digest,
+                reason="snapshot_not_published",
+            )
+        self.verify_integrity(revision)
+        if digest != revision.digest:
+            raise RuntimeSnapshotUnavailable(
+                f"saved configuration snapshot {revision.revision_id!r} digest does not match",
+                revision_id=revision.revision_id,
+                version=revision.revision_sequence,
+                digest=digest,
+                reason="snapshot_digest_mismatch",
+            )
+        try:
+            self._load_for_runtime(copy.deepcopy(revision.document))
+        except RuntimeSnapshotUnavailable:
+            raise
+        except Exception as error:
+            raise RuntimeSnapshotUnavailable(
+                f"saved configuration snapshot {revision.revision_id!r} is unavailable: "
+                f"{type(error).__name__}",
+                revision_id=revision.revision_id,
+                version=revision.revision_sequence,
+                digest=revision.digest,
+                reason="runtime_invalid",
+            ) from error
+
     def _record_audit(self, audit: ConfigurationChangeAudit) -> None:
         record = getattr(self._repository, "record_configuration_audit", None)
         if callable(record):

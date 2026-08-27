@@ -94,6 +94,10 @@ APP_JS = b"""(() => {
     } else if (details && details.revisionId) {
       fragments.push(`Revision: ${details.revisionId} (${details.digest || '-'})`);
     }
+    if (details && details.continuationId) {
+      fragments.push(`Continuation: ${details.continuationId} ` +
+        `(Job ${details.jobId || '-'}; status ${details.status || '-'})`);
+    }
     if (details && details.durableState) fragments.push(`State: ${details.durableState}`);
     if (details && details.sideEffects) fragments.push(`Side effects: ${details.sideEffects}`);
     if (details && details.retrySafe !== undefined) {
@@ -889,6 +893,88 @@ APP_JS = b"""(() => {
       }));
     detailContent.append(text('h3', 'Metadata re-match'), controls);
   }
+  function renderMetadataContinuation(id, review) {
+    const current = review.continuation;
+    const section = text('div', '', 'choices');
+    section.append(text('h3', 'Metadata correction DryRun continuation'));
+    section.append(cards([
+      ['Source Task', review.taskId], ['Source item', review.itemId || '-'],
+      ['Correction', review.reviewId], ['Correction identity', review.correctionVersion],
+      ['Configuration snapshot', review.configurationSnapshotId || '-'],
+      ['Configuration digest', review.configurationSnapshotDigest || '-'],
+      ['Items selected', '1'], ['Authority', 'DRY_RUN_ONLY'], ['Storage mutation', 'NONE']
+    ]));
+    if (current) {
+      section.append(text('p', `Continuation status: ${current.status}. ` +
+        `Job: ${current.jobId}. Task: ${current.taskId || '-'}. ` +
+        `Result: ${current.resultId || '-'}.`, current.status === 'failed' ? 'error' : 'warning'));
+      if (current.failureCategory) {
+        section.append(text('p', `Failure category: ${current.failureCategory}.` +
+          ' Restore the pinned snapshot before retrying.', 'error'));
+      }
+      if (current.error) section.append(text('p', `Failure: ${current.error}`, 'error'));
+      if (current.recovery) section.append(text('p', `Recovery: ${current.recovery}`));
+      if (current.nextAction) section.append(text('p', `Next action: ${current.nextAction}`));
+      const links = text('div', '', 'choices');
+      links.append(actionButton('Open continuation job', () => showJob(current.jobId)));
+      if (current.taskId) {
+        links.append(actionButton('Open linked Task/Result', () => showTask(current.taskId)));
+      }
+      if ((current.status === 'failed' || current.status === 'cancelled') && review.canContinue) {
+        links.append(actionButton('Retry this correction as DryRun', () =>
+          confirmMetadataContinuation(id, review)));
+      }
+      if (current.status === 'stale') {
+        links.append(actionButton('Requeue stale continuation', () =>
+          confirmStaleMetadataContinuation(id, current.jobId)));
+      }
+      section.append(links);
+      return section;
+    }
+    section.append(text('p',
+      'Only this TaskItem will be analyzed. Source media is not modified and no execute authority is inherited.',
+      'warning'));
+    section.append(actionButton('Continue as DryRun', () =>
+      confirmMetadataContinuation(id, review)));
+    return section;
+  }
+  function confirmMetadataContinuation(id, review) {
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p',
+      `Continue only Metadata correction ${review.reviewId} as a new DryRun? ` +
+      `The pinned configuration is ${review.configurationSnapshotId || 'unavailable'}. ` +
+      'No media mutation or execute authority is inherited.'));
+    confirmation.append(actionButton('Confirm Continue as DryRun', async () => {
+      try {
+        await api(`/api/v1/files/${encodeURIComponent(id)}/continue-dry-run`, {
+          method: 'POST',
+          body: JSON.stringify({
+            reviewId: review.reviewId,
+            expectedCorrectionVersion: review.correctionVersion
+          })
+        });
+        detail.hidden = true;
+        message('One-item DryRun continuation queued. Source Task and siblings are unchanged.');
+        await load();
+      } catch (error) { message(errorText(error), true); }
+    }), actionButton('Keep source unchanged', () => confirmation.remove()));
+    detailContent.append(confirmation);
+  }
+  function confirmStaleMetadataContinuation(id, jobId) {
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p',
+      'Stale is an age observation, not proof that the Worker stopped. Inspect the Job, then explicitly requeue it? ' +
+      'The continuation remains DryRun-only and the source stays unchanged.'));
+    confirmation.append(actionButton('Confirm requeue stale Job', async () => {
+      try {
+        await api(`/api/v1/jobs/${encodeURIComponent(jobId)}/requeue-stale`, {method: 'POST'});
+        detail.hidden = true;
+        message('Stale continuation requeued. Reloading the File state.');
+        await load();
+      } catch (error) { message(errorText(error), true); }
+    }), actionButton('Keep stale Job', () => confirmation.remove()));
+    detailContent.append(confirmation);
+  }
   async function renderFiles() {
     clear(content); content.append(text('h2', 'File catalog'));
     const filters = [
@@ -1160,11 +1246,17 @@ APP_JS = b"""(() => {
           item.kind === 'metadata_correction' && item.status === 'pending')) {
           renderFileReMatchForm(id);
         }
+        const continuationReview = Array.isArray(data.relatedReviews)
+          ? data.relatedReviews.find(item => item.kind === 'metadata_correction' &&
+              item.status === 'resolved' && (item.canContinue || item.continuation))
+          : null;
+        if (continuationReview) renderMetadataContinuation(id, continuationReview);
         if (Array.isArray(data.relatedReviews) && data.relatedReviews.length) {
           const rows = data.relatedReviews.map(item => [item.kind, item.reviewId,
-            item.status, item.taskId]);
+            item.status, item.taskId, item.itemId || '-', item.continuation ?
+              item.continuation.status : '-']);
           detailContent.append(text('h3', 'Related reviews'),
-            table(['Kind', 'Review', 'Status', 'Task'], rows));
+            table(['Kind', 'Review', 'Status', 'Task', 'Item', 'Continuation'], rows));
         }
       }
       if (kind === 'confirmations') renderConflictActions(id);

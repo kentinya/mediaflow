@@ -5,7 +5,7 @@ import json
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from urllib.parse import parse_qs
 from uuid import uuid4
@@ -22,10 +22,14 @@ from mediaflow.application.file_metadata_correction import FileMetadataCorrectio
 from mediaflow.application.file_recognition_request import FileRecognitionRequestService
 from mediaflow.application.file_replan_request import FileReplanRequestService
 from mediaflow.application.metadata_correction import MetadataCorrectionService
+from mediaflow.application.metadata_correction_continuation import (
+    FileMetadataCorrectionContinuationService,
+    MetadataCorrectionContinuationConflict,
+)
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.task_retry import TaskRetryRequestService
-from mediaflow.domain.automation import AutomationQueueFull
+from mediaflow.domain.automation import AutomationCommand, AutomationQueueFull
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
     ConfigurationObjectKind,
@@ -34,6 +38,10 @@ from mediaflow.domain.configuration_management import (
     RuntimeSnapshotUnavailable,
 )
 from mediaflow.domain.logging import LogLevel
+from mediaflow.domain.metadata_correction import (
+    MetadataCorrectionContinuation,
+    MetadataCorrectionContinuationStatus,
+)
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.scanner import FileScanStatus
@@ -59,6 +67,7 @@ class _ApiRuntimeBinding:
     snapshot_id: str | None
     snapshot_digest: str | None
     jobs: AutomationJobService
+    maximum_active_jobs: int
     execution_authorizations: ExecutionAuthorizationService
     remote_execution_enabled: bool
     stale_job_age_seconds: int
@@ -199,7 +208,59 @@ class MediaFlowApi:
                 "denied",
                 409,
             )
-            return self._error(start_response, 409, "queue_full", str(error))
+            return self._error(
+                start_response,
+                409,
+                "queue_full",
+                str(error),
+                details={
+                    "durableState": "no new Job or continuation queued",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "wait for active Jobs to finish or cancel one, then resubmit the "
+                        "same request and correction identity"
+                    ),
+                },
+            )
+        except MetadataCorrectionContinuationConflict as error:
+            continuation = error.continuation
+            details = {
+                "durableState": (
+                    "current_continuation_preserved_source_unchanged"
+                    if continuation is not None
+                    else "correction_preserved_source_unchanged"
+                ),
+                "sideEffects": "none",
+                "retrySafe": True,
+                "nextAction": (
+                    "open the current linked continuation/Task"
+                    if continuation is not None
+                    else "refresh the File detail and use the current correction identity"
+                ),
+            }
+            if continuation is not None:
+                details["continuationId"] = continuation.continuation_id
+                details["jobId"] = continuation.job_id
+                details["status"] = continuation.status.value
+                details["taskId"] = continuation.new_task_id
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "metadata-correction-continuation",
+                "conflict",
+                409,
+            )
+            return self._error(
+                start_response,
+                409,
+                "continuation_conflict",
+                str(error),
+                details=details,
+            )
         except ConfigurationActivationConflict as error:
             self._safe_audit(
                 environ,
@@ -879,7 +940,7 @@ class MediaFlowApi:
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "files"]
-            and parts[4] in {"re-recognize", "re-plan", "re-match"}
+            and parts[4] in {"re-recognize", "re-plan", "re-match", "continue-dry-run"}
             and method == "POST"
         ):
             self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
@@ -889,13 +950,60 @@ class MediaFlowApi:
                 )
             self._require_empty_query(environ, "file action")
             document = self._document(environ)
-            if parts[4] == "re-match":
+            if parts[4] == "continue-dry-run":
+                allowed = {"reviewId", "expectedCorrectionVersion"}
+            elif parts[4] == "re-match":
                 allowed = {"query", "year", "mediaType", "providerId", "note"}
             else:
                 allowed = {"note"}
             if set(document).difference(allowed):
                 raise ValueError(f"file {parts[4]} request fields are invalid")
             note = document.get("note")
+            if parts[4] == "continue-dry-run":
+                if set(document) != allowed:
+                    raise ValueError(
+                        "file continuation requires reviewId and expectedCorrectionVersion"
+                    )
+                if self._configuration_service is None:
+                    return self._error(
+                        start_response,
+                        503,
+                        "service_unavailable",
+                        "managed configuration service is unavailable",
+                    )
+                submission = FileMetadataCorrectionContinuationService(
+                    self._file_catalog,
+                    self._repository,
+                    snapshot_validator=(self._configuration_service.validate_runtime_snapshot),
+                ).submit(
+                    parts[3],
+                    document["reviewId"],
+                    expected_correction_version=document["expectedCorrectionVersion"],
+                    actor=principal.principal_id,
+                    maximum_active_jobs=binding.maximum_active_jobs,
+                )
+                continuation = submission.continuation
+                return self._response(
+                    start_response,
+                    202,
+                    {
+                        "continuationId": continuation.continuation_id,
+                        "jobId": continuation.job_id,
+                        "taskId": continuation.new_task_id,
+                        "resultId": continuation.new_result_id,
+                        "status": continuation.status.value,
+                        "executionMode": "dry_run",
+                        "sourceTaskId": continuation.source_task_id,
+                        "sourceItemId": continuation.source_item_id,
+                        "configurationSnapshotId": continuation.configuration_snapshot_id,
+                        "configurationSnapshotDigest": continuation.configuration_snapshot_digest,
+                        "correctionVersion": continuation.correction_version,
+                        "sideEffects": "none",
+                        "nextAction": (
+                            "run or wait for the Worker, then inspect the linked Task/Result"
+                        ),
+                    },
+                )
             if parts[4] == "re-recognize":
                 decision = FileRecognitionRequestService(
                     self._file_catalog,
@@ -1376,6 +1484,29 @@ class MediaFlowApi:
             self._require_empty_query(environ, "job cancellation")
             self._require_empty_body(environ, "job cancellation")
             return self._response(start_response, 200, self._value(binding.jobs.cancel(parts[3])))
+        if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "requeue-stale":
+            if method != "POST":
+                return self._error(start_response, 405, "method_not_allowed", "POST required")
+            self._require(principal, ApiPermission.CANCEL_JOB)
+            self._require_empty_query(environ, "stale Job requeue")
+            self._require_empty_body(environ, "stale Job requeue")
+            job = self._repository.get_job(parts[3])
+            if job is None:
+                raise LookupError(f"automation job {parts[3]!r} was not found")
+            if job.command is not AutomationCommand.FILE_METADATA_CORRECTION:
+                raise ValueError(
+                    "stale requeue is only available for a File correction continuation"
+                )
+            return self._response(
+                start_response,
+                200,
+                self._value(
+                    binding.jobs.requeue_stale(
+                        parts[3],
+                        age_seconds=binding.stale_job_age_seconds,
+                    )
+                ),
+            )
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "confirmations"]
@@ -1549,6 +1680,7 @@ class MediaFlowApi:
                 configuration_snapshot_id=snapshot_id,
                 configuration_snapshot_digest=snapshot_digest,
             ),
+            maximum_active_jobs,
             ExecutionAuthorizationService(
                 self._repository,
                 maximum_ttl_seconds=remote_execution_maximum_ttl_seconds,
@@ -2085,18 +2217,82 @@ class MediaFlowApi:
             "updatedAt": record.updated_at.isoformat(),
         }
 
-    @classmethod
-    def _file_catalog_detail_value(cls, detail) -> dict:
-        document = cls._file_catalog_value(detail.record)
-        document["relatedReviews"] = [
+    def _file_catalog_detail_value(self, detail) -> dict:
+        document = self._file_catalog_value(detail.record)
+        related_reviews = [
             {
                 "kind": item.kind,
                 "reviewId": item.review_id,
                 "status": item.status,
                 "taskId": item.task_id,
+                "itemId": item.item_id,
             }
             for item in detail.related_reviews
         ]
+        if self._file_catalog is not None:
+            continuation_service = FileMetadataCorrectionContinuationService(
+                self._file_catalog,
+                self._repository,
+            )
+            for value in related_reviews:
+                if value["kind"] != "metadata_correction":
+                    continue
+                get_continuation = getattr(
+                    self._repository,
+                    "get_metadata_correction_continuation_for_review",
+                    None,
+                )
+                continuation = (
+                    get_continuation(value["reviewId"]) if callable(get_continuation) else None
+                )
+                try:
+                    context = continuation_service.context(detail.record.file_id, value["reviewId"])
+                except (LookupError, ValueError):
+                    # A queued/running/failed continuation must remain visible even
+                    # if source linkage became stale after admission. Projection is
+                    # read-only; retry stays disabled until the linkage is repaired.
+                    if continuation is None:
+                        continue
+                    value["correctionVersion"] = continuation.correction_version
+                    value["configurationSnapshotId"] = continuation.configuration_snapshot_id
+                    value["configurationSnapshotDigest"] = (
+                        continuation.configuration_snapshot_digest
+                    )
+                    value["canContinue"] = False
+                    value["continuation"] = self._metadata_correction_continuation_value(
+                        continuation,
+                        next_action=(
+                            "repair the linked File/Task/TaskItem, then reload before retrying"
+                        ),
+                    )
+                    continue
+                value["correctionVersion"] = context.correction_version
+                value["configurationSnapshotId"] = context.configuration_snapshot_id
+                value["configurationSnapshotDigest"] = context.configuration_snapshot_digest
+                value["canContinue"] = context.current is None or context.current.status in {
+                    MetadataCorrectionContinuationStatus.FAILED,
+                    MetadataCorrectionContinuationStatus.CANCELLED,
+                }
+                if context.current is not None:
+                    get_job = getattr(self._repository, "get_job", None)
+                    job = get_job(context.current.job_id) if callable(get_job) else None
+                    stale = (
+                        context.current.status is MetadataCorrectionContinuationStatus.RUNNING
+                        and job is not None
+                        and job.status.value == "running"
+                        and datetime.now(UTC) - job.updated_at
+                        >= timedelta(seconds=self._runtime_binding.stale_job_age_seconds)
+                    )
+                    value["continuation"] = self._metadata_correction_continuation_value(
+                        context.current,
+                        display_status="stale" if stale else None,
+                        job=job,
+                    )
+                    if stale:
+                        value["nextAction"] = (
+                            "inspect the stale Job and explicitly requeue it, then reload this File"
+                        )
+        document["relatedReviews"] = related_reviews
         if detail.latest_result is None:
             document["latestResult"] = None
             return document
@@ -2123,6 +2319,63 @@ class MediaFlowApi:
             "error": result.error,
         }
         return document
+
+    @classmethod
+    def _metadata_correction_continuation_value(
+        cls,
+        continuation: MetadataCorrectionContinuation,
+        *,
+        display_status: str | None = None,
+        next_action: str | None = None,
+        job=None,
+    ) -> dict:
+        status = display_status or continuation.status.value
+        return {
+            "continuationId": continuation.continuation_id,
+            "jobId": continuation.job_id,
+            "taskId": continuation.new_task_id,
+            "resultId": continuation.new_result_id,
+            "status": status,
+            "executionMode": "dry_run",
+            "sourceTaskId": continuation.source_task_id,
+            "sourceItemId": continuation.source_item_id,
+            "configurationSnapshotId": continuation.configuration_snapshot_id,
+            "configurationSnapshotDigest": continuation.configuration_snapshot_digest,
+            "correctionVersion": continuation.correction_version,
+            "failureCategory": getattr(job, "failure_category", None),
+            "snapshotUnavailable": getattr(job, "failure_category", None)
+            in {
+                "active_missing",
+                "active_unreadable",
+                "digest_corrupt",
+                "job_snapshot_incomplete",
+                "job_snapshot_missing",
+                "runtime_invalid",
+                "schema_unsupported",
+                "snapshot_digest_mismatch",
+                "snapshot_missing",
+                "snapshot_not_published",
+                "snapshot_unreadable",
+            },
+            "error": continuation.error,
+            "recovery": continuation.recovery,
+            "nextAction": next_action or cls._metadata_correction_continuation_next_action(status),
+            "createdAt": continuation.created_at.isoformat(),
+            "updatedAt": continuation.updated_at.isoformat(),
+        }
+
+    @staticmethod
+    def _metadata_correction_continuation_next_action(status: str) -> str:
+        return {
+            "queued": "wait for the Worker, then inspect the linked DryRun Task/Result",
+            "running": "wait for the Worker, then inspect the linked DryRun Task/Result",
+            "stale": "inspect and explicitly requeue the stale Job, then reload this File",
+            "completed": "inspect the linked DryRun Task/Result; the source remains unchanged",
+            "failed": (
+                "inspect the failure, repair the stated condition, then retry this correction"
+            ),
+            "cancelled": "refresh the File detail and explicitly continue this correction again",
+        }.get(status, "inspect the linked continuation state")
 
     @classmethod
     def _value(cls, value):

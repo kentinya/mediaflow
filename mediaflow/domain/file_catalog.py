@@ -18,3 +18,4 @@ class FileReviewLink:
     review_id: str
     status: str
     task_id: str
+    item_id: str | None = None

@@ -1026,9 +1026,21 @@ Provider from persisted evidence, and passes a bounded query/year/Movie-TV or di
 context is stored in the existing evidence JSON and replacement uses the existing revision-plus-
 evidence CAS. The Web uses the same action and existing candidate confirmation; no second store,
 Storage construction, activation, scan, Task, Preview, or media execution is added. Provider
-switching remains TARGET work. Phase 22.5-E is the current bounded target: queue exactly one
-resolved File correction as a new DryRun continuation pinned to the source Task configuration,
-without generic Task resume, sibling replay, or execute authority.
+switching remains TARGET work. Phase 22.5-E is the current bounded implementation, awaiting
+independent High Review: queue exactly one resolved File correction as a new DryRun continuation
+pinned to the source Task configuration, without generic Task resume, sibling replay, or execute
+authority.
+
+The shared API/Web admission service validates the exact File/review/source Task/TaskItem linkage,
+correction version, active capacity, and immutable snapshot ID/digest, then atomically creates the
+continuation and one-item non-executable Job. The claimed Worker fences those identities before
+Provider or Storage construction, loads the pinned snapshot, and runs the existing read-only
+Parser → Recognition → RecognitionTypePolicy → Metadata → Naming → Classification → Planner path
+with the correction. It creates a new DryRun Task/Item/Result and requires the persisted Result before
+completion. Query correction evidence includes one search plus one detail lookup; direct ID includes
+detail only. RecognitionType C remains C. Files detail renders queued/running/completed/failed,
+stale, and cancelled states with bounded recovery; source files, source review, source Task, and
+sibling items are unchanged.
 
 ## Deferred work
 
@@ -1039,9 +1051,10 @@ Overwrite requires an overwrite-enabled policy plus a fresh persisted high-risk 
 Only OrganizerExecutor consumes the resulting authorized plan and remains the sole mutation
 boundary. Decision audit records are append-only, and invalid destinations cannot be overridden.
 
-Metadata and classification review/resolution APIs and bounded operator UI views exist. The complete
-in-context decision → continuation → result/recovery Web journey remains incomplete. Unresolved
-conflicts/reviews block execution, and silent delete remains unavailable.
+Metadata and classification review/resolution APIs and bounded operator UI views exist. The broader
+in-context decision → continuation → result/recovery Web journey remains incomplete, but the bounded
+resolved File correction → single DryRun continuation path is implemented here pending High Review.
+Unresolved conflicts/reviews block execution, and silent delete remains unavailable.
 
 ## Minimal operator Web UI
 
@@ -1565,7 +1578,8 @@ is not rewritten. Fresh and older databases both receive the columns by presence
 inserts use an explicit column list so historical ALTER-table column order cannot corrupt authority
 fields. Phase 22.3 closed on configuration-management schema marker `4`; Phase 22.4 adds marker `5`
 for revision-bound Recognition Strategy Test evidence. Its revision sequence, singleton authority
-pointer, Local setup-check evidence, and Strategy Test evidence remain additive and do not rewrite
+pointer, Local setup-check evidence, Strategy Test evidence, and the Phase 22.5-E continuation table
+and indexes remain additive and do not rewrite
 the Runtime marker.
 
 ### Phase 22.3 Local Storage + Library guided slice (CURRENT implementation; PASS / CLOSED)
@@ -1613,8 +1627,9 @@ accepted in Phase 22.4; MetadataPolicy managed editing/offline resolution was ac
 22.5-A. Managed live Provider testing/candidate explanation and its F1 correction were accepted in
 Phase 22.5-B. Candidate confirmation and its F1/F2 corrections were accepted in Phase 22.5-C.
 Phase 22.5-D same-Provider managed live correction testing passed independent High re-review.
-Phase 22.5-E is limited to one resolved correction's pinned DryRun continuation; Provider switching,
-generic Task resume, and broader Files/Task recovery remain later work.
+Phase 22.5-E implementation is limited to one resolved correction's pinned DryRun continuation and
+is awaiting independent High Review; Provider switching, generic Task resume, and broader Files/Task
+recovery remain later work.
 
 ## Configuration architecture: TARGET (partially implemented; remaining work explicit)
 

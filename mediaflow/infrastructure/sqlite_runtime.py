@@ -5,7 +5,7 @@ import secrets
 import sqlite3
 import threading
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from mediaflow.domain.automation import (
@@ -45,6 +45,8 @@ from mediaflow.domain.manual_ignore import (
 )
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionBatchResolveRequest,
+    MetadataCorrectionContinuation,
+    MetadataCorrectionContinuationStatus,
     MetadataCorrectionDecisionAudit,
     MetadataCorrectionReview,
     MetadataCorrectionStatus,
@@ -707,15 +709,15 @@ class SQLiteTaskRepository:
 
     def list_file_review_links(self, storage_id: str, path: str) -> tuple[FileReviewLink, ...]:
         query = """
-            SELECT 'recognition' AS kind, review_id, status, task_id
+            SELECT 'recognition' AS kind, review_id, status, task_id, item_id
             FROM recognition_reviews
             WHERE source_storage_id=? AND source_path=?
             UNION ALL
-            SELECT 'metadata', review_id, status, task_id
+            SELECT 'metadata', review_id, status, task_id, item_id
             FROM metadata_reviews
             WHERE source_storage_id=? AND source_path=?
             UNION ALL
-            SELECT 'metadata_correction', review_id, status, task_id
+            SELECT 'metadata_correction', review_id, status, task_id, item_id
             FROM metadata_corrections
             WHERE source_storage_id=? AND source_path=?
             ORDER BY kind, review_id
@@ -725,7 +727,13 @@ class SQLiteTaskRepository:
                 query, (storage_id, path, storage_id, path, storage_id, path)
             ).fetchall()
         return tuple(
-            FileReviewLink(row["kind"], row["review_id"], row["status"], row["task_id"])
+            FileReviewLink(
+                row["kind"],
+                row["review_id"],
+                row["status"],
+                row["task_id"],
+                row["item_id"],
+            )
             for row in rows
         )
 
@@ -959,6 +967,292 @@ class SQLiteTaskRepository:
             )
             for row in rows
         )
+
+    def get_metadata_correction_continuation_for_review(
+        self, review_id: str
+    ) -> MetadataCorrectionContinuation | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM metadata_correction_continuations WHERE review_id=?
+                ORDER BY created_at DESC, continuation_id DESC LIMIT 1""",
+                (review_id,),
+            ).fetchone()
+        return self._metadata_correction_continuation(row) if row else None
+
+    def get_metadata_correction_continuation_for_job(
+        self, job_id: str
+    ) -> MetadataCorrectionContinuation | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM metadata_correction_continuations WHERE job_id=?", (job_id,)
+            ).fetchone()
+        return self._metadata_correction_continuation(row) if row else None
+
+    def admit_metadata_correction_continuation(
+        self,
+        job: AutomationJob,
+        continuation: MetadataCorrectionContinuation,
+        *,
+        maximum_active_jobs: int,
+    ) -> tuple[MetadataCorrectionContinuation, bool]:
+        if (
+            isinstance(maximum_active_jobs, bool)
+            or not isinstance(maximum_active_jobs, int)
+            or not 1 <= maximum_active_jobs <= 10_000
+        ):
+            raise ValueError("maximum active Jobs must be between 1 and 10000")
+        if (
+            job.command is not AutomationCommand.FILE_METADATA_CORRECTION
+            or job.status is not AutomationJobStatus.PENDING
+            or job.limit != 1
+            or job.execute_authorized
+            or job.task_id is not None
+            or job.schedule_id is not None
+            or job.claim_token is not None
+            or job.cancellation_requested
+            or not job.configuration_snapshot_id
+            or not job.configuration_snapshot_digest
+        ):
+            raise ValueError("metadata correction continuation Job identity is invalid")
+        if (
+            continuation.status is not MetadataCorrectionContinuationStatus.QUEUED
+            or continuation.job_id != job.job_id
+            or continuation.configuration_snapshot_id != job.configuration_snapshot_id
+            or continuation.configuration_snapshot_digest != job.configuration_snapshot_digest
+            or continuation.new_task_id is not None
+            or continuation.new_result_id is not None
+            or continuation.started_at is not None
+            or continuation.completed_at is not None
+            or continuation.error is not None
+            or continuation.recovery is not None
+        ):
+            raise ValueError("metadata correction continuation identity is invalid")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                source = self._connection.execute(
+                    """SELECT m.status AS review_status,
+                    m.source_storage_id AS review_storage_id,
+                    m.source_path AS review_source_path,
+                    i.task_id AS item_task_id, i.storage_id AS item_storage_id,
+                    i.source_path AS item_source_path, i.status AS item_status,
+                    t.configuration_snapshot_id, t.configuration_snapshot_digest
+                    FROM metadata_corrections m
+                    JOIN task_items i ON i.item_id=m.item_id
+                    JOIN tasks t ON t.task_id=m.task_id
+                    WHERE m.review_id=? AND m.task_id=? AND m.item_id=?""",
+                    (
+                        continuation.review_id,
+                        continuation.source_task_id,
+                        continuation.source_item_id,
+                    ),
+                ).fetchone()
+                if (
+                    source is None
+                    or source["review_status"] != MetadataCorrectionStatus.RESOLVED.value
+                    or source["item_task_id"] != continuation.source_task_id
+                    or source["item_status"] != TaskItemStatus.PENDING.value
+                    or source["configuration_snapshot_id"] != continuation.configuration_snapshot_id
+                    or source["configuration_snapshot_digest"]
+                    != continuation.configuration_snapshot_digest
+                    or source["review_storage_id"] != source["item_storage_id"]
+                    or source["review_source_path"] != source["item_source_path"]
+                ):
+                    raise ValueError(
+                        "metadata correction continuation source linkage or eligibility changed"
+                    )
+                row = self._connection.execute(
+                    """SELECT * FROM metadata_correction_continuations
+                   WHERE review_id=? AND status IN (?, ?)
+                   ORDER BY created_at DESC, continuation_id DESC LIMIT 1""",
+                    (
+                        continuation.review_id,
+                        MetadataCorrectionContinuationStatus.QUEUED.value,
+                        MetadataCorrectionContinuationStatus.RUNNING.value,
+                    ),
+                ).fetchone()
+                if row is not None:
+                    self._connection.commit()
+                    return self._metadata_correction_continuation(row), False
+                if not self._has_job_capacity(maximum_active_jobs):
+                    self._connection.rollback()
+                    raise AutomationQueueFull(
+                        f"automation queue reached configured active Job limit "
+                        f"{maximum_active_jobs}"
+                    )
+                self._insert_job(job)
+                self._connection.execute(
+                    """INSERT INTO metadata_correction_continuations
+                    (continuation_id, file_id, review_id, source_task_id, source_item_id,
+                     configuration_snapshot_id, configuration_snapshot_digest,
+                     correction_version, status, created_at, updated_at, actor, job_id,
+                     new_task_id, new_result_id, started_at, completed_at, error, recovery)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    self._metadata_correction_continuation_values(continuation),
+                )
+                self._connection.commit()
+                return continuation, True
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def mark_metadata_correction_continuation_running(
+        self, job_id: str, now: datetime | None = None
+    ) -> MetadataCorrectionContinuation:
+        timestamp = now or datetime.now(UTC)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE metadata_correction_continuations
+                SET status=?, updated_at=?, started_at=COALESCE(started_at, ?)
+                WHERE job_id=? AND status=?""",
+                (
+                    MetadataCorrectionContinuationStatus.RUNNING.value,
+                    timestamp.isoformat(),
+                    timestamp.isoformat(),
+                    job_id,
+                    MetadataCorrectionContinuationStatus.QUEUED.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("metadata correction continuation is not queued")
+        return self.require_metadata_correction_continuation_by_job(job_id)
+
+    def bind_metadata_correction_continuation_task(
+        self, job_id: str, task_id: str
+    ) -> MetadataCorrectionContinuation:
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("continuation Task ID is required")
+        with self._lock, self._connection:
+            task = self._connection.execute(
+                "SELECT task_id FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if task is None:
+                raise LookupError(f"continuation Task {task_id!r} was not found")
+            cursor = self._connection.execute(
+                """UPDATE metadata_correction_continuations
+                SET updated_at=?, new_task_id=?
+                WHERE job_id=? AND status=? AND new_task_id IS NULL""",
+                (
+                    datetime.now(UTC).isoformat(),
+                    task_id,
+                    job_id,
+                    MetadataCorrectionContinuationStatus.RUNNING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                continuation = self.get_metadata_correction_continuation_for_job(job_id)
+                if continuation is None:
+                    raise LookupError(
+                        f"metadata correction continuation for Job {job_id!r} was not found"
+                    )
+                raise ValueError("metadata correction continuation Task is already bound")
+        return self.require_metadata_correction_continuation_by_job(job_id)
+
+    def complete_metadata_correction_continuation(
+        self,
+        job_id: str,
+        *,
+        new_task_id: str | None = None,
+        new_result_id: str | None = None,
+        success: bool,
+        error: str | None = None,
+        recovery: str | None = None,
+        now: datetime | None = None,
+    ) -> MetadataCorrectionContinuation:
+        timestamp = now or datetime.now(UTC)
+        status = (
+            MetadataCorrectionContinuationStatus.COMPLETED
+            if success
+            else MetadataCorrectionContinuationStatus.FAILED
+        )
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE metadata_correction_continuations
+                SET status=?, updated_at=?, new_task_id=?, new_result_id=?, completed_at=?,
+                    error=?, recovery=?
+                WHERE job_id=? AND status=?""",
+                (
+                    status.value,
+                    timestamp.isoformat(),
+                    new_task_id,
+                    new_result_id,
+                    timestamp.isoformat(),
+                    error,
+                    recovery,
+                    job_id,
+                    MetadataCorrectionContinuationStatus.RUNNING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("metadata correction continuation is not running")
+        return self.require_metadata_correction_continuation_by_job(job_id)
+
+    def fail_queued_metadata_correction_continuation(
+        self,
+        job_id: str,
+        *,
+        error: str,
+        recovery: str,
+        now: datetime | None = None,
+    ) -> MetadataCorrectionContinuation:
+        timestamp = now or datetime.now(UTC)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE metadata_correction_continuations
+                SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
+                WHERE job_id=? AND status=?""",
+                (
+                    MetadataCorrectionContinuationStatus.FAILED.value,
+                    timestamp.isoformat(),
+                    timestamp.isoformat(),
+                    error,
+                    recovery,
+                    job_id,
+                    MetadataCorrectionContinuationStatus.QUEUED.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("metadata correction continuation is not queued")
+        return self.require_metadata_correction_continuation_by_job(job_id)
+
+    def cancel_metadata_correction_continuation(
+        self, job_id: str, *, now: datetime | None = None
+    ) -> MetadataCorrectionContinuation:
+        timestamp = now or datetime.now(UTC)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE metadata_correction_continuations
+                SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
+                WHERE job_id=? AND status IN (?, ?)""",
+                (
+                    MetadataCorrectionContinuationStatus.CANCELLED.value,
+                    timestamp.isoformat(),
+                    timestamp.isoformat(),
+                    "continuation Job was cancelled before completion",
+                    "refresh the File detail and explicitly continue this correction again",
+                    job_id,
+                    MetadataCorrectionContinuationStatus.QUEUED.value,
+                    MetadataCorrectionContinuationStatus.RUNNING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                continuation = self.get_metadata_correction_continuation_for_job(job_id)
+                if continuation is None:
+                    raise LookupError(
+                        f"metadata correction continuation for Job {job_id!r} was not found"
+                    )
+                if continuation.status is MetadataCorrectionContinuationStatus.CANCELLED:
+                    return continuation
+                raise ValueError("metadata correction continuation is not cancellable")
+        return self.require_metadata_correction_continuation_by_job(job_id)
+
+    def require_metadata_correction_continuation_by_job(
+        self, job_id: str
+    ) -> MetadataCorrectionContinuation:
+        continuation = self.get_metadata_correction_continuation_for_job(job_id)
+        if continuation is None:
+            raise LookupError(f"metadata correction continuation for Job {job_id!r} was not found")
+        return continuation
 
     def create_recognition_review(self, review, choices, item) -> None:
         with self._lock, self._connection:
@@ -1947,6 +2241,11 @@ class SQLiteTaskRepository:
 
     def request_job_cancellation(self, job_id: str, now: datetime) -> AutomationJob:
         with self._lock, self._connection:
+            existing_row = self._connection.execute(
+                "SELECT command, status FROM automation_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if existing_row is None:
+                raise LookupError(f"automation job {job_id!r} was not found")
             cursor = self._connection.execute(
                 "UPDATE automation_jobs SET status=CASE WHEN status=? THEN ? ELSE status END, "
                 "cancellation_requested=1, updated_at=?, "
@@ -1964,10 +2263,25 @@ class SQLiteTaskRepository:
                 ),
             )
             if cursor.rowcount != 1:
-                existing = self.get_job(job_id)
-                if existing is None:
-                    raise LookupError(f"automation job {job_id!r} was not found")
                 raise ValueError("only a pending or running automation job can be cancelled")
+            if existing_row["command"] == AutomationCommand.FILE_METADATA_CORRECTION.value:
+                self._connection.execute(
+                    """UPDATE metadata_correction_continuations
+                    SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
+                    WHERE job_id=? AND status IN (?, ?) AND
+                          (status=? OR new_task_id IS NULL)""",
+                    (
+                        MetadataCorrectionContinuationStatus.CANCELLED.value,
+                        now.isoformat(),
+                        now.isoformat(),
+                        "continuation Job was cancelled before completion",
+                        "refresh the File detail and explicitly continue this correction again",
+                        job_id,
+                        MetadataCorrectionContinuationStatus.QUEUED.value,
+                        MetadataCorrectionContinuationStatus.RUNNING.value,
+                        MetadataCorrectionContinuationStatus.QUEUED.value,
+                    ),
+                )
             row = self._connection.execute(
                 "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
             ).fetchone()
@@ -2039,6 +2353,11 @@ class SQLiteTaskRepository:
 
     def requeue_stale_job(self, job_id: str, before: datetime, now: datetime) -> AutomationJob:
         with self._lock, self._connection:
+            existing_row = self._connection.execute(
+                "SELECT command FROM automation_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if existing_row is None:
+                raise LookupError(f"automation job {job_id!r} was not found")
             cursor = self._connection.execute(
                 "UPDATE automation_jobs SET status=?, updated_at=?, started_at=NULL, "
                 "completed_at=NULL, task_id=NULL, error='explicitly requeued stale job', "
@@ -2055,10 +2374,41 @@ class SQLiteTaskRepository:
                 ),
             )
             if cursor.rowcount != 1:
-                existing = self.get_job(job_id)
-                if existing is None:
-                    raise LookupError(f"automation job {job_id!r} was not found")
                 raise ValueError("automation job is not stale and running")
+            if existing_row["command"] == AutomationCommand.FILE_METADATA_CORRECTION.value:
+                continuation = self._connection.execute(
+                    """SELECT new_task_id FROM metadata_correction_continuations
+                    WHERE job_id=? AND status=?""",
+                    (job_id, MetadataCorrectionContinuationStatus.RUNNING.value),
+                ).fetchone()
+                if continuation is not None and continuation["new_task_id"] is None:
+                    self._connection.execute(
+                        """UPDATE metadata_correction_continuations
+                        SET status=?, updated_at=?, started_at=NULL, completed_at=NULL,
+                            error=NULL, recovery=NULL
+                        WHERE job_id=? AND status=?""",
+                        (
+                            MetadataCorrectionContinuationStatus.QUEUED.value,
+                            now.isoformat(),
+                            job_id,
+                            MetadataCorrectionContinuationStatus.RUNNING.value,
+                        ),
+                    )
+                elif continuation is not None:
+                    self._connection.execute(
+                        """UPDATE metadata_correction_continuations
+                        SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
+                        WHERE job_id=? AND status=?""",
+                        (
+                            MetadataCorrectionContinuationStatus.FAILED.value,
+                            now.isoformat(),
+                            now.isoformat(),
+                            "stale continuation already has a linked Task",
+                            "inspect the linked Task/Result before retrying this correction",
+                            job_id,
+                            MetadataCorrectionContinuationStatus.RUNNING.value,
+                        ),
+                    )
             row = self._connection.execute(
                 "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
             ).fetchone()
@@ -2769,6 +3119,25 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS metadata_corrections_status_created
                     ON metadata_corrections(status, created_at, review_id);
+                CREATE TABLE IF NOT EXISTS metadata_correction_continuations (
+                    continuation_id TEXT PRIMARY KEY, file_id TEXT NOT NULL,
+                    review_id TEXT NOT NULL, source_task_id TEXT NOT NULL,
+                    source_item_id TEXT NOT NULL,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    correction_version TEXT NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, actor TEXT NOT NULL,
+                    job_id TEXT NOT NULL UNIQUE, new_task_id TEXT, new_result_id TEXT,
+                    started_at TEXT, completed_at TEXT, error TEXT, recovery TEXT,
+                    FOREIGN KEY(review_id) REFERENCES metadata_corrections(review_id),
+                    FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(source_item_id) REFERENCES task_items(item_id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS one_active_metadata_correction_continuation
+                    ON metadata_correction_continuations(review_id)
+                    WHERE status IN ('queued', 'running');
+                CREATE INDEX IF NOT EXISTS metadata_correction_continuations_review_created
+                    ON metadata_correction_continuations(review_id, created_at, continuation_id);
                 CREATE TABLE IF NOT EXISTS recognition_reviews (
                     review_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
                     item_id TEXT NOT NULL UNIQUE, source_storage_id TEXT NOT NULL,
@@ -3253,6 +3622,58 @@ class SQLiteTaskRepository:
             row["direct_provider_id"],
             datetime.fromisoformat(row["decided_at"]) if row["decided_at"] else None,
             row["actor"],
+        )
+
+    @staticmethod
+    def _metadata_correction_continuation_values(
+        value: MetadataCorrectionContinuation,
+    ) -> tuple[object, ...]:
+        return (
+            value.continuation_id,
+            value.file_id,
+            value.review_id,
+            value.source_task_id,
+            value.source_item_id,
+            value.configuration_snapshot_id,
+            value.configuration_snapshot_digest,
+            value.correction_version,
+            value.status.value,
+            value.created_at.isoformat(),
+            value.updated_at.isoformat(),
+            value.actor,
+            value.job_id,
+            value.new_task_id,
+            value.new_result_id,
+            value.started_at.isoformat() if value.started_at else None,
+            value.completed_at.isoformat() if value.completed_at else None,
+            value.error,
+            value.recovery,
+        )
+
+    @staticmethod
+    def _metadata_correction_continuation(
+        row: sqlite3.Row,
+    ) -> MetadataCorrectionContinuation:
+        return MetadataCorrectionContinuation(
+            row["continuation_id"],
+            row["file_id"],
+            row["review_id"],
+            row["source_task_id"],
+            row["source_item_id"],
+            row["configuration_snapshot_id"],
+            row["configuration_snapshot_digest"],
+            row["correction_version"],
+            MetadataCorrectionContinuationStatus(row["status"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["actor"],
+            row["job_id"],
+            row["new_task_id"],
+            row["new_result_id"],
+            datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
+            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+            row["error"],
+            row["recovery"],
         )
 
     @staticmethod

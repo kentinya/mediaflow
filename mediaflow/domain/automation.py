@@ -10,6 +10,7 @@ class AutomationCommand(StrEnum):
     SCAN = "scan"
     PREVIEW = "preview"
     ORGANIZE = "organize"
+    FILE_METADATA_CORRECTION = "file-metadata-correction"
 
 
 class AutomationJobStatus(StrEnum):

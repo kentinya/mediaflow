@@ -59,8 +59,9 @@
 > Metadata Test + Candidate Explanation 及 F1 修复也已独立验收；Phase 22.5-C candidate
 > confirmation 及 F1/F2 durable CAS 修复已通过 final Integration Acceptance。Phase 22.5-D
 > same-Provider managed live Metadata correction test 已于 2026-08-26 通过独立 High re-review
-> 并 PASS/CLOSED。Phase 22.5-E 当前只补齐一个 resolved File correction 的显式 pinned DryRun
-> continuation。远端 Storage、Provider switching、通用 Task resume 和更宽配置旅程仍未完成。
+> 并 PASS/CLOSED。Phase 22.5-E 当前实现一个 resolved File correction 的显式 pinned DryRun
+> continuation，已完成实现 checkpoint，尚待独立 High Review；远端 Storage、Provider switching、
+> 通用 Task resume 和更宽配置旅程仍未完成。
 
 ---
 
@@ -1458,6 +1459,14 @@ MatchedBy
 > `WAITING_METADATA_CORRECTION`，可审计地修正查询词、年份、Movie/TV，或输入当前配置
 > Provider 的直接 ID；只有显式 Task resume 才重跑真实 Provider 流程。该实现不允许任意
 > Provider 切换或注入 MediaIdentity，且保持 RecognitionType（包括 C）不变。
+
+> 当前实现（Phase 22.5-E；尚待独立 High Review）：Files detail 可对一个已 `RESOLVED` 的
+> Metadata correction 显示 source Task/TaskItem、correction version 与精确 snapshot ID/digest，
+> 通过 API/Web 共用入口显式继续为单项 DryRun。该入口原子创建 continuation 与不可执行 Job；
+> Worker 只重跑该 File 的 Parser → Recognition → TypePolicy → Metadata → Naming →
+> Classification → Planner，并持久化新的 DryRun Task/Item/Result。源文件、源 review、源
+> Task 及兄弟项不变；Provider switching、通用 Task resume、执行和自动 continuation retry
+> 仍未实现。
 
 当自动识别失败时支持：
 
@@ -3120,7 +3129,12 @@ System Settings
 > PASS/CLOSED；Phase 22.5-B/F1 随后也已独立验收，Phase 22.5-C 及 F1/F2 已通过
 > final Integration Acceptance。Phase 22.5-D same-Provider managed live Metadata correction test
 > 已通过独立 High re-review 并 PASS/CLOSED；Phase 22.5-E 单项 correction DryRun continuation
-> 是当前 Slice。
+> 的实现 checkpoint 已完成，尚待独立 High Review；本 Slice 不宣告 PASS/CLOSED。
+>
+> 当前实现覆盖：Files detail 中 exact resolved correction/version、source Task/TaskItem 与 snapshot
+> ID/digest 的可见性；API/Web 共用的原子单项 admission；以及 pinned Worker 对新 DryRun
+> Task/Item/Result 的创建与结果门。队列、运行、完成、失败、陈旧、取消和重复/陈旧身份均有
+> 有界状态或恢复提示，源文件、源 review、源 Task 和兄弟项不变。
 >
 > 当前实现（Phase 22.2/22.2R-F2 whole-document 与 Phase 22.3 Local slice 已验收）：Managed Configuration
 > 已经经过 Draft → Validate/Test → Validated → 显式 Activate，持久化生成不可变 Runtime Snapshot；
