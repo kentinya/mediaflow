@@ -97,10 +97,11 @@ configuration remain open; Phase 22 overall is not closed.
 ### Phase 22.6-A Managed NamingPolicy Configuration + Offline Naming Preview
 
 ```text
-Status: READY FOR COMMIT (pre-checkpoint)
-Commit SHA: PENDING
-High Audit: PENDING
-Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
+Status: FIX REQUIRED (correction Slice Phase 22.6-A-F1 defined)
+Rejected checkpoint: 90ce13a6c6c39912dd389f71a1189314ff24eb5d (FIX REQUIRED — 2026-08-27, preserved)
+Commit SHA: PENDING (Phase 22.6-A-F1 correction checkpoint)
+High Audit: FIX REQUIRED — 2026-08-27; see the review record below
+Push: NOT REQUIRED BEFORE INDEPENDENT RE-REVIEW
 ```
 
 Implementation evidence:
@@ -126,6 +127,56 @@ Implementation evidence:
   `git diff --check` passed.
 - This is implementation evidence only. No `PASS / CLOSED` decision is recorded, and
   Classification/Organize configuration or later Phase 22.6 work has not started.
+
+The implementation-evidence claim above that "reachable Web controls" are covered by the focused
+tests is not supported at that SHA; see the review record below. The record is preserved unchanged.
+
+## Phase 22.6-A High Review Result (2026-08-27)
+
+- Status: FIX REQUIRED; Rejected checkpoint SHA:
+  `90ce13a6c6c39912dd389f71a1189314ff24eb5d`; High Audit: FIX REQUIRED — 2026-08-27.
+  This record is preserved; the rejected SHA is not amended, squashed, or rewritten.
+- Verified accepted at that SHA: `NAMING_POLICY` editable-section mapping with canonical
+  runtime-shape field validation and `validate_naming_policy`; create/edit/copy/delete under
+  optimistic version CAS with Before/After audit; RecognitionTypePolicy reference evidence that
+  lists the exact referencing objects and blocks deletion until the reference is removed;
+  exact-revision offline preview through the existing `NamingPolicyRegistry`,
+  `NamingPreviewService`, `SafeTemplateRenderer`, `NameSanitizer` and local Parser with no forked
+  rendering; bounded secret-free `NamingPreviewEvidence` with revision identity, current/stale
+  semantics, `sideEffects: none`, retry safety and a correction/rerun next action; forward-only
+  SQLite configuration marker 6 with unchanged runtime marker 22 and unchanged Draft/Validate/
+  checked-Activate semantics; movie, single-episode, multi-episode and path-mode renders;
+  RecognitionType C preserved while referencing NamingPolicy A; zero Storage adapter and zero
+  Provider construction on success and failure paths, asserted by injected `AssertionError` doubles;
+  no scope overreach into ClassificationPolicy/OrganizePolicy editing, MediaLibrary target
+  resolution, conflict/capability prechecks, activation evidence, Task/Job/queue work, or a new CLI
+  journey. Independently re-run at that SHA: the complete offline suite (810 tests, 7 existing
+  external-service skips, 0 failures), 102 focused configuration/naming/UI tests, the
+  RecognitionType C regression, Ruff check/format, `compileall`, `pip check`, both example
+  configuration validations, FFmpeg/FFprobe production audit, business-filesystem mutation audit,
+  `git diff --check`, and the private-configuration checks (`config/alist.json` ignored, untracked,
+  unstaged, unread).
+- Rejected because the Web half of the promised journey has no falsifiable regression evidence.
+  Deleting the single `renderNamingPreview(data, guided);` mount line from
+  `showConfigurationRevision` leaves the complete offline suite green (810 tests, 0 failures), and
+  `renderNamingPreview` appears in no test file. This is the same defect class for which the
+  Phase 22.5-E checkpoint `08dfd4f921728755209b6d52347d28f221121c47` was rejected and for which the
+  22.5-E-F1 correction established the `_js_function_body` brace-matched proof; UX acceptance
+  "not only through the API" and Required Test 1 therefore remain unproven.
+- Also rejected because `test_invalid_templates_are_rejected_without_changing_draft` calls the
+  private `ConfigurationObjectService._normalize` classmethod, asserts only bare `ValueError`, and
+  never constructs a revision, so neither the durable state "Draft unchanged; no preview evidence
+  written" nor the Required Test 1 step "correct an invalid template, and preview successfully" is
+  proven at the service/API boundary that operators actually use.
+- Non-blocking observations recorded for later work, explicitly not part of this correction:
+  `SafeTemplateRenderer.validate` separator/traversal and conversion messages name neither the
+  offending template field nor the token (the reused engine message shape); `_NAMING_POLICY_FIELDS`
+  omits the runtime loader's unused legacy template aliases; a managed document that legitimately
+  omits the optional `namingPolicies` section cannot receive its first policy, which is the
+  pre-existing shared behaviour of every editable kind including `metadataPolicies`.
+- Verdict: **FIX REQUIRED**. `TASK.md` now contains only the focused Phase 22.6-A-F1 correction.
+  Phase 22.6-A is not closed, Phase 22.6 remains open, and Phase 22.6-B
+  (ClassificationPolicy editing and target-resolution preview) must not start.
 
 ## Completed
 
