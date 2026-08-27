@@ -159,6 +159,24 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("Run Recognition Strategy Test", script)
         self.assertIn("Task was not resumed", script)
 
+    def test_naming_policy_editor_and_exact_revision_preview_are_reachable(self) -> None:
+        script = APP_JS.decode()
+        self.assertIn("renderGuidedObjectList(data, guided, 'namingPolicies'", script)
+        self.assertIn("Save NamingPolicy", script)
+        self.assertIn("actionButton('Copy'", script)
+        self.assertIn("References block deletion", script)
+        self.assertIn("Offline naming preview", script)
+        self.assertIn("Run offline naming preview", script)
+        self.assertIn("/naming-preview`,", script)
+        self.assertIn("expectedVersion: revision.version", script)
+        self.assertIn("expectedDigest: revision.digest", script)
+        self.assertIn("Rendered directory", script)
+        self.assertIn("Rendered filename", script)
+        self.assertIn("Sanitization", script)
+        self.assertIn("Missing-variable strategy", script)
+        self.assertIn("This preview is stale", script)
+        self.assertIn("Side effects", script)
+
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
         script = APP_JS.decode()
         mismatch_start = script.index("function renderConfigurationIdentityMismatch")

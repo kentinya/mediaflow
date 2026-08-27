@@ -15,7 +15,13 @@ from pathlib import PurePath
 from threading import BoundedSemaphore, Lock, RLock
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+from mediaflow.application.media_parser import MediaParserService
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.naming import (
+    NamingPolicyRegistry,
+    NamingPreviewService,
+    validate_naming_policy,
+)
 from mediaflow.application.read_only_storage import (
     ReadOnlyStorageGuard,
     ReadOnlyStorageMutationError,
@@ -30,6 +36,7 @@ from mediaflow.domain.configuration_management import (
     CONFIGURATION_SETUP_CHECK_PATH_LIMIT,
     CONFIGURATION_STRATEGY_RESULT_LIMIT,
     ConfigurationActivationConflict,
+    ConfigurationNamingPreviewStatus,
     ConfigurationObjectKind,
     ConfigurationObjectReferenced,
     ConfigurationReferenceEvidence,
@@ -41,10 +48,12 @@ from mediaflow.domain.configuration_management import (
     ManagedConfigurationRevision,
     ManagedConfigurationStatus,
     ManagedDocumentRedactor,
+    NamingPreviewEvidence,
     RecognitionStrategyTestEvidence,
 )
 from mediaflow.domain.metadata import (
     METADATA_POLICY_CONFIGURATION_FIELDS,
+    MediaIdentity,
     MediaQueryType,
     MediaType,
     MetadataErrorCode,
@@ -54,6 +63,15 @@ from mediaflow.domain.metadata import (
 )
 from mediaflow.domain.metadata_correction import MetadataCorrectionSelection
 from mediaflow.domain.metadata_review import MetadataSelection
+from mediaflow.domain.naming import (
+    MissingVariableStrategy,
+    NamingContext,
+    NamingError,
+    NamingErrorCode,
+    NamingMediaTypeMode,
+    NamingPolicy,
+)
+from mediaflow.domain.parser import FileContext, ParseResult
 from mediaflow.domain.recognition import (
     AtomicCondition,
     ConditionField,
@@ -81,6 +99,7 @@ class ConfigurationObjectService:
         ConfigurationObjectKind.RECOGNITION_RULE: "recognitionRules",
         ConfigurationObjectKind.RECOGNITION_TYPE_POLICY: "recognitionTypePolicies",
         ConfigurationObjectKind.METADATA_POLICY: "metadataPolicies",
+        ConfigurationObjectKind.NAMING_POLICY: "namingPolicies",
     }
     _MAX_OBJECT_BYTES = 64 * 1024
     _SETUP_CHECK_TIMEOUT_SECONDS = 10.0
@@ -121,6 +140,43 @@ class ConfigurationObjectService:
         "priority",
     }
     _METADATA_POLICY_FIELDS = METADATA_POLICY_CONFIGURATION_FIELDS
+    _NAMING_POLICY_FIELDS = {
+        "id",
+        "name",
+        "description",
+        "enabled",
+        "mediaTypeMode",
+        "directoryTemplate",
+        "filenameTemplate",
+        "seriesDirectoryTemplate",
+        "seasonDirectoryTemplate",
+        "episodeFilenameTemplate",
+        "multiEpisodeFileTemplate",
+        "missingVariableStrategy",
+        "maxComponentLength",
+    }
+    _NAMING_SAMPLE_FIELDS = {
+        "path",
+        "title",
+        "originalTitle",
+        "mediaType",
+        "recognitionType",
+        "provider",
+        "providerId",
+        "year",
+        "season",
+        "episode",
+        "episodes",
+        "episodeTitle",
+        "resolution",
+        "source",
+        "videoCodec",
+        "audio",
+        "hdr",
+        "version",
+        "releaseGroup",
+        "extension",
+    }
 
     def __init__(
         self,
@@ -197,6 +253,11 @@ class ConfigurationObjectService:
                 "recognitionRules": self._objects(document, "recognitionRules"),
                 "recognitionTypePolicies": self._objects(document, "recognitionTypePolicies"),
                 "metadataPolicies": self._objects(document, "metadataPolicies"),
+                "namingPolicies": (
+                    self._objects(document, "namingPolicies")
+                    if "namingPolicies" in document
+                    else []
+                ),
             },
             # Keep every versioned projection on the same immutable revision read.
             # Calling the public helpers here would re-read the repository and could
@@ -204,6 +265,7 @@ class ConfigurationObjectService:
             "references": self._references_from_document(document),
             "localSetupCheck": self._check_document(revision),
             "recognitionStrategyTest": self._strategy_test_document(revision),
+            "namingPreview": self._naming_preview_document(revision),
         }
 
     def references(self, revision_id: str) -> dict[str, dict[str, object]]:
@@ -216,6 +278,10 @@ class ConfigurationObjectService:
     ) -> dict[str, dict[str, object]]:
         result: dict[str, dict[str, object]] = {}
         for kind, section in cls._SECTIONS.items():
+            # Historical lightweight repository doubles may omit newly editable
+            # sections; canonical managed runtime documents still require them.
+            if section not in document:
+                continue
             for value in cls._canonical_objects(document, section):
                 object_id = str(value.get("id", ""))
                 result[f"{kind.value}:{object_id}"] = cls._references_for(
@@ -329,6 +395,281 @@ class ConfigurationObjectService:
                 synthetic_path=synthetic_path,
                 live_metadata=live_metadata,
             )
+
+    def naming_preview(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        policy_id: str,
+        sample: Mapping[str, object],
+    ) -> NamingPreviewEvidence:
+        revision = self._managed.require(revision_id)
+        if revision.status not in {
+            ManagedConfigurationStatus.DRAFT,
+            ManagedConfigurationStatus.VALIDATED,
+        }:
+            raise ConfigurationVersionConflict(
+                "naming preview requires a Draft or Validated revision",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+            )
+        if revision.version != expected_version or revision.digest != expected_digest:
+            raise ConfigurationVersionConflict(
+                "naming preview requires the exact current revision; reload before previewing",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+                durable_state="current_draft_and_prior_preview_preserved",
+                next_action="reload the revision and explicitly rerun naming preview",
+            )
+        normalized_input: dict[str, object] = {}
+        try:
+            if not isinstance(policy_id, str) or not policy_id.strip() or len(policy_id) > 64:
+                raise ValueError("NamingPolicy ID must be bounded and non-empty")
+            normalized_input, context = self._naming_context(sample)
+            policies = tuple(
+                self._naming_policy(value)
+                for value in self._canonical_objects(revision.document, "namingPolicies")
+            )
+            result = NamingPreviewService(NamingPolicyRegistry(policies)).preview(
+                context, policy_id
+            )
+            missing = [
+                warning.split(":", 1)[1]
+                for warning in result.warnings
+                if warning.startswith("missing_variable:")
+            ]
+            policy = next(item for item in policies if item.policy_id == policy_id)
+            result_document = {
+                "appliedPolicyId": result.policy_id,
+                "recognitionType": result.recognition_type_id,
+                "mediaType": result.media_type.value if result.media_type else None,
+                "directory": "/".join(result.directory_segments),
+                "directorySegments": list(result.directory_segments),
+                "filename": result.filename,
+                "renderedVariables": {
+                    key: self._bounded_utf8(value, 512)
+                    for key, value in result.rendered_variables
+                    if key != "episode_numbers"
+                },
+                "sanitizationChanges": list(result.sanitization_changes),
+                "missingVariableStrategy": policy.missing_variable_strategy.value,
+                "missingVariableDecisions": [
+                    {
+                        "variable": name,
+                        "decision": policy.missing_variable_strategy.value,
+                    }
+                    for name in missing
+                ],
+                "warnings": [self._bounded_utf8(value, 384) for value in result.warnings[:32]],
+            }
+            evidence = NamingPreviewEvidence(
+                revision.revision_id,
+                revision.version,
+                revision.digest,
+                ConfigurationNamingPreviewStatus.COMPLETED,
+                datetime.now(UTC),
+                actor,
+                policy_id,
+                normalized_input,
+                result_document,
+                message="Naming preview completed through the configured production naming engine",
+                next_action=(
+                    "review the rendered name, then correct and rerun or validate the Draft"
+                ),
+            )
+        except (NamingError, ValueError) as error:
+            category = error.code.value if isinstance(error, NamingError) else "invalid_input"
+            evidence = NamingPreviewEvidence(
+                revision.revision_id,
+                revision.version,
+                revision.digest,
+                ConfigurationNamingPreviewStatus.FAILED,
+                datetime.now(UTC),
+                actor,
+                (
+                    policy_id
+                    if isinstance(policy_id, str) and policy_id.strip() and len(policy_id) <= 64
+                    else "invalid"
+                ),
+                normalized_input or {"mode": "invalid"},
+                failure_category=category,
+                message=f"Naming preview failed ({category})",
+                next_action=(
+                    "correct the named policy field or sample, then explicitly rerun preview"
+                ),
+            )
+        return self._repository.save_naming_preview(evidence)
+
+    @classmethod
+    def _naming_policy(cls, value: Mapping[str, object]) -> NamingPolicy:
+        normalized = cls._normalize(ConfigurationObjectKind.NAMING_POLICY, value)
+        return NamingPolicy(
+            str(normalized["id"]),
+            str(normalized["name"]),
+            str(normalized["directoryTemplate"]),
+            str(normalized["filenameTemplate"]),
+            str(normalized["seriesDirectoryTemplate"]),
+            str(normalized["seasonDirectoryTemplate"]),
+            str(normalized["episodeFilenameTemplate"]),
+            str(normalized["multiEpisodeFileTemplate"]),
+            str(normalized["description"]),
+            bool(normalized["enabled"]),
+            NamingMediaTypeMode(str(normalized["mediaTypeMode"])),
+            MissingVariableStrategy(str(normalized["missingVariableStrategy"])),
+            max_component_length=int(normalized["maxComponentLength"]),
+        )
+
+    @classmethod
+    def _naming_context(
+        cls, sample: Mapping[str, object]
+    ) -> tuple[dict[str, object], NamingContext]:
+        if not isinstance(sample, Mapping):
+            raise ValueError("naming preview sample must be an object")
+        unknown = set(sample).difference(cls._NAMING_SAMPLE_FIELDS)
+        if unknown:
+            raise ValueError(
+                f"naming preview sample contains unsupported field {sorted(unknown)[0]!r}"
+            )
+        path = sample.get("path")
+        if path is not None:
+            if (
+                len(sample) != 1
+                or not isinstance(path, str)
+                or not path.strip()
+                or len(path) > 4096
+            ):
+                raise ValueError("path mode requires one bounded non-empty path field")
+            if "\x00" in path:
+                raise ValueError("naming preview path must not contain NUL")
+            pure = PurePath(path.replace("\\", "/"))
+            filename = pure.name
+            parsed = MediaParserService().parse(
+                FileContext(
+                    "offline-preview",
+                    "offline-preview",
+                    path,
+                    filename,
+                    tuple(pure.parts[:-1]),
+                    filename.rsplit(".", 1)[1] if "." in filename else "",
+                    str(pure.parent),
+                )
+            )
+            media_type = (
+                MediaType.TV
+                if parsed.season is not None or parsed.episode is not None
+                else MediaType.MOVIE
+            )
+            # Persist only the basename/parse mode. The operator-supplied path is
+            # used locally by the parser and is not retained as preview evidence.
+            normalized = {"mode": "path", "filename": filename}
+            title = parsed.title_candidate
+            recognition_type = "preview-tv" if media_type is MediaType.TV else "preview-movie"
+            identity = MediaIdentity(
+                "offline-preview",
+                "synthetic",
+                media_type,
+                title,
+                year=parsed.year,
+                season=parsed.season,
+                episode=parsed.episode,
+                episodes=parsed.episodes,
+                recognition_type_id=recognition_type,
+            )
+            return normalized, NamingContext(
+                recognition_type, identity, parsed, filename, parsed.extension
+            )
+        title = cls._preview_text(sample.get("title"), "title", 512, required=True)
+        media_type_value = sample.get("mediaType", "movie")
+        try:
+            media_type = MediaType(media_type_value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("naming preview mediaType must be movie or tv") from error
+        if media_type not in {MediaType.MOVIE, MediaType.TV}:
+            raise ValueError("naming preview mediaType must be movie or tv")
+        recognition_type = cls._preview_text(
+            sample.get("recognitionType", "preview"), "recognitionType", 64, required=True
+        )
+        extension = cls._preview_text(
+            sample.get("extension", "mkv"), "extension", 16, required=True
+        )
+        if not re.fullmatch(r"[A-Za-z0-9]{1,16}", extension):
+            raise ValueError("naming preview extension is invalid")
+        episodes_value = sample.get("episodes", [])
+        if not isinstance(episodes_value, list) or len(episodes_value) > 32:
+            raise ValueError("naming preview episodes must be a bounded array")
+        episodes = tuple(cls._preview_int(item, "episode", 0, 9999) for item in episodes_value)
+        year = cls._preview_optional_int(sample.get("year"), "year", 0, 9999)
+        season = cls._preview_optional_int(sample.get("season"), "season", 0, 9999)
+        episode = cls._preview_optional_int(sample.get("episode"), "episode", 0, 9999)
+        parsed = ParseResult(
+            title,
+            year=year,
+            season=season,
+            episode=episode,
+            episodes=episodes,
+            resolution_tag=cls._preview_text(sample.get("resolution"), "resolution", 64),
+            source_tag=cls._preview_text(sample.get("source"), "source", 64),
+            video_codec_tag=cls._preview_text(sample.get("videoCodec"), "videoCodec", 64),
+            audio_tag=cls._preview_text(sample.get("audio"), "audio", 64),
+            hdr_tag=cls._preview_text(sample.get("hdr"), "hdr", 64),
+            version_tag=cls._preview_text(sample.get("version"), "version", 64),
+            release_group=cls._preview_text(sample.get("releaseGroup"), "releaseGroup", 128),
+            original_filename=f"{title}.{extension}",
+            extension=extension.lower(),
+        )
+        identity = MediaIdentity(
+            cls._preview_text(
+                sample.get("provider", "offline-preview"), "provider", 64, required=True
+            ),
+            cls._preview_text(
+                sample.get("providerId", "synthetic"), "providerId", 128, required=True
+            ),
+            media_type,
+            title,
+            original_title=cls._preview_text(sample.get("originalTitle"), "originalTitle", 512),
+            year=year,
+            season=season,
+            episode=episode,
+            episodes=episodes,
+            episode_title=cls._preview_text(sample.get("episodeTitle"), "episodeTitle", 512),
+            recognition_type_id=recognition_type,
+        )
+        normalized = {"mode": "synthetic", **copy.deepcopy(dict(sample))}
+        return normalized, NamingContext(
+            recognition_type, identity, parsed, parsed.original_filename, parsed.extension
+        )
+
+    @staticmethod
+    def _preview_text(
+        value: object, label: str, maximum: int, *, required: bool = False
+    ) -> str | None:
+        if value is None and not required:
+            return None
+        if (
+            not isinstance(value, str)
+            or (required and not value.strip())
+            or len(value) > maximum
+            or "\x00" in value
+        ):
+            raise ValueError(f"naming preview {label} must be bounded text")
+        return value
+
+    @staticmethod
+    def _preview_int(value: object, label: str, minimum: int, maximum: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+            raise ValueError(f"naming preview {label} is out of bounds")
+        return value
+
+    @classmethod
+    def _preview_optional_int(
+        cls, value: object, label: str, minimum: int, maximum: int
+    ) -> int | None:
+        return None if value is None else cls._preview_int(value, label, minimum, maximum)
 
     def recognition_strategy_select_candidate(
         self,
@@ -1659,6 +2000,20 @@ class ConfigurationObjectService:
         )
         return value
 
+    def _naming_preview_document(
+        self, revision: ManagedConfigurationRevision
+    ) -> dict[str, object] | None:
+        getter = getattr(self._repository, "get_naming_preview", None)
+        evidence = getter(revision.revision_id) if getter is not None else None
+        if evidence is None:
+            return None
+        value = evidence.document()
+        value["stale"] = (
+            evidence.revision_version != revision.version
+            or evidence.revision_digest != revision.digest
+        )
+        return value
+
     def _check_document(self, revision: ManagedConfigurationRevision) -> dict[str, object] | None:
         evidence = self._repository.get_local_setup_check(revision.revision_id)
         if evidence is None:
@@ -1752,6 +2107,7 @@ class ConfigurationObjectService:
             ConfigurationObjectKind.RECOGNITION_RULE: cls._RECOGNITION_RULE_FIELDS,
             ConfigurationObjectKind.RECOGNITION_TYPE_POLICY: cls._RECOGNITION_TYPE_POLICY_FIELDS,
             ConfigurationObjectKind.METADATA_POLICY: cls._METADATA_POLICY_FIELDS,
+            ConfigurationObjectKind.NAMING_POLICY: cls._NAMING_POLICY_FIELDS,
         }[kind]
         unknown = set(value).difference(allowed)
         if unknown:
@@ -1765,6 +2121,88 @@ class ConfigurationObjectService:
         if not isinstance(name, str) or not name.strip() or len(name) > 120:
             raise ValueError(f"{section} name must be a bounded non-empty string")
         result = {"id": object_id, "name": name}
+        if kind is ConfigurationObjectKind.NAMING_POLICY:
+            media_type_mode = value.get("mediaTypeMode", "auto")
+            missing_strategy = value.get("missingVariableStrategy", "omit_token")
+            try:
+                mode = NamingMediaTypeMode(media_type_mode)
+                strategy = MissingVariableStrategy(missing_strategy)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "NamingPolicy mediaTypeMode or missingVariableStrategy is unsupported"
+                ) from error
+            max_length = cls._bounded_int(
+                value,
+                "maxComponentLength",
+                200,
+                minimum=8,
+                maximum=255,
+                label="NamingPolicy",
+            )
+            templates = {
+                "directoryTemplate": value.get("directoryTemplate", "{title} ({year})"),
+                "filenameTemplate": value.get("filenameTemplate", "{title} ({year}).{ext}"),
+                "seriesDirectoryTemplate": value.get("seriesDirectoryTemplate", "{title} ({year})"),
+                "seasonDirectoryTemplate": value.get(
+                    "seasonDirectoryTemplate", "Season {season:02}"
+                ),
+                "episodeFilenameTemplate": value.get(
+                    "episodeFilenameTemplate",
+                    "{title} - S{season:02}E{episode:02} - {episode_title}.{ext}",
+                ),
+                "multiEpisodeFileTemplate": value.get(
+                    "multiEpisodeFileTemplate", "{title} - S{season:02}{episodes}.{ext}"
+                ),
+            }
+            for field, template in templates.items():
+                if not isinstance(template, str):
+                    raise ValueError(f"NamingPolicy {field} must be bounded non-empty text")
+                if not template:
+                    raise NamingError(
+                        NamingErrorCode.INVALID_TEMPLATE,
+                        f"NamingPolicy {field} is empty",
+                    )
+                if len(template.encode("utf-8")) > 4096:
+                    raise NamingError(
+                        NamingErrorCode.COMPONENT_TOO_LONG,
+                        f"NamingPolicy {field} exceeds the template limit",
+                    )
+                if "\x00" in template:
+                    raise NamingError(
+                        NamingErrorCode.UNSAFE_PATH,
+                        f"NamingPolicy {field} contains NUL",
+                    )
+            description = value.get("description", "")
+            if not isinstance(description, str) or len(description) > 500 or "\x00" in description:
+                raise ValueError("NamingPolicy description must be bounded text")
+            enabled = cls._bool(value, "enabled", True, "NamingPolicy")
+            policy = NamingPolicy(
+                object_id,
+                name,
+                templates["directoryTemplate"],
+                templates["filenameTemplate"],
+                templates["seriesDirectoryTemplate"],
+                templates["seasonDirectoryTemplate"],
+                templates["episodeFilenameTemplate"],
+                templates["multiEpisodeFileTemplate"],
+                description,
+                enabled,
+                mode,
+                strategy,
+                max_component_length=max_length,
+            )
+            validate_naming_policy(policy)
+            result.update(templates)
+            result.update(
+                {
+                    "description": description,
+                    "enabled": enabled,
+                    "mediaTypeMode": mode.value,
+                    "missingVariableStrategy": strategy.value,
+                    "maxComponentLength": max_length,
+                }
+            )
+            return result
         if kind is ConfigurationObjectKind.METADATA_POLICY:
             provider_id = cls._metadata_identifier(value, "providerId", "MetadataPolicy")
             raw_media_type = value.get("mediaType")
@@ -2229,6 +2667,24 @@ class ConfigurationObjectService:
                             section="recognitionTypePolicies",
                             object_id=str(item["id"]),
                             field="metadataPolicy",
+                        )
+                    )
+        elif kind is ConfigurationObjectKind.NAMING_POLICY:
+            for index, item in enumerate(
+                cls._canonical_objects(document, "recognitionTypePolicies")
+            ):
+                reference = cls._required_reference_id(
+                    item,
+                    section="recognitionTypePolicies",
+                    index=index,
+                    field="namingPolicy",
+                )
+                if reference == object_id:
+                    collector.add(
+                        ConfigurationReferenceItem(
+                            section="recognitionTypePolicies",
+                            object_id=str(item["id"]),
+                            field="namingPolicy",
                         )
                     )
         return collector.evidence()

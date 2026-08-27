@@ -301,11 +301,18 @@ APP_JS = b"""(() => {
     const referenceKind = {storages: 'storage', resourceLibraries: 'resource_library',
       mediaLibraries: 'media_library', recognitionTypes: 'recognition_type',
       recognitionRules: 'recognition_rule', recognitionTypePolicies: 'recognition_type_policy',
-      metadataPolicies: 'metadata_policy'}[kind] || kind;
+      metadataPolicies: 'metadata_policy', namingPolicies: 'naming_policy'}[kind] || kind;
     detailContent.append(text('h3', `${label} (${values.length})`));
     values.forEach(item => {
       const row = text('div', '', 'choice');
-      row.append(text('span', `${item.id || '-'} - ${item.name || '-'} - ${item.type || ''}`));
+      const namingSummary = kind === 'namingPolicies' ?
+        ` - ${item.mediaTypeMode || 'auto'} - ${item.missingVariableStrategy || 'omit_token'} - ` +
+        `${item.enabled === false ? 'disabled' : 'enabled'}` : '';
+      row.append(text('span', `${item.id || '-'} - ${item.name || '-'} - ${item.type || ''}${namingSummary}`));
+      if (kind === 'namingPolicies') row.append(text('span',
+        `Movie: ${item.directoryTemplate || '-'} / ${item.filenameTemplate || '-'}; ` +
+        `TV: ${item.seriesDirectoryTemplate || '-'} / ${item.seasonDirectoryTemplate || '-'} / ` +
+        `${item.episodeFilenameTemplate || '-'} / ${item.multiEpisodeFileTemplate || '-'}`));
       const referenceEvidence = guided.references && guided.references[`${referenceKind}:${item.id}`] ||
         {total: 0, items: [], truncated: false};
       const references = Array.isArray(referenceEvidence) ? referenceEvidence :
@@ -323,6 +330,10 @@ APP_JS = b"""(() => {
         row.append(text('span', 'Remote/read-only here. Use JSON import for changes.', 'warning'));
       } else if (configurationRevisionEditable(revision)) {
         row.append(actionButton('Edit', () => renderGuidedObjectForm(revision, kind, item)));
+        if (kind === 'namingPolicies') row.append(actionButton('Copy', () => {
+          const copied = {...item, id: `${item.id}-copy`, name: `${item.name || item.id} copy`};
+          renderGuidedObjectForm(revision, kind, copied, true);
+        }));
         row.append(actionButton('Delete', () => {
           const confirmation = text('span', '', 'choices');
           confirmation.append(text('span', `Delete ${label} ${item.id}? References block deletion.`),
@@ -339,25 +350,28 @@ APP_JS = b"""(() => {
       const singular = {storages: 'Storage', resourceLibraries: 'ResourceLibrary',
         mediaLibraries: 'MediaLibrary', recognitionTypes: 'RecognitionType',
         recognitionRules: 'RecognitionRule', recognitionTypePolicies: 'RecognitionTypePolicy',
-        metadataPolicies: 'MetadataPolicy'}[kind] || kind;
-      const guidedJson = kind.startsWith('recognition') || kind === 'metadataPolicies';
+        metadataPolicies: 'MetadataPolicy', namingPolicies: 'NamingPolicy'}[kind] || kind;
+      const guidedJson = kind.startsWith('recognition') ||
+        kind === 'metadataPolicies' || kind === 'namingPolicies';
       detailContent.append(actionButton(`${guidedJson ? 'Add' : 'Add Local'} ${singular}`,
         () => renderGuidedObjectForm(revision, kind, null)));
     }
   }
-  function renderGuidedObjectForm(revision, kind, item) {
-    if (kind.startsWith('recognition') || kind === 'metadataPolicies') {
+  function renderGuidedObjectForm(revision, kind, item, copyMode = false) {
+    if (kind.startsWith('recognition') || kind === 'metadataPolicies' || kind === 'namingPolicies') {
       const metadataPolicy = kind === 'metadataPolicies';
+      const namingPolicy = kind === 'namingPolicies';
       clear(detailContent);
-      detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} ${metadataPolicy ? 'MetadataPolicy' : 'recognition object'}`));
-      detailContent.append(text('p', metadataPolicy ?
+      detailContent.append(text('h2', `${item && !copyMode ? 'Edit' : 'Add'} ${metadataPolicy ? 'MetadataPolicy' : namingPolicy ? 'NamingPolicy' : 'recognition object'}`));
+      detailContent.append(text('p', namingPolicy ?
+        'Edit one bounded NamingPolicy JSON object. Templates use the restricted naming variables; separators, traversal, unknown variables and unsupported formats are rejected.' : metadataPolicy ?
         'Edit one bounded MetadataPolicy JSON object. Provider/query/locale/threshold/request settings are validated; credentials and unknown fields are rejected.' :
         'Edit one bounded JSON object. References and rule priority are checked when the Draft is validated; unsafe regex is rejected when saved.', 'warning'));
       const editor = document.createElement('textarea');
-      editor.setAttribute('aria-label', metadataPolicy ? 'MetadataPolicy JSON' : 'Recognition object JSON');
+      editor.setAttribute('aria-label', metadataPolicy ? 'MetadataPolicy JSON' : namingPolicy ? 'NamingPolicy JSON' : 'Recognition object JSON');
       editor.value = JSON.stringify(item || {}, null, 2); detailContent.append(editor);
-      detailContent.append(actionButton(metadataPolicy ? 'Save MetadataPolicy' : 'Save recognition object', async () => {
-        try { await mutateGuidedObject(revision, kind, item && item.id, JSON.parse(editor.value), item ? 'PUT' : 'POST'); }
+      detailContent.append(actionButton(metadataPolicy ? 'Save MetadataPolicy' : namingPolicy ? 'Save NamingPolicy' : 'Save recognition object', async () => {
+        try { await mutateGuidedObject(revision, kind, item && !copyMode && item.id, JSON.parse(editor.value), item && !copyMode ? 'PUT' : 'POST'); }
         catch (error) { message(errorText(error), true); }
       }), actionButton('Back to revision', () => showConfigurationRevision(revision)));
       return;
@@ -378,6 +392,71 @@ APP_JS = b"""(() => {
   }
   function boundedSetupText(value, fallback = '-') {
     return typeof value === 'string' && value.length > 0 && value.length <= 4096 ? value : fallback;
+  }
+  function namingEvidenceIsCurrent(revision, evidence) {
+    return Boolean(evidence && evidence.stale === false &&
+      evidence.revisionId === revision.revisionId &&
+      evidence.revisionVersion === revision.version && evidence.revisionDigest === revision.digest);
+  }
+  function renderNamingPreview(revision, guided) {
+    const evidence = guided.namingPreview;
+    detailContent.append(text('h3', 'Offline naming preview'));
+    if (!evidence) detailContent.append(text('p',
+      'Status: not run. Preview one bounded sample with zero Storage or Provider access.', 'warning'));
+    else {
+      const current = namingEvidenceIsCurrent(revision, evidence);
+      const result = evidence.result && typeof evidence.result === 'object' ? evidence.result : {};
+      const list = document.createElement('dl');
+      field(list, 'Evidence state', current ? 'current' : 'stale');
+      field(list, 'Status', boundedSetupText(evidence.status));
+      field(list, 'Revision ID', boundedSetupText(evidence.revisionId));
+      field(list, 'Revision version', Number.isInteger(evidence.revisionVersion) ? evidence.revisionVersion : '-');
+      field(list, 'Revision digest', boundedSetupText(evidence.revisionDigest));
+      field(list, 'Applied policy', boundedSetupText(result.appliedPolicyId || evidence.policyId));
+      field(list, 'RecognitionType', boundedSetupText(result.recognitionType));
+      field(list, 'Rendered directory', boundedSetupText(result.directory));
+      field(list, 'Rendered filename', boundedSetupText(result.filename));
+      field(list, 'Sanitization', Array.isArray(result.sanitizationChanges) && result.sanitizationChanges.length ?
+        result.sanitizationChanges.slice(0, 32).join(', ') : 'none');
+      field(list, 'Missing-variable strategy', boundedSetupText(result.missingVariableStrategy));
+      field(list, 'Warnings', Array.isArray(result.warnings) && result.warnings.length ?
+        result.warnings.slice(0, 32).join(', ') : 'none');
+      field(list, 'Failure category', boundedSetupText(evidence.failureCategory));
+      field(list, 'Message', boundedSetupText(evidence.message));
+      field(list, 'Side effects', boundedSetupText(evidence.sideEffects, 'unknown'));
+      field(list, 'Retry safe', evidence.retrySafe === true ? 'YES' : 'NO');
+      field(list, 'Next action', boundedSetupText(evidence.nextAction));
+      detailContent.append(list);
+      if (Array.isArray(result.missingVariableDecisions) && result.missingVariableDecisions.length) {
+        detailContent.append(table(['Missing variable', 'Decision'],
+          result.missingVariableDecisions.slice(0, 32).map(item => [item.variable, item.decision])));
+      }
+      if (!current) detailContent.append(text('p',
+        'This preview is stale because the Draft changed. Rerun against the current revision.', 'warning'));
+    }
+    if (!configurationRevisionEditable(revision)) return;
+    const policies = guided.objects && guided.objects.namingPolicies || [];
+    if (!policies.length) return;
+    const controls = text('div', '', 'choices');
+    const policy = document.createElement('select'); policy.setAttribute('aria-label', 'NamingPolicy preview policy');
+    policies.forEach(item => { const option = document.createElement('option'); option.value = item.id;
+      option.textContent = `${item.id} - ${item.name || item.id}`; policy.append(option); });
+    const editor = document.createElement('textarea'); editor.setAttribute('aria-label', 'Naming preview sample JSON');
+    editor.value = JSON.stringify({title: 'The Matrix', mediaType: 'movie', recognitionType: 'C',
+      provider: 'tmdb', providerId: '603', year: 1999, extension: 'mkv'}, null, 2);
+    controls.append(policy, editor, actionButton('Run offline naming preview', async () => {
+      try {
+        const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/naming-preview`,
+          {method: 'POST', body: JSON.stringify({expectedVersion: revision.version,
+            expectedDigest: revision.digest, policyId: policy.value, sample: JSON.parse(editor.value)})});
+        message(result.status === 'completed' ?
+          'Naming preview completed. Review the rendered directory, filename and explanation.' :
+          `${result.message || 'Naming preview failed.'} ${result.nextAction || ''}`,
+          result.status !== 'completed');
+        await showConfigurationRevision(revision);
+      } catch (error) { message(errorText(error), true); }
+    }));
+    detailContent.append(controls);
   }
   function setupEvidenceIsCurrent(revision, evidence) {
     return Boolean(evidence && evidence.stale === false &&
@@ -793,9 +872,11 @@ APP_JS = b"""(() => {
         renderGuidedObjectList(data, guided, 'recognitionRules', 'RecognitionRules');
         renderGuidedObjectList(data, guided, 'recognitionTypePolicies', 'RecognitionTypePolicies');
         renderGuidedObjectList(data, guided, 'metadataPolicies', 'MetadataPolicies');
+        renderGuidedObjectList(data, guided, 'namingPolicies', 'NamingPolicies');
         renderLocalSetupEvidence(data, guided);
         renderLocalSetupActions(data, guided);
         renderRecognitionStrategyTest(data, guided);
+        renderNamingPreview(data, guided);
       }
       const actions = text('div', '', 'choices');
       if (data.status === 'draft') actions.append(actionButton('Validate Draft', async () => {

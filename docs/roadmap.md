@@ -14,6 +14,7 @@ Phase gate，不复制测试日志或流程正文。
 | Phase 22.5-D Managed Live Metadata Correction Test | PASS / CLOSED | `55769be58a75596461879994560a0c58c3a7c9dc` | PASS；允许 Phase 22.5-E 单项 Metadata correction DryRun continuation；Provider switching 仍后置 |
 | Phase 22.5-E Single-Item Metadata Correction DryRun Continuation | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27，F1 correction checkpoint 独立复审通过；被拒 checkpoint `08dfd4f921728755209b6d52347d28f221121c47`（FIX REQUIRED）保留 |
 | Phase 22.5 Metadata 配置与修正旅程（A/B/C/D/E） | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27 phase-level Final Closure Audit；已推送 `origin/main`；允许 Phase 22.6 Naming/Classification/Organize 配置旅程 |
+| Phase 22.6-A Managed NamingPolicy + Offline Naming Preview | READY FOR HIGH REVIEW | PENDING | 实现完成待独立审核；不得进入 Classification/Organize 后续 Slice |
 
 ## 当前节点
 
@@ -33,6 +34,9 @@ detail Web continuation section 未挂载到 DOM），该记录保留不改写�
 预览旅程，起始 Slice 为 Phase 22.6-A；Provider switching、通用 Task resume 与更宽的逐项
 checkpoint 恢复仍为 TARGET。`dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已于 2026-08-27 在显式
 操作员授权下推送到 `origin/main`，Phase 22.5 的收口 push gate 已满足。
+Phase 22.6-A 已完成待独立 High Review：当前只覆盖 NamingPolicy Managed Draft CRUD、引用阻断
+与 exact-revision 零变更离线命名预览；Phase 22.6 尚未关闭，后续 Classification/Organize、目标
+冲突/能力预检和 activation evidence 不得提前开始。
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 
@@ -65,12 +69,12 @@ Runtime Configuration
 | Parser | 已完成 | 文件名/路径/NFO、电影/剧集、多集、标签、受限 XML 与冲突证据合并 | NFO 生成不属于 Parser；更多格式按样本扩展 |
 | Recognition | 已完成当前配置旅程 | 引擎、Web 规则配置、优先级/引用校验、持久 Strategy Test 解释/恢复、C 身份保持、人工决策和重评请求 | 后续按真实样本扩展，不作为当前 blocker |
 | Metadata | 部分完成（引擎成熟） | TMDB、缓存、候选评分、本地化标题、年份语义、持久人工候选/查询修正 | Provider 切换、配置激活、同页恢复闭环 |
-| Naming | 已完成 | 安全模板、Unicode、多集、预览 | 用户界面配置体验 |
+| Naming | Phase 22.6-A 待 High Review | 安全模板、Unicode、多集、Managed Draft 编辑、引用影响与 exact-revision 离线预览 | Classification/Organize 联动和 activation evidence |
 | Classification | 已完成 | 确定性规则、媒体库选择、持久人工规则选择/恢复 | 自由路径修正明确禁止；完整 UI 待做 |
 | Planner/Executor | 部分完成 | 计划、冲突、附件、Hash 证据、同次调用 Rollback、空目录清理、DryRun、跨存储执行 | 历史/崩溃恢复、Hash 持久复用、逐项恢复体验 |
 | Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、pause/resume、批量请求、claim fencing/心跳 | 统一 Processing Checkpoint 与 stage-aware recovery |
 | API/UI/Scheduler | 部分完成 | API/RBAC/审计、操作台、Dashboard、Files 列表/筛选/详情/部分动作、Cron/通知 | 完整人工/配置/恢复旅程、登录/外部身份源 |
-| Managed Configuration | Phase 22.3/22.4 PASS/CLOSED；Phase 22.5（A/B/C/D/E）PASS/CLOSED | whole-document authority、Local Storage/Library、Recognition、MetadataPolicy offline/live、候选确认与同 Provider correction test、单项 pinned DryRun continuation | Naming/Classification/Organize 配置旅程为 Phase 22.6；Provider switching 与通用 Task resume 后置 |
+| Managed Configuration | Phase 22.3/22.4/22.5 PASS/CLOSED；Phase 22.6-A 待 High Review | 既有能力加 NamingPolicy CRUD、引用阻断与 exact-revision 离线命名预览 | Classification/Organize、冲突/能力预检与 combined activation evidence；Provider switching/通用 Task resume 后置 |
 
 ## 总体阶段计划
 

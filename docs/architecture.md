@@ -1043,6 +1043,23 @@ detail only. RecognitionType C remains C. Files detail renders queued/running/co
 stale, and cancelled states with bounded recovery; source files, source review, source Task, and
 sibling items are unchanged.
 
+Phase 22.6-A adds NamingPolicy as the next narrow object kind on the same managed whole-document
+authority. `ConfigurationObjectService` normalizes the exact runtime-loader shape, validates every
+template with the existing restricted renderer, reports RecognitionTypePolicy inbound references,
+and delegates create/update/copy/delete to the existing revision CAS and audit transaction. It does
+not introduce a second Naming model or configuration store.
+
+Offline naming preview consumes one captured Draft/Validated revision and uses
+`NamingPolicyRegistry -> NamingPreviewService -> NamingEngine -> SafeTemplateRenderer ->
+NameSanitizer`. Synthetic samples are converted to the existing provider-neutral MediaIdentity and
+ParseResult types; path mode invokes only `MediaParserService` and retains no full supplied path in
+durable evidence. SQLite configuration-management schema marker 6 adds one revision-keyed bounded
+preview-evidence table. Evidence always carries exact revision ID/version/digest and becomes stale
+after an edit. Rendering and all failure paths construct no Storage/Provider/Task/Job/queue and grant
+no execute authority. Classification, MediaLibrary resolution, conflict/capability checks, and
+Organizer remain outside this service. Checked activation semantics are unchanged. This
+implementation awaits independent High Review.
+
 ## Deferred work
 
 Phase 15 persists organize conflicts as `waiting_confirm` records in SQLite. `ConflictResolver`
@@ -1578,7 +1595,8 @@ the historical runtime schema marker remains `22` so accepted backup/restore and
 is not rewritten. Fresh and older databases both receive the columns by presence checks, and Job
 inserts use an explicit column list so historical ALTER-table column order cannot corrupt authority
 fields. Phase 22.3 closed on configuration-management schema marker `4`; Phase 22.4 adds marker `5`
-for revision-bound Recognition Strategy Test evidence. Its revision sequence, singleton authority
+for revision-bound Recognition Strategy Test evidence, and Phase 22.6-A adds marker `6` for
+exact-revision Naming preview evidence. Its revision sequence, singleton authority
 pointer, Local setup-check evidence, Strategy Test evidence, and the Phase 22.5-E continuation table
 and indexes remain additive and do not rewrite
 the Runtime marker.

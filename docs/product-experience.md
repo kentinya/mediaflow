@@ -199,6 +199,28 @@ checkpoint/recovery journey remain deferred TARGET work and are outside the clos
 Managed Naming / Classification / Organize configuration with exact-revision offline preview is the
 next Phase (22.6) and is not claimed here.
 
+## Phase 22.6-A managed NamingPolicy and offline preview (CURRENT implementation; awaiting review)
+
+The managed Configuration view now exposes each NamingPolicy in an editable Draft, including its
+movie and TV templates, media-type mode, enabled state, missing-variable strategy, and exact inbound
+RecognitionTypePolicy references. Create, edit, copy, and delete use the existing whole-document
+optimistic version and Before/After audit path. A referenced policy remains visible but cannot be
+deleted until the operator repoints or removes every listed reference.
+
+The same Web/API application service accepts one bounded synthetic sample or one path string for the
+existing local Parser, binds the action to the exact revision ID/version/digest, and invokes the
+existing NamingPolicyRegistry, NamingPreviewService, renderer, and sanitizer. Persisted evidence
+shows rendered directory segments and filename, applied policy, RecognitionType, sanitization,
+missing-variable decisions, warnings, failure category, side effects, retry safety, and one recovery
+action. A later Draft edit preserves the prior evidence but labels it stale and requires an explicit
+rerun. Movie, single-episode TV, and multi-episode TV are supported without constructing Storage or
+Provider services and without creating Tasks, Jobs, queues, plans, or media effects.
+
+This Slice does not change checked activation. ClassificationPolicy and OrganizePolicy editing,
+MediaLibrary target resolution, conflict/destination/capability prechecks, and combined activation
+evidence remain TARGET Phase 22.6 work. The implementation is not `PASS / CLOSED` until independent
+High Review accepts its exact checkpoint.
+
 ## A. First-time setup
 
 ### Starting point

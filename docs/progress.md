@@ -94,6 +94,39 @@ same-Provider correction testing, and one-item pinned DryRun continuation. Provi
 generic Task resume, broader per-item checkpoint recovery, and Naming/Classification/Organize
 configuration remain open; Phase 22 overall is not closed.
 
+### Phase 22.6-A Managed NamingPolicy Configuration + Offline Naming Preview
+
+```text
+Status: READY FOR COMMIT (pre-checkpoint)
+Commit SHA: PENDING
+High Audit: PENDING
+Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
+```
+
+Implementation evidence:
+
+- Added NamingPolicy create/edit/copy/delete to the managed Draft Web/API path with canonical
+  runtime-shape validation, optimistic revision/version checking, Before/After audit, and exact
+  RecognitionTypePolicy reference evidence/delete blocking.
+- Added one exact-revision offline naming preview using the existing Parser (path mode),
+  NamingPolicyRegistry, NamingPreviewService, renderer, sanitizer, MediaIdentity, and ParseResult.
+  Persisted bounded evidence distinguishes completed/failed/current/stale and exposes directory,
+  filename, policy, RecognitionType, sanitization, missing-variable decisions, warnings, durable
+  zero-side-effect state, retry safety, and a correction/rerun action.
+- Movie, single-episode TV, multi-episode TV, path parsing, C identity preservation, invalid
+  templates, missing-variable strategies, blocked delete, stale evidence, optimistic conflict,
+  authenticated API, reachable Web controls, and zero Storage/Provider construction are covered by
+  166 focused tests (all passed). The complete offline suite ran 810 tests: 803 passed, 7 existing
+  externally gated tests skipped, and 0 failed; skips are not acceptance evidence.
+- SQLite configuration-management marker 6 is a forward-only addition for revision-keyed naming
+  evidence. Runtime Active and checked activation semantics are unchanged.
+- Ruff lint/format, compileall, `pip check`, both example configuration validations, isolated wheel
+  build/install/smoke, 22 local documentation links, FFmpeg/FFprobe production audit,
+  business-filesystem import and mutation-boundary audits, private configuration checks, and
+  `git diff --check` passed.
+- This is implementation evidence only. No `PASS / CLOSED` decision is recorded, and
+  Classification/Organize configuration or later Phase 22.6 work has not started.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration
