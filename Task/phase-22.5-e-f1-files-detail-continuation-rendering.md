@@ -167,9 +167,9 @@ explicitly TARGET.
 - [x] High Review inspected that exact SHA: `High Audit: PASS — 2026-08-27`.
 - [x] Progress and roadmap record final Status / Commit SHA / High Audit for Phase 22.5-E closure.
 - [x] Next Slice has not started before every gate above is complete.
-- [x] Required push state is recorded: Phase 22.5 closure requires pushing
-      `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` to `origin/main`; the push is not yet performed and
-      needs explicit operator authorization.
+- [x] Required push state is recorded: Phase 22.5 closure required pushing
+      `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` to `origin/main`; the push was performed on
+      2026-08-27 with explicit operator authorization and `origin/main` contains that SHA.
 
 ## Completion Report
 

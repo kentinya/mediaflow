@@ -13,7 +13,7 @@ Phase gate，不复制测试日志或流程正文。
 | Phase 22.5-C Candidate Confirmation | PASS / CLOSED | `d68a19ddd4bb62bc27e77bab013edb20c9eb53e5` | PASS；允许 Phase 22.5-D same-Provider correction test |
 | Phase 22.5-D Managed Live Metadata Correction Test | PASS / CLOSED | `55769be58a75596461879994560a0c58c3a7c9dc` | PASS；允许 Phase 22.5-E 单项 Metadata correction DryRun continuation；Provider switching 仍后置 |
 | Phase 22.5-E Single-Item Metadata Correction DryRun Continuation | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27，F1 correction checkpoint 独立复审通过；被拒 checkpoint `08dfd4f921728755209b6d52347d28f221121c47`（FIX REQUIRED）保留 |
-| Phase 22.5 Metadata 配置与修正旅程（A/B/C/D/E） | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27 phase-level Final Closure Audit；允许 Phase 22.6 Naming/Classification/Organize 配置旅程；该 SHA 推送 `origin/main` 需显式授权 |
+| Phase 22.5 Metadata 配置与修正旅程（A/B/C/D/E） | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27 phase-level Final Closure Audit；已推送 `origin/main`；允许 Phase 22.6 Naming/Classification/Organize 配置旅程 |
 
 ## 当前节点
 
@@ -31,8 +31,8 @@ detail Web continuation section 未挂载到 DOM），该记录保留不改写�
 2026-08-27 通过独立 High re-review。同日 phase-level Final Closure Audit 判定 Phase 22.5
 **PASS / CLOSED**。下一合法边界是 Phase 22.6 Naming / Classification / Organize 配置与离线
 预览旅程，起始 Slice 为 Phase 22.6-A；Provider switching、通用 Task resume 与更宽的逐项
-checkpoint 恢复仍为 TARGET。把 `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 推送到
-`origin/main` 是 Phase 22.5 收口唯一剩余的非代码门，需要显式操作员授权。
+checkpoint 恢复仍为 TARGET。`dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已于 2026-08-27 在显式
+操作员授权下推送到 `origin/main`，Phase 22.5 的收口 push gate 已满足。
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 
@@ -519,8 +519,8 @@ Phase 22.5-E 的首个实现 checkpoint 曾被判定 **FIX REQUIRED**，该记�
 correction checkpoint `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已于 2026-08-27 通过独立 High
 re-review，同日 phase-level Final Closure Audit 判定 Phase 22.5 **PASS / CLOSED**。
 下一正式 Task 是 **Phase 22.6-A — Managed NamingPolicy Configuration + Offline Naming Preview**；
-在把 `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 推送到 `origin/main`（需显式授权）之前不开始
-Phase 22.6 实现。不得借此提前开展 Provider switching、通用 Task resume、兄弟项重放、
+`dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已推送 `origin/main`，push gate 已满足，
+Phase 22.6-A 实现已解除阻塞。不得借此提前开展 Provider switching、通用 Task resume、兄弟项重放、
 逐项 Processing Checkpoint 恢复或
 更宽的自动化。Interval/Cron 仍只允许 scan/preview；
 无人值守定时 `organize --execute` 继续不支持。

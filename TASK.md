@@ -8,8 +8,8 @@ Commit SHA: PENDING
 High Audit: PENDING
 Preceding closed checkpoint: dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62
   (Phase 22.5-E and Phase 22.5 PASS / CLOSED — 2026-08-27)
-Prerequisite before implementation: dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62 must be pushed to
-  origin/main (major Phase closure push gate); the push needs explicit operator authorization.
+Push gate: SATISFIED — dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62 is contained in origin/main
+  (pushed 2026-08-27 with explicit operator authorization)
 Phase: 22.6 Naming / Classification / Organize configuration journey (roadmap section 5)
 ```
 
@@ -201,7 +201,7 @@ Phase 22.5-E `FIX REQUIRED` record and its rejected SHA.
 - [ ] Capability mode is classified as Git-writable / Full Access or Git-read-only / workspace-write.
 - [ ] The preceding dependent Phase is `PASS / CLOSED` with its commit SHA recorded
       (`dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62`, Phase 22.5).
-- [ ] The Phase 22.5 closure push gate is satisfied: `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` is
+- [x] The Phase 22.5 closure push gate is satisfied: `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` is
       reachable from `origin/main` before this implementation begins.
 - [ ] Implementation and all required focused/full quality gates pass with actual evidence.
 - [ ] `git status` and the commit manifest contain every required file and no unrelated/private file.

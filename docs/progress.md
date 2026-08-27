@@ -76,8 +76,7 @@ High Audit: PASS — 2026-08-27; the Phase 22.5-E-F1 correction checkpoint was i
 reviewed, including the reachable Files detail continuation surface, the Web regression that fails
 against the rejected SHA, unchanged API/Application/Worker behavior, and zero-mutation evidence
 Rejected checkpoint: 08dfd4f921728755209b6d52347d28f221121c47 (FIX REQUIRED — 2026-08-27, preserved)
-Push: REQUIRED FOR PHASE 22.5 CLOSURE; local main is ahead of origin/main and awaits explicit
-authorization
+Push: origin/main contains the reviewed SHA (pushed 2026-08-27)
 ```
 
 ### Phase 22.5 Metadata Configuration and Correction Journey
@@ -86,7 +85,8 @@ authorization
 Status: PASS / CLOSED (Phase 22.5 slices A, B/F1, C/F1/F2, D, E/F1)
 Commit SHA: dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62
 High Audit: PASS — 2026-08-27; Phase-level Final Closure Audit
-Push: REQUIRED; origin/main does not yet contain the reviewed SHA
+Push: origin/main contains the reviewed SHA (pushed 2026-08-27); Phase 22.5 closure push gate is
+satisfied
 ```
 
 This phase-level closure accepts the managed MetadataPolicy journey through candidate confirmation,
@@ -429,9 +429,9 @@ configuration remain open; Phase 22 overall is not closed.
   this closure; Provider switching, generic Task resume, and broader per-item checkpoint recovery
   remain explicitly TARGET.
 - Result: **PASS / CLOSED** for Phase 22.5. Phase 22.6 (managed Naming / Classification / Organize
-  configuration) is the next authorized Phase and starts with `TASK.md` Phase 22.6-A. Pushing
-  `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` to `origin/main` is the one outstanding non-code closure
-  gate and requires explicit operator authorization.
+  configuration) is the next authorized Phase and starts with `TASK.md` Phase 22.6-A. The closure
+  push gate is satisfied: `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` was pushed to `origin/main` on
+  2026-08-27 with explicit operator authorization.
 
 ## Phase 22.5-B Implementation Evidence (2026-08-26; awaiting independent review)
 
@@ -1403,9 +1403,9 @@ configuration remain open; Phase 22 overall is not closed.
 - Next authorized Phase: Phase 22.6 managed Naming / Classification / Organize configuration and its
   exact-revision offline preview. It starts with `TASK.md` Phase 22.6-A (managed NamingPolicy CRUD
   plus offline naming preview) and adds no execute authority and no media mutation.
-- Outstanding non-code gate before Phase 22.6 implementation: pushing
-  `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` to `origin/main` requires explicit operator
-  authorization.
+- Outstanding non-code gate before Phase 22.6 implementation: satisfied.
+  `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` was pushed to `origin/main` on 2026-08-27 with explicit
+  operator authorization, so Phase 22.6-A implementation is unblocked.
 - Deferred beyond Phase 22.6: Provider switching (until a truthful multi-Provider capability exists),
   generic Task resume, broader per-item Processing Checkpoint/stage-aware recovery, complete
   Files/Media detail and manual organize, then automation and final production hardening
