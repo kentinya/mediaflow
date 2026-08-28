@@ -13,7 +13,9 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import PurePath
 from threading import BoundedSemaphore, Lock, RLock
+from typing import TYPE_CHECKING
 
+from mediaflow.application import organizer as organizer_application
 from mediaflow.application.classification import (
     ClassificationPolicyRegistry,
     ClassificationPreviewService,
@@ -21,13 +23,11 @@ from mediaflow.application.classification import (
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.conflict_resolution import ConflictResolutionError, ConflictResolver
 from mediaflow.application.media_parser import MediaParserService
-from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.naming import (
     NamingPolicyRegistry,
     NamingPreviewService,
     validate_naming_policy,
 )
-from mediaflow.application.organizer import OrganizePlanner
 from mediaflow.application.policies import RecognitionTypePolicyResolver
 from mediaflow.application.read_only_storage import (
     ReadOnlyStorageGuard,
@@ -127,6 +127,19 @@ from mediaflow.infrastructure.runtime_configuration import (
     load_runtime_configuration,
 )
 from mediaflow.infrastructure.strategy_user_configuration import parse_organize_policy
+
+if TYPE_CHECKING:
+    from mediaflow.application.metadata import MetadataProviderRegistry
+
+
+def __getattr__(name: str) -> object:
+    """Resolve the preserved Provider test double without a static class binding."""
+
+    if name == "MetadataProviderRegistry":
+        from mediaflow.application.metadata import MetadataProviderRegistry
+
+        return MetadataProviderRegistry
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class _DestinationPreviewFailure(ValueError):
@@ -1570,7 +1583,7 @@ class ConfigurationObjectService:
                 resolution.resolved.classification_policy_id,
                 policy,
             )
-            plan = OrganizePlanner().plan(
+            plan = organizer_application.OrganizePlanner().plan(
                 source_storage_id="destination-precheck-source",
                 source="destination-precheck-source.mkv",
                 recognition=RecognitionResult(
@@ -3354,7 +3367,11 @@ class ConfigurationObjectService:
         }
         applicable = any(
             storages.get(str(library.get("storageId"))) == "local"
-            for library in self._canonical_objects(revision.document, "mediaLibraries")
+            for library in (
+                self._canonical_objects(revision.document, "mediaLibraries")
+                if "mediaLibraries" in revision.document
+                else []
+            )
         )
         if not applicable:
             return

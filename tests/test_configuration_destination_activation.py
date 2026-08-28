@@ -4,12 +4,15 @@ import copy
 import sqlite3
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application import configuration_objects as configuration_objects_module
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
     ConfigurationDestinationPrecheckStatus,
@@ -123,6 +126,14 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 count = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                 if count != 0:
                     raise AssertionError(f"activation created a row in {table}")
+
+    def _assert_activation_module_namespace_is_hardened(self, namespace) -> None:
+        for name in (
+            "OrganizerExecutor",
+            "MetadataProviderRegistry",
+            "OrganizePlanner",
+        ):
+            self.assertNotIn(name, namespace)
 
     def test_missing_stale_failed_and_capability_gap_refuse_without_state_change(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -307,6 +318,61 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                     self.assertEqual(activated.status.value, "active")
                     self.assertIsNone(repository.get_destination_precheck(revision.revision_id))
 
+    def test_omitted_media_libraries_is_not_applicable_for_checked_activation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                managed = ManagedConfigurationService(repository)
+                objects = ConfigurationObjectService(managed)
+                revision = self._validated(managed, self._document(root))
+                self._save_existing_gates(repository, revision)
+                missing_section = replace(
+                    revision,
+                    document={
+                        key: value
+                        for key, value in revision.document.items()
+                        if key != "mediaLibraries"
+                    },
+                )
+                objects.require_current_destination_precheck(missing_section)
+                with (
+                    patch.object(managed, "require", return_value=missing_section),
+                    patch.object(managed, "activate", return_value=revision) as activate,
+                ):
+                    activated = objects.activate_checked(
+                        revision.revision_id,
+                        expected_version=revision.version,
+                        actor="operator",
+                    )
+                self.assertIs(activated, revision)
+                activate.assert_called_once_with(
+                    revision.revision_id,
+                    expected_version=revision.version,
+                    actor="operator",
+                )
+
+    def test_activation_module_namespace_stays_free_of_construction_classes(self) -> None:
+        namespace = vars(configuration_objects_module)
+        self._assert_activation_module_namespace_is_hardened(namespace)
+        self.assertIs(
+            configuration_objects_module.MetadataProviderRegistry,
+            MetadataProviderRegistry,
+        )
+        with patch(
+            "mediaflow.application.metadata.MetadataProviderRegistry",
+            side_effect=AssertionError("activation constructed Provider"),
+        ) as definition_site:
+            self.assertIs(
+                configuration_objects_module.MetadataProviderRegistry,
+                definition_site,
+            )
+            self.assertNotIn("MetadataProviderRegistry", vars(configuration_objects_module))
+
+        probe = dict(namespace)
+        exec("from mediaflow.application.organizer import OrganizerExecutor", probe)
+        with self.assertRaisesRegex(AssertionError, "OrganizerExecutor"):
+            self._assert_activation_module_namespace_is_hardened(probe)
+
     def test_requirement_order_unchecked_activation_and_zero_authority(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -446,6 +512,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 )
                 self.assertLessEqual(len(blocked["error"]["message"]), 384)
                 self.assertNotIn(str(root), repr(blocked))
+                self._assert_runtime_empty(root / "runtime.sqlite3")
                 self._save_precheck(repository, revision)
                 status, active = request(
                     api,
@@ -456,6 +523,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(active["status"], "active")
                 self.assertEqual(set(active), set(revision.summary()))
+                self._assert_runtime_empty(root / "runtime.sqlite3")
 
 
 if __name__ == "__main__":
