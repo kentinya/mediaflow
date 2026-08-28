@@ -1126,8 +1126,8 @@ must all be zero and a bounded read-operation list. It grants no overwrite, dele
 authority. Storage errors, capacity exhaustion and the overall deadline map to bounded categories
 with explicit recovery. Remote SMB/OpenList/S3 destination prechecks, mutation-based capability
 probing, duplicate/cross-item collision detection, attachment prechecks, absolute mounted-path
-display, combined activation evidence and execution remain TARGET pending independent High re-review
-of the focused Phase 22.6-E-F1 correction.
+display, combined activation evidence and execution remain TARGET. Phase 22.6-E is PASS / CLOSED at
+`ee5225dd0e74a7382b6747c6315776413f7fd249`, accepted through the Phase 22.6-E-F1 correction.
 
 ## Deferred work
 
