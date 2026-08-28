@@ -221,6 +221,271 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                     finally:
                         repository.close()
 
+    def test_multiple_samples_success_most_severe_verdict_and_distinct_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target_root = root / "target-private"
+            (target_root / "Movies").mkdir(parents=True)
+            existing = (
+                target_root
+                / "Movies"
+                / "Action"
+                / "The Matrix (1999) [tmdbid-synthetic]"
+                / "The Matrix (1999).mkv"
+            )
+            existing.parent.mkdir(parents=True)
+            existing.write_bytes(b"existing")
+            (root / "source-private").mkdir()
+            before = self._tree_snapshot(target_root)
+            repository, _, objects, draft = self._open(root)
+            try:
+                evidence = objects.destination_precheck(
+                    draft.revision_id,
+                    expected_version=draft.version,
+                    expected_digest=draft.digest,
+                    actor="operator",
+                    recognition_type="C",
+                    samples=[
+                        {
+                            "title": "The Matrix",
+                            "mediaType": "movie",
+                            "year": 1999,
+                            "genres": ["Action"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Your Name",
+                            "mediaType": "movie",
+                            "year": 2016,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Spirited Away",
+                            "mediaType": "movie",
+                            "year": 2001,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                    ],
+                )
+                result = evidence.result
+                self.assertEqual(evidence.status.value, "completed")
+                self.assertEqual(result["recognitionType"], "C")
+                self.assertEqual(result["sampleCount"], 3)
+                self.assertEqual(result["verdict"], "manual_confirmation_required")
+                self.assertEqual(result["collisions"], [])
+                self.assertEqual([row["index"] for row in result["items"]], [0, 1, 2])
+                self.assertEqual(
+                    [row["projectedOutcome"] for row in result["items"]],
+                    ["manual_confirmation_required", "ready", "ready"],
+                )
+                destinations = [row["destinationPath"] for row in result["items"]]
+                self.assertEqual(len(set(destinations)), 3)
+                self.assertTrue(result["items"][0]["targetExists"])
+                self.assertIn("DESTINATION_EXISTS", result["items"][0]["plannerConflicts"])
+                self.assertFalse(result["items"][1]["targetExists"])
+                self.assertEqual(result["authorityGranted"], "none")
+                self.assertEqual(set(result["guardMutationCalls"].values()), {0})
+                self.assertEqual(self._tree_snapshot(target_root), before)
+            finally:
+                repository.close()
+
+    def test_cross_sample_collision_is_duplicate_destination_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target_root = root / "target-private"
+            (target_root / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            before = self._tree_snapshot(target_root)
+            repository, _, objects, draft = self._open(root)
+            try:
+                sample = self._sample()
+                evidence = objects.destination_precheck(
+                    draft.revision_id,
+                    expected_version=draft.version,
+                    expected_digest=draft.digest,
+                    actor="operator",
+                    recognition_type="C",
+                    samples=[sample, copy.deepcopy(sample)],
+                )
+                self.assertEqual(evidence.status.value, "failed")
+                self.assertEqual(evidence.failure_category, "duplicate_destination")
+                result = evidence.result
+                self.assertEqual(result["sampleCount"], 2)
+                self.assertEqual(len(result["items"]), 2)
+                self.assertEqual(
+                    result["items"][0]["destinationPath"],
+                    result["items"][1]["destinationPath"],
+                )
+                self.assertIn("TARGET_COLLISION", result["items"][1]["plannerConflicts"])
+                self.assertEqual(
+                    result["collisions"],
+                    [
+                        {
+                            "destinationPath": result["items"][0]["destinationPath"],
+                            "itemIndexes": [0, 1],
+                        }
+                    ],
+                )
+                self.assertIn("distinguishing naming variable", evidence.next_action)
+                self.assertNotIn(str(root), repr(evidence.document()))
+                self.assertEqual(set(result["guardMutationCalls"].values()), {0})
+                self.assertEqual(self._tree_snapshot(target_root), before)
+            finally:
+                repository.close()
+
+    def test_per_sample_isolation_when_middle_sample_fails_composition(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target-private" / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            repository, _, objects, draft = self._open(root)
+            try:
+                evidence = objects.destination_precheck(
+                    draft.revision_id,
+                    expected_version=draft.version,
+                    expected_digest=draft.digest,
+                    actor="operator",
+                    recognition_type="C",
+                    samples=[
+                        {
+                            "title": "The Matrix",
+                            "mediaType": "movie",
+                            "year": 1999,
+                            "genres": ["Action"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Unroutable",
+                            "mediaType": "tv",
+                            "year": 2020,
+                            "genres": ["Action"],
+                        },
+                        {
+                            "title": "Your Name",
+                            "mediaType": "movie",
+                            "year": 2016,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                    ],
+                )
+                self.assertEqual(evidence.status.value, "failed")
+                self.assertEqual(evidence.failure_category, "invalid_rule")
+                result = evidence.result
+                self.assertEqual(result["sampleCount"], 3)
+                self.assertEqual([row["index"] for row in result["items"]], [0, 1, 2])
+                self.assertIsNone(result["items"][1]["destinationPath"])
+                self.assertEqual(result["items"][1]["failureCategory"], "invalid_rule")
+                self.assertIn("ClassificationPolicy", result["items"][1]["message"])
+                self.assertIsNone(result["items"][0]["failureCategory"])
+                self.assertIsNone(result["items"][2]["failureCategory"])
+                self.assertTrue(result["items"][0]["destinationPath"].startswith("Movies/Action/"))
+                self.assertTrue(result["items"][2]["destinationPath"].startswith("Movies/Anime/"))
+                self.assertEqual(result["items"][0]["projectedOutcome"], "ready")
+                self.assertEqual(result["items"][2]["projectedOutcome"], "ready")
+            finally:
+                repository.close()
+
+    def test_multiple_destination_storages_is_bounded_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target-private" / "Movies").mkdir(parents=True)
+            (root / "target-private-2" / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            document = self._document(root)
+            document["storages"].append(
+                {
+                    "id": "media-target-2",
+                    "name": "Target 2",
+                    "type": "local",
+                    "rootPath": str(root / "target-private-2"),
+                    "readOnly": False,
+                }
+            )
+            document["mediaLibraries"].append(
+                {
+                    "id": "movies2",
+                    "name": "Movies 2",
+                    "storageId": "media-target-2",
+                    "rootPath": "Movies",
+                    "enabled": True,
+                }
+            )
+            for rule in document["classificationPolicies"][0]["rules"]:
+                if rule["id"] == "japanese-animation":
+                    rule["result"]["mediaLibraryId"] = "movies2"
+                    rule["result"]["path"] = ["Anime"]
+            repository, _, objects, draft = self._open(root, document)
+            try:
+                evidence = objects.destination_precheck(
+                    draft.revision_id,
+                    expected_version=draft.version,
+                    expected_digest=draft.digest,
+                    actor="operator",
+                    recognition_type="C",
+                    samples=[
+                        {
+                            "title": "The Matrix",
+                            "mediaType": "movie",
+                            "year": 1999,
+                            "genres": ["Action"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Your Name",
+                            "mediaType": "movie",
+                            "year": 2016,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                    ],
+                )
+                self.assertEqual(evidence.status.value, "failed")
+                self.assertEqual(evidence.failure_category, "multiple_destination_storages")
+                self.assertIn("media-target:local", evidence.message)
+                self.assertIn("media-target-2:local", evidence.message)
+                self.assertNotIn(str(root / "target-private-2"), repr(evidence.document()))
+                self.assertIn("one destination Storage", evidence.next_action)
+                result = evidence.result
+                self.assertEqual(result["sampleCount"], 2)
+                self.assertEqual(len(result["items"]), 2)
+                self.assertEqual(result["collisions"], [])
+                self.assertIsNone(result["items"][0]["projectedOutcome"])
+            finally:
+                repository.close()
+
+    def test_single_sample_result_gains_sample_count_items_and_empty_collisions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target-private" / "Movies" / "Action").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            repository, _, objects, draft = self._open(root)
+            try:
+                evidence = self._run(objects, draft)
+                result = evidence.result
+                self.assertEqual(evidence.status.value, "completed")
+                self.assertEqual(result["sampleCount"], 1)
+                self.assertEqual(result["collisions"], [])
+                self.assertEqual(len(result["items"]), 1)
+                row = result["items"][0]
+                self.assertEqual(row["index"], 0)
+                self.assertEqual(row["relativeDestination"], result["relativeDestination"])
+                self.assertEqual(row["destinationPath"], result["destinationPath"])
+                self.assertEqual(
+                    row["projectedOutcome"],
+                    result["conflictProjection"]["projectedOutcome"],
+                )
+                self.assertIsNone(row["failureCategory"])
+                self.assertEqual(result["verdict"], "ready")
+            finally:
+                repository.close()
+
     def test_capability_gap_hardlink_cleanup_and_declared_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -339,6 +604,163 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                         )
                     finally:
                         repository.close()
+
+    def test_multiple_samples_zero_mutation_and_no_construction(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target-private"
+            (target / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            runtime_database = root / "runtime.sqlite3"
+            with SQLiteTaskRepository(runtime_database):
+                pass
+            before = self._tree_snapshot(target)
+            first = {
+                "title": "The Matrix",
+                "mediaType": "movie",
+                "year": 1999,
+                "genres": ["Action"],
+                "extension": "mkv",
+            }
+            second = {
+                "title": "Your Name",
+                "mediaType": "movie",
+                "year": 2016,
+                "genres": ["Animation"],
+                "countries": ["JP"],
+                "extension": "mkv",
+            }
+            for collision in (False, True):
+                with self.subTest(collision=collision):
+                    repository, managed, objects, draft = self._open(root)
+                    try:
+                        samples = [first, copy.deepcopy(first) if collision else second]
+                        with (
+                            patch(
+                                "mediaflow.application.configuration_objects.MetadataProviderRegistry",
+                                side_effect=AssertionError(
+                                    "destination precheck constructed Provider"
+                                ),
+                            ),
+                            patch(
+                                "mediaflow.application.organizer.OrganizerExecutor",
+                                side_effect=AssertionError(
+                                    "destination precheck constructed Executor"
+                                ),
+                            ),
+                        ):
+                            evidence = objects.destination_precheck(
+                                draft.revision_id,
+                                expected_version=draft.version,
+                                expected_digest=draft.digest,
+                                actor="operator",
+                                recognition_type="C",
+                                samples=samples,
+                            )
+                        if collision:
+                            self.assertEqual(evidence.failure_category, "duplicate_destination")
+                        else:
+                            self.assertEqual(evidence.status.value, "completed")
+                        self.assertEqual(set(evidence.result["guardMutationCalls"].values()), {0})
+                        self.assertEqual(evidence.result["authorityGranted"], "none")
+                        self._assert_runtime_authority_empty(runtime_database)
+                        self.assertIsNone(repository.get_organize_authority(draft.revision_id))
+                        self.assertEqual(self._tree_snapshot(target), before)
+                        self._assert_revision_and_other_evidence_unchanged(
+                            repository, managed, draft
+                        )
+                    finally:
+                        repository.close()
+
+    def test_api_rejects_invalid_sample_shapes_without_writing_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target-private" / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            database = root / "configuration.sqlite3"
+            document = self._document(root)
+            with (
+                SQLiteConfigurationRepository(database) as repository,
+                SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
+            ):
+                managed = ManagedConfigurationService(repository)
+                objects = ConfigurationObjectService(managed)
+                draft = managed.import_draft(document, actor="operator")
+                previous = objects.destination_precheck(
+                    draft.revision_id,
+                    expected_version=draft.version,
+                    expected_digest=draft.digest,
+                    actor="operator",
+                    recognition_type="C",
+                    sample=self._sample(),
+                )
+                with self.assertRaises(ValueError):
+                    objects.destination_precheck(
+                        draft.revision_id,
+                        expected_version=draft.version,
+                        expected_digest=draft.digest,
+                        actor="operator",
+                        recognition_type="C",
+                        samples=[self._sample()] * 9,
+                    )
+                api = MediaFlowApi(
+                    runtime_repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                    ),
+                    configuration_service=managed,
+                    bootstrap_document=document,
+                )
+                endpoint = (
+                    f"/api/v1/configuration/revisions/{draft.revision_id}/destination-precheck"
+                )
+                invalid_bodies = (
+                    {
+                        "expectedVersion": draft.version,
+                        "expectedDigest": draft.digest,
+                        "recognitionType": "C",
+                        "samples": [self._sample()] * 9,
+                    },
+                    {
+                        "expectedVersion": draft.version,
+                        "expectedDigest": draft.digest,
+                        "recognitionType": "C",
+                        "samples": [],
+                    },
+                    {
+                        "expectedVersion": draft.version,
+                        "expectedDigest": draft.digest,
+                        "recognitionType": "C",
+                        "samples": "not-a-list",
+                    },
+                    {
+                        "expectedVersion": draft.version,
+                        "expectedDigest": draft.digest,
+                        "recognitionType": "C",
+                        "sample": self._sample(),
+                        "samples": [self._sample()],
+                    },
+                    {
+                        "expectedVersion": draft.version,
+                        "expectedDigest": draft.digest,
+                        "recognitionType": "C",
+                    },
+                    {
+                        "expectedVersion": draft.version,
+                        "expectedDigest": draft.digest,
+                        "recognitionType": "C",
+                        "samples": [self._sample(), "not-an-object"],
+                    },
+                )
+                for body in invalid_bodies:
+                    with self.subTest(body=body):
+                        status, response = request(api, endpoint, method="POST", body=body)
+                        self.assertEqual(status, 400)
+                        self.assertEqual(response["error"]["code"], "invalid_request")
+                        self.assertEqual(
+                            repository.get_destination_precheck(draft.revision_id), previous
+                        )
 
     def test_defensive_invalid_plan_is_unsafe_destination_failure(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -297,6 +297,19 @@ occupied check capacity, or the overall deadline each names a bounded category, 
 and the explicit action that resolves it; a later Draft edit keeps the evidence but labels it stale
 and names the rerun. Only Local destination Storage is supported in this Slice.
 
+The same precheck accepts one sample object or a JSON array of up to eight sample objects for one
+RecognitionType. Each sample keeps its own row — index, Storage-relative destination, projected
+outcome and, when present, its bounded failure category — and the section reports the sample count
+and either the detected cross-item destination collisions (each destination with its colliding
+sample indexes) or an explicit statement that none were detected. Two distinct samples that compose
+the same destination fail the precheck with `duplicate_destination` and an explicit recovery action
+(add a distinguishing naming variable or correct the naming/classification policy so distinct
+inputs compose distinct destinations, then rerun). Samples that route to MediaLibraries on
+different destination Storages fail with `multiple_destination_storages` (narrow the samples to one
+destination Storage and precheck each separately, then rerun). One sample's composition failure
+never hides, overwrites or blocks the rows or recovery of the other samples. The single-sample
+journey is unchanged.
+
 Checked activation now enforces that result when the exact revision document declares at least one
 MediaLibrary backed by Local Storage. Missing, stale, failed and `capability_gap` evidence each
 refuse activation before publication, preserve the Draft, previous Active revision and evidence,
@@ -316,9 +329,10 @@ still blocks activation. A remote-only or MediaLibrary-free Draft, and a documen
 `mediaLibraries` section, keep the existing two-requirement wording and availability; a current,
 completed non-`capability_gap` precheck leaves the checked control and its label unchanged.
 
-Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing, duplicate and
-cross-item collision detection, attachment prechecks, absolute mounted-path display and execution
-remain TARGET. Active runtime-consumption semantics are unchanged.
+Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
+`ConflictType.DUPLICATE_MEDIA` / known-media detection, attachment prechecks, absolute
+mounted-path display and execution remain TARGET. Active runtime-consumption semantics are
+unchanged.
 
 ## A. First-time setup
 

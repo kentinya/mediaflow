@@ -208,6 +208,18 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 "permission_denied",
             ),
             (
+                ConfigurationDestinationPrecheckStatus.FAILED,
+                "ready",
+                "duplicate_destination",
+                "duplicate_destination",
+            ),
+            (
+                ConfigurationDestinationPrecheckStatus.FAILED,
+                "ready",
+                "multiple_destination_storages",
+                "multiple_destination_storages",
+            ),
+            (
                 ConfigurationDestinationPrecheckStatus.COMPLETED,
                 "capability_gap",
                 None,
@@ -250,6 +262,25 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                     self.assertEqual(
                         repository.get_destination_precheck(revision.revision_id), evidence
                     )
+
+    def test_previous_build_evidence_without_multi_sample_keys_still_activates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                managed = ManagedConfigurationService(repository)
+                objects = ConfigurationObjectService(managed)
+                revision = self._validated(managed, self._document(root))
+                self._save_existing_gates(repository, revision)
+                evidence = self._save_precheck(repository, revision)
+                self.assertNotIn("sampleCount", evidence.result)
+                self.assertNotIn("items", evidence.result)
+                self.assertNotIn("collisions", evidence.result)
+                activated = objects.activate_checked(
+                    revision.revision_id,
+                    expected_version=revision.version,
+                    actor="operator",
+                )
+                self.assertEqual(activated.status.value, "active")
 
     def test_current_completed_outcomes_activate_and_non_local_is_not_applicable(self) -> None:
         for verdict in (

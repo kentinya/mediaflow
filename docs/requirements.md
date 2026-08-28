@@ -1615,9 +1615,15 @@ NamingPolicy ID
 > 存在祖先、需创建目录列表、目标是否已存在、按配置 ConflictStrategy 的冲突投影，以及 declared-vs-
 > required 能力比对（缺失即 `capability_gap`，显式无回退）。证据绑定精确 version/digest，记录
 > `pathScope: storage_relative`、`sideEffects: none`、全零 mutation 计数与有界读操作，且不授予
-> overwrite/delete/执行权限；Storage 错误、容量占用与超时均为有界类别加显式恢复动作。远端 SMB/
-> OpenList/S3 目标预检、写入式能力探测、重复/跨项碰撞检测、附件预检、绝对挂载路径展示与执行仍为
-> 后续 TARGET。Phase 22.6-F 已把当前、completed 且非 `capability_gap` 的
+> overwrite/delete/执行权限；Storage 错误、容量占用与超时均为有界类别加显式恢复动作。
+> Phase 22.6-H 在同一只读预检中接受一个 RecognitionType 下的 1-8 个样本：每一样本独立校验与
+> 组成并保留行级状态，全部样本必须路由到同一目标 Storage；复用生产 `OrganizePlanner.plan` 的
+> `claimed_destinations` 检测跨样本目标碰撞（失败类别 `duplicate_destination`，碰撞行列出目标
+> 与样本索引），样本路由到多个目标 Storage 时以 `multiple_destination_storages` 在任何探测前
+> 拒绝；completed 证据聚合各样本最严重投影结果并新增 `sampleCount`、`items` 与 `collisions`，
+> 单样本请求与既有 evidence 不变。远端 SMB/OpenList/S3 目标预检、写入式能力探测、
+> `ConflictType.DUPLICATE_MEDIA`/已知媒体检测、附件预检、绝对挂载路径展示与执行仍为后续 TARGET。
+> Phase 22.6-F 已把当前、completed 且非 `capability_gap` 的
 > Local 目标预检证据纳入 checked activation；missing/stale/failed/capability-gap 均拒绝且给出恢复，
 > remote-only 或无 MediaLibrary 文档明确为不适用，unchecked activation 不变。
 

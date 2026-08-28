@@ -6,7 +6,7 @@ import math
 import posixpath
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, replace
@@ -1364,8 +1364,11 @@ class ConfigurationObjectService:
         expected_digest: str,
         actor: str,
         recognition_type: str,
-        sample: Mapping[str, object],
+        sample: Mapping[str, object] | None = None,
+        samples: Sequence[Mapping[str, object]] | None = None,
     ) -> DestinationPrecheckEvidence:
+        if (sample is None) == (samples is None):
+            raise ValueError("destination precheck requires exactly one of sample or samples")
         revision = self._managed.require(revision_id)
         if revision.status not in {
             ManagedConfigurationStatus.DRAFT,
@@ -1386,41 +1389,70 @@ class ConfigurationObjectService:
                 durable_state="current_draft_and_prior_destination_precheck_preserved",
                 next_action="reload the revision and explicitly rerun destination precheck",
             )
-        self._validate_destination_request(recognition_type, sample, "destination precheck")
+        request_samples: list[Mapping[str, object]] = (
+            [sample] if sample is not None else list(samples or ())
+        )
+        if not 1 <= len(request_samples) <= 8:
+            raise ValueError("destination precheck accepts one to eight sample objects")
+        for index, item in enumerate(request_samples):
+            self._validate_destination_request(
+                recognition_type, item, f"destination precheck sample[{index}]"
+            )
         normalized_input: dict[str, object] = {}
-        resolution_state: dict[str, object] = {}
-        try:
-            resolution = self._resolve_destination(
-                revision.document,
-                recognition_type,
-                sample,
-                normalized_input,
-                resolution_state,
-            )
-        except (PolicyResolutionError, NamingError, ClassificationError, ValueError) as error:
-            resolved = resolution_state.get("resolved")
-            category, message = self._destination_failure_details(
-                error,
-                resolved if isinstance(resolved, ResolvedRecognitionPolicy) else None,
-            )
+        resolutions: list[tuple[int, _DestinationResolution]] = []
+        precomposed_rows: list[tuple[int, dict[str, object]]] = []
+        for index, item in enumerate(request_samples):
+            sample_input: dict[str, object] = {}
+            resolution_state: dict[str, object] = {}
+            try:
+                resolution = self._resolve_destination(
+                    revision.document,
+                    recognition_type,
+                    item,
+                    sample_input,
+                    resolution_state,
+                )
+            except (PolicyResolutionError, NamingError, ClassificationError, ValueError) as error:
+                if not normalized_input:
+                    normalized_input = sample_input
+                resolved = resolution_state.get("resolved")
+                category, message = self._destination_failure_details(
+                    error,
+                    resolved if isinstance(resolved, ResolvedRecognitionPolicy) else None,
+                )
+                precomposed_rows.append(
+                    (index, self._destination_sample_failure_row(index, category, message))
+                )
+            else:
+                if not normalized_input:
+                    normalized_input = sample_input
+                resolutions.append((index, resolution))
+        if not resolutions:
+            first_index, first_row = precomposed_rows[0]
             evidence = self._destination_precheck_failure(
                 revision,
                 actor,
                 recognition_type,
                 normalized_input,
-                category,
-                message,
+                str(first_row["failureCategory"]),
+                str(first_row["message"]),
                 "fix the composition in this Draft, rerun destination preview, then rerun precheck",
+                result=self._destination_multi_result(
+                    len(request_samples),
+                    [row for _, row in sorted(precomposed_rows)],
+                    [],
+                ),
             )
             return self._repository.save_destination_precheck(evidence)
 
-        storage_id = str(resolution.library.get("storageId", ""))
         storage_values = {
             str(value.get("id")): value
             for value in self._canonical_objects(revision.document, "storages")
         }
-        storage_value = storage_values.get(storage_id)
-        if storage_value is None:
+        storage_ids = [
+            str(resolution.library.get("storageId", "")) for _, resolution in resolutions
+        ]
+        if any(storage_id not in storage_values for storage_id in storage_ids):
             evidence = self._destination_precheck_failure(
                 revision,
                 actor,
@@ -1431,17 +1463,53 @@ class ConfigurationObjectService:
                 "add or correct the destination Storage in this Draft, then rerun precheck",
             )
             return self._repository.save_destination_precheck(evidence)
-        if str(storage_value.get("type", "")).lower() != "local":
+        if any(
+            str(storage_values[storage_id].get("type", "")).lower() != "local"
+            for storage_id in storage_ids
+        ):
+            offending = next(
+                storage_id
+                for storage_id in storage_ids
+                if str(storage_values[storage_id].get("type", "")).lower() != "local"
+            )
             evidence = self._destination_precheck_failure(
                 revision,
                 actor,
                 recognition_type,
                 normalized_input,
                 "unsupported_storage_type",
-                f"Storage {storage_id!r} is not supported; destination precheck is Local-only",
+                f"Storage {offending!r} is not supported; destination precheck is Local-only",
                 "point the MediaLibrary at Local Storage or wait for remote precheck support",
             )
             return self._repository.save_destination_precheck(evidence)
+        if len(set(storage_ids)) != 1:
+            labels = ", ".join(
+                f"{storage_id}:{str(storage_values[storage_id].get('type', '')).lower()}"
+                for storage_id in sorted(set(storage_ids))
+            )
+            rows = [row for _, row in sorted(precomposed_rows)] + [
+                self._destination_sample_resolution_row(index, resolution)
+                for index, resolution in sorted(resolutions)
+            ]
+            rows = sorted(rows, key=lambda row: int(row["index"]))
+            evidence = self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                normalized_input,
+                "multiple_destination_storages",
+                (
+                    "destination samples route to multiple destination Storages "
+                    f"({labels}); precheck one destination Storage at a time"
+                ),
+                (
+                    "narrow the samples to one destination Storage and precheck each "
+                    "destination Storage separately, then rerun"
+                ),
+                result=self._destination_multi_result(len(request_samples), rows, []),
+            )
+            return self._repository.save_destination_precheck(evidence)
+        storage_id = storage_ids[0]
         if not self._acquire_setup_check():
             return self._destination_precheck_failure(
                 revision,
@@ -1458,8 +1526,10 @@ class ConfigurationObjectService:
                 revision,
                 actor,
                 recognition_type,
-                resolution,
+                tuple(resolutions),
                 storage_id,
+                precomposed_rows,
+                normalized_input,
             )
         except Exception:
             self._release_setup_check()
@@ -1503,6 +1573,34 @@ class ConfigurationObjectService:
             lease.response_finished()
 
     def _run_destination_precheck(
+        self,
+        revision: ManagedConfigurationRevision,
+        actor: str,
+        recognition_type: str,
+        resolutions: Sequence[tuple[int, _DestinationResolution]],
+        storage_id: str,
+        precomposed_rows: Sequence[tuple[int, dict[str, object]]] = (),
+        normalized_input: dict[str, object] | None = None,
+    ) -> DestinationPrecheckEvidence:
+        if len(resolutions) == 1 and not precomposed_rows:
+            return self._run_single_destination_precheck(
+                revision,
+                actor,
+                recognition_type,
+                resolutions[0][1],
+                storage_id,
+            )
+        return self._run_multi_destination_precheck(
+            revision,
+            actor,
+            recognition_type,
+            resolutions,
+            storage_id,
+            precomposed_rows,
+            normalized_input or {},
+        )
+
+    def _run_single_destination_precheck(
         self,
         revision: ManagedConfigurationRevision,
         actor: str,
@@ -1666,6 +1764,21 @@ class ConfigurationObjectService:
                 "guardMutationCalls": dict(guard.mutation_calls),
                 "verdict": verdict,
                 "authorityGranted": "none",
+                "sampleCount": 1,
+                "items": [
+                    {
+                        "index": 0,
+                        "relativeDestination": resolution.composition.relative_destination,
+                        "destinationPath": resolution.composition.target,
+                        "targetExists": target_exists,
+                        "plannerConflicts": conflicts,
+                        "projectedOutcome": projected,
+                        "proposedRelativeDestination": proposed,
+                        "failureCategory": None,
+                        "message": None,
+                    }
+                ],
+                "collisions": [],
             }
             return DestinationPrecheckEvidence(
                 revision.revision_id,
@@ -1732,6 +1845,448 @@ class ConfigurationObjectService:
                 "destination precheck failed (details redacted)",
                 "inspect service health and configuration, then rerun precheck",
             )
+
+    def _run_multi_destination_precheck(
+        self,
+        revision: ManagedConfigurationRevision,
+        actor: str,
+        recognition_type: str,
+        resolutions: Sequence[tuple[int, _DestinationResolution]],
+        storage_id: str,
+        precomposed_rows: Sequence[tuple[int, dict[str, object]]],
+        normalized_input: dict[str, object],
+    ) -> DestinationPrecheckEvidence:
+        guard: _ReadOnlyDestinationStorage | None = None
+        rows: list[tuple[int, dict[str, object]]] = list(precomposed_rows)
+        first_details: dict[str, object] | None = None
+        any_missing = False
+        claimed: dict[str, str] = {}
+        claimed_indexes: dict[str, int] = {}
+        collision_indexes: dict[str, list[int]] = {}
+        try:
+            if self._managed.bootstrap_database_path is not None:
+                runtime = load_managed_runtime_configuration(
+                    revision.document,
+                    bootstrap_database_path=self._managed.bootstrap_database_path,
+                )
+            else:
+                runtime = load_runtime_configuration(revision.document)
+            created = runtime.create_storages(storage_ids={storage_id})
+            adapter = created.get(storage_id)
+            if adapter is None:
+                raise _DestinationPreviewFailure(
+                    "invalid_configuration", "Local destination Storage was not created"
+                )
+            capabilities = adapter.capabilities
+            guard = _ReadOnlyDestinationStorage(adapter)
+            for index, resolution in resolutions:
+                try:
+                    row, details = self._probe_destination_sample(
+                        resolution,
+                        storage_id,
+                        guard,
+                        capabilities,
+                        claimed,
+                        claimed_indexes,
+                        collision_indexes,
+                        index,
+                    )
+                except StorageError as error:
+                    category = self._storage_failure_category(error.code)
+                    row = self._destination_sample_failure_row(
+                        index,
+                        category,
+                        "destination precheck could not read the configured Local path",
+                    )
+                except _DestinationPrecheckMutationError:
+                    raise
+                except (ConflictResolutionError, _DestinationPreviewFailure) as error:
+                    category = (
+                        error.category
+                        if isinstance(error, _DestinationPreviewFailure)
+                        else "invalid"
+                    )
+                    row = self._destination_sample_failure_row(
+                        index,
+                        category,
+                        "destination precheck could not safely project the destination",
+                    )
+                except Exception:
+                    row = self._destination_sample_failure_row(
+                        index,
+                        "unavailable",
+                        "destination precheck failed (details redacted)",
+                    )
+                rows.append((index, row))
+                if row["failureCategory"] is None:
+                    if first_details is None:
+                        first_details = details
+                    if details["missingStorageCapabilities"]:
+                        any_missing = True
+            if guard is not None and any(guard.mutation_calls.values()):
+                raise _DestinationPrecheckMutationError("guard counted a forbidden mutation")
+        except StorageError as error:
+            category = self._storage_failure_category(error.code)
+            items = [row for _, row in sorted(rows)]
+            guard_calls = dict(guard.mutation_calls) if guard is not None else {}
+            return self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                normalized_input,
+                category,
+                "destination precheck could not read the configured Local path",
+                "correct availability, permissions or path, then rerun destination precheck",
+                result={
+                    **self._destination_multi_result(len(items), items, []),
+                    "guardMutationCalls": guard_calls,
+                    "authorityGranted": "none",
+                },
+            )
+        except _DestinationPrecheckMutationError:
+            items = [row for _, row in sorted(rows)]
+            guard_calls = dict(guard.mutation_calls) if guard is not None else {}
+            return self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                normalized_input,
+                "read_only_violation",
+                "destination precheck attempted a forbidden Storage mutation",
+                "do not activate; inspect the destination-precheck implementation",
+                result={
+                    **self._destination_multi_result(len(items), items, []),
+                    "guardMutationCalls": guard_calls,
+                    "authorityGranted": "none",
+                },
+            )
+        except Exception:
+            items = [row for _, row in sorted(rows)]
+            guard_calls = dict(guard.mutation_calls) if guard is not None else {}
+            return self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                normalized_input,
+                "unavailable",
+                "destination precheck failed (details redacted)",
+                "inspect service health and configuration, then rerun precheck",
+                result={
+                    **self._destination_multi_result(len(items), items, []),
+                    "guardMutationCalls": guard_calls,
+                    "authorityGranted": "none",
+                },
+            )
+
+        items = [row for _, row in sorted(rows)]
+        collisions = [
+            {"destinationPath": target, "itemIndexes": indexes}
+            for target, indexes in sorted(collision_indexes.items())
+        ]
+        guard_calls = dict(guard.mutation_calls) if guard is not None else {}
+        if collisions:
+            return self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                normalized_input,
+                "duplicate_destination",
+                (
+                    f"{len(collisions)} cross-item destination collision(s) detected; "
+                    "distinct samples compose the same destination"
+                ),
+                (
+                    "add a distinguishing naming variable or correct the naming/classification "
+                    "policy so distinct inputs compose distinct destinations, then rerun "
+                    "the precheck"
+                ),
+                result={
+                    **self._destination_multi_result(len(items), items, collisions),
+                    "guardMutationCalls": guard_calls,
+                    "authorityGranted": "none",
+                },
+            )
+        failures = sorted(
+            (index, str(row["failureCategory"]), str(row["message"]))
+            for index, row in rows
+            if row["failureCategory"] is not None
+        )
+        if failures:
+            index, category, message = failures[0]
+            return self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                normalized_input,
+                category,
+                message,
+                self._destination_sample_next_action(category),
+                result={
+                    **self._destination_multi_result(len(items), items, collisions),
+                    "guardMutationCalls": guard_calls,
+                    "authorityGranted": "none",
+                },
+            )
+        first_index, first_resolution = resolutions[0]
+        assert first_details is not None
+        severity = {
+            "ready": 0,
+            "skip": 1,
+            "rename": 2,
+            "overwrite_requires_confirmation": 3,
+            "manual_confirmation_required": 4,
+        }
+        outcomes = [
+            str(row["projectedOutcome"]) for _, row in rows if row["projectedOutcome"] is not None
+        ]
+        verdict = (
+            "capability_gap" if any_missing else max(outcomes, key=lambda value: severity[value])
+        )
+        result = {
+            **self._destination_probe_identity(first_resolution, storage_id, True, True),
+            **first_details,
+            "verdict": verdict,
+            "sampleCount": len(items),
+            "items": items,
+            "collisions": collisions,
+        }
+        return DestinationPrecheckEvidence(
+            revision.revision_id,
+            revision.version,
+            revision.digest,
+            ConfigurationDestinationPrecheckStatus.COMPLETED,
+            datetime.now(UTC),
+            actor,
+            recognition_type,
+            normalized_input,
+            result,
+            message=(
+                "Destination capability gap detected; there is no fallback"
+                if any_missing
+                else "Destination precheck completed with read-only observations"
+            ),
+            next_action=(
+                "change the operation or destination Storage, then rerun precheck"
+                if any_missing
+                else "review the projected outcome, then correct and rerun or validate"
+            ),
+        )
+
+    def _probe_destination_sample(
+        self,
+        resolution: _DestinationResolution,
+        storage_id: str,
+        guard: _ReadOnlyDestinationStorage,
+        capabilities: StorageCapabilities,
+        claimed: dict[str, str],
+        claimed_indexes: dict[str, int],
+        collision_indexes: dict[str, list[int]],
+        index: int,
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        root = resolution.composition.media_library_root
+        if not guard.exists(root):
+            raise _DestinationPreviewFailure(
+                "missing_destination_root", "configured MediaLibrary root does not exist"
+            )
+        root_entry = guard.stat(root)
+        if not root_entry.is_directory:
+            raise _DestinationPreviewFailure(
+                "destination_root_not_directory",
+                "configured MediaLibrary root is not a directory",
+            )
+        parent = posixpath.dirname(resolution.composition.relative_destination)
+        segments = [] if not parent else parent.split("/")
+        if len(segments) > 64:
+            raise _DestinationPreviewFailure(
+                "invalid_path", "destination ancestor depth exceeds 64 segments"
+            )
+        deepest = root
+        directories_to_create: list[str] = []
+        for segment_index, segment in enumerate(segments):
+            candidate = posixpath.join(root, *segments[: segment_index + 1])
+            if guard.exists(candidate):
+                if not guard.stat(candidate).is_directory:
+                    raise _DestinationPreviewFailure(
+                        "invalid_path", "an existing destination ancestor is not a directory"
+                    )
+                deepest = candidate
+                continue
+            directories_to_create = [
+                posixpath.join(root, *segments[: offset + 1])
+                for offset in range(segment_index, len(segments))
+            ]
+            break
+        policy = resolution.organize_policy
+        type_policy = RecognitionTypePolicy(
+            resolution.resolved.type_policy_id,
+            resolution.resolved.recognition_type,
+            resolution.resolved.metadata_policy_id,
+            resolution.resolved.naming_policy_id,
+            resolution.resolved.classification_policy_id,
+            policy,
+        )
+        source = f"destination-precheck-source-{index}.mkv"
+        plan = organizer_application.OrganizePlanner().plan(
+            source_storage_id="destination-precheck-source",
+            source=source,
+            recognition=RecognitionResult(
+                resolution.resolved.recognition_type, "destination-precheck"
+            ),
+            type_policy=type_policy,
+            media_library=MediaLibrary(
+                str(resolution.library.get("id")),
+                str(resolution.library.get("name") or resolution.library.get("id")),
+                storage_id,
+                root,
+            ),
+            naming=resolution.naming,
+            classification=resolution.classification,
+            media_identity=None,
+            target_storage=guard,
+            claimed_destinations=claimed,
+            known_media=None,
+        )
+        if guard.last_storage_error is not None:
+            raise guard.last_storage_error
+        if any(conflict.type is ConflictType.INVALID_DESTINATION for conflict in plan.conflicts):
+            raise _DestinationPreviewFailure(
+                "unsafe_destination",
+                "planner rejected the composed destination as unsafe",
+            )
+        target = plan.target
+        conflicts = [conflict.type.value for conflict in plan.conflicts]
+        target_exists = ConflictType.DESTINATION_EXISTS in {
+            conflict.type for conflict in plan.conflicts
+        }
+        resolved_plan = ConflictResolver().apply_configured(plan, policy, guard)
+        if guard.last_storage_error is not None:
+            raise guard.last_storage_error
+        if not plan.conflicts:
+            projected = "ready"
+        elif policy.conflict_strategy is ConflictStrategy.SKIP:
+            projected = "skip"
+        elif policy.conflict_strategy is ConflictStrategy.RENAME:
+            projected = "rename"
+        elif policy.conflict_strategy is ConflictStrategy.OVERWRITE:
+            projected = "overwrite_requires_confirmation"
+        else:
+            projected = "manual_confirmation_required"
+        proposed = (
+            resolved_plan.relative_destination
+            if projected == "rename" and resolved_plan is not None
+            else None
+        )
+        required = self._required_storage_capabilities(policy)
+        declared = self._capability_names(capabilities)
+        missing = [value for value in required if value not in declared]
+        verdict = "capability_gap" if missing else projected
+        if any(guard.mutation_calls.values()):
+            raise _DestinationPrecheckMutationError("guard counted a forbidden mutation")
+        prior = claimed_indexes.get(target)
+        if prior is None:
+            claimed[target] = source
+            claimed_indexes[target] = index
+        else:
+            collision_indexes.setdefault(target, [prior]).append(index)
+        row: dict[str, object] = {
+            "index": index,
+            "relativeDestination": resolution.composition.relative_destination,
+            "destinationPath": target,
+            "targetExists": target_exists,
+            "plannerConflicts": conflicts,
+            "projectedOutcome": projected,
+            "proposedRelativeDestination": proposed,
+            "failureCategory": None,
+            "message": None,
+        }
+        details: dict[str, object] = {
+            "relativeDestination": resolution.composition.relative_destination,
+            "destinationPath": target,
+            "deepestExistingAncestor": deepest,
+            "directoriesToCreate": directories_to_create,
+            "targetExists": target_exists,
+            "conflictProjection": {
+                "configuredStrategy": policy.conflict_strategy.value,
+                "plannerConflicts": conflicts,
+                "projectedOutcome": projected,
+                "proposedRelativeDestination": proposed,
+            },
+            "requiredStorageCapabilities": required,
+            "destinationStorageCapabilities": declared,
+            "missingStorageCapabilities": missing,
+            "requiredByOperation": policy.operation.value,
+            "fallback": "none; an unsupported capability is a failure",
+            "probeOperations": list(guard.read_operations),
+            "probeOperationCount": guard.read_operation_count,
+            "probeOperationsTruncated": (guard.read_operation_count > len(guard.read_operations)),
+            "guardMutationCalls": dict(guard.mutation_calls),
+            "verdict": verdict,
+            "authorityGranted": "none",
+        }
+        return row, details
+
+    @staticmethod
+    def _destination_sample_failure_row(
+        index: int, category: str, message: str
+    ) -> dict[str, object]:
+        return {
+            "index": index,
+            "relativeDestination": None,
+            "destinationPath": None,
+            "targetExists": None,
+            "plannerConflicts": [],
+            "projectedOutcome": None,
+            "proposedRelativeDestination": None,
+            "failureCategory": category,
+            "message": ConfigurationObjectService._bounded_utf8(message, 384),
+        }
+
+    @staticmethod
+    def _destination_sample_resolution_row(
+        index: int, resolution: _DestinationResolution
+    ) -> dict[str, object]:
+        return {
+            "index": index,
+            "relativeDestination": resolution.composition.relative_destination,
+            "destinationPath": resolution.composition.target,
+            "targetExists": None,
+            "plannerConflicts": [],
+            "projectedOutcome": None,
+            "proposedRelativeDestination": None,
+            "failureCategory": None,
+            "message": None,
+        }
+
+    @staticmethod
+    def _destination_multi_result(
+        sample_count: int,
+        items: list[dict[str, object]],
+        collisions: list[dict[str, object]],
+    ) -> dict[str, object]:
+        return {
+            "sampleCount": sample_count,
+            "items": items,
+            "collisions": collisions,
+        }
+
+    @classmethod
+    def _destination_sample_next_action(cls, category: str) -> str:
+        return {
+            "missing_destination_root": (
+                "create the root out of band or correct MediaLibrary.rootPath, then rerun"
+            ),
+            "destination_root_not_directory": (
+                "correct MediaLibrary.rootPath, then rerun destination precheck"
+            ),
+            "read_only_violation": (
+                "do not activate; inspect the destination-precheck implementation"
+            ),
+            "permission_denied": (
+                "correct availability, permissions or path, then rerun destination precheck"
+            ),
+            "unavailable": ("inspect service health and configuration, then rerun precheck"),
+            "timeout": ("wait for the in-flight check to finish, fix availability, then rerun"),
+        }.get(category, "correct the destination or conflict policy, then rerun precheck")
 
     @staticmethod
     def _destination_probe_identity(

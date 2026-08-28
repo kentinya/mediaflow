@@ -528,6 +528,53 @@ class OperatorUiTests(unittest.TestCase):
             precheck,
         )
 
+    def test_destination_precheck_multi_sample_web_surface_is_falsifiable(self) -> None:
+        script = APP_JS.decode()
+        precheck = _js_function_body(script, "renderDestinationPrecheck")
+
+        self.assertIn(
+            "const sampleCount = Number.isFinite(result.sampleCount) ? result.sampleCount : 1;",
+            precheck,
+        )
+        self.assertIn("field(list, 'Sample count', String(sampleCount));", precheck)
+        self.assertIn(
+            "if (sampleCount > 1) detailContent.append(text('h4', 'First sample destination'));",
+            precheck,
+        )
+        self.assertIn("if (Array.isArray(result.items)) {", precheck)
+        self.assertIn("detailContent.append(text('h4', 'Per-sample destination rows'));", precheck)
+        self.assertIn(
+            "detailContent.append(table(['Sample', 'Destination', 'Projected outcome', "
+            "'Failure category'],",
+            precheck,
+        )
+        self.assertIn("if (Array.isArray(result.collisions)) {", precheck)
+        self.assertIn(
+            "detailContent.append(text('h4', 'Cross-item destination collisions'));",
+            precheck,
+        )
+        self.assertIn("detailContent.append(table(['Destination', 'Colliding samples'],", precheck)
+        self.assertIn(
+            "else detailContent.append(text('p', "
+            "'No cross-item destination collision detected.'));",
+            precheck,
+        )
+        self.assertIn(
+            "sample.setAttribute('aria-label', 'Destination precheck sample JSON "
+            "(one object, or an array of 1-8 samples)');",
+            precheck,
+        )
+        self.assertIn(
+            "controls.append(text('p', 'An array of samples detects cross-item "
+            "destination collisions before activation.'));",
+            precheck,
+        )
+        self.assertIn(
+            "if (Array.isArray(parsed)) body.samples = parsed; else body.sample = parsed;",
+            precheck,
+        )
+        self.assertIn("const body = {expectedVersion: revision.version,", precheck)
+
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
         script = APP_JS.decode()
         mismatch_start = script.index("function renderConfigurationIdentityMismatch")

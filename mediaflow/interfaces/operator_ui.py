@@ -735,7 +735,9 @@ APP_JS = b"""(() => {
       const conflict = result.conflictProjection && typeof result.conflictProjection === 'object' ?
         result.conflictProjection : {};
       const list = document.createElement('dl');
+      const sampleCount = Number.isFinite(result.sampleCount) ? result.sampleCount : 1;
       field(list, 'Evidence state', current ? 'current' : 'stale');
+      field(list, 'Sample count', String(sampleCount));
       field(list, 'Status', boundedSetupText(evidence.status));
       field(list, 'Verdict', boundedSetupText(result.verdict || evidence.failureCategory));
       field(list, 'Destination Storage', `${boundedSetupText(result.destinationStorageId)} (${boundedSetupText(result.destinationStorageType)})`);
@@ -760,7 +762,27 @@ APP_JS = b"""(() => {
       field(list, 'Retry safe', evidence.retrySafe === true ? 'YES' : 'NO');
       field(list, 'Message', boundedSetupText(evidence.message));
       field(list, 'Next action', boundedSetupText(evidence.nextAction));
+      if (sampleCount > 1) detailContent.append(text('h4', 'First sample destination'));
       detailContent.append(list);
+      if (Array.isArray(result.items)) {
+        detailContent.append(text('h4', 'Per-sample destination rows'));
+        detailContent.append(table(['Sample', 'Destination', 'Projected outcome', 'Failure category'],
+          result.items.map(item => [
+            Number.isFinite(item.index) ? String(item.index) : '-',
+            boundedSetupText(item.destinationPath),
+            boundedSetupText(item.projectedOutcome),
+            boundedSetupText(item.failureCategory)
+          ])));
+      }
+      if (Array.isArray(result.collisions)) {
+        detailContent.append(text('h4', 'Cross-item destination collisions'));
+        if (result.collisions.length) detailContent.append(table(['Destination', 'Colliding samples'],
+          result.collisions.map(item => [
+            boundedSetupText(item.destinationPath),
+            Array.isArray(item.itemIndexes) ? item.itemIndexes.join(', ') : '-'
+          ])));
+        else detailContent.append(text('p', 'No cross-item destination collision detected.'));
+      }
       if (!current) detailContent.append(text('p',
         'This destination precheck is stale. Reload and rerun it.', 'warning'));
       if (evidence.status !== 'completed' || result.verdict === 'capability_gap' ||
@@ -777,15 +799,18 @@ APP_JS = b"""(() => {
     recognitionType.setAttribute('aria-label', 'Destination precheck RecognitionType');
     recognitionType.value = 'C';
     const sample = document.createElement('textarea');
-    sample.setAttribute('aria-label', 'Destination precheck sample JSON');
+    sample.setAttribute('aria-label', 'Destination precheck sample JSON (one object, or an array of 1-8 samples)');
     sample.value = JSON.stringify({title: 'The Matrix', mediaType: 'movie', year: 1999,
       genres: ['Action'], extension: 'mkv'}, null, 2);
+    controls.append(text('p', 'An array of samples detects cross-item destination collisions before activation.'));
     controls.append(recognitionType, sample, actionButton('Run read-only destination precheck', async () => {
       try {
+        const parsed = JSON.parse(sample.value);
+        const body = {expectedVersion: revision.version,
+          expectedDigest: revision.digest, recognitionType: recognitionType.value};
+        if (Array.isArray(parsed)) body.samples = parsed; else body.sample = parsed;
         const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/destination-precheck`,
-          {method: 'POST', body: JSON.stringify({expectedVersion: revision.version,
-            expectedDigest: revision.digest, recognitionType: recognitionType.value,
-            sample: JSON.parse(sample.value)})});
+          {method: 'POST', body: JSON.stringify(body)});
         message(result.status === 'completed' ?
           'Destination precheck completed. Review the read-only verdict.' :
           `${result.message || 'Destination precheck failed.'} ${result.nextAction || ''}`,
