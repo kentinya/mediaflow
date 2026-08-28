@@ -1966,6 +1966,28 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 if status != 200 or strategy_evidence["status"] != "completed":
                     raise AssertionError((status, strategy_evidence))
+                status, destination_evidence = request(
+                    self.app,
+                    f"/api/v1/configuration/revisions/{revision_id}/destination-precheck",
+                    method="POST",
+                    body=json.dumps(
+                        {
+                            "expectedVersion": validated["version"],
+                            "expectedDigest": validated["digest"],
+                            "recognitionType": "C",
+                            "sample": {
+                                "title": "Example Movie",
+                                "mediaType": "movie",
+                                "year": 2024,
+                                "genres": ["Animation"],
+                                "countries": ["JP"],
+                                "extension": "mkv",
+                            },
+                        }
+                    ).encode(),
+                )
+                if status != 200 or destination_evidence["status"] != "completed":
+                    raise AssertionError((status, destination_evidence))
                 status, active = request(
                     self.app,
                     f"/api/v1/configuration/revisions/{revision_id}/activate",

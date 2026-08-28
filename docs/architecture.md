@@ -973,10 +973,11 @@ consume the supplied path directly.
 The latest bounded, secret-free Strategy Test outcome is persisted beside the managed revision and
 is projected with an explicit current/stale comparison. Matched, ambiguous, and unrecognized are
 engine outcomes rather than hidden defaults; configuration/engine failures retain zero-side-effect,
-retry-safe recovery evidence. Checked activation now requires both current passed Local setup
-evidence and current completed Strategy Test evidence. Activation still starts no scan or Preview,
-and resident API/Worker work continues to consume the immutable Active snapshot through the
-existing snapshot binding and saved-revision resolver.
+retry-safe recovery evidence. Checked activation requires current passed Local setup evidence and
+current completed Strategy Test evidence; Phase 22.6-F additionally requires current successful
+destination-precheck evidence when the document declares a Local-backed MediaLibrary. Activation
+still starts no scan or Preview, and resident API/Worker work continues to consume the immutable
+Active snapshot through the existing snapshot binding and saved-revision resolver.
 
 Independent review closed Phase 22.4 on 2026-08-26. The accepted Web projection renders bounded
 matched rules, alternatives, reasons, and warnings. Its persisted `nextAction` is outcome-specific:
@@ -1124,9 +1125,14 @@ Copy or Move. Evidence is revision-keyed with exact version/digest CAS, and reco
 `pathScope: storage_relative` and `sideEffects: none` together with guard mutation counters that
 must all be zero and a bounded read-operation list. It grants no overwrite, delete or execute
 authority. Storage errors, capacity exhaustion and the overall deadline map to bounded categories
-with explicit recovery. Remote SMB/OpenList/S3 destination prechecks, mutation-based capability
-probing, duplicate/cross-item collision detection, attachment prechecks, absolute mounted-path
-display, combined activation evidence and execution remain TARGET. Phase 22.6-E is PASS / CLOSED at
+with explicit recovery. Phase 22.6-F makes that evidence part of checked activation for documents
+that declare at least one MediaLibrary backed by Local Storage. The gate reads only the immutable
+revision document and persisted evidence: missing, stale, failed and `capability_gap` evidence
+refuse with bounded recovery, while remote-only or MediaLibrary-free documents report the
+requirement as not applicable and retain the existing two gates. Unchecked activation is unchanged.
+Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
+duplicate/cross-item collision detection, attachment prechecks, absolute mounted-path display and
+execution remain TARGET. Phase 22.6-E is PASS / CLOSED at
 `ee5225dd0e74a7382b6747c6315776413f7fd249`, accepted through the Phase 22.6-E-F1 correction.
 
 ## Deferred work

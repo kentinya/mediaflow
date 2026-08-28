@@ -1616,8 +1616,10 @@ NamingPolicy ID
 > required 能力比对（缺失即 `capability_gap`，显式无回退）。证据绑定精确 version/digest，记录
 > `pathScope: storage_relative`、`sideEffects: none`、全零 mutation 计数与有界读操作，且不授予
 > overwrite/delete/执行权限；Storage 错误、容量占用与超时均为有界类别加显式恢复动作。远端 SMB/
-> OpenList/S3 目标预检、写入式能力探测、重复/跨项碰撞检测、附件预检、绝对挂载路径展示与 combined
-> activation evidence 仍为后续 TARGET；checked activation 未改变。
+> OpenList/S3 目标预检、写入式能力探测、重复/跨项碰撞检测、附件预检、绝对挂载路径展示与执行仍为
+> 后续 TARGET。Phase 22.6-F 已把当前、completed 且非 `capability_gap` 的
+> Local 目标预检证据纳入 checked activation；missing/stale/failed/capability-gap 均拒绝且给出恢复，
+> remote-only 或无 MediaLibrary 文档明确为不适用，unchecked activation 不变。
 
 ---
 

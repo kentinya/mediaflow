@@ -393,6 +393,7 @@ class ConfigurationObjectService:
         revision = self._managed.require(revision_id)
         self.require_current_local_check(revision)
         self.require_current_strategy_test(revision)
+        self.require_current_destination_precheck(revision)
         return self._managed.activate(
             revision_id,
             expected_version=expected_version,
@@ -3344,6 +3345,59 @@ class ConfigurationObjectService:
             raise ConfigurationActivationConflict(
                 "Recognition Strategy Test is stale; validate and test the Draft again",
                 revision_id=revision.revision_id,
+            )
+
+    def require_current_destination_precheck(self, revision: ManagedConfigurationRevision) -> None:
+        storages = {
+            str(value.get("id")): str(value.get("type", "")).lower()
+            for value in self._canonical_objects(revision.document, "storages")
+        }
+        applicable = any(
+            storages.get(str(library.get("storageId"))) == "local"
+            for library in self._canonical_objects(revision.document, "mediaLibraries")
+        )
+        if not applicable:
+            return
+        evidence = self._repository.get_destination_precheck(revision.revision_id)
+        if evidence is None:
+            raise ConfigurationActivationConflict(
+                "a current Local destination precheck is required before checked activation",
+                revision_id=revision.revision_id,
+                next_action=(
+                    "run the read-only destination precheck on this revision, then activate checked"
+                ),
+            )
+        if (
+            evidence.revision_version != revision.version
+            or evidence.revision_digest != revision.digest
+        ):
+            raise ConfigurationActivationConflict(
+                "Local destination precheck is stale; rerun it before checked activation",
+                revision_id=revision.revision_id,
+                next_action=(
+                    "reload this revision and rerun the destination precheck on its current "
+                    "version and digest"
+                ),
+            )
+        if evidence.status is not ConfigurationDestinationPrecheckStatus.COMPLETED:
+            category = self._bounded_utf8(evidence.failure_category or "unavailable", 128)
+            raise ConfigurationActivationConflict(
+                f"Local destination precheck failed with category {category}",
+                revision_id=revision.revision_id,
+                next_action=(
+                    evidence.next_action
+                    or "correct the destination configuration, then rerun the precheck"
+                ),
+            )
+        result = evidence.result or {}
+        if result.get("verdict") == "capability_gap":
+            raise ConfigurationActivationConflict(
+                "Local destination precheck completed with a capability_gap verdict",
+                revision_id=revision.revision_id,
+                next_action=(
+                    "change the configured operation or destination Storage, "
+                    "then rerun the precheck"
+                ),
             )
 
     def _strategy_test_document(

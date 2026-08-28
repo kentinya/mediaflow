@@ -685,7 +685,28 @@ APP_JS = b"""(() => {
   }
   function renderDestinationPrecheck(revision, guided) {
     const evidence = guided.destinationPrecheck;
+    const objects = guided.objects && typeof guided.objects === 'object' ? guided.objects : {};
+    const storages = Array.isArray(objects.storages) ? objects.storages : [];
+    const mediaLibraries = Array.isArray(objects.mediaLibraries) ? objects.mediaLibraries : [];
+    const localDestinationIds = new Set(storages.filter(storage =>
+      String(storage.type || '').toLowerCase() === 'local').map(storage => String(storage.id)));
+    const activationApplicable = mediaLibraries.some(library =>
+      localDestinationIds.has(String(library.storageId)));
+    const currentForActivation = destinationPrecheckIsCurrent(revision, evidence);
     detailContent.append(text('h3', 'Read-only Local destination precheck'));
+    if (!activationApplicable) detailContent.append(text('p',
+      'Checked activation requirement: not applicable because this Draft has no Local destination.'));
+    else if (!evidence) detailContent.append(text('p',
+      'Checked activation blocked: run the read-only destination precheck on this revision, then activate checked.', 'warning'));
+    else if (!currentForActivation) detailContent.append(text('p',
+      'Checked activation blocked: reload this revision and rerun the stale destination precheck.', 'warning'));
+    else if (evidence.status !== 'completed') detailContent.append(text('p',
+      `Checked activation blocked: destination precheck failed (${boundedSetupText(evidence.failureCategory)}). Follow its recovery action and rerun it.`, 'error'));
+    else if (evidence.result && evidence.result.verdict === 'capability_gap')
+      detailContent.append(text('p',
+        'Checked activation blocked: change the configured operation or destination Storage, then rerun the precheck.', 'error'));
+    else detailContent.append(text('p',
+      'Checked activation requirement: satisfied by current destination precheck evidence.'));
     if (!evidence) detailContent.append(text('p',
       'Status: not run. This observes one Local destination without changing it.', 'warning'));
     else {

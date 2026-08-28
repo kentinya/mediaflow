@@ -211,12 +211,14 @@ class ConfigurationActivationConflict(RuntimeError):
         current_revision_id: str | None = None,
         current_version: int | None = None,
         current_digest: str | None = None,
+        next_action: str | None = None,
     ) -> None:
         super().__init__(message)
         self.revision_id = revision_id
         self.current_revision_id = current_revision_id
         self.current_version = current_version
         self.current_digest = current_digest
+        self.next_action = next_action
 
 
 class RuntimeSnapshotUnavailable(RuntimeError):

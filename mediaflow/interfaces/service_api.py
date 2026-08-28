@@ -287,7 +287,8 @@ class MediaFlowApi:
                     "sideEffects": "none",
                     "retrySafe": True,
                     "nextAction": (
-                        "refresh the current Active/Draft, review the diff, and revalidate"
+                        error.next_action
+                        or "refresh the current Active/Draft, review the diff, and revalidate"
                     ),
                 }.items()
                 if value is not None

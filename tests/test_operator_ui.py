@@ -360,6 +360,21 @@ class OperatorUiTests(unittest.TestCase):
             "detailContent.append(text('h3', 'Read-only Local destination precheck'));",
             precheck,
         )
+        for activation_line in (
+            "Checked activation requirement: not applicable because this Draft has no "
+            "Local destination.",
+            "Checked activation blocked: run the read-only destination precheck on this "
+            "revision, then activate checked.",
+            "Checked activation blocked: reload this revision and rerun the stale "
+            "destination precheck.",
+            "Checked activation blocked: destination precheck failed (",
+            "Follow its recovery action and rerun it.",
+            "Checked activation blocked: change the configured operation or destination "
+            "Storage, then rerun the precheck.",
+            "Checked activation requirement: satisfied by current destination precheck evidence.",
+        ):
+            self.assertIn(activation_line, precheck)
+        self.assertIn("const activationApplicable = mediaLibraries.some", precheck)
         self.assertIn("controls.append(recognitionType, sample, actionButton(", precheck)
         self.assertIn("Destination precheck RecognitionType", precheck)
         self.assertIn("Destination precheck sample JSON", precheck)
