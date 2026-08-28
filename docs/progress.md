@@ -191,6 +191,25 @@ Implementation evidence is recorded below under "Phase 22.6-D Implementation Evi
 and is preserved unchanged. The independent review record is
 "Phase 22.6-D High Review Result (2026-08-28): PASS".
 
+### Phase 22.6-E Managed Exact-Revision Read-Only Destination Precheck (Local)
+
+```text
+Status: FIX REQUIRED
+Rejected checkpoint SHA: 7353b0d22497e6e3e596c93c7052eea34daf27df (preserved, never amended,
+squashed or rewritten)
+High Audit: FIX REQUIRED — 2026-08-28; the checkpoint was independently reviewed with two
+reproduced operator-UI falsifications, an independent read-only destination probe, the byte-restored
+production tree, and the complete offline suite. Product behaviour, safety boundaries and the
+Web/API journey were accepted; the checkpoint is rejected because four of the Task's own Required
+Test assertions are absent, including the Required Test 10 non-construction proof
+Push: NOT PERFORMED — a rejected checkpoint is not pushed; `main` remains ahead of `origin/main`
+```
+
+Implementation evidence is recorded below under "Phase 22.6-E Implementation Evidence (2026-08-28)"
+and is preserved unchanged. The independent review record is
+"Phase 22.6-E High Review Result (2026-08-28): FIX REQUIRED". The only allowed next Slice is
+Phase 22.6-E-F1.
+
 ## Phase 22.6-A High Review Result (2026-08-27)
 
 - Status: FIX REQUIRED; Rejected checkpoint SHA:
@@ -810,6 +829,113 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   probing, duplicate and cross-item collision detection, attachment prechecks, absolute mounted-path
   display, combined activation evidence, execution, and any later Slice. This implementation
   evidence is not a High PASS or Phase closure.
+- Preserved-history note added by the independent High review: the enumeration above that lists
+  `invalid` among the projected conflict outcomes, and the claims that the non-construction property
+  and the composed `relativeDestination` / `destinationPath` evidence fields are covered by the
+  focused tests, are not supported at that SHA. The `invalid` branch is unreachable from this path
+  and no test asserts those fields, the fully missing subtree's create list, or the absence of
+  Provider/Executor construction. See the review record below. This evidence section is otherwise
+  preserved unchanged.
+
+## Phase 22.6-E High Review Result (2026-08-28): FIX REQUIRED
+
+- Status: FIX REQUIRED; Rejected checkpoint SHA: `7353b0d22497e6e3e596c93c7052eea34daf27df`; High
+  Audit: FIX REQUIRED — 2026-08-28. This record is preserved; the rejected SHA is not amended,
+  squashed, or rewritten.
+- Verified accepted at that SHA: the shared `_validate_destination_request` / `_resolve_destination`
+  extraction is behaviour-preserving, with `tests/test_configuration_destination.py` byte-unchanged
+  and green including its composed-path assertions; the destination Storage adapter is built from
+  the unmodified revision document and its declared capabilities are read from the unwrapped adapter
+  before wrapping; every probe runs inside a `ReadOnlyStorageGuard` subclass whose seven mutation
+  entry points raise and whose counters are asserted zero before evidence is produced; the
+  production `OrganizePlanner.plan` and `ConflictResolver.apply_configured` are reused unmodified,
+  and the conflict projection is asserted per configured strategy (`ready`, `skip`, `rename` with
+  the resolver's own forward-walking candidate, `overwrite_requires_confirmation`,
+  `manual_confirmation_required`) with `authorityGranted: none`; the declared-versus-required
+  capability comparison reports `can_move` satisfied, a patched `_can_hard_link` as a
+  `capability_gap` naming `can_hard_link` with the requiring operation, the rest of the report and
+  the no-fallback wording, `can_delete` added by overwrite or source-directory cleanup, and a
+  document-declared `readOnly: true` destination as a capability gap rather than a crash, proving
+  the adapter is not constructed with `readOnly` forced.
+- Also verified accepted: every bounded failure category is asserted with the revision version,
+  digest, document and the five other evidence rows unchanged — composition failures (missing and
+  duplicate type policy, disabled RecognitionType, disabled policy, invalid policy reference,
+  unresolved MediaLibrary, unsafe destination) decided before any Storage construction under an
+  injected `AssertionError` double, `unsupported_storage_type` with no adapter constructed,
+  `missing_destination_root`, `destination_root_not_directory`, the `StorageError` mapping for
+  `PERMISSION_DENIED`, `CONNECTION_FAILED`, `TIMEOUT` and `INVALID_PATH` with the raw detail
+  redacted, the over-deep ancestor `invalid_path`, `capacity_unavailable` which stores nothing, and
+  the deadline `timeout`; exact-revision semantics refuse a stale version/digest and an Active
+  revision while preserving prior evidence byte-for-byte and marking it stale after an edit;
+  configuration marker 9 to 10 is additive with a revision foreign key and status index, marker 9
+  and marker 8 databases upgrade with revisions and all prior evidence intact, and the Runtime
+  marker stays 22; the API enforces `MANAGE_CONFIGURATION` before body handling and returns
+  `400 invalid_request`, `409 configuration_version_conflict` and `503` as specified, and the Web
+  run control gate `configurationRevisionEditable` (Draft or Validated) matches the service gate
+  exactly, so Web and API share one permission and state rule.
+- Independently reproduced at that SHA: deleting `renderDestinationPrecheck(data, guided);` from the
+  guided branch of `showConfigurationRevision` fails the focused UI test, and detaching the
+  RecognitionType and sample inputs from the precheck control block fails it as well; the restored
+  file is byte-identical with a clean `git status` and the focused test green again; its `sha256` is
+  `f04fff8ed9147dd72a64c26f96d96abf6ec72d683388c1df9a793d273f386675`. An independent read-only probe
+  with injected `AssertionError` doubles for `MetadataProviderRegistry` and `OrganizerExecutor`,
+  against a destination whose only existing path was the MediaLibrary root, returned the 22.6-D
+  composed values for `relativeDestination` and `destinationPath`, `Movies` as the deepest existing
+  ancestor, both directories to create, four bounded Storage-relative read operations, verdict
+  `ready`, no runtime database and no task table, and a byte-identical destination tree. Gates
+  re-run: 840 offline tests (833 passed, 7 existing external skips, 0 failed), 135 focused
+  configuration/UI tests, Ruff check with 307 files already formatted, `compileall`, the
+  FFmpeg/FFprobe audit with 0 hits, `config/alist.json` ignored at `.gitignore:21` and untracked,
+  and a clean tree at the checkpoint.
+- Rejected because Required Test 10's non-construction proof is absent. The Task requires that the
+  precheck "creates no Task, Job, queue entry, plan record or execution authority, constructs no
+  Provider client or Executor — asserted, not assumed", and every preceding Slice in this Phase
+  proved that class of claim with injected `AssertionError` doubles (Phase 22.6-D asserts
+  zero-Storage, zero-Provider, zero-Planner and zero-Executor construction inside
+  `tests/test_configuration_destination.py`). At this SHA no test in
+  `tests/test_configuration_destination_precheck.py` references `MetadataProviderRegistry`,
+  `OrganizerExecutor`, or any Task/Job/queue state; the injected-double assertions that do exist
+  cover only `RuntimeConfiguration.create_storages` on composition-failure and
+  `unsupported_storage_type` paths. The behaviour is correct today — this review verified it
+  independently — but the safety property is unguarded, so a later Slice can introduce a Provider or
+  Executor construction on this path with every gate green.
+- Rejected because Required Test 4's enumerated evidence fields `relativeDestination` and
+  `destinationPath` are asserted nowhere. These two keys are the operator's actual answer to "where
+  would this file go", and `renderDestinationPrecheck` reads `result.destinationPath` directly, with
+  a falsy value routed into the red "Destination is not ready" banner. A swapped or misspelled key
+  would therefore change the Web verdict while the whole suite stays green.
+- Rejected because Required Test 4's "fully missing subtree" case is executed but never asserted. In
+  `test_capability_gap_hardlink_cleanup_and_declared_read_only` and
+  `test_storage_error_depth_composition_capacity_and_timeout_categories` only the MediaLibrary root
+  exists, yet neither test asserts `deepestExistingAncestor` or `directoriesToCreate`; the only
+  assertions on those keys are the partial-ancestor case in
+  `test_success_partial_ancestor_c_identity_and_three_read_only_proofs`. The multi-entry
+  "directories that would be created" list the operator relies on before activation is unproven.
+- Rejected because Required Test 5's `invalid` projection is neither proven nor reachable, and
+  `docs/progress.md` states the projection reports it. `_resolve_destination` raises
+  `unsafe_destination` whenever `compose_destination` reports an unsafe composition, before any
+  Storage adapter is constructed, and `OrganizePlanner.plan` derives
+  `ConflictType.INVALID_DESTINATION` from that same `composition.safe` check on the same inputs, so
+  the `projected = "invalid"` branch in `_run_destination_precheck` cannot be entered from this
+  path. The earlier refusal is the safer behaviour and is asserted; implementation, tests and the
+  documented outcome list must be made consistent rather than left claiming an outcome no test can
+  produce.
+- Non-blocking observations recorded for later work, explicitly not part of this correction: the
+  failure rendering prints `Destination root exists / directory` as `NO / NO` for categories decided
+  before any probe, which reads as a probed negative even though Status, Verdict, Message and the
+  red banner state the real cause; `relativeDestination` and `destinationPath` name the same two
+  values that Phase 22.6-D evidence calls `rootRelativeDestination` and
+  `composedStorageRelativeDestination`, and the Task mandated the new names, so this is a
+  naming-consistency note only; a Storage literally named `destination-precheck-source` would make
+  the planner's same-location branch compare the synthetic source against the real destination,
+  which no shipped example document can produce; and the pre-existing
+  `ResourceWarning: unclosed database` from `load_managed_runtime_configuration` is emitted
+  identically by the byte-unmodified Phase 22.6-D suite and is not a Slice regression.
+- Verdict: **FIX REQUIRED**. `TASK.md` now contains only the focused Phase 22.6-E-F1 correction,
+  which is evidence-only apart from resolving the unreachable `invalid` branch. Phase 22.6-E is not
+  closed, Phase 22.6 remains open, and remote destination prechecks, mutation-based capability
+  probing, duplicate/collision detection, attachment prechecks, combined activation evidence and any
+  execution change must not start.
 
 ## Completed
 
