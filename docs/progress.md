@@ -172,6 +172,25 @@ Implementation evidence is recorded below under
 is preserved unchanged. The independent review record is
 "Phase 22.6-C High Review Result (2026-08-28): PASS".
 
+### Phase 22.6-D Managed Exact-Revision Offline Composed Destination Preview
+
+```text
+Status: PASS / CLOSED
+Commit SHA: c7ec192b3b20f236cca5a70ed59cad43e0851242
+High Audit: PASS — 2026-08-28; the checkpoint was independently reviewed with seven deliberate
+falsifications (four operator-UI mounts, one shared-composition safety guard, one unsafe-verdict
+bypass, one RecognitionType C identity), a planner-parity check against the real OrganizePlanner,
+a zero-Storage/zero-Provider/zero-Planner/zero-Executor probe, a marker 8 to 9 upgrade check, the
+unmodified organizer and Phase 22.6-C suites, and the complete offline suite
+Push: PENDING — not required for this Slice closure; `c7ec192b3b20f236cca5a70ed59cad43e0851242`
+and the docs record are not yet contained in `origin/main`, and the phase-level Phase 22.6 closure
+will require an explicitly authorized push
+```
+
+Implementation evidence is recorded below under "Phase 22.6-D Implementation Evidence (2026-08-28)"
+and is preserved unchanged. The independent review record is
+"Phase 22.6-D High Review Result (2026-08-28): PASS".
+
 ## Phase 22.6-A High Review Result (2026-08-27)
 
 - Status: FIX REQUIRED; Rejected checkpoint SHA:
@@ -476,6 +495,111 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
 - This is implementation evidence only. Phase 22.6-C is not `PASS / CLOSED`; composed
   destination-path preview, destination conflict/capability/existence prechecks, Storage capability
   probing and activation-evidence changes have not started.
+
+## Phase 22.6-D High Review Result (2026-08-28): PASS
+
+- Status: PASS / CLOSED for Phase 22.6-D; reviewed checkpoint SHA:
+  `c7ec192b3b20f236cca5a70ed59cad43e0851242`; High Audit: PASS — 2026-08-28. No earlier Phase 22.6-D
+  checkpoint was rejected, so no rejected SHA record exists for this Slice. The preserved Phase
+  22.5-E and Phase 22.6-A `FIX REQUIRED` records and their rejected SHAs
+  (`08dfd4f921728755209b6d52347d28f221121c47`, `90ce13a6c6c39912dd389f71a1189314ff24eb5d`) are
+  unchanged, and the `docs/progress.md` diff in the reviewed checkpoint is purely additive.
+- Scope conformance verified against `TASK.md`: the checkpoint touches
+  `mediaflow/domain/organizer.py`, `mediaflow/application/organizer.py`,
+  `mediaflow/domain/configuration_management.py`, `mediaflow/application/configuration_objects.py`,
+  `mediaflow/infrastructure/sqlite_configuration_management.py`,
+  `mediaflow/interfaces/service_api.py`, `mediaflow/interfaces/operator_ui.py`,
+  `tests/test_configuration_destination.py` (new), `tests/test_operator_ui.py`, `TASK.md` and
+  documentation only. No destination existence, collision or capability precheck; no Storage adapter
+  construction and no Storage mount prefix; no combined activation evidence; no activation-gate or
+  Active-projection change; `mediaflow/application/configuration_snapshot.py` and
+  `mediaflow/infrastructure/sqlite_runtime.py` are absent from the manifest and the runtime schema
+  marker remains 22, independently confirmed by the installed-wheel smoke run.
+- The composition extraction is behaviour-preserving and is not a fork.
+  `mediaflow/domain/organizer.py` now owns `safe_destination_root`,
+  `unsafe_relative_destination_path`, `unsafe_destination_filename` and `compose_destination` with
+  bodies identical to the removed private planner helpers; all five previous call sites delegate,
+  and the unsafe branch still passes an empty target so the recomputed `relative_destination`
+  matches the previous raw join byte-for-byte. Both `tests/test_organizer.py` and
+  `tests/test_configuration_organize.py` are unmodified in the checkpoint and pass, and weakening
+  the shared classification-path guard to `False` independently produced two failures in the
+  unmodified organizer suite plus one in the new suite, so the pre-existing assertions genuinely pin
+  the extracted behaviour.
+- Planner parity is asserted against the real `OrganizePlanner.plan` for a safe case, an absolute
+  root, an unsafe root, absolute and traversal classification paths, a traversal directory segment,
+  a separator-containing filename and a `..` filename, comparing `media_library_root`,
+  `relative_destination`, `target`, `PlanStatus.INVALID` and `ConflictType.INVALID_DESTINATION`.
+  Suppressing the preview's unsafe-composition verdict independently failed the suite (`None !=
+  'unsafe_destination'`), so the safety boundary is proven rather than assumed.
+- The managed journey uses production behaviour end to end: the Phase 22.6-C inline resolver catalog
+  is extracted verbatim into `_policy_resolution_catalog` and shared, policy selection comes only
+  from `RecognitionTypePolicyResolver` (`resolved.naming_policy_id`,
+  `resolved.classification_policy_id`), and the production `NamingPreviewService` and
+  `ClassificationPreviewService` produce the naming and classification contributions. C identity
+  holds structurally, because `ClassificationContext.recognition_type_id` and
+  `ResolvedRecognitionPolicy.recognition_type_id` are properties over `RecognitionType.type_id`;
+  reporting the RecognitionType from the NamingPolicy ID instead independently failed with `'A' !=
+  'C'`.
+- Evidence and the destination contract are bounded, secret-free and Storage-relative.
+  `DestinationPreviewEvidence` validates revision identity, digest, timezone-aware time, actor and
+  RecognitionType bounds, JSON size against `CONFIGURATION_STRATEGY_RESULT_LIMIT`, bounded failure
+  text, and requires a result when completed; its document emits `pathScope: storage_relative`,
+  `sideEffects: none` and `retrySafe: true`. Only the selected MediaLibrary's `rootPath` and
+  `storageId` label are read; the new code path reads no `storages` section, so no Storage endpoint,
+  credential or private user path can reach evidence, the API or the Web section, and the shipped
+  tests assert the temporary root string is absent from both evidence documents.
+- Failure and recovery behaviour is actionable and per-item durable. Category derivation tests
+  `PolicyResolutionError`, `NamingError` and `ClassificationError` before the generic `ValueError`
+  arm, so an engine failure cannot degrade to `invalid_input` even though `NamingError` and
+  `ClassificationError` subclass `ValueError`; `resolved` is bound before any arm that reads it.
+  Messages are reconstructed rather than echoed, verified by a patched `NamingError` carrying a
+  secret-shaped string that does not appear in the persisted message. Missing, duplicated, disabled,
+  dangling and disabled-policy mappings, naming and classification failures, an unresolved
+  MediaLibrary and all four unsafe contributions each persist a distinct bounded category with the
+  revision version, digest and document unchanged and the naming, classification and
+  organize-authority evidence rows intact.
+- Exact-revision semantics hold: only Draft or Validated revisions are previewable, an Active
+  revision and a stale `expectedVersion`/`expectedDigest` are refused with
+  `ConfigurationVersionConflict` before any repository write, prior evidence is preserved
+  byte-for-byte, and `revision_detail` marks evidence stale after any further edit.
+- Zero side effects are proven statically and dynamically:
+  `mediaflow/application/configuration_objects.py` imports only pure domain symbols from
+  `mediaflow.domain.organizer` and never imports `OrganizePlanner` or `OrganizerExecutor`, and the
+  shipped test makes `RuntimeConfiguration.create_storages`, `MetadataProviderRegistry`,
+  `OrganizePlanner` and `OrganizerExecutor` raise while both preview modes succeed. The audited diff
+  contains no direct filesystem mutation call and no FFmpeg/FFprobe reference.
+- Web reachability is falsifiable and body-scoped. Removing the guided mount, moving it after the
+  final `detail.hidden = false;`, detaching the heading and renaming the run control each failed the
+  focused test, and the restored tree passed; the assertions are scoped to the brace-matched `if
+  (guided)` body and the rendering function's own body, so a defined-but-unmounted section cannot
+  pass. The section is read-only on a non-editable revision and shows each owning contribution in
+  composition order with the path labelled Storage-relative.
+- Persistence is additive and forward-only: configuration-management marker 9 adds
+  `managed_destination_previews` with a revision foreign key, a status index and upsert-by-revision;
+  a database downgraded to marker 8 with the table dropped reopens, upgrades to 9, and retains its
+  revisions and its naming, classification and organize-authority evidence. Missing optional
+  `mediaLibraries` or `organizePolicies` now renders as an empty section instead of failing.
+- Gates independently re-executed on the reviewed tree: 832 offline tests (7 pre-existing
+  external-service skips, 0 failures), `ruff check` and `ruff format --check` across 306 files,
+  `compileall`, `pip check`, both full example configuration validations, wheel build plus isolated
+  installed-wheel smoke reporting Runtime schema 22, 120 markdown files with 0 broken local links,
+  `git diff --check` on the checkpoint, the FFmpeg/FFprobe audit, the business-layer
+  filesystem-mutation audit, and confirmation that `config/alist.json` and `config/strategy.json`
+  remain ignored, untracked and unread. Every falsification was restored and `git status` returned
+  to clean.
+- Non-blocking observations carried forward, none of which is a Slice defect: an unclassified sample
+  is re-categorized as `ClassificationErrorCode.INVALID_RULE` because the production enum has no "no
+  rule matched" member; a sample-supplied `recognitionType` is overridden by the request selector
+  while the raw sample stays visible in evidence `input`; a generic sample-normalization
+  `ValueError` collapses to `invalid_input` without naming the offending field; the Active-refusal
+  case asserts the raise without additionally asserting that no evidence row was written; and the
+  `TASK.md` status line necessarily still reads `READY FOR COMMIT (pre-checkpoint)` because a commit
+  cannot contain its own SHA, which this closure record supplies.
+- Review result: **PASS / CLOSED** for Phase 22.6-D only. Phase 22.6 and Phase 22 remain open. The
+  next legal Slice is **Phase 22.6-E — Managed Exact-Revision Read-Only Destination Precheck (Local
+  Storage)**, defined in `TASK.md`. Destination prechecks against remote Storage types, write or
+  capability probing, duplicate and cross-item collision detection, combined activation evidence,
+  absolute mounted-path display and any execution change remain TARGET and must not start early.
 
 ## Phase 22.6-C High Review Result (2026-08-28): PASS
 
