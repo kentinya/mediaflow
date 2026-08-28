@@ -1326,6 +1326,89 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   probing, duplicate and cross-item collision detection, attachment prechecks, absolute mounted-path
   display and any execution change must not start.
 
+## Phase 22.6-G-F1 High Review Result (2026-08-28): PASS
+
+- Status: PASS / CLOSED for Phase 22.6-G, accepted through the focused Phase 22.6-G-F1 correction;
+  reviewed checkpoint SHA: `5ca1247156e6de4615dff53f5fc8e421bd8bf264`; High Audit: PASS —
+  2026-08-28. The rejected Phase 22.6-G checkpoint `b9cc35e2677a35920042b5695f87b50a80025ef0` and
+  its `FIX REQUIRED` record remain preserved and unmodified, as do the earlier preserved rejected
+  SHAs `7353b0d22497e6e3e596c93c7052eea34daf27df`,
+  `90ce13a6c6c39912dd389f71a1189314ff24eb5d` and
+  `08dfd4f921728755209b6d52347d28f221121c47`; `b9cc35e…` is still an ancestor of the reviewed
+  checkpoint, so nothing was amended, squashed or rewritten. Push: NOT PERFORMED; `main` remains
+  ahead of `origin/main` and no push authorization was requested or used.
+- Scope conformance verified against `TASK.md`: the checkpoint touches exactly two files —
+  `tests/test_operator_ui.py` (+58/-0) and `TASK.md` (+157/-23, one status line plus the Completion
+  Report). `git diff --exit-code b9cc35e 5ca1247 -- mediaflow scripts config pyproject.toml` is
+  empty, so every production file is byte-identical to the rejected checkpoint, which is exactly
+  what the correction's evidence-only scope demanded. `tests/` has zero deletions, no documentation
+  file changed, and the implementation role wrote no `docs/progress.md` review record and no
+  `docs/roadmap.md` gate row, correctly leaving both High-only. Configuration marker stays 10 and
+  Runtime marker 22, independently confirmed in the installed-wheel smoke run.
+- The correction's substance is one new test,
+  `test_destination_precheck_blocking_sentence_contract_is_body_scoped`, which scopes every
+  assertion to the branch that owns it: it takes `destinationPrecheckActivationRequirement` and
+  `renderDestinationPrecheck` through `_js_function_body`, then slices each of the four blocked
+  branches with `_js_braced_body` before asserting. Branch scoping is what makes the three
+  byte-identical ``message = `Checked activation blocked: ${nextAction}.`;`` assignments
+  independently falsifiable, which no body-wide assertion can do.
+- Independently falsified with eleven probes against the shipped
+  `mediaflow/interfaces/operator_ui.py`, each restored with `git checkout --` and each verified to
+  leave a clean tree. All eleven were caught, and every one failed exactly
+  `test_destination_precheck_blocking_sentence_contract_is_body_scoped` and nothing else, so the two
+  pre-existing Phase 22.6-G tests are genuinely unaffected: deleting only the missing-evidence
+  message (`:705`), only the stale message (`:708`) or only the capability-gap message (`:716`);
+  truncating the failed template (`:712`) to the prefix the parent commit used to assert; dropping
+  `message` from the predicate return object (`:719`); replacing the blocked-branch render payload
+  (`:727`) with a fixed `'Checked activation blocked.'` literal; deleting the failed branch's
+  `style = 'error';` (`:713`); deleting the capability-gap branch's `style = 'error';` (`:717`);
+  dropping `style` from the return object; dropping the trailing period from all three simple
+  sentences; and swapping the missing-evidence and stale `nextAction` strings between their
+  branches. The last five exceed the correction's six required probes: the two error styles,
+  sentence punctuation and branch placement are proven as well, and branch placement provably was
+  not proven before, because the swap probe passes against a body-wide assertion.
+- Proof strength versus the parent history is restored and exceeded. Phase 22.6-G had deleted 21
+  assertions that verbatim-asserted the four sentences at `f601606`; the correction reinstates all
+  four sentences plus both error styles, the predicate return contract and the render payload, and
+  does so per branch rather than per body. Suite counts confirm it is purely additive: the full
+  offline suite is 850 tests OK (skipped=7) against 849 at the rejected checkpoint, and the
+  operator-UI module is 21 tests OK against 20.
+- Regression safety independently checked: `tests/test_configuration_destination.py` is
+  byte-identical to `c7ec192…`, `tests/test_configuration_destination_precheck.py` to `ee5225d…`
+  and `tests/test_configuration_destination_activation.py` to `b9cc35e…`, and the activation suite
+  still asserts `CONFIGURATION_SCHEMA_VERSION == 10` and `RUNTIME_SCHEMA_VERSION == 22`. Because no
+  production byte changed, every CURRENT claim that held at `b9cc35e…` — including
+  `docs/architecture.md`'s Phase 22.6-G paragraph and the `docs/product-experience.md` rows added
+  there — remains exactly true, so implementation, tests and documentation stay consistent.
+- Gates re-run at the reviewed checkpoint, all green: `.venv/bin/python -m unittest` 850 OK
+  (skipped=7); `ruff check` "All checks passed!"; `ruff format --check` 308 files already formatted;
+  `compileall` clean; `pip check` "No broken requirements found."; CLI `config validate`
+  "Configuration valid" on both example configurations; `git diff --check` clean; FFmpeg/FFprobe
+  audit 0 hits; business-layer filesystem-mutation audit 0 hits; Markdown local-link check 120 files
+  / 25 links / 0 broken; `config/alist.json` ignored at `.gitignore:21` and untracked; secret scan
+  of the reviewed diff 0 hits; wheel built, installed into an isolated venv, and
+  `scripts/wheel_smoke_test.py` exit 0 with Supported/Runtime/Backup schema 22, migration rehearsal
+  PASS, restore/verify consistent SHA-256 and upgrade preflight READY.
+- One defect in the correction TASK belonged to the review role, not to the delivery: Required Test
+  8 asked for `git diff b9cc35e <checkpoint> --stat` to list only two files, which cannot hold,
+  because the review-record commit `ed17ebb` sits between them and touches the three High-owned
+  files. The implementation role reported this honestly instead of quietly weakening the test and
+  supplied the equivalent proof, and both halves were independently reconfirmed here. Future
+  correction TASKs must scope such diffs to production paths.
+- Non-blocking observations carried forward unchanged, none of them closure conditions: the same
+  bounded sentence still appears twice on one page when the destination precheck is the blocker;
+  document-level applicability still blocks a Draft that declares an unrouted Local MediaLibrary
+  until it is corrected or activated unchecked; the `-` fallback inside the `text` helper remains a
+  general latent hazard for any future null message, now bounded for this journey; and the
+  pre-existing `ResourceWarning: unclosed database` in unrelated suites is still open.
+- Verdict: **PASS**. Phase 22.6-G is **CLOSED**, accepted through Phase 22.6-G-F1 with the rejected
+  checkpoint preserved. Phase 22.6 remains open. The next legal Slice is **Phase 22.6-H** (bounded
+  multi-sample Local destination precheck with cross-item destination-collision detection), now
+  written to `TASK.md`; remote SMB/OpenList/S3 destination prechecks, mutation-based capability
+  probing, multiple RecognitionTypes or multiple destination Storages per precheck request,
+  known-media duplicate detection, attachment prechecks, absolute mounted-path display and any
+  execution or authority change must not start.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration
