@@ -143,9 +143,9 @@ Commit SHA: 5e2da5c634f1fa72a40e5f50b035260418fe1a37
 High Audit: PASS — 2026-08-28; the checkpoint was independently reviewed with eight deliberate
 falsifications (five operator-UI mounts, three service-boundary rules), a marker 6 to 7 upgrade
 check, an end-to-end preview payload check, and the complete offline suite
-Push: PENDING — not required for this Slice closure; `5e2da5c634f1fa72a40e5f50b035260418fe1a37`
-and the docs record `279904c` are not yet contained in `origin/main`, and the phase-level
-Phase 22.6 closure will require an explicitly authorized push
+Push: DONE — 2026-08-28 under explicit operator authorization;
+`5e2da5c634f1fa72a40e5f50b035260418fe1a37` and the docs record `279904c` are contained in
+`origin/main` (`3ace53c7cdcc3312033f388d8f68d2d7d1a159ae`)
 ```
 
 Implementation evidence is recorded below under
@@ -162,9 +162,9 @@ High Audit: PASS — 2026-08-28; the checkpoint was independently reviewed with 
 falsifications (five operator-UI mounts, two narrowed job/decision assertions, four
 service-boundary rules), an independent 22-variant normalization-fidelity check, an independent
 zero-side-effect and C-identity probe, a marker 7 to 8 upgrade check, and the complete offline suite
-Push: PENDING — not required for this Slice closure; `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa`
-and the docs record are not yet contained in `origin/main`, and the phase-level Phase 22.6 closure
-will require an explicitly authorized push
+Push: DONE — 2026-08-28 under explicit operator authorization;
+`47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa` and its docs record are contained in `origin/main`
+(`3ace53c7cdcc3312033f388d8f68d2d7d1a159ae`)
 ```
 
 Implementation evidence is recorded below under
@@ -182,9 +182,9 @@ falsifications (four operator-UI mounts, one shared-composition safety guard, on
 bypass, one RecognitionType C identity), a planner-parity check against the real OrganizePlanner,
 a zero-Storage/zero-Provider/zero-Planner/zero-Executor probe, a marker 8 to 9 upgrade check, the
 unmodified organizer and Phase 22.6-C suites, and the complete offline suite
-Push: PENDING — not required for this Slice closure; `c7ec192b3b20f236cca5a70ed59cad43e0851242`
-and the docs record are not yet contained in `origin/main`, and the phase-level Phase 22.6 closure
-will require an explicitly authorized push
+Push: DONE — 2026-08-28 under explicit operator authorization;
+`c7ec192b3b20f236cca5a70ed59cad43e0851242` and its docs record are contained in `origin/main`
+(`3ace53c7cdcc3312033f388d8f68d2d7d1a159ae`)
 ```
 
 Implementation evidence is recorded below under "Phase 22.6-D Implementation Evidence (2026-08-28)"
@@ -202,7 +202,10 @@ reproduced operator-UI falsifications, an independent read-only destination prob
 production tree, and the complete offline suite. Product behaviour, safety boundaries and the
 Web/API journey were accepted; the checkpoint is rejected because four of the Task's own Required
 Test assertions are absent, including the Required Test 10 non-construction proof
-Push: NOT PERFORMED — a rejected checkpoint is not pushed; `main` remains ahead of `origin/main`
+Push: NOT PUSHED AS AN ACCEPTANCE — a rejected checkpoint is never pushed as a closure; the SHA is
+preserved as an ancestor and is therefore contained in `origin/main`
+(`3ace53c7cdcc3312033f388d8f68d2d7d1a159ae`, pushed 2026-08-28 under explicit operator
+authorization), never amended, squashed or rewritten
 ```
 
 Implementation evidence is recorded below under "Phase 22.6-E Implementation Evidence (2026-08-28)"
@@ -220,8 +223,9 @@ High Audit: PASS — 2026-08-28; four falsification counter-proofs (injected Pro
 the synchronous path and again inside the worker, swapped `relativeDestination`/`destinationPath`,
 truncated `directoriesToCreate`, removed defensive `INVALID_DESTINATION` refusal) each failed first
 and passed after restore; configuration marker 10 and Runtime marker 22 unchanged
-Push: PENDING — not required for this Slice closure; the phase-level Phase 22.6 closure requires an
-explicitly authorized push
+Push: DONE — 2026-08-28 under explicit operator authorization;
+`ee5225dd0e74a7382b6747c6315776413f7fd249` and the preserved rejected Phase 22.6-E checkpoint are
+contained in `origin/main` (`3ace53c7cdcc3312033f388d8f68d2d7d1a159ae`)
 ```
 
 The independent review record is "Phase 22.6-E-F1 High Review Result (2026-08-28): PASS".
@@ -236,12 +240,34 @@ falsifications (removed gate call, deleted Web not-applicable line, forced appli
 `capability_gap` branch), a verdict-space completeness check against the Phase 22.6-E projection, a
 Web/API parity check on permission and status code, byte-identity checks on the Phase 22.6-D and
 Phase 22.6-E suites, and the complete offline suite of 846 tests
-Push: PENDING — not required for this Slice closure; `e68e901a73107484dc0521b47b1b0001eed2b853` and
-this record are not yet contained in `origin/main`, and the phase-level Phase 22.6 closure will
-require an explicitly authorized push
+Push: DONE — 2026-08-28 under explicit operator authorization;
+`e68e901a73107484dc0521b47b1b0001eed2b853` and this record are contained in `origin/main`
+(`3ace53c7cdcc3312033f388d8f68d2d7d1a159ae`)
 ```
 
 The independent review record is "Phase 22.6-F High Review Result (2026-08-28): PASS".
+
+### Phase 22.6-G Web Checked-Activation Controls Cover All Three Requirements
+
+```text
+Status: PASS / CLOSED — accepted through the focused Phase 22.6-G-F1 correction; the rejected
+Phase 22.6-G checkpoint is preserved and is not amended, squashed or rewritten
+Commit SHA: 5ca1247156e6de4615dff53f5fc8e421bd8bf264
+High Audit: PASS — 2026-08-28; eleven independent falsification probes were all caught and each
+failed only `test_destination_precheck_blocking_sentence_contract_is_body_scoped`, five of them
+beyond the correction Task's requirement; the production tree is byte-identical to the rejected
+checkpoint, `tests/` has zero deletions, the three pinned suites are byte-identical, and
+configuration marker 10 and Runtime marker 22 are unchanged
+Rejected checkpoint: b9cc35e2677a35920042b5695f87b50a80025ef0 (FIX REQUIRED — 2026-08-28, preserved)
+Push: DONE — 2026-08-28 under explicit operator authorization;
+`5ca1247156e6de4615dff53f5fc8e421bd8bf264`, the preserved rejected checkpoint
+`b9cc35e2677a35920042b5695f87b50a80025ef0` and the closure record
+`3ace53c7cdcc3312033f388d8f68d2d7d1a159ae` are contained in `origin/main`
+```
+
+The independent review records are "Phase 22.6-G High Review Result (2026-08-28): FIX REQUIRED" and
+"Phase 22.6-G-F1 High Review Result (2026-08-28): PASS". Phase 22.6 itself remains open; the next
+legal Slice is Phase 22.6-H.
 
 ## Phase 22.6-A High Review Result (2026-08-27)
 

@@ -12,9 +12,11 @@ Preserved rejected checkpoints: b9cc35e2677a35920042b5695f87b50a80025ef0 (Phase 
   7353b0d22497e6e3e596c93c7052eea34daf27df (Phase 22.6-E),
   90ce13a6c6c39912dd389f71a1189314ff24eb5d (Phase 22.6-A) and
   08dfd4f921728755209b6d52347d28f221121c47 (Phase 22.5-E); never amended, squashed or rewritten
-Push gate: NOT BLOCKING — Slice closure does not require a push; every closed Phase 22.6
-  checkpoint and its documentation record is still absent from origin/main, and phase-level
-  Phase 22.6 closure requires an explicitly authorized push
+Push gate: SATISFIED — every closed Phase 22.6-A through 22.6-G checkpoint, the preserved rejected
+  checkpoints above and the review records through 3ace53c7cdcc3312033f388d8f68d2d7d1a159ae were
+  pushed to origin/main on 2026-08-28 under explicit operator authorization, so no accepted
+  checkpoint is unpushed. This Slice's own checkpoint stays local until its closure and a new
+  explicit authorization; phase-level Phase 22.6 closure still requires the Final Closure Audit
 Phase: 22.6 Naming / Classification / Organize configuration journey (roadmap section 5)
 Slice scope: extend the existing read-only Local destination precheck from one sample to a bounded
   list of up to 8 samples under one RecognitionType, keep every item's state, outcome and recovery
