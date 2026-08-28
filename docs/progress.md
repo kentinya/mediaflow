@@ -1207,6 +1207,125 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   probing, duplicate and cross-item collision detection, attachment prechecks, absolute mounted-path
   display and any execution change remain TARGET and must not start.
 
+## Phase 22.6-G High Review Result (2026-08-28): FIX REQUIRED
+
+- Status: FIX REQUIRED; rejected checkpoint SHA: `b9cc35e2677a35920042b5695f87b50a80025ef0`; High
+  Audit: FIX REQUIRED — 2026-08-28. This record is preserved; the rejected SHA is not amended,
+  squashed or rewritten, and the previously preserved rejected SHAs
+  `7353b0d22497e6e3e596c93c7052eea34daf27df`, `90ce13a6c6c39912dd389f71a1189314ff24eb5d` and
+  `08dfd4f921728755209b6d52347d28f221121c47` remain unmodified. Push: NOT PERFORMED; `main` stays
+  ahead of `origin/main` and no push authorization was requested or used.
+- Scope conformance verified against `TASK.md`: the checkpoint touches exactly seven files —
+  `mediaflow/interfaces/operator_ui.py` (+56/-18),
+  `mediaflow/application/configuration_objects.py` (+21/-4), `tests/test_operator_ui.py`
+  (+86/-21), `tests/test_configuration_destination_activation.py` (+68/-0),
+  `docs/architecture.md` (+8), `docs/product-experience.md` (+10) and one `TASK.md` status line. It
+  writes no `docs/progress.md` review record and no `docs/roadmap.md` gate row, correctly leaving
+  both High-only. No new endpoint call, evidence key, request field, response field, permission or
+  API status code appears, and no remote precheck, mutation probe, duplicate/attachment check or
+  execution change was introduced; the Configuration marker stays 10 and the Runtime marker 22,
+  independently confirmed in the installed-wheel smoke run.
+- Behaviour accepted at this SHA: the Web decision is now one shared predicate.
+  `destinationPrecheckActivationRequirement` derives Local applicability from the projected
+  `guided.objects.storages`/`mediaLibraries`, currency from the existing
+  `destinationPrecheckIsCurrent`, completion from `status === 'completed'` and the capability gap
+  from `result.verdict`, and `renderDestinationPrecheck`, `checkedActivationEvidenceIsCurrent` and
+  `destinationPrecheckBlocksCheckedActivation` all consume that one rule, so the guided panel, the
+  revision-detail actions and the precheck section cannot disagree. The blocked-branch set was
+  independently proven exhaustive: `satisfied` is false only when evidence is missing, stale,
+  not `completed`, or reports `capability_gap`, and each of those four cases assigns a message, so
+  no shipped path can reach the blocked branch with an empty sentence.
+- Web/server parity independently checked, not assumed: the four Web next actions are byte-equal in
+  meaning and wording to the four `next_action` strings `require_current_destination_precheck`
+  refuses with, including the failed case that repeats the stored bounded `failureCategory` and
+  falls back to "correct the destination configuration, then rerun the precheck" when the evidence
+  carries no next action; applicability agrees because `_objects(redact_remote=True)` preserves
+  Storage `id` and `type` for Local entries; staleness agrees because
+  `_destination_precheck_document` derives `stale` from the same version and digest comparison the
+  gate performs. Both interpolated values are bounded to 500 characters at the domain layer and were
+  already rendered on the same page at the parent commit, so this Slice adds no new
+  secret-exposure surface, and no credential, endpoint, `rootPath`, header, cookie, private path or
+  raw exception text appears in the diff.
+- The two folded-in deferred items are correct and falsifiable. Applicability is now total —
+  `require_current_destination_precheck` guards on `"mediaLibraries" in revision.document`, matching
+  `revision_detail`, and an independent probe reverting that guard fails
+  `test_omitted_media_libraries_is_not_applicable_for_checked_activation` with `ValueError`. The
+  activation module namespace is hardened by moving `MetadataProviderRegistry` behind
+  `TYPE_CHECKING` plus a module `__getattr__` and by calling
+  `organizer_application.OrganizePlanner()` at the use site; two independent probes confirm the
+  assertion bites, one adding a real module-level `OrganizerExecutor` import and one making
+  `__getattr__` return an import-time alias that would shadow a definition-site patch. Both fail
+  `test_activation_module_namespace_stays_free_of_construction_classes`, so the `AssertionError`
+  doubles behind the Phase 22.6-E, 22.6-E-F1 and 22.6-F non-construction proofs can no longer be
+  bypassed by a future import.
+- Contract and regression independently re-run on the reviewed checkout:
+  `tests/test_configuration_destination.py` is byte-identical to
+  `c7ec192b3b20f236cca5a70ed59cad43e0851242` and
+  `tests/test_configuration_destination_precheck.py` to
+  `ee5225dd0e74a7382b6747c6315776413f7fd249`; the Phase 22.6-F activation suite diff contains zero
+  deletions; the complete offline suite runs 849 tests with 7 external skips and 0 failures; ruff
+  check and ruff format, `compileall` and `pip check` are clean; both example configurations report
+  `Configuration valid`; the wheel builds, installs in isolation and reports markers 10 and 22;
+  `config/alist.json` stays ignored, untracked and unread; the tree is clean at the checkpoint. The
+  documentation CURRENT claims in `docs/architecture.md` and `docs/product-experience.md` match the
+  shipped behaviour, and leaving `docs/requirements.md` unchanged is correct because no requirement
+  ID describes the Web activation control as gating two requirements.
+- Rejected because the operator-visible sentence this Slice exists to produce is proven by nothing.
+  `mediaflow/interfaces/operator_ui.py:705`, `:708` and `:716` each assign
+  ``message = `Checked activation blocked: ${nextAction}.` `` for the missing, stale and
+  `capability_gap` cases, and no assertion in the repository contains that composed text — the only
+  match anywhere in `tests/` is the failed case's prefix at `tests/test_operator_ui.py:369`. An
+  independent probe deleting all three assignments left the complete 849-test suite green. The
+  consequence is not cosmetic: `message` stays `null`, so the precheck section renders the `text`
+  helper's bare `-` placeholder, and the `!requirement.message` guard in
+  `destinationPrecheckBlocksCheckedActivation` returns `null`, so the guided panel silently
+  withholds its button again and the revision-detail warning falls back to the two-requirement
+  sentence. That is precisely the pre-Slice defect the Slice was written to remove, restorable at all
+  three surfaces with every gate green.
+- Rejected because the shared predicate's return contract is unproven. Dropping `message` from
+  `return {applicable, evidence, current, completed, capabilityGap, satisfied, nextAction, message,
+  style};` at `mediaflow/interfaces/operator_ui.py:719` also left the whole suite green in an
+  independent probe, even though all four assignments survive: every consumer then reads
+  `activation.message === undefined` and the same three-surface regression appears. The existing
+  assertion on the failed-case assignment cannot catch this, because it proves the assignment exists,
+  not that the value reaches a consumer.
+- Rejected because the blocked branch's render payload is unproven and is a measurable strength
+  regression against the parent commit. `mediaflow/interfaces/operator_ui.py:727` was rewritten by an
+  independent probe to `text('p', 'Checked activation blocked.', 'warning')` — dropping the next
+  action the recovery rule requires and the `error` style — and the suite stayed green, because
+  `tests/test_operator_ui.py:384` and `:438` assert only the `else if (!activation.satisfied)`
+  condition prefix. At parent `f601606` this same deletion would have failed: that commit asserted
+  all four full sentences verbatim, including the closing period, and those verbatim assertions are
+  among the 21 deleted lines in `tests/test_operator_ui.py`. Proof strength therefore decreased on
+  the exact strings the Slice changed.
+- Together these violate the Slice's own Required Test 5 ("each new Web line and the predicate wiring
+  are proven by deletion, and the failing test for each deletion is named in the Completion Report"),
+  the wording half of Required Tests 2 and 3, the UX criterion "Every new or changed Web string is
+  proven by a body-scoped operator-UI assertion that fails when the line is deleted", and the Closure
+  Checklist item "All Required Tests exist, assert rather than assume, and each new Web line is
+  falsifiable". Everything else in Required Tests 1, 4, 6, 7, 8, 9 and 10 was verified present and
+  biting.
+- Rejected because `TASK.md` again carries no Completion Report. The Slice's own Closure Checklist
+  requires one recording actual commands and results, Required Test 5 requires the failing test for
+  each falsification to be named in it, and the Phase 22.6-F review already accepted this omission
+  once while stating that future Slices must record it. The correction must close it.
+- Non-blocking observations, recorded and explicitly not part of this correction: the same bounded
+  sentence now appears twice on one page when the destination precheck is the blocker — once beside
+  the guided control and once in the precheck section below it — which the Task's own instruction to
+  reuse one predicate and one message makes unavoidable and which no operator can misread; the
+  document-level applicability rule still means a Draft declaring an unrouted Local MediaLibrary
+  stays blocked until corrected or activated unchecked, unchanged from Phase 22.6-F and deliberately
+  a non-goal here; and the `-` fallback inside the `text` helper remains a general latent hazard for
+  any future null message, which the required assertions will now bound for this journey.
+- Verdict: **FIX REQUIRED**. The production behaviour shipped in this checkpoint is correct and no
+  regression, safety-boundary or user-journey break was found; the defect is that the Slice's
+  headline operator-visible strings and the predicate contract carrying them are unguarded, so the
+  journey can silently revert. `TASK.md` now contains only the focused Phase 22.6-G-F1 correction,
+  which is test-and-report-only: no production file may change. Phase 22.6-G is not closed, Phase
+  22.6 remains open, and remote SMB/OpenList/S3 destination prechecks, mutation-based capability
+  probing, duplicate and cross-item collision detection, attachment prechecks, absolute mounted-path
+  display and any execution change must not start.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration
