@@ -345,6 +345,45 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("No valid destination was produced", preview)
         self.assertIn("configurationRevisionEditable(revision)", preview)
 
+    def test_destination_precheck_is_reachable_read_only_and_actionable(self) -> None:
+        script = APP_JS.decode()
+        show_revision = _js_function_body(script, "showConfigurationRevision")
+        precheck = _js_function_body(script, "renderDestinationPrecheck")
+        mount = "renderDestinationPrecheck(data, guided);"
+        guided_start = show_revision.index("if (guided) {")
+        guided_body = _js_braced_body(show_revision, show_revision.index("{", guided_start))
+        visible = show_revision.rindex("detailContent.append(actions); detail.hidden = false;")
+
+        self.assertIn(mount, guided_body)
+        self.assertLess(show_revision.index(mount), visible)
+        self.assertIn(
+            "detailContent.append(text('h3', 'Read-only Local destination precheck'));",
+            precheck,
+        )
+        self.assertIn("controls.append(recognitionType, sample, actionButton(", precheck)
+        self.assertIn("Destination precheck RecognitionType", precheck)
+        self.assertIn("Destination precheck sample JSON", precheck)
+        self.assertIn("Run read-only destination precheck", precheck)
+        self.assertIn("detailContent.append(controls);", precheck)
+        self.assertIn("configurationRevisionEditable(revision)", precheck)
+        for label in (
+            "Destination Storage",
+            "MediaLibrary and Storage-relative root",
+            "Deepest existing ancestor",
+            "Directories that would be created",
+            "Projected conflict outcome",
+            "Proposed relative destination",
+            "Required capabilities",
+            "Declared destination capabilities",
+            "Missing capabilities",
+            "Read operations",
+            "Authority granted",
+        ):
+            self.assertIn(label, precheck)
+        self.assertIn("grants no overwrite, delete or execute authority", precheck)
+        self.assertIn("no fallback to Copy or Move", precheck)
+        self.assertIn("Destination is not ready", precheck)
+
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
         script = APP_JS.decode()
         mismatch_start = script.index("function renderConfigurationIdentityMismatch")

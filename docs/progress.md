@@ -741,6 +741,76 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   construction or mount-prefix display, combined activation evidence, execution, and any later
   Slice. This implementation evidence is not a High PASS or Phase closure.
 
+## Phase 22.6-E Implementation Evidence (2026-08-28)
+
+- Status: READY FOR COMMIT (pre-checkpoint); Commit SHA: PENDING; High Audit: PENDING. Workspace,
+  Git directory and index are writable under unrestricted filesystem access with approval mode
+  `never`, so this run is Git-writable / Full Access. Phase 22.6-D is PASS/CLOSED at
+  `c7ec192b3b20f236cca5a70ed59cad43e0851242`; its closure record is
+  `b1cd9bf591acfd50bba562d62834d44a1e8b7599`.
+- A Draft/Validated exact-revision read-only destination precheck now observes one real Local
+  destination. Request validation and destination resolution are shared with Phase 22.6-D through
+  one extracted helper pair, so the precheck answers about exactly the composition the preview
+  shows; `tests/test_configuration_destination.py` was left byte-unchanged and passes.
+- The destination Storage adapter is constructed from the unmodified revision document and its
+  declared capabilities are read before wrapping, because a forced `readOnly` document would report
+  every capability as absent and make the declared-versus-required comparison meaningless. Every
+  probe then runs through a `ReadOnlyStorageGuard` subclass that records bounded read operations and
+  whose mutation surface raises.
+- Inside that guard the production `OrganizePlanner.plan` and `ConflictResolver.apply_configured`
+  report destination-root existence and directory state, the deepest existing ancestor, the bounded
+  directory list that would have to be created, target existence, planner conflicts and the outcome
+  projected for the configured strategy: `ready`, `skip`, `rename` with the proposed relative
+  destination, `overwrite_requires_confirmation`, `manual_confirmation_required` or `invalid`. No
+  organizer, planner, executor or conflict-resolution production file was edited.
+- Capabilities required by the resolved OrganizePolicy are compared against the declared destination
+  capabilities; a missing capability produces a `capability_gap` verdict stating that an unsupported
+  capability is a failure with no fallback to Copy or Move. Evidence records
+  `pathScope: storage_relative` and `sideEffects: none`, zeroed guard mutation counters, the bounded
+  read-operation list and `authorityGranted: none`, and grants no overwrite, delete or execute
+  authority.
+- Failures are bounded and actionable: `missing_destination_root`, `destination_root_not_directory`,
+  `unsupported_storage_type`, `invalid_configuration`, `invalid_path`, `permission_denied`,
+  `timeout`, `unavailable`, `capacity_unavailable` and `read_only_violation`, plus every existing
+  composition category. Composition failures and unsupported Storage types are decided before any
+  Storage adapter is constructed; occupied single-slot capacity refuses without starting a probe and
+  without overwriting stored evidence; `read_only_violation` is the only category reported as not
+  retry-safe.
+- The authenticated API adds a `destination-precheck` POST route on the exact revision under
+  `MANAGE_CONFIGURATION` with an exact request key set, and the guided Web revision view mounts a
+  read-only precheck section with evidence state, verdict, capability comparison, recovery action
+  and a permanent no-authority warning. Invalid shapes remain HTTP 400 without replacing prior
+  evidence, stale requests remain 409, and an unavailable managed service remains 503.
+- Configuration-management schema marker advances 9 to 10 with a separate additive precheck table
+  and status index; revisions and naming, classification, organize-authority, destination-preview
+  and setup-check evidence are preserved on upgrade from marker 9 and from marker 8. Runtime marker
+  remains 22. No activation or Active projection change.
+- Read-only proof was taken three ways: all guard mutation counters are zero, the destination tree
+  snapshot is byte-identical before and after every probe, and a patched planner that attempts
+  `create_directory` through the guard is reported as `read_only_violation` with the tree still
+  unchanged.
+- Four required Web falsifications were reproduced and restored: removing the guided mount, moving
+  it after final visibility, detaching the controls and detaching the heading each made the focused
+  UI test fail; the restored file is byte-identical to the pre-experiment copy and passed before and
+  after.
+- The focused configuration, naming, classification, organizer, conflict, UI and API group ran 247
+  tests with 0 failures. The complete offline suite ran 840 tests: 833 passed, 7 existing
+  external-service tests skipped, 0 failed; skips are not acceptance evidence.
+- Ruff check and format across 307 files, compileall, `pip check`, both example configuration
+  validations, wheel build and isolated installed-wheel smoke (Runtime schema 22), 120 markdown
+  files with 0 broken local links, `git diff --check`, the FFmpeg/FFprobe audit, business-layer
+  filesystem-mutation audit and private-configuration checks passed. Wheel SHA-256:
+  `e8ddb96e42c3dfe38f1f2224eb7e5f5fbb584644ae8713a8e1892940419aa805`; a re-run at the checkpoint
+  produced `921f587ba1741c537918794b33c3282004ac219897423a96c9a46f9c4dbaed7a` with the same
+  runtime schema marker 22, so the digest identifies one build and is not reproducible across
+  builds, matching the accepted Phase 22.6-B note.
+- All destination I/O used temporary directories only; no real Storage, Provider or production data
+  was used and `config/alist.json` was never read, staged or committed.
+- Deliberately out of scope: remote SMB/OpenList/S3 destination prechecks, mutation-based capability
+  probing, duplicate and cross-item collision detection, attachment prechecks, absolute mounted-path
+  display, combined activation evidence, execution, and any later Slice. This implementation
+  evidence is not a High PASS or Phase closure.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration

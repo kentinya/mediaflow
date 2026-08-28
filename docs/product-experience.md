@@ -262,7 +262,7 @@ Task, Job, queue or media work is created.
 
 Phase 22.6-C is independently accepted at `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa`.
 
-## Phase 22.6-D exact-revision composed destination preview (CURRENT implementation; awaiting review)
+## Phase 22.6-D exact-revision composed destination preview (CURRENT; PASS / CLOSED)
 
 The same revision view accepts one RecognitionType and one bounded path or synthetic sample, then
 uses the production resolver, Naming engine, Classification engine and the exact composition/path
@@ -273,9 +273,34 @@ bounded category, durable state and explicit correction/rerun action; later edit
 evidence stale.
 
 This offline action constructs no Storage, Provider, Planner or Executor, applies no Storage mount
-prefix, and performs no existence, collision or capability probe. Destination prechecks, absolute
-mounted-path display, combined activation evidence and execution remain TARGET. Checked activation
-and Active runtime-consumption semantics are unchanged pending independent High Review.
+prefix, and performs no existence, collision or capability probe. Phase 22.6-D is independently
+accepted at `c7ec192b3b20f236cca5a70ed59cad43e0851242` and does not change checked activation.
+
+## Phase 22.6-E read-only Local destination precheck (CURRENT implementation; awaiting review)
+
+Before activating a Draft, the operator can now ask one question about the real destination without
+changing it: would this composed path actually work. The same revision view takes one
+RecognitionType and one bounded sample and reports whether the configured MediaLibrary root exists
+and is a directory, the deepest ancestor that already exists, the bounded list of directories that
+would have to be created, whether the target file already exists, and what the configured conflict
+strategy would do about it — Skip, Rename with the proposed name, Overwrite requiring confirmation,
+or Manual confirmation. It also compares the capabilities the destination Storage declares against
+the capabilities the resolved OrganizePolicy requires, and reports a `capability_gap` verdict when
+one is missing, stating that an unsupported capability is a failure with no fallback to Copy or
+Move.
+
+Every probe runs through a read-only guard, so nothing on the destination is created, renamed,
+overwritten or deleted; the evidence reports zeroed mutation counters, `sideEffects: none`, the
+bounded read operations performed, `pathScope: storage_relative` and `authorityGranted: none`. A
+missing or non-directory root, a permission or connectivity error, an unsupported non-Local Storage,
+occupied check capacity, or the overall deadline each names a bounded category, the durable state
+and the explicit action that resolves it; a later Draft edit keeps the evidence but labels it stale
+and names the rerun. Only Local destination Storage is supported in this Slice.
+
+Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing, duplicate and
+cross-item collision detection, attachment prechecks, absolute mounted-path display, combined
+activation evidence and execution remain TARGET. Checked activation and Active runtime-consumption
+semantics are unchanged pending independent High Review.
 
 ## A. First-time setup
 

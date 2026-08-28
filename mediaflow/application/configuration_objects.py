@@ -19,6 +19,7 @@ from mediaflow.application.classification import (
     ClassificationPreviewService,
 )
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+from mediaflow.application.conflict_resolution import ConflictResolutionError, ConflictResolver
 from mediaflow.application.media_parser import MediaParserService
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.naming import (
@@ -26,6 +27,7 @@ from mediaflow.application.naming import (
     NamingPreviewService,
     validate_naming_policy,
 )
+from mediaflow.application.organizer import OrganizePlanner
 from mediaflow.application.policies import RecognitionTypePolicyResolver
 from mediaflow.application.read_only_storage import (
     ReadOnlyStorageGuard,
@@ -41,6 +43,7 @@ from mediaflow.domain.classification import (
     ClassificationError,
     ClassificationErrorCode,
     ClassificationPolicy,
+    ClassificationResult,
     ClassificationRule,
 )
 from mediaflow.domain.configuration_management import (
@@ -50,6 +53,7 @@ from mediaflow.domain.configuration_management import (
     ClassificationPreviewEvidence,
     ConfigurationActivationConflict,
     ConfigurationClassificationPreviewStatus,
+    ConfigurationDestinationPrecheckStatus,
     ConfigurationDestinationPreviewStatus,
     ConfigurationNamingPreviewStatus,
     ConfigurationObjectKind,
@@ -60,6 +64,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationSetupCheckStatus,
     ConfigurationStrategyTestStatus,
     ConfigurationVersionConflict,
+    DestinationPrecheckEvidence,
     DestinationPreviewEvidence,
     LocalSetupCheckEvidence,
     ManagedConfigurationRevision,
@@ -69,6 +74,7 @@ from mediaflow.domain.configuration_management import (
     OrganizeAuthorityEvidence,
     RecognitionStrategyTestEvidence,
 )
+from mediaflow.domain.library import MediaLibrary
 from mediaflow.domain.metadata import (
     METADATA_POLICY_CONFIGURATION_FIELDS,
     MediaIdentity,
@@ -88,9 +94,12 @@ from mediaflow.domain.naming import (
     NamingErrorCode,
     NamingMediaTypeMode,
     NamingPolicy,
+    NamingResult,
 )
 from mediaflow.domain.organizer import (
     ConflictStrategy,
+    ConflictType,
+    DestinationComposition,
     DirectoryCleanupMode,
     OrganizeOperationType,
     OrganizePolicy,
@@ -105,11 +114,13 @@ from mediaflow.domain.recognition import (
     LogicalOperator,
     PolicyReference,
     PolicyResolutionError,
+    RecognitionResult,
     RecognitionStatus,
     RecognitionType,
     RecognitionTypePolicy,
+    ResolvedRecognitionPolicy,
 )
-from mediaflow.domain.storage import StorageError, StorageErrorCode
+from mediaflow.domain.storage import StorageCapabilities, StorageError, StorageErrorCode
 from mediaflow.infrastructure.metadata_provider_bootstrap import MetadataProviderBootstrapError
 from mediaflow.infrastructure.runtime_configuration import (
     load_managed_runtime_configuration,
@@ -122,6 +133,57 @@ class _DestinationPreviewFailure(ValueError):
     def __init__(self, category: str, message: str) -> None:
         super().__init__(message)
         self.category = category
+
+
+class _DestinationPrecheckMutationError(ReadOnlyStorageMutationError):
+    pass
+
+
+class _ReadOnlyDestinationStorage(ReadOnlyStorageGuard):
+    _MAX_RECORDED_READS = 128
+
+    def __init__(self, storage) -> None:
+        super().__init__(storage)
+        self.read_operations: list[str] = []
+        self.read_operation_count = 0
+        self.last_storage_error: StorageError | None = None
+
+    def _record(self, operation: str, path: str) -> None:
+        self.read_operation_count += 1
+        if len(self.read_operations) < self._MAX_RECORDED_READS:
+            self.read_operations.append(f"{operation}:{path}")
+
+    def exists(self, path: str) -> bool:
+        self._record("exists", path)
+        try:
+            return super().exists(path)
+        except StorageError as error:
+            self.last_storage_error = error
+            raise
+
+    def stat(self, path: str):
+        self._record("stat", path)
+        try:
+            return super().stat(path)
+        except StorageError as error:
+            self.last_storage_error = error
+            raise
+
+    def _mutation_error(self, operation: str) -> _DestinationPrecheckMutationError:
+        return _DestinationPrecheckMutationError(
+            f"destination precheck forbids Storage mutation: {operation}"
+        )
+
+
+@dataclass(frozen=True)
+class _DestinationResolution:
+    normalized_input: dict[str, object]
+    resolved: ResolvedRecognitionPolicy
+    organize_policy: OrganizePolicy
+    naming: NamingResult
+    classification: ClassificationResult
+    library: dict[str, object]
+    composition: DestinationComposition
 
 
 class ConfigurationObjectService:
@@ -380,6 +442,7 @@ class ConfigurationObjectService:
             "classificationPreview": self._classification_preview_document(revision),
             "organizeAuthority": self._organize_authority_document(revision),
             "destinationPreview": self._destination_preview_document(revision),
+            "destinationPrecheck": self._destination_precheck_document(revision),
         }
 
     def references(self, revision_id: str) -> dict[str, dict[str, object]]:
@@ -953,14 +1016,7 @@ class ConfigurationObjectService:
             cleanup_enabled = policy.source_directory_cleanup.mode is not DirectoryCleanupMode.NONE
             overwrite = policy.conflict_strategy is ConflictStrategy.OVERWRITE
             delete_authorized = overwrite or cleanup_enabled
-            required_capabilities = {
-                OrganizeOperationType.MOVE: ["can_move"],
-                OrganizeOperationType.COPY: ["can_copy"],
-                OrganizeOperationType.HARD_LINK: ["can_hard_link"],
-                OrganizeOperationType.SOFT_LINK: ["can_soft_link"],
-            }[policy.operation]
-            if delete_authorized:
-                required_capabilities.append("can_delete")
+            required_capabilities = self._required_storage_capabilities(policy)
             warnings: list[str] = []
             if overwrite:
                 warnings.append(
@@ -1063,127 +1119,23 @@ class ConfigurationObjectService:
                 durable_state="current_draft_and_prior_destination_preview_preserved",
                 next_action="reload the revision and explicitly rerun destination preview",
             )
-        if (
-            not isinstance(recognition_type, str)
-            or not recognition_type.strip()
-            or len(recognition_type) > 64
-            or "\x00" in recognition_type
-        ):
-            raise ValueError("destination preview RecognitionType must be bounded and non-empty")
-        if not isinstance(sample, Mapping):
-            raise ValueError("destination preview sample must be an object")
-        allowed_sample_fields = self._NAMING_SAMPLE_FIELDS | self._CLASSIFICATION_SAMPLE_FIELDS
-        if any(not isinstance(key, str) or len(key) > 64 for key in sample):
-            raise ValueError("destination preview sample field names must be bounded text")
-        if unknown := set(sample).difference(allowed_sample_fields):
-            raise ValueError(
-                f"destination preview sample contains unsupported field {sorted(unknown)[0]!r}"
-            )
-        if "path" in sample and len(sample) != 1:
-            raise ValueError("destination preview path mode accepts only the path field")
+        self._validate_destination_request(recognition_type, sample, "destination preview")
 
         normalized_input: dict[str, object] = {}
+        resolution_state: dict[str, object] = {}
         try:
-            resolver, _ = self._policy_resolution_catalog(revision.document)
-            resolved = resolver.resolve(RecognitionType(recognition_type, recognition_type))
-            if "path" in sample:
-                naming_sample = classification_sample = dict(sample)
-            else:
-                naming_sample = {
-                    key: copy.deepcopy(value)
-                    for key, value in sample.items()
-                    if key in self._NAMING_SAMPLE_FIELDS
-                }
-                classification_sample = {
-                    key: copy.deepcopy(value)
-                    for key, value in sample.items()
-                    if key in self._CLASSIFICATION_SAMPLE_FIELDS
-                }
-                naming_sample["recognitionType"] = recognition_type
-                classification_sample["recognitionType"] = recognition_type
-            naming_input, naming_context = self._naming_context(naming_sample)
-            _, classification_context = self._classification_context(classification_sample)
-            normalized_input = (
-                naming_input
-                if "path" in sample
-                else {"mode": "synthetic", **copy.deepcopy(dict(sample))}
+            resolution = self._resolve_destination(
+                revision.document,
+                recognition_type,
+                sample,
+                normalized_input,
+                resolution_state,
             )
-            naming_identity = replace(
-                naming_context.media_identity, recognition_type_id=recognition_type
-            )
-            naming_context = replace(
-                naming_context,
-                recognition_type_id=recognition_type,
-                media_identity=naming_identity,
-            )
-            classification_identity = replace(
-                classification_context.media_identity, recognition_type_id=recognition_type
-            )
-            classification_context = replace(
-                classification_context,
-                recognition_type=resolved.recognition_type,
-                media_identity=classification_identity,
-            )
-            naming_policies = tuple(
-                self._naming_policy(value)
-                for value in self._canonical_objects(revision.document, "namingPolicies")
-            )
-            naming = NamingPreviewService(NamingPolicyRegistry(naming_policies)).preview(
-                naming_context, resolved.naming_policy_id
-            )
-            classification_policies = tuple(
-                self._classification_policy(value)
-                for value in self._canonical_objects(revision.document, "classificationPolicies")
-            )
-            classification = ClassificationPreviewService(
-                ClassificationPolicyRegistry(classification_policies)
-            ).preview(classification_context, resolved.classification_policy_id)
-            if classification.status.value != "classified":
-                raise ClassificationError(
-                    ClassificationErrorCode.INVALID_RULE,
-                    "no enabled classification rule matched the destination sample",
-                )
-            libraries = {
-                str(value.get("id")): value
-                for value in self._canonical_objects(revision.document, "mediaLibraries")
-            }
-            library = libraries.get(classification.media_library_id)
-            if library is None:
-                raise _DestinationPreviewFailure(
-                    "unresolved_media_library",
-                    f"MediaLibrary {classification.media_library_id!r} is unresolved",
-                )
-            root_path = library.get("rootPath")
-            if not isinstance(root_path, str):
-                raise _DestinationPreviewFailure(
-                    "unsafe_destination",
-                    f"MediaLibrary {classification.media_library_id!r}.rootPath is unsafe",
-                )
-            composition = compose_destination(
-                root_path,
-                classification.relative_path,
-                naming.directory,
-                naming.directory_segments,
-                naming.filename,
-            )
-            if not composition.safe:
-                owners = {
-                    "mediaLibrary.rootPath": f"MediaLibrary:{classification.media_library_id}",
-                    "classification.relativePath": (
-                        f"ClassificationPolicy:{resolved.classification_policy_id}"
-                    ),
-                    "naming.directory": f"NamingPolicy:{resolved.naming_policy_id}",
-                    "naming.filename": f"NamingPolicy:{resolved.naming_policy_id}",
-                }
-                contribution = composition.unsafe_contribution or "destination"
-                owner = owners.get(
-                    contribution,
-                    f"NamingPolicy:{resolved.naming_policy_id}",
-                )
-                raise _DestinationPreviewFailure(
-                    "unsafe_destination",
-                    f"unsafe contribution {contribution!r} owned by {owner}",
-                )
+            resolved = resolution.resolved
+            naming = resolution.naming
+            classification = resolution.classification
+            library = resolution.library
+            composition = resolution.composition
             result = {
                 "recognitionType": resolved.recognition_type_id,
                 "recognitionTypePolicyId": resolved.type_policy_id,
@@ -1216,6 +1168,7 @@ class ConfigurationObjectService:
                 ),
             )
         except (PolicyResolutionError, NamingError, ClassificationError, ValueError) as error:
+            resolved = resolution_state.get("resolved")
             if isinstance(error, (PolicyResolutionError, NamingError, ClassificationError)):
                 category = error.code.value
             elif isinstance(error, _DestinationPreviewFailure):
@@ -1252,6 +1205,626 @@ class ConfigurationObjectService:
                 ),
             )
         return self._repository.save_destination_preview(evidence)
+
+    def _validate_destination_request(
+        self, recognition_type: str, sample: Mapping[str, object], label: str
+    ) -> None:
+        if (
+            not isinstance(recognition_type, str)
+            or not recognition_type.strip()
+            or len(recognition_type) > 64
+            or "\x00" in recognition_type
+        ):
+            raise ValueError(f"{label} RecognitionType must be bounded and non-empty")
+        if not isinstance(sample, Mapping):
+            raise ValueError(f"{label} sample must be an object")
+        allowed = self._NAMING_SAMPLE_FIELDS | self._CLASSIFICATION_SAMPLE_FIELDS
+        if any(not isinstance(key, str) or len(key) > 64 for key in sample):
+            raise ValueError(f"{label} sample field names must be bounded text")
+        if unknown := set(sample).difference(allowed):
+            raise ValueError(f"{label} sample contains unsupported field {sorted(unknown)[0]!r}")
+        if "path" in sample and len(sample) != 1:
+            raise ValueError(f"{label} path mode accepts only the path field")
+
+    def _resolve_destination(
+        self,
+        document: Mapping[str, object],
+        recognition_type: str,
+        sample: Mapping[str, object],
+        normalized_input: dict[str, object],
+        resolution_state: dict[str, object] | None = None,
+    ) -> _DestinationResolution:
+        resolver, organize_policies = self._policy_resolution_catalog(document)
+        resolved = resolver.resolve(RecognitionType(recognition_type, recognition_type))
+        if resolution_state is not None:
+            resolution_state["resolved"] = resolved
+        if "path" in sample:
+            naming_sample = classification_sample = dict(sample)
+        else:
+            naming_sample = {
+                key: copy.deepcopy(value)
+                for key, value in sample.items()
+                if key in self._NAMING_SAMPLE_FIELDS
+            }
+            classification_sample = {
+                key: copy.deepcopy(value)
+                for key, value in sample.items()
+                if key in self._CLASSIFICATION_SAMPLE_FIELDS
+            }
+            naming_sample["recognitionType"] = recognition_type
+            classification_sample["recognitionType"] = recognition_type
+        naming_input, naming_context = self._naming_context(naming_sample)
+        _, classification_context = self._classification_context(classification_sample)
+        normalized_input.update(
+            naming_input
+            if "path" in sample
+            else {"mode": "synthetic", **copy.deepcopy(dict(sample))}
+        )
+        naming_identity = replace(
+            naming_context.media_identity, recognition_type_id=recognition_type
+        )
+        naming_context = replace(
+            naming_context,
+            recognition_type_id=recognition_type,
+            media_identity=naming_identity,
+        )
+        classification_identity = replace(
+            classification_context.media_identity, recognition_type_id=recognition_type
+        )
+        classification_context = replace(
+            classification_context,
+            recognition_type=resolved.recognition_type,
+            media_identity=classification_identity,
+        )
+        naming_policies = tuple(
+            self._naming_policy(value)
+            for value in self._canonical_objects(document, "namingPolicies")
+        )
+        naming = NamingPreviewService(NamingPolicyRegistry(naming_policies)).preview(
+            naming_context, resolved.naming_policy_id
+        )
+        classification_policies = tuple(
+            self._classification_policy(value)
+            for value in self._canonical_objects(document, "classificationPolicies")
+        )
+        classification = ClassificationPreviewService(
+            ClassificationPolicyRegistry(classification_policies)
+        ).preview(classification_context, resolved.classification_policy_id)
+        if classification.status.value != "classified":
+            raise ClassificationError(
+                ClassificationErrorCode.INVALID_RULE,
+                "no enabled classification rule matched the destination sample",
+            )
+        libraries = {
+            str(value.get("id")): value
+            for value in self._canonical_objects(document, "mediaLibraries")
+        }
+        library = libraries.get(classification.media_library_id)
+        if library is None:
+            raise _DestinationPreviewFailure(
+                "unresolved_media_library",
+                f"MediaLibrary {classification.media_library_id!r} is unresolved",
+            )
+        root_path = library.get("rootPath")
+        if not isinstance(root_path, str):
+            raise _DestinationPreviewFailure(
+                "unsafe_destination",
+                f"MediaLibrary {classification.media_library_id!r}.rootPath is unsafe",
+            )
+        composition = compose_destination(
+            root_path,
+            classification.relative_path,
+            naming.directory,
+            naming.directory_segments,
+            naming.filename,
+        )
+        if not composition.safe:
+            owners = {
+                "mediaLibrary.rootPath": f"MediaLibrary:{classification.media_library_id}",
+                "classification.relativePath": (
+                    f"ClassificationPolicy:{resolved.classification_policy_id}"
+                ),
+                "naming.directory": f"NamingPolicy:{resolved.naming_policy_id}",
+                "naming.filename": f"NamingPolicy:{resolved.naming_policy_id}",
+            }
+            contribution = composition.unsafe_contribution or "destination"
+            owner = owners.get(contribution, f"NamingPolicy:{resolved.naming_policy_id}")
+            raise _DestinationPreviewFailure(
+                "unsafe_destination", f"unsafe contribution {contribution!r} owned by {owner}"
+            )
+        return _DestinationResolution(
+            normalized_input,
+            resolved,
+            organize_policies[resolved.organize_policy_id],
+            naming,
+            classification,
+            library,
+            composition,
+        )
+
+    def destination_precheck(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        recognition_type: str,
+        sample: Mapping[str, object],
+    ) -> DestinationPrecheckEvidence:
+        revision = self._managed.require(revision_id)
+        if revision.status not in {
+            ManagedConfigurationStatus.DRAFT,
+            ManagedConfigurationStatus.VALIDATED,
+        }:
+            raise ConfigurationVersionConflict(
+                "destination precheck requires a Draft or Validated revision",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+            )
+        if revision.version != expected_version or revision.digest != expected_digest:
+            raise ConfigurationVersionConflict(
+                "destination precheck requires the exact current revision; reload before checking",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+                durable_state="current_draft_and_prior_destination_precheck_preserved",
+                next_action="reload the revision and explicitly rerun destination precheck",
+            )
+        self._validate_destination_request(recognition_type, sample, "destination precheck")
+        normalized_input: dict[str, object] = {}
+        resolution_state: dict[str, object] = {}
+        try:
+            resolution = self._resolve_destination(
+                revision.document,
+                recognition_type,
+                sample,
+                normalized_input,
+                resolution_state,
+            )
+        except (PolicyResolutionError, NamingError, ClassificationError, ValueError) as error:
+            resolved = resolution_state.get("resolved")
+            category, message = self._destination_failure_details(
+                error,
+                resolved if isinstance(resolved, ResolvedRecognitionPolicy) else None,
+            )
+            evidence = self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                normalized_input,
+                category,
+                message,
+                "fix the composition in this Draft, rerun destination preview, then rerun precheck",
+            )
+            return self._repository.save_destination_precheck(evidence)
+
+        storage_id = str(resolution.library.get("storageId", ""))
+        storage_values = {
+            str(value.get("id")): value
+            for value in self._canonical_objects(revision.document, "storages")
+        }
+        storage_value = storage_values.get(storage_id)
+        if storage_value is None:
+            evidence = self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                normalized_input,
+                "invalid_configuration",
+                "destination Storage is unresolved",
+                "add or correct the destination Storage in this Draft, then rerun precheck",
+            )
+            return self._repository.save_destination_precheck(evidence)
+        if str(storage_value.get("type", "")).lower() != "local":
+            evidence = self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                normalized_input,
+                "unsupported_storage_type",
+                f"Storage {storage_id!r} is not supported; destination precheck is Local-only",
+                "point the MediaLibrary at Local Storage or wait for remote precheck support",
+            )
+            return self._repository.save_destination_precheck(evidence)
+        if not self._acquire_setup_check():
+            return self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                normalized_input,
+                "capacity_unavailable",
+                "destination precheck capacity is occupied by an unfinished check",
+                "wait for the in-flight check to finish, then rerun destination precheck",
+            )
+        try:
+            future = self._setup_check_executor.submit(
+                self._run_destination_precheck,
+                revision,
+                actor,
+                recognition_type,
+                resolution,
+                storage_id,
+            )
+        except Exception:
+            self._release_setup_check()
+            evidence = self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                normalized_input,
+                "unavailable",
+                "destination precheck worker is unavailable",
+                "inspect service health, then rerun destination precheck",
+            )
+            return self._repository.save_destination_precheck(evidence)
+        lease = _SetupCheckLease(self._release_setup_check)
+        future.add_done_callback(lambda _future: lease.worker_finished())
+        try:
+            try:
+                evidence = future.result(timeout=self._setup_check_timeout_seconds)
+            except FutureTimeoutError:
+                evidence = self._destination_precheck_failure(
+                    revision,
+                    actor,
+                    recognition_type,
+                    normalized_input,
+                    "timeout",
+                    "destination precheck exceeded its overall deadline",
+                    "wait for the in-flight check to finish, fix availability, then rerun",
+                )
+            except Exception:
+                evidence = self._destination_precheck_failure(
+                    revision,
+                    actor,
+                    recognition_type,
+                    normalized_input,
+                    "unavailable",
+                    "destination precheck worker failed (details redacted)",
+                    "inspect service health and configuration, then rerun precheck",
+                )
+            return self._repository.save_destination_precheck(evidence)
+        finally:
+            lease.response_finished()
+
+    def _run_destination_precheck(
+        self,
+        revision: ManagedConfigurationRevision,
+        actor: str,
+        recognition_type: str,
+        resolution: _DestinationResolution,
+        storage_id: str,
+    ) -> DestinationPrecheckEvidence:
+        guard: _ReadOnlyDestinationStorage | None = None
+        try:
+            if self._managed.bootstrap_database_path is not None:
+                runtime = load_managed_runtime_configuration(
+                    revision.document,
+                    bootstrap_database_path=self._managed.bootstrap_database_path,
+                )
+            else:
+                runtime = load_runtime_configuration(revision.document)
+            created = runtime.create_storages(storage_ids={storage_id})
+            adapter = created.get(storage_id)
+            if adapter is None:
+                raise _DestinationPreviewFailure(
+                    "invalid_configuration", "Local destination Storage was not created"
+                )
+            capabilities = adapter.capabilities
+            guard = _ReadOnlyDestinationStorage(adapter)
+            root = resolution.composition.media_library_root
+            root_exists = guard.exists(root)
+            if not root_exists:
+                return self._destination_precheck_failure(
+                    revision,
+                    actor,
+                    recognition_type,
+                    resolution.normalized_input,
+                    "missing_destination_root",
+                    "configured MediaLibrary root does not exist",
+                    "create the root out of band or correct MediaLibrary.rootPath, then rerun",
+                    result=self._destination_probe_identity(resolution, storage_id, False, False),
+                )
+            root_entry = guard.stat(root)
+            if not root_entry.is_directory:
+                return self._destination_precheck_failure(
+                    revision,
+                    actor,
+                    recognition_type,
+                    resolution.normalized_input,
+                    "destination_root_not_directory",
+                    "configured MediaLibrary root is not a directory",
+                    "correct MediaLibrary.rootPath, then rerun destination precheck",
+                    result=self._destination_probe_identity(resolution, storage_id, True, False),
+                )
+            parent = posixpath.dirname(resolution.composition.relative_destination)
+            segments = [] if not parent else parent.split("/")
+            if len(segments) > 64:
+                raise _DestinationPreviewFailure(
+                    "invalid_path", "destination ancestor depth exceeds 64 segments"
+                )
+            deepest = root
+            directories_to_create: list[str] = []
+            for index, segment in enumerate(segments):
+                candidate = posixpath.join(root, *segments[: index + 1])
+                if guard.exists(candidate):
+                    if not guard.stat(candidate).is_directory:
+                        raise _DestinationPreviewFailure(
+                            "invalid_path", "an existing destination ancestor is not a directory"
+                        )
+                    deepest = candidate
+                    continue
+                directories_to_create = [
+                    posixpath.join(root, *segments[: offset + 1])
+                    for offset in range(index, len(segments))
+                ]
+                break
+            policy = resolution.organize_policy
+            type_policy = RecognitionTypePolicy(
+                resolution.resolved.type_policy_id,
+                resolution.resolved.recognition_type,
+                resolution.resolved.metadata_policy_id,
+                resolution.resolved.naming_policy_id,
+                resolution.resolved.classification_policy_id,
+                policy,
+            )
+            plan = OrganizePlanner().plan(
+                source_storage_id="destination-precheck-source",
+                source="destination-precheck-source.mkv",
+                recognition=RecognitionResult(
+                    resolution.resolved.recognition_type, "destination-precheck"
+                ),
+                type_policy=type_policy,
+                media_library=MediaLibrary(
+                    str(resolution.library.get("id")),
+                    str(resolution.library.get("name") or resolution.library.get("id")),
+                    storage_id,
+                    root,
+                ),
+                naming=resolution.naming,
+                classification=resolution.classification,
+                media_identity=None,
+                target_storage=guard,
+                claimed_destinations=None,
+                known_media=None,
+            )
+            if guard.last_storage_error is not None:
+                raise guard.last_storage_error
+            conflicts = [conflict.type.value for conflict in plan.conflicts]
+            target_exists = ConflictType.DESTINATION_EXISTS in {
+                conflict.type for conflict in plan.conflicts
+            }
+            resolved_plan = ConflictResolver().apply_configured(plan, policy, guard)
+            if guard.last_storage_error is not None:
+                raise guard.last_storage_error
+            if any(
+                conflict.type is ConflictType.INVALID_DESTINATION for conflict in plan.conflicts
+            ):
+                projected = "invalid"
+            elif not plan.conflicts:
+                projected = "ready"
+            elif policy.conflict_strategy is ConflictStrategy.SKIP:
+                projected = "skip"
+            elif policy.conflict_strategy is ConflictStrategy.RENAME:
+                projected = "rename"
+            elif policy.conflict_strategy is ConflictStrategy.OVERWRITE:
+                projected = "overwrite_requires_confirmation"
+            else:
+                projected = "manual_confirmation_required"
+            proposed = (
+                resolved_plan.relative_destination
+                if projected == "rename" and resolved_plan is not None
+                else None
+            )
+            required = self._required_storage_capabilities(policy)
+            declared = self._capability_names(capabilities)
+            missing = [value for value in required if value not in declared]
+            verdict = "capability_gap" if missing else projected
+            if guard is not None and any(guard.mutation_calls.values()):
+                raise _DestinationPrecheckMutationError("guard counted a forbidden mutation")
+            result = {
+                **self._destination_probe_identity(resolution, storage_id, True, True),
+                "relativeDestination": resolution.composition.relative_destination,
+                "destinationPath": resolution.composition.target,
+                "deepestExistingAncestor": deepest,
+                "directoriesToCreate": directories_to_create,
+                "targetExists": target_exists,
+                "conflictProjection": {
+                    "configuredStrategy": policy.conflict_strategy.value,
+                    "plannerConflicts": conflicts,
+                    "projectedOutcome": projected,
+                    "proposedRelativeDestination": proposed,
+                },
+                "requiredStorageCapabilities": required,
+                "destinationStorageCapabilities": declared,
+                "missingStorageCapabilities": missing,
+                "requiredByOperation": policy.operation.value,
+                "fallback": "none; an unsupported capability is a failure",
+                "probeOperations": list(guard.read_operations),
+                "probeOperationCount": guard.read_operation_count,
+                "probeOperationsTruncated": (
+                    guard.read_operation_count > len(guard.read_operations)
+                ),
+                "guardMutationCalls": dict(guard.mutation_calls),
+                "verdict": verdict,
+                "authorityGranted": "none",
+            }
+            return DestinationPrecheckEvidence(
+                revision.revision_id,
+                revision.version,
+                revision.digest,
+                ConfigurationDestinationPrecheckStatus.COMPLETED,
+                datetime.now(UTC),
+                actor,
+                recognition_type,
+                resolution.normalized_input,
+                result,
+                message=(
+                    "Destination capability gap detected; there is no fallback"
+                    if missing
+                    else "Destination precheck completed with read-only observations"
+                ),
+                next_action=(
+                    "change the operation or destination Storage, then rerun precheck"
+                    if missing
+                    else "review the projected outcome, then correct and rerun or validate"
+                ),
+            )
+        except StorageError as error:
+            category = self._storage_failure_category(error.code)
+            return self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                resolution.normalized_input,
+                category,
+                "destination precheck could not read the configured Local path",
+                "correct availability, permissions or path, then rerun destination precheck",
+            )
+        except _DestinationPrecheckMutationError:
+            return self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                resolution.normalized_input,
+                "read_only_violation",
+                "destination precheck attempted a forbidden Storage mutation",
+                "do not activate; inspect the destination-precheck implementation",
+            )
+        except (ConflictResolutionError, _DestinationPreviewFailure) as error:
+            category = (
+                error.category if isinstance(error, _DestinationPreviewFailure) else "invalid"
+            )
+            return self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                resolution.normalized_input,
+                category,
+                "destination precheck could not safely project the destination",
+                "correct the destination or conflict policy, then rerun precheck",
+            )
+        except Exception:
+            return self._destination_precheck_failure(
+                revision,
+                actor,
+                recognition_type,
+                resolution.normalized_input,
+                "unavailable",
+                "destination precheck failed (details redacted)",
+                "inspect service health and configuration, then rerun precheck",
+            )
+
+    @staticmethod
+    def _destination_probe_identity(
+        resolution: _DestinationResolution,
+        storage_id: str,
+        root_exists: bool,
+        root_is_directory: bool,
+    ) -> dict[str, object]:
+        return {
+            "recognitionType": resolution.resolved.recognition_type_id,
+            "recognitionTypePolicyId": resolution.resolved.type_policy_id,
+            "organizePolicyId": resolution.organize_policy.policy_id,
+            "destinationStorageId": storage_id,
+            "destinationStorageType": "local",
+            "storageSupport": "local_only",
+            "mediaLibraryId": str(resolution.library.get("id")),
+            "mediaLibraryRootPath": resolution.composition.media_library_root,
+            "destinationRootExists": root_exists,
+            "destinationRootIsDirectory": root_is_directory,
+        }
+
+    @staticmethod
+    def _required_storage_capabilities(policy: OrganizePolicy) -> list[str]:
+        values = {
+            OrganizeOperationType.MOVE: ["can_move"],
+            OrganizeOperationType.COPY: ["can_copy"],
+            OrganizeOperationType.HARD_LINK: ["can_hard_link"],
+            OrganizeOperationType.SOFT_LINK: ["can_soft_link"],
+        }[policy.operation]
+        cleanup = policy.source_directory_cleanup.mode is not DirectoryCleanupMode.NONE
+        if policy.conflict_strategy is ConflictStrategy.OVERWRITE or cleanup:
+            values.append("can_delete")
+        return values
+
+    @staticmethod
+    def _capability_names(capabilities: StorageCapabilities) -> list[str]:
+        return [
+            name
+            for name in (
+                "can_move",
+                "can_copy",
+                "can_delete",
+                "can_hard_link",
+                "can_soft_link",
+            )
+            if getattr(capabilities, name)
+        ]
+
+    @staticmethod
+    def _storage_failure_category(code: StorageErrorCode) -> str:
+        return {
+            StorageErrorCode.PERMISSION_DENIED: "permission_denied",
+            StorageErrorCode.TIMEOUT: "timeout",
+            StorageErrorCode.CONNECTION_FAILED: "unavailable",
+            StorageErrorCode.CONNECTION_LOST: "unavailable",
+            StorageErrorCode.INVALID_PATH: "invalid_path",
+            StorageErrorCode.PATH_TRAVERSAL: "invalid_path",
+        }.get(code, "unavailable")
+
+    @classmethod
+    def _destination_precheck_failure(
+        cls,
+        revision: ManagedConfigurationRevision,
+        actor: str,
+        recognition_type: str,
+        normalized_input: dict[str, object],
+        category: str,
+        message: str,
+        next_action: str,
+        *,
+        result: dict[str, object] | None = None,
+    ) -> DestinationPrecheckEvidence:
+        return DestinationPrecheckEvidence(
+            revision.revision_id,
+            revision.version,
+            revision.digest,
+            ConfigurationDestinationPrecheckStatus.FAILED,
+            datetime.now(UTC),
+            actor,
+            recognition_type,
+            normalized_input or {"mode": "invalid"},
+            result,
+            failure_category=category,
+            message=cls._bounded_utf8(message, 384),
+            next_action=cls._bounded_utf8(next_action, 500),
+        )
+
+    @staticmethod
+    def _destination_failure_details(
+        error: Exception, resolved: ResolvedRecognitionPolicy | None
+    ) -> tuple[str, str]:
+        if isinstance(error, (PolicyResolutionError, NamingError, ClassificationError)):
+            category = error.code.value
+        elif isinstance(error, _DestinationPreviewFailure):
+            category = error.category
+        else:
+            category = "invalid_input"
+        if isinstance(error, _DestinationPreviewFailure):
+            message = str(error)
+        elif isinstance(error, NamingError) and resolved is not None:
+            message = f"NamingPolicy {resolved.naming_policy_id!r} failed ({category})"
+        elif isinstance(error, ClassificationError) and resolved is not None:
+            message = (
+                f"ClassificationPolicy {resolved.classification_policy_id!r} failed ({category})"
+            )
+        elif isinstance(error, PolicyResolutionError):
+            message = f"RecognitionTypePolicy resolution failed ({category})"
+        else:
+            message = f"Destination composition failed ({category})"
+        return category, message
 
     def _policy_resolution_catalog(
         self, document: Mapping[str, object]
@@ -2829,6 +3402,20 @@ class ConfigurationObjectService:
         self, revision: ManagedConfigurationRevision
     ) -> dict[str, object] | None:
         getter = getattr(self._repository, "get_destination_preview", None)
+        evidence = getter(revision.revision_id) if getter is not None else None
+        if evidence is None:
+            return None
+        value = evidence.document()
+        value["stale"] = (
+            evidence.revision_version != revision.version
+            or evidence.revision_digest != revision.digest
+        )
+        return value
+
+    def _destination_precheck_document(
+        self, revision: ManagedConfigurationRevision
+    ) -> dict[str, object] | None:
+        getter = getattr(self._repository, "get_destination_precheck", None)
         evidence = getter(revision.revision_id) if getter is not None else None
         if evidence is None:
             return None
