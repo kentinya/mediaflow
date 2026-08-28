@@ -18,7 +18,7 @@ Phase gate，不复制测试日志或流程正文。
 | Phase 22.6-B Managed ClassificationPolicy + Offline Classification Preview | PASS / CLOSED | `5e2da5c634f1fa72a40e5f50b035260418fe1a37` | PASS — 2026-08-28 独立审核：五项 operator-UI 与三项 service-boundary 可证伪对照全部先失败后通过，marker 6→7 前向升级与 Runtime marker 22 均已复核，归一化对 runtime 语义为恒等；下一合法 Slice 为 Phase 22.6-C |
 | Phase 22.6-C Managed OrganizePolicy + Offline Organize Authority Explanation | PASS / CLOSED | `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa` | PASS — 2026-08-28 独立审核：五项 operator-UI 挂载、两项被收窄断言与四项 service-boundary 可证伪对照全部先失败后恢复通过；另独立复核 22 组非默认字段归一化零语义漂移、零副作用与 C 身份保持、marker 7→8 前向升级与 Runtime marker 22；下一合法 Slice 为 Phase 22.6-D |
 | Phase 22.6-D Managed Exact-Revision Offline Composed Destination Preview | PASS / CLOSED | `c7ec192b3b20f236cca5a70ed59cad43e0851242` | PASS — 2026-08-28 独立审核：四项 operator-UI 挂载、共享 composition 安全守卫、unsafe 判定短路与 RecognitionType C 身份共七项可证伪对照全部先失败后恢复通过；另独立复核与真实 `OrganizePlanner.plan` 的 8 组 composition parity、零 Storage/Provider/Planner/Executor 构造、marker 8→9 前向升级与 Runtime marker 22；下一合法 Slice 为 Phase 22.6-E |
-| Phase 22.6-E Managed Exact-Revision Read-Only Destination Precheck (Local) | FIX REQUIRED — F1 READY FOR HIGH REVIEW | 被拒 checkpoint `7353b0d22497e6e3e596c93c7052eea34daf27df`（保留，不得 amend/squash/改写）；F1 checkpoint SHA 待交接 | F1 已只补齐 zero-Provider/Executor/Task/Job/queue/authority、组合路径字段、fully-missing subtree 与 Web `destinationPath` 证据，并把防御性 `INVALID_DESTINATION` 收敛为既有 `unsafe_destination` 失败；完整离线与质量门禁通过，等待独立 High 复审。Phase 22.6-E 未关闭，Phase 22.6 仍开放，下一 Slice 仍禁止开始 |
+| Phase 22.6-E Managed Exact-Revision Read-Only Destination Precheck (Local) | PASS / CLOSED | `ee5225dd0e74a7382b6747c6315776413f7fd249`（经 Phase 22.6-E-F1 修正接受；被拒 checkpoint `7353b0d22497e6e3e596c93c7052eea34daf27df` 保留，不得 amend/squash/改写） | PASS — 2026-08-28 独立审核：六项可证伪对照（同步路径与 worker 内注入 Provider 构造、互换 `relativeDestination`/`destinationPath`、截断 `directoriesToCreate`、删除 Web destination-path 字段行、移除防御性 `INVALID_DESTINATION` 拒绝）全部先失败后恢复通过；另复核零 Provider/Executor/Task/queue/Job/authority 与十张 Runtime 表为空、fully-missing subtree 完整创建列表且 partial 证明未被削弱、不可达 `invalid` 投影已在生产消解、被拒 SHA 与其 FIX REQUIRED 记录保留且 `docs/progress.md` 仅追加、marker 10 与 Runtime marker 22 不变、842 项离线回归与 wheel smoke；下一合法 Slice 为 Phase 22.6-F |
 
 ## 当前节点
 
@@ -124,8 +124,23 @@ subtree 用例已执行但从未断言 `deepestExistingAncestor` 或 `directorie
 SMB/OpenList/S3 目标预检、写入式能力探测、重复与跨项碰撞检测、附件预检、combined activation
 evidence 与任何执行改动仍为 TARGET，不得开始。
 
-Phase 22.6-E-F1 correction 已按上述四项 blocker 完成并通过实现门禁，等待独立 High 复审；被拒 SHA
-仍保留。复审 `PASS` 前 Phase 22.6-E 与 Phase 22.6 均不关闭，也不得定义或开始下一 Slice。
+Phase 22.6-E-F1 correction checkpoint `ee5225dd0e74a7382b6747c6315776413f7fd249` 已于 2026-08-28 经
+独立 High 复审判定 **PASS**，Phase 22.6-E 随之 **PASS / CLOSED**；被拒 SHA
+`7353b0d22497e6e3e596c93c7052eea34daf27df` 及其 FIX REQUIRED 记录保留，`docs/progress.md` 仅追加。
+四项 blocker 均以可证伪对照复核通过：同步路径注入 `MetadataProviderRegistry(())` 使两个 subtest 均以
+`AssertionError: destination precheck constructed Provider` 失败，worker 内注入则经有界 `unavailable`
+转换失败；互换 `relativeDestination`/`destinationPath` 与删除 Web destination-path 字段行各自使对应
+断言失败；截断 `directoriesToCreate` 只让 fully-missing subtree 用例失败而 partial 用例仍通过；移除新
+增的防御性 `INVALID_DESTINATION` 拒绝使 `unsafe_destination` 用例失败。marker 保持 10 / 22，842 项离线
+回归、聚焦 34 项、ruff、compileall、`pip check`、两份示例配置校验、120 个 Markdown 文件 25 条本地链接
+零断链、wheel 构建与隔离 smoke 均通过；`config/alist.json` 仍被忽略、未跟踪且未读取。
+
+Phase 22.6 未关闭：下一合法 Slice 是 **Phase 22.6-F**（checked activation 要求当前目标预检证据，仅
+Local 目标 Storage），已写入 `TASK.md`。该 Slice 只把既有 22.6-E 证据接入 `activate_checked` 门禁并给
+出可执行的 Web/API 拒绝与恢复，不新增探测、不改 schema marker、不做任何写入。远端 SMB/OpenList/S3 目标
+预检、写入式能力探测、重复与跨项碰撞检测、附件预检、绝对挂载路径展示与任何执行改动仍为 TARGET，不得
+开始。已关闭的 22.6-A 至 22.6-E checkpoint 及其文档记录尚未推送 `origin/main`；Slice 级关闭不要求推
+送，Phase 22.6 收口关闭需显式操作员授权后推送。
 
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
@@ -159,13 +174,13 @@ Runtime Configuration
 | Parser | 已完成 | 文件名/路径/NFO、电影/剧集、多集、标签、受限 XML 与冲突证据合并 | NFO 生成不属于 Parser；更多格式按样本扩展 |
 | Recognition | 已完成当前配置旅程 | 引擎、Web 规则配置、优先级/引用校验、持久 Strategy Test 解释/恢复、C 身份保持、人工决策和重评请求 | 后续按真实样本扩展，不作为当前 blocker |
 | Metadata | 部分完成（引擎成熟） | TMDB、缓存、候选评分、本地化标题、年份语义、持久人工候选/查询修正 | Provider 切换、配置激活、同页恢复闭环 |
-| Naming | Phase 22.6-A/22.6-D PASS / CLOSED；22.6-E FIX REQUIRED（被拒 checkpoint 保留，唯一后续为 22.6-E-F1） | 安全模板、Unicode、多集、Managed Draft 编辑、引用影响、exact-revision 离线预览（含可证伪 Web 挂载回归），以及与 Planner 同源的组合目标贡献归属 | 组合目标已可只读预检（22.6-E FIX REQUIRED，仅 Local）；activation evidence 待做 |
-| Classification | Phase 22.6-B/22.6-D PASS / CLOSED；22.6-E FIX REQUIRED（被拒 checkpoint 保留，唯一后续为 22.6-E-F1） | 确定性规则、媒体库选择、持久人工规则选择/恢复、Managed Draft CRUD、引用阻断、exact-revision 离线分类预览（含可证伪 Web 挂载回归），以及 MediaLibrary/relativePath 在组合目标中的归属 | 自由路径修正明确禁止；目标存在性/冲突/能力预检已在 22.6-E 实现（FIX REQUIRED，仅 Local）；activation evidence 待做 |
-| Organize | Phase 22.6-C/22.6-D PASS / CLOSED（配置、授权解释与组合目标预览）；22.6-E FIX REQUIRED（被拒 checkpoint 保留，唯一后续为 22.6-E-F1） | managed OrganizePolicy CRUD、引用阻断、仅 Move/Copy/HardLink/SoftLink 的编辑限制、exact-revision 零副作用组织授权解释（所需 Storage 能力声明而非探测、显式无回退、破坏性告警），以及与 Planner 同源的 Storage-relative 组合目标预览 | 远端目标预检、写入式能力探测与 activation evidence 待做（22.6-E 只读预检仅覆盖 Local） |
+| Naming | Phase 22.6-A/22.6-D PASS / CLOSED；22.6-E PASS / CLOSED（经 22.6-E-F1 修正接受，被拒 checkpoint 保留） | 安全模板、Unicode、多集、Managed Draft 编辑、引用影响、exact-revision 离线预览（含可证伪 Web 挂载回归），以及与 Planner 同源的组合目标贡献归属 | 组合目标已可只读预检（22.6-E PASS / CLOSED，仅 Local）；combined activation evidence 为下一 Slice（Phase 22.6-F） |
+| Classification | Phase 22.6-B/22.6-D PASS / CLOSED；22.6-E PASS / CLOSED（经 22.6-E-F1 修正接受，被拒 checkpoint 保留） | 确定性规则、媒体库选择、持久人工规则选择/恢复、Managed Draft CRUD、引用阻断、exact-revision 离线分类预览（含可证伪 Web 挂载回归），以及 MediaLibrary/relativePath 在组合目标中的归属 | 自由路径修正明确禁止；目标存在性/冲突/能力预检已在 22.6-E 实现（PASS / CLOSED，仅 Local）；combined activation evidence 为下一 Slice（Phase 22.6-F） |
+| Organize | Phase 22.6-C/22.6-D PASS / CLOSED（配置、授权解释与组合目标预览）；22.6-E PASS / CLOSED（经 22.6-E-F1 修正接受，被拒 checkpoint 保留） | managed OrganizePolicy CRUD、引用阻断、仅 Move/Copy/HardLink/SoftLink 的编辑限制、exact-revision 零副作用组织授权解释（所需 Storage 能力声明而非探测、显式无回退、破坏性告警），以及与 Planner 同源的 Storage-relative 组合目标预览 | 远端目标预检与写入式能力探测待做；combined activation evidence 为下一 Slice（Phase 22.6-F） |
 | Planner/Executor | 部分完成 | 计划、冲突、附件、Hash 证据、同次调用 Rollback、空目录清理、DryRun、跨存储执行 | 历史/崩溃恢复、Hash 持久复用、逐项恢复体验 |
 | Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、pause/resume、批量请求、claim fencing/心跳 | 统一 Processing Checkpoint 与 stage-aware recovery |
 | API/UI/Scheduler | 部分完成 | API/RBAC/审计、操作台、Dashboard、Files 列表/筛选/详情/部分动作、Cron/通知 | 完整人工/配置/恢复旅程、登录/外部身份源 |
-| Managed Configuration | Phase 22.3/22.4/22.5 与 Phase 22.6-A/22.6-B/22.6-C/22.6-D 均 PASS / CLOSED；22.6-E FIX REQUIRED（被拒 checkpoint 保留，唯一后续为 22.6-E-F1） | 既有能力加 NamingPolicy、ClassificationPolicy 与 OrganizePolicy CRUD、引用阻断、exact-revision 离线命名/分类/组织授权与 Storage-relative 组合目标预览，以及仅 Local 目标的只读目标预检（configuration marker 10） | combined activation evidence；远端目标预检、写入式能力探测、Provider switching、通用 Task resume 后置 |
+| Managed Configuration | Phase 22.3/22.4/22.5 与 Phase 22.6-A/22.6-B/22.6-C/22.6-D 均 PASS / CLOSED；22.6-E PASS / CLOSED（经 22.6-E-F1 修正接受，被拒 checkpoint 保留） | 既有能力加 NamingPolicy、ClassificationPolicy 与 OrganizePolicy CRUD、引用阻断、exact-revision 离线命名/分类/组织授权与 Storage-relative 组合目标预览，以及仅 Local 目标的只读目标预检（configuration marker 10） | combined activation evidence 为下一 Slice（Phase 22.6-F）；远端目标预检、写入式能力探测、Provider switching、通用 Task resume 后置 |
 
 ## 总体阶段计划
 

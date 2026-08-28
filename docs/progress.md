@@ -990,6 +990,85 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   evidence and execution remain TARGET. This correction is ready for independent High re-review;
   it does not close Phase 22.6-E or authorize the next Slice.
 
+## Phase 22.6-E-F1 High Review Result (2026-08-28): PASS
+
+- Status: PASS / CLOSED for Phase 22.6-E, accepted through the focused Phase 22.6-E-F1 correction;
+  reviewed checkpoint SHA: `ee5225dd0e74a7382b6747c6315776413f7fd249`; High Audit: PASS —
+  2026-08-28. The rejected Phase 22.6-E checkpoint `7353b0d22497e6e3e596c93c7052eea34daf27df` and
+  its `FIX REQUIRED` record remain preserved and unmodified, as do the earlier preserved rejected
+  SHAs `08dfd4f921728755209b6d52347d28f221121c47` and `90ce13a6c6c39912dd389f71a1189314ff24eb5d`.
+  The `docs/progress.md` diff in the reviewed checkpoint is purely additive. Push: NOT PERFORMED;
+  `main` remains ahead of `origin/main` and no push authorization was requested or used.
+- Scope conformance verified against `TASK.md`: the checkpoint touches
+  `mediaflow/application/configuration_objects.py` (+13/-6),
+  `tests/test_configuration_destination_precheck.py` (+151), `tests/test_operator_ui.py` (+4),
+  `TASK.md`, `docs/progress.md` (+53, additive), `docs/roadmap.md`, `docs/architecture.md`,
+  `docs/product-experience.md` and one status line of the Chinese requirements specification. No
+  remote precheck, no mutation-based probing, no attachment or cross-item check, no activation-gate
+  change and no new evidence key, request field or API status appear. Configuration marker remains
+  10 and Runtime marker remains 22, independently confirmed in the installed-wheel smoke run.
+- Blocker 1, the missing non-construction proof, is resolved and falsifiable.
+  `test_constructs_no_provider_executor_or_runtime_authority` runs a success and a
+  `permission_denied` subtest with `AssertionError` doubles on the Provider registry and the
+  Executor, asserts on the successful subtest `authorityGranted: none` with seven zero guard
+  counters, and proves an independently pre-created Runtime database stays empty across `tasks`,
+  `task_items`, `task_results`, the conflict confirmation, metadata correction and three review
+  queues, `automation_jobs` and `execution_authorizations`, with `get_organize_authority(...)`
+  returning `None`. Temporarily constructing `MetadataProviderRegistry(())` on the synchronous
+  precheck path failed both subtests with the injected
+  `AssertionError: destination precheck constructed Provider`, reproducing the recorded
+  falsification exactly; the same construction placed inside
+  the worker instead failed the success subtest through the bounded `unavailable` conversion
+  (`'failed' != 'completed'`), so a construction is detected wherever it enters this path.
+- Blocker 2, the unasserted composed destination, is resolved on both surfaces. The success test now
+  pins `relativeDestination` and `destinationPath` to the Phase 22.6-D accepted composition and to
+  the configured `Movies/` prefix; swapping the two production values independently failed it. The
+  Web proof is body-scoped inside `renderDestinationPrecheck`, and deleting the destination-path
+  field line from `mediaflow/interfaces/operator_ui.py` independently failed
+  `tests/test_operator_ui.py`.
+- Blocker 3, the unasserted fully missing subtree, is resolved without weakening the older proof.
+  The capability-gap case starts with only `Movies` present and asserts `Movies` as the deepest
+  existing ancestor, the ordered create list `Movies/Action` then
+  `Movies/Action/The Matrix (1999) [tmdbid-synthetic]`, a missing target, seven zero guard counters,
+  `authorityGranted: none` and a byte-identical destination tree. Truncating
+  `directories_to_create` to its first entry failed that case while the partial-ancestor case still
+  passed, so the two depths are genuinely distinct and the earlier single-level proof is intact.
+- Blocker 4, the unreachable `invalid` projection, is resolved in production rather than in prose. A
+  planner-reported `INVALID_DESTINATION` now raises the existing bounded `unsafe_destination`
+  failure before conflict resolution, and the `invalid` projection branch is deleted, so the
+  documented outcome set matches the reachable one. The defensive test patches
+  `OrganizePlanner.plan` and keeps an `AssertionError` double on
+  `ConflictResolver.apply_configured` to prove resolution is never reached; removing the new raise
+  independently failed it. No live document still claims an `invalid` projection, and the stale
+  claim inside the preserved Phase 22.6-E evidence stays corrected in place by the preserved-history
+  note.
+- Gates re-run independently on the reviewed checkout: the complete offline suite ran 842 tests with
+  835 passed, 7 external integration skips, 0 failed and exit 0; the focused precheck, destination
+  and operator-UI group ran 34 tests with 0 failures; ruff check and format, `compileall` and
+  `pip check` are clean; both strategy example configurations report `Configuration valid`; 120
+  Markdown files carry 25 local links with 0 broken; `git diff --check` is clean; the repository
+  contains zero FFmpeg/FFprobe references; `config/alist.json` stays ignored, untracked and unread,
+  and no credential, endpoint, header, cookie or private path pattern appears in the reviewed diff;
+  `tests/test_configuration_destination.py` is byte-identical to
+  `c7ec192b3b20f236cca5a70ed59cad43e0851242`; and the wheel build, isolated install and smoke run
+  report Runtime marker 22 and Configuration marker 10.
+- Non-blocking observations, deferred and not closure conditions: the Executor double targets the
+  definition site, and a probe proved that a future module-level import of `OrganizerExecutor` into
+  `mediaflow/application/configuration_objects.py` would bypass it while the test still passes, so a
+  later Slice may cheaply assert that this module namespace stays free of the symbol, the guard
+  counters, tree snapshot and empty Runtime authority remaining the real net meanwhile; the recorded
+  wheel SHA-256 is build-specific, because an independent `pip wheel` build produced
+  `0bc960c328e75a679016940d30f5b0cf729513870da93540a9fc2c450eac9815`, so future records should name
+  the build command beside any hash; the checkpoint edited High's `docs/roadmap.md` Phase 22.6-E
+  gate row, which stays High-only, although the preserved record and the four-blocker prose were
+  untouched and the row still declared the Slice open, so no status was misrepresented; and the four
+  non-blocking observations from the Phase 22.6-E review remain deferred.
+- Next Slice authorization: Phase 22.6-E is CLOSED and Phase 22.6 remains open. The next legal Slice
+  is Phase 22.6-F, which makes checked activation require current destination precheck evidence for
+  Local destinations only. Remote SMB/OpenList/S3 prechecks, mutation-based capability probing,
+  duplicate and cross-item collision detection, attachment prechecks, absolute mounted-path display
+  and any execution change remain TARGET and must not start.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration

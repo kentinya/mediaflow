@@ -1,303 +1,250 @@
-# Phase 22.6-E-F1 — Destination Precheck Required-Test Evidence and Outcome Correction
+# Phase 22.6-F — Checked Activation Requires Current Local Destination Precheck Evidence
 
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: READY FOR COMMIT
+Status: NOT STARTED
 Commit SHA: PENDING
 High Audit: PENDING
-Rejected checkpoint under correction: 7353b0d22497e6e3e596c93c7052eea34daf27df
-  (Phase 22.6-E FIX REQUIRED — 2026-08-28; preserved, never amended, squashed or rewritten)
-Preceding closed checkpoint: c7ec192b3b20f236cca5a70ed59cad43e0851242
-  (Phase 22.6-D PASS / CLOSED — 2026-08-28)
-Earlier preserved rejected checkpoints: 90ce13a6c6c39912dd389f71a1189314ff24eb5d (Phase 22.6-A) and
+Preceding closed checkpoint: ee5225dd0e74a7382b6747c6315776413f7fd249
+  (Phase 22.6-E PASS / CLOSED — 2026-08-28, accepted through the Phase 22.6-E-F1 correction)
+Preserved rejected checkpoints: 7353b0d22497e6e3e596c93c7052eea34daf27df (Phase 22.6-E),
+  90ce13a6c6c39912dd389f71a1189314ff24eb5d (Phase 22.6-A) and
   08dfd4f921728755209b6d52347d28f221121c47 (Phase 22.5-E); never amended, squashed or rewritten
-Push gate: NOT BLOCKING — Slice closure does not require a push; the closed 22.6-D checkpoint, the
-  rejected 22.6-E checkpoint and their docs records are not in origin/main, and the phase-level
-  Phase 22.6 closure requires an explicitly authorized push
+Push gate: NOT BLOCKING — Slice closure does not require a push; every closed Phase 22.6 checkpoint
+  and its documentation record is still absent from origin/main, and phase-level Phase 22.6 closure
+  requires an explicitly authorized push
 Phase: 22.6 Naming / Classification / Organize configuration journey (roadmap section 5)
-Correction scope: evidence only, plus the minimal production change that removes one documented but
-  unreachable projected conflict outcome so implementation, tests and documentation agree
+Slice scope: combined activation evidence for Local destinations only — checked activation consumes
+  the destination precheck evidence that Phase 22.6-E already produces; no new probe, no remote
+  Storage support, no schema marker change and no execution
 ```
 
 ## User Problem
 
-The Phase 22.6-E checkpoint ships a working read-only destination precheck. Independent review
-verified the behaviour it promises: the destination Storage adapter is built from the unmodified
-revision document, its declared capabilities are read before wrapping, every probe runs inside a
-`ReadOnlyStorageGuard` subclass whose seven mutation counters are asserted zero, and the production
-`OrganizePlanner.plan` and `ConflictResolver.apply_configured` are reused per configured
-ConflictStrategy. None of that is in question here.
+An operator can still activate a Draft whose destination has never been observed.
+`activate_checked` requires a current Local setup check and a current Recognition Strategy Test, but
+the Phase 22.6-E destination precheck is advisory only: the operator may skip it, ignore a
+`capability_gap` verdict or a bounded failure, or edit the Draft until the evidence is stale, and
+checked activation still succeeds. The questions the precheck answers — does the composed
+Storage-relative path resolve, which directories would be created, does the destination Storage
+declare the capability the configured operation needs — therefore have no effect on the gate that
+protects the media library.
 
-What is missing is proof of four things the Task itself required, so today's correct behaviour is
-undefended and one documented outcome cannot happen at all:
+The product requirement is explicit that checked activation requires both the current Local check
+and the destination evidence, so `Active` means a configuration whose destination was actually
+observed on that exact revision. Today the Web view shows the precheck result next to an activation
+control that ignores it, which is the weaker half of a safety promise the operator reasonably reads
+as enforced.
 
-1. Required Test 10 demanded that "creates no Task, Job, queue entry, plan record or execution
-   authority, constructs no Provider client or Executor" be "asserted, not assumed". No test in
-   `tests/test_configuration_destination_precheck.py` references `MetadataProviderRegistry`,
-   `OrganizerExecutor`, or any Task/Job/queue state; the only injected doubles cover
-   `RuntimeConfiguration.create_storages` on composition-failure and `unsupported_storage_type`
-   paths. Phase 22.6-D proved the same class of claim with four injected `AssertionError` doubles in
-   `tests/test_configuration_destination.py`, so the standard already exists in this repository. A
-   later Slice can add a Provider client or an Executor construction to this path with every gate
-   green.
-2. Required Test 4 enumerated `relativeDestination` and `destinationPath` among the fields that "are
-   all asserted", and no test asserts either. These two keys are the operator's answer to "where
-   would this file go", and `renderDestinationPrecheck` in `mediaflow/interfaces/operator_ui.py`
-   reads `result.destinationPath` directly and routes a falsy value into the red
-   "Destination is not ready" banner. A swapped or misspelled key would change the Web verdict
-   while the whole suite stays green.
-3. Required Test 4 also demanded "both a fully missing subtree and a partially existing subtree".
-   The fully missing case is executed — in the capability-gap and Storage-error tests only the
-   MediaLibrary root exists — but neither test asserts `deepestExistingAncestor` or
-   `directoriesToCreate`. The multi-entry "directories that would be created" list the operator
-   reads before activating is unproven.
-4. Required Test 5 ended "An unsafe composition yields `invalid`", and `docs/progress.md` recorded
-   `invalid` among the reported projected outcomes. That branch cannot be reached:
-   `_resolve_destination` raises the bounded `unsafe_destination` failure whenever
-   `compose_destination` reports an unsafe composition, before any Storage adapter is constructed,
-   and `OrganizePlanner.plan` derives `ConflictType.INVALID_DESTINATION` from that same
-   `composition.safe` check on the same inputs. The earlier refusal is the safer behaviour and is
-   already asserted, so the projection must stop advertising an outcome no input can produce.
+This Slice closes that gap for Local destinations only, using evidence that already exists. It adds
+no probe, no capability mutation, no remote support and no new persisted state.
 
 ## User Journey
 
-Unchanged from Phase 22.6-E; this Task only makes the already-shipped journey provable and stops it
-advertising an unreachable outcome:
-
-```text
-Configuration → open a Draft revision → the composed destination preview already shows the exact
-   Storage-relative path this revision produces
-→ run the read-only destination precheck for the same RecognitionType and sample
-→ read, bound to the exact revision: which destination Storage was probed and that it is Local,
-   whether the MediaLibrary root exists and is a directory, which ancestor directories already
-   exist and which would have to be created, whether the composed target already exists, what the
-   configured ConflictStrategy would do about it (including the concrete rename candidate), and
-   whether the destination Storage actually declares the capability the OrganizePolicy requires
-→ if something is missing, unsupported, or would block, correct that object or path in the same
-   Draft → rerun the precheck → Validate and activate
-```
-
-No new entry point, request field, permission, evidence key, state, or schema marker is introduced.
+- User goal: activate a Draft only when its Local destination has actually been observed on this
+  exact revision, and understand immediately what is missing when it has not.
+- Entry point: the same managed revision view, and checked activation through the Web control or
+  `POST /api/v1/configuration/revisions/<revision-id>/activation` with `checked: true`.
+- Visible state: the destination precheck section keeps showing current or stale, status, verdict,
+  bounded message and next action, and now also states whether checked activation is satisfied,
+  blocked or not applicable for this Draft.
+- Available action: run the read-only destination precheck on the exact version and digest, then
+  activate checked; or fix the destination configuration first and rerun the precheck.
+- Success outcome: once the precheck evidence for this revision is current, completed and free of a
+  capability gap, checked activation behaves exactly as it does today.
+- Failure outcome: checked activation is refused before any activation happens, the previous Active
+  configuration and every stored evidence record stay unchanged, and the refusal names which
+  requirement is missing, stale or failed.
+- Recovery path: the refusal carries one explicit next action — rerun the destination precheck on
+  the current version and digest, or correct the destination configuration and then rerun it.
 
 ## User-visible Outcome
 
-Operator-visible behaviour stays identical to `7353b0d22497e6e3e596c93c7052eea34daf27df` except that
-the projected conflict outcome list contains only outcomes an input can actually produce. What
-changes is durable protection of the shipped behaviour:
-
-- the composed `relativeDestination` and `destinationPath` the operator reads, and the Web field
-  that renders the destination path, are provably the composed values Phase 22.6-D accepted, so a
-  renamed or swapped evidence key fails the suite instead of silently flipping the Web banner to
-  "Destination is not ready";
-- the "directories that would be created" list is proven for a fully missing destination subtree as
-  well as a partially existing one, so the operator's pre-activation answer is defended in both
-  shapes;
-- the precheck's zero-authority promise is asserted: no Provider client, no Executor, no Task, Job,
-  queue entry or execution authority is constructed on this path, and a future edit that introduces
-  one fails immediately;
-- an unsafe composition keeps its single documented answer — the bounded `unsafe_destination`
-  failure, refused before any Storage adapter exists — and no evidence advertises a projected
-  `invalid` outcome that cannot occur.
+- Checked activation of a Draft that configures a Local destination requires three current pieces of
+  evidence instead of two: the Local setup check, the Recognition Strategy Test and the destination
+  precheck.
+- The refusal distinguishes four cases in bounded, secret-free language: no destination precheck was
+  run for this revision, the stored precheck is stale after an edit, the stored precheck failed with
+  its bounded category, and the stored precheck completed with a `capability_gap` verdict.
+- A Draft that configures no Local destination is explicitly reported as not applicable and keeps
+  today's two-gate behaviour, so remote-only configurations are never made unactivatable by a
+  requirement this Phase cannot yet satisfy.
+- Unchecked activation, `Active` projection, permissions, evidence documents, request fields, API
+  status codes and both schema markers stay exactly as they are.
 
 ## Failure and Recovery
 
-| Failure class | Visible state | Durable state / side effects | Retry safe | Recovery | If recovery also fails |
-|---|---|---|---|---|---|
-| Unsafe composed destination | Failed precheck evidence with the bounded `unsafe_destination` category and the offending object named | Revision document, version, digest and all other evidence rows unchanged; no Storage adapter constructed, no probe performed | Yes | Correct the NamingPolicy, ClassificationPolicy or MediaLibrary rootPath in the same Draft, then rerun the precheck | The revision stays Draft and editable; the previous current evidence stays inspectable and attributed to its exact revision |
-| Planner defensively reports an invalid destination | Failed precheck evidence in the same bounded category, never a `completed` ready or conflict verdict | Nothing created or mutated; guard mutation counters remain zero | Yes | Fix the destination composition in the Draft and rerun; the message states which object to correct | The precheck keeps refusing; activation is not reached with an unsafe destination |
-| A future edit constructs a Provider client, Executor, Task, Job or queue entry on this path | Focused test fails naming the forbidden construction | No product change; nothing ships with hidden execution authority | Yes | Remove the construction from the precheck path and rerun the focused test | The suite keeps failing; the read-only precheck cannot ship with execute authority |
-| A future edit renames or drops a composed evidence field or the create list | Focused test fails on the exact expected composed values or the ordered create list | No product change; the Web destination-path field cannot silently go falsy | Yes | Restore the evidence key or the create-list computation and rerun | The suite keeps failing; the Web section cannot ship reading a missing key |
-
-Retry alone is never the recovery text: each row states what is durable, what is safe to repeat, and
-the single explicit action that continues.
+| Failure | Visible state | Durable state | Safe to repeat | Explicit action |
+| --- | --- | --- | --- | --- |
+| No destination precheck exists for the revision | Refusal naming the missing destination precheck; the section still reads `not run` | Draft, Active configuration and every other evidence record unchanged | Yes | Run the read-only destination precheck on this revision, then activate checked |
+| Stored precheck is stale after an edit | Refusal naming stale destination evidence; the section reads `stale` | Draft, Active configuration and the stale evidence preserved | Yes | Reload the revision and rerun the destination precheck on the current version and digest |
+| Stored precheck failed | Refusal repeating the stored bounded failure category | Draft, Active configuration and the failed evidence preserved | Yes | Follow the stored next action, fix the destination, then rerun the precheck |
+| Stored precheck completed with `capability_gap` | Refusal naming the capability gap without echoing Storage internals | Draft, Active configuration and the completed evidence preserved | Yes | Change the configured operation or the destination Storage, then rerun the precheck |
+| Draft configures no Local destination | The section reports the requirement as not applicable | Unchanged | Yes | Activate checked under the existing Local check and Strategy Test gates |
 
 ## UX Acceptance Criteria
 
-- [ ] A focused test asserts the exact composed `relativeDestination` and `destinationPath` returned
-      by a successful precheck, equal to the values Phase 22.6-D already accepted for the same
-      revision and sample, with `destinationPath` asserted to start with the MediaLibrary
-      `rootPath`.
-- [ ] A body-scoped operator-UI assertion proves the rendered destination-path field inside
-      `renderDestinationPrecheck` reads `result.destinationPath`, so the red
-      "Destination is not ready" banner cannot be driven by a renamed key. If the existing focused
-      UI test already asserts this inside that function body, state that and do not duplicate it.
-- [ ] A focused test with only the MediaLibrary root existing asserts `deepestExistingAncestor` is
-      that root, asserts the complete ordered `directoriesToCreate` list including both missing
-      levels, and asserts `targetExists` is false. The existing partial-ancestor assertions stay.
-- [ ] A focused test proves the precheck constructs no Provider client and no Executor and creates
-      no Task, Job, queue entry or execution authority, for a successful run and for at least one
-      failure category, using injected `AssertionError` doubles the way
-      `tests/test_configuration_destination.py` does. The production `OrganizePlanner` and
-      `ConflictResolver` are deliberately excluded from those doubles because this Slice must reuse
-      them; the test states that distinction.
-- [ ] `authorityGranted` stays `none`, the seven guard mutation counters stay asserted zero, and the
-      destination tree is asserted byte-identical in the new tests.
-- [ ] No evidence document reports a projected conflict outcome that no input can produce; an unsafe
-      composition has exactly one documented answer and it is asserted.
-- [ ] No new request field, evidence key, permission, API status, activation semantic, or schema
-      marker is introduced; configuration marker stays 10 and the Runtime marker stays 22.
-
-Batch per-item independence does not apply: the precheck evaluates one RecognitionType and one
-sample per request, and this Task adds no batch surface.
+- [ ] The revision view states, for the current Draft, whether the destination precheck requirement
+      for checked activation is satisfied, blocked or not applicable, using the already projected
+      revision, evidence, MediaLibrary and Storage data.
+- [ ] Each of the four blocked cases renders one bounded, secret-free sentence naming the single
+      action that continues, with no Storage endpoint, credential, header, cookie, private path or
+      raw exception text.
+- [ ] A refused checked activation leaves the operator on the same revision with the previous Active
+      configuration intact and no partial activation visible anywhere.
+- [ ] A satisfied requirement produces exactly today's activation result, with no extra confirmation
+      step and no new field in the activation response.
+- [ ] The Web and API surfaces refuse the same cases with the same reasons and the same permissions.
+- [ ] The not-applicable case is visible rather than silent, so a remote-only Draft cannot look
+      broken.
+- [ ] Every new Web string is proven by a body-scoped operator-UI assertion that fails when the line
+      is deleted.
 
 ## Technical Scope
 
-Evidence first, with one bounded production change:
-
-```text
-tests/test_configuration_destination_precheck.py → the four missing Required Test proofs
-tests/test_operator_ui.py                        → body-scoped destination-path proof if absent
-mediaflow/application/configuration_objects.py   → remove the unreachable `invalid` projection only
-docs/*                                           → correction record and accurate CURRENT claims
-```
-
-- Add the non-construction proof with injected `AssertionError` doubles for the Provider registry
-  and the Executor on the module path that `mediaflow/application/configuration_objects.py` actually
-  resolves, plus an assertion that no Task/Job/queue/plan/execution row exists after the run (an
-  absent runtime database, or empty task and job tables where one is already present). Cover a
-  success path and at least one failure path.
-- Assert the composed evidence fields against the Phase 22.6-D accepted composed values rather than
-  recomputing them in the test, so the two Slices cannot drift apart silently.
-- Add the fully missing subtree assertions where that shape is already exercised, or in a dedicated
-  focused test if that keeps the existing tests readable.
-- Resolve the unreachable outcome by making `ConflictType.INVALID_DESTINATION` an explicit defensive
-  refusal that maps to the existing bounded `unsafe_destination` failure category instead of a
-  `completed` evidence document with a projected `invalid` outcome, and remove `invalid` from the
-  documented outcome list. Prove the defensive path with a narrowly injected planner double that
-  returns a plan carrying that conflict for an otherwise safe composition. If instead a real
-  revision document and sample can reach `invalid` with a safe composition, keep the branch, prove
-  it with that document, and report which resolution was taken and why.
-- Change nothing else in the precheck: no new probe, no new category, and no capability-comparison,
-  guard, planner, resolver, Storage, activation or execution change.
+- `mediaflow/application/configuration_objects.py`
+  - Add one `require_current_destination_precheck(revision)` helper beside the existing
+    `require_current_local_check` and `require_current_strategy_test`, raising
+    `ConfigurationActivationConflict` with a bounded message and an explicit next action for the
+    missing, stale, failed and `capability_gap` cases.
+  - Add a document-level applicability rule: the requirement applies when the revision document
+    declares at least one MediaLibrary whose `storageId` names a Storage whose `type` is `local`.
+    Any other document, including one with no MediaLibrary, is not applicable.
+  - Call the new helper from `activate_checked` after the two existing requirements so the existing
+    refusal order and messages are preserved.
+- `mediaflow/interfaces/operator_ui.py`
+  - Extend `renderDestinationPrecheck` with the activation-requirement state derived from data the
+    view already receives: the revision summary, the projected evidence and the projected
+    `mediaLibraries` and `storages` objects, whose `type` field survives remote redaction.
+  - Reuse the existing warning and error styles and the existing bounded text helpers.
+- `tests/test_configuration_destination_precheck.py`
+  - Add the activation-gate tests listed under Required Tests, including the not-applicable case and
+    the unchanged behaviour of unchecked activation.
+- `tests/test_operator_ui.py`
+  - Add body-scoped assertions for the new activation-requirement lines.
+- `tests/test_service_api.py`
+  - Add the API refusal test for one blocked case and one satisfied case, asserting the existing
+    activation-conflict status code and bounded body.
+- Documentation: `docs/architecture.md`, `docs/product-experience.md`, `docs/requirements.md` if a
+  requirement ID needs its CURRENT wording corrected, and the Chinese requirements specification
+  status line. `docs/progress.md` and `docs/roadmap.md` gate records stay High-only.
 
 ## Non-goals
 
-- No remote SMB / OpenList / S3 destination precheck, and no non-Local destination Storage support.
-- No mutation-based capability probing; declared capability comparison stays declaration-only.
-- No duplicate-media or cross-item collision detection, and no attachment or sidecar precheck.
-- No absolute mounted-path display, and no reading or displaying `storages[].rootPath`.
-- No combined activation evidence, no activation-gate change, and no execution or Task/Job creation.
-- No new evidence key, request field, API route, permission, response status, or schema marker.
-- No change to the guard, the capability comparison, the bounded failure categories, the probe
-  budget, the capacity lease or the timeout behaviour.
-- No rewrite of the Phase 22.6-E implementation-evidence record, the preserved `FIX REQUIRED`
-  records, or any rejected checkpoint SHA.
-- The four non-blocking review observations are deliberately deferred and must not be addressed
-  here: the `NO / NO` destination-root rendering for categories decided before any probe; the
-  `relativeDestination` / `destinationPath` naming divergence from the Phase 22.6-D
-  `rootRelativeDestination` / `composedStorageRelativeDestination` names, which the Phase 22.6-E
-  Task mandated; the theoretical same-location branch for a Storage literally named
-  `destination-precheck-source`; and the pre-existing `ResourceWarning: unclosed database` that the
-  byte-unmodified Phase 22.6-D suite emits identically.
+- No remote SMB, OpenList or S3 destination precheck, and no change to the Local-only support
+  statement.
+- No mutation-based capability probing, no write, no create, no delete and no execution.
+- No duplicate media, cross-item collision or attachment precheck.
+- No absolute mounted-path display and no Storage `rootPath` exposure.
+- No new evidence key, request field, response field, permission or API status code.
+- No schema change: the Configuration marker stays 10 and the Runtime marker stays 22.
+- No change to unchecked activation, to `Active` projection semantics or to the two existing
+  activation requirements.
+- No new Task, Job, authority or queue record, and no Provider, Planner, Executor or Storage
+  construction on the activation path.
+- The four non-blocking observations deferred by the Phase 22.6-E and Phase 22.6-E-F1 reviews stay
+  deferred, except that a later Slice may harden the Executor double target.
 
 ## Safety and Architecture Invariants
 
-- Scanner, Parser, Recognition, Metadata, Naming, Classification, Planner and DryRun mutate nothing;
-  the precheck stays a read-only probe behind the `ReadOnlyStorageGuard` subclass.
-- Only OrganizerExecutor may mutate Storage; this Task grants no execute, overwrite or delete
-  authority, and `authorityGranted` stays `none`.
-- Overwrite and Manual projections remain projections that require explicit operator confirmation
-  later; nothing here confirms them.
-- RecognitionType C remains C even when its RecognitionTypePolicy references NamingPolicy A and
-  ClassificationPolicy A, and the precheck evidence keeps reporting C.
-- Anything shown as Active remains the exact immutable snapshot consumed by runtime; the precheck
-  keeps refusing a non-Draft/Validated revision and keeps its exact version/digest CAS.
-- No FFmpeg or FFprobe dependency, and no filesystem access outside Storage interfaces.
-- Credentials, endpoints, raw exception text, headers, cookies and private paths must not enter Web,
-  API, evidence, logs, tests or commits. `config/alist.json` is never read, staged or committed.
+- Scanning, parsing, recognition, metadata, naming, classification, planning and DryRun still mutate
+  nothing; only `OrganizerExecutor` may mutate Storage, and this Slice does not touch it.
+- The activation gate performs no Storage, Provider, Planner or Executor construction and no probe;
+  it reads only the revision document and the already persisted evidence.
+- RecognitionType C stays C through every policy resolution touched by the applicability rule.
+- Evidence remains immutable: a refused activation writes nothing and rewrites no stored evidence.
+- Configuration displayed as Active stays the exact immutable snapshot consumed by runtime.
+- Bounded, secret-free explanations only: no credential, endpoint, Storage `rootPath`, header,
+  cookie, private path or raw exception text may reach the Web, API, evidence, logs, tests or
+  commits. `config/alist.json` is never read, staged or committed.
+- No FFmpeg or FFprobe dependency is introduced.
 
 ## Required Tests
 
-1. Non-construction proof: with injected `AssertionError` doubles for the Provider registry and the
-   Executor, a successful precheck and at least one failure category both complete, and no Task,
-   Job, queue entry, plan record or execution authority exists afterwards. The production planner
-   and conflict resolver are excluded from the doubles by design.
-2. Falsification of that proof: temporarily construct a Provider client or an Executor on the
-   precheck path, show the new test fails, revert, show it passes and `git status` is clean. Record
-   both runs.
-3. Composed field proof: a successful precheck asserts the exact `relativeDestination` and
-   `destinationPath` values, consistent with the Phase 22.6-D accepted composition, and asserts
-   `destinationPath` begins with the MediaLibrary `rootPath`.
-4. Web field proof: the destination-path field inside `renderDestinationPrecheck` is asserted to
-   read `result.destinationPath` with a body-scoped assertion, or the existing body-scoped coverage
-   is identified precisely if it already holds.
-5. Fully missing subtree: with only the MediaLibrary root present, `deepestExistingAncestor` is that
-   root, `directoriesToCreate` is the complete ordered multi-entry list, `targetExists` is false,
-   the guard counters are zero, and the destination tree is unchanged.
-6. Partially existing subtree: the existing single-entry create-list assertions remain and are not
-   weakened.
-7. Unreachable outcome resolution: an `INVALID_DESTINATION` conflict on an otherwise safe
-   composition yields the bounded `unsafe_destination` failure with no `completed` ready or conflict
-   verdict, and no documented outcome list still advertises `invalid`. If reachability is
-   demonstrated instead, the real document proving it is asserted.
-8. Unchanged contract: configuration schema marker stays 10, Runtime marker stays 22, the API's
-   `400`, `409` and `503` behaviour and `MANAGE_CONFIGURATION` enforcement are unchanged, and the
-   `tests/test_configuration_destination.py` Phase 22.6-D suite stays byte-unmodified and green.
-9. Regression: the Phase 22.6-A/B/C/D configuration suites, the Phase 22.3/22.4/22.5 configuration
-   and continuation regressions, the RecognitionType C regression, the marker upgrade tests, and the
-   complete offline suite pass with no weakened, skipped or removed assertion.
+1. Missing evidence: checked activation of a Local-destination Draft with no destination precheck is
+   refused with the bounded missing-evidence message and next action; the revision stays
+   Draft or Validated, the previous Active revision is unchanged, and every other evidence record is
+   untouched.
+2. Stale evidence: a completed precheck followed by a document edit that changes version and digest
+   is refused with the stale wording, and the stale evidence is preserved rather than deleted.
+3. Failed evidence: a stored precheck with a bounded failure category refuses activation and the
+   refusal names that category.
+4. Capability gap: a completed precheck whose verdict is `capability_gap` refuses activation even
+   though the evidence is current and completed.
+5. Satisfied requirement: a current completed precheck with verdict `ready` activates exactly as
+   today, and a conflict projection of `skip`, `rename`, `overwrite_requires_confirmation` or
+   `manual_confirmation_required` does not block activation.
+6. Not applicable: a Draft whose only MediaLibrary points at a non-Local Storage, and a Draft with
+   no MediaLibrary at all, both activate under the two existing requirements with the new helper
+   raising nothing.
+7. Requirement order preserved: a Draft missing the Local setup check or the Strategy Test still
+   fails with the existing message before the destination requirement is evaluated, and unchecked
+   activation ignores all three.
+8. Zero authority and zero construction on the activation path: `AssertionError` doubles on the
+   Provider registry, the Executor and `OrganizePlanner.plan` are never called during a refused or
+   a successful checked activation, no Storage adapter is constructed, and a pre-created Runtime
+   database stays empty across Tasks, task items and results, the conflict confirmation,
+   metadata correction and three review queues, `automation_jobs` and `execution_authorizations`.
+9. Falsifiable Web proof: body-scoped assertions inside `renderDestinationPrecheck` for each new
+   activation-requirement line, each proven by deleting the line and observing the failure.
+10. API parity: the blocked case returns the existing activation-conflict status code with a bounded
+    body and no secret, and the satisfied case returns today's activation response unchanged; the
+    permission requirement is identical to the current activation route.
+11. Contract unchanged: Configuration marker 10 and Runtime marker 22 are asserted, and the Phase
+    22.6-D and Phase 22.6-E suites stay byte-unmodified and green.
+12. Regression: the complete offline suite plus the Phase 22.3 through 22.6 configuration,
+    continuation, RecognitionType C, organizer and conflict group.
 
 ## Validation
 
-Run the focused destination precheck, destination preview and operator UI tests, the Phase
-22.6-A/B/C configuration suites, the Phase 22.3/22.4/22.5 configuration and continuation
-regressions, the RecognitionType C regression, the schema marker upgrade tests, and the complete
-offline suite. Run Ruff lint and format, `compileall`, `pip check`, both example configuration
-validations, the wheel build plus the isolated installed-wheel smoke test, documentation local-link
-validation, `git diff --check`, the FFmpeg/FFprobe production audit, the business-layer
-filesystem-mutation audit, and the private configuration checks. Report the deliberate falsification
-runs explicitly — the temporary Provider/Executor construction that must fail the non-construction
-test, and its removal — including the restoration and a clean `git status`. All destination I/O uses
-temporary directories only; no real Storage, Provider or production data is used, and
-`config/alist.json` is never read.
+- `.venv/bin/python -m unittest` for the focused destination, precheck, operator-UI and service-API
+  tests, then the Phase 22.3 through 22.6 regression group, then the complete offline suite.
+- `.venv/bin/python -m ruff check .` and `.venv/bin/python -m ruff format --check .`.
+- `.venv/bin/python -m compileall mediaflow tests`.
+- `.venv/bin/pip check`.
+- CLI validation of both example configurations through `.venv/bin/python -m mediaflow.cli`, once
+  with `--config config/mediaflow.phase13.2.example.json config validate` and once with
+  `--config config/strategy.example.json config validate`.
+- Wheel build, isolated install and smoke run reporting both schema markers.
+- `git diff --check`, the FFmpeg/FFprobe audit, the business-layer filesystem-mutation audit, the
+  Markdown local-link check, and confirmation that `config/alist.json` stays ignored and untracked.
 
 ## Documentation
 
-Record the correction implementation evidence in `docs/progress.md` beneath the preserved Phase
-22.6-E `FIX REQUIRED` review record, and state exactly what now proves the four previously unproven
-claims, including the resolution of the unreachable `invalid` outcome. Update the Phase 22.6-E gate
-in `docs/roadmap.md` with the resulting status. Keep `docs/product-experience.md`,
-`docs/requirements.md` and `docs/architecture.md` CURRENT claims accurate, changing them only where
-they overstate coverage or still list a projected outcome that cannot occur. Keep remote destination
-prechecks, mutation-based capability probing, duplicate and cross-item collision detection,
-attachment prechecks, absolute mounted-path display, combined activation evidence and execution
-explicitly TARGET. Never rewrite historical Phase evidence, the preserved `FIX REQUIRED` records, or
-any rejected checkpoint SHA.
+- `docs/architecture.md`: move combined activation evidence for Local destinations from TARGET to
+  CURRENT and keep remote precheck, mutation probing, duplicate and attachment checks, absolute
+  mounted-path display and execution as TARGET.
+- `docs/product-experience.md`: extend the Phase 22.6-E journey section with the enforced activation
+  requirement, the four blocked cases and the not-applicable case.
+- `docs/requirements.md`: correct the CURRENT wording of any activation requirement ID that still
+  describes destination evidence as advisory.
+- The Chinese requirements specification: update only the implementation-status sentence.
+- Do not write `docs/progress.md` review records or `docs/roadmap.md` gate rows; both stay
+  High-only.
 
 ## Closure Checklist
 
-- [ ] Workspace preflight records worktree, `.git`, index, sandbox, and approval mode.
-- [ ] Capability mode is classified as Git-writable / Full Access or Git-read-only /
-      workspace-write.
-- [ ] The preceding dependent Slice is `PASS / CLOSED` with its commit SHA recorded
-      (`c7ec192b3b20f236cca5a70ed59cad43e0851242`, Phase 22.6-D).
-- [ ] The rejected Phase 22.6-E checkpoint `7353b0d22497e6e3e596c93c7052eea34daf27df` is preserved
-      and not amended, squashed, or rewritten.
-- [ ] Implementation and all required focused/full quality gates pass with actual evidence,
-      including the non-construction falsification and its restoration.
-- [ ] `git status` and the commit manifest contain every required file and no unrelated or private
-      file.
+- [ ] `require_current_destination_precheck` exists, is called from `activate_checked` after the two
+      existing requirements, and covers the missing, stale, failed and `capability_gap` cases.
+- [ ] The applicability rule is document-level, Local-only and explicit about not applicable.
+- [ ] The Web view shows satisfied, blocked or not applicable with bounded, secret-free text.
+- [ ] Web and API refuse identically, with unchanged permissions and status codes.
+- [ ] No evidence key, request field, response field or schema marker changed; markers stay 10
+      and 22.
+- [ ] No probe, no Storage/Provider/Planner/Executor construction and no mutation on the gate path.
+- [ ] RecognitionType C identity holds and the Phase 22.6-D and 22.6-E suites stay byte-unmodified.
+- [ ] All Required Tests exist, assert rather than assume, and each new Web line is falsifiable.
+- [ ] The complete offline suite, lint, format, compileall, `pip check`, both example validations
+      and the wheel smoke run pass.
 - [ ] Private runtime configuration remains ignored and untracked; no secret is staged or committed.
-- [ ] A coherent, buildable commit has been created: `Commit SHA: ________________________________`.
-- [ ] High Review inspected that exact SHA and returned: `High Audit: ___________________________`.
-- [ ] `docs/progress.md` records Status / Commit SHA / High Audit.
-- [ ] `docs/roadmap.md` records the resulting Phase gate.
-- [ ] The next Slice has not started before every preceding gate is complete.
-- [ ] Required major-closure/integration push is recorded, or push is explicitly not required.
+- [ ] Documentation CURRENT claims match the shipped behaviour.
+- [ ] One coherent, buildable, reviewable commit is created, and the Completion Report records
+      actual commands and results.
+- [ ] The Slice is reported as READY FOR HIGH REVIEW without declaring Phase closure.
 
 ## Completion Report
 
-Use the AGENTS.md completion structure and additionally report:
-
-- the exact non-construction evidence: which doubles were injected, where they resolve, which runs
-  they covered, and the falsification failure text with the temporary construction in place;
-- the asserted composed `relativeDestination` and `destinationPath` values and how they were tied to
-  the Phase 22.6-D accepted composition;
-- the fully missing subtree assertions, including the exact ordered `directoriesToCreate` list;
-- which resolution was chosen for the unreachable `invalid` projection, the production diff it
-  required, and what now proves an unsafe or invalid destination has exactly one documented answer;
-- confirmation that no evidence key, request field, API contract, permission, activation semantic or
-  schema marker changed, or the exact minimal change if one proved necessary;
-- CURRENT versus remaining TARGET for the Phase 22.6 destination journey and the exact next journey
-  gap.
+Report, at minimum: changed files; implemented behaviour; commands executed; pass or fail results
+with counts; design decisions, especially the applicability rule and the refusal wording; work
+intentionally deferred; and risks, assumptions or newly discovered issues.
