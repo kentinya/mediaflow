@@ -1077,6 +1077,29 @@ Phase 22.6-B is independently accepted at `5e2da5c634f1fa72a40e5f50b035260418fe1
 normalization was verified to be semantically identity for runtime, so an edited policy loads into
 the same domain `ClassificationRule` objects the loader produces from the original document.
 
+Phase 22.6-C adds OrganizePolicy to that same managed object authority and an exact-revision offline
+organize authority explanation. Normalization delegates to the runtime loader entry point
+`parse_organize_policy`, so operation, conflict strategy, attachment, duplicate-detection, rollback
+and source-directory-cleanup bounds — including the `overwrite`/`conflictStrategy` cross-field rule —
+stay owned by the production `OrganizePolicy` domain object and cannot diverge from the Active
+snapshot. The managed layer adds only unknown-field rejection, the bounded ID, and an editor
+restriction to Move, Copy, HardLink and SoftLink that refuses `delete` and `create_directory` without
+changing the loader. RecognitionTypePolicy inbound `organizePolicy` references block delete until
+repointed.
+
+The organize authority explanation resolves the requested RecognitionType through the production
+`RecognitionTypePolicyResolver` against the exact Draft/Validated revision. Its revision-keyed
+bounded evidence records RecognitionType, RecognitionTypePolicy, OrganizePolicy, operation, conflict
+strategy, overwrite and delete authority, attachments, duplicate detection, rollback, source-directory
+cleanup, the Storage capabilities the operation requires, an explicit statement that an unsupported
+capability is a failure rather than a silent fallback, destructive-authority warnings, current/stale
+state and recovery. Required capabilities are declared from the resolved policy, never probed: the
+path constructs no Storage, Provider, Planner, Executor, Task, Job or queue, reports
+`sideEffects: none` with `retrySafe: true`, and grants no execute authority. Every
+`PolicyResolutionErrorCode` becomes an explained failure with a next action. Composed destination
+paths, destination existence/conflict/capability prechecks, Storage capability probing and combined
+activation evidence remain outside this Slice, which awaits independent High Review.
+
 ## Deferred work
 
 Phase 15 persists organize conflicts as `waiting_confirm` records in SQLite. `ConflictResolver`
@@ -1613,8 +1636,9 @@ is not rewritten. Fresh and older databases both receive the columns by presence
 inserts use an explicit column list so historical ALTER-table column order cannot corrupt authority
 fields. Phase 22.3 closed on configuration-management schema marker `4`; Phase 22.4 adds marker `5`
 for revision-bound Recognition Strategy Test evidence, Phase 22.6-A adds marker `6` for
-exact-revision Naming preview evidence, and Phase 22.6-B adds marker `7` for exact-revision
-Classification preview evidence. Its revision sequence, singleton authority
+exact-revision Naming preview evidence, Phase 22.6-B adds marker `7` for exact-revision
+Classification preview evidence, and Phase 22.6-C adds marker `8` for exact-revision organize
+authority evidence. Its revision sequence, singleton authority
 pointer, Local setup-check evidence, Strategy Test evidence, and the Phase 22.5-E continuation table
 and indexes remain additive and do not rewrite
 the Runtime marker.

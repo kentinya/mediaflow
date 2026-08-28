@@ -146,7 +146,11 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("{strategy}", script)
         self.assertIn("'candidateRank'", script)
         self.assertIn("'choiceRank'", script)
-        self.assertNotIn("overwrite", script.lower())
+        conflict_actions = _js_function_body(script, "renderConflictActions")
+        self.assertNotIn("overwrite", conflict_actions.lower())
+        # Overwrite may only be displayed, never requested: no served path sends the field.
+        self.assertNotIn("overwrite:", script)
+        self.assertNotIn("overwrite=true", script)
         self.assertIn("Queue DryRun job", script)
         self.assertIn("'/api/v1/jobs', {method: 'POST'", script)
         self.assertNotIn("/api/v1/tasks/${encodeURIComponent(id)}/resume", script)
@@ -258,6 +262,57 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("kind === 'classificationPolicies'", object_list)
         self.assertIn("actionButton('Copy'", object_list)
         self.assertIn("classification_policy", object_list)
+
+    def test_organize_policy_editor_and_authority_explanation_are_reachable(self) -> None:
+        script = APP_JS.decode()
+        show_revision = _js_function_body(script, "showConfigurationRevision")
+        authority = _js_function_body(script, "renderOrganizeAuthority")
+        policy_mount = (
+            "renderGuidedObjectList(data, guided, 'organizePolicies', 'OrganizePolicies');"
+        )
+        authority_mount = "renderOrganizeAuthority(data, guided);"
+        guided_branch = show_revision.index("if (guided) {")
+        guided_body = _js_braced_body(show_revision, show_revision.index("{", guided_branch))
+        visible = show_revision.rindex("detail.hidden = false;")
+
+        self.assertIn(policy_mount, guided_body)
+        self.assertIn(authority_mount, guided_body)
+        self.assertLess(guided_body.index(policy_mount), guided_body.index(authority_mount))
+        self.assertLess(show_revision.index(authority_mount), visible)
+
+        self.assertIn(
+            "detailContent.append(text('h3', 'Offline organize authority explanation'));",
+            authority,
+        )
+        self.assertIn("detailContent.append(controls);", authority)
+        self.assertIn("Organize authority RecognitionType", authority)
+        self.assertIn("Explain offline organize authority", authority)
+        self.assertIn("/organize-authority`,", authority)
+        self.assertIn("expectedVersion: revision.version", authority)
+        self.assertIn("expectedDigest: revision.digest", authority)
+        for label in (
+            "'RecognitionTypePolicy'",
+            "'OrganizePolicy'",
+            "'Operation'",
+            "'Conflict strategy'",
+            "'Overwrite authorized'",
+            "'Delete authorized'",
+            "'Required Storage capabilities'",
+            "'Fallback'",
+            "'Destructive warnings'",
+            "'Side effects'",
+            "'Next action'",
+        ):
+            self.assertIn(label, authority)
+        self.assertIn("This organize authority explanation is stale", authority)
+
+        object_list = _js_function_body(script, "renderGuidedObjectList")
+        object_form = _js_function_body(script, "renderGuidedObjectForm")
+        self.assertIn("Save OrganizePolicy", object_form)
+        self.assertIn("kind === 'organizePolicies'", object_list)
+        self.assertIn("actionButton('Copy'", object_list)
+        self.assertIn("organize_policy", object_list)
+        self.assertIn("DESTRUCTIVE AUTHORITY", object_list)
 
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
         script = APP_JS.decode()

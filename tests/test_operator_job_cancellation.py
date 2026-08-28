@@ -112,7 +112,28 @@ class OperatorJobCancellationTests(unittest.TestCase):
         self.assertNotIn("innerHTML", script)
         self.assertNotIn("/api/v1/tasks/${encodeURIComponent(id)}/resume", script)
         self.assertNotIn("execute: true", script)
-        self.assertNotIn("overwrite", script.casefold())
+        # The job detail and cancellation journey must never name overwrite authority; the
+        # guided OrganizePolicy configuration section legitimately displays it read-only.
+        cancellation = "".join(
+            _js_function_body(script, name) for name in ("showJob", "confirmJobCancellation")
+        )
+        self.assertNotIn("overwrite", cancellation.casefold())
+        self.assertNotIn("overwrite:", script)
+
+
+def _js_function_body(script: str, name: str) -> str:
+    """Return one JS function body from the served asset by brace matching."""
+
+    opening = script.index("{", script.index(f"function {name}("))
+    depth = 0
+    for index in range(opening, len(script)):
+        if script[index] == "{":
+            depth += 1
+        elif script[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return script[opening + 1 : index]
+    raise AssertionError("JavaScript block has an unbalanced body")
 
 
 if __name__ == "__main__":

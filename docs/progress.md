@@ -153,6 +153,19 @@ Implementation evidence is recorded below under
 preserved unchanged. The independent review record is
 "Phase 22.6-B High Review Result (2026-08-28): PASS".
 
+### Phase 22.6-C Managed OrganizePolicy Configuration + Offline Organize Authority Explanation
+
+```text
+Status: READY FOR COMMIT (pre-checkpoint)
+Commit SHA: PENDING
+High Audit: PENDING
+Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
+```
+
+Implementation evidence is recorded below under
+"Phase 22.6-C OrganizePolicy Configuration + Offline Organize Authority Implementation Evidence".
+Implementation completion is not Phase closure.
+
 ## Phase 22.6-A High Review Result (2026-08-27)
 
 - Status: FIX REQUIRED; Rejected checkpoint SHA:
@@ -385,6 +398,78 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   explanation), defined in `TASK.md`. Composed destination-path preview, destination
   conflict/capability/existence prechecks, Storage capability probing and activation-evidence
   changes remain prohibited.
+
+## Phase 22.6-C OrganizePolicy Configuration + Offline Organize Authority Implementation Evidence
+
+```text
+Status: READY FOR COMMIT (pre-checkpoint)
+Commit SHA: PENDING
+High Audit: PENDING
+Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
+```
+
+- Added OrganizePolicy create/edit/copy/delete to the managed Draft/Validated Web/API path, using
+  the existing revision CAS and Before/After guided audit. The managed normalizer builds the real
+  `OrganizePolicy` domain object through the runtime loader entry point, so operation, conflict
+  strategy, attachment, duplicate-detection, rollback and source-cleanup bounds are the production
+  ones; the managed branch adds only unknown-field rejection, the bounded ID and the editor
+  operation restriction.
+- The managed editor accepts only Move, Copy, HardLink and SoftLink and refuses `delete` and
+  `create_directory` as an organize-policy operation, without changing the loader. The loader's
+  `overwrite`/`conflictStrategy` cross-field rule is preserved unchanged.
+- RecognitionTypePolicy inbound `organizePolicy` references are visible as `organize_policy:<id>`
+  and block delete until every referencing RecognitionTypePolicy is repointed.
+- Added exact-revision offline organize authority explanation resolved through the production
+  `RecognitionTypePolicyResolver`. Bounded persisted evidence exposes RecognitionType,
+  RecognitionTypePolicy, OrganizePolicy, operation, conflict strategy, overwrite and delete
+  authority, attachments, duplicate detection, rollback, source-directory cleanup, the required
+  Storage capabilities, the explicit "no fallback" statement, destructive-authority warnings,
+  current/stale state and explicit recovery. All five `PolicyResolutionErrorCode` categories become
+  actionable failure evidence instead of an unexplained error.
+- Required Storage capabilities are declared from the resolved operation and delete authority; no
+  Storage, Provider, Planner or Executor is constructed and no capability is probed. The explanation
+  reports `sideEffects: none` and `retrySafe: true`.
+- Added forward-only configuration-management marker 8 and a separate revision-keyed organize
+  authority table. A marker-7 database reopens at marker 8 with revisions plus naming and
+  classification preview evidence intact; the runtime schema marker stays 22.
+- Managed normalization is neutral for runtime: re-saving every example organize policy through the
+  managed service and re-loading the document produced identical
+  `strategy.organize_policies` domain objects, so a managed edit cannot silently change what runtime
+  consumes.
+- Eight deliberate falsifications each failed the focused test and were restored to a byte-identical
+  tree. Web (`tests.test_operator_ui`): removing the authority mount FAILED; removing the
+  `organizePolicies` list mount FAILED; moving the authority mount after the final
+  `detail.hidden = false;` FAILED; detaching its controls FAILED; detaching its heading FAILED.
+  Service boundary (`tests.test_configuration_organize`): removing the Move/Copy/HardLink/SoftLink
+  restriction FAILED; removing the `ORGANIZE_POLICY` reference branch FAILED; removing the
+  `can_delete` capability declaration FAILED.
+- Zero side effects during explanation are proven by patching storage creation, the metadata
+  provider registry, the planner and the executor to raise; the explanation still succeeds.
+- The complete offline suite ran 825 tests: 818 passed, 7 existing externally gated tests skipped
+  and 0 failed; skips are not acceptance evidence.
+- Ruff lint/format across 305 files, compileall, `pip check`, both example configuration validations,
+  isolated wheel build/install/smoke, 120 markdown files with 0 broken local links,
+  `git diff --check`, the FFmpeg/FFprobe production audit, the business-layer filesystem/Storage
+  mutation-boundary audit and the private-configuration checks (`config/alist.json` and
+  `config/strategy.json` ignored, untracked, unstaged, never read) passed. The wheel smoke retained
+  runtime schema marker 22; review wheel SHA-256:
+  `e0855fcc3547ba3ab941675d06c325a33e9a497f27e852f7f1920b1b739fdedc` (not reproducible across
+  builds, as recorded for Phase 22.6-B).
+- Two supporting non-scope-widening adjustments are included and disclosed for review. First, the
+  loader helper `_organize_policy` was renamed to the public `parse_organize_policy` (rename only,
+  no behavioural change, single internal call site updated) so the application layer does not import
+  a private infrastructure helper. Second, the whole-script `assertNotIn("overwrite", ...)`
+  assertions in `tests/test_operator_job_submission.py` and `tests/test_operator_job_cancellation.py`
+  were scoped to the exact job journey function bodies they protect, because the guided OrganizePolicy
+  section must now name overwrite authority in read-only display text; a stronger global assertion
+  proves no served path ever sends an `overwrite` field.
+- Recorded out-of-scope observations, deliberately not corrected in this Slice: the runtime loader
+  still accepts `delete` and `create_directory` as organize-policy operations and still lacks
+  top-level unknown-field rejection for organize policies, both reachable only by editing a
+  configuration file directly, not through the managed editor.
+- This is implementation evidence only. Phase 22.6-C is not `PASS / CLOSED`; composed
+  destination-path preview, destination conflict/capability/existence prechecks, Storage capability
+  probing and activation-evidence changes have not started.
 
 ## Completed
 

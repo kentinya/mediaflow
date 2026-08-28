@@ -287,6 +287,91 @@ class ConfigurationClassificationPreviewStatus(StrEnum):
     FAILED = "failed"
 
 
+class ConfigurationOrganizeAuthorityStatus(StrEnum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class OrganizeAuthorityEvidence:
+    """Bounded, secret-free organize authority evidence for one exact revision."""
+
+    revision_id: str
+    revision_version: int
+    revision_digest: str
+    status: ConfigurationOrganizeAuthorityStatus
+    explained_at: datetime
+    actor: str
+    recognition_type: str
+    result: dict[str, object] | None = None
+    failure_category: str | None = None
+    message: str | None = None
+    next_action: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.revision_id, str) or not self.revision_id.strip():
+            raise ValueError("organize authority revision ID is required")
+        if isinstance(self.revision_version, bool) or not isinstance(self.revision_version, int):
+            raise ValueError("organize authority revision version must be an integer")
+        if self.revision_version < 1:
+            raise ValueError("organize authority revision version must be positive")
+        if not isinstance(self.revision_digest, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.revision_digest
+        ):
+            raise ValueError("organize authority revision digest must be a SHA-256 hex digest")
+        if not isinstance(self.status, ConfigurationOrganizeAuthorityStatus):
+            raise ValueError("organize authority status is required")
+        if not isinstance(self.explained_at, datetime) or self.explained_at.tzinfo is None:
+            raise ValueError("organize authority time must include a timezone")
+        for label, value, maximum in (
+            ("actor", self.actor, 200),
+            ("RecognitionType", self.recognition_type, 64),
+        ):
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > maximum
+                or "\x00" in value
+            ):
+                raise ValueError(f"organize authority {label} must be bounded and non-empty")
+        if self.result is not None:
+            if not isinstance(self.result, dict):
+                raise ValueError("organize authority result must be an object")
+            encoded = json.dumps(
+                self.result, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+            )
+            if len(encoded.encode("utf-8")) > CONFIGURATION_STRATEGY_RESULT_LIMIT:
+                raise ValueError("organize authority result is too large")
+        for label, value in (
+            ("failure category", self.failure_category),
+            ("message", self.message),
+            ("next action", self.next_action),
+        ):
+            if value is not None and (
+                not isinstance(value, str) or not value.strip() or len(value) > 500
+            ):
+                raise ValueError(f"organize authority {label} must be bounded text")
+        if self.status is ConfigurationOrganizeAuthorityStatus.COMPLETED and self.result is None:
+            raise ValueError("completed organize authority explanation requires a result")
+
+    def document(self) -> dict[str, object]:
+        return {
+            "revisionId": self.revision_id,
+            "revisionVersion": self.revision_version,
+            "revisionDigest": self.revision_digest,
+            "status": self.status.value,
+            "explainedAt": self.explained_at.isoformat(),
+            "actor": self.actor,
+            "recognitionType": self.recognition_type,
+            "result": copy.deepcopy(self.result),
+            "failureCategory": self.failure_category,
+            "message": self.message,
+            "nextAction": self.next_action,
+            "sideEffects": "none",
+            "retrySafe": True,
+        }
+
+
 @dataclass(frozen=True)
 class ClassificationPreviewEvidence:
     """Bounded, secret-free classification evidence for one exact managed revision."""
@@ -903,6 +988,12 @@ class ManagedConfigurationRepository(Protocol):
     def get_classification_preview(
         self, revision_id: str
     ) -> ClassificationPreviewEvidence | None: ...
+
+    def save_organize_authority(
+        self, evidence: OrganizeAuthorityEvidence
+    ) -> OrganizeAuthorityEvidence: ...
+
+    def get_organize_authority(self, revision_id: str) -> OrganizeAuthorityEvidence | None: ...
 
 
 class StorageConfigurationValidator:

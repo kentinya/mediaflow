@@ -26,6 +26,7 @@ from mediaflow.application.naming import (
     NamingPreviewService,
     validate_naming_policy,
 )
+from mediaflow.application.policies import RecognitionTypePolicyResolver
 from mediaflow.application.read_only_storage import (
     ReadOnlyStorageGuard,
     ReadOnlyStorageMutationError,
@@ -52,6 +53,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationNamingPreviewStatus,
     ConfigurationObjectKind,
     ConfigurationObjectReferenced,
+    ConfigurationOrganizeAuthorityStatus,
     ConfigurationReferenceEvidence,
     ConfigurationReferenceItem,
     ConfigurationSetupCheckStatus,
@@ -62,6 +64,7 @@ from mediaflow.domain.configuration_management import (
     ManagedConfigurationStatus,
     ManagedDocumentRedactor,
     NamingPreviewEvidence,
+    OrganizeAuthorityEvidence,
     RecognitionStrategyTestEvidence,
 )
 from mediaflow.domain.metadata import (
@@ -84,6 +87,12 @@ from mediaflow.domain.naming import (
     NamingMediaTypeMode,
     NamingPolicy,
 )
+from mediaflow.domain.organizer import (
+    ConflictStrategy,
+    DirectoryCleanupMode,
+    OrganizeOperationType,
+    OrganizePolicy,
+)
 from mediaflow.domain.parser import FileContext, ParseResult
 from mediaflow.domain.recognition import (
     AtomicCondition,
@@ -91,8 +100,11 @@ from mediaflow.domain.recognition import (
     ConditionOperator,
     LogicalCondition,
     LogicalOperator,
+    PolicyReference,
+    PolicyResolutionError,
     RecognitionStatus,
     RecognitionType,
+    RecognitionTypePolicy,
 )
 from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.infrastructure.metadata_provider_bootstrap import MetadataProviderBootstrapError
@@ -100,6 +112,7 @@ from mediaflow.infrastructure.runtime_configuration import (
     load_managed_runtime_configuration,
     load_runtime_configuration,
 )
+from mediaflow.infrastructure.strategy_user_configuration import parse_organize_policy
 
 
 class ConfigurationObjectService:
@@ -115,6 +128,7 @@ class ConfigurationObjectService:
         ConfigurationObjectKind.METADATA_POLICY: "metadataPolicies",
         ConfigurationObjectKind.NAMING_POLICY: "namingPolicies",
         ConfigurationObjectKind.CLASSIFICATION_POLICY: "classificationPolicies",
+        ConfigurationObjectKind.ORGANIZE_POLICY: "organizePolicies",
     }
     _MAX_OBJECT_BYTES = 64 * 1024
     _SETUP_CHECK_TIMEOUT_SECONDS = 10.0
@@ -241,6 +255,16 @@ class ConfigurationObjectService:
         "keywords",
         "overview",
     }
+    _ORGANIZE_POLICY_FIELDS = {
+        "id",
+        "operation",
+        "conflictStrategy",
+        "overwrite",
+        "duplicateDetection",
+        "rollback",
+        "sourceDirectoryCleanup",
+        "attachments",
+    }
 
     def __init__(
         self,
@@ -327,6 +351,11 @@ class ConfigurationObjectService:
                     if "classificationPolicies" in document
                     else []
                 ),
+                "organizePolicies": (
+                    self._objects(document, "organizePolicies")
+                    if "organizePolicies" in document
+                    else []
+                ),
             },
             # Keep every versioned projection on the same immutable revision read.
             # Calling the public helpers here would re-read the repository and could
@@ -336,6 +365,7 @@ class ConfigurationObjectService:
             "recognitionStrategyTest": self._strategy_test_document(revision),
             "namingPreview": self._naming_preview_document(revision),
             "classificationPreview": self._classification_preview_document(revision),
+            "organizeAuthority": self._organize_authority_document(revision),
         }
 
     def references(self, revision_id: str) -> dict[str, dict[str, object]]:
@@ -863,6 +893,228 @@ class ConfigurationObjectService:
                 ),
             )
         return self._repository.save_classification_preview(evidence)
+
+    def organize_authority(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        recognition_type: str,
+    ) -> OrganizeAuthorityEvidence:
+        revision = self._managed.require(revision_id)
+        if revision.status not in {
+            ManagedConfigurationStatus.DRAFT,
+            ManagedConfigurationStatus.VALIDATED,
+        }:
+            raise ConfigurationVersionConflict(
+                "organize authority explanation requires a Draft or Validated revision",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+            )
+        if revision.version != expected_version or revision.digest != expected_digest:
+            raise ConfigurationVersionConflict(
+                "organize authority explanation requires the exact current revision; "
+                "reload before explaining",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+                durable_state="current_draft_and_prior_organize_authority_preserved",
+                next_action="reload the revision and explicitly rerun organize authority",
+            )
+        if (
+            not isinstance(recognition_type, str)
+            or not recognition_type.strip()
+            or len(recognition_type) > 64
+            or "\x00" in recognition_type
+        ):
+            raise ValueError("organize authority RecognitionType must be bounded and non-empty")
+
+        try:
+            types = {
+                str(value["id"]): RecognitionType(
+                    str(value["id"]),
+                    str(value.get("name") or value["id"]),
+                    str(value.get("description", "")),
+                    bool(value.get("enabled", True)),
+                )
+                for value in self._canonical_objects(revision.document, "recognitionTypes")
+            }
+            organize_policies = {
+                policy.policy_id: policy
+                for policy in (
+                    self._organize_policy(value)
+                    for value in self._canonical_objects(revision.document, "organizePolicies")
+                )
+            }
+            type_policies: list[RecognitionTypePolicy] = []
+            for value in self._canonical_objects(revision.document, "recognitionTypePolicies"):
+                normalized = self._normalize(ConfigurationObjectKind.RECOGNITION_TYPE_POLICY, value)
+                type_id = str(normalized["recognitionType"])
+                known_type = types.get(type_id, RecognitionType(type_id, type_id))
+                organize_id = str(normalized["organizePolicy"])
+                organize = organize_policies.get(
+                    organize_id, OrganizePolicy(organize_id, OrganizeOperationType.MOVE)
+                )
+                type_policies.append(
+                    RecognitionTypePolicy(
+                        str(normalized["id"]),
+                        known_type,
+                        str(normalized["metadataPolicy"]),
+                        str(normalized["namingPolicy"]),
+                        str(normalized["classificationPolicy"]),
+                        organize,
+                        str(normalized["name"]),
+                        bool(normalized["enabled"]),
+                        int(normalized["priority"]),
+                    )
+                )
+
+            def references(section: str) -> dict[str, PolicyReference]:
+                return {
+                    str(value["id"]): PolicyReference(
+                        str(value["id"]), bool(value.get("enabled", True))
+                    )
+                    for value in self._canonical_objects(revision.document, section)
+                }
+
+            resolved = RecognitionTypePolicyResolver(
+                type_policies,
+                metadata_policies=references("metadataPolicies"),
+                naming_policies=references("namingPolicies"),
+                classification_policies=references("classificationPolicies"),
+                organize_policies={key: PolicyReference(key) for key in organize_policies},
+            ).resolve(RecognitionType(recognition_type, recognition_type))
+            policy = organize_policies[resolved.organize_policy_id]
+            cleanup_enabled = policy.source_directory_cleanup.mode is not DirectoryCleanupMode.NONE
+            overwrite = policy.conflict_strategy is ConflictStrategy.OVERWRITE
+            delete_authorized = overwrite or cleanup_enabled
+            required_capabilities = {
+                OrganizeOperationType.MOVE: ["can_move"],
+                OrganizeOperationType.COPY: ["can_copy"],
+                OrganizeOperationType.HARD_LINK: ["can_hard_link"],
+                OrganizeOperationType.SOFT_LINK: ["can_soft_link"],
+            }[policy.operation]
+            if delete_authorized:
+                required_capabilities.append("can_delete")
+            warnings: list[str] = []
+            if overwrite:
+                warnings.append(
+                    "conflictStrategy=overwrite grants explicit destination replacement authority"
+                )
+            if cleanup_enabled:
+                warnings.append(
+                    "sourceDirectoryCleanup grants explicit source-directory delete authority"
+                )
+            if policy.operation is OrganizeOperationType.MOVE and not policy.rollback.enabled:
+                warnings.append("rollback is disabled for Move; partial effects may remain")
+            if policy.operation in {
+                OrganizeOperationType.HARD_LINK,
+                OrganizeOperationType.SOFT_LINK,
+            }:
+                warnings.append(
+                    f"{policy.operation.value} has no fallback to Copy or Move; unsupported "
+                    "capability is a failure"
+                )
+            result = {
+                "recognitionType": resolved.recognition_type_id,
+                "recognitionTypePolicyId": resolved.type_policy_id,
+                "organizePolicyId": policy.policy_id,
+                "operation": policy.operation.value,
+                "conflictStrategy": policy.conflict_strategy.value,
+                "overwriteAuthorized": overwrite,
+                "deleteAuthorized": delete_authorized,
+                "attachments": self._attachment_document(policy),
+                "duplicateDetection": self._hash_document(policy),
+                "rollback": self._rollback_document(policy),
+                "sourceDirectoryCleanup": self._cleanup_document(policy),
+                "requiredStorageCapabilities": required_capabilities,
+                "fallback": "none; unsupported capability is a failure",
+                "warnings": warnings,
+            }
+            evidence = OrganizeAuthorityEvidence(
+                revision.revision_id,
+                revision.version,
+                revision.digest,
+                ConfigurationOrganizeAuthorityStatus.COMPLETED,
+                datetime.now(UTC),
+                actor,
+                recognition_type,
+                result,
+                message="Organize authority resolved through the production policy resolver",
+                next_action=(
+                    "review each destructive warning, then correct and rerun or validate the Draft"
+                    if warnings
+                    else (
+                        "review the declared authority, then correct and rerun or validate "
+                        "the Draft"
+                    )
+                ),
+            )
+        except PolicyResolutionError as error:
+            evidence = OrganizeAuthorityEvidence(
+                revision.revision_id,
+                revision.version,
+                revision.digest,
+                ConfigurationOrganizeAuthorityStatus.FAILED,
+                datetime.now(UTC),
+                actor,
+                recognition_type,
+                failure_category=error.code.value,
+                message=self._bounded_utf8(str(error), 384),
+                next_action=(
+                    "add, enable, deduplicate or repoint the RecognitionTypePolicy in this Draft, "
+                    "then explicitly rerun organize authority"
+                ),
+            )
+        return self._repository.save_organize_authority(evidence)
+
+    @classmethod
+    def _organize_policy(cls, value: Mapping[str, object]) -> OrganizePolicy:
+        normalized = cls._normalize(ConfigurationObjectKind.ORGANIZE_POLICY, value)
+        return parse_organize_policy(normalized)
+
+    @staticmethod
+    def _attachment_document(policy: OrganizePolicy) -> dict[str, object]:
+        value = policy.attachments
+        return {
+            "enabled": value.enabled,
+            "subtitles": value.subtitles,
+            "nfo": value.nfo,
+            "artwork": value.artwork,
+            "trailers": value.trailers,
+            "otherSameStem": value.other_same_stem,
+        }
+
+    @staticmethod
+    def _hash_document(policy: OrganizePolicy) -> dict[str, object]:
+        value = policy.duplicate_detection
+        return {
+            "mode": value.mode.value,
+            "fastSampleBytes": value.fast_sample_bytes,
+            "fullMaxFileSize": value.full_max_file_size,
+            "chunkSize": value.chunk_size,
+        }
+
+    @staticmethod
+    def _rollback_document(policy: OrganizePolicy) -> dict[str, object]:
+        value = policy.rollback
+        return {
+            "enabled": value.enabled,
+            "cleanupCreatedDirectories": value.cleanup_created_directories,
+        }
+
+    @staticmethod
+    def _cleanup_document(policy: OrganizePolicy) -> dict[str, object]:
+        value = policy.source_directory_cleanup
+        return {
+            "mode": value.mode.value,
+            "maxParentDirectories": value.max_parent_directories,
+            "ignorePatterns": list(value.ignore_patterns),
+            "maxEntries": value.max_entries,
+        }
 
     @classmethod
     def _classification_context(
@@ -2316,6 +2568,20 @@ class ConfigurationObjectService:
         )
         return value
 
+    def _organize_authority_document(
+        self, revision: ManagedConfigurationRevision
+    ) -> dict[str, object] | None:
+        getter = getattr(self._repository, "get_organize_authority", None)
+        evidence = getter(revision.revision_id) if getter is not None else None
+        if evidence is None:
+            return None
+        value = evidence.document()
+        value["stale"] = (
+            evidence.revision_version != revision.version
+            or evidence.revision_digest != revision.digest
+        )
+        return value
+
     def _check_document(self, revision: ManagedConfigurationRevision) -> dict[str, object] | None:
         evidence = self._repository.get_local_setup_check(revision.revision_id)
         if evidence is None:
@@ -2411,6 +2677,7 @@ class ConfigurationObjectService:
             ConfigurationObjectKind.METADATA_POLICY: cls._METADATA_POLICY_FIELDS,
             ConfigurationObjectKind.NAMING_POLICY: cls._NAMING_POLICY_FIELDS,
             ConfigurationObjectKind.CLASSIFICATION_POLICY: cls._CLASSIFICATION_POLICY_FIELDS,
+            ConfigurationObjectKind.ORGANIZE_POLICY: cls._ORGANIZE_POLICY_FIELDS,
         }[kind]
         unknown = set(value).difference(allowed)
         if unknown:
@@ -2420,6 +2687,42 @@ class ConfigurationObjectService:
             raise ValueError(f"{section} id must be a bounded non-empty string")
         if any(character in object_id for character in "/\\\x00"):
             raise ValueError(f"{section} id contains an invalid character")
+        if kind is ConfigurationObjectKind.ORGANIZE_POLICY:
+            operation = value.get("operation")
+            if (
+                not isinstance(operation, str)
+                or not operation.strip()
+                or len(operation) > 64
+                or "\x00" in operation
+            ):
+                raise ValueError("OrganizePolicy operation must be bounded non-empty text")
+            # Reuse the runtime loader so a managed edit cannot accept, reject, or
+            # normalize an organize policy differently from the Active snapshot; the
+            # domain objects it builds own every bound and the overwrite cross-field rule.
+            try:
+                policy = parse_organize_policy(copy.deepcopy(dict(value)))
+            except ValueError as error:
+                raise ValueError(f"OrganizePolicy {cls._bounded_utf8(str(error), 384)}") from error
+            if policy.operation not in {
+                OrganizeOperationType.MOVE,
+                OrganizeOperationType.COPY,
+                OrganizeOperationType.HARD_LINK,
+                OrganizeOperationType.SOFT_LINK,
+            }:
+                raise ValueError(
+                    "OrganizePolicy operation must be Move, Copy, HardLink, or SoftLink"
+                )
+            normalized = {
+                "id": policy.policy_id,
+                "operation": policy.operation.value,
+                "conflictStrategy": policy.conflict_strategy.value,
+                "overwrite": policy.conflict_strategy is ConflictStrategy.OVERWRITE,
+                "duplicateDetection": cls._hash_document(policy),
+                "rollback": cls._rollback_document(policy),
+                "sourceDirectoryCleanup": cls._cleanup_document(policy),
+                "attachments": cls._attachment_document(policy),
+            }
+            return cls._bounded_object(section, normalized)
         name = value.get("name", object_id)
         if not isinstance(name, str) or not name.strip() or len(name) > 120:
             raise ValueError(f"{section} name must be a bounded non-empty string")
@@ -3287,6 +3590,24 @@ class ConfigurationObjectService:
                             section="recognitionTypePolicies",
                             object_id=str(item["id"]),
                             field="classificationPolicy",
+                        )
+                    )
+        elif kind is ConfigurationObjectKind.ORGANIZE_POLICY:
+            for index, item in enumerate(
+                cls._canonical_objects(document, "recognitionTypePolicies")
+            ):
+                reference = cls._required_reference_id(
+                    item,
+                    section="recognitionTypePolicies",
+                    index=index,
+                    field="organizePolicy",
+                )
+                if reference == object_id:
+                    collector.add(
+                        ConfigurationReferenceItem(
+                            section="recognitionTypePolicies",
+                            object_id=str(item["id"]),
+                            field="organizePolicy",
                         )
                     )
         return collector.evidence()
