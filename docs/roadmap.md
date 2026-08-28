@@ -14,7 +14,7 @@ Phase gate，不复制测试日志或流程正文。
 | Phase 22.5-D Managed Live Metadata Correction Test | PASS / CLOSED | `55769be58a75596461879994560a0c58c3a7c9dc` | PASS；允许 Phase 22.5-E 单项 Metadata correction DryRun continuation；Provider switching 仍后置 |
 | Phase 22.5-E Single-Item Metadata Correction DryRun Continuation | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27，F1 correction checkpoint 独立复审通过；被拒 checkpoint `08dfd4f921728755209b6d52347d28f221121c47`（FIX REQUIRED）保留 |
 | Phase 22.5 Metadata 配置与修正旅程（A/B/C/D/E） | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27 phase-level Final Closure Audit；已推送 `origin/main`；允许 Phase 22.6 Naming/Classification/Organize 配置旅程 |
-| Phase 22.6-A Managed NamingPolicy + Offline Naming Preview | FIX REQUIRED | 被拒 checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d`（保留） | FIX REQUIRED — 2026-08-27，Web preview section 缺少可失效挂载回归、invalid template 仅测私有 `_normalize`；仅允许 Phase 22.6-A-F1 correction Slice，不得进入 Classification/Organize 后续 Slice |
+| Phase 22.6-A Managed NamingPolicy + Offline Naming Preview | READY FOR HIGH RE-REVIEW | F1 correction SHA PENDING；被拒 checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d` 保留 | F1 已补 Web mount 可失效回归与 service/API durable-state 证据；待独立复审，不得进入 Classification/Organize 后续 Slice |
 
 ## 当前节点
 
@@ -42,6 +42,10 @@ Phase 22.6-A 首个 checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d` 已于
 不改写。当前唯一合法 Slice 是 Phase 22.6-A-F1 correction（仅补测试与文档，不改产品行为）；
 Phase 22.6 尚未关闭，Phase 22.6-B ClassificationPolicy 编辑与目标解析预览、目标冲突/能力预检和
 activation evidence 不得提前开始。
+Phase 22.6-A-F1 已补齐两项阻断证据：brace-matched Web 测试对 preview 与 NamingPolicy list
+挂载分别做了删除即失败、恢复即通过的可证伪验证；真实 Draft 的 service/API 测试证明三类 invalid
+template 不改变 version/digest/document、不写 preview evidence，并在修正后完成精确 revision
+预览。当前状态仅为 **READY FOR HIGH RE-REVIEW**，未宣告 PASS/CLOSED，下一 Slice 仍禁止开始。
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 

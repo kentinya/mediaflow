@@ -13,6 +13,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationObjectReferenced,
     ConfigurationVersionConflict,
 )
+from mediaflow.domain.naming import NamingError, NamingErrorCode
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -284,16 +285,73 @@ class ManagedNamingPolicyJourneyTests(unittest.TestCase):
 
     def test_invalid_templates_are_rejected_without_changing_draft(self) -> None:
         invalid = (
-            ("unknown", "{unknown}"),
-            ("separator", "../{title}"),
-            ("backslash", "folder\\{title}"),
-            ("empty", ""),
-            ("overlong", "x" * 4097),
+            ("unknown", "{unknown}", NamingErrorCode.UNKNOWN_VARIABLE),
+            ("separator", "../{title}", NamingErrorCode.UNSAFE_PATH),
+            ("empty", "", NamingErrorCode.INVALID_TEMPLATE),
         )
-        for label, template in invalid:
-            value = {"id": "bad", "name": "Bad", "directoryTemplate": template}
-            with self.subTest(label=label), self.assertRaises(ValueError):
-                ConfigurationObjectService._normalize(ConfigurationObjectKind.NAMING_POLICY, value)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                managed = ManagedConfigurationService(repository)
+                objects = ConfigurationObjectService(managed)
+                draft = managed.import_draft(self._document(root), actor="operator")
+                original_document = copy.deepcopy(draft.document)
+
+                for label, template, expected_code in invalid:
+                    with self.subTest(label=label), self.assertRaises(NamingError) as caught:
+                        objects.mutate(
+                            draft.revision_id,
+                            ConfigurationObjectKind.NAMING_POLICY,
+                            object_id=None,
+                            value={
+                                "id": f"bad-{label}",
+                                "name": f"Bad {label}",
+                                "directoryTemplate": template,
+                            },
+                            expected_version=draft.version,
+                            actor="operator",
+                        )
+                    self.assertEqual(caught.exception.code, expected_code)
+                    self.assertGreater(len(str(caught.exception)), 0)
+                    self.assertLessEqual(len(str(caught.exception)), 500)
+                    unchanged = managed.require(draft.revision_id)
+                    self.assertEqual(unchanged.version, draft.version)
+                    self.assertEqual(unchanged.digest, draft.digest)
+                    self.assertEqual(unchanged.document, original_document)
+                    self.assertIsNone(repository.get_naming_preview(draft.revision_id))
+
+                corrected = objects.mutate(
+                    draft.revision_id,
+                    ConfigurationObjectKind.NAMING_POLICY,
+                    object_id=None,
+                    value={
+                        "id": "corrected-movie",
+                        "name": "Corrected movie",
+                        "mediaTypeMode": "movie",
+                        "directoryTemplate": "{title} ({year})",
+                        "filenameTemplate": "{title} ({year}).{ext}",
+                    },
+                    expected_version=draft.version,
+                    actor="operator",
+                )
+                evidence = objects.naming_preview(
+                    corrected.revision_id,
+                    expected_version=corrected.version,
+                    expected_digest=corrected.digest,
+                    actor="operator",
+                    policy_id="corrected-movie",
+                    sample={
+                        "title": "The Matrix",
+                        "mediaType": "movie",
+                        "year": 1999,
+                        "extension": "mkv",
+                    },
+                )
+                self.assertEqual(evidence.status.value, "completed")
+                self.assertEqual(evidence.revision_version, corrected.version)
+                self.assertEqual(evidence.revision_digest, corrected.digest)
+                self.assertEqual(evidence.result["directory"], "The Matrix (1999)")
+                self.assertEqual(evidence.result["filename"], "The Matrix (1999).mkv")
 
     def test_render_failures_are_persisted_with_distinct_recovery_categories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -381,21 +439,35 @@ class ManagedNamingPolicyJourneyTests(unittest.TestCase):
                 collection = (
                     f"/api/v1/configuration/revisions/{draft.revision_id}/objects/namingPolicies"
                 )
-                status, invalid = request(
-                    api,
-                    collection,
-                    method="POST",
-                    body={
-                        "expectedVersion": draft.version,
-                        "object": {
-                            "id": "managed-movie",
-                            "name": "Managed movie",
-                            "directoryTemplate": "{unknown}",
-                        },
-                    },
-                )
-                self.assertEqual(status, 400)
-                self.assertEqual(invalid["error"]["code"], "invalid_request")
+                original_document = copy.deepcopy(draft.document)
+                for label, template in (
+                    ("unknown", "{unknown}"),
+                    ("separator", "../{title}"),
+                    ("empty", ""),
+                ):
+                    with self.subTest(api_invalid=label):
+                        status, invalid_response = request(
+                            api,
+                            collection,
+                            method="POST",
+                            body={
+                                "expectedVersion": draft.version,
+                                "object": {
+                                    "id": f"invalid-{label}",
+                                    "name": f"Invalid {label}",
+                                    "directoryTemplate": template,
+                                },
+                            },
+                        )
+                        self.assertEqual(status, 400)
+                        self.assertEqual(invalid_response["error"]["code"], "invalid_request")
+                        self.assertGreater(len(invalid_response["error"]["message"]), 0)
+                        self.assertLessEqual(len(invalid_response["error"]["message"]), 500)
+                        unchanged = managed.require(draft.revision_id)
+                        self.assertEqual(unchanged.version, draft.version)
+                        self.assertEqual(unchanged.digest, draft.digest)
+                        self.assertEqual(unchanged.document, original_document)
+                        self.assertIsNone(repository.get_naming_preview(draft.revision_id))
                 status, created = request(
                     api,
                     collection,

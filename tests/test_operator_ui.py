@@ -34,6 +34,27 @@ def request(api, path: str, method: str = "GET"):
     return int(status[0].split()[0]), dict(headers), body
 
 
+def _js_function_body(script: str, name: str) -> str:
+    """Return one JS function body from the served asset by brace matching."""
+
+    opening = script.index("{", script.index(f"function {name}("))
+    return _js_braced_body(script, opening)
+
+
+def _js_braced_body(script: str, opening: int) -> str:
+    """Return the body whose opening brace is at ``opening``."""
+
+    depth = 0
+    for index in range(opening, len(script)):
+        if script[index] == "{":
+            depth += 1
+        elif script[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return script[opening + 1 : index]
+    raise AssertionError("JavaScript block has an unbalanced body")
+
+
 class OperatorUiTests(unittest.TestCase):
     def setUp(self) -> None:
         principal = ResolvedApiPrincipal("viewer", "unused-token", frozenset({ApiPermission.READ}))
@@ -161,21 +182,41 @@ class OperatorUiTests(unittest.TestCase):
 
     def test_naming_policy_editor_and_exact_revision_preview_are_reachable(self) -> None:
         script = APP_JS.decode()
-        self.assertIn("renderGuidedObjectList(data, guided, 'namingPolicies'", script)
-        self.assertIn("Save NamingPolicy", script)
-        self.assertIn("actionButton('Copy'", script)
-        self.assertIn("References block deletion", script)
-        self.assertIn("Offline naming preview", script)
-        self.assertIn("Run offline naming preview", script)
-        self.assertIn("/naming-preview`,", script)
-        self.assertIn("expectedVersion: revision.version", script)
-        self.assertIn("expectedDigest: revision.digest", script)
-        self.assertIn("Rendered directory", script)
-        self.assertIn("Rendered filename", script)
-        self.assertIn("Sanitization", script)
-        self.assertIn("Missing-variable strategy", script)
-        self.assertIn("This preview is stale", script)
-        self.assertIn("Side effects", script)
+        show_revision = _js_function_body(script, "showConfigurationRevision")
+        preview = _js_function_body(script, "renderNamingPreview")
+        policy_mount = "renderGuidedObjectList(data, guided, 'namingPolicies', 'NamingPolicies');"
+        preview_mount = "renderNamingPreview(data, guided);"
+
+        self.assertIn(policy_mount, show_revision)
+        self.assertIn(preview_mount, show_revision)
+        guided_branch = show_revision.index("if (guided) {")
+        guided_body = _js_braced_body(show_revision, show_revision.index("{", guided_branch))
+        visible = show_revision.rindex("detail.hidden = false;")
+        self.assertIn(policy_mount, guided_body)
+        self.assertIn(preview_mount, guided_body)
+        self.assertLess(guided_body.index(policy_mount), guided_body.index(preview_mount))
+        self.assertLess(show_revision.index(preview_mount), visible)
+
+        self.assertIn("detailContent.append(text('h3', 'Offline naming preview'));", preview)
+        self.assertIn("detailContent.append(controls);", preview)
+        self.assertIn("NamingPolicy preview policy", preview)
+        self.assertIn("Naming preview sample JSON", preview)
+        self.assertIn("Run offline naming preview", preview)
+        self.assertIn("/naming-preview`,", preview)
+        self.assertIn("expectedVersion: revision.version", preview)
+        self.assertIn("expectedDigest: revision.digest", preview)
+        self.assertIn("Rendered directory", preview)
+        self.assertIn("Rendered filename", preview)
+        self.assertIn("Sanitization", preview)
+        self.assertIn("Missing-variable strategy", preview)
+        self.assertIn("This preview is stale", preview)
+        self.assertIn("Side effects", preview)
+
+        object_list = _js_function_body(script, "renderGuidedObjectList")
+        object_form = _js_function_body(script, "renderGuidedObjectForm")
+        self.assertIn("Save NamingPolicy", object_form)
+        self.assertIn("actionButton('Copy'", object_list)
+        self.assertIn("References block deletion", object_list)
 
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
         script = APP_JS.decode()

@@ -178,6 +178,45 @@ tests is not supported at that SHA; see the review record below. The record is p
   Phase 22.6-A is not closed, Phase 22.6 remains open, and Phase 22.6-B
   (ClassificationPolicy editing and target-resolution preview) must not start.
 
+## Phase 22.6-A-F1 Correction Implementation Evidence (2026-08-28; not an acceptance decision)
+
+```text
+Status: READY FOR COMMIT (pre-checkpoint)
+Commit SHA: PENDING
+High Audit: PENDING RE-REVIEW
+Push: NOT REQUIRED BEFORE INDEPENDENT RE-REVIEW
+```
+
+- Replaced the global naming UI substring check with brace-matched function-body evidence. The
+  `showConfigurationRevision` body must mount both the NamingPolicy guided list and
+  `renderNamingPreview` inside the guided branch before final detail visibility; the
+  `renderNamingPreview` body must append its heading and controls and retain its policy selector,
+  bounded sample input, exact-version/digest POST, output explanations and recovery state.
+- Falsification was exercised separately for both mounts. Removing
+  `renderNamingPreview(data, guided);` failed the focused test on the missing preview mount;
+  restoring it passed. Removing the NamingPolicy guided-list mount failed on the missing policy
+  mount; restoring it passed. The production Web asset is byte-for-byte unchanged from the rejected
+  checkpoint after restoration.
+- The invalid-template journey now uses a real SQLite-backed Draft and public
+  `ConfigurationObjectService.mutate` for unknown-variable, path-separator and empty-template
+  inputs. Each reports its distinct bounded `NamingErrorCode`, while revision version, digest,
+  document and absent naming-preview evidence remain unchanged. The authenticated API repeats all
+  three cases as bounded `400 invalid_request`; a corrected policy is then created and previewed
+  successfully against its exact version/digest, producing `The Matrix (1999)` and
+  `The Matrix (1999).mkv`.
+- Related configuration/naming/Metadata correction/continuation/UI regressions ran 283 tests with
+  0 failures. The complete offline suite ran 810 tests: 803 passed, 7 existing externally gated
+  tests skipped, and 0 failed; skips are not acceptance evidence.
+- Ruff lint/format, compileall, `pip check`, both example configuration validations, isolated wheel
+  build/install/smoke, 14 local documentation links, FFmpeg/FFprobe production audit,
+  business-filesystem import and Storage mutation-boundary audits, private configuration checks and
+  `git diff --check` passed. Review wheel SHA-256:
+  `290c9c00beddf857d6ccd3a090088618c4f270aa564d3355b722b011d023ff2b`.
+- This correction changes tests and factual gate documentation only. Production behaviour, API
+  contract, evidence keys, configuration/runtime schema markers, activation semantics and the
+  preserved Phase 22.6-A rejected record/SHA are unchanged. Phase 22.6-B and all later work remain
+  prohibited pending independent re-review.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration
