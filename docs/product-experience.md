@@ -276,7 +276,7 @@ This offline action constructs no Storage, Provider, Planner or Executor, applie
 prefix, and performs no existence, collision or capability probe. Phase 22.6-D is independently
 accepted at `c7ec192b3b20f236cca5a70ed59cad43e0851242` and does not change checked activation.
 
-## Phase 22.6-E read-only Local destination precheck (CURRENT implementation; awaiting review)
+## Phase 22.6-E read-only Local destination precheck (CURRENT; F1 awaiting High re-review)
 
 Before activating a Draft, the operator can now ask one question about the real destination without
 changing it: would this composed path actually work. The same revision view takes one

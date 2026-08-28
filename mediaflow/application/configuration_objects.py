@@ -1591,6 +1591,13 @@ class ConfigurationObjectService:
             )
             if guard.last_storage_error is not None:
                 raise guard.last_storage_error
+            if any(
+                conflict.type is ConflictType.INVALID_DESTINATION for conflict in plan.conflicts
+            ):
+                raise _DestinationPreviewFailure(
+                    "unsafe_destination",
+                    "planner rejected the composed destination as unsafe",
+                )
             conflicts = [conflict.type.value for conflict in plan.conflicts]
             target_exists = ConflictType.DESTINATION_EXISTS in {
                 conflict.type for conflict in plan.conflicts
@@ -1598,11 +1605,7 @@ class ConfigurationObjectService:
             resolved_plan = ConflictResolver().apply_configured(plan, policy, guard)
             if guard.last_storage_error is not None:
                 raise guard.last_storage_error
-            if any(
-                conflict.type is ConflictType.INVALID_DESTINATION for conflict in plan.conflicts
-            ):
-                projected = "invalid"
-            elif not plan.conflicts:
+            if not plan.conflicts:
                 projected = "ready"
             elif policy.conflict_strategy is ConflictStrategy.SKIP:
                 projected = "skip"

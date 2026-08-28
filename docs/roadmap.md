@@ -18,7 +18,7 @@ Phase gate，不复制测试日志或流程正文。
 | Phase 22.6-B Managed ClassificationPolicy + Offline Classification Preview | PASS / CLOSED | `5e2da5c634f1fa72a40e5f50b035260418fe1a37` | PASS — 2026-08-28 独立审核：五项 operator-UI 与三项 service-boundary 可证伪对照全部先失败后通过，marker 6→7 前向升级与 Runtime marker 22 均已复核，归一化对 runtime 语义为恒等；下一合法 Slice 为 Phase 22.6-C |
 | Phase 22.6-C Managed OrganizePolicy + Offline Organize Authority Explanation | PASS / CLOSED | `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa` | PASS — 2026-08-28 独立审核：五项 operator-UI 挂载、两项被收窄断言与四项 service-boundary 可证伪对照全部先失败后恢复通过；另独立复核 22 组非默认字段归一化零语义漂移、零副作用与 C 身份保持、marker 7→8 前向升级与 Runtime marker 22；下一合法 Slice 为 Phase 22.6-D |
 | Phase 22.6-D Managed Exact-Revision Offline Composed Destination Preview | PASS / CLOSED | `c7ec192b3b20f236cca5a70ed59cad43e0851242` | PASS — 2026-08-28 独立审核：四项 operator-UI 挂载、共享 composition 安全守卫、unsafe 判定短路与 RecognitionType C 身份共七项可证伪对照全部先失败后恢复通过；另独立复核与真实 `OrganizePlanner.plan` 的 8 组 composition parity、零 Storage/Provider/Planner/Executor 构造、marker 8→9 前向升级与 Runtime marker 22；下一合法 Slice 为 Phase 22.6-E |
-| Phase 22.6-E Managed Exact-Revision Read-Only Destination Precheck (Local) | FIX REQUIRED | 被拒 checkpoint `7353b0d22497e6e3e596c93c7052eea34daf27df`（保留，不得 amend/squash/改写） | FIX REQUIRED — 2026-08-28 独立审核：产品行为、只读安全边界与 Web/API 旅程均已验证通过（含两项operator-UI 可证伪反证、独立只读目标探测、byte-restored 生产树与 840 项离线回归），但该 checkpoint缺失自身 Required Test 的四项断言：RT10 的 zero-Provider/zero-Executor/zero-Task 非构造证明缺席；RT4 枚举的 `relativeDestination` 与 `destinationPath` 无任何断言（Web 红色横幅直接读取`result.destinationPath`）；RT4 的 fully-missing subtree 已执行但未断言`deepestExistingAncestor`/`directoriesToCreate`；RT5 的 `invalid` 投影既不可达也未被证明，而`docs/progress.md` 声称其可被报告。唯一合法下一 Slice 为 Phase 22.6-E-F1（证据修正，另需消解不可达`invalid` 分支）；Phase 22.6-E 未关闭，Phase 22.6 仍开放 |
+| Phase 22.6-E Managed Exact-Revision Read-Only Destination Precheck (Local) | FIX REQUIRED — F1 READY FOR HIGH REVIEW | 被拒 checkpoint `7353b0d22497e6e3e596c93c7052eea34daf27df`（保留，不得 amend/squash/改写）；F1 checkpoint SHA 待交接 | F1 已只补齐 zero-Provider/Executor/Task/Job/queue/authority、组合路径字段、fully-missing subtree 与 Web `destinationPath` 证据，并把防御性 `INVALID_DESTINATION` 收敛为既有 `unsafe_destination` 失败；完整离线与质量门禁通过，等待独立 High 复审。Phase 22.6-E 未关闭，Phase 22.6 仍开放，下一 Slice 仍禁止开始 |
 
 ## 当前节点
 
@@ -123,6 +123,9 @@ subtree 用例已执行但从未断言 `deepestExistingAncestor` 或 `directorie
 `TASK.md`）：除消解不可达 `invalid` 分支并使实现/测试/文档一致外仅补证据，不得扩大产品范围。远端
 SMB/OpenList/S3 目标预检、写入式能力探测、重复与跨项碰撞检测、附件预检、combined activation
 evidence 与任何执行改动仍为 TARGET，不得开始。
+
+Phase 22.6-E-F1 correction 已按上述四项 blocker 完成并通过实现门禁，等待独立 High 复审；被拒 SHA
+仍保留。复审 `PASS` 前 Phase 22.6-E 与 Phase 22.6 均不关闭，也不得定义或开始下一 Slice。
 
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。

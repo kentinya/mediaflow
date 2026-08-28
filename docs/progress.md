@@ -937,6 +937,59 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   probing, duplicate/collision detection, attachment prechecks, combined activation evidence and any
   execution change must not start.
 
+## Phase 22.6-E-F1 Correction Implementation Evidence (2026-08-28)
+
+- Status: READY FOR COMMIT; Commit SHA: PENDING; High Audit: PENDING. The rejected Phase 22.6-E
+  checkpoint `7353b0d22497e6e3e596c93c7052eea34daf27df` remains preserved and unmodified. Workspace,
+  Git directory and index are writable under unrestricted filesystem access with approval mode
+  `never`, so this run is Git-writable / Full Access.
+- The successful precheck now asserts the exact Phase 22.6-D accepted composition:
+  `relativeDestination` is
+  `Action/The Matrix (1999) [tmdbid-synthetic]/The Matrix (1999).mkv`, and `destinationPath` is
+  `Movies/Action/The Matrix (1999) [tmdbid-synthetic]/The Matrix (1999).mkv`, beginning with the
+  configured `Movies/` MediaLibrary root. The body-scoped Web test separately asserts that
+  `renderDestinationPrecheck` renders `result.destinationPath`.
+- The fully missing subtree proof starts with only `Movies` present and asserts `Movies` as the
+  deepest existing ancestor, the ordered create list `Movies/Action` then
+  `Movies/Action/The Matrix (1999) [tmdbid-synthetic]`, a missing target, all seven guard mutation
+  counters zero, `authorityGranted: none`, and a byte-identical destination tree. The existing
+  partial-ancestor proof remains unchanged.
+- The zero-authority test injects `AssertionError` doubles at
+  `mediaflow.application.configuration_objects.MetadataProviderRegistry` and
+  `mediaflow.application.organizer.OrganizerExecutor`. A successful run and a
+  `permission_denied` failure both finish without touching those doubles. A pre-created isolated
+  Runtime database remains empty across Tasks, task items/results, conflict and review queues,
+  Jobs, and execution authorizations; no persisted plan or organize-authority evidence appears.
+  Production `OrganizePlanner` and `ConflictResolver` are intentionally used and are not doubled.
+- The required falsification temporarily constructed `MetadataProviderRegistry(())` on the
+  precheck path. Both the success and failure subtests failed with
+  `AssertionError: destination precheck constructed Provider`. Removing that temporary line
+  restored the production and test file SHA-256 values to
+  `4571521704cb69730dab38256290581861a3d0dd16646dd417d28ebee09c50c3` and
+  `c20ad371031975195d00250fa8e465e708f0f38bd3dd92f248674f878386c731`; the same focused test then
+  passed.
+- `OrganizePlanner` defensively returning `INVALID_DESTINATION` for an otherwise safe composition
+  now refuses with the existing bounded `unsafe_destination` failure before conflict resolution.
+  It no longer produces a completed `invalid` projection. The normal unsafe-composition path still
+  refuses before Storage construction, so unsafe and defensive-invalid destinations have one
+  documented answer.
+- Focused destination/precheck/UI tests ran 34 tests with 0 failures; the Phase 22.3 through 22.6
+  configuration, continuation, RecognitionType C, organizer and conflict regression group ran 229
+  tests with 0 failures. The complete offline suite ran 842 tests: 835 passed, 7 existing external
+  integration tests skipped, and 0 failed. The previously documented `ResourceWarning` remains an
+  explicitly deferred non-blocker.
+- Ruff lint and format across 186 files, compileall, `pip check`, both example configuration
+  validations, 120 Markdown files with 25 local links and 0 broken links, `git diff --check`, the
+  FFmpeg/FFprobe audit, business-layer filesystem-mutation audit and private-configuration checks
+  passed. The isolated wheel build/install/smoke passed with Runtime schema marker 22; wheel
+  SHA-256 was `0cc613c32f18bebe39ab4cf5035070a78374149804b036ec78fb3636a2b511e5`.
+- No evidence key, request field, API response status, permission, activation semantic or schema
+  marker changed. Configuration marker remains 10 and Runtime marker remains 22. CURRENT remains
+  the Local, exact-revision, read-only destination journey. Remote prechecks, mutation probes,
+  duplicate/cross-item and attachment checks, absolute mounted-path display, combined activation
+  evidence and execution remain TARGET. This correction is ready for independent High re-review;
+  it does not close Phase 22.6-E or authorize the next Slice.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration
