@@ -135,6 +135,24 @@ Implementation evidence:
 The implementation-evidence claim above that "reachable Web controls" are covered by the focused
 tests is not supported at that SHA; see the review record below. The record is preserved unchanged.
 
+### Phase 22.6-B Managed ClassificationPolicy Configuration + Offline Classification Preview
+
+```text
+Status: PASS / CLOSED
+Commit SHA: 5e2da5c634f1fa72a40e5f50b035260418fe1a37
+High Audit: PASS — 2026-08-28; the checkpoint was independently reviewed with eight deliberate
+falsifications (five operator-UI mounts, three service-boundary rules), a marker 6 to 7 upgrade
+check, an end-to-end preview payload check, and the complete offline suite
+Push: PENDING — not required for this Slice closure; `5e2da5c634f1fa72a40e5f50b035260418fe1a37`
+and the docs record `279904c` are not yet contained in `origin/main`, and the phase-level
+Phase 22.6 closure will require an explicitly authorized push
+```
+
+Implementation evidence is recorded below under
+"Phase 22.6-B ClassificationPolicy Configuration + Offline Preview Implementation Evidence" and is
+preserved unchanged. The independent review record is
+"Phase 22.6-B High Review Result (2026-08-28): PASS".
+
 ## Phase 22.6-A High Review Result (2026-08-27)
 
 - Status: FIX REQUIRED; Rejected checkpoint SHA:
@@ -304,6 +322,69 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
 - This is implementation evidence only. Phase 22.6-B is not `PASS / CLOSED`; OrganizePolicy,
   composed destination preview, destination conflict/capability/existence prechecks and activation
   evidence have not started.
+
+## Phase 22.6-B High Review Result (2026-08-28): PASS
+
+- Status: PASS / CLOSED for Phase 22.6-B; reviewed checkpoint SHA:
+  `5e2da5c634f1fa72a40e5f50b035260418fe1a37`; High Audit: PASS — 2026-08-28. No earlier Phase 22.6-B
+  checkpoint was rejected, so no rejected SHA record exists for this Slice.
+- Scope conformance verified against `TASK.md`: the checkpoint touches
+  `mediaflow/domain/configuration_management.py`, `mediaflow/application/configuration_objects.py`,
+  `mediaflow/infrastructure/sqlite_configuration_management.py`, `mediaflow/interfaces/service_api.py`,
+  `mediaflow/interfaces/operator_ui.py`, `tests/test_configuration_classification.py` (new),
+  `tests/test_operator_ui.py` and documentation only. No OrganizePolicy section, composed
+  destination path, conflict/capability/destination-existence precheck or activation-evidence change
+  is present, and the runtime schema marker is untouched.
+- Path and rule safety is owned by the production domain, as the Task required: the managed
+  normalizer builds real `ClassificationRule` and `ClassificationPolicy` objects and re-wraps only
+  `ClassificationErrorCode.UNSAFE_PATH` with the offending rule index; it does not re-implement path
+  validation. Its own checks are bounds and unknown-field rejection only.
+- Normalization is semantically identity for runtime: normalizing every example
+  `classificationPolicies` rule through the managed service and re-loading both the original and the
+  normalized rule through the production loader produced identical domain `ClassificationRule`
+  objects for all 6 rules, so a managed edit cannot silently change what runtime consumes.
+- Independently reproduced eight falsifications. Each was applied to a restored tree, the focused
+  test was run, and the tree was restored to a clean `git status` afterwards. Web
+  (`tests.test_operator_ui`): removing `renderClassificationPreview(data, guided);` FAILED; removing
+  `renderGuidedObjectList(data, guided, 'classificationPolicies', 'ClassificationPolicies');`
+  FAILED; moving the preview mount after the final `detail.hidden = false;` FAILED; detaching the
+  preview controls from `detailContent` FAILED; detaching the section heading FAILED.
+  Service boundary (`tests.test_configuration_classification`): removing the condition-field
+  whitelist FAILED; treating any non-empty `mediaLibraryId` as resolved FAILED; removing the
+  `CLASSIFICATION_POLICY` reference branch FAILED. The unmodified tree PASSED before and after.
+- End-to-end payload check at the reviewed SHA: a path-mode preview against an exact Draft revision
+  returned `classified`, matched rule `action-movie`, MediaLibrary `movies` resolved, relative path
+  `Action`, `matchEvidence` `["media_type=movie", "genre=Action"]`, `sideEffects: none` and
+  `stale: false`, and persisted only `{"mode": "path", "filename": ...}` from the sample. Draft
+  validation independently refused an absent MediaLibrary with
+  `ValueError: ClassificationRule 'japanese-animation' references unknown MediaLibrary 'absent'`,
+  which matches the documented CURRENT claim.
+- Independently re-run at the reviewed SHA: complete offline suite 817 tests with 7 existing
+  external-service skips and 0 failures; 6 focused classification tests; 92 focused
+  UI/naming/configuration-object tests; a 257-test configuration + naming + classification +
+  Metadata correction/continuation + policy-mapping regression group; the four RecognitionType C
+  identity regressions; Ruff check and format across 304 files; `compileall`; `pip check`; both
+  example configuration validations; `pip wheel` plus the isolated installed-wheel smoke test
+  reporting unchanged runtime schema marker 22; 120 markdown files with 0 broken local links;
+  `git diff --check`; the FFmpeg/FFprobe production audit (no match under `mediaflow/`); the
+  business-layer filesystem mutation audit (only `datetime.replace` in `mediaflow/application` and
+  `mediaflow/domain`); and the private-configuration checks (`config/alist.json` and
+  `config/strategy.json` ignored, untracked, absent from the diff, never read).
+- Non-blocking observations carried forward, deliberately not corrections: two `sqlite3.connect`
+  context managers in the new test file commit rather than close, producing ResourceWarnings;
+  `classification_preview` normalizes every policy in the document, so one legacy flat-form policy
+  would fail preview for all, which is the accepted `naming_preview` precedent; path mode accepts a
+  sample carrying extra fields while persisting only mode and filename, unlike naming's
+  path-exclusive rule, mitigated because `matchEvidence` records the matched condition values;
+  `_classification_policy` calls `_classification_rule` without `index=`, unreachable because
+  `_normalize` already validated with correct indices; the recorded wheel SHA-256 is not
+  reproducible across builds.
+- Verdict: **PASS**. Phase 22.6-B is `PASS / CLOSED` at
+  `5e2da5c634f1fa72a40e5f50b035260418fe1a37`. Phase 22.6 remains open; the next legal Slice is
+  Phase 22.6-C (managed OrganizePolicy editing plus exact-revision offline organize-authority
+  explanation), defined in `TASK.md`. Composed destination-path preview, destination
+  conflict/capability/existence prechecks, Storage capability probing and activation-evidence
+  changes remain prohibited.
 
 ## Completed
 

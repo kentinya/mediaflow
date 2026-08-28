@@ -219,7 +219,7 @@ Provider services and without creating Tasks, Jobs, queues, plans, or media effe
 Phase 22.6-A is independently accepted at `30af69ac82b30f8a45ad66afbd3c9747597c8fe7` and does not
 change checked activation.
 
-## Phase 22.6-B managed ClassificationPolicy and offline preview (CURRENT implementation; awaiting review)
+## Phase 22.6-B managed ClassificationPolicy and offline preview (CURRENT; PASS / CLOSED)
 
 The same managed Configuration revision view now exposes ClassificationPolicy create/edit/copy/
 delete, bounded rule summaries, RecognitionTypePolicy inbound references and reference-blocked
