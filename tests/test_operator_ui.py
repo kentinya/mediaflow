@@ -470,6 +470,64 @@ class OperatorUiTests(unittest.TestCase):
             show_revision,
         )
 
+    def test_destination_precheck_blocking_sentence_contract_is_body_scoped(self) -> None:
+        script = APP_JS.decode()
+        activation = _js_function_body(script, "destinationPrecheckActivationRequirement")
+        precheck = _js_function_body(script, "renderDestinationPrecheck")
+
+        missing_start = activation.index("if (applicable && !evidence) {")
+        missing_branch = _js_braced_body(activation, activation.index("{", missing_start))
+        self.assertIn(
+            "nextAction = 'run the read-only destination precheck on this revision, then "
+            "activate checked';",
+            missing_branch,
+        )
+        self.assertIn("message = `Checked activation blocked: ${nextAction}.`;", missing_branch)
+
+        stale_start = activation.index("if (applicable && !current) {")
+        stale_branch = _js_braced_body(activation, activation.index("{", stale_start))
+        self.assertIn(
+            "nextAction = 'reload this revision and rerun the destination precheck on its "
+            "current version and digest';",
+            stale_branch,
+        )
+        self.assertIn("message = `Checked activation blocked: ${nextAction}.`;", stale_branch)
+
+        failed_start = activation.index("if (applicable && !completed) {")
+        failed_branch = _js_braced_body(activation, activation.index("{", failed_start))
+        self.assertIn(
+            "nextAction = boundedSetupText(evidence.nextAction,\n"
+            "        'correct the destination configuration, then rerun the precheck');",
+            failed_branch,
+        )
+        self.assertIn(
+            "message = `Checked activation blocked: destination precheck failed "
+            "(${boundedSetupText(evidence.failureCategory)}); ${nextAction}.`;",
+            failed_branch,
+        )
+        self.assertIn("style = 'error';", failed_branch)
+
+        gap_start = activation.index("if (applicable && capabilityGap) {")
+        gap_branch = _js_braced_body(activation, activation.index("{", gap_start))
+        self.assertIn(
+            "nextAction = 'change the configured operation or destination Storage, then "
+            "rerun the precheck';",
+            gap_branch,
+        )
+        self.assertIn("message = `Checked activation blocked: ${nextAction}.`;", gap_branch)
+        self.assertIn("style = 'error';", gap_branch)
+
+        self.assertIn(
+            "return {applicable, evidence, current, completed, capabilityGap, satisfied, "
+            "nextAction, message, style};",
+            activation,
+        )
+        self.assertIn(
+            "else if (!activation.satisfied) detailContent.append(text('p', "
+            "activation.message, activation.style));",
+            precheck,
+        )
+
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
         script = APP_JS.decode()
         mismatch_start = script.index("function renderConfigurationIdentityMismatch")
