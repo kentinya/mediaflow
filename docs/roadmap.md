@@ -16,7 +16,8 @@ Phase gate，不复制测试日志或流程正文。
 | Phase 22.5 Metadata 配置与修正旅程（A/B/C/D/E） | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27 phase-level Final Closure Audit；已推送 `origin/main`；允许 Phase 22.6 Naming/Classification/Organize 配置旅程 |
 | Phase 22.6-A Managed NamingPolicy + Offline Naming Preview | PASS / CLOSED | `30af69ac82b30f8a45ad66afbd3c9747597c8fe7`；被拒 checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d` 保留 | PASS — 2026-08-28 独立复审：五项 operator-UI 与两项 service-boundary 可证伪对照全部先失败后通过，生产树与被拒 checkpoint 逐字节相同；已于 2026-08-28 在显式操作员授权下推送 `origin/main`；下一合法 Slice 为 Phase 22.6-B |
 | Phase 22.6-B Managed ClassificationPolicy + Offline Classification Preview | PASS / CLOSED | `5e2da5c634f1fa72a40e5f50b035260418fe1a37` | PASS — 2026-08-28 独立审核：五项 operator-UI 与三项 service-boundary 可证伪对照全部先失败后通过，marker 6→7 前向升级与 Runtime marker 22 均已复核，归一化对 runtime 语义为恒等；下一合法 Slice 为 Phase 22.6-C |
-| Phase 22.6-C Managed OrganizePolicy + Offline Organize Authority Explanation | IMPLEMENTED / READY FOR HIGH REVIEW | PENDING（checkpoint SHA 记录于 Slice 完成报告） | managed OrganizePolicy CRUD、`organize_policy:<id>` 引用阻断、Move/Copy/HardLink/SoftLink 编辑限制与 exact-revision 零副作用组织授权解释已实现；配置 marker 7→8 前向升级，Runtime marker 仍为 22；组合目标路径、冲突/能力/存在性预检、Storage 能力探测与 activation evidence 未开始；实现完成不等于 Phase 关闭，待独立 High Review |
+| Phase 22.6-C Managed OrganizePolicy + Offline Organize Authority Explanation | PASS / CLOSED | `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa` | PASS — 2026-08-28 独立审核：五项 operator-UI 挂载、两项被收窄断言与四项 service-boundary 可证伪对照全部先失败后恢复通过；另独立复核 22 组非默认字段归一化零语义漂移、零副作用与 C 身份保持、marker 7→8 前向升级与 Runtime marker 22；下一合法 Slice 为 Phase 22.6-D |
+| Phase 22.6-D Composed Final Destination Path Preview | TASK DEFINED / NOT STARTED | PENDING | 仅含 exact-revision 组合最终目标路径预览（MediaLibrary.RootPath + Classification relativePath + Naming 目录/文件名）与其证据；目标存在性/冲突/能力预检、Storage 能力探测、combined activation evidence 与 Planner/Executor 改动不得提前开始 |
 
 ## 当前节点
 
@@ -66,17 +67,20 @@ exact-revision 离线组织授权解释）。组合最终目标路径预览、�
 探测与 combined activation evidence 仍为 TARGET，不得提前开始。`5e2da5c634f1fa72a40e5f50b035260418fe1a37`
 与文档记录 `279904c` 尚未推送 `origin/main`；Slice 级关闭不要求推送，Phase 22.6 的收口关闭需显式
 操作员授权后推送。
-Phase 22.6-C（managed OrganizePolicy 编辑 + exact-revision 离线组织授权解释）已完成实现、
-测试与文档同步，状态为 **IMPLEMENTED / READY FOR HIGH REVIEW**，尚未 `PASS / CLOSED`。本 Slice
-交付 managed OrganizePolicy CRUD/Copy、`organize_policy:<id>` 引用阻断、仅接受
-Move/Copy/HardLink/SoftLink 的编辑限制（拒绝 `delete` 与 `create_directory` 且不改 loader），以及
-经生产 `RecognitionTypePolicyResolver` 解析、零 Storage/Provider/Planner/Executor 构造的精确
-revision 组织授权解释（操作、冲突策略、overwrite/delete 授权、附件、重复检测、rollback、
-源目录清理、所需 Storage 能力"声明而非探测"、显式"无回退"说明、破坏性告警与 current/stale 恢复）。
-配置管理 schema marker 前向升级 7→8（marker 7 数据库可原地重开，命名与分类预览证据完好），
-Runtime marker 仍为 22。八项可证伪对照（五项 operator-UI 挂载、三项 service-boundary）全部先失败
-后恢复通过；归一化对 runtime 语义为恒等。组合最终目标路径预览、目标冲突/能力/存在性预检、
-Storage 能力探测与 combined activation evidence 仍为 TARGET，不得提前开始。
+Phase 22.6-C checkpoint `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa` 已于 2026-08-28 通过独立
+High Review，判定 **PASS / CLOSED**。复审独立复现了十一项可证伪对照（五项 operator-UI 挂载、两项
+被收窄的 `overwrite` 断言、四项 service-boundary 规则）全部先失败后恢复通过，并独立复核了 22 组
+非默认字段组合的归一化零语义漂移与幂等、零副作用与 RecognitionType C 身份保持、
+marker 7→8 前向升级与 Runtime marker 仍为 22，以及编辑限制未改动 loader。本 Slice 交付 managed
+OrganizePolicy CRUD/Copy、`organize_policy:<id>` 引用阻断、仅接受 Move/Copy/HardLink/SoftLink 的
+编辑限制（拒绝 `delete` 与 `create_directory`），以及经生产 `RecognitionTypePolicyResolver` 解析、
+零 Storage/Provider/Planner/Executor 构造的精确 revision 组织授权解释。
+Phase 22.6 未关闭：下一合法 Slice 是 **Phase 22.6-D**（exact-revision 组合最终目标路径预览，
+仅计算与解释 `MediaLibrary.RootPath + ClassificationPolicy relativePath + NamingPolicy 目录/文件名`
+的组合结果并持久化其证据），已写入 `TASK.md`。目标存在性/冲突/能力预检、Storage 能力探测、
+combined activation evidence、Planner/Executor 改动与任何 activation gate 变更仍为 TARGET，
+不得提前开始。`47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa` 及其文档记录尚未推送 `origin/main`；
+Slice 级关闭不要求推送，Phase 22.6 的收口关闭需显式操作员授权后推送。
 
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
@@ -112,10 +116,11 @@ Runtime Configuration
 | Metadata | 部分完成（引擎成熟） | TMDB、缓存、候选评分、本地化标题、年份语义、持久人工候选/查询修正 | Provider 切换、配置激活、同页恢复闭环 |
 | Naming | Phase 22.6-A PASS / CLOSED | 安全模板、Unicode、多集、Managed Draft 编辑、引用影响与 exact-revision 离线预览（含可证伪 Web 挂载回归） | 组合最终目标路径联动和 activation evidence |
 | Classification | Phase 22.6-B PASS / CLOSED | 确定性规则、媒体库选择、持久人工规则选择/恢复、Managed Draft CRUD、引用阻断与 exact-revision 离线分类预览（含可证伪 Web 挂载回归） | 自由路径修正明确禁止；组合最终目标路径与 activation evidence 待做 |
+| Organize | Phase 22.6-C PASS / CLOSED（配置与授权解释） | managed OrganizePolicy CRUD、引用阻断、仅 Move/Copy/HardLink/SoftLink 的编辑限制与 exact-revision 零副作用组织授权解释（所需 Storage 能力声明而非探测、显式无回退、破坏性告警） | 组合最终目标路径预览、目标存在性/冲突/能力预检与 activation evidence 待做 |
 | Planner/Executor | 部分完成 | 计划、冲突、附件、Hash 证据、同次调用 Rollback、空目录清理、DryRun、跨存储执行 | 历史/崩溃恢复、Hash 持久复用、逐项恢复体验 |
 | Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、pause/resume、批量请求、claim fencing/心跳 | 统一 Processing Checkpoint 与 stage-aware recovery |
 | API/UI/Scheduler | 部分完成 | API/RBAC/审计、操作台、Dashboard、Files 列表/筛选/详情/部分动作、Cron/通知 | 完整人工/配置/恢复旅程、登录/外部身份源 |
-| Managed Configuration | Phase 22.3/22.4/22.5 与 Phase 22.6-A/22.6-B 均 PASS / CLOSED | 既有能力加 NamingPolicy 与 ClassificationPolicy CRUD、引用阻断与 exact-revision 离线命名/分类预览 | OrganizePolicy 编辑与组织授权解释（Phase 22.6-C，当前边界）、组合最终目标路径、冲突/能力/存在性预检与 combined activation evidence；Provider switching/通用 Task resume 后置 |
+| Managed Configuration | Phase 22.3/22.4/22.5 与 Phase 22.6-A/22.6-B/22.6-C 均 PASS / CLOSED | 既有能力加 NamingPolicy、ClassificationPolicy 与 OrganizePolicy CRUD、引用阻断、exact-revision 离线命名/分类预览与离线组织授权解释 | 组合最终目标路径预览（Phase 22.6-D，当前边界）、目标冲突/能力/存在性预检与 combined activation evidence；Provider switching/通用 Task resume 后置 |
 
 ## 总体阶段计划
 
