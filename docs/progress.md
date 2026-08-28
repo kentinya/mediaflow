@@ -576,6 +576,47 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   combined activation evidence, Planner/Executor changes and any activation-gate change remain
   prohibited.
 
+## Phase 22.6-D Implementation Evidence (2026-08-28)
+
+- Status: READY FOR COMMIT (pre-checkpoint); Commit SHA: PENDING; High Audit: PENDING. Workspace,
+  Git directory and index are writable under unrestricted filesystem access with approval mode
+  `never`, so this run is Git-writable / Full Access. Phase 22.6-C is PASS/CLOSED at
+  `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa`; its closure record is
+  `581284e8223c629a2d32c022e734ad50209dfd29`.
+- The domain organizer now owns dependency-free destination-root normalization, relative-path and
+  filename safety, and composition. Every existing application organizer call site delegates to
+  these helpers, and real-planner parity covers safe, absolute-root and every required unsafe input.
+- A Draft/Validated exact-revision destination preview resolves the requested RecognitionType with
+  the same catalog as organize authority, runs the production naming and classification engines,
+  resolves the selected MediaLibrary in that revision, and stores bounded revision-keyed evidence.
+  RecognitionType C remains C while NamingPolicy A and ClassificationPolicy A are reused.
+- The authenticated API and guided Web section expose every owning contribution, root-relative and
+  composed Storage-relative paths, exact version/digest CAS, current/stale state, failure category
+  and explicit recovery. Invalid request shapes remain HTTP 400 without replacing prior destination
+  evidence; stale requests remain 409 and an unavailable managed service remains 503.
+- Configuration-management schema marker advances 8 to 9 with a separate destination-evidence
+  table while preserving revisions and naming/classification/organize-authority evidence. Runtime
+  marker remains 22. Missing optional `mediaLibraries` or `organizePolicies` renders as an empty
+  section. No activation or Active projection changes.
+- Zero-side-effect tests make Storage, Provider, Planner and Executor construction raise while the
+  preview succeeds. The preview never applies a Storage configuration root/mount prefix, probes no
+  destination and creates no plan, job or execution authority.
+- Six required Web falsifications were reproduced and restored: removing the guided mount, moving
+  it after final visibility, and detaching the heading, RecognitionType input, sample input or run
+  control each made the focused UI test fail; the restored tree passed before and after.
+- Existing organizer/planner/executor coverage in `tests/test_organizer.py` and Phase 22.6-C coverage
+  in `tests/test_configuration_organize.py` were not edited and pass. The focused destination/UI/
+  organize/organizer group ran 54 tests with 0 failures. The complete offline suite ran 832 tests:
+  825 passed, 7 existing external-service tests skipped, 0 failed; skips are not acceptance evidence.
+- Ruff format/check across 306 files, compileall, `pip check`, both example configuration
+  validations, wheel build and isolated installed-wheel smoke (Runtime schema 22), 120 markdown
+  files with 0 broken local links, `git diff --check`, the FFmpeg/FFprobe audit, business-layer
+  filesystem-mutation audit and private-configuration checks passed. Wheel SHA-256:
+  `2c2168ea7ac99f9f0c1bbc59645c8c71a6c0fc32f824e142654da207734579f7`.
+- Deliberately out of scope: destination existence/collision/capability prechecks, Storage adapter
+  construction or mount-prefix display, combined activation evidence, execution, and any later
+  Slice. This implementation evidence is not a High PASS or Phase closure.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration

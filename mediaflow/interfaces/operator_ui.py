@@ -618,6 +618,66 @@ APP_JS = b"""(() => {
     }));
     detailContent.append(controls);
   }
+  function destinationPreviewIsCurrent(revision, evidence) {
+    return Boolean(evidence && evidence.stale === false &&
+      evidence.revisionId === revision.revisionId &&
+      evidence.revisionVersion === revision.version && evidence.revisionDigest === revision.digest);
+  }
+  function renderDestinationPreview(revision, guided) {
+    const evidence = guided.destinationPreview;
+    detailContent.append(text('h3', 'Offline composed destination preview'));
+    if (!evidence) detailContent.append(text('p',
+      'Status: not run. This computes a Storage-relative path without reading Storage.', 'warning'));
+    else {
+      const current = destinationPreviewIsCurrent(revision, evidence);
+      const result = evidence.result && typeof evidence.result === 'object' ? evidence.result : {};
+      const list = document.createElement('dl');
+      field(list, 'Evidence state', current ? 'current' : 'stale');
+      field(list, 'Status', boundedSetupText(evidence.status));
+      field(list, 'Path scope', boundedSetupText(evidence.pathScope));
+      field(list, 'RecognitionType', boundedSetupText(result.recognitionType || evidence.recognitionType));
+      field(list, 'RecognitionTypePolicy', boundedSetupText(result.recognitionTypePolicyId));
+      field(list, 'MediaLibrary contribution', `${boundedSetupText(result.mediaLibraryId)}: ${boundedSetupText(result.mediaLibraryRootPath)}`);
+      field(list, 'ClassificationPolicy contribution', `${boundedSetupText(result.classificationPolicyId)}: ${boundedSetupText(result.classificationRelativePath)}`);
+      field(list, 'NamingPolicy directory contribution', `${boundedSetupText(result.namingPolicyId)}: ${Array.isArray(result.namingDirectorySegments) ? result.namingDirectorySegments.join('/') : '-'}`);
+      field(list, 'NamingPolicy filename contribution', `${boundedSetupText(result.namingPolicyId)}: ${boundedSetupText(result.namingFilename)}`);
+      field(list, 'Root-relative destination', boundedSetupText(result.rootRelativeDestination));
+      field(list, 'Composed Storage-relative destination', boundedSetupText(result.composedStorageRelativeDestination));
+      field(list, 'Failure category', boundedSetupText(evidence.failureCategory));
+      field(list, 'Message', boundedSetupText(evidence.message));
+      field(list, 'Side effects', boundedSetupText(evidence.sideEffects, 'unknown'));
+      field(list, 'Retry safe', evidence.retrySafe === true ? 'YES' : 'NO');
+      field(list, 'Next action', boundedSetupText(evidence.nextAction));
+      detailContent.append(list);
+      if (!current) detailContent.append(text('p',
+        'This destination preview is stale. Reload and rerun it.', 'warning'));
+      if (evidence.status !== 'completed' || !result.composedStorageRelativeDestination)
+        detailContent.append(text('p', 'No valid destination was produced. Follow the recovery action.', 'error'));
+    }
+    if (!configurationRevisionEditable(revision)) return;
+    const controls = text('div', '', 'choices');
+    const recognitionType = document.createElement('input');
+    recognitionType.setAttribute('aria-label', 'Destination preview RecognitionType');
+    recognitionType.value = 'C';
+    const sample = document.createElement('textarea');
+    sample.setAttribute('aria-label', 'Destination preview sample JSON');
+    sample.value = JSON.stringify({title: 'The Matrix', mediaType: 'movie', year: 1999,
+      genres: ['Action'], extension: 'mkv'}, null, 2);
+    controls.append(recognitionType, sample, actionButton('Run offline destination preview', async () => {
+      try {
+        const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/destination-preview`,
+          {method: 'POST', body: JSON.stringify({expectedVersion: revision.version,
+            expectedDigest: revision.digest, recognitionType: recognitionType.value,
+            sample: JSON.parse(sample.value)})});
+        message(result.status === 'completed' ?
+          'Destination preview completed. Review the Storage-relative composition.' :
+          `${result.message || 'Destination preview failed.'} ${result.nextAction || ''}`,
+          result.status !== 'completed');
+        await showConfigurationRevision(revision);
+      } catch (error) { message(errorText(error), true); }
+    }));
+    detailContent.append(controls);
+  }
   function setupEvidenceIsCurrent(revision, evidence) {
     return Boolean(evidence && evidence.stale === false &&
       evidence.revisionId === revision.revisionId &&
@@ -1041,6 +1101,7 @@ APP_JS = b"""(() => {
         renderNamingPreview(data, guided);
         renderClassificationPreview(data, guided);
         renderOrganizeAuthority(data, guided);
+        renderDestinationPreview(data, guided);
       }
       const actions = text('div', '', 'choices');
       if (data.status === 'draft') actions.append(actionButton('Validate Draft', async () => {

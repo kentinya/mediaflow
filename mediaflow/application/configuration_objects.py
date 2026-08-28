@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import PurePath
 from threading import BoundedSemaphore, Lock, RLock
@@ -50,6 +50,7 @@ from mediaflow.domain.configuration_management import (
     ClassificationPreviewEvidence,
     ConfigurationActivationConflict,
     ConfigurationClassificationPreviewStatus,
+    ConfigurationDestinationPreviewStatus,
     ConfigurationNamingPreviewStatus,
     ConfigurationObjectKind,
     ConfigurationObjectReferenced,
@@ -59,6 +60,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationSetupCheckStatus,
     ConfigurationStrategyTestStatus,
     ConfigurationVersionConflict,
+    DestinationPreviewEvidence,
     LocalSetupCheckEvidence,
     ManagedConfigurationRevision,
     ManagedConfigurationStatus,
@@ -92,6 +94,7 @@ from mediaflow.domain.organizer import (
     DirectoryCleanupMode,
     OrganizeOperationType,
     OrganizePolicy,
+    compose_destination,
 )
 from mediaflow.domain.parser import FileContext, ParseResult
 from mediaflow.domain.recognition import (
@@ -113,6 +116,12 @@ from mediaflow.infrastructure.runtime_configuration import (
     load_runtime_configuration,
 )
 from mediaflow.infrastructure.strategy_user_configuration import parse_organize_policy
+
+
+class _DestinationPreviewFailure(ValueError):
+    def __init__(self, category: str, message: str) -> None:
+        super().__init__(message)
+        self.category = category
 
 
 class ConfigurationObjectService:
@@ -336,7 +345,11 @@ class ConfigurationObjectService:
             "objects": {
                 "storages": self._objects(document, "storages", redact_remote=True),
                 "resourceLibraries": self._objects(document, "resourceLibraries"),
-                "mediaLibraries": self._objects(document, "mediaLibraries"),
+                "mediaLibraries": (
+                    self._objects(document, "mediaLibraries")
+                    if "mediaLibraries" in document
+                    else []
+                ),
                 "recognitionTypes": self._objects(document, "recognitionTypes"),
                 "recognitionRules": self._objects(document, "recognitionRules"),
                 "recognitionTypePolicies": self._objects(document, "recognitionTypePolicies"),
@@ -366,6 +379,7 @@ class ConfigurationObjectService:
             "namingPreview": self._naming_preview_document(revision),
             "classificationPreview": self._classification_preview_document(revision),
             "organizeAuthority": self._organize_authority_document(revision),
+            "destinationPreview": self._destination_preview_document(revision),
         }
 
     def references(self, revision_id: str) -> dict[str, dict[str, object]]:
@@ -933,60 +947,8 @@ class ConfigurationObjectService:
             raise ValueError("organize authority RecognitionType must be bounded and non-empty")
 
         try:
-            types = {
-                str(value["id"]): RecognitionType(
-                    str(value["id"]),
-                    str(value.get("name") or value["id"]),
-                    str(value.get("description", "")),
-                    bool(value.get("enabled", True)),
-                )
-                for value in self._canonical_objects(revision.document, "recognitionTypes")
-            }
-            organize_policies = {
-                policy.policy_id: policy
-                for policy in (
-                    self._organize_policy(value)
-                    for value in self._canonical_objects(revision.document, "organizePolicies")
-                )
-            }
-            type_policies: list[RecognitionTypePolicy] = []
-            for value in self._canonical_objects(revision.document, "recognitionTypePolicies"):
-                normalized = self._normalize(ConfigurationObjectKind.RECOGNITION_TYPE_POLICY, value)
-                type_id = str(normalized["recognitionType"])
-                known_type = types.get(type_id, RecognitionType(type_id, type_id))
-                organize_id = str(normalized["organizePolicy"])
-                organize = organize_policies.get(
-                    organize_id, OrganizePolicy(organize_id, OrganizeOperationType.MOVE)
-                )
-                type_policies.append(
-                    RecognitionTypePolicy(
-                        str(normalized["id"]),
-                        known_type,
-                        str(normalized["metadataPolicy"]),
-                        str(normalized["namingPolicy"]),
-                        str(normalized["classificationPolicy"]),
-                        organize,
-                        str(normalized["name"]),
-                        bool(normalized["enabled"]),
-                        int(normalized["priority"]),
-                    )
-                )
-
-            def references(section: str) -> dict[str, PolicyReference]:
-                return {
-                    str(value["id"]): PolicyReference(
-                        str(value["id"]), bool(value.get("enabled", True))
-                    )
-                    for value in self._canonical_objects(revision.document, section)
-                }
-
-            resolved = RecognitionTypePolicyResolver(
-                type_policies,
-                metadata_policies=references("metadataPolicies"),
-                naming_policies=references("namingPolicies"),
-                classification_policies=references("classificationPolicies"),
-                organize_policies={key: PolicyReference(key) for key in organize_policies},
-            ).resolve(RecognitionType(recognition_type, recognition_type))
+            resolver, organize_policies = self._policy_resolution_catalog(revision.document)
+            resolved = resolver.resolve(RecognitionType(recognition_type, recognition_type))
             policy = organize_policies[resolved.organize_policy_id]
             cleanup_enabled = policy.source_directory_cleanup.mode is not DirectoryCleanupMode.NONE
             overwrite = policy.conflict_strategy is ConflictStrategy.OVERWRITE
@@ -1070,6 +1032,287 @@ class ConfigurationObjectService:
                 ),
             )
         return self._repository.save_organize_authority(evidence)
+
+    def destination_preview(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        recognition_type: str,
+        sample: Mapping[str, object],
+    ) -> DestinationPreviewEvidence:
+        revision = self._managed.require(revision_id)
+        if revision.status not in {
+            ManagedConfigurationStatus.DRAFT,
+            ManagedConfigurationStatus.VALIDATED,
+        }:
+            raise ConfigurationVersionConflict(
+                "destination preview requires a Draft or Validated revision",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+            )
+        if revision.version != expected_version or revision.digest != expected_digest:
+            raise ConfigurationVersionConflict(
+                "destination preview requires the exact current revision; reload before previewing",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+                durable_state="current_draft_and_prior_destination_preview_preserved",
+                next_action="reload the revision and explicitly rerun destination preview",
+            )
+        if (
+            not isinstance(recognition_type, str)
+            or not recognition_type.strip()
+            or len(recognition_type) > 64
+            or "\x00" in recognition_type
+        ):
+            raise ValueError("destination preview RecognitionType must be bounded and non-empty")
+        if not isinstance(sample, Mapping):
+            raise ValueError("destination preview sample must be an object")
+        allowed_sample_fields = self._NAMING_SAMPLE_FIELDS | self._CLASSIFICATION_SAMPLE_FIELDS
+        if any(not isinstance(key, str) or len(key) > 64 for key in sample):
+            raise ValueError("destination preview sample field names must be bounded text")
+        if unknown := set(sample).difference(allowed_sample_fields):
+            raise ValueError(
+                f"destination preview sample contains unsupported field {sorted(unknown)[0]!r}"
+            )
+        if "path" in sample and len(sample) != 1:
+            raise ValueError("destination preview path mode accepts only the path field")
+
+        normalized_input: dict[str, object] = {}
+        try:
+            resolver, _ = self._policy_resolution_catalog(revision.document)
+            resolved = resolver.resolve(RecognitionType(recognition_type, recognition_type))
+            if "path" in sample:
+                naming_sample = classification_sample = dict(sample)
+            else:
+                naming_sample = {
+                    key: copy.deepcopy(value)
+                    for key, value in sample.items()
+                    if key in self._NAMING_SAMPLE_FIELDS
+                }
+                classification_sample = {
+                    key: copy.deepcopy(value)
+                    for key, value in sample.items()
+                    if key in self._CLASSIFICATION_SAMPLE_FIELDS
+                }
+                naming_sample["recognitionType"] = recognition_type
+                classification_sample["recognitionType"] = recognition_type
+            naming_input, naming_context = self._naming_context(naming_sample)
+            _, classification_context = self._classification_context(classification_sample)
+            normalized_input = (
+                naming_input
+                if "path" in sample
+                else {"mode": "synthetic", **copy.deepcopy(dict(sample))}
+            )
+            naming_identity = replace(
+                naming_context.media_identity, recognition_type_id=recognition_type
+            )
+            naming_context = replace(
+                naming_context,
+                recognition_type_id=recognition_type,
+                media_identity=naming_identity,
+            )
+            classification_identity = replace(
+                classification_context.media_identity, recognition_type_id=recognition_type
+            )
+            classification_context = replace(
+                classification_context,
+                recognition_type=resolved.recognition_type,
+                media_identity=classification_identity,
+            )
+            naming_policies = tuple(
+                self._naming_policy(value)
+                for value in self._canonical_objects(revision.document, "namingPolicies")
+            )
+            naming = NamingPreviewService(NamingPolicyRegistry(naming_policies)).preview(
+                naming_context, resolved.naming_policy_id
+            )
+            classification_policies = tuple(
+                self._classification_policy(value)
+                for value in self._canonical_objects(revision.document, "classificationPolicies")
+            )
+            classification = ClassificationPreviewService(
+                ClassificationPolicyRegistry(classification_policies)
+            ).preview(classification_context, resolved.classification_policy_id)
+            if classification.status.value != "classified":
+                raise ClassificationError(
+                    ClassificationErrorCode.INVALID_RULE,
+                    "no enabled classification rule matched the destination sample",
+                )
+            libraries = {
+                str(value.get("id")): value
+                for value in self._canonical_objects(revision.document, "mediaLibraries")
+            }
+            library = libraries.get(classification.media_library_id)
+            if library is None:
+                raise _DestinationPreviewFailure(
+                    "unresolved_media_library",
+                    f"MediaLibrary {classification.media_library_id!r} is unresolved",
+                )
+            root_path = library.get("rootPath")
+            if not isinstance(root_path, str):
+                raise _DestinationPreviewFailure(
+                    "unsafe_destination",
+                    f"MediaLibrary {classification.media_library_id!r}.rootPath is unsafe",
+                )
+            composition = compose_destination(
+                root_path,
+                classification.relative_path,
+                naming.directory,
+                naming.directory_segments,
+                naming.filename,
+            )
+            if not composition.safe:
+                owners = {
+                    "mediaLibrary.rootPath": f"MediaLibrary:{classification.media_library_id}",
+                    "classification.relativePath": (
+                        f"ClassificationPolicy:{resolved.classification_policy_id}"
+                    ),
+                    "naming.directory": f"NamingPolicy:{resolved.naming_policy_id}",
+                    "naming.filename": f"NamingPolicy:{resolved.naming_policy_id}",
+                }
+                contribution = composition.unsafe_contribution or "destination"
+                owner = owners.get(
+                    contribution,
+                    f"NamingPolicy:{resolved.naming_policy_id}",
+                )
+                raise _DestinationPreviewFailure(
+                    "unsafe_destination",
+                    f"unsafe contribution {contribution!r} owned by {owner}",
+                )
+            result = {
+                "recognitionType": resolved.recognition_type_id,
+                "recognitionTypePolicyId": resolved.type_policy_id,
+                "namingPolicyId": resolved.naming_policy_id,
+                "classificationPolicyId": resolved.classification_policy_id,
+                "mediaLibraryId": classification.media_library_id,
+                "mediaLibraryStorageId": str(library.get("storageId", "")),
+                "mediaLibraryRootPath": composition.media_library_root,
+                "classificationRuleId": classification.matched_rule_id,
+                "classificationRelativePath": classification.relative_path,
+                "namingDirectorySegments": list(naming.directory_segments),
+                "namingFilename": naming.filename,
+                "rootRelativeDestination": composition.relative_destination,
+                "composedStorageRelativeDestination": composition.target,
+            }
+            evidence = DestinationPreviewEvidence(
+                revision.revision_id,
+                revision.version,
+                revision.digest,
+                ConfigurationDestinationPreviewStatus.COMPLETED,
+                datetime.now(UTC),
+                actor,
+                recognition_type,
+                normalized_input,
+                result,
+                message="Destination preview completed through the production composition rules",
+                next_action=(
+                    "review every attributed contribution, then correct and rerun or validate "
+                    "the Draft"
+                ),
+            )
+        except (PolicyResolutionError, NamingError, ClassificationError, ValueError) as error:
+            if isinstance(error, (PolicyResolutionError, NamingError, ClassificationError)):
+                category = error.code.value
+            elif isinstance(error, _DestinationPreviewFailure):
+                category = error.category
+            else:
+                category = "invalid_input"
+            if isinstance(error, _DestinationPreviewFailure):
+                message = str(error)
+            elif isinstance(error, NamingError):
+                message = f"NamingPolicy {resolved.naming_policy_id!r} failed ({category})"
+            elif isinstance(error, ClassificationError):
+                message = (
+                    f"ClassificationPolicy {resolved.classification_policy_id!r} "
+                    f"failed ({category})"
+                )
+            elif isinstance(error, PolicyResolutionError):
+                message = f"RecognitionTypePolicy resolution failed ({category})"
+            else:
+                message = f"Destination preview failed ({category})"
+            evidence = DestinationPreviewEvidence(
+                revision.revision_id,
+                revision.version,
+                revision.digest,
+                ConfigurationDestinationPreviewStatus.FAILED,
+                datetime.now(UTC),
+                actor,
+                recognition_type,
+                normalized_input or {"mode": "invalid"},
+                failure_category=category,
+                message=self._bounded_utf8(message, 384),
+                next_action=(
+                    "correct the named mapping, policy, MediaLibrary, sample or path contribution "
+                    "in this Draft, then explicitly rerun destination preview"
+                ),
+            )
+        return self._repository.save_destination_preview(evidence)
+
+    def _policy_resolution_catalog(
+        self, document: Mapping[str, object]
+    ) -> tuple[RecognitionTypePolicyResolver, dict[str, OrganizePolicy]]:
+        types = {
+            str(value["id"]): RecognitionType(
+                str(value["id"]),
+                str(value.get("name") or value["id"]),
+                str(value.get("description", "")),
+                bool(value.get("enabled", True)),
+            )
+            for value in self._canonical_objects(document, "recognitionTypes")
+        }
+        organize_policies = {
+            policy.policy_id: policy
+            for policy in (
+                self._organize_policy(value)
+                for value in self._canonical_objects(document, "organizePolicies")
+            )
+        }
+        type_policies: list[RecognitionTypePolicy] = []
+        for value in self._canonical_objects(document, "recognitionTypePolicies"):
+            normalized = self._normalize(ConfigurationObjectKind.RECOGNITION_TYPE_POLICY, value)
+            type_id = str(normalized["recognitionType"])
+            known_type = types.get(type_id, RecognitionType(type_id, type_id))
+            organize_id = str(normalized["organizePolicy"])
+            organize = organize_policies.get(
+                organize_id, OrganizePolicy(organize_id, OrganizeOperationType.MOVE)
+            )
+            type_policies.append(
+                RecognitionTypePolicy(
+                    str(normalized["id"]),
+                    known_type,
+                    str(normalized["metadataPolicy"]),
+                    str(normalized["namingPolicy"]),
+                    str(normalized["classificationPolicy"]),
+                    organize,
+                    str(normalized["name"]),
+                    bool(normalized["enabled"]),
+                    int(normalized["priority"]),
+                )
+            )
+
+        def references(section: str) -> dict[str, PolicyReference]:
+            return {
+                str(value["id"]): PolicyReference(
+                    str(value["id"]), bool(value.get("enabled", True))
+                )
+                for value in self._canonical_objects(document, section)
+            }
+
+        return (
+            RecognitionTypePolicyResolver(
+                type_policies,
+                metadata_policies=references("metadataPolicies"),
+                naming_policies=references("namingPolicies"),
+                classification_policies=references("classificationPolicies"),
+                organize_policies={key: PolicyReference(key) for key in organize_policies},
+            ),
+            organize_policies,
+        )
 
     @classmethod
     def _organize_policy(cls, value: Mapping[str, object]) -> OrganizePolicy:
@@ -2582,6 +2825,20 @@ class ConfigurationObjectService:
         )
         return value
 
+    def _destination_preview_document(
+        self, revision: ManagedConfigurationRevision
+    ) -> dict[str, object] | None:
+        getter = getattr(self._repository, "get_destination_preview", None)
+        evidence = getter(revision.revision_id) if getter is not None else None
+        if evidence is None:
+            return None
+        value = evidence.document()
+        value["stale"] = (
+            evidence.revision_version != revision.version
+            or evidence.revision_digest != revision.digest
+        )
+        return value
+
     def _check_document(self, revision: ManagedConfigurationRevision) -> dict[str, object] | None:
         evidence = self._repository.get_local_setup_check(revision.revision_id)
         if evidence is None:
@@ -3454,6 +3711,8 @@ class ConfigurationObjectService:
         collector = _ReferenceEvidenceCollector()
         if kind is ConfigurationObjectKind.STORAGE:
             for section in ("resourceLibraries", "mediaLibraries"):
+                if section not in document:
+                    continue
                 for index, item in enumerate(cls._canonical_objects(document, section)):
                     storage_id = cls._required_reference_id(
                         item,

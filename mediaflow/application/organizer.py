@@ -26,6 +26,9 @@ from mediaflow.domain.organizer import (
     RollbackStatus,
     RollbackStep,
     StorageLocation,
+    compose_destination,
+    safe_destination_root,
+    unsafe_relative_destination_path,
 )
 from mediaflow.domain.recognition import RecognitionResult, RecognitionTypePolicy
 from mediaflow.domain.storage import Storage, StorageEntryType, StorageError
@@ -88,15 +91,14 @@ class OrganizePlanner:
             raise PlanningError("classification selected a different media library")
         if not source or not naming.filename:
             raise PlanningError("source and target filename must not be empty")
-        root = _safe_root(media_library.root_path)
-        unsafe = (
-            root is None
-            or _unsafe_relative_path(classification.relative_path)
-            or _unsafe_relative_path(naming.directory)
-            or any(_unsafe_relative_path(segment) for segment in naming.directory_segments)
-            or _unsafe_filename(naming.filename)
+        composition = compose_destination(
+            media_library.root_path,
+            classification.relative_path,
+            naming.directory,
+            naming.directory_segments,
+            naming.filename,
         )
-        if unsafe:
+        if not composition.safe:
             conflict = Conflict(
                 ConflictType.INVALID_DESTINATION,
                 source,
@@ -118,10 +120,7 @@ class OrganizePlanner:
                 (conflict,),
                 source_library_root=source_library_root,
             )
-        relative_destination = posixpath.join(
-            classification.relative_path, *naming.directory_segments, naming.filename
-        )
-        target = posixpath.join(root, relative_destination)
+        target = composition.target
         storage_source = source_storage_path or source
         if _same_location(source_storage_id, storage_source, media_library.storage_id, target):
             return self._result(
@@ -243,22 +242,26 @@ class OrganizePlanner:
             ),
             media_library_root=media_library.root_path,
             relative_destination=(
-                posixpath.join(
+                compose_destination(
+                    media_library.root_path,
                     classification.relative_path,
-                    *naming.directory_segments,
+                    naming.directory,
+                    naming.directory_segments,
                     naming.filename,
-                )
+                ).relative_destination
                 if target
                 else ""
             ),
             source_location=(
                 StorageLocation(source_storage_id, source_storage_path)
-                if source_storage_path and not _unsafe_relative_path(source_storage_path)
+                if source_storage_path and not unsafe_relative_destination_path(source_storage_path)
                 else None
             ),
             destination_location=(
                 StorageLocation(media_library.storage_id, target)
-                if target and not target.startswith("/") and not _unsafe_relative_path(target)
+                if target
+                and not target.startswith("/")
+                and not unsafe_relative_destination_path(target)
                 else None
             ),
             rollback_policy=type_policy.organize_policy.rollback,
@@ -285,41 +288,11 @@ def _same_location(source_storage: str, source: str, target_storage: str, target
     return source_storage == target_storage and _normalize(source) == _normalize(target)
 
 
-def _safe_root(value: str) -> str | None:
-    """Normalize the configured root; this is the only input allowed to be absolute."""
-    if not value or "\\" in value or "\x00" in value:
-        return None
-    if any(part in {".", ".."} for part in value.split("/")):
-        return None
-    absolute = value.startswith("/")
-    normalized = posixpath.normpath(value)
-    parts = normalized.lstrip("/").split("/")
-    if any(part in {"", ".", ".."} for part in parts) and normalized != "/":
-        return None
-    if not absolute and normalized.startswith("../"):
-        return None
-    return normalized
-
-
-def _unsafe_relative_path(value: str) -> bool:
-    return (
-        not value
-        or value.startswith(("/", "\\"))
-        or "\\" in value
-        or "\x00" in value
-        or any(part in {"", ".", ".."} for part in value.split("/"))
-    )
-
-
-def _unsafe_filename(value: str) -> bool:
-    return _unsafe_relative_path(value) or "/" in value
-
-
 def _safe_source_library_root(value: str) -> str:
     if not value:
         return ""
     normalized = posixpath.normpath(value.strip("/"))
-    if _unsafe_relative_path(normalized):
+    if unsafe_relative_destination_path(normalized):
         return ""
     return normalized
 
@@ -1034,8 +1007,8 @@ def _resolved_execution_target(plan: OrganizePlan) -> str | None:
     """Rebuild a Phase 12.2 target when the planner supplied split destination semantics."""
     if not plan.media_library_root and not plan.relative_destination:
         return None
-    root = _safe_root(plan.media_library_root)
-    if root is None or _unsafe_relative_path(plan.relative_destination):
+    root = safe_destination_root(plan.media_library_root)
+    if root is None or unsafe_relative_destination_path(plan.relative_destination):
         return ""
     return posixpath.join(root, plan.relative_destination)
 

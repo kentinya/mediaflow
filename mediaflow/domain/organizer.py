@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import posixpath
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -20,6 +21,79 @@ class OrganizeOperationType(StrEnum):
     HARD_LINK = "hard_link"
     SOFT_LINK = "soft_link"
     DELETE = "delete"
+
+
+@dataclass(frozen=True)
+class DestinationComposition:
+    media_library_root: str
+    relative_destination: str
+    target: str
+    unsafe_contribution: str | None = None
+
+    @property
+    def safe(self) -> bool:
+        return self.unsafe_contribution is None
+
+
+def safe_destination_root(value: str) -> str | None:
+    """Normalize a MediaLibrary root; it is the only destination input allowed absolute."""
+    if not value or "\\" in value or "\x00" in value:
+        return None
+    if any(part in {".", ".."} for part in value.split("/")):
+        return None
+    absolute = value.startswith("/")
+    normalized = posixpath.normpath(value)
+    parts = normalized.lstrip("/").split("/")
+    if any(part in {"", ".", ".."} for part in parts) and normalized != "/":
+        return None
+    if not absolute and normalized.startswith("../"):
+        return None
+    return normalized
+
+
+def unsafe_relative_destination_path(value: str) -> bool:
+    return (
+        not value
+        or value.startswith(("/", "\\"))
+        or "\\" in value
+        or "\x00" in value
+        or any(part in {"", ".", ".."} for part in value.split("/"))
+    )
+
+
+def unsafe_destination_filename(value: str) -> bool:
+    return unsafe_relative_destination_path(value) or "/" in value
+
+
+def compose_destination(
+    media_library_root: str,
+    classification_relative_path: str,
+    naming_directory: str,
+    naming_directory_segments: tuple[str, ...],
+    naming_filename: str,
+) -> DestinationComposition:
+    root = safe_destination_root(media_library_root)
+    unsafe: str | None = None
+    if root is None:
+        unsafe = "mediaLibrary.rootPath"
+    elif unsafe_relative_destination_path(classification_relative_path):
+        unsafe = "classification.relativePath"
+    elif unsafe_relative_destination_path(naming_directory):
+        unsafe = "naming.directory"
+    else:
+        for index, segment in enumerate(naming_directory_segments):
+            if unsafe_relative_destination_path(segment):
+                unsafe = f"naming.directorySegments[{index}]"
+                break
+    if unsafe is None and unsafe_destination_filename(naming_filename):
+        unsafe = "naming.filename"
+    if unsafe is not None:
+        return DestinationComposition("", "", "", unsafe)
+    assert root is not None
+    relative = posixpath.join(
+        classification_relative_path, *naming_directory_segments, naming_filename
+    )
+    return DestinationComposition(root, relative, posixpath.join(root, relative))
 
 
 class PlanOperation(StrEnum):
