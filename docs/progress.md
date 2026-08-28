@@ -97,11 +97,13 @@ configuration remain open; Phase 22 overall is not closed.
 ### Phase 22.6-A Managed NamingPolicy Configuration + Offline Naming Preview
 
 ```text
-Status: FIX REQUIRED (correction Slice Phase 22.6-A-F1 defined)
+Status: PASS / CLOSED
+Commit SHA: 30af69ac82b30f8a45ad66afbd3c9747597c8fe7
+High Audit: PASS — 2026-08-28; the Phase 22.6-A-F1 correction checkpoint was independently
+re-reviewed, including five deliberate operator-UI falsifications, two service-boundary
+falsifications, the byte-identical production tree, and the complete offline suite
 Rejected checkpoint: 90ce13a6c6c39912dd389f71a1189314ff24eb5d (FIX REQUIRED — 2026-08-27, preserved)
-Commit SHA: PENDING (Phase 22.6-A-F1 correction checkpoint)
-High Audit: FIX REQUIRED — 2026-08-27; see the review record below
-Push: NOT REQUIRED BEFORE INDEPENDENT RE-REVIEW
+Push: NOT REQUIRED BEFORE PHASE 22.6 CLOSURE; local main, not yet pushed
 ```
 
 Implementation evidence:
@@ -216,6 +218,55 @@ Push: NOT REQUIRED BEFORE INDEPENDENT RE-REVIEW
   contract, evidence keys, configuration/runtime schema markers, activation semantics and the
   preserved Phase 22.6-A rejected record/SHA are unchanged. Phase 22.6-B and all later work remain
   prohibited pending independent re-review.
+
+## Phase 22.6-A-F1 High Review Result (2026-08-28): PASS
+
+- Status: PASS / CLOSED for Phase 22.6-A; reviewed checkpoint SHA:
+  `30af69ac82b30f8a45ad66afbd3c9747597c8fe7`; High Audit: PASS — 2026-08-28. The rejected
+  Phase 22.6-A checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d` is preserved unchanged.
+- The correction is evidence-only, as required: `git diff 90ce13a 30af69a` touches
+  `tests/test_operator_ui.py`, `tests/test_configuration_naming.py`, `TASK.md`, `docs/progress.md`
+  and `docs/roadmap.md` only. Every file under `mediaflow/`, `scripts/`, `config/` and
+  `pyproject.toml` is byte-identical, so no product behaviour, API contract, evidence key, schema
+  marker or activation semantic changed.
+- Independently reproduced falsification of the Web mount proof. Each mutation was applied to a
+  restored working tree, the focused test
+  `tests.test_operator_ui -k naming_policy_editor` was run, and the tree was restored to a clean
+  `git diff --stat` afterwards: removing `renderNamingPreview(data, guided);` FAILED; removing
+  `renderGuidedObjectList(data, guided, 'namingPolicies', 'NamingPolicies');` FAILED; moving the
+  preview mount after the final `detail.hidden = false;` FAILED; detaching the preview controls from
+  `detailContent` FAILED; detaching the section heading FAILED; the unmodified asset PASSED. The
+  same assertions are body-scoped through brace matching, so a defined-but-unmounted section can no
+  longer pass.
+- Independently reproduced falsification of the service-boundary proof: accepting an empty template
+  inside `_normalize` FAILED `tests.test_configuration_naming -k invalid_templates`, and removing
+  the renderer's path-separator rejection FAILED it as well; the unmodified tree PASSED. The test
+  drives the public `ConfigurationObjectService.mutate` against a real SQLite-backed Draft, asserts
+  the distinct `NamingErrorCode` per case, and asserts unchanged version, digest and document plus
+  absent naming-preview evidence, then previews the corrected policy against the exact revision.
+- Independently re-run at the reviewed SHA: complete offline suite 810 tests with 7 existing
+  external-service skips and 0 failures; 105 focused configuration/naming/UI tests; 125-test
+  configuration + naming + Metadata correction/continuation + policy-mapping regression group; the
+  RecognitionType C regression; Ruff check and format; `compileall`; `pip check`; both example
+  configuration validations; `pip wheel` build plus the isolated installed-wheel smoke test
+  reporting unchanged runtime schema marker 22; local documentation links; `git diff --check`;
+  FFmpeg/FFprobe production audit (no match under `mediaflow/`); business-layer filesystem
+  mutation audit (no direct mutation in `mediaflow/application` or `mediaflow/domain`); and the
+  private-configuration checks (`config/alist.json` ignored, untracked, unstaged, never read).
+- Non-blocking observations carried forward, deliberately not corrections: the `_normalize`
+  template-size (>4096 bytes) and NUL branches are no longer directly exercised after the private
+  `_normalize` cases were replaced, although the equivalent operator outcome remains asserted as the
+  `component_too_long` preview category; `SafeTemplateRenderer` separator and conversion messages
+  still name neither the template field nor the token; `_NAMING_POLICY_FIELDS` omits the loader's
+  unused legacy template aliases; a document legitimately omitting the optional `namingPolicies`
+  section still cannot receive its first policy, which is the pre-existing shared behaviour of every
+  editable kind.
+- Verdict: **PASS**. Phase 22.6-A is `PASS / CLOSED` at
+  `30af69ac82b30f8a45ad66afbd3c9747597c8fe7`. Phase 22.6 remains open; the next legal Slice is
+  Phase 22.6-B (managed ClassificationPolicy editing plus exact-revision offline classification
+  preview), defined in `TASK.md`. OrganizePolicy editing, composed destination-path preview,
+  conflict/capability/destination-existence prechecks and activation-evidence changes remain
+  prohibited.
 
 ## Completed
 

@@ -14,7 +14,8 @@ Phase gate，不复制测试日志或流程正文。
 | Phase 22.5-D Managed Live Metadata Correction Test | PASS / CLOSED | `55769be58a75596461879994560a0c58c3a7c9dc` | PASS；允许 Phase 22.5-E 单项 Metadata correction DryRun continuation；Provider switching 仍后置 |
 | Phase 22.5-E Single-Item Metadata Correction DryRun Continuation | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27，F1 correction checkpoint 独立复审通过；被拒 checkpoint `08dfd4f921728755209b6d52347d28f221121c47`（FIX REQUIRED）保留 |
 | Phase 22.5 Metadata 配置与修正旅程（A/B/C/D/E） | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27 phase-level Final Closure Audit；已推送 `origin/main`；允许 Phase 22.6 Naming/Classification/Organize 配置旅程 |
-| Phase 22.6-A Managed NamingPolicy + Offline Naming Preview | READY FOR HIGH RE-REVIEW | F1 correction SHA PENDING；被拒 checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d` 保留 | F1 已补 Web mount 可失效回归与 service/API durable-state 证据；待独立复审，不得进入 Classification/Organize 后续 Slice |
+| Phase 22.6-A Managed NamingPolicy + Offline Naming Preview | PASS / CLOSED | `30af69ac82b30f8a45ad66afbd3c9747597c8fe7`；被拒 checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d` 保留 | PASS — 2026-08-28 独立复审：五项 operator-UI 与两项 service-boundary 可证伪对照全部先失败后通过，生产树与被拒 checkpoint 逐字节相同；下一合法 Slice 为 Phase 22.6-B |
+| Phase 22.6-B Managed ClassificationPolicy + Offline Classification Preview | 未开始 | — | 已在 `TASK.md` 定义：managed classificationPolicies CRUD、MediaLibrary 引用校验、RecognitionTypePolicy 引用阻断与 exact-revision 离线分类预览；不含 OrganizePolicy、组合目标路径、冲突/能力预检与 activation evidence 变更 |
 
 ## 当前节点
 
@@ -42,10 +43,16 @@ Phase 22.6-A 首个 checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d` 已于
 不改写。当前唯一合法 Slice 是 Phase 22.6-A-F1 correction（仅补测试与文档，不改产品行为）；
 Phase 22.6 尚未关闭，Phase 22.6-B ClassificationPolicy 编辑与目标解析预览、目标冲突/能力预检和
 activation evidence 不得提前开始。
-Phase 22.6-A-F1 已补齐两项阻断证据：brace-matched Web 测试对 preview 与 NamingPolicy list
-挂载分别做了删除即失败、恢复即通过的可证伪验证；真实 Draft 的 service/API 测试证明三类 invalid
-template 不改变 version/digest/document、不写 preview evidence，并在修正后完成精确 revision
-预览。当前状态仅为 **READY FOR HIGH RE-REVIEW**，未宣告 PASS/CLOSED，下一 Slice 仍禁止开始。
+Phase 22.6-A-F1 correction checkpoint `30af69ac82b30f8a45ad66afbd3c9747597c8fe7` 已于
+2026-08-28 通过独立 High re-review，Phase 22.6-A 判定 **PASS / CLOSED**。复审独立复现了可证伪
+性：删除 preview 挂载、删除 NamingPolicy list 挂载、把 preview 挂载移到 `detail.hidden = false;`
+之后、把 preview 控件与标题从 `detailContent` 脱挂，五项 operator-UI 对照全部失败；`_normalize`
+接受空模板与渲染器接受路径分隔符两项 service-boundary 对照亦全部失败，未改动树全部通过。
+`git diff 90ce13a 30af69a` 仅触及测试与文档，`mediaflow/`、`scripts/`、`config/` 与
+`pyproject.toml` 逐字节相同，产品行为、API 契约、evidence key、schema marker 与 activation
+语义均未变化。Phase 22.6 尚未关闭：下一合法 Slice 是 **Phase 22.6-B**（managed
+ClassificationPolicy 编辑 + exact-revision 离线分类预览）；OrganizePolicy 编辑、组合最终目标
+路径预览、目标冲突/能力/存在性预检与 combined activation evidence 仍为 TARGET，不得提前开始。
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 
@@ -78,12 +85,12 @@ Runtime Configuration
 | Parser | 已完成 | 文件名/路径/NFO、电影/剧集、多集、标签、受限 XML 与冲突证据合并 | NFO 生成不属于 Parser；更多格式按样本扩展 |
 | Recognition | 已完成当前配置旅程 | 引擎、Web 规则配置、优先级/引用校验、持久 Strategy Test 解释/恢复、C 身份保持、人工决策和重评请求 | 后续按真实样本扩展，不作为当前 blocker |
 | Metadata | 部分完成（引擎成熟） | TMDB、缓存、候选评分、本地化标题、年份语义、持久人工候选/查询修正 | Provider 切换、配置激活、同页恢复闭环 |
-| Naming | Phase 22.6-A 待 High Review | 安全模板、Unicode、多集、Managed Draft 编辑、引用影响与 exact-revision 离线预览 | Classification/Organize 联动和 activation evidence |
+| Naming | Phase 22.6-A PASS / CLOSED | 安全模板、Unicode、多集、Managed Draft 编辑、引用影响与 exact-revision 离线预览（含可证伪 Web 挂载回归） | Classification/Organize 联动和 activation evidence |
 | Classification | 已完成 | 确定性规则、媒体库选择、持久人工规则选择/恢复 | 自由路径修正明确禁止；完整 UI 待做 |
 | Planner/Executor | 部分完成 | 计划、冲突、附件、Hash 证据、同次调用 Rollback、空目录清理、DryRun、跨存储执行 | 历史/崩溃恢复、Hash 持久复用、逐项恢复体验 |
 | Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、pause/resume、批量请求、claim fencing/心跳 | 统一 Processing Checkpoint 与 stage-aware recovery |
 | API/UI/Scheduler | 部分完成 | API/RBAC/审计、操作台、Dashboard、Files 列表/筛选/详情/部分动作、Cron/通知 | 完整人工/配置/恢复旅程、登录/外部身份源 |
-| Managed Configuration | Phase 22.3/22.4/22.5 PASS/CLOSED；Phase 22.6-A 待 High Review | 既有能力加 NamingPolicy CRUD、引用阻断与 exact-revision 离线命名预览 | Classification/Organize、冲突/能力预检与 combined activation evidence；Provider switching/通用 Task resume 后置 |
+| Managed Configuration | Phase 22.3/22.4/22.5 与 Phase 22.6-A 均 PASS / CLOSED | 既有能力加 NamingPolicy CRUD、引用阻断与 exact-revision 离线命名预览 | ClassificationPolicy 编辑与离线分类预览（Phase 22.6-B，进行中边界）、OrganizePolicy、冲突/能力预检与 combined activation evidence；Provider switching/通用 Task resume 后置 |
 
 ## 总体阶段计划
 
@@ -491,8 +498,11 @@ Domain
 - Phase 22.6 边界：沿用 whole-document revision authority、乐观版本、引用影响/阻断、
   Before/After 审计与 host-absolute/Storage-relative 路径规则；预览必须消费被指定的精确
   revision 而不是当前 Active，且不构造 Provider、不访问 Storage、不产生媒体变更。
-- Phase 22.6 起始 Slice 为 22.6-A（managed NamingPolicy CRUD + 精确 revision 离线命名预览）；
-  Classification/Organize 对象、冲突与能力预检、激活门在后续 Slice 交付，均不授予 execute 权限。
+- Phase 22.6 起始 Slice 22.6-A（managed NamingPolicy CRUD + 精确 revision 离线命名预览）已
+  **PASS / CLOSED**（`30af69ac82b30f8a45ad66afbd3c9747597c8fe7`）。当前 Slice 是 22.6-B
+  （managed ClassificationPolicy CRUD + 精确 revision 离线分类预览，含 MediaLibrary 引用校验与
+  RecognitionTypePolicy 引用阻断）；OrganizePolicy 对象、组合最终目标路径、冲突与能力预检、
+  激活门在后续 Slice 交付，均不授予 execute 权限。
 - 明确不在 Phase 22.6 范围：Provider switching、通用 Task resume、逐项 Processing Checkpoint
   恢复（第 6 项）、手工整理旅程（第 7 项）、无人值守 `organize --execute`。
 
@@ -531,9 +541,11 @@ Phase 22.3、Phase 22.4 与 Phase 22.5（A/B/C/D/E 及其全部 correction）的
 Phase 22.5-E 的首个实现 checkpoint 曾被判定 **FIX REQUIRED**，该记录与被拒 SHA 保留不改写；
 correction checkpoint `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已于 2026-08-27 通过独立 High
 re-review，同日 phase-level Final Closure Audit 判定 Phase 22.5 **PASS / CLOSED**。
-下一正式 Task 是 **Phase 22.6-A — Managed NamingPolicy Configuration + Offline Naming Preview**；
-`dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已推送 `origin/main`，push gate 已满足，
-Phase 22.6-A 实现已解除阻塞。不得借此提前开展 Provider switching、通用 Task resume、兄弟项重放、
+Phase 22.6-A（含被拒 checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d` 与其保留记录）已于
+2026-08-28 在 correction checkpoint `30af69ac82b30f8a45ad66afbd3c9747597c8fe7` 通过独立 High
+re-review，判定 **PASS / CLOSED**。下一正式 Task 是 **Phase 22.6-B — Managed ClassificationPolicy
+Configuration + Offline Classification Preview**；`dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62`
+已推送 `origin/main`，Phase 22.6 的实现不受 push gate 阻塞。不得借此提前开展 Provider switching、通用 Task resume、兄弟项重放、
 逐项 Processing Checkpoint 恢复或
 更宽的自动化。Interval/Cron 仍只允许 scan/preview；
 无人值守定时 `organize --execute` 继续不支持。
