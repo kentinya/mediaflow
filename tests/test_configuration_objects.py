@@ -196,6 +196,23 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
             synthetic_path="Example.Movie.2024.1080p.mkv",
         )
 
+    @staticmethod
+    def _destination_precheck(objects, revision):
+        return objects.destination_precheck(
+            revision.revision_id,
+            expected_version=revision.version,
+            expected_digest=revision.digest,
+            actor="tester",
+            recognition_type="C",
+            sample={
+                "title": "The Matrix",
+                "mediaType": "movie",
+                "year": 1999,
+                "genres": ["Action"],
+                "extension": "mkv",
+            },
+        )
+
     def test_revision_detail_uses_one_captured_revision_for_all_projections(self) -> None:
         document_v1 = {
             "storages": [{"id": "source", "type": "local", "rootPath": "/source"}],
@@ -573,6 +590,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(before, {path for path in root.rglob("*") if path.is_dir()})
                 self.assertIsNone(service.active())
                 self._strategy_test(objects, validated)
+                self._destination_precheck(objects, validated)
                 activated = objects.activate_checked(
                     validated.revision_id,
                     expected_version=validated.version,
@@ -742,6 +760,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     resource_library_id="source",
                     synthetic_path="/C/Special.Movie.2024.mkv",
                 )
+                self._destination_precheck(objects, revalidated)
                 activated = objects.activate_checked(
                     revalidated.revision_id,
                     expected_version=revalidated.version,
@@ -5055,6 +5074,25 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(active["status"], "completed")
+                status, precheck = request(
+                    api,
+                    f"/api/v1/configuration/revisions/{revision_id}/destination-precheck",
+                    method="POST",
+                    body={
+                        "expectedVersion": validated["version"],
+                        "expectedDigest": validated["digest"],
+                        "recognitionType": "C",
+                        "sample": {
+                            "title": "The Matrix",
+                            "mediaType": "movie",
+                            "year": 1999,
+                            "genres": ["Action"],
+                            "extension": "mkv",
+                        },
+                    },
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(precheck["status"], "completed")
                 status, active = request(
                     api,
                     f"/api/v1/configuration/revisions/{revision_id}/activate",

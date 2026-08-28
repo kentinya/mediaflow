@@ -276,7 +276,7 @@ This offline action constructs no Storage, Provider, Planner or Executor, applie
 prefix, and performs no existence, collision or capability probe. Phase 22.6-D is independently
 accepted at `c7ec192b3b20f236cca5a70ed59cad43e0851242` and does not change checked activation.
 
-## Phase 22.6-E read-only Local destination precheck (CURRENT implementation; PASS / CLOSED)
+## Phase 22.6-E/F Local destination precheck and checked activation (CURRENT)
 
 Before activating a Draft, the operator can now ask one question about the real destination without
 changing it: would this composed path actually work. The same revision view takes one
@@ -297,10 +297,18 @@ occupied check capacity, or the overall deadline each names a bounded category, 
 and the explicit action that resolves it; a later Draft edit keeps the evidence but labels it stale
 and names the rerun. Only Local destination Storage is supported in this Slice.
 
+Checked activation now enforces that result when the exact revision document declares at least one
+MediaLibrary backed by Local Storage. Missing, stale, failed and `capability_gap` evidence each
+refuse activation before publication, preserve the Draft, previous Active revision and evidence,
+and name the single corrective action. Current completed evidence with `ready` or a projected Skip,
+Rename, confirmation-required Overwrite or Manual outcome satisfies the gate. A remote-only or
+MediaLibrary-free Draft visibly reports this requirement as not applicable and retains the existing
+Local setup and Recognition Strategy Test gates. Unchecked activation remains the compatibility
+path and is unchanged.
+
 Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing, duplicate and
-cross-item collision detection, attachment prechecks, absolute mounted-path display, combined
-activation evidence and execution remain TARGET. Checked activation and Active runtime-consumption
-semantics are unchanged pending independent High Review.
+cross-item collision detection, attachment prechecks, absolute mounted-path display and execution
+remain TARGET. Active runtime-consumption semantics are unchanged.
 
 ## A. First-time setup
 
