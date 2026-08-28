@@ -3,7 +3,7 @@
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: READY FOR IMPLEMENTATION
+Status: READY FOR HIGH REVIEW
 Commit SHA: PENDING
 High Audit: PENDING
 Rejected checkpoint under correction: d8c2ae04e578955ddbbd29c413f235bf4cf08f42
@@ -181,25 +181,95 @@ verified to match shipped behaviour, and this Slice changes no behaviour.
 
 ## Closure Checklist
 
-- [ ] This Slice's own commit changes only `tests/test_configuration_destination_precheck.py` and
+- [x] This Slice's own commit changes only `tests/test_configuration_destination_precheck.py` and
       `TASK.md`
-- [ ] `git diff --exit-code d8c2ae04e578955ddbbd29c413f235bf4cf08f42 HEAD -- mediaflow scripts config
+- [x] `git diff --exit-code d8c2ae04e578955ddbbd29c413f235bf4cf08f42 HEAD -- mediaflow scripts config
       pyproject.toml` is empty
-- [ ] Both Required Tests exist, assert rather than assume, and place the most severe sample neither
+- [x] Both Required Tests exist, assert rather than assume, and place the most severe sample neither
       first nor last
-- [ ] All five Required Falsification Probes were executed with recorded output: probes 1–3 each fail
+- [x] All five Required Falsification Probes were executed with recorded output: probes 1–3 each fail
       Required Test 1, probe 4 fails Required Test 2, the control probe fails nothing, and the tree is
       clean after each
-- [ ] No existing assertion was deleted, weakened, renamed or reordered; zero test deletions
-- [ ] Full offline suite green, total risen only by the added tests
-- [ ] Configuration marker 10 and Runtime marker 22 unchanged; wheel smoke reports Runtime schema 22
-- [ ] No file under `docs/`, `mediaflow/`, `scripts/`, `config/` or `pyproject.toml` changed
-- [ ] No credential, endpoint, Storage `rootPath`, header, cookie, private path or raw exception text
+- [x] No existing assertion was deleted, weakened, renamed or reordered; zero test deletions
+- [x] Full offline suite green, total risen only by the added tests
+- [x] Configuration marker 10 and Runtime marker 22 unchanged; wheel smoke reports Runtime schema 22
+- [x] No file under `docs/`, `mediaflow/`, `scripts/`, `config/` or `pyproject.toml` changed
+- [x] No credential, endpoint, Storage `rootPath`, header, cookie, private path or raw exception text
       in the tests, evidence, report or commit; `config/alist.json` still untracked, unstaged, ignored
-- [ ] Completion Report filled in with the actual commands, actual output, deviations and risks
-- [ ] Status set to READY FOR HIGH REVIEW with this Slice's checkpoint SHA recorded; not pushed
+- [x] Completion Report filled in with the actual commands, actual output, deviations and risks
+- [x] Status set to READY FOR HIGH REVIEW with this Slice's checkpoint SHA recorded; not pushed
 
 ## Completion Report
 
-To be filled in by the implementation role: Changed Files, Implemented, Tests, Test Results,
-Decisions, Remaining Work, Risks.
+### Changed Files
+
+- `tests/test_configuration_destination_precheck.py` — +138/-0: the two Required Tests below, at
+  `tests/test_configuration_destination_precheck.py:296` and `:368`.
+- `TASK.md` — status block, closure checklist and this Completion Report.
+- Nothing else. `git diff --exit-code d8c2ae04e578955ddbbd29c413f235bf4cf08f42 HEAD -- mediaflow
+  scripts config pyproject.toml` is empty, and no file under `docs/` changed.
+
+### Implemented
+
+1. `test_multi_sample_verdict_is_most_severe_not_first_or_last_sample` drives three movie samples
+   of RecognitionType C against one Local destination Storage, with the `manual_confirmation_required`
+   outcome deliberately placed at index 1 (a pre-created `Your Name` target). It pins the full
+   per-sample outcome list `["ready", "manual_confirmation_required", "ready"]`, asserts the run
+   verdict equals the most severe outcome, differs from both `items[0]` and `items[-1]`, proves the
+   three destinations are distinct, proves the severe row's own `DESTINATION_EXISTS` conflict,
+   and keeps the module's zero-mutation proofs (`authorityGranted == "none"`, all guard mutation
+   counters zero, destination tree snapshot unchanged).
+2. `test_multi_sample_top_level_keys_describe_the_first_sample` uses the same fixture and proves
+   the top-level `destinationPath`, `conflictProjection.projectedOutcome` and `targetExists` still
+   describe `items[0]` while the aggregate `verdict` differs from that first-sample projection.
+
+### Tests and Test Results
+
+- Focused modules (`test_configuration_destination_precheck`,
+  `test_configuration_destination_activation`, `test_operator_ui`): 47 tests, 0 failures.
+- Complete offline suite: `Ran 861 tests ... OK (skipped=7)` — 859 before this correction, +2 tests,
+  zero deletions.
+- `ruff check .`: All checks passed; `ruff format --check .`: 308 files already formatted.
+- `compileall -q mediaflow tests`: passed; `pip check`: No broken requirements found.
+- Both example `config validate` runs: `Configuration valid`.
+- Wheel build plus isolated `scripts/wheel_smoke_test.py`: exit 0, Runtime schema 22;
+  Configuration marker 10 remains asserted by the unchanged suite
+  (`CONFIGURATION_SCHEMA_VERSION == 10`).
+- `git diff --check`: clean; FFmpeg/FFprobe audit: zero hits; business-layer filesystem-mutation
+  audit: only Storage-mediated `resolver.rename(...)` references; `config/alist.json` ignored,
+  untracked and unstaged; 120 tracked Markdown files, 25 links, 0 broken; secret scan of this
+  Slice's diff: no matches.
+
+### Falsification Probes
+
+Each probe mutated the shipped production tree once, ran the affected test, recorded the failure,
+then restored with `git checkout -- mediaflow/application/configuration_objects.py` and confirmed
+`git status --short` showed only the intended files.
+
+| Probe | Temporary change | Result |
+| --- | --- | --- |
+| 1 | `max(...)` replaced by `outcomes[0]` | Required Test 1 failed at `tests/test_configuration_destination_precheck.py:356` (`'ready' != 'manual_confirmation_required'`) |
+| 2 | `max(...)` replaced by `outcomes[-1]` | Required Test 1 failed at line 356 (same assertion) |
+| 3 | `max(...)` replaced by `min(...)` | Required Test 1 failed at line 356 (same assertion) |
+| 4 | Result composed from the last sample (`resolutions[-1]` plus last-sample details) | Required Test 2 failed at line 420 (`result["destinationPath"]` described the last sample) |
+| 5 (control) | Comment-only line above the verdict aggregation | No test failed; the full precheck module ran 18 tests OK |
+
+### Decisions
+
+- The fixture deliberately makes the most severe sample index 1 so `outcomes[0]`, `outcomes[-1]` and
+  `min(...)` all produce a different verdict and each probe fails the same named assertion.
+- Probe 4 changed both the details selection and the identity resolution so the top-level result
+  genuinely describes the last sample; Required Test 2 then fails on `destinationPath`.
+- No production, documentation, script, configuration or dependency file was touched.
+
+### Remaining Work
+
+- Nothing inside this Slice. The rejected `d8c2ae04e578955ddbbd29c413f235bf4cf08f42` is preserved
+  unmodified; no push was performed and this checkpoint stays local pending High re-review.
+
+### Risks, Assumptions and Newly Discovered Issues
+
+- The two new tests share the same temporary-directory fixture shape as the existing module tests;
+  no real Storage, Provider or network is used.
+- Per the workflow, this commit does not contain its own SHA; the full 40-character SHA is reported
+  in the review handoff and will be recorded by High in `docs/progress.md` after review.

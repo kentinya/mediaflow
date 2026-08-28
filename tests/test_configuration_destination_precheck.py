@@ -293,6 +293,144 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             finally:
                 repository.close()
 
+    def test_multi_sample_verdict_is_most_severe_not_first_or_last_sample(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target_root = root / "target-private"
+            (target_root / "Movies").mkdir(parents=True)
+            severe = (
+                target_root
+                / "Movies"
+                / "Anime"
+                / "Your Name (2016) [tmdbid-synthetic]"
+                / "Your Name (2016).mkv"
+            )
+            severe.parent.mkdir(parents=True)
+            severe.write_bytes(b"existing")
+            (root / "source-private").mkdir()
+            before = self._tree_snapshot(target_root)
+            repository, _, objects, draft = self._open(root)
+            try:
+                evidence = objects.destination_precheck(
+                    draft.revision_id,
+                    expected_version=draft.version,
+                    expected_digest=draft.digest,
+                    actor="operator",
+                    recognition_type="C",
+                    samples=[
+                        {
+                            "title": "The Matrix",
+                            "mediaType": "movie",
+                            "year": 1999,
+                            "genres": ["Action"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Your Name",
+                            "mediaType": "movie",
+                            "year": 2016,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Spirited Away",
+                            "mediaType": "movie",
+                            "year": 2001,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                    ],
+                )
+                result = evidence.result
+                self.assertEqual(evidence.status.value, "completed")
+                self.assertIsNone(evidence.failure_category)
+                self.assertEqual(result["sampleCount"], 3)
+                self.assertEqual(result["collisions"], [])
+                outcomes = [row["projectedOutcome"] for row in result["items"]]
+                self.assertEqual(
+                    outcomes,
+                    ["ready", "manual_confirmation_required", "ready"],
+                )
+                self.assertEqual(result["verdict"], "manual_confirmation_required")
+                self.assertNotEqual(result["verdict"], outcomes[0])
+                self.assertNotEqual(result["verdict"], outcomes[-1])
+                destinations = [row["destinationPath"] for row in result["items"]]
+                self.assertEqual(len(set(destinations)), 3)
+                self.assertIn("DESTINATION_EXISTS", result["items"][1]["plannerConflicts"])
+                self.assertEqual(result["authorityGranted"], "none")
+                self.assertEqual(set(result["guardMutationCalls"].values()), {0})
+                self.assertEqual(self._tree_snapshot(target_root), before)
+            finally:
+                repository.close()
+
+    def test_multi_sample_top_level_keys_describe_the_first_sample(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target_root = root / "target-private"
+            (target_root / "Movies").mkdir(parents=True)
+            severe = (
+                target_root
+                / "Movies"
+                / "Anime"
+                / "Your Name (2016) [tmdbid-synthetic]"
+                / "Your Name (2016).mkv"
+            )
+            severe.parent.mkdir(parents=True)
+            severe.write_bytes(b"existing")
+            (root / "source-private").mkdir()
+            before = self._tree_snapshot(target_root)
+            repository, _, objects, draft = self._open(root)
+            try:
+                evidence = objects.destination_precheck(
+                    draft.revision_id,
+                    expected_version=draft.version,
+                    expected_digest=draft.digest,
+                    actor="operator",
+                    recognition_type="C",
+                    samples=[
+                        {
+                            "title": "The Matrix",
+                            "mediaType": "movie",
+                            "year": 1999,
+                            "genres": ["Action"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Your Name",
+                            "mediaType": "movie",
+                            "year": 2016,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Spirited Away",
+                            "mediaType": "movie",
+                            "year": 2001,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                    ],
+                )
+                result = evidence.result
+                first = result["items"][0]
+                self.assertEqual(result["destinationPath"], first["destinationPath"])
+                self.assertEqual(
+                    result["conflictProjection"]["projectedOutcome"],
+                    first["projectedOutcome"],
+                )
+                self.assertEqual(result["targetExists"], first["targetExists"])
+                self.assertEqual(first["projectedOutcome"], "ready")
+                self.assertNotEqual(result["verdict"], first["projectedOutcome"])
+                self.assertEqual(result["authorityGranted"], "none")
+                self.assertEqual(set(result["guardMutationCalls"].values()), {0})
+                self.assertEqual(self._tree_snapshot(target_root), before)
+            finally:
+                repository.close()
+
     def test_cross_sample_collision_is_duplicate_destination_failure(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
