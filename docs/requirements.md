@@ -1589,7 +1589,7 @@ NamingPolicy ID
 启用状态
 ```
 
-> 当前实现（Phase 22.6-A 已 PASS/CLOSED；Phase 22.6-B 等待独立 High Review）：NamingPolicy 已接入现有 Managed Draft 的
+> 当前实现（Phase 22.6-A 与 Phase 22.6-B 均已 PASS/CLOSED）：NamingPolicy 已接入现有 Managed Draft 的
 > Web/API 对象编辑、乐观版本、Before/After 审计和 RecognitionTypePolicy 引用阻断。操作员可对
 > 精确 revision ID/version/digest 提交一个有界合成样本或由既有 Parser 解析的路径，并通过既有
 > NamingPolicyRegistry/NamingPreviewService/安全 renderer/sanitizer 得到持久离线命名证据；证据

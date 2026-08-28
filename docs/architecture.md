@@ -1072,8 +1072,10 @@ MediaIdentity/ParseResult/RecognitionType/ClassificationContext types and calls
 revision-keyed bounded evidence records classified/unclassified state, matched rule and evidence,
 MediaLibrary resolution, relative path, warnings and recovery, and becomes stale after any edit.
 The path constructs no Storage/Provider/Task/Job/queue and has no execute authority. OrganizePolicy,
-composed destination paths and conflict/capability/existence prechecks remain outside this Slice,
-which awaits independent High Review.
+composed destination paths and conflict/capability/existence prechecks remain outside this Slice.
+Phase 22.6-B is independently accepted at `5e2da5c634f1fa72a40e5f50b035260418fe1a37`; managed
+normalization was verified to be semantically identity for runtime, so an edited policy loads into
+the same domain `ClassificationRule` objects the loader produces from the original document.
 
 ## Deferred work
 
