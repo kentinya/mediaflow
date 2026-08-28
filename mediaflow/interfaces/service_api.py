@@ -547,15 +547,23 @@ class MediaFlowApi:
                     "managed configuration service is unavailable",
                 )
             document = self._document(environ)
-            if set(document) != {
-                "expectedVersion",
-                "expectedDigest",
-                "recognitionType",
-                "sample",
-            }:
+            if set(document) not in (
+                {
+                    "expectedVersion",
+                    "expectedDigest",
+                    "recognitionType",
+                    "sample",
+                },
+                {
+                    "expectedVersion",
+                    "expectedDigest",
+                    "recognitionType",
+                    "samples",
+                },
+            ):
                 raise ValueError(
                     "destination precheck requires expectedVersion, expectedDigest, "
-                    "recognitionType, and sample"
+                    "recognitionType, and exactly one of sample or samples"
                 )
             expected = document["expectedVersion"]
             if isinstance(expected, bool) or not isinstance(expected, int):
@@ -564,16 +572,33 @@ class MediaFlowApi:
                 raise ValueError("configuration expectedDigest is required")
             if not isinstance(document["recognitionType"], str):
                 raise ValueError("destination precheck RecognitionType is required")
-            if not isinstance(document["sample"], dict):
-                raise ValueError("destination precheck sample must be an object")
-            evidence = self._configuration_objects.destination_precheck(
-                parts[4],
-                expected_version=expected,
-                expected_digest=document["expectedDigest"],
-                actor=principal.principal_id,
-                recognition_type=document["recognitionType"],
-                sample=document["sample"],
-            )
+            if "sample" in document:
+                if not isinstance(document["sample"], dict):
+                    raise ValueError("destination precheck sample must be an object")
+                evidence = self._configuration_objects.destination_precheck(
+                    parts[4],
+                    expected_version=expected,
+                    expected_digest=document["expectedDigest"],
+                    actor=principal.principal_id,
+                    recognition_type=document["recognitionType"],
+                    sample=document["sample"],
+                )
+            else:
+                raw_samples = document["samples"]
+                if not isinstance(raw_samples, list):
+                    raise ValueError("destination precheck samples must be an array")
+                if not 1 <= len(raw_samples) <= 8:
+                    raise ValueError("destination precheck accepts one to eight samples")
+                if any(not isinstance(value, dict) for value in raw_samples):
+                    raise ValueError("destination precheck sample must be an object")
+                evidence = self._configuration_objects.destination_precheck(
+                    parts[4],
+                    expected_version=expected,
+                    expected_digest=document["expectedDigest"],
+                    actor=principal.principal_id,
+                    recognition_type=document["recognitionType"],
+                    samples=raw_samples,
+                )
             return self._response(start_response, 200, evidence.document())
         if (
             len(parts) == 6

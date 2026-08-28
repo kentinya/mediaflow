@@ -1138,9 +1138,26 @@ the Local setup check and Recognition Strategy Test are current, so the sentence
 requirement the server refuses on first. A missing `mediaLibraries` document section is likewise not
 applicable at the activation gate. The gate still reads only the revision document and persisted
 evidence; it constructs no Storage, Provider, Planner or Executor and performs no probe.
+Phase 22.6-H extends the same precheck from one sample to one to eight samples under one
+RecognitionType. Each sample is validated and composed independently through the same production
+path; all samples must resolve to one destination Storage, and the whole run keeps one capacity
+lease, one `_ReadOnlyDestinationStorage` guard, one worker submission and one overall deadline.
+`OrganizePlanner.plan` is called once per sample with `claimed_destinations` accumulating distinct
+`destination-precheck-source-<index>.mkv` synthetic sources, so a production
+`ConflictType.TARGET_COLLISION` between two composed destinations is detected with zero mutation;
+the run then fails with the bounded `duplicate_destination` category, retaining every sample row
+and a collision list naming the destination and the colliding sample indexes. Samples routed to
+MediaLibraries on more than one destination Storage fail with `multiple_destination_storages`
+before any probe, naming only Storage `id` and `type`. Completed evidence aggregates the
+per-sample projected outcome by severity (`manual_confirmation_required`,
+`overwrite_requires_confirmation`, `rename`, `skip`, `ready`, most severe first, or
+`capability_gap` when any required capability is missing) and adds `sampleCount`, `items` and
+`collisions`; the single-sample request and evidence keep their existing keys and add the same
+three keys. The activation gate is byte-identical and refuses both new categories through its
+existing failed branch.
 Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
-duplicate/cross-item collision detection, attachment prechecks, absolute mounted-path display and
-execution remain TARGET. Phase 22.6-E is PASS / CLOSED at
+`ConflictType.DUPLICATE_MEDIA` / known-media detection, attachment prechecks, absolute mounted-path
+display and execution remain TARGET. Phase 22.6-E is PASS / CLOSED at
 `ee5225dd0e74a7382b6747c6315776413f7fd249`, accepted through the Phase 22.6-E-F1 correction.
 
 ## Deferred work

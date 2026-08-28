@@ -3,7 +3,7 @@
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: READY FOR IMPLEMENTATION
+Status: READY FOR HIGH REVIEW
 Commit SHA: PENDING
 High Audit: PENDING
 Preceding closed checkpoint: 5ca1247156e6de4615dff53f5fc8e421bd8bf264
@@ -314,49 +314,174 @@ No CURRENT claim may describe behaviour this Slice does not ship.
 
 ## Closure Checklist
 
-- [ ] Multi-sample composition, per-sample rows, collision detection and both new bounded categories
+- [x] Multi-sample composition, per-sample rows, collision detection and both new bounded categories
       are implemented in the application layer and reach the API and the Web.
-- [ ] Every sample keeps independent state, outcome and recovery; no sample hides another.
-- [ ] `require_current_destination_precheck` is byte-identical, and both new categories are refused
+- [x] Every sample keeps independent state, outcome and recovery; no sample hides another.
+- [x] `require_current_destination_precheck` is byte-identical, and both new categories are refused
       by its existing failed branch.
-- [ ] Single-sample requests are unchanged, and evidence written by the previous build still renders
+- [x] Single-sample requests are unchanged, and evidence written by the previous build still renders
       and still gates.
-- [ ] All eleven Required Tests exist and assert rather than assume; every new Web line is
+- [x] All eleven Required Tests exist and assert rather than assume; every new Web line is
       falsifiable and its failing test is named in the Completion Report.
-- [ ] All seven falsification probes were run, each failed a named test, each was restored, and the
+- [x] All seven falsification probes were run, each failed a named test, each was restored, and the
       tree was clean afterwards.
-- [ ] The guard counted zero mutations; no Provider, Executor, Task, Job or authority was
+- [x] The guard counted zero mutations; no Provider, Executor, Task, Job or authority was
       constructed; Runtime tables stayed empty; `authorityGranted` stayed `none`.
-- [ ] Markers stay 10 and 22; no migration, new table, new endpoint or new permission was added.
-- [ ] The complete offline suite, lint, format, compileall, `pip check`, both example validations
+- [x] Markers stay 10 and 22; no migration, new table, new endpoint or new permission was added.
+- [x] The complete offline suite, lint, format, compileall, `pip check`, both example validations
       and the wheel smoke run pass, with no test deleted and no count decrease.
-- [ ] Documentation CURRENT claims match the shipped behaviour; `docs/progress.md` and
+- [x] Documentation CURRENT claims match the shipped behaviour; `docs/progress.md` and
       `docs/roadmap.md` were not touched.
-- [ ] Private runtime configuration remains ignored and untracked; no secret is staged or committed.
-- [ ] One coherent, buildable, reviewable commit is created on top of
+- [x] Private runtime configuration remains ignored and untracked; no secret is staged or committed.
+- [x] One coherent, buildable, reviewable commit is created on top of
       `5ca1247156e6de4615dff53f5fc8e421bd8bf264`, which is never amended, squashed or rewritten.
-- [ ] The Completion Report is written into this file and the Slice is reported as
+- [x] The Completion Report is written into this file and the Slice is reported as
       READY FOR HIGH REVIEW without declaring Phase closure.
 
 ## Completion Report
 
-Fill in before requesting review, with actual commands and actual results:
-
 ### Changed Files
+
+```text
+docs/architecture.md                               +19/-2
+docs/product-experience.md                         +17/-3
+docs/requirements.md                               +9/-3
+mediaflow/application/configuration_objects.py     +581/-26
+mediaflow/interfaces/operator_ui.py                +29/-4
+mediaflow/interfaces/service_api.py                +42/-17
+tests/test_configuration_destination_activation.py +31/-0
+tests/test_configuration_destination_precheck.py   +422/-0
+tests/test_operator_ui.py                          +47/-0
+TASK.md                                            this Completion Report
+```
+
+`docs/progress.md` and `docs/roadmap.md` were not touched.
 
 ### Implemented
 
+The read-only Local destination precheck now accepts one RecognitionType with either one sample
+object or a JSON array of one to eight sample objects:
+
+- `ConfigurationObjectService.destination_precheck(...)` accepts `samples` alongside `sample`,
+  requires exactly one of them, validates each element as
+  `destination precheck sample[<index>]`, and enforces the one-to-eight bound.
+- Each sample is resolved independently through the unchanged `_resolve_destination`; a composition
+  failure becomes that sample's own bounded row (`failureCategory`, `message`) while every other
+  sample's row is retained and probed.
+- All resolved samples must target one destination Storage; more than one Storage yields the new
+  bounded `multiple_destination_storages` failure before any probe, naming only Storage `id` and
+  `type`. `invalid_configuration` and `unsupported_storage_type` checks stay ahead of probes.
+- One capacity lease, one `_ReadOnlyDestinationStorage` guard, one worker submission and one
+  overall timeout cover the whole run. `OrganizePlanner().plan(...)` is called once per sample with
+  `claimed_destinations` accumulating `{target: destination-precheck-source-<index>.mkv}`; a second
+  sample claiming the same target receives the production `TARGET_COLLISION` conflict and the run
+  fails with the new bounded `duplicate_destination` category, retaining every item row and a
+  collision list (`destinationPath`, `itemIndexes`).
+- Completed runs aggregate the most severe per-sample projected outcome
+  (`manual_confirmation_required` > `overwrite_requires_confirmation` > `rename` > `skip` >
+  `ready`), or `capability_gap` when any sample misses a required capability. `sampleCount`,
+  `items` and `collisions` are added to the result; the single-sample request keeps its existing
+  behaviour and evidence, with only those three additive keys.
+- The API accepts exactly the two request shapes and rejects both/neither, non-list, empty,
+  over-eight and non-object-element `samples` with a bounded HTTP 400 before writing evidence.
+- The Web control label, helper line, array/object dispatch, sample count, first-sample label,
+  per-sample rows and collision section (including the explicit no-collision sentence) are shipped;
+  `destinationPrecheckActivationRequirement` and all four blocked branches are unchanged.
+
 ### Assertions Added and Shipped Lines They Guard
+
+- `test_multiple_samples_success_most_severe_verdict_and_distinct_rows` — three distinct samples
+  complete with `sampleCount: 3`, three independent rows, a mixed
+  `manual_confirmation_required`/`ready` aggregation and empty `collisions`.
+- `test_cross_sample_collision_is_duplicate_destination_failure` — same-destination samples fail
+  with `duplicate_destination`, `TARGET_COLLISION` on the later row, a collision row naming the
+  destination and `[0, 1]`, retained items and the bounded recovery action.
+- `test_per_sample_isolation_when_middle_sample_fails_composition` — the second of three samples
+  fails with `invalid_rule`; rows 0 and 2 keep their own destinations and observations.
+- `test_multiple_destination_storages_is_bounded_failure` — different destination Storages fail
+  with `multiple_destination_storages` before probing, with only Storage `id:type` labels and no
+  rootPath in evidence.
+- `test_single_sample_result_gains_sample_count_items_and_empty_collisions` — the single-sample
+  result keeps its keys and adds one item row and empty collisions.
+- `test_multiple_samples_zero_mutation_and_no_construction` — success and collision runs keep
+  guard counters zero, `authorityGranted: none`, Runtime tables empty and Provider/Executor
+  doubles uncalled.
+- `test_api_rejects_invalid_sample_shapes_without_writing_evidence` — nine samples, empty array,
+  non-list, both/neither, and non-object element are 400s (plus a direct service ValueError for
+  nine samples) and previous evidence is preserved.
+- `test_destination_precheck_multi_sample_web_surface_is_falsifiable` — every new Web string and
+  the array/object dispatch are body-scoped inside `renderDestinationPrecheck`.
+- Activation tests — the unchanged gate refuses `duplicate_destination` and
+  `multiple_destination_storages` through its existing failed branch, and old-style evidence
+  without `sampleCount`/`items`/`collisions` still activates.
 
 ### Tests and Test Results
 
+Commands actually run, with results:
+
+- Focused modules (`test_configuration_destination_precheck`,
+  `test_configuration_destination_activation`, `test_operator_ui`,
+  `test_configuration_destination`): 51 tests, 0 failures.
+- Complete offline suite: `Ran 859 tests ... OK (skipped=7)` — 850 before this Slice, +9 tests,
+  no test removed.
+- `ruff check .`: All checks passed; `ruff format --check .`: 308 files already formatted.
+- `compileall -q mediaflow tests`: passed; `pip check`: No broken requirements found.
+- Both example `config validate` runs: `Configuration valid`.
+- Wheel: `pip wheel . --no-deps --no-build-isolation -w dist` built; isolated
+  `scripts/wheel_smoke_test.py` exited 0 with Runtime schema 22; Configuration marker 10 remains
+  asserted by the unchanged suite (`CONFIGURATION_SCHEMA_VERSION == 10`).
+- `git diff --check`: clean; 120 tracked Markdown files, 25 local links, 0 broken.
+- FFmpeg/FFprobe audit: zero hits; business-layer filesystem-mutation audit: only Storage-mediated
+  `resolver.rename(...)` references.
+- `config/alist.json`: ignored, untracked and unstaged.
+- `require_current_destination_precheck` extracted from `5ca1247...` and the working tree:
+  `identical: True` (function-level byte-identity).
+
 ### Falsification Probes
+
+Each probe temporarily changed one shipped line, ran the named test, confirmed the failure, then
+restored the intended tree byte-identically (the probed file's SHA-256 matched its intended
+snapshot and `git status --short` showed only the intended files).
 
 | Probe | Temporary change | Failing test and assertion |
 | --- | --- | --- |
+| 1 | `claimed_destinations=None` in the multi-sample probe | `test_cross_sample_collision_is_duplicate_destination_failure`, line 323 (`TARGET_COLLISION` not found) |
+| 2 | One identical synthetic source for every sample | same test, line 323 (`TARGET_COLLISION` not found) |
+| 3 | Same-destination-Storage check disabled | `test_multiple_destination_storages_is_bounded_failure`, line 449 (`completed` != `failed`) |
+| 4 | Failing sample replaces the other rows | `test_per_sample_isolation_when_middle_sample_fails_composition`, line 380 (`sampleCount` 1 != 3) |
+| 5 | Delete the explicit no-collision Web line | `test_destination_precheck_multi_sample_web_surface_is_falsifiable`, line 559 |
+| 6 | Delete the per-sample rows Web line | same test, line 545 |
+| 7 | Sample bound raised above eight (64) | `test_api_rejects_invalid_sample_shapes_without_writing_evidence`, line 697 (`ValueError not raised`) |
 
 ### Decisions
 
+- The single-sample worker keeps its original failure semantics (including `result=None` for
+  `unsafe_destination`) so no existing assertion changes; the multi-sample worker adds rows,
+  collisions and guard counters to its failure evidence.
+- Collision failure is chosen over per-sample failure when both exist, because the collision is
+  the safety blocker the Slice exists to surface; item rows still retain every sample.
+- The Web helper line is a separate `controls.append(...)` so the pre-existing
+  `controls.append(recognitionType, sample, actionButton(` assertion stays byte-identical and no
+  test assertion was deleted.
+- `multiple_destination_storages` rows carry composition-only data with unprobed fields `null`;
+  the run-level message directs the operator to narrow to one destination Storage.
+
 ### Remaining Work
 
+- Nothing remains inside this Slice. Remote SMB/OpenList/S3 prechecks, mutation-based capability
+  probing, `ConflictType.DUPLICATE_MEDIA` / known-media detection, attachment prechecks, absolute
+  mounted-path display and execution remain TARGET.
+- No push was performed; Phase 22.6 closure and push require High PASS plus explicit operator
+  authorization.
+
 ### Risks, Assumptions and Newly Discovered Issues
+
+- If the first requested sample fails composition, the top-level result describes the first
+  successfully probed sample while `items` preserves every sample in request order; this edge case
+  is bounded by the run-level failure and is recorded here.
+- Probe 7 initially did not bite because the API layer also enforced the bound; the Required Test
+  now asserts the service boundary directly so the probe fails as mandated.
+- The pre-existing `ResourceWarning: unclosed database` from earlier Phases still appears and is
+  a recorded non-blocking observation.
+- Per the workflow, this commit does not contain its own SHA; the full SHA is reported in the
+  review handoff and will be recorded by High in `docs/progress.md` after review.
