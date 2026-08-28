@@ -156,15 +156,21 @@ preserved unchanged. The independent review record is
 ### Phase 22.6-C Managed OrganizePolicy Configuration + Offline Organize Authority Explanation
 
 ```text
-Status: READY FOR COMMIT (pre-checkpoint)
-Commit SHA: PENDING
-High Audit: PENDING
-Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
+Status: PASS / CLOSED
+Commit SHA: 47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa
+High Audit: PASS — 2026-08-28; the checkpoint was independently reviewed with eleven deliberate
+falsifications (five operator-UI mounts, two narrowed job/decision assertions, four
+service-boundary rules), an independent 22-variant normalization-fidelity check, an independent
+zero-side-effect and C-identity probe, a marker 7 to 8 upgrade check, and the complete offline suite
+Push: PENDING — not required for this Slice closure; `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa`
+and the docs record are not yet contained in `origin/main`, and the phase-level Phase 22.6 closure
+will require an explicitly authorized push
 ```
 
 Implementation evidence is recorded below under
-"Phase 22.6-C OrganizePolicy Configuration + Offline Organize Authority Implementation Evidence".
-Implementation completion is not Phase closure.
+"Phase 22.6-C OrganizePolicy Configuration + Offline Organize Authority Implementation Evidence" and
+is preserved unchanged. The independent review record is
+"Phase 22.6-C High Review Result (2026-08-28): PASS".
 
 ## Phase 22.6-A High Review Result (2026-08-27)
 
@@ -470,6 +476,105 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
 - This is implementation evidence only. Phase 22.6-C is not `PASS / CLOSED`; composed
   destination-path preview, destination conflict/capability/existence prechecks, Storage capability
   probing and activation-evidence changes have not started.
+
+## Phase 22.6-C High Review Result (2026-08-28): PASS
+
+- Status: PASS / CLOSED for Phase 22.6-C; reviewed checkpoint SHA:
+  `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa`; High Audit: PASS — 2026-08-28. No earlier Phase 22.6-C
+  checkpoint was rejected, so no rejected SHA record exists for this Slice. The preserved
+  Phase 22.5-E and Phase 22.6-A `FIX REQUIRED` records and their rejected SHAs
+  (`08dfd4f921728755209b6d52347d28f221121c47`, `90ce13a6c6c39912dd389f71a1189314ff24eb5d`) are
+  unchanged and both objects remain reachable; the `docs/progress.md` diff in this checkpoint is
+  purely additive.
+- Scope conformance verified against `TASK.md`: the checkpoint touches
+  `mediaflow/domain/configuration_management.py`, `mediaflow/application/configuration_objects.py`,
+  `mediaflow/infrastructure/sqlite_configuration_management.py`,
+  `mediaflow/infrastructure/strategy_user_configuration.py` (rename only),
+  `mediaflow/interfaces/service_api.py`, `mediaflow/interfaces/operator_ui.py`,
+  `tests/test_configuration_organize.py` (new), three operator-UI test files, `TASK.md` and
+  documentation only. No composed destination path, no destination conflict/capability/existence
+  precheck, no Storage capability probing, no Planner/Executor/loader behaviour change, no
+  activation-gate or Active-projection change, and the runtime schema marker is untouched
+  (`mediaflow/application/configuration_snapshot.py` and `mediaflow/infrastructure/sqlite_runtime.py`
+  are absent from the manifest). `mediaflow/application/configuration_objects.py` has zero deleted
+  lines; every other production deletion is an existing conditional chain extended to include
+  `organizePolicies`, or the single rename.
+- Bounds are owned by the production domain, as the Task required: the managed normalizer calls
+  `parse_organize_policy` and keeps only unknown-field rejection, the bounded ID and the editor
+  restriction to Move/Copy/HardLink/SoftLink. The loader's `overwrite`/`conflictStrategy` cross-field
+  rule is unchanged, and the loader still accepts `delete` and `create_directory` exactly as before.
+- Normalization fidelity independently verified beyond the shipped test: 22 non-default field
+  combinations (all four editable operations x all four conflict strategies, plus non-default
+  `attachments`, `fast`/`full` duplicate detection, enabled rollback and `empty`/`ignorable` source
+  cleanup) round-tripped through `_normalize` and `parse_organize_policy` with zero semantic drift
+  and idempotent canonical output, so a managed edit cannot silently change what runtime consumes.
+- Independently reproduced eleven falsifications. Each was applied to a restored tree, the focused
+  test was run, and the tree was restored to a clean `git status` afterwards. Web
+  (`tests.test_operator_ui`): removing `renderOrganizeAuthority(data, guided);` FAILED; removing
+  `renderGuidedObjectList(data, guided, 'organizePolicies', 'OrganizePolicies');` FAILED; moving the
+  authority mount after the final `detail.hidden = false;` FAILED; detaching its controls from
+  `detailContent` FAILED; detaching its heading FAILED. Narrowed assertions still bite: naming
+  `overwrite` inside the `renderConflictActions` body FAILED, and inside `showDryRunJobForm` and
+  `showJob` FAILED in `tests.test_operator_job_submission` and
+  `tests.test_operator_job_cancellation`. Service boundary
+  (`tests.test_configuration_organize`): removing the Move/Copy/HardLink/SoftLink restriction FAILED
+  (15 failures/errors); removing the `ORGANIZE_POLICY` reference branch FAILED; removing the
+  `can_delete` capability declaration FAILED. The unmodified tree PASSED before and after every run.
+- Independent end-to-end probe at the reviewed SHA: RecognitionType `C` mapped through
+  RecognitionTypePolicy `type-C` to OrganizePolicy `A` reported `recognitionType: C`, so C-identity
+  survives a shared OrganizePolicy; `requiredStorageCapabilities` was exactly `["can_move"]`;
+  `sideEffects: none` with `retrySafe: true`; the source and target trees were byte-identical before
+  and after; the Draft document, version and digest were unchanged; and the evidence payload contains
+  no token, password, secret, authorization or cookie text.
+- Independently re-run at the reviewed SHA: complete offline suite 825 tests with 7 existing
+  external-service skips and 0 failures; 41 focused organize/classification/naming/operator-UI tests;
+  a 200-test configuration + configuration-object + snapshot/status + organizer + organizer-rollback
+  + recognition + strategy-configuration + storage-configuration regression group; 54 naming,
+  classification, strategy-CLI and Metadata correction/resolution tests carrying the RecognitionType
+  C regressions; Ruff 0.16.3 check and format across 305 files; `compileall`; `pip check`; both
+  example configuration validations; `pip wheel` plus the isolated installed-wheel smoke test
+  reporting unchanged runtime schema marker 22; 120 markdown files with 0 broken local links;
+  `git diff --check`; the FFmpeg/FFprobe production audit (no match under `mediaflow/`); the
+  business-layer filesystem mutation audit (no direct filesystem mutation in
+  `mediaflow/application` or `mediaflow/domain`); and the private-configuration checks
+  (`config/alist.json` and `config/strategy.json` ignored, untracked, absent from the diff and never
+  read).
+- Documentation CURRENT claims match the code as read: the marker `8` transition, the
+  declared-not-probed capability statement, the no-fallback statement, the editor operation
+  restriction without a loader change, and the "normalization is identity for runtime semantics"
+  claim were each verified directly rather than accepted from the completion report.
+- Record correction made by this review, not a behaviour defect: the implementation evidence
+  discloses the narrowed whole-script `overwrite` assertions in
+  `tests/test_operator_job_submission.py` and `tests/test_operator_job_cancellation.py` but omits the
+  third narrowing, `tests/test_operator_ui.py:146`, where
+  `assertNotIn("overwrite", script.lower())` became a `renderConflictActions` body assertion plus the
+  global `assertNotIn("overwrite:", script)` and `assertNotIn("overwrite=true", script)` guards. All
+  three narrowings are legitimate — the whole-script prohibition became unsatisfiable once this Slice
+  is required to display overwrite authority — and all three were independently proven still to bite
+  in their own journey bodies. `renderConflictActions` still offers only `['skip', 'rename']`, and no
+  served path sends an `overwrite` field.
+- Non-blocking observations carried forward, deliberately not corrections: `organize_authority`
+  normalizes every organize policy in the revision document and catches only `PolicyResolutionError`,
+  so an imported or hand-edited document whose organize policy is loader-valid but editor-invalid
+  (for example `operation: delete`) raises a bare `ValueError` that reaches the API as
+  `400 invalid_request` without persisted FAILED evidence and without naming the offending policy,
+  whereas `naming_preview` and `classification_preview` catch `ValueError` into actionable evidence —
+  this is the explicit `TASK.md` non-goal "whole-document policy normalization during preview",
+  the guided list still displays such a policy truthfully and editing it is the recovery; the shipped
+  normalization-neutrality test satisfies Required Test 5 literally but every example organize policy
+  uses default `attachments`, `duplicateDetection`, `rollback` and `sourceDirectoryCleanup`
+  sub-documents, so a control that drops a whole canonical sub-document stays green and the fixture
+  should later carry non-default sub-documents; the new test file adds further `sqlite3.connect`
+  context managers that commit rather than close, extending the carried-forward ResourceWarning
+  observation; the runtime loader still accepts `delete` and `create_directory` and still lacks
+  top-level unknown-field rejection for organize policies; the recorded wheel SHA-256 is not
+  reproducible across builds.
+- Verdict: **PASS**. Phase 22.6-C is `PASS / CLOSED` at
+  `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa`. Phase 22.6 remains open; the next legal Slice is
+  Phase 22.6-D (the composed final destination-path preview for an exact revision), defined in
+  `TASK.md`. Destination existence/conflict/capability prechecks, Storage capability probing,
+  combined activation evidence, Planner/Executor changes and any activation-gate change remain
+  prohibited.
 
 ## Completed
 
