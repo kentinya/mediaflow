@@ -1057,8 +1057,23 @@ durable evidence. SQLite configuration-management schema marker 6 adds one revis
 preview-evidence table. Evidence always carries exact revision ID/version/digest and becomes stale
 after an edit. Rendering and all failure paths construct no Storage/Provider/Task/Job/queue and grant
 no execute authority. Classification, MediaLibrary resolution, conflict/capability checks, and
-Organizer remain outside this service. Checked activation semantics are unchanged. This
-implementation awaits independent High Review.
+Organizer remain outside this service. Checked activation semantics are unchanged. Phase 22.6-A is
+independently accepted at `30af69ac82b30f8a45ad66afbd3c9747597c8fe7`.
+
+Phase 22.6-B adds ClassificationPolicy to that same managed object authority. Normalization builds
+the existing `ClassificationRule` and `ClassificationPolicy` domain types, so rule ordering and
+relative-path safety remain owned by the production classification stack. RecognitionTypePolicy
+inbound references block delete, while MediaLibrary existence remains a whole-Draft validation
+concern rather than a new save-time rule.
+
+Exact-revision classification preview converts one bounded sample to the existing
+MediaIdentity/ParseResult/RecognitionType/ClassificationContext types and calls
+`ClassificationPolicyRegistry -> ClassificationPreviewService -> ClassificationEngine`. Its
+revision-keyed bounded evidence records classified/unclassified state, matched rule and evidence,
+MediaLibrary resolution, relative path, warnings and recovery, and becomes stale after any edit.
+The path constructs no Storage/Provider/Task/Job/queue and has no execute authority. OrganizePolicy,
+composed destination paths and conflict/capability/existence prechecks remain outside this Slice,
+which awaits independent High Review.
 
 ## Deferred work
 
@@ -1595,8 +1610,9 @@ the historical runtime schema marker remains `22` so accepted backup/restore and
 is not rewritten. Fresh and older databases both receive the columns by presence checks, and Job
 inserts use an explicit column list so historical ALTER-table column order cannot corrupt authority
 fields. Phase 22.3 closed on configuration-management schema marker `4`; Phase 22.4 adds marker `5`
-for revision-bound Recognition Strategy Test evidence, and Phase 22.6-A adds marker `6` for
-exact-revision Naming preview evidence. Its revision sequence, singleton authority
+for revision-bound Recognition Strategy Test evidence, Phase 22.6-A adds marker `6` for
+exact-revision Naming preview evidence, and Phase 22.6-B adds marker `7` for exact-revision
+Classification preview evidence. Its revision sequence, singleton authority
 pointer, Local setup-check evidence, Strategy Test evidence, and the Phase 22.5-E continuation table
 and indexes remain additive and do not rewrite
 the Runtime marker.

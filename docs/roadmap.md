@@ -15,7 +15,7 @@ Phase gate，不复制测试日志或流程正文。
 | Phase 22.5-E Single-Item Metadata Correction DryRun Continuation | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27，F1 correction checkpoint 独立复审通过；被拒 checkpoint `08dfd4f921728755209b6d52347d28f221121c47`（FIX REQUIRED）保留 |
 | Phase 22.5 Metadata 配置与修正旅程（A/B/C/D/E） | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27 phase-level Final Closure Audit；已推送 `origin/main`；允许 Phase 22.6 Naming/Classification/Organize 配置旅程 |
 | Phase 22.6-A Managed NamingPolicy + Offline Naming Preview | PASS / CLOSED | `30af69ac82b30f8a45ad66afbd3c9747597c8fe7`；被拒 checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d` 保留 | PASS — 2026-08-28 独立复审：五项 operator-UI 与两项 service-boundary 可证伪对照全部先失败后通过，生产树与被拒 checkpoint 逐字节相同；已于 2026-08-28 在显式操作员授权下推送 `origin/main`；下一合法 Slice 为 Phase 22.6-B |
-| Phase 22.6-B Managed ClassificationPolicy + Offline Classification Preview | 未开始 | — | 已在 `TASK.md` 定义：managed classificationPolicies CRUD、MediaLibrary 引用校验、RecognitionTypePolicy 引用阻断与 exact-revision 离线分类预览；不含 OrganizePolicy、组合目标路径、冲突/能力预检与 activation evidence 变更 |
+| Phase 22.6-B Managed ClassificationPolicy + Offline Classification Preview | READY FOR HIGH REVIEW | PENDING | 实现完成待独立审核；仅含 managed CRUD、引用阻断和 exact-revision 分类预览，不得进入 OrganizePolicy 或组合目标预览 |
 
 ## 当前节点
 
@@ -53,6 +53,10 @@ Phase 22.6-A-F1 correction checkpoint `30af69ac82b30f8a45ad66afbd3c9747597c8fe7`
 语义均未变化。Phase 22.6 尚未关闭：下一合法 Slice 是 **Phase 22.6-B**（managed
 ClassificationPolicy 编辑 + exact-revision 离线分类预览）；OrganizePolicy 编辑、组合最终目标
 路径预览、目标冲突/能力/存在性预检与 combined activation evidence 仍为 TARGET，不得提前开始。
+Phase 22.6-B 已完成待独立 High Review：当前覆盖 ClassificationPolicy managed CRUD、规则摘要、
+RecognitionTypePolicy 引用阻断、MediaLibrary 解析解释和 exact-revision classified/unclassified
+离线预览；配置 schema marker 前向升级至 7，Runtime marker 仍为 22。Phase 22.6 未关闭，
+OrganizePolicy、组合最终目标预览及冲突/能力/存在性预检不得提前开始。
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 

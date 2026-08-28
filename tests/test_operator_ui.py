@@ -171,7 +171,7 @@ class OperatorUiTests(unittest.TestCase):
         self.assertNotIn("Validate Draft", mismatch)
         self.assertNotIn("Save Draft", mismatch)
         self.assertNotIn("Activate", mismatch)
-        self.assertNotIn("classificationPolicies", script)
+        self.assertIn("classificationPolicies", script)
         self.assertIn("recognitionRules", script)
         self.assertIn("metadataPolicies", script)
         self.assertIn("Save MetadataPolicy", script)
@@ -217,6 +217,47 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("Save NamingPolicy", object_form)
         self.assertIn("actionButton('Copy'", object_list)
         self.assertIn("References block deletion", object_list)
+
+    def test_classification_policy_editor_and_preview_are_reachable(self) -> None:
+        script = APP_JS.decode()
+        show_revision = _js_function_body(script, "showConfigurationRevision")
+        preview = _js_function_body(script, "renderClassificationPreview")
+        policy_mount = (
+            "renderGuidedObjectList(data, guided, 'classificationPolicies', "
+            "'ClassificationPolicies');"
+        )
+        preview_mount = "renderClassificationPreview(data, guided);"
+        guided_branch = show_revision.index("if (guided) {")
+        guided_body = _js_braced_body(show_revision, show_revision.index("{", guided_branch))
+        visible = show_revision.rindex("detail.hidden = false;")
+
+        self.assertIn(policy_mount, guided_body)
+        self.assertIn(preview_mount, guided_body)
+        self.assertLess(guided_body.index(policy_mount), guided_body.index(preview_mount))
+        self.assertLess(show_revision.index(preview_mount), visible)
+        self.assertIn(
+            "detailContent.append(text('h3', 'Offline classification preview'));",
+            preview,
+        )
+        self.assertIn("detailContent.append(controls);", preview)
+        self.assertIn("ClassificationPolicy preview policy", preview)
+        self.assertIn("Classification preview sample JSON", preview)
+        self.assertIn("Run offline classification preview", preview)
+        self.assertIn("/classification-preview`,", preview)
+        self.assertIn("expectedVersion: revision.version", preview)
+        self.assertIn("expectedDigest: revision.digest", preview)
+        self.assertIn("MediaLibrary resolved", preview)
+        self.assertIn("Relative path", preview)
+        self.assertIn("Matched rule name", preview)
+        self.assertIn("Match evidence", preview)
+        self.assertIn("This classification preview is stale", preview)
+
+        object_list = _js_function_body(script, "renderGuidedObjectList")
+        object_form = _js_function_body(script, "renderGuidedObjectForm")
+        self.assertIn("Save ClassificationPolicy", object_form)
+        self.assertIn("kind === 'classificationPolicies'", object_list)
+        self.assertIn("actionButton('Copy'", object_list)
+        self.assertIn("classification_policy", object_list)
 
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
         script = APP_JS.decode()

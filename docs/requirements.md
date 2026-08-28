@@ -1589,14 +1589,18 @@ NamingPolicy ID
 启用状态
 ```
 
-> 当前实现（Phase 22.6-A，等待独立 High Review）：NamingPolicy 已接入现有 Managed Draft 的
+> 当前实现（Phase 22.6-A 已 PASS/CLOSED；Phase 22.6-B 等待独立 High Review）：NamingPolicy 已接入现有 Managed Draft 的
 > Web/API 对象编辑、乐观版本、Before/After 审计和 RecognitionTypePolicy 引用阻断。操作员可对
 > 精确 revision ID/version/digest 提交一个有界合成样本或由既有 Parser 解析的路径，并通过既有
 > NamingPolicyRegistry/NamingPreviewService/安全 renderer/sanitizer 得到持久离线命名证据；证据
 > 显示目录、文件名、应用策略、RecognitionType、清理、缺失变量决策、warning、失败类别和恢复
 > 动作，Draft 变化后明确为 stale。该路径不构造 Storage/Provider/Task/Job 且零媒体变更。
-> ClassificationPolicy、OrganizePolicy、最终目标、冲突/能力预检与 combined activation evidence
-> 仍为 Phase 22.6 后续 TARGET；本 Slice 不改变 checked activation。
+> ClassificationPolicy 也已接入相同 Web/API 对象编辑、引用阻断和 exact-revision 离线预览；证据
+> 显示 classified/unclassified、matched rule、匹配解释、MediaLibrary ID/解析状态、安全相对路径、
+> warning、current/stale 和恢复动作。预览复用既有 ClassificationPolicyRegistry/
+> ClassificationPreviewService，不构造 Storage/Provider 且不授予执行权限。OrganizePolicy、组合
+> 最终目标、冲突/能力/存在性预检与 combined activation evidence 仍为后续 TARGET；checked
+> activation 未改变。
 
 ---
 

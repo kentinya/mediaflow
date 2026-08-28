@@ -301,7 +301,8 @@ APP_JS = b"""(() => {
     const referenceKind = {storages: 'storage', resourceLibraries: 'resource_library',
       mediaLibraries: 'media_library', recognitionTypes: 'recognition_type',
       recognitionRules: 'recognition_rule', recognitionTypePolicies: 'recognition_type_policy',
-      metadataPolicies: 'metadata_policy', namingPolicies: 'naming_policy'}[kind] || kind;
+      metadataPolicies: 'metadata_policy', namingPolicies: 'naming_policy',
+      classificationPolicies: 'classification_policy'}[kind] || kind;
     detailContent.append(text('h3', `${label} (${values.length})`));
     values.forEach(item => {
       const row = text('div', '', 'choice');
@@ -313,6 +314,18 @@ APP_JS = b"""(() => {
         `Movie: ${item.directoryTemplate || '-'} / ${item.filenameTemplate || '-'}; ` +
         `TV: ${item.seriesDirectoryTemplate || '-'} / ${item.seasonDirectoryTemplate || '-'} / ` +
         `${item.episodeFilenameTemplate || '-'} / ${item.multiEpisodeFileTemplate || '-'}`));
+      if (kind === 'classificationPolicies') {
+        const allRules = Array.isArray(item.rules) ? item.rules : [];
+        const rules = allRules.slice(0, 32);
+        row.append(text('span', `Priority: ${Number.isInteger(item.priority) ? item.priority : 0}; ` +
+          `${item.enabled === false ? 'disabled' : 'enabled'}; Rules: ${allRules.length}`));
+        rules.forEach(rule => { const result = rule.result && typeof rule.result === 'object' ? rule.result : {};
+          const path = Array.isArray(result.path) ? result.path.join('/') : result.path || '-';
+          row.append(text('span', `${rule.id || '-'} - ${Number.isInteger(rule.priority) ? rule.priority : 0} - ` +
+            `${result.mediaLibraryId || '-'} - ${path}`)); });
+        if (allRules.length > rules.length) row.append(text('span',
+          `Rule summary truncated; showing ${rules.length} of ${allRules.length}.`, 'warning'));
+      }
       const referenceEvidence = guided.references && guided.references[`${referenceKind}:${item.id}`] ||
         {total: 0, items: [], truncated: false};
       const references = Array.isArray(referenceEvidence) ? referenceEvidence :
@@ -330,7 +343,7 @@ APP_JS = b"""(() => {
         row.append(text('span', 'Remote/read-only here. Use JSON import for changes.', 'warning'));
       } else if (configurationRevisionEditable(revision)) {
         row.append(actionButton('Edit', () => renderGuidedObjectForm(revision, kind, item)));
-        if (kind === 'namingPolicies') row.append(actionButton('Copy', () => {
+        if (kind === 'namingPolicies' || kind === 'classificationPolicies') row.append(actionButton('Copy', () => {
           const copied = {...item, id: `${item.id}-copy`, name: `${item.name || item.id} copy`};
           renderGuidedObjectForm(revision, kind, copied, true);
         }));
@@ -351,26 +364,30 @@ APP_JS = b"""(() => {
         mediaLibraries: 'MediaLibrary', recognitionTypes: 'RecognitionType',
         recognitionRules: 'RecognitionRule', recognitionTypePolicies: 'RecognitionTypePolicy',
         metadataPolicies: 'MetadataPolicy', namingPolicies: 'NamingPolicy'}[kind] || kind;
+      const classificationPolicy = kind === 'classificationPolicies';
       const guidedJson = kind.startsWith('recognition') ||
-        kind === 'metadataPolicies' || kind === 'namingPolicies';
-      detailContent.append(actionButton(`${guidedJson ? 'Add' : 'Add Local'} ${singular}`,
+        kind === 'metadataPolicies' || kind === 'namingPolicies' || classificationPolicy;
+      const objectLabel = classificationPolicy ? 'ClassificationPolicy' : singular;
+      detailContent.append(actionButton(`${guidedJson ? 'Add' : 'Add Local'} ${objectLabel}`,
         () => renderGuidedObjectForm(revision, kind, null)));
     }
   }
   function renderGuidedObjectForm(revision, kind, item, copyMode = false) {
-    if (kind.startsWith('recognition') || kind === 'metadataPolicies' || kind === 'namingPolicies') {
+    if (kind.startsWith('recognition') || kind === 'metadataPolicies' || kind === 'namingPolicies' || kind === 'classificationPolicies') {
       const metadataPolicy = kind === 'metadataPolicies';
       const namingPolicy = kind === 'namingPolicies';
+      const classificationPolicy = kind === 'classificationPolicies';
       clear(detailContent);
-      detailContent.append(text('h2', `${item && !copyMode ? 'Edit' : 'Add'} ${metadataPolicy ? 'MetadataPolicy' : namingPolicy ? 'NamingPolicy' : 'recognition object'}`));
-      detailContent.append(text('p', namingPolicy ?
+      detailContent.append(text('h2', `${item && !copyMode ? 'Edit' : 'Add'} ${metadataPolicy ? 'MetadataPolicy' : namingPolicy ? 'NamingPolicy' : classificationPolicy ? 'ClassificationPolicy' : 'recognition object'}`));
+      detailContent.append(text('p', classificationPolicy ?
+        'Edit one bounded ClassificationPolicy JSON object. Rules use the configured conditions and safe relative result paths.' : namingPolicy ?
         'Edit one bounded NamingPolicy JSON object. Templates use the restricted naming variables; separators, traversal, unknown variables and unsupported formats are rejected.' : metadataPolicy ?
         'Edit one bounded MetadataPolicy JSON object. Provider/query/locale/threshold/request settings are validated; credentials and unknown fields are rejected.' :
         'Edit one bounded JSON object. References and rule priority are checked when the Draft is validated; unsafe regex is rejected when saved.', 'warning'));
       const editor = document.createElement('textarea');
-      editor.setAttribute('aria-label', metadataPolicy ? 'MetadataPolicy JSON' : namingPolicy ? 'NamingPolicy JSON' : 'Recognition object JSON');
+      editor.setAttribute('aria-label', metadataPolicy ? 'MetadataPolicy JSON' : namingPolicy ? 'NamingPolicy JSON' : classificationPolicy ? 'ClassificationPolicy JSON' : 'Recognition object JSON');
       editor.value = JSON.stringify(item || {}, null, 2); detailContent.append(editor);
-      detailContent.append(actionButton(metadataPolicy ? 'Save MetadataPolicy' : namingPolicy ? 'Save NamingPolicy' : 'Save recognition object', async () => {
+      detailContent.append(actionButton(metadataPolicy ? 'Save MetadataPolicy' : namingPolicy ? 'Save NamingPolicy' : classificationPolicy ? 'Save ClassificationPolicy' : 'Save recognition object', async () => {
         try { await mutateGuidedObject(revision, kind, item && !copyMode && item.id, JSON.parse(editor.value), item && !copyMode ? 'PUT' : 'POST'); }
         catch (error) { message(errorText(error), true); }
       }), actionButton('Back to revision', () => showConfigurationRevision(revision)));
@@ -452,6 +469,72 @@ APP_JS = b"""(() => {
         message(result.status === 'completed' ?
           'Naming preview completed. Review the rendered directory, filename and explanation.' :
           `${result.message || 'Naming preview failed.'} ${result.nextAction || ''}`,
+          result.status !== 'completed');
+        await showConfigurationRevision(revision);
+      } catch (error) { message(errorText(error), true); }
+    }));
+    detailContent.append(controls);
+  }
+  function classificationEvidenceIsCurrent(revision, evidence) {
+    return Boolean(evidence && evidence.stale === false &&
+      evidence.revisionId === revision.revisionId &&
+      evidence.revisionVersion === revision.version && evidence.revisionDigest === revision.digest);
+  }
+  function renderClassificationPreview(revision, guided) {
+    const evidence = guided.classificationPreview;
+    detailContent.append(text('h3', 'Offline classification preview'));
+    if (!evidence) detailContent.append(text('p',
+      'Status: not run. Preview one bounded sample with zero Storage or Provider access.', 'warning'));
+    else {
+      const current = classificationEvidenceIsCurrent(revision, evidence);
+      const result = evidence.result && typeof evidence.result === 'object' ? evidence.result : {};
+      const list = document.createElement('dl');
+      field(list, 'Evidence state', current ? 'current' : 'stale');
+      field(list, 'Status', boundedSetupText(result.status || evidence.status));
+      field(list, 'Revision ID', boundedSetupText(evidence.revisionId));
+      field(list, 'Revision version', Number.isInteger(evidence.revisionVersion) ? evidence.revisionVersion : '-');
+      field(list, 'Revision digest', boundedSetupText(evidence.revisionDigest));
+      field(list, 'Applied policy', boundedSetupText(result.appliedPolicyId || evidence.policyId));
+      field(list, 'RecognitionType', boundedSetupText(result.recognitionType));
+      field(list, 'Matched rule', boundedSetupText(result.matchedRuleId));
+      field(list, 'Matched rule name', boundedSetupText(result.matchedRuleName));
+      field(list, 'MediaLibrary', boundedSetupText(result.mediaLibraryId));
+      field(list, 'MediaLibrary resolved', result.mediaLibraryResolved === true ? 'YES' : 'NO');
+      field(list, 'Relative path', boundedSetupText(result.relativePath));
+      field(list, 'Reason', boundedSetupText(result.reason));
+      field(list, 'Match evidence', Array.isArray(result.matchEvidence) && result.matchEvidence.length ?
+        result.matchEvidence.slice(0, 32).join(', ') : 'none');
+      field(list, 'Warnings', Array.isArray(result.warnings) && result.warnings.length ?
+        result.warnings.slice(0, 32).join(', ') : 'none');
+      field(list, 'Failure category', boundedSetupText(evidence.failureCategory));
+      field(list, 'Message', boundedSetupText(evidence.message));
+      field(list, 'Side effects', boundedSetupText(evidence.sideEffects, 'unknown'));
+      field(list, 'Retry safe', evidence.retrySafe === true ? 'YES' : 'NO');
+      field(list, 'Next action', boundedSetupText(evidence.nextAction));
+      detailContent.append(list);
+      if (!current) detailContent.append(text('p',
+        'This classification preview is stale because the Draft changed. Reload and rerun it.', 'warning'));
+    }
+    if (!configurationRevisionEditable(revision)) return;
+    const policies = guided.objects && guided.objects.classificationPolicies || [];
+    if (!policies.length) return;
+    const controls = text('div', '', 'choices');
+    const policy = document.createElement('select');
+    policy.setAttribute('aria-label', 'ClassificationPolicy preview policy');
+    policies.forEach(item => { const option = document.createElement('option'); option.value = item.id;
+      option.textContent = `${item.id} - ${item.name || item.id}`; policy.append(option); });
+    const editor = document.createElement('textarea');
+    editor.setAttribute('aria-label', 'Classification preview sample JSON');
+    editor.value = JSON.stringify({title: 'The Matrix', mediaType: 'movie', recognitionType: 'C',
+      year: 1999, genres: ['Action'], countries: ['US'], languages: ['en'], keywords: []}, null, 2);
+    controls.append(policy, editor, actionButton('Run offline classification preview', async () => {
+      try {
+        const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/classification-preview`,
+          {method: 'POST', body: JSON.stringify({expectedVersion: revision.version,
+            expectedDigest: revision.digest, policyId: policy.value, sample: JSON.parse(editor.value)})});
+        message(result.status === 'completed' ?
+          'Classification preview completed. Review the chosen MediaLibrary, path and explanation.' :
+          `${result.message || 'Classification preview failed.'} ${result.nextAction || ''}`,
           result.status !== 'completed');
         await showConfigurationRevision(revision);
       } catch (error) { message(errorText(error), true); }
@@ -873,10 +956,12 @@ APP_JS = b"""(() => {
         renderGuidedObjectList(data, guided, 'recognitionTypePolicies', 'RecognitionTypePolicies');
         renderGuidedObjectList(data, guided, 'metadataPolicies', 'MetadataPolicies');
         renderGuidedObjectList(data, guided, 'namingPolicies', 'NamingPolicies');
+        renderGuidedObjectList(data, guided, 'classificationPolicies', 'ClassificationPolicies');
         renderLocalSetupEvidence(data, guided);
         renderLocalSetupActions(data, guided);
         renderRecognitionStrategyTest(data, guided);
         renderNamingPreview(data, guided);
+        renderClassificationPreview(data, guided);
       }
       const actions = text('div', '', 'choices');
       if (data.status === 'draft') actions.append(actionButton('Validate Draft', async () => {

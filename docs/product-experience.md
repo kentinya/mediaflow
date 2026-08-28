@@ -199,7 +199,7 @@ checkpoint/recovery journey remain deferred TARGET work and are outside the clos
 Managed Naming / Classification / Organize configuration with exact-revision offline preview is the
 next Phase (22.6) and is not claimed here.
 
-## Phase 22.6-A managed NamingPolicy and offline preview (CURRENT implementation; awaiting review)
+## Phase 22.6-A managed NamingPolicy and offline preview (CURRENT; PASS / CLOSED)
 
 The managed Configuration view now exposes each NamingPolicy in an editable Draft, including its
 movie and TV templates, media-type mode, enabled state, missing-variable strategy, and exact inbound
@@ -216,10 +216,27 @@ action. A later Draft edit preserves the prior evidence but labels it stale and 
 rerun. Movie, single-episode TV, and multi-episode TV are supported without constructing Storage or
 Provider services and without creating Tasks, Jobs, queues, plans, or media effects.
 
-This Slice does not change checked activation. ClassificationPolicy and OrganizePolicy editing,
-MediaLibrary target resolution, conflict/destination/capability prechecks, and combined activation
-evidence remain TARGET Phase 22.6 work. The implementation is not `PASS / CLOSED` until independent
-High Review accepts its exact checkpoint.
+Phase 22.6-A is independently accepted at `30af69ac82b30f8a45ad66afbd3c9747597c8fe7` and does not
+change checked activation.
+
+## Phase 22.6-B managed ClassificationPolicy and offline preview (CURRENT implementation; awaiting review)
+
+The same managed Configuration revision view now exposes ClassificationPolicy create/edit/copy/
+delete, bounded rule summaries, RecognitionTypePolicy inbound references and reference-blocked
+deletion. Rules are normalized through existing ClassificationPolicy/ClassificationRule domain
+construction, while the same whole-document revision CAS and Before/After audit remain authoritative.
+
+One bounded synthetic or locally parsed sample runs through the existing
+ClassificationPolicyRegistry and ClassificationPreviewService against the exact Draft/Validated
+revision. Persisted evidence distinguishes classified/unclassified and current/stale outcomes,
+shows matched rule, match evidence, MediaLibrary ID and resolution state, safe relative path,
+warnings and recovery. An absent MediaLibrary is an explicit completed-with-warning preview and is
+still rejected by existing Draft validation. No Storage, Provider, Task, Job, queue or media work is
+created.
+
+OrganizePolicy editing, composed final destination preview, destination existence/conflict/
+capability prechecks and combined activation evidence remain TARGET Phase 22.6 work. Checked
+activation and Active runtime-consumption semantics are unchanged pending independent review.
 
 ## A. First-time setup
 

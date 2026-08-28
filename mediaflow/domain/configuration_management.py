@@ -282,6 +282,91 @@ class ConfigurationNamingPreviewStatus(StrEnum):
     FAILED = "failed"
 
 
+class ConfigurationClassificationPreviewStatus(StrEnum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class ClassificationPreviewEvidence:
+    """Bounded, secret-free classification evidence for one exact managed revision."""
+
+    revision_id: str
+    revision_version: int
+    revision_digest: str
+    status: ConfigurationClassificationPreviewStatus
+    previewed_at: datetime
+    actor: str
+    policy_id: str
+    input: dict[str, object]
+    result: dict[str, object] | None = None
+    failure_category: str | None = None
+    message: str | None = None
+    next_action: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.revision_id, str) or not self.revision_id.strip():
+            raise ValueError("classification preview revision ID is required")
+        if isinstance(self.revision_version, bool) or not isinstance(self.revision_version, int):
+            raise ValueError("classification preview revision version must be an integer")
+        if self.revision_version < 1:
+            raise ValueError("classification preview revision version must be positive")
+        if not isinstance(self.revision_digest, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.revision_digest
+        ):
+            raise ValueError("classification preview revision digest must be a SHA-256 hex digest")
+        if not isinstance(self.status, ConfigurationClassificationPreviewStatus):
+            raise ValueError("classification preview status is required")
+        if not isinstance(self.previewed_at, datetime) or self.previewed_at.tzinfo is None:
+            raise ValueError("classification preview time must include a timezone")
+        for label, value, maximum in (
+            ("actor", self.actor, 200),
+            ("policy ID", self.policy_id, 64),
+        ):
+            if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+                raise ValueError(f"classification preview {label} must be bounded and non-empty")
+        for label, value in (("input", self.input), ("result", self.result)):
+            if value is None and label == "result":
+                continue
+            if not isinstance(value, dict):
+                raise ValueError(f"classification preview {label} must be an object")
+            encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            if len(encoded.encode("utf-8")) > CONFIGURATION_STRATEGY_RESULT_LIMIT:
+                raise ValueError(f"classification preview {label} is too large")
+        for label, value in (
+            ("failure category", self.failure_category),
+            ("message", self.message),
+            ("next action", self.next_action),
+        ):
+            if value is not None and (
+                not isinstance(value, str) or not value.strip() or len(value) > 500
+            ):
+                raise ValueError(f"classification preview {label} must be bounded text")
+        if (
+            self.status is ConfigurationClassificationPreviewStatus.COMPLETED
+            and self.result is None
+        ):
+            raise ValueError("completed classification preview requires a result")
+
+    def document(self) -> dict[str, object]:
+        return {
+            "revisionId": self.revision_id,
+            "revisionVersion": self.revision_version,
+            "revisionDigest": self.revision_digest,
+            "status": self.status.value,
+            "previewedAt": self.previewed_at.isoformat(),
+            "actor": self.actor,
+            "policyId": self.policy_id,
+            "input": copy.deepcopy(self.input),
+            "result": copy.deepcopy(self.result),
+            "failureCategory": self.failure_category,
+            "message": self.message,
+            "nextAction": self.next_action,
+            "sideEffects": "none",
+            "retrySafe": True,
+        }
+
+
 @dataclass(frozen=True)
 class NamingPreviewEvidence:
     """Bounded, secret-free naming evidence for one exact managed revision."""
@@ -810,6 +895,14 @@ class ManagedConfigurationRepository(Protocol):
     def save_naming_preview(self, evidence: NamingPreviewEvidence) -> NamingPreviewEvidence: ...
 
     def get_naming_preview(self, revision_id: str) -> NamingPreviewEvidence | None: ...
+
+    def save_classification_preview(
+        self, evidence: ClassificationPreviewEvidence
+    ) -> ClassificationPreviewEvidence: ...
+
+    def get_classification_preview(
+        self, revision_id: str
+    ) -> ClassificationPreviewEvidence | None: ...
 
 
 class StorageConfigurationValidator:

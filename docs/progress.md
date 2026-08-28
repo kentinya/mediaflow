@@ -270,6 +270,41 @@ Push: NOT REQUIRED BEFORE INDEPENDENT RE-REVIEW
   conflict/capability/destination-existence prechecks and activation-evidence changes remain
   prohibited.
 
+## Phase 22.6-B ClassificationPolicy Configuration + Offline Preview Implementation Evidence
+
+```text
+Status: READY FOR COMMIT (pre-checkpoint)
+Commit SHA: PENDING
+High Audit: PENDING
+Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
+```
+
+- Added ClassificationPolicy create/edit/copy/delete to the managed Draft/Validated Web/API path,
+  using the existing revision CAS, Before/After audit and production ClassificationRule/
+  ClassificationPolicy domain validation. RecognitionTypePolicy inbound references are visible and
+  block delete until repointed; MediaLibrary resolution remains with preview and Draft validation.
+- Added exact-revision offline classification preview through the existing Parser (path mode),
+  ClassificationPolicyRegistry, ClassificationPreviewService and ClassificationEngine. Bounded
+  persisted evidence exposes classified/unclassified, matched rule, RecognitionType, MediaLibrary
+  ID/resolution, relative path, match evidence, warnings, current/stale state and explicit recovery.
+- Added forward-only configuration-management marker 7 and a separate revision-keyed classification
+  preview table. A marker-6 database reopens at marker 7 with revisions and naming preview evidence
+  intact; the runtime schema marker stays 22.
+- Five deliberate Web falsifications each failed the body-scoped focused test: removing the policy
+  list mount, removing the preview mount, moving preview after final detail visibility, detaching its
+  heading and detaching its controls. Each was restored and the unchanged Web path passed.
+- Focused Classification/Naming/configuration/Metadata correction/continuation/C-identity/UI
+  regressions ran 218 tests with 0 failures. The complete offline suite ran 817 tests: 810 passed,
+  7 existing externally gated tests skipped and 0 failed; skips are not acceptance evidence.
+- Ruff lint/format, compileall, `pip check`, both example configuration validations, isolated wheel
+  build/install/smoke, 22 local documentation links, `git diff --check`, FFmpeg/FFprobe production,
+  business-filesystem/Storage-mutation-boundary and private-configuration audits passed. The wheel
+  smoke retained runtime schema marker 22; review wheel SHA-256:
+  `ab880a0d2e4306a0bed030218e0756b6bc9a7008dc38c6a749f08fa410658553`.
+- This is implementation evidence only. Phase 22.6-B is not `PASS / CLOSED`; OrganizePolicy,
+  composed destination preview, destination conflict/capability/existence prechecks and activation
+  evidence have not started.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration

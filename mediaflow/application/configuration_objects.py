@@ -14,6 +14,10 @@ from datetime import UTC, datetime
 from pathlib import PurePath
 from threading import BoundedSemaphore, Lock, RLock
 
+from mediaflow.application.classification import (
+    ClassificationPolicyRegistry,
+    ClassificationPreviewService,
+)
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.media_parser import MediaParserService
 from mediaflow.application.metadata import MetadataProviderRegistry
@@ -31,11 +35,20 @@ from mediaflow.application.strategy_test import (
     StrategyTestResult,
     strategy_runner_from_configuration,
 )
+from mediaflow.domain.classification import (
+    ClassificationContext,
+    ClassificationError,
+    ClassificationErrorCode,
+    ClassificationPolicy,
+    ClassificationRule,
+)
 from mediaflow.domain.configuration_management import (
     CONFIGURATION_REFERENCE_EVIDENCE_LIMIT,
     CONFIGURATION_SETUP_CHECK_PATH_LIMIT,
     CONFIGURATION_STRATEGY_RESULT_LIMIT,
+    ClassificationPreviewEvidence,
     ConfigurationActivationConflict,
+    ConfigurationClassificationPreviewStatus,
     ConfigurationNamingPreviewStatus,
     ConfigurationObjectKind,
     ConfigurationObjectReferenced,
@@ -79,6 +92,7 @@ from mediaflow.domain.recognition import (
     LogicalCondition,
     LogicalOperator,
     RecognitionStatus,
+    RecognitionType,
 )
 from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.infrastructure.metadata_provider_bootstrap import MetadataProviderBootstrapError
@@ -100,6 +114,7 @@ class ConfigurationObjectService:
         ConfigurationObjectKind.RECOGNITION_TYPE_POLICY: "recognitionTypePolicies",
         ConfigurationObjectKind.METADATA_POLICY: "metadataPolicies",
         ConfigurationObjectKind.NAMING_POLICY: "namingPolicies",
+        ConfigurationObjectKind.CLASSIFICATION_POLICY: "classificationPolicies",
     }
     _MAX_OBJECT_BYTES = 64 * 1024
     _SETUP_CHECK_TIMEOUT_SECONDS = 10.0
@@ -176,6 +191,55 @@ class ConfigurationObjectService:
         "version",
         "releaseGroup",
         "extension",
+    }
+    _CLASSIFICATION_POLICY_FIELDS = {
+        "id",
+        "name",
+        "description",
+        "enabled",
+        "priority",
+        "rules",
+    }
+    _CLASSIFICATION_RULE_FIELDS = {
+        "id",
+        "name",
+        "priority",
+        "enabled",
+        "confidence",
+        "description",
+        "conditions",
+        "result",
+    }
+    _CLASSIFICATION_CONDITION_FIELDS = {
+        "mediaType",
+        "mediaTypes",
+        "genres",
+        "countries",
+        "languages",
+        "canonicalYear",
+        "yearMin",
+        "yearMax",
+        "keywords",
+    }
+    _CLASSIFICATION_RESULT_FIELDS = {
+        "mediaLibraryId",
+        "library",
+        "path",
+        "category",
+        "subcategory",
+    }
+    _CLASSIFICATION_SAMPLE_FIELDS = {
+        "path",
+        "title",
+        "originalTitle",
+        "mediaType",
+        "recognitionType",
+        "year",
+        "genres",
+        "countries",
+        "languages",
+        "keywords",
+        "overview",
     }
 
     def __init__(
@@ -258,6 +322,11 @@ class ConfigurationObjectService:
                     if "namingPolicies" in document
                     else []
                 ),
+                "classificationPolicies": (
+                    self._objects(document, "classificationPolicies")
+                    if "classificationPolicies" in document
+                    else []
+                ),
             },
             # Keep every versioned projection on the same immutable revision read.
             # Calling the public helpers here would re-read the repository and could
@@ -266,6 +335,7 @@ class ConfigurationObjectService:
             "localSetupCheck": self._check_document(revision),
             "recognitionStrategyTest": self._strategy_test_document(revision),
             "namingPreview": self._naming_preview_document(revision),
+            "classificationPreview": self._classification_preview_document(revision),
         }
 
     def references(self, revision_id: str) -> dict[str, dict[str, object]]:
@@ -670,6 +740,224 @@ class ConfigurationObjectService:
         cls, value: object, label: str, minimum: int, maximum: int
     ) -> int | None:
         return None if value is None else cls._preview_int(value, label, minimum, maximum)
+
+    def classification_preview(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        policy_id: str,
+        sample: Mapping[str, object],
+    ) -> ClassificationPreviewEvidence:
+        revision = self._managed.require(revision_id)
+        if revision.status not in {
+            ManagedConfigurationStatus.DRAFT,
+            ManagedConfigurationStatus.VALIDATED,
+        }:
+            raise ConfigurationVersionConflict(
+                "classification preview requires a Draft or Validated revision",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+            )
+        if revision.version != expected_version or revision.digest != expected_digest:
+            raise ConfigurationVersionConflict(
+                "classification preview requires the exact current revision; "
+                "reload before previewing",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+                durable_state="current_draft_and_prior_preview_preserved",
+                next_action="reload the revision and explicitly rerun classification preview",
+            )
+        normalized_input: dict[str, object] = {}
+        try:
+            if not isinstance(policy_id, str) or not policy_id.strip() or len(policy_id) > 64:
+                raise ValueError("ClassificationPolicy ID must be bounded and non-empty")
+            normalized_input, context = self._classification_context(sample)
+            policies = tuple(
+                self._classification_policy(value)
+                for value in self._canonical_objects(revision.document, "classificationPolicies")
+            )
+            result = ClassificationPreviewService(ClassificationPolicyRegistry(policies)).preview(
+                context, policy_id
+            )
+            media_library_ids = {
+                str(item.get("id"))
+                for item in self._canonical_objects(revision.document, "mediaLibraries")
+            }
+            resolved = (
+                bool(result.media_library_id) and result.media_library_id in media_library_ids
+            )
+            warnings = list(result.warnings)
+            if result.media_library_id and not resolved:
+                warnings.append(f"unresolved_media_library:{result.media_library_id}")
+            result_document = {
+                "appliedPolicyId": result.policy_id,
+                "recognitionType": result.recognition_type_id,
+                "status": result.status.value,
+                "matchedRuleId": result.matched_rule_id,
+                "matchedRuleName": result.matched_rule_name,
+                "mediaLibraryId": result.media_library_id or None,
+                "mediaLibraryResolved": resolved,
+                "relativePath": result.relative_path or None,
+                "library": result.library,
+                "category": result.category,
+                "subcategory": result.subcategory,
+                "confidence": result.confidence,
+                "matchEvidence": [self._bounded_utf8(value, 384) for value in result.evidence[:32]],
+                "warnings": [self._bounded_utf8(value, 384) for value in warnings[:32]],
+                "reason": (
+                    "no enabled classification rule matched the sample"
+                    if result.status.value == "unclassified"
+                    else "highest-priority matching rule selected"
+                ),
+            }
+            next_action = (
+                "adjust the rule conditions or sample, then explicitly rerun classification preview"
+                if result.status.value == "unclassified"
+                else (
+                    "add or correct the MediaLibrary in this Draft, then rerun "
+                    "classification preview"
+                    if not resolved
+                    else "review the classification explanation, then correct and rerun "
+                    "or validate the Draft"
+                )
+            )
+            evidence = ClassificationPreviewEvidence(
+                revision.revision_id,
+                revision.version,
+                revision.digest,
+                ConfigurationClassificationPreviewStatus.COMPLETED,
+                datetime.now(UTC),
+                actor,
+                policy_id,
+                normalized_input,
+                result_document,
+                message="Classification preview completed through the configured production engine",
+                next_action=next_action,
+            )
+        except (ClassificationError, ValueError) as error:
+            category = (
+                error.code.value if isinstance(error, ClassificationError) else "invalid_input"
+            )
+            evidence = ClassificationPreviewEvidence(
+                revision.revision_id,
+                revision.version,
+                revision.digest,
+                ConfigurationClassificationPreviewStatus.FAILED,
+                datetime.now(UTC),
+                actor,
+                (
+                    policy_id
+                    if isinstance(policy_id, str) and policy_id.strip() and len(policy_id) <= 64
+                    else "invalid"
+                ),
+                normalized_input or {"mode": "invalid"},
+                failure_category=category,
+                message=f"Classification preview failed ({category})",
+                next_action=(
+                    "correct the policy or sample, then explicitly rerun classification preview"
+                ),
+            )
+        return self._repository.save_classification_preview(evidence)
+
+    @classmethod
+    def _classification_context(
+        cls, sample: Mapping[str, object]
+    ) -> tuple[dict[str, object], ClassificationContext]:
+        if not isinstance(sample, Mapping):
+            raise ValueError("classification preview sample must be an object")
+        unknown = set(sample).difference(cls._CLASSIFICATION_SAMPLE_FIELDS)
+        if unknown:
+            raise ValueError(
+                f"classification preview sample contains unsupported field {sorted(unknown)[0]!r}"
+            )
+        path = sample.get("path")
+        if path is not None:
+            if not isinstance(path, str) or not path.strip() or len(path) > 4096 or "\x00" in path:
+                raise ValueError("classification preview path must be bounded non-empty text")
+            pure = PurePath(path.replace("\\", "/"))
+            parsed_path = MediaParserService().parse(
+                FileContext(
+                    "offline-preview",
+                    "offline-preview",
+                    path,
+                    pure.name,
+                    tuple(pure.parts[:-1]),
+                    pure.name.rsplit(".", 1)[1] if "." in pure.name else "",
+                    str(pure.parent),
+                )
+            )
+            normalized: dict[str, object] = {
+                "mode": "path",
+                "filename": pure.name,
+            }
+            title_default = parsed_path.title_candidate
+            year_default = parsed_path.year
+        else:
+            parsed_path = None
+            normalized = {"mode": "synthetic", **copy.deepcopy(dict(sample))}
+            title_default = None
+            year_default = None
+        title = cls._preview_text(sample.get("title", title_default), "title", 512, required=True)
+        media_type_value = sample.get("mediaType", "movie")
+        try:
+            media_type = MediaType(media_type_value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("classification preview mediaType must be movie or tv") from error
+        if media_type not in {MediaType.MOVIE, MediaType.TV}:
+            raise ValueError("classification preview mediaType must be movie or tv")
+        recognition_id = cls._preview_text(
+            sample.get("recognitionType", "preview"),
+            "recognitionType",
+            64,
+            required=True,
+        )
+        year = cls._preview_optional_int(sample.get("year", year_default), "year", 0, 9999)
+
+        def strings(field: str) -> tuple[str, ...]:
+            value = sample.get(field, [])
+            if not isinstance(value, list) or len(value) > 64:
+                raise ValueError(f"classification preview {field} must be a bounded array")
+            return tuple(cls._preview_text(item, field, 200, required=True) or "" for item in value)
+
+        parsed = parsed_path or ParseResult(
+            title or "",
+            year=year,
+            original_filename=f"{title}.mkv",
+            extension="mkv",
+        )
+        identity = MediaIdentity(
+            "offline-preview",
+            "synthetic",
+            media_type,
+            title or "",
+            original_title=cls._preview_text(sample.get("originalTitle"), "originalTitle", 512),
+            year=year,
+            genres=strings("genres"),
+            countries=strings("countries"),
+            languages=strings("languages"),
+            keywords=strings("keywords"),
+            overview=cls._preview_text(sample.get("overview"), "overview", 2000),
+            recognition_type_id=recognition_id,
+        )
+        recognition_type = RecognitionType(recognition_id or "preview", recognition_id or "preview")
+        return normalized, ClassificationContext(recognition_type, identity, parsed)
+
+    @classmethod
+    def _classification_policy(cls, value: Mapping[str, object]) -> ClassificationPolicy:
+        normalized = cls._normalize(ConfigurationObjectKind.CLASSIFICATION_POLICY, value)
+        return ClassificationPolicy(
+            str(normalized["id"]),
+            str(normalized["name"]),
+            tuple(cls._classification_rule(item)[0] for item in normalized["rules"]),
+            str(normalized["description"]),
+            bool(normalized["enabled"]),
+            int(normalized["priority"]),
+        )
 
     def recognition_strategy_select_candidate(
         self,
@@ -2014,6 +2302,20 @@ class ConfigurationObjectService:
         )
         return value
 
+    def _classification_preview_document(
+        self, revision: ManagedConfigurationRevision
+    ) -> dict[str, object] | None:
+        getter = getattr(self._repository, "get_classification_preview", None)
+        evidence = getter(revision.revision_id) if getter is not None else None
+        if evidence is None:
+            return None
+        value = evidence.document()
+        value["stale"] = (
+            evidence.revision_version != revision.version
+            or evidence.revision_digest != revision.digest
+        )
+        return value
+
     def _check_document(self, revision: ManagedConfigurationRevision) -> dict[str, object] | None:
         evidence = self._repository.get_local_setup_check(revision.revision_id)
         if evidence is None:
@@ -2108,6 +2410,7 @@ class ConfigurationObjectService:
             ConfigurationObjectKind.RECOGNITION_TYPE_POLICY: cls._RECOGNITION_TYPE_POLICY_FIELDS,
             ConfigurationObjectKind.METADATA_POLICY: cls._METADATA_POLICY_FIELDS,
             ConfigurationObjectKind.NAMING_POLICY: cls._NAMING_POLICY_FIELDS,
+            ConfigurationObjectKind.CLASSIFICATION_POLICY: cls._CLASSIFICATION_POLICY_FIELDS,
         }[kind]
         unknown = set(value).difference(allowed)
         if unknown:
@@ -2121,6 +2424,44 @@ class ConfigurationObjectService:
         if not isinstance(name, str) or not name.strip() or len(name) > 120:
             raise ValueError(f"{section} name must be a bounded non-empty string")
         result = {"id": object_id, "name": name}
+        if kind is ConfigurationObjectKind.CLASSIFICATION_POLICY:
+            rules_value = value.get("rules")
+            if not isinstance(rules_value, list) or not rules_value or len(rules_value) > 128:
+                raise ClassificationError(
+                    ClassificationErrorCode.INVALID_POLICY,
+                    "ClassificationPolicy rules must be a non-empty bounded array",
+                )
+            rules: list[dict[str, object]] = []
+            domain_rules: list[ClassificationRule] = []
+            for index, rule_value in enumerate(rules_value):
+                if not isinstance(rule_value, Mapping):
+                    raise ClassificationError(
+                        ClassificationErrorCode.INVALID_RULE,
+                        f"ClassificationPolicy rules[{index}] must be an object",
+                    )
+                domain_rule, normalized_rule = cls._classification_rule(rule_value, index=index)
+                domain_rules.append(domain_rule)
+                rules.append(normalized_rule)
+            description = cls._text(value, "description", "", 500, "ClassificationPolicy")
+            enabled = cls._bool(value, "enabled", True, "ClassificationPolicy")
+            priority = cls._int(value, "priority", 0, "ClassificationPolicy")
+            ClassificationPolicy(
+                object_id,
+                name,
+                tuple(domain_rules),
+                description,
+                enabled,
+                priority,
+            )
+            result.update(
+                {
+                    "description": description,
+                    "enabled": enabled,
+                    "priority": priority,
+                    "rules": rules,
+                }
+            )
+            return cls._bounded_object(section, result)
         if kind is ConfigurationObjectKind.NAMING_POLICY:
             media_type_mode = value.get("mediaTypeMode", "auto")
             missing_strategy = value.get("missingVariableStrategy", "omit_token")
@@ -2387,6 +2728,246 @@ class ConfigurationObjectService:
         return result
 
     @classmethod
+    def _classification_rule(
+        cls, value: Mapping[str, object], *, index: int = 0
+    ) -> tuple[ClassificationRule, dict[str, object]]:
+        if unknown := set(value).difference(cls._CLASSIFICATION_RULE_FIELDS):
+            raise ClassificationError(
+                ClassificationErrorCode.INVALID_RULE,
+                f"ClassificationPolicy rules[{index}] contains unsupported field "
+                f"{sorted(unknown)[0]!r}",
+            )
+        rule_id = value.get("id")
+        if (
+            not isinstance(rule_id, str)
+            or not rule_id.strip()
+            or len(rule_id) > 64
+            or any(character in rule_id for character in "/\\\x00")
+        ):
+            raise ClassificationError(
+                ClassificationErrorCode.INVALID_RULE,
+                f"ClassificationPolicy rules[{index}].id must be bounded and safe",
+            )
+        name = value.get("name", rule_id)
+        if not isinstance(name, str) or not name.strip() or len(name) > 120 or "\x00" in name:
+            raise ClassificationError(
+                ClassificationErrorCode.INVALID_RULE,
+                f"ClassificationPolicy rules[{index}].name must be bounded text",
+            )
+        conditions = value.get("conditions", {})
+        result = value.get("result")
+        if not isinstance(conditions, Mapping):
+            raise ClassificationError(
+                ClassificationErrorCode.INVALID_RULE,
+                f"ClassificationPolicy rules[{index}].conditions must be an object",
+            )
+        if not isinstance(result, Mapping):
+            raise ClassificationError(
+                ClassificationErrorCode.INVALID_RULE,
+                f"ClassificationPolicy rules[{index}].result must be an object",
+            )
+        if unknown := set(conditions).difference(cls._CLASSIFICATION_CONDITION_FIELDS):
+            raise ClassificationError(
+                ClassificationErrorCode.INVALID_RULE,
+                f"ClassificationPolicy rules[{index}].conditions contains unsupported field "
+                f"{sorted(unknown)[0]!r}",
+            )
+        if unknown := set(result).difference(cls._CLASSIFICATION_RESULT_FIELDS):
+            raise ClassificationError(
+                ClassificationErrorCode.INVALID_RULE,
+                f"ClassificationPolicy rules[{index}].result contains unsupported field "
+                f"{sorted(unknown)[0]!r}",
+            )
+
+        def bounded_string(field: str, *, required: bool = False, maximum: int = 200):
+            raw = result.get(field)
+            if raw is None and not required:
+                return None
+            if (
+                not isinstance(raw, str)
+                or (required and not raw.strip())
+                or len(raw) > maximum
+                or "\x00" in raw
+            ):
+                raise ClassificationError(
+                    ClassificationErrorCode.INVALID_RULE,
+                    f"ClassificationPolicy rules[{index}].result.{field} must be bounded text",
+                )
+            return raw
+
+        media_library_id = bounded_string("mediaLibraryId", required=True, maximum=64)
+        library = bounded_string("library", required=True, maximum=200)
+        path_value = result.get("path")
+        if isinstance(path_value, list):
+            if not path_value or len(path_value) > 32:
+                raise ClassificationError(
+                    ClassificationErrorCode.UNSAFE_PATH,
+                    f"ClassificationPolicy rules[{index}].result.path must be a bounded path",
+                )
+            path_parts = []
+            for part_index, part in enumerate(path_value):
+                if not isinstance(part, str) or not part.strip() or len(part) > 200:
+                    raise ClassificationError(
+                        ClassificationErrorCode.UNSAFE_PATH,
+                        f"ClassificationPolicy rules[{index}].result.path[{part_index}] is invalid",
+                    )
+                path_parts.append(part)
+            relative_path = "/".join(path_parts)
+        elif isinstance(path_value, str):
+            relative_path = path_value
+            path_parts = path_value.split("/")
+        else:
+            raise ClassificationError(
+                ClassificationErrorCode.UNSAFE_PATH,
+                f"ClassificationPolicy rules[{index}].result.path is required",
+            )
+        category = bounded_string("category") or (
+            path_parts[0] if path_parts and path_parts[0] else "path"
+        )
+        subcategory = bounded_string("subcategory")
+
+        def condition_strings(field: str) -> tuple[str, ...]:
+            raw = conditions.get(field, [])
+            if not isinstance(raw, list) or len(raw) > 64:
+                raise ClassificationError(
+                    ClassificationErrorCode.INVALID_RULE,
+                    f"ClassificationPolicy rules[{index}].conditions.{field} must be a "
+                    "bounded array",
+                )
+            values: list[str] = []
+            for item in raw:
+                if (
+                    not isinstance(item, str)
+                    or not item.strip()
+                    or len(item) > 200
+                    or "\x00" in item
+                ):
+                    raise ClassificationError(
+                        ClassificationErrorCode.INVALID_RULE,
+                        f"ClassificationPolicy rules[{index}].conditions.{field} contains "
+                        "invalid text",
+                    )
+                values.append(item)
+            return tuple(values)
+
+        media_type_value = conditions.get("mediaType", conditions.get("mediaTypes", []))
+        if isinstance(media_type_value, str):
+            media_type_value = [media_type_value]
+        if not isinstance(media_type_value, list) or len(media_type_value) > 8:
+            raise ClassificationError(
+                ClassificationErrorCode.INVALID_RULE,
+                f"ClassificationPolicy rules[{index}].conditions.mediaType must be bounded",
+            )
+        try:
+            media_types = tuple(MediaType(item) for item in media_type_value)
+        except (TypeError, ValueError) as error:
+            raise ClassificationError(
+                ClassificationErrorCode.INVALID_RULE,
+                f"ClassificationPolicy rules[{index}].conditions.mediaType is unsupported",
+            ) from error
+        canonical_year = conditions.get("canonicalYear")
+        if canonical_year is not None and (
+            isinstance(canonical_year, bool)
+            or not isinstance(canonical_year, int)
+            or not 0 <= canonical_year <= 9999
+        ):
+            raise ClassificationError(
+                ClassificationErrorCode.INVALID_RULE,
+                f"ClassificationPolicy rules[{index}].conditions.canonicalYear must be a "
+                "bounded integer",
+            )
+        year_min = canonical_year if canonical_year is not None else conditions.get("yearMin")
+        year_max = canonical_year if canonical_year is not None else conditions.get("yearMax")
+        for field, raw in (("yearMin", year_min), ("yearMax", year_max)):
+            if raw is not None and (
+                isinstance(raw, bool) or not isinstance(raw, int) or not 0 <= raw <= 9999
+            ):
+                raise ClassificationError(
+                    ClassificationErrorCode.INVALID_RULE,
+                    f"ClassificationPolicy rules[{index}].conditions.{field} must be a "
+                    "bounded integer",
+                )
+        priority = cls._int(value, "priority", 0, f"ClassificationPolicy rules[{index}]")
+        enabled = cls._bool(value, "enabled", True, f"ClassificationPolicy rules[{index}]")
+        confidence = cls._bounded_number(
+            value,
+            "confidence",
+            100,
+            minimum=0,
+            maximum=100,
+            label=f"ClassificationPolicy rules[{index}]",
+        )
+        description = cls._text(
+            value, "description", "", 500, f"ClassificationPolicy rules[{index}]"
+        )
+        try:
+            domain = ClassificationRule(
+                rule_id,
+                name,
+                media_library_id or "",
+                library or "",
+                category or "",
+                priority=priority,
+                enabled=enabled,
+                subcategory=subcategory,
+                relative_category_path=relative_path,
+                media_types=media_types,
+                genres=condition_strings("genres"),
+                countries=condition_strings("countries"),
+                languages=condition_strings("languages"),
+                year_min=year_min,
+                year_max=year_max,
+                keywords=condition_strings("keywords"),
+                confidence=confidence,
+                description=description,
+            )
+        except ClassificationError as error:
+            if error.code is not ClassificationErrorCode.UNSAFE_PATH:
+                raise
+            raise ClassificationError(
+                error.code,
+                f"ClassificationPolicy rules[{index}].result.path: {error}",
+            ) from error
+        normalized_conditions: dict[str, object] = {}
+        if media_types:
+            normalized_conditions["mediaType"] = [item.value for item in media_types]
+        for field, values in (
+            ("genres", domain.genres),
+            ("countries", domain.countries),
+            ("languages", domain.languages),
+            ("keywords", domain.keywords),
+        ):
+            if values:
+                normalized_conditions[field] = list(values)
+        if canonical_year is not None:
+            normalized_conditions["canonicalYear"] = canonical_year
+        else:
+            if year_min is not None:
+                normalized_conditions["yearMin"] = year_min
+            if year_max is not None:
+                normalized_conditions["yearMax"] = year_max
+        normalized_result: dict[str, object] = {
+            "mediaLibraryId": media_library_id or "",
+            "library": library or "",
+            "path": list(path_parts),
+        }
+        if result.get("category") is not None:
+            normalized_result["category"] = category or ""
+        if subcategory is not None:
+            normalized_result["subcategory"] = subcategory
+        normalized = {
+            "id": rule_id,
+            "name": name,
+            "priority": priority,
+            "enabled": enabled,
+            "confidence": confidence,
+            "description": description,
+            "conditions": normalized_conditions,
+            "result": normalized_result,
+        }
+        return domain, normalized
+
+    @classmethod
     def _recognition_condition(cls, value: object, *, depth: int = 0) -> object:
         if depth > 16 or not isinstance(value, Mapping):
             raise ValueError("RecognitionRule condition must be a bounded object")
@@ -2586,9 +3167,12 @@ class ConfigurationObjectService:
                             )
                         )
         elif kind is ConfigurationObjectKind.MEDIA_LIBRARY:
-            for policy_index, policy in enumerate(
+            policies = (
                 cls._canonical_objects(document, "classificationPolicies")
-            ):
+                if "classificationPolicies" in document
+                else []
+            )
+            for policy_index, policy in enumerate(policies):
                 rules = policy.get("rules")
                 if not isinstance(rules, list):
                     raise ValueError(
@@ -2685,6 +3269,24 @@ class ConfigurationObjectService:
                             section="recognitionTypePolicies",
                             object_id=str(item["id"]),
                             field="namingPolicy",
+                        )
+                    )
+        elif kind is ConfigurationObjectKind.CLASSIFICATION_POLICY:
+            for index, item in enumerate(
+                cls._canonical_objects(document, "recognitionTypePolicies")
+            ):
+                reference = cls._required_reference_id(
+                    item,
+                    section="recognitionTypePolicies",
+                    index=index,
+                    field="classificationPolicy",
+                )
+                if reference == object_id:
+                    collector.add(
+                        ConfigurationReferenceItem(
+                            section="recognitionTypePolicies",
+                            object_id=str(item["id"]),
+                            field="classificationPolicy",
                         )
                     )
         return collector.evidence()
