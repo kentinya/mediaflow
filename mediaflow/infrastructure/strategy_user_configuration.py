@@ -335,12 +335,19 @@ def _organize_policies(document, base, required):
         if inherited:
             return inherited
         return tuple(policy.organize_policy for policy in base.recognition_type_policies)
-    policies = tuple(_organize_policy(item) for item in values)
+    policies = tuple(parse_organize_policy(item) for item in values)
     _unique(policies, lambda item: item.policy_id, "organizePolicies")
     return policies
 
 
-def _organize_policy(item: Mapping[str, Any]) -> OrganizePolicy:
+def parse_organize_policy(item: Mapping[str, Any]) -> OrganizePolicy:
+    """Parse one organize policy object exactly the way runtime loading does.
+
+    Managed configuration editing reuses this entry point so a managed edit can never
+    accept, reject, or normalize an organize policy differently from the configuration
+    the runtime snapshot is built from.
+    """
+
     legacy_overwrite = _boolean(item, "overwrite", False)
     raw_strategy = item.get("conflictStrategy")
     if raw_strategy is None:

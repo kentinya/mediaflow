@@ -234,9 +234,36 @@ warnings and recovery. An absent MediaLibrary is an explicit completed-with-warn
 still rejected by existing Draft validation. No Storage, Provider, Task, Job, queue or media work is
 created.
 
-OrganizePolicy editing, composed final destination preview, destination existence/conflict/
-capability prechecks and combined activation evidence remain TARGET Phase 22.6 work. Checked
-activation and Active runtime-consumption semantics are unchanged pending independent review.
+Phase 22.6-B is independently accepted at `5e2da5c634f1fa72a40e5f50b035260418fe1a37` and does not
+change checked activation.
+
+## Phase 22.6-C managed OrganizePolicy and offline organize authority (CURRENT implementation; awaiting review)
+
+The same managed Configuration revision view now exposes OrganizePolicy create/edit/copy/delete with
+a bounded summary of operation, conflict strategy, attachments, duplicate detection and
+source-directory cleanup, an explicit destructive-authority warning when overwrite or source cleanup
+is enabled, and RecognitionTypePolicy inbound references that block deletion until every referencing
+policy is repointed. The editor accepts only Move, Copy, HardLink and SoftLink and refuses `delete`
+and `create_directory` as an organize operation. Bounds and the overwrite/conflict-strategy rule are
+the production ones, so a managed edit cannot accept or normalize a policy differently from the
+configuration runtime consumes.
+
+For an exact Draft or Validated revision the operator names one RecognitionType and gets a persisted,
+secret-free explanation of the organize authority that revision would grant: which
+RecognitionTypePolicy and OrganizePolicy resolve, the operation and conflict strategy, whether
+overwrite and source-directory delete authority are granted, attachment/duplicate/rollback/cleanup
+behaviour, which Storage capabilities the operation requires, and the explicit statement that an
+unsupported capability is a failure rather than a silent fallback. Required capabilities are declared
+from the resolved policy and never probed. An unresolvable RecognitionType — missing or duplicate
+type policy, disabled RecognitionType or policy, or an invalid policy reference — is an explained
+failure with the action that resolves it, not an unexplained error. A later Draft edit keeps the
+prior explanation but labels it stale and names the rerun. No Storage, Provider, Planner, Executor,
+Task, Job, queue or media work is created.
+
+Composed final destination preview, destination existence/conflict/capability prechecks, Storage
+capability probing and combined activation evidence remain TARGET Phase 22.6 work. Checked activation
+and Active runtime-consumption semantics are unchanged, and this Slice is not `PASS / CLOSED` until
+independent High Review accepts its exact checkpoint.
 
 ## A. First-time setup
 

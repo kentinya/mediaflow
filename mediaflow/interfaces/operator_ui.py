@@ -302,7 +302,7 @@ APP_JS = b"""(() => {
       mediaLibraries: 'media_library', recognitionTypes: 'recognition_type',
       recognitionRules: 'recognition_rule', recognitionTypePolicies: 'recognition_type_policy',
       metadataPolicies: 'metadata_policy', namingPolicies: 'naming_policy',
-      classificationPolicies: 'classification_policy'}[kind] || kind;
+      classificationPolicies: 'classification_policy', organizePolicies: 'organize_policy'}[kind] || kind;
     detailContent.append(text('h3', `${label} (${values.length})`));
     values.forEach(item => {
       const row = text('div', '', 'choice');
@@ -326,6 +326,16 @@ APP_JS = b"""(() => {
         if (allRules.length > rules.length) row.append(text('span',
           `Rule summary truncated; showing ${rules.length} of ${allRules.length}.`, 'warning'));
       }
+      if (kind === 'organizePolicies') {
+        const duplicate = item.duplicateDetection && typeof item.duplicateDetection === 'object' ? item.duplicateDetection : {};
+        const cleanup = item.sourceDirectoryCleanup && typeof item.sourceDirectoryCleanup === 'object' ? item.sourceDirectoryCleanup : {};
+        const attachments = item.attachments && typeof item.attachments === 'object' ? item.attachments : {};
+        row.append(text('span', `Operation: ${item.operation || '-'}; Conflict: ${item.conflictStrategy || 'manual'}; ` +
+          `Attachments: ${attachments.enabled === true ? 'enabled' : 'disabled'}; ` +
+          `Duplicates: ${duplicate.mode || 'none'}; Source cleanup: ${cleanup.mode || 'none'}`));
+        if (item.conflictStrategy === 'overwrite' || (cleanup.mode && cleanup.mode !== 'none'))
+          row.append(text('span', 'DESTRUCTIVE AUTHORITY: overwrite or source cleanup is enabled.', 'warning'));
+      }
       const referenceEvidence = guided.references && guided.references[`${referenceKind}:${item.id}`] ||
         {total: 0, items: [], truncated: false};
       const references = Array.isArray(referenceEvidence) ? referenceEvidence :
@@ -343,7 +353,7 @@ APP_JS = b"""(() => {
         row.append(text('span', 'Remote/read-only here. Use JSON import for changes.', 'warning'));
       } else if (configurationRevisionEditable(revision)) {
         row.append(actionButton('Edit', () => renderGuidedObjectForm(revision, kind, item)));
-        if (kind === 'namingPolicies' || kind === 'classificationPolicies') row.append(actionButton('Copy', () => {
+        if (kind === 'namingPolicies' || kind === 'classificationPolicies' || kind === 'organizePolicies') row.append(actionButton('Copy', () => {
           const copied = {...item, id: `${item.id}-copy`, name: `${item.name || item.id} copy`};
           renderGuidedObjectForm(revision, kind, copied, true);
         }));
@@ -363,31 +373,35 @@ APP_JS = b"""(() => {
       const singular = {storages: 'Storage', resourceLibraries: 'ResourceLibrary',
         mediaLibraries: 'MediaLibrary', recognitionTypes: 'RecognitionType',
         recognitionRules: 'RecognitionRule', recognitionTypePolicies: 'RecognitionTypePolicy',
-        metadataPolicies: 'MetadataPolicy', namingPolicies: 'NamingPolicy'}[kind] || kind;
+        metadataPolicies: 'MetadataPolicy', namingPolicies: 'NamingPolicy',
+        organizePolicies: 'OrganizePolicy'}[kind] || kind;
       const classificationPolicy = kind === 'classificationPolicies';
+      const organizePolicy = kind === 'organizePolicies';
       const guidedJson = kind.startsWith('recognition') ||
-        kind === 'metadataPolicies' || kind === 'namingPolicies' || classificationPolicy;
-      const objectLabel = classificationPolicy ? 'ClassificationPolicy' : singular;
+        kind === 'metadataPolicies' || kind === 'namingPolicies' || classificationPolicy || organizePolicy;
+      const objectLabel = classificationPolicy ? 'ClassificationPolicy' : organizePolicy ? 'OrganizePolicy' : singular;
       detailContent.append(actionButton(`${guidedJson ? 'Add' : 'Add Local'} ${objectLabel}`,
         () => renderGuidedObjectForm(revision, kind, null)));
     }
   }
   function renderGuidedObjectForm(revision, kind, item, copyMode = false) {
-    if (kind.startsWith('recognition') || kind === 'metadataPolicies' || kind === 'namingPolicies' || kind === 'classificationPolicies') {
+    if (kind.startsWith('recognition') || kind === 'metadataPolicies' || kind === 'namingPolicies' || kind === 'classificationPolicies' || kind === 'organizePolicies') {
       const metadataPolicy = kind === 'metadataPolicies';
       const namingPolicy = kind === 'namingPolicies';
       const classificationPolicy = kind === 'classificationPolicies';
+      const organizePolicy = kind === 'organizePolicies';
       clear(detailContent);
-      detailContent.append(text('h2', `${item && !copyMode ? 'Edit' : 'Add'} ${metadataPolicy ? 'MetadataPolicy' : namingPolicy ? 'NamingPolicy' : classificationPolicy ? 'ClassificationPolicy' : 'recognition object'}`));
-      detailContent.append(text('p', classificationPolicy ?
+      detailContent.append(text('h2', `${item && !copyMode ? 'Edit' : 'Add'} ${metadataPolicy ? 'MetadataPolicy' : namingPolicy ? 'NamingPolicy' : classificationPolicy ? 'ClassificationPolicy' : organizePolicy ? 'OrganizePolicy' : 'recognition object'}`));
+      detailContent.append(text('p', organizePolicy ?
+        'Edit one bounded OrganizePolicy JSON object. Overwrite and source cleanup grant destructive authority and are never implicit.' : classificationPolicy ?
         'Edit one bounded ClassificationPolicy JSON object. Rules use the configured conditions and safe relative result paths.' : namingPolicy ?
         'Edit one bounded NamingPolicy JSON object. Templates use the restricted naming variables; separators, traversal, unknown variables and unsupported formats are rejected.' : metadataPolicy ?
         'Edit one bounded MetadataPolicy JSON object. Provider/query/locale/threshold/request settings are validated; credentials and unknown fields are rejected.' :
         'Edit one bounded JSON object. References and rule priority are checked when the Draft is validated; unsafe regex is rejected when saved.', 'warning'));
       const editor = document.createElement('textarea');
-      editor.setAttribute('aria-label', metadataPolicy ? 'MetadataPolicy JSON' : namingPolicy ? 'NamingPolicy JSON' : classificationPolicy ? 'ClassificationPolicy JSON' : 'Recognition object JSON');
+      editor.setAttribute('aria-label', metadataPolicy ? 'MetadataPolicy JSON' : namingPolicy ? 'NamingPolicy JSON' : classificationPolicy ? 'ClassificationPolicy JSON' : organizePolicy ? 'OrganizePolicy JSON' : 'Recognition object JSON');
       editor.value = JSON.stringify(item || {}, null, 2); detailContent.append(editor);
-      detailContent.append(actionButton(metadataPolicy ? 'Save MetadataPolicy' : namingPolicy ? 'Save NamingPolicy' : classificationPolicy ? 'Save ClassificationPolicy' : 'Save recognition object', async () => {
+      detailContent.append(actionButton(metadataPolicy ? 'Save MetadataPolicy' : namingPolicy ? 'Save NamingPolicy' : classificationPolicy ? 'Save ClassificationPolicy' : organizePolicy ? 'Save OrganizePolicy' : 'Save recognition object', async () => {
         try { await mutateGuidedObject(revision, kind, item && !copyMode && item.id, JSON.parse(editor.value), item && !copyMode ? 'PUT' : 'POST'); }
         catch (error) { message(errorText(error), true); }
       }), actionButton('Back to revision', () => showConfigurationRevision(revision)));
@@ -535,6 +549,69 @@ APP_JS = b"""(() => {
         message(result.status === 'completed' ?
           'Classification preview completed. Review the chosen MediaLibrary, path and explanation.' :
           `${result.message || 'Classification preview failed.'} ${result.nextAction || ''}`,
+          result.status !== 'completed');
+        await showConfigurationRevision(revision);
+      } catch (error) { message(errorText(error), true); }
+    }));
+    detailContent.append(controls);
+  }
+  function organizeAuthorityIsCurrent(revision, evidence) {
+    return Boolean(evidence && evidence.stale === false &&
+      evidence.revisionId === revision.revisionId &&
+      evidence.revisionVersion === revision.version && evidence.revisionDigest === revision.digest);
+  }
+  function renderOrganizeAuthority(revision, guided) {
+    const evidence = guided.organizeAuthority;
+    detailContent.append(text('h3', 'Offline organize authority explanation'));
+    if (!evidence) detailContent.append(text('p',
+      'Status: not run. Explain declared authority without Storage, planning, or execution.', 'warning'));
+    else {
+      const current = organizeAuthorityIsCurrent(revision, evidence);
+      const result = evidence.result && typeof evidence.result === 'object' ? evidence.result : {};
+      const list = document.createElement('dl');
+      field(list, 'Evidence state', current ? 'current' : 'stale');
+      field(list, 'Status', boundedSetupText(evidence.status));
+      field(list, 'Revision ID', boundedSetupText(evidence.revisionId));
+      field(list, 'Revision version', Number.isInteger(evidence.revisionVersion) ? evidence.revisionVersion : '-');
+      field(list, 'Revision digest', boundedSetupText(evidence.revisionDigest));
+      field(list, 'RecognitionType', boundedSetupText(result.recognitionType || evidence.recognitionType));
+      field(list, 'RecognitionTypePolicy', boundedSetupText(result.recognitionTypePolicyId));
+      field(list, 'OrganizePolicy', boundedSetupText(result.organizePolicyId));
+      field(list, 'Operation', boundedSetupText(result.operation));
+      field(list, 'Conflict strategy', boundedSetupText(result.conflictStrategy));
+      field(list, 'Overwrite authorized', result.overwriteAuthorized === true ? 'YES' : 'NO');
+      field(list, 'Delete authorized', result.deleteAuthorized === true ? 'YES' : 'NO');
+      field(list, 'Attachments', boundedSetupText(JSON.stringify(result.attachments || {})));
+      field(list, 'Duplicate detection', boundedSetupText(JSON.stringify(result.duplicateDetection || {})));
+      field(list, 'Rollback', boundedSetupText(JSON.stringify(result.rollback || {})));
+      field(list, 'Source cleanup', boundedSetupText(JSON.stringify(result.sourceDirectoryCleanup || {})));
+      field(list, 'Required Storage capabilities', Array.isArray(result.requiredStorageCapabilities) ?
+        result.requiredStorageCapabilities.slice(0, 8).join(', ') : 'none');
+      field(list, 'Fallback', boundedSetupText(result.fallback));
+      field(list, 'Destructive warnings', Array.isArray(result.warnings) && result.warnings.length ?
+        result.warnings.slice(0, 16).join('; ') : 'none');
+      field(list, 'Failure category', boundedSetupText(evidence.failureCategory));
+      field(list, 'Message', boundedSetupText(evidence.message));
+      field(list, 'Side effects', boundedSetupText(evidence.sideEffects, 'unknown'));
+      field(list, 'Retry safe', evidence.retrySafe === true ? 'YES' : 'NO');
+      field(list, 'Next action', boundedSetupText(evidence.nextAction));
+      detailContent.append(list);
+      if (!current) detailContent.append(text('p',
+        'This organize authority explanation is stale. Reload and rerun it.', 'warning'));
+    }
+    if (!configurationRevisionEditable(revision)) return;
+    const controls = text('div', '', 'choices');
+    const recognitionType = document.createElement('input');
+    recognitionType.setAttribute('aria-label', 'Organize authority RecognitionType');
+    recognitionType.value = 'C';
+    controls.append(recognitionType, actionButton('Explain offline organize authority', async () => {
+      try {
+        const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/organize-authority`,
+          {method: 'POST', body: JSON.stringify({expectedVersion: revision.version,
+            expectedDigest: revision.digest, recognitionType: recognitionType.value})});
+        message(result.status === 'completed' ?
+          'Organize authority explained. Review destructive warnings and required capabilities.' :
+          `${result.message || 'Organize authority failed.'} ${result.nextAction || ''}`,
           result.status !== 'completed');
         await showConfigurationRevision(revision);
       } catch (error) { message(errorText(error), true); }
@@ -957,11 +1034,13 @@ APP_JS = b"""(() => {
         renderGuidedObjectList(data, guided, 'metadataPolicies', 'MetadataPolicies');
         renderGuidedObjectList(data, guided, 'namingPolicies', 'NamingPolicies');
         renderGuidedObjectList(data, guided, 'classificationPolicies', 'ClassificationPolicies');
+        renderGuidedObjectList(data, guided, 'organizePolicies', 'OrganizePolicies');
         renderLocalSetupEvidence(data, guided);
         renderLocalSetupActions(data, guided);
         renderRecognitionStrategyTest(data, guided);
         renderNamingPreview(data, guided);
         renderClassificationPreview(data, guided);
+        renderOrganizeAuthority(data, guided);
       }
       const actions = text('div', '', 'choices');
       if (data.status === 'draft') actions.append(actionButton('Validate Draft', async () => {

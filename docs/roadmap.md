@@ -16,7 +16,7 @@ Phase gate，不复制测试日志或流程正文。
 | Phase 22.5 Metadata 配置与修正旅程（A/B/C/D/E） | PASS / CLOSED | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | PASS — 2026-08-27 phase-level Final Closure Audit；已推送 `origin/main`；允许 Phase 22.6 Naming/Classification/Organize 配置旅程 |
 | Phase 22.6-A Managed NamingPolicy + Offline Naming Preview | PASS / CLOSED | `30af69ac82b30f8a45ad66afbd3c9747597c8fe7`；被拒 checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d` 保留 | PASS — 2026-08-28 独立复审：五项 operator-UI 与两项 service-boundary 可证伪对照全部先失败后通过，生产树与被拒 checkpoint 逐字节相同；已于 2026-08-28 在显式操作员授权下推送 `origin/main`；下一合法 Slice 为 Phase 22.6-B |
 | Phase 22.6-B Managed ClassificationPolicy + Offline Classification Preview | PASS / CLOSED | `5e2da5c634f1fa72a40e5f50b035260418fe1a37` | PASS — 2026-08-28 独立审核：五项 operator-UI 与三项 service-boundary 可证伪对照全部先失败后通过，marker 6→7 前向升级与 Runtime marker 22 均已复核，归一化对 runtime 语义为恒等；下一合法 Slice 为 Phase 22.6-C |
-| Phase 22.6-C Managed OrganizePolicy + Offline Organize Authority Explanation | TASK DEFINED / NOT STARTED | PENDING | 仅含 managed OrganizePolicy CRUD、引用阻断和 exact-revision 组织授权解释；组合目标路径、冲突/能力/存在性预检与 activation evidence 不得提前开始 |
+| Phase 22.6-C Managed OrganizePolicy + Offline Organize Authority Explanation | IMPLEMENTED / READY FOR HIGH REVIEW | PENDING（checkpoint SHA 记录于 Slice 完成报告） | managed OrganizePolicy CRUD、`organize_policy:<id>` 引用阻断、Move/Copy/HardLink/SoftLink 编辑限制与 exact-revision 零副作用组织授权解释已实现；配置 marker 7→8 前向升级，Runtime marker 仍为 22；组合目标路径、冲突/能力/存在性预检、Storage 能力探测与 activation evidence 未开始；实现完成不等于 Phase 关闭，待独立 High Review |
 
 ## 当前节点
 
@@ -66,6 +66,18 @@ exact-revision 离线组织授权解释）。组合最终目标路径预览、�
 探测与 combined activation evidence 仍为 TARGET，不得提前开始。`5e2da5c634f1fa72a40e5f50b035260418fe1a37`
 与文档记录 `279904c` 尚未推送 `origin/main`；Slice 级关闭不要求推送，Phase 22.6 的收口关闭需显式
 操作员授权后推送。
+Phase 22.6-C（managed OrganizePolicy 编辑 + exact-revision 离线组织授权解释）已完成实现、
+测试与文档同步，状态为 **IMPLEMENTED / READY FOR HIGH REVIEW**，尚未 `PASS / CLOSED`。本 Slice
+交付 managed OrganizePolicy CRUD/Copy、`organize_policy:<id>` 引用阻断、仅接受
+Move/Copy/HardLink/SoftLink 的编辑限制（拒绝 `delete` 与 `create_directory` 且不改 loader），以及
+经生产 `RecognitionTypePolicyResolver` 解析、零 Storage/Provider/Planner/Executor 构造的精确
+revision 组织授权解释（操作、冲突策略、overwrite/delete 授权、附件、重复检测、rollback、
+源目录清理、所需 Storage 能力"声明而非探测"、显式"无回退"说明、破坏性告警与 current/stale 恢复）。
+配置管理 schema marker 前向升级 7→8（marker 7 数据库可原地重开，命名与分类预览证据完好），
+Runtime marker 仍为 22。八项可证伪对照（五项 operator-UI 挂载、三项 service-boundary）全部先失败
+后恢复通过；归一化对 runtime 语义为恒等。组合最终目标路径预览、目标冲突/能力/存在性预检、
+Storage 能力探测与 combined activation evidence 仍为 TARGET，不得提前开始。
+
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 

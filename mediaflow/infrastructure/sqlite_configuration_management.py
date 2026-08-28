@@ -16,6 +16,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationNamingPreviewStatus,
     ConfigurationObjectKind,
     ConfigurationObjectReferenced,
+    ConfigurationOrganizeAuthorityStatus,
     ConfigurationReference,
     ConfigurationReferencePolicy,
     ConfigurationSetupCheckStatus,
@@ -26,6 +27,7 @@ from mediaflow.domain.configuration_management import (
     ManagedConfigurationStatus,
     ManagedStorageConfiguration,
     NamingPreviewEvidence,
+    OrganizeAuthorityEvidence,
     RecognitionStrategyTestEvidence,
     RuntimeSnapshotUnavailable,
     StorageConfigurationType,
@@ -33,7 +35,7 @@ from mediaflow.domain.configuration_management import (
     validate_storage_configuration,
 )
 
-CONFIGURATION_SCHEMA_VERSION = 7
+CONFIGURATION_SCHEMA_VERSION = 8
 
 
 class SQLiteConfigurationRepository:
@@ -1062,6 +1064,69 @@ class SQLiteConfigurationRepository:
             row["next_action"],
         )
 
+    def save_organize_authority(
+        self, evidence: OrganizeAuthorityEvidence
+    ) -> OrganizeAuthorityEvidence:
+        if not isinstance(evidence, OrganizeAuthorityEvidence):
+            raise ValueError("organize authority evidence is required")
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO managed_organize_authority_previews
+                (revision_id, revision_version, revision_digest, status, explained_at, actor,
+                 recognition_type, result_json, failure_category, message, next_action)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(revision_id) DO UPDATE SET
+                    revision_version=excluded.revision_version,
+                    revision_digest=excluded.revision_digest,
+                    status=excluded.status,
+                    explained_at=excluded.explained_at,
+                    actor=excluded.actor,
+                    recognition_type=excluded.recognition_type,
+                    result_json=excluded.result_json,
+                    failure_category=excluded.failure_category,
+                    message=excluded.message,
+                    next_action=excluded.next_action
+                """,
+                (
+                    evidence.revision_id,
+                    evidence.revision_version,
+                    evidence.revision_digest,
+                    evidence.status.value,
+                    evidence.explained_at.isoformat(),
+                    evidence.actor,
+                    evidence.recognition_type,
+                    self._json(evidence.result) if evidence.result is not None else None,
+                    evidence.failure_category,
+                    evidence.message,
+                    evidence.next_action,
+                ),
+            )
+        return evidence
+
+    def get_organize_authority(self, revision_id: str) -> OrganizeAuthorityEvidence | None:
+        self._object_id(revision_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM managed_organize_authority_previews WHERE revision_id=?",
+                (revision_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return OrganizeAuthorityEvidence(
+            row["revision_id"],
+            int(row["revision_version"]),
+            row["revision_digest"],
+            ConfigurationOrganizeAuthorityStatus(row["status"]),
+            datetime.fromisoformat(row["explained_at"]),
+            row["actor"],
+            row["recognition_type"],
+            json.loads(row["result_json"]) if row["result_json"] is not None else None,
+            row["failure_category"],
+            row["message"],
+            row["next_action"],
+        )
+
     def _get_row(self, storage_id: str) -> sqlite3.Row | None:
         self._object_id(storage_id)
         with self._lock:
@@ -1356,6 +1421,22 @@ class SQLiteConfigurationRepository:
                 );
                 CREATE INDEX IF NOT EXISTS managed_classification_previews_status
                     ON managed_classification_previews(status, previewed_at);
+                CREATE TABLE IF NOT EXISTS managed_organize_authority_previews (
+                    revision_id TEXT PRIMARY KEY,
+                    revision_version INTEGER NOT NULL,
+                    revision_digest TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    explained_at TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    recognition_type TEXT NOT NULL,
+                    result_json TEXT,
+                    failure_category TEXT,
+                    message TEXT,
+                    next_action TEXT,
+                    FOREIGN KEY(revision_id) REFERENCES managed_configuration_revisions(revision_id)
+                );
+                CREATE INDEX IF NOT EXISTS managed_organize_authority_previews_status
+                    ON managed_organize_authority_previews(status, explained_at);
                 """
             )
             self._connection.execute(

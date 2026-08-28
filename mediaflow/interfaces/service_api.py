@@ -570,6 +570,42 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, evidence.document())
         if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "organize-authority"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            if set(document) != {"expectedVersion", "expectedDigest", "recognitionType"}:
+                raise ValueError(
+                    "organize authority requires expectedVersion, expectedDigest, and "
+                    "recognitionType"
+                )
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            if not isinstance(document["expectedDigest"], str):
+                raise ValueError("configuration expectedDigest is required")
+            if not isinstance(document["recognitionType"], str):
+                raise ValueError("organize authority RecognitionType is required")
+            evidence = self._configuration_objects.organize_authority(
+                parts[4],
+                expected_version=expected,
+                expected_digest=document["expectedDigest"],
+                actor=principal.principal_id,
+                recognition_type=document["recognitionType"],
+            )
+            return self._response(start_response, 200, evidence.document())
+        if (
             len(parts) == 7
             and parts[:3] == ["api", "v1", "configuration"]
             and parts[3] == "revisions"
@@ -2196,6 +2232,7 @@ class MediaFlowApi:
             "metadataPolicies": ConfigurationObjectKind.METADATA_POLICY,
             "namingPolicies": ConfigurationObjectKind.NAMING_POLICY,
             "classificationPolicies": ConfigurationObjectKind.CLASSIFICATION_POLICY,
+            "organizePolicies": ConfigurationObjectKind.ORGANIZE_POLICY,
         }
         try:
             return mapping[value]

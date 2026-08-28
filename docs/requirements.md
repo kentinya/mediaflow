@@ -1589,7 +1589,7 @@ NamingPolicy ID
 启用状态
 ```
 
-> 当前实现（Phase 22.6-A 与 Phase 22.6-B 均已 PASS/CLOSED）：NamingPolicy 已接入现有 Managed Draft 的
+> 当前实现（Phase 22.6-A 与 Phase 22.6-B 均已 PASS/CLOSED；Phase 22.6-C 等待独立 High Review）：NamingPolicy 已接入现有 Managed Draft 的
 > Web/API 对象编辑、乐观版本、Before/After 审计和 RecognitionTypePolicy 引用阻断。操作员可对
 > 精确 revision ID/version/digest 提交一个有界合成样本或由既有 Parser 解析的路径，并通过既有
 > NamingPolicyRegistry/NamingPreviewService/安全 renderer/sanitizer 得到持久离线命名证据；证据
@@ -1598,8 +1598,16 @@ NamingPolicy ID
 > ClassificationPolicy 也已接入相同 Web/API 对象编辑、引用阻断和 exact-revision 离线预览；证据
 > 显示 classified/unclassified、matched rule、匹配解释、MediaLibrary ID/解析状态、安全相对路径、
 > warning、current/stale 和恢复动作。预览复用既有 ClassificationPolicyRegistry/
-> ClassificationPreviewService，不构造 Storage/Provider 且不授予执行权限。OrganizePolicy、组合
-> 最终目标、冲突/能力/存在性预检与 combined activation evidence 仍为后续 TARGET；checked
+> ClassificationPreviewService，不构造 Storage/Provider 且不授予执行权限。OrganizePolicy 也已接入
+> 相同 Web/API 对象编辑、`organize_policy:<id>` 引用阻断与仅接受 Move/Copy/HardLink/SoftLink 的
+> 编辑限制（拒绝 `delete` 与 `create_directory`），其边界与 overwrite/conflictStrategy 交叉规则由
+> 生产 loader 与 OrganizePolicy domain 拥有，因此 managed 编辑与 Active 快照不会产生分歧；操作员
+> 可对精确 revision 指定一个 RecognitionType，经生产 `RecognitionTypePolicyResolver` 得到持久、
+> 无秘密的组织授权解释（RecognitionTypePolicy/OrganizePolicy、操作、冲突策略、overwrite 与源目录
+> delete 授权、附件/重复检测/rollback/源目录清理、所需 Storage 能力"声明而非探测"、显式"能力不支持
+> 即失败、绝不静默回退"、破坏性告警、current/stale 与恢复动作），五类 policy resolution 失败均为可
+> 操作解释；该路径不构造 Storage/Provider/Planner/Executor/Task/Job 且零媒体变更。组合最终目标、
+> 冲突/能力/存在性预检、Storage 能力探测与 combined activation evidence 仍为后续 TARGET；checked
 > activation 未改变。
 
 ---
