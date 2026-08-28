@@ -17,7 +17,7 @@ Phase gate，不复制测试日志或流程正文。
 | Phase 22.6-A Managed NamingPolicy + Offline Naming Preview | PASS / CLOSED | `30af69ac82b30f8a45ad66afbd3c9747597c8fe7`；被拒 checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d` 保留 | PASS — 2026-08-28 独立复审：五项 operator-UI 与两项 service-boundary 可证伪对照全部先失败后通过，生产树与被拒 checkpoint 逐字节相同；已于 2026-08-28 在显式操作员授权下推送 `origin/main`；下一合法 Slice 为 Phase 22.6-B |
 | Phase 22.6-B Managed ClassificationPolicy + Offline Classification Preview | PASS / CLOSED | `5e2da5c634f1fa72a40e5f50b035260418fe1a37` | PASS — 2026-08-28 独立审核：五项 operator-UI 与三项 service-boundary 可证伪对照全部先失败后通过，marker 6→7 前向升级与 Runtime marker 22 均已复核，归一化对 runtime 语义为恒等；下一合法 Slice 为 Phase 22.6-C |
 | Phase 22.6-C Managed OrganizePolicy + Offline Organize Authority Explanation | PASS / CLOSED | `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa` | PASS — 2026-08-28 独立审核：五项 operator-UI 挂载、两项被收窄断言与四项 service-boundary 可证伪对照全部先失败后恢复通过；另独立复核 22 组非默认字段归一化零语义漂移、零副作用与 C 身份保持、marker 7→8 前向升级与 Runtime marker 22；下一合法 Slice 为 Phase 22.6-D |
-| Phase 22.6-D Composed Final Destination Path Preview | TASK DEFINED / NOT STARTED | PENDING | 仅含 exact-revision 组合最终目标路径预览（MediaLibrary.RootPath + Classification relativePath + Naming 目录/文件名）与其证据；目标存在性/冲突/能力预检、Storage 能力探测、combined activation evidence 与 Planner/Executor 改动不得提前开始 |
+| Phase 22.6-D Composed Final Destination Path Preview | READY FOR HIGH REVIEW | PENDING | 实现已完成并通过 832 项离线回归与零副作用/Planner parity/UI 反证门禁；待 High 审核显式 checkpoint。目标存在性/冲突/能力预检、Storage 能力探测、combined activation evidence 与执行改动未开始 |
 
 ## 当前节点
 
@@ -82,6 +82,13 @@ combined activation evidence、Planner/Executor 改动与任何 activation gate 
 不得提前开始。`47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa` 及其文档记录尚未推送 `origin/main`；
 Slice 级关闭不要求推送，Phase 22.6 的收口关闭需显式操作员授权后推送。
 
+Phase 22.6-D 已实现 exact-revision 离线组合目标预览并进入 **READY FOR HIGH REVIEW**：同一生产
+composition/path-safety owner 同时服务 Planner 与 managed preview；Web/API 显示解析后的 C 身份、
+策略与 MediaLibrary 贡献、root-relative 和 Storage-relative 目标，并持久化 current/stale 或可恢复
+失败证据。该路径不构造 Storage、Provider、Planner 或 Executor，不做存在性、冲突或能力探测，也不
+改变 activation gate 或 Runtime marker 22。当前只能等待 High 审核本 Slice checkpoint；不得进入
+下一 Slice，且本普通 Slice 的未审核 checkpoint 不要求 push。
+
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 
@@ -120,7 +127,7 @@ Runtime Configuration
 | Planner/Executor | 部分完成 | 计划、冲突、附件、Hash 证据、同次调用 Rollback、空目录清理、DryRun、跨存储执行 | 历史/崩溃恢复、Hash 持久复用、逐项恢复体验 |
 | Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、pause/resume、批量请求、claim fencing/心跳 | 统一 Processing Checkpoint 与 stage-aware recovery |
 | API/UI/Scheduler | 部分完成 | API/RBAC/审计、操作台、Dashboard、Files 列表/筛选/详情/部分动作、Cron/通知 | 完整人工/配置/恢复旅程、登录/外部身份源 |
-| Managed Configuration | Phase 22.3/22.4/22.5 与 Phase 22.6-A/22.6-B/22.6-C 均 PASS / CLOSED | 既有能力加 NamingPolicy、ClassificationPolicy 与 OrganizePolicy CRUD、引用阻断、exact-revision 离线命名/分类预览与离线组织授权解释 | 组合最终目标路径预览（Phase 22.6-D，当前边界）、目标冲突/能力/存在性预检与 combined activation evidence；Provider switching/通用 Task resume 后置 |
+| Managed Configuration | Phase 22.3/22.4/22.5 与 Phase 22.6-A/22.6-B/22.6-C 均 PASS / CLOSED；22.6-D 待 High | 既有能力加 NamingPolicy、ClassificationPolicy 与 OrganizePolicy CRUD、引用阻断、exact-revision 离线命名/分类/组织授权与组合目标预览 | 目标冲突/能力/存在性预检与 combined activation evidence；Provider switching/通用 Task resume 后置 |
 
 ## 总体阶段计划
 

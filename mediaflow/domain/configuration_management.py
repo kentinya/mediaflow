@@ -292,6 +292,94 @@ class ConfigurationOrganizeAuthorityStatus(StrEnum):
     FAILED = "failed"
 
 
+class ConfigurationDestinationPreviewStatus(StrEnum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class DestinationPreviewEvidence:
+    """Bounded, secret-free composed destination evidence for one exact revision."""
+
+    revision_id: str
+    revision_version: int
+    revision_digest: str
+    status: ConfigurationDestinationPreviewStatus
+    previewed_at: datetime
+    actor: str
+    recognition_type: str
+    input: dict[str, object]
+    result: dict[str, object] | None = None
+    failure_category: str | None = None
+    message: str | None = None
+    next_action: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.revision_id, str) or not self.revision_id.strip():
+            raise ValueError("destination preview revision ID is required")
+        if isinstance(self.revision_version, bool) or not isinstance(self.revision_version, int):
+            raise ValueError("destination preview revision version must be an integer")
+        if self.revision_version < 1:
+            raise ValueError("destination preview revision version must be positive")
+        if not isinstance(self.revision_digest, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.revision_digest
+        ):
+            raise ValueError("destination preview revision digest must be a SHA-256 hex digest")
+        if not isinstance(self.status, ConfigurationDestinationPreviewStatus):
+            raise ValueError("destination preview status is required")
+        if not isinstance(self.previewed_at, datetime) or self.previewed_at.tzinfo is None:
+            raise ValueError("destination preview time must include a timezone")
+        for label, value, maximum in (
+            ("actor", self.actor, 200),
+            ("RecognitionType", self.recognition_type, 64),
+        ):
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > maximum
+                or "\x00" in value
+            ):
+                raise ValueError(f"destination preview {label} must be bounded and non-empty")
+        for label, value in (("input", self.input), ("result", self.result)):
+            if value is None and label == "result":
+                continue
+            if not isinstance(value, dict):
+                raise ValueError(f"destination preview {label} must be an object")
+            encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            if len(encoded.encode("utf-8")) > CONFIGURATION_STRATEGY_RESULT_LIMIT:
+                raise ValueError(f"destination preview {label} is too large")
+        for label, value in (
+            ("failure category", self.failure_category),
+            ("message", self.message),
+            ("next action", self.next_action),
+        ):
+            if value is not None and (
+                not isinstance(value, str) or not value.strip() or len(value) > 500
+            ):
+                raise ValueError(f"destination preview {label} must be bounded text")
+        if self.status is ConfigurationDestinationPreviewStatus.COMPLETED and self.result is None:
+            raise ValueError("completed destination preview requires a result")
+
+    def document(self) -> dict[str, object]:
+        return {
+            "revisionId": self.revision_id,
+            "revisionVersion": self.revision_version,
+            "revisionDigest": self.revision_digest,
+            "status": self.status.value,
+            "previewedAt": self.previewed_at.isoformat(),
+            "actor": self.actor,
+            "recognitionType": self.recognition_type,
+            "input": copy.deepcopy(self.input),
+            "result": copy.deepcopy(self.result),
+            "failureCategory": self.failure_category,
+            "message": self.message,
+            "nextAction": self.next_action,
+            "pathScope": "storage_relative",
+            "sideEffects": "none",
+            "retrySafe": True,
+        }
+
+
 @dataclass(frozen=True)
 class OrganizeAuthorityEvidence:
     """Bounded, secret-free organize authority evidence for one exact revision."""
@@ -994,6 +1082,12 @@ class ManagedConfigurationRepository(Protocol):
     ) -> OrganizeAuthorityEvidence: ...
 
     def get_organize_authority(self, revision_id: str) -> OrganizeAuthorityEvidence | None: ...
+
+    def save_destination_preview(
+        self, evidence: DestinationPreviewEvidence
+    ) -> DestinationPreviewEvidence: ...
+
+    def get_destination_preview(self, revision_id: str) -> DestinationPreviewEvidence | None: ...
 
 
 class StorageConfigurationValidator:

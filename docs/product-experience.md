@@ -237,7 +237,7 @@ created.
 Phase 22.6-B is independently accepted at `5e2da5c634f1fa72a40e5f50b035260418fe1a37` and does not
 change checked activation.
 
-## Phase 22.6-C managed OrganizePolicy and offline organize authority (CURRENT implementation; awaiting review)
+## Phase 22.6-C managed OrganizePolicy and offline organize authority (CURRENT; PASS / CLOSED)
 
 The same managed Configuration revision view now exposes OrganizePolicy create/edit/copy/delete with
 a bounded summary of operation, conflict strategy, attachments, duplicate detection and
@@ -260,10 +260,22 @@ failure with the action that resolves it, not an unexplained error. A later Draf
 prior explanation but labels it stale and names the rerun. No Storage, Provider, Planner, Executor,
 Task, Job, queue or media work is created.
 
-Composed final destination preview, destination existence/conflict/capability prechecks, Storage
-capability probing and combined activation evidence remain TARGET Phase 22.6 work. Checked activation
-and Active runtime-consumption semantics are unchanged, and this Slice is not `PASS / CLOSED` until
-independent High Review accepts its exact checkpoint.
+Phase 22.6-C is independently accepted at `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa`.
+
+## Phase 22.6-D exact-revision composed destination preview (CURRENT implementation; awaiting review)
+
+The same revision view accepts one RecognitionType and one bounded path or synthetic sample, then
+uses the production resolver, Naming engine, Classification engine and the exact composition/path
+safety helpers used by `OrganizePlanner`. It presents each owning policy and MediaLibrary
+contribution in order, the root-relative suffix and the composed Storage-relative destination.
+RecognitionType C remains C while A policies are reused. Unsafe and unresolved outcomes name a
+bounded category, durable state and explicit correction/rerun action; later edits retain but mark
+evidence stale.
+
+This offline action constructs no Storage, Provider, Planner or Executor, applies no Storage mount
+prefix, and performs no existence, collision or capability probe. Destination prechecks, absolute
+mounted-path display, combined activation evidence and execution remain TARGET. Checked activation
+and Active runtime-consumption semantics are unchanged pending independent High Review.
 
 ## A. First-time setup
 

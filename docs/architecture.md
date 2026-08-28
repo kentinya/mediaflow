@@ -1096,9 +1096,20 @@ capability is a failure rather than a silent fallback, destructive-authority war
 state and recovery. Required capabilities are declared from the resolved policy, never probed: the
 path constructs no Storage, Provider, Planner, Executor, Task, Job or queue, reports
 `sideEffects: none` with `retrySafe: true`, and grants no execute authority. Every
-`PolicyResolutionErrorCode` becomes an explained failure with a next action. Composed destination
-paths, destination existence/conflict/capability prechecks, Storage capability probing and combined
-activation evidence remain outside this Slice, which awaits independent High Review.
+`PolicyResolutionErrorCode` becomes an explained failure with a next action. Phase 22.6-C is
+independently accepted at `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa`.
+
+Phase 22.6-D extracts destination-root normalization, relative-path/filename safety and composition
+into dependency-free domain organizer helpers. `OrganizePlanner` delegates to those helpers, and the
+exact-revision destination preview calls the same helpers after using the shared production policy
+catalog plus the production Naming and Classification engines. It resolves only the selected
+MediaLibrary's `rootPath` and `storageId` label from that revision; it never reads or applies the
+Storage configuration root/mount prefix. Revision-keyed evidence attributes the RecognitionType,
+type policy, naming policy, classification policy/rule and MediaLibrary contributions, with both
+root-relative and composed Storage-relative results or a bounded unsafe/failure recovery. The path
+constructs no Storage, Provider, Planner or Executor and preserves C identity. Destination
+existence/conflict/capability prechecks, Storage capability probing, absolute mounted-path display
+and combined activation evidence remain TARGET pending independent High Review of this Slice.
 
 ## Deferred work
 
@@ -1637,8 +1648,8 @@ inserts use an explicit column list so historical ALTER-table column order canno
 fields. Phase 22.3 closed on configuration-management schema marker `4`; Phase 22.4 adds marker `5`
 for revision-bound Recognition Strategy Test evidence, Phase 22.6-A adds marker `6` for
 exact-revision Naming preview evidence, Phase 22.6-B adds marker `7` for exact-revision
-Classification preview evidence, and Phase 22.6-C adds marker `8` for exact-revision organize
-authority evidence. Its revision sequence, singleton authority
+Classification preview evidence, Phase 22.6-C adds marker `8` for exact-revision organize
+authority evidence, and Phase 22.6-D adds marker `9` for composed destination-preview evidence. Its revision sequence, singleton authority
 pointer, Local setup-check evidence, Strategy Test evidence, and the Phase 22.5-E continuation table
 and indexes remain additive and do not rewrite
 the Runtime marker.

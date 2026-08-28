@@ -314,6 +314,37 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("organize_policy", object_list)
         self.assertIn("DESTRUCTIVE AUTHORITY", object_list)
 
+    def test_destination_preview_is_reachable_and_attributed(self) -> None:
+        script = APP_JS.decode()
+        show_revision = _js_function_body(script, "showConfigurationRevision")
+        preview = _js_function_body(script, "renderDestinationPreview")
+        mount = "renderDestinationPreview(data, guided);"
+        guided_start = show_revision.index("if (guided) {")
+        guided_body = _js_braced_body(show_revision, show_revision.index("{", guided_start))
+        visible = show_revision.rindex("detail.hidden = false;")
+
+        self.assertIn(mount, guided_body)
+        self.assertLess(show_revision.index(mount), visible)
+        self.assertIn(
+            "detailContent.append(text('h3', 'Offline composed destination preview'));",
+            preview,
+        )
+        self.assertIn("detailContent.append(controls);", preview)
+        self.assertIn("Destination preview RecognitionType", preview)
+        self.assertIn("Destination preview sample JSON", preview)
+        self.assertIn("Run offline destination preview", preview)
+        self.assertIn("controls.append(recognitionType, sample, actionButton(", preview)
+        self.assertIn("/destination-preview`,", preview)
+        self.assertIn("expectedVersion: revision.version", preview)
+        self.assertIn("expectedDigest: revision.digest", preview)
+        self.assertIn("MediaLibrary contribution", preview)
+        self.assertIn("ClassificationPolicy contribution", preview)
+        self.assertIn("NamingPolicy directory contribution", preview)
+        self.assertIn("NamingPolicy filename contribution", preview)
+        self.assertIn("Composed Storage-relative destination", preview)
+        self.assertIn("No valid destination was produced", preview)
+        self.assertIn("configurationRevisionEditable(revision)", preview)
+
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
         script = APP_JS.decode()
         mismatch_start = script.index("function renderConfigurationIdentityMismatch")

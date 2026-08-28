@@ -1589,7 +1589,7 @@ NamingPolicy ID
 启用状态
 ```
 
-> 当前实现（Phase 22.6-A 与 Phase 22.6-B 均已 PASS/CLOSED；Phase 22.6-C 等待独立 High Review）：NamingPolicy 已接入现有 Managed Draft 的
+> 当前实现（Phase 22.6-A/B/C 已 PASS/CLOSED；Phase 22.6-D 等待独立 High Review）：NamingPolicy 已接入现有 Managed Draft 的
 > Web/API 对象编辑、乐观版本、Before/After 审计和 RecognitionTypePolicy 引用阻断。操作员可对
 > 精确 revision ID/version/digest 提交一个有界合成样本或由既有 Parser 解析的路径，并通过既有
 > NamingPolicyRegistry/NamingPreviewService/安全 renderer/sanitizer 得到持久离线命名证据；证据
@@ -1606,8 +1606,10 @@ NamingPolicy ID
 > 无秘密的组织授权解释（RecognitionTypePolicy/OrganizePolicy、操作、冲突策略、overwrite 与源目录
 > delete 授权、附件/重复检测/rollback/源目录清理、所需 Storage 能力"声明而非探测"、显式"能力不支持
 > 即失败、绝不静默回退"、破坏性告警、current/stale 与恢复动作），五类 policy resolution 失败均为可
-> 操作解释；该路径不构造 Storage/Provider/Planner/Executor/Task/Job 且零媒体变更。组合最终目标、
-> 冲突/能力/存在性预检、Storage 能力探测与 combined activation evidence 仍为后续 TARGET；checked
+> 操作解释；Phase 22.6-D 进一步以生产 resolver、Naming/Classification engine 和 Planner 共用的
+> composition/path-safety helper 输出 exact-revision 组合目标及每项 owner，路径明确为 Storage-relative，
+> C 身份保持，失败持久且可恢复。该路径不构造 Storage/Provider/Planner/Executor 且零媒体变更。
+> 冲突/能力/存在性预检、Storage mount prefix、能力探测与 combined activation evidence 仍为后续 TARGET；checked
 > activation 未改变。
 
 ---
