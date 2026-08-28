@@ -383,6 +383,10 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("grants no overwrite, delete or execute authority", precheck)
         self.assertIn("no fallback to Copy or Move", precheck)
         self.assertIn("Destination is not ready", precheck)
+        self.assertIn(
+            "field(list, 'Destination path', boundedSetupText(result.destinationPath));",
+            precheck,
+        )
 
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
         script = APP_JS.decode()

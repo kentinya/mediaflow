@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,7 +18,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationVersionConflict,
 )
 from mediaflow.domain.naming import NamingResult
-from mediaflow.domain.organizer import ConflictStrategy
+from mediaflow.domain.organizer import Conflict, ConflictStrategy, ConflictType, PlanStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.infrastructure.local_storage import LocalStorage
@@ -92,6 +93,24 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
         self.assertIsNone(repository.get_destination_preview(revision.revision_id))
         self.assertIsNone(repository.get_local_setup_check(revision.revision_id))
 
+    def _assert_runtime_authority_empty(self, database: Path) -> None:
+        with sqlite3.connect(database) as connection:
+            for table in (
+                "tasks",
+                "task_items",
+                "task_results",
+                "conflict_confirmations",
+                "metadata_corrections",
+                "recognition_reviews",
+                "metadata_reviews",
+                "classification_reviews",
+                "automation_jobs",
+                "execution_authorizations",
+            ):
+                with self.subTest(table=table):
+                    count = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    self.assertEqual(count, 0)
+
     def test_success_partial_ancestor_c_identity_and_three_read_only_proofs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -110,6 +129,15 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 self.assertEqual(result["storageSupport"], "local_only")
                 self.assertEqual(result["mediaLibraryId"], "movies")
                 self.assertEqual(result["mediaLibraryRootPath"], "Movies")
+                self.assertEqual(
+                    result["relativeDestination"],
+                    "Action/The Matrix (1999) [tmdbid-synthetic]/The Matrix (1999).mkv",
+                )
+                self.assertEqual(
+                    result["destinationPath"],
+                    "Movies/Action/The Matrix (1999) [tmdbid-synthetic]/The Matrix (1999).mkv",
+                )
+                self.assertTrue(result["destinationPath"].startswith("Movies/"))
                 self.assertTrue(result["destinationRootExists"])
                 self.assertTrue(result["destinationRootIsDirectory"])
                 self.assertEqual(result["deepestExistingAncestor"], "Movies/Action")
@@ -198,6 +226,7 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             root = Path(directory)
             (root / "target-private" / "Movies").mkdir(parents=True)
             (root / "source-private").mkdir()
+            before = self._tree_snapshot(root / "target-private")
             document = self._document(root)
             document["organizePolicies"][0]["operation"] = "HARD_LINK"
             with patch.object(LocalStorage, "_can_hard_link", return_value=False):
@@ -214,6 +243,18 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                         "none; an unsupported capability is a failure",
                     )
                     self.assertTrue(evidence.result["destinationRootExists"])
+                    self.assertEqual(evidence.result["deepestExistingAncestor"], "Movies")
+                    self.assertEqual(
+                        evidence.result["directoriesToCreate"],
+                        [
+                            "Movies/Action",
+                            "Movies/Action/The Matrix (1999) [tmdbid-synthetic]",
+                        ],
+                    )
+                    self.assertFalse(evidence.result["targetExists"])
+                    self.assertEqual(set(evidence.result["guardMutationCalls"].values()), {0})
+                    self.assertEqual(evidence.result["authorityGranted"], "none")
+                    self.assertEqual(self._tree_snapshot(root / "target-private"), before)
                 finally:
                     repository.close()
 
@@ -234,6 +275,114 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             try:
                 evidence = self._run(objects, draft)
                 self.assertIn("can_delete", evidence.result["requiredStorageCapabilities"])
+            finally:
+                repository.close()
+
+    def test_constructs_no_provider_executor_or_runtime_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target-private"
+            (target / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            runtime_database = root / "runtime.sqlite3"
+            with SQLiteTaskRepository(runtime_database):
+                pass
+            before = self._tree_snapshot(target)
+
+            for expected_failure in (None, "permission_denied"):
+                with self.subTest(expected_failure=expected_failure):
+                    repository, managed, objects, draft = self._open(root)
+                    try:
+                        storage_failure = (
+                            patch.object(
+                                LocalStorage,
+                                "exists",
+                                side_effect=StorageError(
+                                    StorageErrorCode.PERMISSION_DENIED,
+                                    "Exists",
+                                    "Movies",
+                                    "redacted",
+                                ),
+                            )
+                            if expected_failure
+                            else nullcontext()
+                        )
+                        with (
+                            patch(
+                                "mediaflow.application.configuration_objects.MetadataProviderRegistry",
+                                side_effect=AssertionError(
+                                    "destination precheck constructed Provider"
+                                ),
+                            ),
+                            patch(
+                                "mediaflow.application.organizer.OrganizerExecutor",
+                                side_effect=AssertionError(
+                                    "destination precheck constructed Executor"
+                                ),
+                            ),
+                            storage_failure,
+                        ):
+                            evidence = self._run(objects, draft)
+                        if expected_failure is None:
+                            self.assertEqual(evidence.status.value, "completed")
+                            self.assertEqual(evidence.result["authorityGranted"], "none")
+                            self.assertEqual(
+                                set(evidence.result["guardMutationCalls"].values()), {0}
+                            )
+                        else:
+                            self.assertEqual(evidence.failure_category, expected_failure)
+                        self._assert_runtime_authority_empty(runtime_database)
+                        self.assertIsNone(repository.get_organize_authority(draft.revision_id))
+                        self.assertEqual(self._tree_snapshot(target), before)
+                        self._assert_revision_and_other_evidence_unchanged(
+                            repository, managed, draft
+                        )
+                    finally:
+                        repository.close()
+
+    def test_defensive_invalid_plan_is_unsafe_destination_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target-private"
+            (target / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            before = self._tree_snapshot(target)
+            repository, managed, objects, draft = self._open(root)
+            original_plan = OrganizePlanner.plan
+
+            def invalid_plan(planner, **kwargs):
+                plan = original_plan(planner, **kwargs)
+                return replace(
+                    plan,
+                    status=PlanStatus.INVALID,
+                    conflicts=(
+                        Conflict(
+                            ConflictType.INVALID_DESTINATION,
+                            plan.source,
+                            plan.target,
+                            "defensive invalid destination",
+                        ),
+                    ),
+                )
+
+            try:
+                with (
+                    patch.object(OrganizePlanner, "plan", invalid_plan),
+                    patch(
+                        "mediaflow.application.configuration_objects.ConflictResolver.apply_configured",
+                        side_effect=AssertionError(
+                            "invalid destination reached conflict resolution"
+                        ),
+                    ),
+                ):
+                    evidence = self._run(objects, draft)
+                self.assertEqual(evidence.status.value, "failed")
+                self.assertEqual(evidence.failure_category, "unsafe_destination")
+                self.assertIsNone(evidence.result)
+                self.assertEqual(evidence.document()["status"], "failed")
+                self.assertIsNone(evidence.document()["result"])
+                self.assertEqual(self._tree_snapshot(target), before)
+                self._assert_revision_and_other_evidence_unchanged(repository, managed, draft)
             finally:
                 repository.close()
 
