@@ -210,6 +210,39 @@ and is preserved unchanged. The independent review record is
 "Phase 22.6-E High Review Result (2026-08-28): FIX REQUIRED". The only allowed next Slice is
 Phase 22.6-E-F1.
 
+### Phase 22.6-E-F1 Destination Precheck Evidence Correction
+
+```text
+Status: PASS / CLOSED — this correction closes Phase 22.6-E; the rejected Phase 22.6-E checkpoint
+recorded above is preserved and is not amended, squashed or rewritten
+Commit SHA: ee5225dd0e74a7382b6747c6315776413f7fd249
+High Audit: PASS — 2026-08-28; four falsification counter-proofs (injected Provider construction on
+the synchronous path and again inside the worker, swapped `relativeDestination`/`destinationPath`,
+truncated `directoriesToCreate`, removed defensive `INVALID_DESTINATION` refusal) each failed first
+and passed after restore; configuration marker 10 and Runtime marker 22 unchanged
+Push: PENDING — not required for this Slice closure; the phase-level Phase 22.6 closure requires an
+explicitly authorized push
+```
+
+The independent review record is "Phase 22.6-E-F1 High Review Result (2026-08-28): PASS".
+
+### Phase 22.6-F Checked Activation Requires Current Local Destination Precheck Evidence
+
+```text
+Status: PASS / CLOSED
+Commit SHA: e68e901a73107484dc0521b47b1b0001eed2b853
+High Audit: PASS — 2026-08-28; the checkpoint was independently reviewed with four reproduced
+falsifications (removed gate call, deleted Web not-applicable line, forced applicability, disabled
+`capability_gap` branch), a verdict-space completeness check against the Phase 22.6-E projection, a
+Web/API parity check on permission and status code, byte-identity checks on the Phase 22.6-D and
+Phase 22.6-E suites, and the complete offline suite of 846 tests
+Push: PENDING — not required for this Slice closure; `e68e901a73107484dc0521b47b1b0001eed2b853` and
+this record are not yet contained in `origin/main`, and the phase-level Phase 22.6 closure will
+require an explicitly authorized push
+```
+
+The independent review record is "Phase 22.6-F High Review Result (2026-08-28): PASS".
+
 ## Phase 22.6-A High Review Result (2026-08-27)
 
 - Status: FIX REQUIRED; Rejected checkpoint SHA:
@@ -1068,6 +1101,111 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   Local destinations only. Remote SMB/OpenList/S3 prechecks, mutation-based capability probing,
   duplicate and cross-item collision detection, attachment prechecks, absolute mounted-path display
   and any execution change remain TARGET and must not start.
+
+## Phase 22.6-F High Review Result (2026-08-28): PASS
+
+- Status: PASS / CLOSED; reviewed checkpoint SHA: `e68e901a73107484dc0521b47b1b0001eed2b853`; High
+  Audit: PASS — 2026-08-28. The preserved rejected SHAs
+  `7353b0d22497e6e3e596c93c7052eea34daf27df`, `90ce13a6c6c39912dd389f71a1189314ff24eb5d` and
+  `08dfd4f921728755209b6d52347d28f221121c47` remain unmodified, and the reviewed checkpoint writes
+  neither a `docs/progress.md` review record nor a `docs/roadmap.md` gate row, correctly leaving
+  both High-only. Push: NOT PERFORMED; `main` remains ahead of `origin/main` and no push
+  authorization was requested or used.
+- Scope conformance verified against `TASK.md`: the checkpoint touches
+  `mediaflow/application/configuration_objects.py` (+54/-0),
+  `mediaflow/interfaces/operator_ui.py` (+21/-0),
+  `mediaflow/domain/configuration_management.py` (+2/-0),
+  `mediaflow/interfaces/service_api.py` (+2/-1),
+  `tests/test_configuration_destination_activation.py` (+462, new file),
+  `tests/test_configuration_objects.py` (+38), `tests/test_configuration_snapshot.py` (+22),
+  `tests/test_operator_ui.py` (+15), `TASK.md`, `docs/architecture.md`,
+  `docs/product-experience.md`, `docs/requirements.md` and one status sentence of the Chinese
+  requirements specification. No remote precheck, no mutation probe, no duplicate/attachment check,
+  no new evidence key, request field, response field, permission or API status code, and no schema
+  change appear. Configuration marker remains 10 and Runtime marker remains 22, independently
+  confirmed in the installed-wheel smoke run.
+- The gate sits exactly where the Task requires it: `activate_checked` calls
+  `require_current_local_check`, then `require_current_strategy_test`, then the new
+  `require_current_destination_precheck`, so the two existing refusals keep their precedence and
+  their wording. The helper reads only the revision document and the already persisted evidence — no
+  Storage, Provider, Planner or Executor construction and no probe — and refuses the missing, stale
+  (version or digest mismatch), failed (repeating the stored bounded category) and `capability_gap`
+  cases with a bounded, secret-free message plus one explicit next action. Unchecked activation
+  never reaches it.
+- The applicability rule is document-level and Local-only, as mandated: the requirement applies when
+  the revision document declares at least one MediaLibrary whose `storageId` names a Storage whose
+  `type` is `local`; any other document, including one with no MediaLibrary entries, is reported as
+  not applicable and keeps today's two-gate behaviour, so a remote-only Draft cannot be made
+  unactivatable by a requirement this Phase cannot yet satisfy.
+- Verdict space independently checked for completeness, because a gate that accepts `completed`
+  evidence is only as safe as the projection behind it: `ready`, `skip`, `rename`,
+  `overwrite_requires_confirmation` and `manual_confirmation_required` are the only completed
+  projections, `capability_gap` overrides all of them whenever a required Storage capability is not
+  declared, and every unsafe or unresolvable destination — missing or non-directory root,
+  unsupported Storage type, unsafe composition — already yields `FAILED` rather than `COMPLETED`. No
+  completed-but-unsafe verdict can therefore pass the gate, and the existing red "Destination is not
+  ready" banner cannot disagree with it.
+- Web and API refuse identically. The activation route still requires
+  `ApiPermission.ACTIVATE_CONFIGURATION` for both checked and unchecked activation and still answers
+  409 `configuration_conflict`; the recovery sentence rides the pre-existing `nextAction` conflict
+  detail, so no response field was added. `renderDestinationPrecheck` states satisfied, blocked in
+  four distinguishable sentences, or not applicable, using only the revision summary, the projected
+  evidence and the projected `mediaLibraries`/`storages` whose `type` survives remote redaction; all
+  seven new lines are proven by body-scoped assertions inside
+  `_js_function_body(script, "renderDestinationPrecheck")`.
+- Falsification counter-proofs, each followed by a byte-identical restore with an empty
+  `git status --short`: deleting the `require_current_destination_precheck(revision)` call from
+  `activate_checked` failed three tests; deleting the Web not-applicable line failed
+  `tests/test_operator_ui.py`; forcing `applicable` to `True` raised two errors on the
+  not-applicable journeys; and disabling the `capability_gap` branch failed the capability-gap case.
+- Gates re-run independently on the reviewed checkout: the complete offline suite ran 846 tests with
+  7 external integration skips, 0 failures and exit 0; ruff check and ruff format are clean over 308
+  files; `compileall` and `pip check` are clean; both example configurations report
+  `Configuration valid` through `.venv/bin/python -m mediaflow.cli`; the wheel built with
+  `python -m pip wheel . --no-deps --no-build-isolation -w dist`, installed in isolation, and
+  `scripts/wheel_smoke_test.py` exited 0 reporting Runtime marker 22 and configuration marker 10;
+  120 Markdown files carry 25 local links with 0 broken; `git diff --check` is clean; the repository
+  contains zero FFmpeg/FFprobe references; `config/alist.json` stays ignored, untracked and unread,
+  and no credential, endpoint, header, cookie or private path pattern appears in the reviewed diff;
+  `tests/test_configuration_destination.py` is byte-identical to
+  `c7ec192b3b20f236cca5a70ed59cad43e0851242` and
+  `tests/test_configuration_destination_precheck.py` is byte-identical to
+  `ee5225dd0e74a7382b6747c6315776413f7fd249`, so neither closed suite was weakened.
+- Non-blocking observations, deferred and not closure conditions: (a) the Web control still derives
+  `checkedActivationEvidenceIsCurrent` from the Local setup check and the Strategy Test only, so a
+  Local Draft without current precheck evidence still offers an enabled "Activate checked revision"
+  button and a warning that enumerates two requirements, and the guided panel's "Activate checked
+  Draft" button remains visible; the refusal is server-side, bounded and carries its next action,
+  and the precheck section immediately above already names the blocked requirement, so this is a
+  control-labelling gap rather than a safety gap, and it becomes the next Slice; (b) the helper
+  reads `mediaLibraries` without `revision_detail`'s `"mediaLibraries" in document` guard, so a
+  document missing the section entirely would raise `ValueError` instead of reporting not
+  applicable — unreachable through the validated product path, and the empty-array case is tested;
+  (c) document-level applicability means one destination's evidence satisfies a document declaring
+  several Local MediaLibraries, and a Draft that declares an unrouted Local MediaLibrary while
+  routing to a remote destination stays blocked until it is corrected or activated unchecked, which
+  is exactly the Task-mandated rule, recorded so a later Slice can narrow it to the routed
+  destination if the journey demands it; (d) the API parity test does not itself assert Runtime-table
+  emptiness, which the application-level test does prove for both the refused and the successful
+  path; and the Phase 22.6-E-F1 Executor-double observation stays open, is now cheap to close, and
+  is folded into the next Slice.
+- Accepted scope deviations: the new tests live in
+  `tests/test_configuration_destination_activation.py` instead of the two files named under
+  Technical Scope, which is the correct resolution of the Task's own internal conflict, because
+  Required Test 11 demands the Phase 22.6-E suite stay byte-unmodified; and
+  `mediaflow/domain/configuration_management.py` (+2) and `mediaflow/interfaces/service_api.py`
+  (+2/-1) were touched outside the literal file list to carry the explicit next action that the UX
+  acceptance criteria require. Both are minimal and inside the Slice's user outcome. The checkpoint
+  wrote no Completion Report into `TASK.md`; the claimed evidence was reproduced independently
+  instead, and future Slices must still record it.
+- Next Slice authorization: Phase 22.6-F is CLOSED and Phase 22.6 remains open. The next legal Slice
+  is Phase 22.6-G, which makes the Web checked-activation control itself state and gate all three
+  requirements for a Local-destination Draft on both control sites, and closes the deferred
+  Executor-double hardening by asserting that the activation module namespace stays free of the
+  symbol; it adds no probe, no evidence key, no request or response field, no permission, no API
+  status code and no schema change. Remote SMB/OpenList/S3 prechecks, mutation-based capability
+  probing, duplicate and cross-item collision detection, attachment prechecks, absolute mounted-path
+  display and any execution change remain TARGET and must not start.
 
 ## Completed
 
