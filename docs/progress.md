@@ -269,6 +269,28 @@ The independent review records are "Phase 22.6-G High Review Result (2026-08-28)
 "Phase 22.6-G-F1 High Review Result (2026-08-28): PASS". Phase 22.6 itself remains open; the next
 legal Slice is Phase 22.6-H.
 
+### Phase 22.6-H Bounded Multi-Sample Local Destination Precheck with Cross-Item Collision Detection
+
+```text
+Status: FIX REQUIRED
+Rejected checkpoint SHA: d8c2ae04e578955ddbbd29c413f235bf4cf08f42 (preserved, never amended,
+squashed or rewritten)
+High Audit: FIX REQUIRED — 2026-08-28; independently reviewed with all seven Task-mandated
+falsification probes plus thirteen further independent probes, the complete offline suite, the
+isolated wheel smoke run and a byte-restored production tree. Multi-sample composition, per-sample
+independent state and recovery, production-Planner cross-item collision detection, both new bounded
+categories, the byte-identical activation gate, single-sample and stored-evidence compatibility,
+zero mutation and every safety boundary were verified and accepted; the checkpoint is rejected
+because Required Test 1's most-severe verdict aggregation is not falsifiable — the complete
+859-test suite stays green when that aggregation is replaced by the first sample's outcome
+Push: NOT PERFORMED — a rejected checkpoint is not pushed; `main` stays one commit ahead of
+`origin/main` and no push authorization was requested or used
+```
+
+Implementation evidence is recorded by the implementation role in `TASK.md` at that SHA and is
+preserved unchanged. The independent review record is "Phase 22.6-H High Review Result
+(2026-08-28): FIX REQUIRED". The only allowed next Slice is Phase 22.6-H-F1.
+
 ## Phase 22.6-A High Review Result (2026-08-27)
 
 - Status: FIX REQUIRED; Rejected checkpoint SHA:
@@ -1434,6 +1456,118 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   probing, multiple RecognitionTypes or multiple destination Storages per precheck request,
   known-media duplicate detection, attachment prechecks, absolute mounted-path display and any
   execution or authority change must not start.
+
+## Phase 22.6-H High Review Result (2026-08-28): FIX REQUIRED
+
+- Reviewed checkpoint: `d8c2ae04e578955ddbbd29c413f235bf4cf08f42`
+  ("feat(config): multi-sample read-only destination precheck with collision detection"), one commit
+  ahead of `origin/main`, reviewed against `AGENTS.md`, `docs/development-workflow.md`, the root
+  Chinese requirements specification, `docs/product-experience.md`, `docs/requirements.md`,
+  `docs/architecture.md`, `docs/roadmap.md`, the Phase 22.6-H `TASK.md` and the real code state.
+  Earlier rejected SHAs of this Phase family remain preserved and untouched.
+- Scope conformance verified: the checkpoint touches exactly ten allowed files (+1338/-71) —
+  `mediaflow/application/configuration_objects.py`, `mediaflow/interfaces/service_api.py`,
+  `mediaflow/interfaces/operator_ui.py`, `mediaflow/interfaces/cli.py`,
+  `tests/test_configuration_destination_precheck.py`,
+  `tests/test_configuration_destination_activation.py`, `tests/test_operator_ui.py`,
+  `docs/architecture.md`, `docs/product-experience.md`, `docs/requirements.md` — plus `TASK.md`
+  status/report. `docs/progress.md` and `docs/roadmap.md` were correctly left to the review role. No
+  new route, HTTP status, permission, database table, migration or schema marker: Configuration
+  schema stays 10 and Runtime schema stays 22, reconfirmed by the isolated wheel smoke run. Test
+  count rose 850 → 859 with zero deletions and no weakened assertion.
+- Multi-sample composition accepted: one RecognitionType resolved once through `_resolve_destination`,
+  1–8 samples validated per index before any work, one capacity lease, one
+  `_ReadOnlyDestinationStorage` guard, one worker submission and one overall timeout for the whole
+  run; per-sample rows carry their own `destinationPath`, `projectedOutcome`, `plannerConflicts`,
+  `failureCategory` and bounded `message`, and a middle sample that fails composition neither hides
+  nor rewrites its neighbours' rows (probe P4 bit).
+- Cross-item collision detection accepted as real: each sample is planned by the production
+  `OrganizePlanner` with `claimed_destinations=claimed` and a distinct synthetic source
+  `destination-precheck-source-<index>.mkv`, so a genuine `ConflictType.TARGET_COLLISION` is
+  produced by the planner rather than by a bespoke comparison. Removing either the claimed-set
+  hand-off (probe P1) or the per-index source distinction (probe P2) breaks the named test.
+- Both new bounded failure categories behave as promised: `multiple_destination_storages` is decided
+  before any storage work from the resolved MediaLibrary identities, and `duplicate_destination` is
+  raised from the planner's collision bookkeeping; each carries a bounded operator message and a
+  concrete next action, and the activation gate refuses both. The gate
+  (`require_current_destination_precheck`) is byte-identical to its Phase 22.6-G-F1 form, and my own
+  probe that widened it to accept the two new categories broke the activation-refusal test, so the
+  refusal is genuinely proven rather than assumed.
+- Safety and secret boundaries verified independently: zero mutations across the run (guard counters
+  asserted `{0}` and a filesystem snapshot compared before/after), `authorityGranted` stays `none`,
+  evidence paths stay storage-relative, and the path-leak assertion is live — injecting the absolute
+  Storage `rootPath` into the collision evidence broke the named test. Business-layer mutation audit
+  and the FFmpeg/FFprobe audit are both empty, and the diff secret scan is clean.
+- Single-sample and stored-evidence compatibility verified: the `sample` document keeps its exact
+  meaning, the top-level keys keep describing the first requested sample, and the three additive keys
+  (`sampleCount`, `items`, `collisions`) are the only result-shape change; `sampleCount` defaults to
+  1 in the Web surface so evidence stored before this Slice still renders.
+- Falsification evidence: all seven Task-mandated probes bit, each failing only its named test, with
+  a clean tree restored after every probe (`probes that did not bite: 0`). I then ran thirteen
+  further independent probes: five bit (identical-source collision, same-Storage check removal,
+  no-collision Web line, per-sample Web table, `rootPath` leak), one was a deliberate comment-only
+  control that correctly did not fire, and seven did not bite — one of those is the blocking defect
+  below and the other six are explained in the non-blocking observations.
+- Validation independently re-run at the checkpoint: `.venv/bin/python -m unittest` → `Ran 859 tests
+  … OK (skipped=7)`; the three focused modules → 51 OK; `ruff check` and `ruff format --check` clean
+  over 308 files; `compileall` clean; `pip check` clean; both example configurations report
+  `Configuration valid` with exit 0; `pip wheel . --no-deps --no-build-isolation` builds and
+  `scripts/wheel_smoke_test.py` installs the wheel in an isolated environment and reports Runtime
+  schema 22 with `Migration required: NO`; `git diff --check` clean; Markdown link check 120 files /
+  25 local links / 0 broken; `config/alist.json` remains untracked, unstaged and ignored.
+- Documentation accuracy verified: the CURRENT claims added to `docs/architecture.md`,
+  `docs/product-experience.md` and `docs/requirements.md` match shipped behaviour, cross-item
+  destination-collision detection moved TARGET → CURRENT consistently in all three, and remote
+  SMB/OpenList/S3 prechecks, mutation-based capability probing, `ConflictType.DUPLICATE_MEDIA`
+  known-media duplicate detection, attachment prechecks, absolute mounted-path display and execution
+  all correctly remain TARGET.
+- **Blocking defect (the only one): Required Test 1 does not prove the most-severe verdict
+  aggregation.** `test_multiple_samples_success_most_severe_verdict_and_distinct_rows` asserts
+  per-sample outcomes `["manual_confirmation_required", "ready", "ready"]`, i.e. the most severe
+  sample sits at index 0. Replacing the shipped aggregation
+  `max(outcomes, key=lambda value: severity[value])` in
+  `mediaflow/application/configuration_objects.py` with `outcomes[0]` leaves the complete suite green
+  (`Ran 859 tests in 32.599s … OK (skipped=7)`), so nothing in the repository distinguishes
+  "aggregate the most severe sample" from "report the first sample". That contradicts `TASK.md`
+  line 228 ("Every test below must assert, not assume, and must fail if the behaviour it names is
+  removed"), Required Test 1's own parenthetical ("prove the aggregation with a mix, not with three
+  identical outcomes") and the Closure Checklist item "All eleven Required Tests exist and assert
+  rather than assume", which is currently ticked. The shipped runtime behaviour appears correct; the
+  evidence for it does not exist, and this Slice's whole purpose is a falsifiable multi-sample
+  verdict. Correction Slice **Phase 22.6-H-F1** is defined in `TASK.md`: add a test-only proof in
+  which the most severe sample is neither first nor last, so the named test fails under `outcomes[0]`,
+  `outcomes[-1]` and `min(outcomes, key=severity)` alike, and assert that the aggregate `verdict` can
+  differ from the top-level first-sample projection. No production file may change.
+- Non-blocking observations, none of them a closure condition for this Slice or for 22.6-H-F1:
+  within one precheck run only two distinct projected outcomes are reachable (one RecognitionType
+  yields one OrganizePolicy and one ConflictStrategy), so the finer ordering inside the five-level
+  severity map is currently unreachable and defensive; the per-sample capability-gap loop is
+  behaviourally equivalent to inspecting the first sample, because required capabilities come from
+  the shared OrganizePolicy and declared capabilities from the single shared Storage adapter; the
+  per-sample row target comes from `plan.target` while the top-level key comes from
+  `resolution.composition.target`, and probing showed they agree in every covered scenario
+  (`plan.target` is the correct key to feed `claimed_destinations`); the post-loop guard-counter
+  recheck is unproven because the guard already raises at the mutation call site, so it is defence in
+  depth rather than enforcement; the API's `samples`-not-a-list and element-not-an-object checks are
+  redundant with the service validation, and the bounded 400 with no evidence written survives their
+  removal one layer deeper; the `destination precheck sample[<index>]` validation label is asserted
+  nowhere, though the operator-visible contract is; when `sampleCount > 1` the Web surface appends
+  the "First sample destination" heading before the whole definition list, so run-level fields
+  including the aggregate verdict render under a first-sample heading, which reads worse than it
+  behaves; the persisted normalized input is the first sample that produced one, so a sample 0 that
+  fails before normalization leaves a later sample's input in the request record; `assert
+  first_details is not None` is an unreachable defensive assert of the kind already present elsewhere
+  in `mediaflow/`; and the pre-existing `ResourceWarning: unclosed database` in unrelated suites is
+  still open.
+- Verdict: **FIX REQUIRED**, with exactly one blocking item. The rejected checkpoint
+  `d8c2ae04e578955ddbbd29c413f235bf4cf08f42` is preserved and is not pushed. Phase 22.6-H is **not
+  closed** and Phase 22.6 remains open. `TASK.md` now contains only Phase 22.6-H-F1, which is
+  evidence-only: no production file may change, and the activation gate, both failure categories, the
+  schema markers, the Web heading placement, the redundant defences and every 22.6-H non-goal
+  (remote destination prechecks, mutation-based capability probing, multiple RecognitionTypes or
+  destination Storages per request, known-media duplicate detection, attachment prechecks, absolute
+  mounted-path display, execution or authority change) must not be touched. After the correction
+  commit the Phase returns to High re-review.
 
 ## Completed
 

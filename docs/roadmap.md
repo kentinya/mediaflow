@@ -21,6 +21,7 @@ Phase gate，不复制测试日志或流程正文。
 | Phase 22.6-E Managed Exact-Revision Read-Only Destination Precheck (Local) | PASS / CLOSED | `ee5225dd0e74a7382b6747c6315776413f7fd249`（经 Phase 22.6-E-F1 修正接受；被拒 checkpoint `7353b0d22497e6e3e596c93c7052eea34daf27df` 保留，不得 amend/squash/改写） | PASS — 2026-08-28 独立审核：六项可证伪对照（同步路径与 worker 内注入 Provider 构造、互换 `relativeDestination`/`destinationPath`、截断 `directoriesToCreate`、删除 Web destination-path 字段行、移除防御性 `INVALID_DESTINATION` 拒绝）全部先失败后恢复通过；另复核零 Provider/Executor/Task/queue/Job/authority 与十张 Runtime 表为空、fully-missing subtree 完整创建列表且 partial 证明未被削弱、不可达 `invalid` 投影已在生产消解、被拒 SHA 与其 FIX REQUIRED 记录保留且 `docs/progress.md` 仅追加、marker 10 与 Runtime marker 22 不变、842 项离线回归与 wheel smoke；已于 2026-08-28 在显式操作员授权下推送 `origin/main`；下一合法 Slice 为 Phase 22.6-F |
 | Phase 22.6-F Checked Activation Requires Current Local Destination Precheck Evidence | PASS / CLOSED | `e68e901a73107484dc0521b47b1b0001eed2b853` | PASS — 2026-08-28 独立审核：四项可证伪对照（删除 `activate_checked` 中的 `require_current_destination_precheck` 调用致 3 项失败、删除 Web not-applicable 行致 operator-UI 失败、强制 `applicable` 为真致 2 项报错、停用 `capability_gap` 分支致 1 项失败）全部先失败后恢复通过；另复核门禁顺序（Local check → Strategy Test → destination precheck）、缺失/过期/失败/`capability_gap` 四类有界拒绝与显式 next action、document-level 仅 Local 适用规则与可见的 not-applicable、completed 投影空间完备（`ready`/`skip`/`rename`/`overwrite_requires_confirmation`/`manual_confirmation_required` 之外的不安全目标一律 FAILED，不存在 completed-but-unsafe 漏网）、门禁路径零探测零构造且十张 Runtime 表在拒绝与成功两条路径均为空、Web/API 同权限 `ACTIVATE_CONFIGURATION` 与同一 409 `configuration_conflict`、无新增 evidence key 与请求/响应字段、marker 10 与 Runtime marker 22 不变、22.6-D 与 22.6-E 套件逐字节未改、846 项离线回归与 wheel smoke；已于 2026-08-28 在显式操作员授权下推送 `origin/main`；下一合法 Slice 为 Phase 22.6-G |
 | Phase 22.6-G Web Checked-Activation Controls Cover All Three Requirements | PASS / CLOSED | `5ca1247156e6de4615dff53f5fc8e421bd8bf264`（经 Phase 22.6-G-F1 修正接受；被拒 checkpoint `b9cc35e2677a35920042b5695f87b50a80025ef0` 保留，不得 amend/squash/改写） | PASS — 2026-08-28 独立审核：十一项可证伪探针全部被捕获，且每次只有 `test_destination_precheck_blocking_sentence_contract_is_body_scoped` 失败（分别删除 `:705`/`:708`/`:716` 三处 blocked 文案之一、把 `:712` failed 模板截断为父提交曾断言的前缀、从 `:719` 返回对象删掉 `message`、把 `:727` 渲染载荷换成固定字面量、删除 `:713` 与 `:717` 的 `style = 'error';`、从返回对象删掉 `style`、去掉三条简单句的句末句号、互换 missing 与 stale 两条 `nextAction`），其中后五项超出修正 TASK 要求，证明两种 error 样式、句末标点与分支归属亦已受约束；另复核生产文件与被拒 checkpoint 逐字节一致（`git diff --exit-code b9cc35e 5ca1247 -- mediaflow scripts config pyproject.toml` 为空）、`tests/` 零删除、无文档改动、Completion Report 已补齐、三份冻结套件逐字节未改、marker 10 与 Runtime marker 22 不变、850 项离线回归（849 → 850 纯增量）、operator-UI 模块 21 项、ruff/format/compileall/`pip check`/两份示例配置校验/Markdown 链接检查/机密扫描与 wheel 隔离 smoke 全绿；已于 2026-08-28 在显式操作员授权下推送 `origin/main`；下一合法 Slice 为 Phase 22.6-H |
+| Phase 22.6-H Bounded Multi-Sample Local Destination Precheck + Cross-Item Collision Detection | FIX REQUIRED | 被拒 checkpoint `d8c2ae04e578955ddbbd29c413f235bf4cf08f42`（保留，不得 amend/squash/改写） | FIX REQUIRED — 2026-08-28 独立审核：TASK 要求的七项可证伪探针全部被捕获且每次只有其命名测试失败，另加十三项独立探针（五项被捕获、一项 comment-only control 正确不触发、七项未被捕获）；多样本 composition、逐样本独立状态与恢复、经生产 `OrganizePlanner` + `claimed_destinations` 真实产生的 `TARGET_COLLISION`、`duplicate_destination` 与 `multiple_destination_storages` 两类有界失败、逐字节未变的 activation gate、单样本与既存 evidence 兼容、零变更与零授权、有界无机密证据（绝对 `rootPath` 注入即被测试捕获）、marker 10 与 Runtime marker 22 不变、`tests/` 零删除（850 → 859）、三份文档 CURRENT 声明与实现一致均已复核通过；被拒原因唯一：Required Test 1 的 most-severe verdict 聚合不可证伪——把 `max(outcomes, key=severity)` 换成 `outcomes[0]` 后 859 项离线套件仍全绿，因为该测试的样本序把最严重结果放在 index 0，违反 `TASK.md` 第 228 行「must fail if the behaviour it names is removed」；未推送；仅允许 Phase 22.6-H-F1（纯证据修正，不得改动任何生产文件） |
 
 ## 当前节点
 
@@ -224,6 +225,34 @@ Phase 22.6-A 至 22.6-G 的全部已关闭 checkpoint、被保留的被拒 check
 无凭据、私有端点、header、cookie 或绝对用户路径。本推送记录提交本身在同一授权下随后推送，因此
 `origin/main` 与本地 `main` 保持一致。Slice 级关闭仍不要求推送；Phase 22.6 的收口关闭仍需
 phase-level Final Closure Audit，Phase 22.6-H 的 checkpoint 在获得新授权前仍只保留在本地。
+
+Phase 22.6-H checkpoint `d8c2ae04e578955ddbbd29c413f235bf4cf08f42` 已于 2026-08-28 经独立 High 审核判定
+**FIX REQUIRED**，被拒 checkpoint 保留且未推送，`main` 仍只领先 `origin/main` 一个 commit；Phase 22.6-H
+未关闭，Phase 22.6 仍未关闭。本次审核接受的部分包括：恰好十个允许文件（+1338/-71）且
+`docs/progress.md`、`docs/roadmap.md` 正确留给评审角色；单一 RecognitionType 一次解析、1–8 样本逐索引前
+置校验、一次容量租约、一个 `_ReadOnlyDestinationStorage` 守卫、一次 worker 提交与一个整体超时；逐样本独
+立的 `destinationPath`/`projectedOutcome`/`plannerConflicts`/`failureCategory` 与有界 message，中间样本失
+败不掩盖也不改写邻居行；跨项碰撞由生产 `OrganizePlanner` 在 `claimed_destinations` 与逐索引不同的合成源下
+真实产生 `TARGET_COLLISION`；`duplicate_destination` 与 `multiple_destination_storages` 两类有界失败各带
+明确 next action 且被激活门禁拒绝（门禁逐字节未改，放宽门禁的探针会使拒绝测试失败）；零变更、
+`authorityGranted` 恒为 `none`、证据路径仅相对且注入绝对 `rootPath` 立即被测试捕获；单样本文档语义与既存
+evidence 渲染兼容（`sampleCount` 默认 1，仅新增三个 key）；859 项离线回归 `OK (skipped=7)`、`tests/` 零删
+除（850 → 859）、marker 10 与 Runtime marker 22 不变、wheel 隔离 smoke、ruff/format/compileall/
+`pip check`/两份示例配置校验/Markdown 链接检查/机密扫描/FFmpeg 审计/业务层写操作审计全绿；三份文档的
+CURRENT 声明与实现一致，远端预检、写入式能力探测、`ConflictType.DUPLICATE_MEDIA`、附件预检、绝对挂载路
+径展示与执行仍为 TARGET。唯一阻塞项：Required Test 1 的 most-severe verdict 聚合不可证伪——
+`test_multiple_samples_success_most_severe_verdict_and_distinct_rows` 的样本序为
+`["manual_confirmation_required", "ready", "ready"]`，最严重结果位于 index 0，因此把生产聚合
+`max(outcomes, key=severity)` 换成 `outcomes[0]` 后 859 项套件仍 `OK`，仓库中没有任何断言能区分「取最严重
+样本」与「取第一个样本」，违反 `TASK.md` 第 228 行、Required Test 1 自身的括注与已勾选的 Closure Checklist
+声明。生产运行时行为看来正确，缺的是证据。修正 Slice **Phase 22.6-H-F1** 已写入 `TASK.md`：纯证据修正，
+不得改动任何生产文件，需新增一项最严重样本既不在首位也不在末位的多样本测试，使其在 `outcomes[0]`、
+`outcomes[-1]` 与 `min(outcomes, key=severity)` 三种替换下均失败，并断言聚合 `verdict` 可与顶层首样本投影
+不同。评审同时记录了若干非阻塞观察（单次运行仅两种投影可达故严重度表的细分序当前不可达、逐样本
+capability-gap 循环与只看首样本等价、`plan.target` 与 `composition.target` 在所有覆盖场景一致、守卫计数复
+查属纵深防御、API 两处形状校验与服务层重复、验证标签未被断言、`sampleCount > 1` 时 run 级字段渲染在
+「First sample destination」标题之下、归一化输入取首个成功归一化的样本），这些不是 22.6-H-F1 的关闭条件，
+也不得在该 Slice 中改动。
 
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
