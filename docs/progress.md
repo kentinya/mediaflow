@@ -103,7 +103,9 @@ High Audit: PASS — 2026-08-28; the Phase 22.6-A-F1 correction checkpoint was i
 re-reviewed, including five deliberate operator-UI falsifications, two service-boundary
 falsifications, the byte-identical production tree, and the complete offline suite
 Rejected checkpoint: 90ce13a6c6c39912dd389f71a1189314ff24eb5d (FIX REQUIRED — 2026-08-27, preserved)
-Push: NOT REQUIRED BEFORE PHASE 22.6 CLOSURE; local main, not yet pushed
+Push: DONE — 2026-08-28 under explicit operator authorization;
+30af69ac82b30f8a45ad66afbd3c9747597c8fe7 and the preserved rejected checkpoint
+90ce13a6c6c39912dd389f71a1189314ff24eb5d are contained in origin/main (be38631)
 ```
 
 Implementation evidence:

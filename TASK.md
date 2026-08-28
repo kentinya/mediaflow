@@ -10,9 +10,9 @@ Preceding closed checkpoint: 30af69ac82b30f8a45ad66afbd3c9747597c8fe7
   (Phase 22.6-A PASS / CLOSED — 2026-08-28, includes the 22.6-A-F1 correction)
 Preserved rejected checkpoint: 90ce13a6c6c39912dd389f71a1189314ff24eb5d
   (Phase 22.6-A FIX REQUIRED — 2026-08-27; never amended, squashed or rewritten)
-Push gate: NOT BLOCKING — dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62 (Phase 22.5) is contained in
-  origin/main. 90ce13a, 81baec4 and 30af69a are accepted local Slice checkpoints inside the open
-  Phase 22.6 review loop; the Phase 22.6 closure push requires explicit operator authorization.
+Push gate: SATISFIED — 90ce13a, 81baec4, 30af69a and the closure record be38631 were pushed to
+  origin/main on 2026-08-28 under explicit operator authorization; no accepted checkpoint is
+  unpushed. This Slice's own checkpoint push follows the same rule at its closure.
 Phase: 22.6 Naming / Classification / Organize configuration journey (roadmap section 5)
 Slice scope: managed ClassificationPolicy editing + exact-revision offline classification preview
 ```
