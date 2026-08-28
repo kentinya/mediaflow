@@ -3,7 +3,7 @@
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: NOT STARTED
+Status: READY FOR HIGH REVIEW
 Commit SHA: PENDING
 High Audit: PENDING
 Checkpoint under correction: b9cc35e2677a35920042b5695f87b50a80025ef0
@@ -99,18 +99,18 @@ impossible.
 
 ## UX Acceptance Criteria
 
-- [ ] Nothing an operator sees changes: no sentence is reworded, restyled, moved, added or removed.
-- [ ] Each of the four composed blocking sentences is proven by a body-scoped assertion that fails
+- [x] Nothing an operator sees changes: no sentence is reworded, restyled, moved, added or removed.
+- [x] Each of the four composed blocking sentences is proven by a body-scoped assertion that fails
       when that single assignment is deleted — not merely when all of them are.
-- [ ] The failed case's complete composed template, including its bounded failure category, its
+- [x] The failed case's complete composed template, including its bounded failure category, its
       `; ${nextAction}.` tail and its fallback next action, is asserted in full rather than by
       prefix.
-- [ ] Both `style = 'error'` assignments are proven, so a blocked failure or capability gap cannot
+- [x] Both `style = 'error'` assignments are proven, so a blocked failure or capability gap cannot
       silently degrade to a warning style.
-- [ ] The predicate's return object is proven to carry `message` and `style`, so a value that is
+- [x] The predicate's return object is proven to carry `message` and `style`, so a value that is
       assigned but never delivered fails a test.
-- [ ] The blocked branch's render payload is proven, so substituting a fixed literal fails a test.
-- [ ] No assertion is weakened, deleted or made less specific anywhere in `tests/`.
+- [x] The blocked branch's render payload is proven, so substituting a fixed literal fails a test.
+- [x] No assertion is weakened, deleted or made less specific anywhere in `tests/`.
 
 ## Technical Scope
 
@@ -221,30 +221,164 @@ impossible.
 
 ## Closure Checklist
 
-- [ ] All four composed blocking sentences, both `style = 'error'` assignments, the `message` and
+- [x] All four composed blocking sentences, both `style = 'error'` assignments, the `message` and
       `style` return-contract entries and the blocked branch's render payload are each proven by a
       named, body-scoped assertion.
-- [ ] All six falsification probes were run, each failed a named test, each was followed by a
+- [x] All six falsification probes were run, each failed a named test, each was followed by a
       byte-identical restore and a clean `git status --short`, and the Completion Report names the
       failing test for every one.
-- [ ] No production file changed; `mediaflow/`, `scripts/`, `config/` and `pyproject.toml` are
+- [x] No production file changed; `mediaflow/`, `scripts/`, `config/` and `pyproject.toml` are
       byte-identical to `b9cc35e2677a35920042b5695f87b50a80025ef0`.
-- [ ] No existing assertion was deleted, weakened or made less specific, and no test count decreased.
-- [ ] Both frozen suites and the Phase 22.6-F activation suite stay byte-identical to their pinned
+- [x] No existing assertion was deleted, weakened or made less specific, and no test count decreased.
+- [x] Both frozen suites and the Phase 22.6-F activation suite stay byte-identical to their pinned
       SHAs; markers stay 10 and 22.
-- [ ] The complete offline suite, lint, format, compileall, `pip check`, both example validations and
+- [x] The complete offline suite, lint, format, compileall, `pip check`, both example validations and
       the wheel smoke run pass.
-- [ ] Private runtime configuration remains ignored and untracked; no secret is staged or committed.
-- [ ] One coherent, buildable, reviewable commit is created on top of
+- [x] Private runtime configuration remains ignored and untracked; no secret is staged or committed.
+- [x] One coherent, buildable, reviewable commit is created on top of
       `b9cc35e2677a35920042b5695f87b50a80025ef0`, which is never amended, squashed or rewritten.
-- [ ] The Completion Report is written into this file, and the Slice is reported as
+- [x] The Completion Report is written into this file, and the Slice is reported as
       READY FOR HIGH REVIEW without declaring Phase closure.
 
 ## Completion Report
 
-To be written by the implementation role. Record, at minimum: changed files with insertion and
-deletion counts; the assertions added and which shipped line each one guards; every command executed
-with its actual result and counts; each of the six falsification probes with the exact test it
-failed and the confirmation that the tree was restored byte-identically; the byte-identity proof
-that no production file changed; design decisions; work intentionally deferred; and risks,
-assumptions or newly discovered issues.
+### Changed Files
+
+- `tests/test_operator_ui.py` — +58/-0. Added one focused test,
+  `test_destination_precheck_blocking_sentence_contract_is_body_scoped`
+  (`tests/test_operator_ui.py:474` onward). No existing assertion was modified, deleted or
+  weakened.
+- `TASK.md` — status header, acceptance/closure checklist and this Completion Report.
+- Nothing else. `mediaflow/`, `scripts/`, `config/` and `pyproject.toml` are byte-identical to
+  `b9cc35e2677a35920042b5695f87b50a80025ef0`.
+
+### Assertions Added and Shipped Lines They Guard
+
+All assertions reuse the existing `_js_function_body` / `_js_braced_body` helpers and are
+branch-scoped inside `destinationPrecheckActivationRequirement` or body-scoped inside
+`renderDestinationPrecheck`:
+
+1. Missing-evidence branch: `nextAction = 'run the read-only destination precheck on this
+   revision, then activate checked';` together with
+   ``message = `Checked activation blocked: ${nextAction}.`;``
+   (`mediaflow/interfaces/operator_ui.py:704-705`; assertion at `tests/test_operator_ui.py:485`).
+2. Stale branch: `nextAction = 'reload this revision and rerun the destination precheck on its
+   current version and digest';` together with the same composed message
+   (`operator_ui.py:707-708`; assertion at `tests/test_operator_ui.py:494`).
+3. Failed branch: the complete composed template
+   ``message = `Checked activation blocked: destination precheck failed (${boundedSetupText(evidence.failureCategory)}); ${nextAction}.`;``,
+   the two-line fallback
+   `nextAction = boundedSetupText(evidence.nextAction, 'correct the destination configuration, then rerun the precheck');`
+   exactly as shipped, and `style = 'error';`
+   (`operator_ui.py:711-714`; assertions at `tests/test_operator_ui.py:504-511`).
+4. Capability-gap branch: `nextAction = 'change the configured operation or destination Storage,
+   then rerun the precheck';`, the composed message, and `style = 'error';`
+   (`operator_ui.py:716-718`; assertions at `tests/test_operator_ui.py:517-519`).
+5. Return contract: the exact return literal
+   `return {applicable, evidence, current, completed, capabilityGap, satisfied, nextAction, message, style};`
+   (`operator_ui.py:719`; assertion at `tests/test_operator_ui.py:521`).
+6. Render payload:
+   `else if (!activation.satisfied) detailContent.append(text('p', activation.message, activation.style));`
+   (`operator_ui.py:727`; assertion at `tests/test_operator_ui.py:526`).
+
+Branch scoping is the point: the three simple blocking sentences are byte-identical, so only
+extracting each `if` branch separately proves that deleting one assignment fails a named test
+rather than requiring all three to be deleted together.
+
+### Tests and Test Results
+
+Commands actually run, with results:
+
+- Environment preflight: worktree, `.git` directory and index all writable (Git-writable / Full
+  Access); HEAD `ed17ebbc19b2a35813fb26f448080992ffe63ba2`; initial `git status --short` empty.
+- Focused run (both existing Phase 22.6-G tests plus the new test): `Ran 3 tests ... OK`.
+- Full operator-UI class: `Ran 21 tests ... OK` (20 before this Slice).
+- Phase 22.3-22.6 configuration, continuation, RecognitionType C, organizer and conflict group
+  (15 modules): `Ran 229 tests ... OK`.
+- Complete offline suite: `Ran 850 tests ... OK (skipped=7)` — 849 before, +1 new test, no test
+  removed.
+- `ruff check .`: `All checks passed!`; `ruff format --check .`: `308 files already formatted`.
+- `compileall -q mediaflow tests`: passed; `pip check`: `No broken requirements found`.
+- Both example validations through `.venv/bin/python -m mediaflow.cli`: `Configuration valid`
+  for `config/mediaflow.phase13.2.example.json` and `config/strategy.example.json`.
+- Wheel: `python -m pip wheel . --no-deps --no-build-isolation -w dist` succeeded; isolated
+  `scripts/wheel_smoke_test.py dist/mediaflow-0.1.0-py3-none-any.whl` exited 0 and reported
+  Supported/Runtime/Backup schema 22. Configuration marker 10 is asserted by the byte-unchanged
+  `tests/test_configuration_destination_activation.py:462`
+  (`CONFIGURATION_SCHEMA_VERSION == 10`).
+- `git diff --check`: clean.
+- Markdown local-link check over the 120 tracked `.md` files: 25 local links, 0 broken.
+- FFmpeg/FFprobe audit: zero hits under `mediaflow/` and `pyproject.toml`.
+- Business-layer filesystem-mutation audit: only Storage-mediated `resolver.rename(...)` calls in
+  `mediaflow/application` and `mediaflow/domain`; no direct filesystem mutation.
+- Private configuration: `git check-ignore config/alist.json` matches; `git ls-files -- config/alist.json`
+  and `git diff --cached -- config/alist.json` are both empty.
+- Frozen suites: `tests/test_configuration_destination.py` is byte-identical to
+  `c7ec192b3b20f236cca5a70ed59cad43e0851242`; `tests/test_configuration_destination_precheck.py`
+  to `ee5225dd0e74a7382b6747c6315776413f7fd249`;
+  `tests/test_configuration_destination_activation.py` to
+  `b9cc35e2677a35920042b5695f87b50a80025ef0`.
+
+### Six Falsification Probes
+
+Each probe temporarily edited exactly one shipped line in
+`mediaflow/interfaces/operator_ui.py`, ran the same three focused tests, confirmed the new test
+failed while the two existing Phase 22.6-G tests stayed green, then restored the line and verified
+`git diff --exit-code -- mediaflow/interfaces/operator_ui.py` (empty) and `git status --short`
+(only `tests/test_operator_ui.py`, because `TASK.md` had not yet been edited during the probe
+phase).
+
+| Probe | Temporary change | Failing test and assertion |
+| --- | --- | --- |
+| (a) missing-evidence sentence | delete only the missing branch's ``message = `Checked activation blocked: ${nextAction}.`;`` | `test_destination_precheck_blocking_sentence_contract_is_body_scoped`, `tests/test_operator_ui.py:485` |
+| (b) stale sentence | delete only the stale branch's message assignment | same test, `tests/test_operator_ui.py:494` |
+| (c) capability-gap sentence | delete only the capability-gap branch's message assignment | same test, `tests/test_operator_ui.py:517` |
+| (d) failed template truncation | truncate to ``message = `Checked activation blocked: destination precheck failed (`;`` | same test, `tests/test_operator_ui.py:504` (full-template assertion) |
+| (e) return contract | drop `message` from the return object literal | same test, `tests/test_operator_ui.py:521` (return-contract assertion) |
+| (f) render payload | replace the blocked branch with `text('p', 'Checked activation blocked.', 'warning')` | same test, `tests/test_operator_ui.py:526` (render-payload assertion) |
+
+### Byte-identity Proof
+
+- `git diff --exit-code b9cc35e2677a35920042b5695f87b50a80025ef0 -- mediaflow scripts config pyproject.toml`
+  exits 0 with no output, and the same `--stat` is empty.
+- After every probe restore the `operator_ui.py` diff was empty.
+- One wording note: the Task's Required Test 8 literal command
+  `git diff b9cc35e <this checkpoint> --stat` cannot list only `tests/test_operator_ui.py` and
+  `TASK.md`, because High's task-definition commit `ed17ebb`
+  (`docs(review): record Phase 22.6-G FIX REQUIRED and define 22.6-G-F1`) already sits between
+  `b9cc35e` and this checkpoint and changed `TASK.md`, `docs/progress.md` and `docs/roadmap.md`.
+  The correction commit itself changes only `tests/test_operator_ui.py` and `TASK.md` relative to
+  its parent, and all production directories are byte-identical to `b9cc35e`, which satisfies the
+  requirement's intent.
+
+### Decisions
+
+- A new focused test was added instead of editing the two existing Phase 22.6-G tests, so no
+  existing assertion was touched and the review diff is purely additive.
+- Each of the three identical blocking messages is asserted inside its own extracted branch body,
+  which is what makes deleting a single assignment fail independently.
+- The failed branch's fallback `nextAction` is asserted in its exact shipped two-line form because
+  `boundedSetupText(evidence.nextAction,` wraps onto the next line.
+- No production line, documentation file, script, configuration or dependency was changed; no
+  JavaScript runtime or new test file was added.
+
+### Remaining Work
+
+- Nothing remains inside this Slice. Phase 22.6 stays open; the next legal boundary is High's to
+  authorize after review. Remote SMB/OpenList/S3 prechecks, mutation-based capability probing,
+  duplicate and cross-item collision detection, attachment prechecks, absolute mounted-path
+  display and any execution change remain TARGET and were not started.
+- No push was performed; the push gate stays `NOT BLOCKING` and Phase 22.6 closure push requires
+  explicit authorization.
+
+### Risks, Assumptions and Newly Discovered Issues
+
+- Required Test 8's literal diff cannot be reproduced exactly for the reason documented above;
+  the production byte-identity and the correction commit's two-file manifest are the equivalent
+  proof.
+- The complete suite still emits the pre-existing `ResourceWarning: unclosed database` already
+  recorded as a deferred non-blocking observation from earlier Phases; this Slice adds nothing.
+- During the probe phase `git status --short` showed only `tests/test_operator_ui.py`; the final
+  pre-commit status shows `tests/test_operator_ui.py` and `TASK.md`.
+- Per the workflow, this commit does not contain its own SHA; the full 40-character SHA is
+  reported in the review handoff and will be recorded by High in `docs/progress.md` after review.
