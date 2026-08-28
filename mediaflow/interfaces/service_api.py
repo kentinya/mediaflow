@@ -534,6 +534,50 @@ class MediaFlowApi:
             len(parts) == 6
             and parts[:3] == ["api", "v1", "configuration"]
             and parts[3] == "revisions"
+            and parts[5] == "destination-precheck"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            if set(document) != {
+                "expectedVersion",
+                "expectedDigest",
+                "recognitionType",
+                "sample",
+            }:
+                raise ValueError(
+                    "destination precheck requires expectedVersion, expectedDigest, "
+                    "recognitionType, and sample"
+                )
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            if not isinstance(document["expectedDigest"], str):
+                raise ValueError("configuration expectedDigest is required")
+            if not isinstance(document["recognitionType"], str):
+                raise ValueError("destination precheck RecognitionType is required")
+            if not isinstance(document["sample"], dict):
+                raise ValueError("destination precheck sample must be an object")
+            evidence = self._configuration_objects.destination_precheck(
+                parts[4],
+                expected_version=expected,
+                expected_digest=document["expectedDigest"],
+                actor=principal.principal_id,
+                recognition_type=document["recognitionType"],
+                sample=document["sample"],
+            )
+            return self._response(start_response, 200, evidence.document())
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
             and parts[5] == "classification-preview"
             and method == "POST"
         ):

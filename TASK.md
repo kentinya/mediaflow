@@ -3,7 +3,7 @@
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: TASK DEFINED / NOT STARTED
+Status: READY FOR COMMIT (pre-checkpoint)
 Commit SHA: PENDING
 High Audit: PENDING
 Preceding closed checkpoint: c7ec192b3b20f236cca5a70ed59cad43e0851242
@@ -482,25 +482,25 @@ rewrite historical Phase evidence, including the preserved Phase 22.5-E and Phas
 
 ## Closure Checklist
 
-- [ ] Workspace preflight records worktree, `.git`, index, sandbox, and approval mode.
-- [ ] Capability mode is classified as Git-writable / Full Access or Git-read-only /
+- [x] Workspace preflight records worktree, `.git`, index, sandbox, and approval mode.
+- [x] Capability mode is classified as Git-writable / Full Access or Git-read-only /
       workspace-write.
-- [ ] The preceding dependent Slice is `PASS / CLOSED` with its commit SHA recorded
+- [x] The preceding dependent Slice is `PASS / CLOSED` with its commit SHA recorded
       (`c7ec192b3b20f236cca5a70ed59cad43e0851242`, Phase 22.6-D).
-- [ ] The preserved rejected checkpoints `90ce13a6c6c39912dd389f71a1189314ff24eb5d` and
+- [x] The preserved rejected checkpoints `90ce13a6c6c39912dd389f71a1189314ff24eb5d` and
       `08dfd4f921728755209b6d52347d28f221121c47` are not amended, squashed, or rewritten.
-- [ ] Implementation and all required focused/full quality gates pass with actual evidence,
+- [x] Implementation and all required focused/full quality gates pass with actual evidence,
       including the Web mount-removal falsifications, the three read-only proofs, the conflict
       projection parity cases, and the unmodified existing suites.
-- [ ] `git status` and the commit manifest contain every required file and no unrelated/private
+- [x] `git status` and the commit manifest contain every required file and no unrelated/private
       file.
-- [ ] Private runtime configuration remains ignored/untracked; no secret is staged or committed.
+- [x] Private runtime configuration remains ignored/untracked; no secret is staged or committed.
 - [ ] A coherent, buildable commit has been created: `Commit SHA: ________________________________`.
 - [ ] High Review inspected that exact SHA and returned: `High Audit: ___________________________`.
 - [ ] `docs/progress.md` records Status / Commit SHA / High Audit.
-- [ ] `docs/roadmap.md` records the resulting Phase gate.
-- [ ] The next Slice has not started before every preceding gate is complete.
-- [ ] Required major-closure/integration push is recorded, or push is explicitly not required.
+- [x] `docs/roadmap.md` records the resulting Phase gate.
+- [x] The next Slice has not started before every preceding gate is complete.
+- [x] Required major-closure/integration push is recorded, or push is explicitly not required.
 
 ## Completion Report
 

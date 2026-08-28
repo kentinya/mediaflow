@@ -13,6 +13,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
     ConfigurationChangeAudit,
     ConfigurationClassificationPreviewStatus,
+    ConfigurationDestinationPrecheckStatus,
     ConfigurationDestinationPreviewStatus,
     ConfigurationNamingPreviewStatus,
     ConfigurationObjectKind,
@@ -23,6 +24,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationSetupCheckStatus,
     ConfigurationStrategyTestStatus,
     ConfigurationVersionConflict,
+    DestinationPrecheckEvidence,
     DestinationPreviewEvidence,
     LocalSetupCheckEvidence,
     ManagedConfigurationRevision,
@@ -37,7 +39,7 @@ from mediaflow.domain.configuration_management import (
     validate_storage_configuration,
 )
 
-CONFIGURATION_SCHEMA_VERSION = 9
+CONFIGURATION_SCHEMA_VERSION = 10
 
 
 class SQLiteConfigurationRepository:
@@ -1195,6 +1197,72 @@ class SQLiteConfigurationRepository:
             row["next_action"],
         )
 
+    def save_destination_precheck(
+        self, evidence: DestinationPrecheckEvidence
+    ) -> DestinationPrecheckEvidence:
+        if not isinstance(evidence, DestinationPrecheckEvidence):
+            raise ValueError("destination precheck evidence is required")
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO managed_destination_prechecks
+                (revision_id, revision_version, revision_digest, status, prechecked_at, actor,
+                 recognition_type, input_json, result_json, failure_category, message, next_action)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(revision_id) DO UPDATE SET
+                    revision_version=excluded.revision_version,
+                    revision_digest=excluded.revision_digest,
+                    status=excluded.status,
+                    prechecked_at=excluded.prechecked_at,
+                    actor=excluded.actor,
+                    recognition_type=excluded.recognition_type,
+                    input_json=excluded.input_json,
+                    result_json=excluded.result_json,
+                    failure_category=excluded.failure_category,
+                    message=excluded.message,
+                    next_action=excluded.next_action
+                """,
+                (
+                    evidence.revision_id,
+                    evidence.revision_version,
+                    evidence.revision_digest,
+                    evidence.status.value,
+                    evidence.prechecked_at.isoformat(),
+                    evidence.actor,
+                    evidence.recognition_type,
+                    self._json(evidence.input),
+                    self._json(evidence.result) if evidence.result is not None else None,
+                    evidence.failure_category,
+                    evidence.message,
+                    evidence.next_action,
+                ),
+            )
+        return evidence
+
+    def get_destination_precheck(self, revision_id: str) -> DestinationPrecheckEvidence | None:
+        self._object_id(revision_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM managed_destination_prechecks WHERE revision_id=?",
+                (revision_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return DestinationPrecheckEvidence(
+            row["revision_id"],
+            int(row["revision_version"]),
+            row["revision_digest"],
+            ConfigurationDestinationPrecheckStatus(row["status"]),
+            datetime.fromisoformat(row["prechecked_at"]),
+            row["actor"],
+            row["recognition_type"],
+            json.loads(row["input_json"]),
+            json.loads(row["result_json"]) if row["result_json"] is not None else None,
+            row["failure_category"],
+            row["message"],
+            row["next_action"],
+        )
+
     def _get_row(self, storage_id: str) -> sqlite3.Row | None:
         self._object_id(storage_id)
         with self._lock:
@@ -1522,6 +1590,23 @@ class SQLiteConfigurationRepository:
                 );
                 CREATE INDEX IF NOT EXISTS managed_destination_previews_status
                     ON managed_destination_previews(status, previewed_at);
+                CREATE TABLE IF NOT EXISTS managed_destination_prechecks (
+                    revision_id TEXT PRIMARY KEY,
+                    revision_version INTEGER NOT NULL,
+                    revision_digest TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    prechecked_at TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    recognition_type TEXT NOT NULL,
+                    input_json TEXT NOT NULL,
+                    result_json TEXT,
+                    failure_category TEXT,
+                    message TEXT,
+                    next_action TEXT,
+                    FOREIGN KEY(revision_id) REFERENCES managed_configuration_revisions(revision_id)
+                );
+                CREATE INDEX IF NOT EXISTS managed_destination_prechecks_status
+                    ON managed_destination_prechecks(status, prechecked_at);
                 """
             )
             self._connection.execute(

@@ -678,6 +678,82 @@ APP_JS = b"""(() => {
     }));
     detailContent.append(controls);
   }
+  function destinationPrecheckIsCurrent(revision, evidence) {
+    return Boolean(evidence && evidence.stale === false &&
+      evidence.revisionId === revision.revisionId &&
+      evidence.revisionVersion === revision.version && evidence.revisionDigest === revision.digest);
+  }
+  function renderDestinationPrecheck(revision, guided) {
+    const evidence = guided.destinationPrecheck;
+    detailContent.append(text('h3', 'Read-only Local destination precheck'));
+    if (!evidence) detailContent.append(text('p',
+      'Status: not run. This observes one Local destination without changing it.', 'warning'));
+    else {
+      const current = destinationPrecheckIsCurrent(revision, evidence);
+      const result = evidence.result && typeof evidence.result === 'object' ? evidence.result : {};
+      const conflict = result.conflictProjection && typeof result.conflictProjection === 'object' ?
+        result.conflictProjection : {};
+      const list = document.createElement('dl');
+      field(list, 'Evidence state', current ? 'current' : 'stale');
+      field(list, 'Status', boundedSetupText(evidence.status));
+      field(list, 'Verdict', boundedSetupText(result.verdict || evidence.failureCategory));
+      field(list, 'Destination Storage', `${boundedSetupText(result.destinationStorageId)} (${boundedSetupText(result.destinationStorageType)})`);
+      field(list, 'Storage support', boundedSetupText(result.storageSupport));
+      field(list, 'MediaLibrary and Storage-relative root', `${boundedSetupText(result.mediaLibraryId)}: ${boundedSetupText(result.mediaLibraryRootPath)}`);
+      field(list, 'Destination root exists / directory', `${result.destinationRootExists === true ? 'YES' : 'NO'} / ${result.destinationRootIsDirectory === true ? 'YES' : 'NO'}`);
+      field(list, 'Deepest existing ancestor', boundedSetupText(result.deepestExistingAncestor));
+      field(list, 'Directories that would be created', Array.isArray(result.directoriesToCreate) ? result.directoriesToCreate.join(', ') : '-');
+      field(list, 'Destination path', boundedSetupText(result.destinationPath));
+      field(list, 'Target exists', result.targetExists === true ? 'YES' : 'NO');
+      field(list, 'Configured conflict strategy', boundedSetupText(conflict.configuredStrategy));
+      field(list, 'Projected conflict outcome', boundedSetupText(conflict.projectedOutcome));
+      field(list, 'Proposed relative destination', boundedSetupText(conflict.proposedRelativeDestination));
+      field(list, 'Required capabilities', Array.isArray(result.requiredStorageCapabilities) ? result.requiredStorageCapabilities.join(', ') : '-');
+      field(list, 'Declared destination capabilities', Array.isArray(result.destinationStorageCapabilities) ? result.destinationStorageCapabilities.join(', ') : '-');
+      field(list, 'Missing capabilities', Array.isArray(result.missingStorageCapabilities) ? result.missingStorageCapabilities.join(', ') : '-');
+      field(list, 'Fallback', boundedSetupText(result.fallback));
+      field(list, 'Read operations', Array.isArray(result.probeOperations) ? result.probeOperations.join(', ') : '-');
+      field(list, 'Authority granted', boundedSetupText(result.authorityGranted));
+      field(list, 'Path scope', boundedSetupText(evidence.pathScope));
+      field(list, 'Side effects', boundedSetupText(evidence.sideEffects));
+      field(list, 'Retry safe', evidence.retrySafe === true ? 'YES' : 'NO');
+      field(list, 'Message', boundedSetupText(evidence.message));
+      field(list, 'Next action', boundedSetupText(evidence.nextAction));
+      detailContent.append(list);
+      if (!current) detailContent.append(text('p',
+        'This destination precheck is stale. Reload and rerun it.', 'warning'));
+      if (evidence.status !== 'completed' || result.verdict === 'capability_gap' ||
+          !result.destinationRootExists || !result.destinationPath)
+        detailContent.append(text('p',
+          'Destination is not ready. Follow the recovery action; no authority was granted.', 'error'));
+      detailContent.append(text('p',
+        'This precheck grants no overwrite, delete or execute authority. Unsupported capabilities fail with no fallback to Copy or Move.',
+        'warning'));
+    }
+    if (!configurationRevisionEditable(revision)) return;
+    const controls = text('div', '', 'choices');
+    const recognitionType = document.createElement('input');
+    recognitionType.setAttribute('aria-label', 'Destination precheck RecognitionType');
+    recognitionType.value = 'C';
+    const sample = document.createElement('textarea');
+    sample.setAttribute('aria-label', 'Destination precheck sample JSON');
+    sample.value = JSON.stringify({title: 'The Matrix', mediaType: 'movie', year: 1999,
+      genres: ['Action'], extension: 'mkv'}, null, 2);
+    controls.append(recognitionType, sample, actionButton('Run read-only destination precheck', async () => {
+      try {
+        const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/destination-precheck`,
+          {method: 'POST', body: JSON.stringify({expectedVersion: revision.version,
+            expectedDigest: revision.digest, recognitionType: recognitionType.value,
+            sample: JSON.parse(sample.value)})});
+        message(result.status === 'completed' ?
+          'Destination precheck completed. Review the read-only verdict.' :
+          `${result.message || 'Destination precheck failed.'} ${result.nextAction || ''}`,
+          result.status !== 'completed');
+        await showConfigurationRevision(revision);
+      } catch (error) { message(errorText(error), true); }
+    }));
+    detailContent.append(controls);
+  }
   function setupEvidenceIsCurrent(revision, evidence) {
     return Boolean(evidence && evidence.stale === false &&
       evidence.revisionId === revision.revisionId &&
@@ -1102,6 +1178,7 @@ APP_JS = b"""(() => {
         renderClassificationPreview(data, guided);
         renderOrganizeAuthority(data, guided);
         renderDestinationPreview(data, guided);
+        renderDestinationPrecheck(data, guided);
       }
       const actions = text('div', '', 'choices');
       if (data.status === 'draft') actions.append(actionButton('Validate Draft', async () => {

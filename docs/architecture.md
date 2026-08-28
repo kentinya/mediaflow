@@ -1107,9 +1107,27 @@ MediaLibrary's `rootPath` and `storageId` label from that revision; it never rea
 Storage configuration root/mount prefix. Revision-keyed evidence attributes the RecognitionType,
 type policy, naming policy, classification policy/rule and MediaLibrary contributions, with both
 root-relative and composed Storage-relative results or a bounded unsafe/failure recovery. The path
-constructs no Storage, Provider, Planner or Executor and preserves C identity. Destination
-existence/conflict/capability prechecks, Storage capability probing, absolute mounted-path display
-and combined activation evidence remain TARGET pending independent High Review of this Slice.
+constructs no Storage, Provider, Planner or Executor and preserves C identity. Phase 22.6-D is
+independently accepted at `c7ec192b3b20f236cca5a70ed59cad43e0851242`.
+
+Phase 22.6-E adds the first managed read-only destination precheck, for Local destination Storage
+only. It reuses the Phase 22.6-D resolution and composition unchanged, then constructs the
+destination Storage adapter from the unmodified revision document, reads its declared capabilities
+before wrapping, and performs every probe through a `ReadOnlyStorageGuard` subclass whose
+Write/CreateDirectory/Move/Copy/Delete/HardLink/SoftLink calls raise. Inside that guard it reuses
+the production `OrganizePlanner.plan` and `ConflictResolver.apply_configured` to report
+destination-root existence and directory state, the deepest existing ancestor, the bounded directory
+list that would have to be created, target existence, and the conflict outcome projected for the
+configured strategy. Declared capabilities are compared against the capabilities required by the
+resolved OrganizePolicy, and a missing capability is a `capability_gap` verdict with no fallback to
+Copy or Move. Evidence is revision-keyed with exact version/digest CAS, and records
+`pathScope: storage_relative` and `sideEffects: none` together with guard mutation counters that
+must all be zero and a bounded read-operation list. It grants no overwrite, delete or execute
+authority. Storage errors, capacity exhaustion and the overall deadline map to bounded categories
+with explicit recovery. Remote SMB/OpenList/S3 destination prechecks, mutation-based capability
+probing, duplicate/cross-item collision detection, attachment prechecks, absolute mounted-path
+display, combined activation evidence and execution remain TARGET pending independent High Review of
+this Slice.
 
 ## Deferred work
 
@@ -1649,10 +1667,10 @@ fields. Phase 22.3 closed on configuration-management schema marker `4`; Phase 2
 for revision-bound Recognition Strategy Test evidence, Phase 22.6-A adds marker `6` for
 exact-revision Naming preview evidence, Phase 22.6-B adds marker `7` for exact-revision
 Classification preview evidence, Phase 22.6-C adds marker `8` for exact-revision organize
-authority evidence, and Phase 22.6-D adds marker `9` for composed destination-preview evidence. Its revision sequence, singleton authority
-pointer, Local setup-check evidence, Strategy Test evidence, and the Phase 22.5-E continuation table
-and indexes remain additive and do not rewrite
-the Runtime marker.
+authority evidence, Phase 22.6-D adds marker `9` for composed destination-preview evidence, and
+Phase 22.6-E adds marker `10` for read-only destination-precheck evidence. Its revision sequence,
+singleton authority pointer, Local setup-check evidence, Strategy Test evidence, and the
+Phase 22.5-E continuation table and indexes remain additive and do not rewrite the Runtime marker.
 
 ### Phase 22.3 Local Storage + Library guided slice (CURRENT implementation; PASS / CLOSED)
 

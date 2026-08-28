@@ -1589,7 +1589,7 @@ NamingPolicy ID
 启用状态
 ```
 
-> 当前实现（Phase 22.6-A/B/C 已 PASS/CLOSED；Phase 22.6-D 等待独立 High Review）：NamingPolicy 已接入现有 Managed Draft 的
+> 当前实现（Phase 22.6-A/B/C/D 已 PASS/CLOSED；Phase 22.6-E 等待独立 High Review）：NamingPolicy 已接入现有 Managed Draft 的
 > Web/API 对象编辑、乐观版本、Before/After 审计和 RecognitionTypePolicy 引用阻断。操作员可对
 > 精确 revision ID/version/digest 提交一个有界合成样本或由既有 Parser 解析的路径，并通过既有
 > NamingPolicyRegistry/NamingPreviewService/安全 renderer/sanitizer 得到持久离线命名证据；证据
@@ -1609,8 +1609,15 @@ NamingPolicy ID
 > 操作解释；Phase 22.6-D 进一步以生产 resolver、Naming/Classification engine 和 Planner 共用的
 > composition/path-safety helper 输出 exact-revision 组合目标及每项 owner，路径明确为 Storage-relative，
 > C 身份保持，失败持久且可恢复。该路径不构造 Storage/Provider/Planner/Executor 且零媒体变更。
-> 冲突/能力/存在性预检、Storage mount prefix、能力探测与 combined activation evidence 仍为后续 TARGET；checked
-> activation 未改变。
+> Phase 22.6-E 在此之上新增仅限 Local 目标 Storage 的只读目标预检：目标 Storage adapter 由未经修改
+> 的 revision document 构造，能力在包装前读取，全部探测经 `ReadOnlyStorageGuard` 子类执行并复用生产
+> `OrganizePlanner.plan` 与 `ConflictResolver.apply_configured`，报告目标根存在性/是否目录、最深已
+> 存在祖先、需创建目录列表、目标是否已存在、按配置 ConflictStrategy 的冲突投影，以及 declared-vs-
+> required 能力比对（缺失即 `capability_gap`，显式无回退）。证据绑定精确 version/digest，记录
+> `pathScope: storage_relative`、`sideEffects: none`、全零 mutation 计数与有界读操作，且不授予
+> overwrite/delete/执行权限；Storage 错误、容量占用与超时均为有界类别加显式恢复动作。远端 SMB/
+> OpenList/S3 目标预检、写入式能力探测、重复/跨项碰撞检测、附件预检、绝对挂载路径展示与 combined
+> activation evidence 仍为后续 TARGET；checked activation 未改变。
 
 ---
 
