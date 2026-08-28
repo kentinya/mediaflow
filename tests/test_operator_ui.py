@@ -349,6 +349,7 @@ class OperatorUiTests(unittest.TestCase):
         script = APP_JS.decode()
         show_revision = _js_function_body(script, "showConfigurationRevision")
         precheck = _js_function_body(script, "renderDestinationPrecheck")
+        activation = _js_function_body(script, "destinationPrecheckActivationRequirement")
         mount = "renderDestinationPrecheck(data, guided);"
         guided_start = show_revision.index("if (guided) {")
         guided_body = _js_braced_body(show_revision, show_revision.index("{", guided_start))
@@ -361,20 +362,27 @@ class OperatorUiTests(unittest.TestCase):
             precheck,
         )
         for activation_line in (
-            "Checked activation requirement: not applicable because this Draft has no "
-            "Local destination.",
-            "Checked activation blocked: run the read-only destination precheck on this "
-            "revision, then activate checked.",
-            "Checked activation blocked: reload this revision and rerun the stale "
-            "destination precheck.",
+            "nextAction = 'run the read-only destination precheck on this revision, then "
+            "activate checked';",
+            "nextAction = 'reload this revision and rerun the destination precheck on its "
+            "current version and digest';",
             "Checked activation blocked: destination precheck failed (",
-            "Follow its recovery action and rerun it.",
-            "Checked activation blocked: change the configured operation or destination "
-            "Storage, then rerun the precheck.",
-            "Checked activation requirement: satisfied by current destination precheck evidence.",
+            "nextAction = 'change the configured operation or destination Storage, then "
+            "rerun the precheck';",
         ):
-            self.assertIn(activation_line, precheck)
-        self.assertIn("const activationApplicable = mediaLibraries.some", precheck)
+            self.assertIn(activation_line, activation)
+        self.assertIn(
+            "Checked activation requirement: not applicable because this Draft has no Local "
+            "destination.",
+            precheck,
+        )
+        self.assertIn(
+            "Checked activation requirement: satisfied by current destination precheck evidence.",
+            precheck,
+        )
+        self.assertIn("const activation = destinationPrecheckActivationRequirement", precheck)
+        self.assertIn("else if (!activation.satisfied)", precheck)
+        self.assertIn("const applicable = mediaLibraries.some", activation)
         self.assertIn("controls.append(recognitionType, sample, actionButton(", precheck)
         self.assertIn("Destination precheck RecognitionType", precheck)
         self.assertIn("Destination precheck sample JSON", precheck)
@@ -401,6 +409,65 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn(
             "field(list, 'Destination path', boundedSetupText(result.destinationPath));",
             precheck,
+        )
+
+    def test_checked_activation_controls_share_destination_precheck_gate(self) -> None:
+        script = APP_JS.decode()
+        activation = _js_function_body(script, "destinationPrecheckActivationRequirement")
+        checked = _js_function_body(script, "checkedActivationEvidenceIsCurrent")
+        guided = _js_function_body(script, "renderRecognitionStrategyTest")
+        show_revision = _js_function_body(script, "showConfigurationRevision")
+        precheck = _js_function_body(script, "renderDestinationPrecheck")
+
+        for predicate_line in (
+            "const applicable = mediaLibraries.some",
+            "const current = destinationPrecheckIsCurrent(revision, evidence);",
+            "const completed = Boolean(evidence && evidence.status === 'completed');",
+            "evidence.result.verdict === 'capability_gap'",
+            "const satisfied = !applicable || Boolean(current && completed && !capabilityGap);",
+        ):
+            self.assertIn(predicate_line, activation)
+        self.assertIn(
+            "destinationPrecheckActivationRequirement(revision, guided).satisfied", checked
+        )
+        self.assertIn("setupAndStrategyEvidenceIsCurrent(revision, guided)", checked)
+        self.assertIn(
+            "const activation = destinationPrecheckActivationRequirement(revision, guided);",
+            precheck,
+        )
+        self.assertIn("else if (!activation.satisfied)", precheck)
+        blocks = _js_function_body(script, "destinationPrecheckBlocksCheckedActivation")
+        self.assertIn(
+            "const requirement = destinationPrecheckActivationRequirement(revision, guided);",
+            blocks,
+        )
+        self.assertIn(
+            "if (!requirement.message || !setupAndStrategyEvidenceIsCurrent(revision, guided)) "
+            "return null;",
+            blocks,
+        )
+        self.assertIn(
+            "const destination = destinationPrecheckBlocksCheckedActivation(revision, guided);",
+            guided,
+        )
+        self.assertIn(
+            "if (destination) detailContent.append(text('p', destination.message, "
+            "destination.style));",
+            guided,
+        )
+        self.assertIn(
+            "const destination = destinationPrecheckBlocksCheckedActivation(data, guided);",
+            show_revision,
+        )
+        self.assertIn(
+            "checked activation is blocked by the Local destination precheck; "
+            "${destination.nextAction}.",
+            show_revision,
+        )
+        self.assertIn(
+            "requires both a current passed Local setup check and a current completed "
+            "Recognition Strategy Test.",
+            show_revision,
         )
 
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
@@ -612,15 +679,13 @@ class OperatorUiTests(unittest.TestCase):
         self.assertNotIn("guided.objects.mediaLibraries.filter", actions)
         self.assertNotIn("activateConfigurationRevision", actions)
 
-        checked_helper_start = script.index("function checkedActivationEvidenceIsCurrent")
-        row_renderer_start = script.index(
-            "function renderStrategyEvidenceRows", checked_helper_start
-        )
-        checked_helper = script[checked_helper_start:row_renderer_start]
-        self.assertIn("local.status === 'passed'", checked_helper)
-        self.assertIn("setupEvidenceIsCurrent(revision, local)", checked_helper)
-        self.assertIn("strategy.status === 'completed'", checked_helper)
-        self.assertIn("strategyEvidenceIsCurrent(revision, strategy)", checked_helper)
+        setup_and_strategy = _js_function_body(script, "setupAndStrategyEvidenceIsCurrent")
+        self.assertIn("local.status === 'passed'", setup_and_strategy)
+        self.assertIn("setupEvidenceIsCurrent(revision, local)", setup_and_strategy)
+        self.assertIn("strategy.status === 'completed'", setup_and_strategy)
+        self.assertIn("strategyEvidenceIsCurrent(revision, strategy)", setup_and_strategy)
+        checked_helper = _js_function_body(script, "checkedActivationEvidenceIsCurrent")
+        self.assertIn("setupAndStrategyEvidenceIsCurrent(revision, guided)", checked_helper)
 
         strategy_start = script.index("function renderRecognitionStrategyTest")
         strategy_end = script.index("async function activateConfigurationRevision", strategy_start)

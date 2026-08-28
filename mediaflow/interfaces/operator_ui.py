@@ -683,34 +683,54 @@ APP_JS = b"""(() => {
       evidence.revisionId === revision.revisionId &&
       evidence.revisionVersion === revision.version && evidence.revisionDigest === revision.digest);
   }
-  function renderDestinationPrecheck(revision, guided) {
-    const evidence = guided.destinationPrecheck;
-    const objects = guided.objects && typeof guided.objects === 'object' ? guided.objects : {};
+  function destinationPrecheckActivationRequirement(revision, guided) {
+    const evidence = guided && guided.destinationPrecheck;
+    const objects = guided && guided.objects && typeof guided.objects === 'object' ? guided.objects : {};
     const storages = Array.isArray(objects.storages) ? objects.storages : [];
     const mediaLibraries = Array.isArray(objects.mediaLibraries) ? objects.mediaLibraries : [];
     const localDestinationIds = new Set(storages.filter(storage =>
       String(storage.type || '').toLowerCase() === 'local').map(storage => String(storage.id)));
-    const activationApplicable = mediaLibraries.some(library =>
+    const applicable = mediaLibraries.some(library =>
       localDestinationIds.has(String(library.storageId)));
-    const currentForActivation = destinationPrecheckIsCurrent(revision, evidence);
+    const current = destinationPrecheckIsCurrent(revision, evidence);
+    const completed = Boolean(evidence && evidence.status === 'completed');
+    const capabilityGap = Boolean(evidence && evidence.result &&
+      typeof evidence.result === 'object' && evidence.result.verdict === 'capability_gap');
+    const satisfied = !applicable || Boolean(current && completed && !capabilityGap);
+    let nextAction = null;
+    let message = null;
+    let style = 'warning';
+    if (applicable && !evidence) {
+      nextAction = 'run the read-only destination precheck on this revision, then activate checked';
+      message = `Checked activation blocked: ${nextAction}.`;
+    } else if (applicable && !current) {
+      nextAction = 'reload this revision and rerun the destination precheck on its current version and digest';
+      message = `Checked activation blocked: ${nextAction}.`;
+    } else if (applicable && !completed) {
+      nextAction = boundedSetupText(evidence.nextAction,
+        'correct the destination configuration, then rerun the precheck');
+      message = `Checked activation blocked: destination precheck failed (${boundedSetupText(evidence.failureCategory)}); ${nextAction}.`;
+      style = 'error';
+    } else if (applicable && capabilityGap) {
+      nextAction = 'change the configured operation or destination Storage, then rerun the precheck';
+      message = `Checked activation blocked: ${nextAction}.`;
+      style = 'error';
+    }
+    return {applicable, evidence, current, completed, capabilityGap, satisfied, nextAction, message, style};
+  }
+  function renderDestinationPrecheck(revision, guided) {
+    const activation = destinationPrecheckActivationRequirement(revision, guided);
+    const evidence = activation.evidence;
     detailContent.append(text('h3', 'Read-only Local destination precheck'));
-    if (!activationApplicable) detailContent.append(text('p',
+    if (!activation.applicable) detailContent.append(text('p',
       'Checked activation requirement: not applicable because this Draft has no Local destination.'));
-    else if (!evidence) detailContent.append(text('p',
-      'Checked activation blocked: run the read-only destination precheck on this revision, then activate checked.', 'warning'));
-    else if (!currentForActivation) detailContent.append(text('p',
-      'Checked activation blocked: reload this revision and rerun the stale destination precheck.', 'warning'));
-    else if (evidence.status !== 'completed') detailContent.append(text('p',
-      `Checked activation blocked: destination precheck failed (${boundedSetupText(evidence.failureCategory)}). Follow its recovery action and rerun it.`, 'error'));
-    else if (evidence.result && evidence.result.verdict === 'capability_gap')
-      detailContent.append(text('p',
-        'Checked activation blocked: change the configured operation or destination Storage, then rerun the precheck.', 'error'));
+    else if (!activation.satisfied) detailContent.append(text('p', activation.message, activation.style));
     else detailContent.append(text('p',
       'Checked activation requirement: satisfied by current destination precheck evidence.'));
     if (!evidence) detailContent.append(text('p',
       'Status: not run. This observes one Local destination without changing it.', 'warning'));
     else {
-      const current = destinationPrecheckIsCurrent(revision, evidence);
+      const current = activation.current;
       const result = evidence.result && typeof evidence.result === 'object' ? evidence.result : {};
       const conflict = result.conflictProjection && typeof result.conflictProjection === 'object' ?
         result.conflictProjection : {};
@@ -862,11 +882,20 @@ APP_JS = b"""(() => {
       evidence.revisionId === revision.revisionId &&
       evidence.revisionVersion === revision.version && evidence.revisionDigest === revision.digest);
   }
-  function checkedActivationEvidenceIsCurrent(revision, guided) {
+  function setupAndStrategyEvidenceIsCurrent(revision, guided) {
     const local = guided && guided.localSetupCheck;
     const strategy = guided && guided.recognitionStrategyTest;
     return Boolean(local && local.status === 'passed' && setupEvidenceIsCurrent(revision, local) &&
       strategy && strategy.status === 'completed' && strategyEvidenceIsCurrent(revision, strategy));
+  }
+  function checkedActivationEvidenceIsCurrent(revision, guided) {
+    return Boolean(setupAndStrategyEvidenceIsCurrent(revision, guided) &&
+      destinationPrecheckActivationRequirement(revision, guided).satisfied);
+  }
+  function destinationPrecheckBlocksCheckedActivation(revision, guided) {
+    const requirement = destinationPrecheckActivationRequirement(revision, guided);
+    if (!requirement.message || !setupAndStrategyEvidenceIsCurrent(revision, guided)) return null;
+    return requirement;
   }
   function renderStrategyEvidenceRows(label, values) {
     const source = Array.isArray(values) ? values : [];
@@ -1119,6 +1148,9 @@ APP_JS = b"""(() => {
     controls.append(actionButton('Run live Metadata test', () => runStrategyTest(true)));
     if (checkedActivationEvidenceIsCurrent(revision, guided)) {
       controls.append(actionButton('Activate checked Draft', () => activateConfigurationRevision(revision, true)));
+    } else {
+      const destination = destinationPrecheckBlocksCheckedActivation(revision, guided);
+      if (destination) detailContent.append(text('p', destination.message, destination.style));
     }
     detailContent.append(controls);
   }
@@ -1227,7 +1259,13 @@ APP_JS = b"""(() => {
         actions.append(actionButton(checked ? 'Activate checked revision' :
           (guided ? 'Activate unchecked compatibility revision' : 'Activate revision'),
           () => activateConfigurationRevision(data, Boolean(checked))));
-        if (!checked && guided) actions.append(text('p', 'Activation is available for compatibility, but the guided safe path requires both a current passed Local setup check and a current completed Recognition Strategy Test.', 'warning'));
+        if (!checked && guided) {
+          const destination = destinationPrecheckBlocksCheckedActivation(data, guided);
+          const warning = destination ?
+            `Activation is available for compatibility, but checked activation is blocked by the Local destination precheck; ${destination.nextAction}.` :
+            'Activation is available for compatibility, but the guided safe path requires both a current passed Local setup check and a current completed Recognition Strategy Test.';
+          actions.append(text('p', warning, 'warning'));
+        }
       }
       if (data.status === 'active') actions.append(actionButton('Queue first DryRun Preview', async () => {
         try { const job = await api('/api/v1/jobs', {method: 'POST', body: JSON.stringify({command: 'preview'})});

@@ -306,6 +306,16 @@ MediaLibrary-free Draft visibly reports this requirement as not applicable and r
 Local setup and Recognition Strategy Test gates. Unchecked activation remains the compatibility
 path and is unchanged.
 
+The Web uses that same three-requirement decision before offering checked activation. When the Local
+destination precheck is missing, stale, failed or a `capability_gap`, both the guided setup control
+and the revision-detail compatibility control withhold checked activation and show one bounded,
+secret-free sentence naming the Local destination precheck and the corrective action. That sentence
+appears once the Local setup check and Recognition Strategy Test are current, matching the order in
+which the server refuses, so the operator is never sent to the precheck while an earlier requirement
+still blocks activation. A remote-only or MediaLibrary-free Draft, and a document without a
+`mediaLibraries` section, keep the existing two-requirement wording and availability; a current,
+completed non-`capability_gap` precheck leaves the checked control and its label unchanged.
+
 Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing, duplicate and
 cross-item collision detection, attachment prechecks, absolute mounted-path display and execution
 remain TARGET. Active runtime-consumption semantics are unchanged.

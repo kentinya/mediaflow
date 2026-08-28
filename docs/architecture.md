@@ -1130,6 +1130,14 @@ that declare at least one MediaLibrary backed by Local Storage. The gate reads o
 revision document and persisted evidence: missing, stale, failed and `capability_gap` evidence
 refuse with bounded recovery, while remote-only or MediaLibrary-free documents report the
 requirement as not applicable and retain the existing two gates. Unchecked activation is unchanged.
+Phase 22.6-G gives both Web checked-activation controls this same decision before they offer the
+action: the shared Local applicability/current/completed/non-`capability_gap` predicate also feeds
+the destination-precheck section, the guided control's bounded recovery line, and the
+revision-detail compatibility warning. Both control sites name the destination requirement only once
+the Local setup check and Recognition Strategy Test are current, so the sentence always names the
+requirement the server refuses on first. A missing `mediaLibraries` document section is likewise not
+applicable at the activation gate. The gate still reads only the revision document and persisted
+evidence; it constructs no Storage, Provider, Planner or Executor and performs no probe.
 Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
 duplicate/cross-item collision detection, attachment prechecks, absolute mounted-path display and
 execution remain TARGET. Phase 22.6-E is PASS / CLOSED at
