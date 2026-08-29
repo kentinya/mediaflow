@@ -1,13 +1,13 @@
-# Phase 22.6-I — The Run Verdict Stops Hiding Under "First Sample Destination"
+# Phase 22.6-J — An Undetermined Destination Observation Stops Printing as "NO"
 
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: READY FOR HIGH REVIEW
+Status: READY FOR IMPLEMENTATION
 Commit SHA: PENDING
 High Audit: PENDING
-Preceding closed checkpoint: 4455198a6ef3b93fe1e92cef73660039620e756e
-  (Phase 22.6-H PASS / CLOSED — 2026-08-28, accepted through Phase 22.6-H-F1)
+Preceding closed checkpoint: 6c0ba745772e315b941c1c3b314ab47e66e8f35a
+  (Phase 22.6-I PASS / CLOSED — 2026-08-29)
 Preserved rejected checkpoints: d8c2ae04e578955ddbbd29c413f235bf4cf08f42 (Phase 22.6-H),
   b9cc35e2677a35920042b5695f87b50a80025ef0 (Phase 22.6-G),
   7353b0d22497e6e3e596c93c7052eea34daf27df (Phase 22.6-E),
@@ -15,90 +15,101 @@ Preserved rejected checkpoints: d8c2ae04e578955ddbbd29c413f235bf4cf08f42 (Phase 
   08dfd4f921728755209b6d52347d28f221121c47 (Phase 22.5-E); never amended, squashed or rewritten
 Push gate: SATISFIED — every closed Phase 22.6-A through 22.6-G checkpoint and the review records
   through 3ace53c7cdcc3312033f388d8f68d2d7d1a159ae were pushed to origin/main on 2026-08-28 under
-  explicit operator authorization. The preserved rejected 22.6-H checkpoint, the 22.6-H-F1 correction
-  and the review records after it stay local; Slice closure does not require a push, and phase-level
-  Phase 22.6 closure still requires the Final Closure Audit plus a new explicit authorization
+  explicit operator authorization. The preserved rejected 22.6-H checkpoint, the 22.6-H-F1 and 22.6-I
+  checkpoints and every review record after them stay local; Slice closure does not require a push,
+  and phase-level Phase 22.6 closure still requires the Final Closure Audit plus a new explicit
+  authorization
 Phase: 22.6 Naming / Classification / Organize configuration journey (roadmap section 5)
-Slice scope: Web presentation only. In the destination-precheck evidence block, render the run-level
-  fields — including the aggregate verdict — above the "First sample destination" heading, render only
-  first-sample fields under it, and label the multi-sample verdict as the run verdict. The only
-  production file that may change is `mediaflow/interfaces/operator_ui.py`. No evidence key, request
-  or response field, aggregation rule, activation gate, category, route, permission, table or schema
-  marker may change; markers stay 10 and 22
+Slice scope: Web presentation only. In the destination-precheck evidence block, a boolean
+  determination the evidence does not carry must render as the bounded text `NOT DETERMINED` instead
+  of `NO`, in both the single-sample and the multi-sample branch, for `destinationRootExists`,
+  `destinationRootIsDirectory` and `targetExists`. The only production file that may change is
+  `mediaflow/interfaces/operator_ui.py`. No evidence key, request or response field, aggregation rule,
+  activation gate expression, failure category, route, permission, table or schema marker may change;
+  markers stay 10 and 22
 ```
 
 ## Why This Slice Exists
 
-Phase 22.6-H-F1 proved two things about completed multi-sample evidence: the run verdict is the most
-severe sample's projected outcome, and it is provably different from the top-level first-sample
-projection. The Web surface does not yet show that distinction. In
-`mediaflow/interfaces/operator_ui.py:765` the heading `First sample destination` is appended *before*
-the single definition list that holds every field, so for a multi-sample run the operator reads
-`Sample count`, `Status`, `Verdict`, `Message` and `Next action` — all run-level — underneath a
-heading that says they describe the first sample, while the genuinely first-sample-only fields
-(`Destination path`, `Target exists`, `Projected conflict outcome`) sit in the same list with nothing
-separating them.
+The destination precheck reports FAILED for most misconfigurations, and FAILED evidence usually
+carries no observation at all. `_destination_precheck_failure` in
+`mediaflow/application/configuration_objects.py` defaults to `result=None`; only two failure paths
+attach anything about the root (`:1639` `missing_destination_root` with `(False, False)` and `:1651`
+`destination_root_not_directory` with `(True, False)`), and the multi-sample failure path attaches
+only `sampleCount`, `items`, `collisions`, `guardMutationCalls` and `authorityGranted`. `targetExists`
+appears in COMPLETED payloads only (`:1747` single, `:2047` multi through `first_details`).
 
-That is the one place in this journey where the operator decides whether to activate with checks,
-and it currently misattributes the evidence that the gate consumes.
+The Web block prints those absent determinations as facts. At
+`mediaflow/interfaces/operator_ui.py:747` and `:779` it renders
+`${result.destinationRootExists === true ? 'YES' : 'NO'} / ${result.destinationRootIsDirectory ===
+true ? 'YES' : 'NO'}`, and at `:764` and `:783` it renders
+`result.targetExists === true ? 'YES' : 'NO'`. So a run that failed on an invalid rule, a duplicate
+destination, a cross-Storage sample set or an unsafe composition tells the operator
+`Destination root exists / directory: NO / NO` and `Target exists: NO` — three negatives the precheck
+never observed. Absent and `null` genuinely mean *undetermined* in this evidence vocabulary, and
+`Target exists: NO` is the most safety-relevant negative in the block: it reads as "nothing would be
+overwritten", which is exactly the claim a failed precheck is not entitled to make.
+
+For COMPLETED evidence nothing changes: all three keys are real booleans there, and the two
+root-failure categories above keep their genuine `NO / NO` and `YES / NO`.
 
 ## User Problem
 
-An operator prechecks three samples of one RecognitionType. The run verdict is
-`manual_confirmation_required` because sample 1 would land on an existing file, while sample 0
-projects `ready`. Today both statements appear in one list under "First sample destination". Either
-reading is wrong in a way that matters: taken as sample 0's verdict it understates which sample needs
-attention, and taken as the run's destination path it overstates how much of the run is ready. The
-evidence is correct; only its presentation misattributes it.
+An operator prechecks a Draft whose classification rule is invalid. The run fails with a bounded
+category and a next action, which is correct — but the same page also states that the MediaLibrary
+root does not exist and is not a directory, and that the target does not exist. The operator either
+goes looking for a root problem that does not exist and stops trusting the evidence, or reads
+`Target exists: NO` as an assurance that nothing would be overwritten once the rule is fixed. Neither
+statement came from the precheck; both came from the page.
 
 ## Journey
 
-- User goal: understand, before activating with checks, what the whole precheck run says and what
-  only its first sample says.
+- User goal: know what the precheck actually observed, and know when it observed nothing.
 - Entry point: Web configuration Draft page, destination precheck section (unchanged).
-- Visible state: the same evidence values as today. For a multi-sample run, run-level fields render in
-  their own list above the "First sample destination" heading, and only first-sample fields render
-  under it. Per-sample rows and the collision table stay where they are.
+- Visible state: `YES` when the evidence says `true`, `NO` when the evidence says `false`, and the
+  bounded text `NOT DETERMINED` when the evidence carries no boolean for that field.
 - Available action: unchanged — "Run read-only destination precheck", still read-only.
-- Success outcome: the operator can tell at a glance which fields describe the run — including the
-  aggregate verdict, labelled as the run verdict — and which describe sample 0 only.
-- Failure outcome: unchanged. The stale sentence, the not-ready sentence, the no-authority warning and
-  every bounded failure sentence keep their exact current text; a failed sample keeps its own row with
-  its index, projected outcome and failure category.
-- Recovery path: unchanged — rerun the precheck on the exact revision, or follow the row's stated next
-  action.
+- Success outcome: a completed run reads exactly as it does today; a failed run no longer asserts a
+  destination-root or target-existence negative that was never observed.
+- Failure outcome: unchanged. The bounded failure category, message and next action still render, the
+  per-sample rows still carry each sample's own outcome, and the not-ready sentence still appears —
+  an undetermined root must keep counting as not ready.
+- Recovery path: unchanged — follow the stated next action, or rerun the precheck on the exact
+  revision after correcting the Draft.
 
 ## UX Acceptance
 
-1. Single-sample rendering is unchanged: no "First sample destination" heading, the same field labels
-   in the same order, the same warnings, the label still `Verdict`.
-2. Multi-sample rendering: every run-level field is appended before the heading; every
-   first-sample-only field is appended after it, into a separate list.
-3. Multi-sample rendering names the aggregate — the verdict label must state that it is the run
-   verdict (for example `Run verdict (most severe sample)`), and the single-sample label stays
-   `Verdict`.
-4. The per-sample rows table, the collision table, the `No cross-item destination collision detected.`
-   sentence, the stale sentence, the not-ready sentence and the no-authority warning all render
-   exactly as they do today, with byte-identical text.
-5. No new evidence key, no new API field, no absolute path, no secret, no new page.
+1. `true` renders `YES` and `false` renders `NO` for all three fields, so every completed run and both
+   root-failure categories render exactly as they do today.
+2. Any other value — key absent, `null`, or a non-boolean — renders the exact bounded text
+   `NOT DETERMINED`.
+3. Both branches are covered: the multi-sample run-level `Destination root exists / directory` field
+   and its `First sample destination` `Target exists` field, and the single-sample branch's two
+   equivalents.
+4. Nothing else moves: every other field label, expression, order and list, the per-sample rows table,
+   the collision table, `No cross-item destination collision detected.`, the stale sentence, the
+   not-ready sentence, the no-authority warning and the `1-8 samples` control stay byte-identical.
+5. The not-ready gate expression stays byte-identical, including `!result.destinationRootExists`, so
+   an undetermined root still blocks readiness. Presentation may not soften a gate.
+6. No new evidence key, no new API field, no new route or page, no absolute path, no secret.
 
-Authoritative field split for this Slice:
+Authoritative mapping for this Slice — the three fields, and nothing else:
 
-- Run-level, before the heading: Evidence state, Sample count, Status, verdict field, Destination
-  Storage, Storage support, MediaLibrary and Storage-relative root, Destination root exists /
-  directory, Required capabilities, Declared destination capabilities, Missing capabilities, Fallback,
-  Authority granted, Path scope, Side effects, Retry safe, Message, Next action.
-- First sample only, after the heading: Deepest existing ancestor, Directories that would be created,
-  Destination path, Target exists, Configured conflict strategy, Projected conflict outcome, Proposed
-  relative destination, Read operations.
+| Evidence key | Field label | `true` | `false` | absent / `null` / other |
+| --- | --- | --- | --- | --- |
+| `destinationRootExists` | Destination root exists / directory (left) | `YES` | `NO` | `NOT DETERMINED` |
+| `destinationRootIsDirectory` | Destination root exists / directory (right) | `YES` | `NO` | `NOT DETERMINED` |
+| `targetExists` | Target exists | `YES` | `NO` | `NOT DETERMINED` |
 
 ## Technical Scope
 
 Files this Slice may change — nothing else:
 
-- `mediaflow/interfaces/operator_ui.py`, inside `renderDestinationPrecheck` only.
+- `mediaflow/interfaces/operator_ui.py`: the four render sites inside `renderDestinationPrecheck`, plus
+  exactly one new script-level helper function named `determinationText`, defined immediately after
+  `boundedSetupText`. `boundedSetupText` itself must not change.
 - `tests/test_operator_ui.py`.
-- `TASK.md` (status block and Completion Report).
+- `TASK.md` (status block, closure checklist and Completion Report).
 - `docs/product-experience.md` only if an existing CURRENT sentence would otherwise become inaccurate,
   and then by at most one sentence, quoted verbatim in the Completion Report. If no such sentence
   exists, change no documentation at all.
@@ -109,37 +120,46 @@ Explicitly forbidden: `mediaflow/application/**`, `mediaflow/domain/**`,
 
 Rules:
 
-1. Presentation only. The same evidence keys are read, the same request body is sent, and no value is
-   recomputed, re-derived, reordered inside a row, rounded or reformatted on the way to the page.
-2. Every bounded sentence, warning and heading that exists today keeps its exact text, except that the
-   verdict field label may differ between the single-sample and multi-sample branches as required
-   above.
-3. Exactly one existing assertion may be replaced: the line in
-   `test_destination_precheck_multi_sample_web_surface_is_falsifiable` that pins
-   `if (sampleCount > 1) detailContent.append(text('h4', 'First sample destination'));`. Its
-   replacement must be equal or stronger and must pin the new structure. Every other assertion in
-   `tests/test_operator_ui.py` stays byte-identical, and no test may be deleted or renamed.
-4. New tests must be body-scoped the way the module already does it (`_js_function_body` /
+1. Presentation only. The same evidence keys are read, the same request body is sent, no value is
+   recomputed or re-derived, and no key is added, renamed or defaulted on the way to the page.
+2. `determinationText(value)` must be the single place that decides the three-way text, must be used by
+   all four render sites, and must map `value === true` to `'YES'`, `value === false` to `'NO'` and
+   everything else to `'NOT DETERMINED'`. The literal text is exactly `NOT DETERMINED` — uppercase, no
+   punctuation, no explanation appended, and it may not be substituted for the `-` fallback that
+   `boundedSetupText` already produces for text fields.
+3. `evidence.retrySafe === true ? 'YES' : 'NO'` stays byte-identical everywhere: `document()` always
+   supplies a real boolean for it, so it is not an undetermined field. The same applies to every
+   `YES`/`NO` render outside `renderDestinationPrecheck` (`renderNamingPreview`,
+   `renderClassificationPreview`, `renderOrganizeAuthority`, `renderDestinationPreview`,
+   `renderMetadataTestEvidence`, `renderRecognitionStrategyTest`); they are out of scope.
+4. No existing assertion in `tests/test_operator_ui.py` may be replaced, weakened, deleted or renamed
+   this time. The current assertions anchor on `field(firstList, 'Target exists',` and
+   `field(list, 'Target exists',` prefixes and on labels, so they must all still pass unchanged; if one
+   does not, the implementation went beyond this Slice.
+5. New tests must be body-scoped the way the module already does it (`_js_function_body` /
    `_js_braced_body`), because the operator UI is a Python `bytes` literal with no JS runtime.
-5. No credential, endpoint, Storage `rootPath`, header, cookie, private path or raw exception text may
+6. No credential, endpoint, Storage `rootPath`, header, cookie, private path or raw exception text may
    enter the page, the tests, the report or the commit.
 
 ## Required Tests
 
-All in `tests/test_operator_ui.py`. Every assertion must fail if the behaviour it names is removed.
+All in `tests/test_operator_ui.py`, all additive. Every assertion must fail if the behaviour it names
+is removed.
 
-1. `test_destination_precheck_run_level_summary_precedes_first_sample_block` — inside the
-   `renderDestinationPrecheck` body, assert by source position that the run-level verdict field is
-   appended before the `'First sample destination'` heading and that `'Destination path'` and
-   `'Target exists'` are appended after it, into a list that is not the run-level list; assert the
-   heading is still guarded by `sampleCount > 1`; and assert the per-sample rows table still follows
-   the first-sample block.
-2. `test_destination_precheck_multi_sample_verdict_label_names_the_run` — assert the multi-sample
-   branch labels the aggregate as the run verdict, assert the single-sample branch still uses the exact
-   label `Verdict`, and assert the choice is guarded by `sampleCount > 1`.
-3. The one permitted replacement in
-   `test_destination_precheck_multi_sample_web_surface_is_falsifiable`, keeping the rest of that test
-   byte-identical.
+1. `test_destination_precheck_absent_determinations_render_as_not_determined` — inside the
+   `renderDestinationPrecheck` body, assert that both branches route all three fields through
+   `determinationText(...)`, that the multi-sample run-level list and first-sample list and the
+   single-sample list each carry their own call, and that no `=== true ? 'YES' : 'NO'` expression
+   remains for `result.destinationRootExists`, `result.destinationRootIsDirectory` or
+   `result.targetExists` anywhere in the body.
+2. `test_determination_text_maps_true_false_and_undetermined_separately` — body-scope
+   `determinationText` and assert all three arms exist independently: `=== true` yields `'YES'`,
+   `=== false` yields `'NO'`, and the remaining case yields exactly `'NOT DETERMINED'`. Collapsing any
+   two arms must fail this test.
+3. `test_destination_precheck_not_ready_gate_still_blocks_an_undetermined_root` — assert the not-ready
+   gate condition is byte-identical, including `!result.destinationRootExists`, and that the
+   `Destination is not ready. Follow the recovery action; no authority was granted.` sentence and its
+   `'error'` style are unchanged, so an undetermined root cannot be rendered as ready.
 
 No other test may be added, renamed or changed.
 
@@ -149,22 +169,23 @@ Mutate the shipped tree one edit at a time, run the affected tests, record the a
 names and output, restore with `git checkout -- <file>`, and confirm a clean tree after each probe.
 Report every probe, including the control.
 
-1. Append the run-level list after the `'First sample destination'` heading again — Required Test 1
-   must fail.
-2. Move `'Destination path'` into the run-level list — Required Test 1 must fail.
-3. Drop the `sampleCount > 1` guard so the heading and the multi-sample verdict label always render —
-   at least one Required Test must fail on the single-sample claim.
-4. Use the plain `Verdict` label in the multi-sample branch — Required Test 2 must fail.
-5. Delete the `No cross-item destination collision detected.` sentence — the existing Phase 22.6-H
-   test `test_destination_precheck_multi_sample_web_surface_is_falsifiable` must still fail, proving no
-   existing proof was weakened by the permitted replacement.
+1. Collapse the undetermined arm of `determinationText` so anything not `true` yields `'NO'` — Required
+   Test 2 must fail.
+2. Collapse the `false` arm so `false` also yields `'NOT DETERMINED'` — Required Test 2 must fail.
+3. Restore the old inline `result.targetExists === true ? 'YES' : 'NO'` expression in the multi-sample
+   first-sample list — Required Test 1 must fail.
+4. Restore the old inline `result.destinationRootExists === true ? 'YES' : 'NO'` expression in the
+   single-sample branch — Required Test 1 must fail.
+5. Change the not-ready gate from `!result.destinationRootExists` to
+   `result.destinationRootExists === false` — Required Test 3 must fail, proving the gate is pinned and
+   that an undetermined root still blocks readiness.
 6. Control probe: a comment-only edit inside `renderDestinationPrecheck` must fail no test.
 
 ## Validation
 
 Run every command and report its actual output:
 
-- `.venv/bin/python -m unittest` (the total must rise from 861 by exactly the number of added tests,
+- `.venv/bin/python -m unittest` (the total must rise from 863 by exactly the number of added tests,
   with zero deletions).
 - `.venv/bin/python -m unittest tests.test_operator_ui
   tests.test_configuration_destination_precheck tests.test_configuration_destination_activation`.
@@ -177,28 +198,39 @@ Run every command and report its actual output:
 - `git diff --check`; FFmpeg/FFprobe audit; business-layer filesystem-mutation audit;
   `git check-ignore config/alist.json` plus empty `git ls-files` and `git diff --cached` for it;
   Markdown local-link check.
-- `git diff --exit-code 4455198a6ef3b93fe1e92cef73660039620e756e HEAD -- mediaflow/application
+- `git diff --exit-code 6c0ba745772e315b941c1c3b314ab47e66e8f35a HEAD -- mediaflow/application
   mediaflow/domain mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py
   scripts config pyproject.toml` must be empty, proving evidence semantics, the service boundary, the
   CLI and the schema are untouched.
-- `git diff --stat 4455198a6ef3b93fe1e92cef73660039620e756e HEAD` must list only
+- `git diff --stat 6c0ba745772e315b941c1c3b314ab47e66e8f35a HEAD` must list only
   `mediaflow/interfaces/operator_ui.py`, `tests/test_operator_ui.py`, `TASK.md`, the review-owned
   `docs/progress.md` and `docs/roadmap.md` from the intervening review-record commit, and at most
   `docs/product-experience.md` under the rule above.
+- `git diff 6c0ba745772e315b941c1c3b314ab47e66e8f35a HEAD -- mediaflow/interfaces/operator_ui.py`
+  must contain no hunk outside `renderDestinationPrecheck` other than the new `determinationText`
+  helper.
 - Secret scan of this Slice's own diff.
 
 ## Non-goals — must not start
 
-- Any change to evidence keys, the verdict aggregation, the severity map, failure categories, the
-  activation gate, request or response fields, permissions, HTTP statuses, routes, tables, migrations
-  or schema markers.
-- Making the first-sample block index-accurate when sample 0 itself failed. Today the top-level fields
-  come from the first sample that projected successfully, so a run whose sample 0 failed shows a later
-  sample's destination under the heading. Correcting that needs the evidence to carry the index of the
-  details it exposes, which is an application change; the per-sample rows already show sample 0's own
-  failure category, so this Slice leaves it alone and reports it as known.
+- Any change to evidence keys, payload shape, the verdict aggregation, the severity map, failure
+  categories, the activation gate, request or response fields, permissions, HTTP statuses, routes,
+  tables, migrations or schema markers. In particular, do not make the application attach
+  `destinationRootExists`, `destinationRootIsDirectory` or `targetExists` to failure payloads; this
+  Slice fixes how absence is presented, not what is observed.
+- Changing the `-` fallback that `boundedSetupText` produces for absent text fields, anywhere.
+- Applying the three-way rendering to any other boolean in the page: `Retry safe`, `MediaLibrary
+  resolved`, `Overwrite authorized`, `Delete authorized`, `Evidence truncated`, metadata `Enabled` and
+  every other `YES`/`NO` outside `renderDestinationPrecheck` are out of scope for this Slice.
+- Adding an explanation, tooltip, style or icon to the undetermined state; the bounded text is the
+  whole change.
+- Making the first-sample block index-accurate. This was previously recorded as a defect and is not
+  one: any sample carrying a `failureCategory` makes the whole precheck FAILED through
+  `_destination_precheck_failure`, so completed evidence has no failed sample and its top-level details
+  always describe sample 0.
 - Closing the residual proof gap recorded in the Phase 22.6-H-F1 review (no multi-sample all-`ready`
-  run asserts `verdict == "ready"`). It is not a blocker and not this Slice's business.
+  run asserts `verdict == "ready"`), pinning single-sample field order, or adding a test that compares
+  the two branches' field lists. All three are known, non-blocking, and not this Slice's business.
 - Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing, multiple
   RecognitionTypes or multiple destination Storages per request, known-media duplicate detection,
   attachment prechecks, absolute mounted-path display, and any execution or authority change.
@@ -207,126 +239,51 @@ Run every command and report its actual output:
 
 ## Closure Checklist
 
-- [x] Only `mediaflow/interfaces/operator_ui.py`, `tests/test_operator_ui.py`, `TASK.md` and — only
+- [ ] Only `mediaflow/interfaces/operator_ui.py`, `tests/test_operator_ui.py`, `TASK.md` and — only
       under the stated rule — `docs/product-experience.md` changed
-- [x] `git diff --exit-code 4455198 HEAD -- mediaflow/application mediaflow/domain
+- [ ] `git diff --exit-code 6c0ba74 HEAD -- mediaflow/application mediaflow/domain
       mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config
       pyproject.toml` is empty
-- [x] Multi-sample run-level fields render before the "First sample destination" heading and
-      first-sample-only fields after it, per the authoritative field split
-- [x] The multi-sample verdict label names the run verdict; the single-sample label is still `Verdict`
-- [x] Single-sample rendering is unchanged: no heading, same labels, same order, same warnings
-- [x] Every existing bounded sentence, warning, table and heading keeps its exact text
-- [x] Exactly one existing assertion was replaced, by an equal-or-stronger one; every other assertion
-      is byte-identical and no test was deleted or renamed
-- [x] All six Required Falsification Probes executed with recorded output, control included, clean tree
+- [ ] `determinationText` exists once, sits immediately after `boundedSetupText`, and maps `true` /
+      `false` / everything else to `YES` / `NO` / `NOT DETERMINED`
+- [ ] All four render sites use it: run-level and first-sample in the multi-sample branch, both
+      equivalents in the single-sample branch
+- [ ] No `=== true ? 'YES' : 'NO'` expression remains for `destinationRootExists`,
+      `destinationRootIsDirectory` or `targetExists`
+- [ ] `evidence.retrySafe` and every `YES`/`NO` render outside `renderDestinationPrecheck` are
+      byte-identical
+- [ ] The not-ready gate expression, its sentence and its `'error'` style are byte-identical
+- [ ] Every other field, label, order, list, table, heading and bounded sentence in the precheck block
+      is byte-identical
+- [ ] Zero existing assertions replaced, weakened, deleted or renamed; the three new tests are additive
+      and body-scoped
+- [ ] All six Required Falsification Probes executed with recorded output, control included, clean tree
       after each
-- [x] Full offline suite green, total risen only by the added tests
-- [x] Markers still 10 and 22; wheel smoke reports Runtime schema 22
-- [x] No credential, endpoint, Storage `rootPath`, header, cookie, private path or raw exception text
+- [ ] Full offline suite green, total risen from 863 only by the added tests
+- [ ] Markers still 10 and 22; wheel smoke reports Runtime schema 22
+- [ ] No credential, endpoint, Storage `rootPath`, header, cookie, private path or raw exception text
       in the page, tests, report or commit; `config/alist.json` still untracked, unstaged, ignored
-- [x] Completion Report filled in with the actual commands, actual output, deviations and risks
-- [x] Status set to READY FOR HIGH REVIEW; not pushed
+- [ ] Completion Report filled in with the actual commands, actual output, deviations and risks
+- [ ] Status set to READY FOR HIGH REVIEW; not pushed
 
 ## Completion Report
 
-### Changed Files
+To be filled in by the implementation role at the checkpoint commit. Report actual commands and actual
+output, not intentions.
 
-- `mediaflow/interfaces/operator_ui.py` — +62/-29, only inside `renderDestinationPrecheck`.
-- `tests/test_operator_ui.py` — +50/-1: two new Required Tests and exactly one replaced assertion.
-- `TASK.md` — status block, closure checklist and this Completion Report.
-- No documentation file changed: `docs/product-experience.md` needed no update because no CURRENT
-  sentence became inaccurate, and `docs/progress.md` / `docs/roadmap.md` remain review-owned.
+### Changed Files
 
 ### Implemented
 
-- In `renderDestinationPrecheck`, completed evidence now branches on `sampleCount > 1`:
-  - Multi-sample: a run-level definition list (`runList`) carries Evidence state, Sample count,
-    Status, `Run verdict (most severe sample)`, Destination Storage, Storage support, MediaLibrary
-    and Storage-relative root, Destination root exists / directory, Required / Declared / Missing
-    capabilities, Fallback, Authority granted, Path scope, Side effects, Retry safe, Message and
-    Next action — all appended before the `First sample destination` heading; a second list
-    (`firstList`) carries Deepest existing ancestor, Directories that would be created, Destination
-    path, Target exists, Configured conflict strategy, Projected conflict outcome, Proposed relative
-    destination and Read operations after the heading.
-  - Single-sample: the original single list is preserved verbatim — same labels, same order, same
-    `Verdict` label, no heading, and the per-sample rows, collision table, stale sentence, not-ready
-    sentence and no-authority warning follow unchanged.
-
 ### Tests and Test Results
-
-- `test_destination_precheck_run_level_summary_precedes_first_sample_block`
-  (`tests/test_operator_ui.py:578`) pins by source position: run-level verdict field and the
-  `detailContent.append(runList)` call precede the `First sample destination` heading, the heading
-  precedes `detailContent.append(firstList)` and both `field(firstList, 'Destination path', ...)` /
-  `field(firstList, 'Target exists', ...)`, the heading lives inside the `sampleCount > 1` branch,
-  and the per-sample rows heading follows the first-sample block.
-- `test_destination_precheck_multi_sample_verdict_label_names_the_run`
-  (`tests/test_operator_ui.py:607`) pins the multi-sample `Run verdict (most severe sample)` label
-  inside the guarded branch, the single-sample `Verdict` label inside the `else` branch, and that the
-  run-verdict label is absent from the single-sample branch.
-- The one permitted replacement in
-  `test_destination_precheck_multi_sample_web_surface_is_falsifiable` now pins
-  `if (sampleCount > 1) {\n const runList = ...`, which is equal-or-stronger than the old heading
-  line assertion; every other assertion in that test is byte-identical.
-
-Commands actually run, with results:
-
-- Focused modules (`test_operator_ui`, `test_configuration_destination_precheck`,
-  `test_configuration_destination_activation`): 49 tests, 0 failures.
-- Complete offline suite: `Ran 863 tests ... OK (skipped=7)` — 861 before, +2 tests, zero deletions.
-- `ruff check .`: All checks passed; `ruff format --check .`: 308 files already formatted.
-- `compileall -q mediaflow tests`: passed; `pip check`: No broken requirements found.
-- Both example `config validate` runs: `Configuration valid`.
-- Wheel build plus isolated `scripts/wheel_smoke_test.py`: exit 0, Runtime schema 22;
-  Configuration marker 10 remains asserted by the unchanged suite.
-- `git diff --check`: clean; FFmpeg/FFprobe audit: zero hits; business-layer filesystem-mutation
-  audit: only Storage-mediated `resolver.rename(...)` references; `config/alist.json` ignored,
-  untracked and unstaged; 120 tracked Markdown files, 25 links, 0 broken; secret scan of this
-  Slice's diff: no matches.
-- `git diff --exit-code 4455198 HEAD -- mediaflow/application mediaflow/domain
-  mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config
-  pyproject.toml`: empty.
 
 ### Falsification Probes
 
-Each probe mutated `mediaflow/interfaces/operator_ui.py` once, ran the affected tests, recorded the
-failure, then restored with `git checkout -- mediaflow/interfaces/operator_ui.py` from the staged
-intended implementation (the file was staged before the probe phase so checkout restored this
-Slice's own state, not the parent) and confirmed `git status --short` showed only the intended files.
-
 | Probe | Temporary change | Result |
 | --- | --- | --- |
-| 1 | `detailContent.append(runList)` moved after the `First sample destination` heading | Required Test 1 failed at `tests/test_operator_ui.py:591` (append order not preserved) |
-| 2 | `Destination path` moved into the run-level list | Required Test 1 failed at `tests/test_operator_ui.py:598` (`field(firstList, 'Destination path', ...)` missing) |
-| 3 | `if (sampleCount > 1) {` replaced by `if (true) {` | Required Tests 1 and 2 both failed (`if (sampleCount > 1) {` not found) |
-| 4 | Multi-sample branch used the plain `Verdict` label | Required Test 2 failed at `tests/test_operator_ui.py:617` |
-| 5 | Deleted `No cross-item destination collision detected.` | Existing `test_destination_precheck_multi_sample_web_surface_is_falsifiable` failed, proving the Phase 22.6-H proof was not weakened |
-| 6 (control) | Comment-only line inside `renderDestinationPrecheck` | No test failed; the full operator-UI module ran 24 tests OK |
 
 ### Decisions
 
-- The single-sample branch duplicates the original field list verbatim so its rendered labels,
-  order and warnings are byte-identical, and existing substring assertions keep matching.
-- The multi-sample branch uses two separate `dl` lists (`runList`, `firstList`) so the run-level
-  and first-sample groups are distinct nodes, matching the authoritative field split.
-- No documentation change was needed: the existing `docs/product-experience.md` CURRENT sentences
-  still describe the same evidence values and are not contradicted by the presentation split.
-
 ### Remaining Work
 
-- Nothing inside this Slice. Known non-goals are recorded above and were not started: making the
-  first-sample block index-accurate for a failed sample 0 (application change) and the residual
-  all-`ready` proof gap from the Phase 22.6-H-F1 review remain for later Slices.
-- No push was performed; this checkpoint stays local pending High review.
-
 ### Risks, Assumptions and Newly Discovered Issues
-
-- Probe restore used the staged index version of `operator_ui.py` because a plain checkout from
-  `HEAD` would have reverted the uncommitted Slice implementation; after each restore the worktree
-  matched the staged file byte-for-byte.
-- The multi-sample run-level fields still come from the first successfully probed sample's details
-  (top-level evidence semantics are unchanged); the per-sample rows show every sample's own state,
-  and the known sample-0-failed limitation is recorded in Non-goals.
-- Per the workflow, this commit does not contain its own SHA; the full SHA is reported in the
-  review handoff and will be recorded by High in `docs/progress.md` after review.

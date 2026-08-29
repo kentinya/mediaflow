@@ -298,6 +298,34 @@ independent review records are "Phase 22.6-H High Review Result (2026-08-28): FI
 "Phase 22.6-H-F1 High Review Result (2026-08-28): PASS". Phase 22.6 itself remains open; the next
 legal Slice is Phase 22.6-I.
 
+### Phase 22.6-I Web Run-Level Destination Precheck Summary Separated From the First Sample
+
+```text
+Status: PASS / CLOSED
+Accepted checkpoint SHA: 6c0ba745772e315b941c1c3b314ab47e66e8f35a
+High Audit: PASS — 2026-08-29; independently reviewed against the Phase 22.6-I `TASK.md`, the real
+code state and the Phase 22.6-H-F1 tree. Scope is exactly `mediaflow/interfaces/operator_ui.py`
+(inside `renderDestinationPrecheck` only), `tests/test_operator_ui.py` and `TASK.md`; the diff
+against every forbidden path (`mediaflow/application`, `mediaflow/domain`,
+`mediaflow/infrastructure`, `mediaflow/interfaces/service_api.py`, `mediaflow/cli.py`, `scripts`,
+`config`, `pyproject.toml`) is EMPTY. The single-sample branch is byte-identical in its 26 label and
+expression pairs and their order, the multi-sample branch splits exactly 18 run-level and 8
+first-sample fields with only the verdict label differing, no evidence key is added or read
+differently, and every per-sample row table, collision table and bounded sentence after the branch
+is byte-identical and still present exactly once. `tests/` grew 22 to 24 tests with exactly one
+Task-permitted assertion replacement and zero deletions or renames. All six Task-mandated
+falsification probes bit as required and six further independent probes were run; the complete
+offline suite is 863 tests OK (7 skipped), the focused modules 49 OK, and configuration marker 10
+and Runtime marker 22 are unchanged in an isolated wheel smoke run
+Push: NOT PERFORMED — neither the checkpoint nor this record was pushed; `main` is ahead of
+`origin/main` and Phase 22.6 closure still needs the Final Closure Audit plus a new explicit
+authorization
+```
+
+Implementation evidence is recorded by the implementation role in `TASK.md` at that SHA. The
+independent review record is "Phase 22.6-I High Review Result (2026-08-29): PASS". Phase 22.6 itself
+remains open; the next legal Slice is Phase 22.6-J.
+
 ## Phase 22.6-A High Review Result (2026-08-27)
 
 - Status: FIX REQUIRED; Rejected checkpoint SHA:
@@ -1649,6 +1677,103 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   RecognitionTypes or multiple destination Storages per request, known-media duplicate detection,
   attachment prechecks, absolute mounted-path display and any execution or authority change must not
   start.
+
+## Phase 22.6-I High Review Result (2026-08-29): PASS
+
+- Status: PASS / CLOSED for Phase 22.6-I; Accepted checkpoint SHA:
+  `6c0ba745772e315b941c1c3b314ab47e66e8f35a`; High Audit: PASS — 2026-08-29. There is no rejected
+  checkpoint for this Slice. Reviewed independently against `AGENTS.md`,
+  `docs/development-workflow.md`, `docs/product-experience.md`, `docs/architecture.md`,
+  `docs/roadmap.md`, the Phase 22.6-I `TASK.md`, the accepted Phase 22.6-H-F1 tree
+  (`4455198a6ef3b93fe1e92cef73660039620e756e`) and the real code state, not on the implementer's
+  report.
+- Scope conformance is exact. The checkpoint touches three files only:
+  `mediaflow/interfaces/operator_ui.py` (+62/-29), `tests/test_operator_ui.py` (+50/-1) and
+  `TASK.md`. `git diff 4455198 6c0ba74 -- mediaflow/application mediaflow/domain
+  mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config
+  pyproject.toml` is EMPTY, and every production hunk lies inside `renderDestinationPrecheck`; no
+  other renderer, helper, route, permission, gate, category, evidence key or schema marker moved.
+- The promised user outcome is delivered. For a multi-sample run the Web now builds a run-level `dl`
+  first — `Evidence state`, `Sample count`, `Status`, `Run verdict (most severe sample)`, destination
+  Storage identity and support, MediaLibrary and Storage-relative root, destination-root
+  observations, required/declared/missing capabilities, `Fallback`, `Authority granted`, path scope,
+  side effects, retry safety, `Message`, `Next action` (18 fields) — appends it, and only then emits
+  the `First sample destination` heading followed by a second `dl` holding the 8 genuinely
+  per-sample fields (deepest existing ancestor, directories that would be created, destination path,
+  target existence, configured strategy, projected outcome, proposed relative destination, read
+  operations). 18 + 8 covers all 26 fields the previous single list carried, each list preserves the
+  single-sample relative order, and only the verdict label differs. The aggregate verdict can no
+  longer be read as the first sample's, and the operator can still see which sample is which in the
+  untouched per-sample row table below.
+- No regression in the single-sample journey. The `else` branch is byte-identical in all 26 label and
+  expression pairs and their order, its label is still `Verdict`, and everything from
+  `if (Array.isArray(result.items)) {` to the end of the function is byte-identical: per-sample rows,
+  the collision table, `No cross-item destination collision detected.`, the stale sentence, the
+  not-ready sentence with its unchanged `!result.destinationRootExists` gate, the no-authority
+  warning and the `1-8 samples` control. All nine bounded sentences and headings still appear exactly
+  once. Evidence keys are read exactly as before; nothing new is expected from API or persistence, so
+  stored Phase 22.6-H evidence still renders.
+- Tests genuinely prove the new semantics. `tests/test_operator_ui.py` grew 22 to 24 tests with zero
+  deletions or renames and exactly one assertion replacement, the one the Task permitted, because the
+  pinned source string it named no longer exists. Both new tests are body-scoped through
+  `_js_function_body` plus the brace-counting `_js_braced_body`, so they cannot pass on text found
+  elsewhere in the script: one pins that the run-level verdict and the `detailContent.append(runList)`
+  both precede the heading, that the heading precedes `detailContent.append(firstList)` and the
+  first-sample fields, that no `field(list, …)` destination-path or target-exists call survives in the
+  multi branch, and that the first-sample destination path still precedes the per-sample row table;
+  the other pins the run label in the multi branch, the plain `Verdict` label in the single branch,
+  and the absence of the run label from the single branch.
+- Falsification is real. All six Task-mandated probes bit, each applied alone to the shipped tree and
+  reverted to a clean tree afterwards: re-appending the run list after the heading, moving
+  `Destination path` into the run list, and replacing the `sampleCount > 1` guard with `if (true)`
+  each fail `test_destination_precheck_run_level_summary_precedes_first_sample_block` (the guard probe
+  also fails the verdict-label test); the plain `Verdict` label in the multi branch fails
+  `test_destination_precheck_multi_sample_verdict_label_names_the_run`; deleting the no-collision
+  sentence fails `test_destination_precheck_multi_sample_web_surface_is_falsifiable`; and the
+  comment-only control changes nothing. Six further independent probes confirmed the boundary is not
+  accidental: using the run verdict label in the single branch is caught, while deleting a run-level
+  field such as `Message`, renaming the heading text, reordering single-sample fields or rewording the
+  not-ready sentence are not — the field split itself I verified by source analysis rather than by
+  test, which matches what this Task demanded and is recorded below.
+- Validation re-run on the checkpoint tree: `.venv/bin/python -m unittest` → `Ran 863 tests` `OK
+  (skipped=7)`; the focused set `tests.test_operator_ui tests.test_configuration_destination_precheck
+  tests.test_configuration_destination_activation` → 49 OK; `ruff check .` and `ruff format --check .`
+  clean; `compileall -q mediaflow tests` clean; `pip check` clean; `python -m mediaflow.cli --config
+  <temp> config validate` clean; `pip wheel . --no-deps --no-build-isolation` plus
+  `scripts/wheel_smoke_test.py` clean in an isolated interpreter with configuration marker 10 and
+  Runtime marker 22 unchanged; `git diff --check` clean; no FFmpeg/FFprobe reference anywhere; the
+  business-layer filesystem-mutation audit still shows mutation only under `OrganizerExecutor`;
+  120 tracked Markdown files with 25 local links and 0 broken; `config/alist.json` untracked,
+  unstaged and ignored; and the secret scan over the diff and the review output found no token,
+  credential, endpoint, header, cookie or private path.
+- Zero documentation change was correct for this Slice. No CURRENT sentence in `docs/architecture.md`
+  or row in `docs/product-experience.md` describes how the precheck fields are grouped, so the
+  existing claims stay true; the Slice changed grouping only, not behaviour, vocabulary or scope.
+- Non-blocking observations, none of them closure conditions: the 26-field list now exists twice, so a
+  future label or expression change must be applied to both branches and no test compares them;
+  single-sample field order remains unpinned by tests (pre-existing — I verified it programmatically
+  instead); and deleting a run-level field from the multi branch is caught by no test, since the Task
+  pinned only the verdict label, `Destination path` and `Target exists`.
+- Correction to my own earlier record. The Phase 22.6-I Non-goals I wrote said a multi-sample run whose
+  sample 0 failed would show a later sample's destination under the `First sample destination` heading.
+  Reading `mediaflow/application/configuration_objects.py` proves that cannot happen: any sample with a
+  `failureCategory` makes the whole precheck FAILED through `_destination_precheck_failure`, so
+  completed evidence contains no failed sample and its top-level details always come from sample 0. The
+  index-accuracy concern is therefore void and must not become a Slice. The separate Phase 22.6-H
+  observation about the *persisted normalized input* stands unchanged and is still correct: `:1416`
+  keeps the first sample that normalized, so a FAILED run whose sample 0 never normalized does record a
+  later sample's input. What the Web block does get wrong is different and real: FAILED evidence carries
+  only `sampleCount`, `items`, `collisions`, `guardMutationCalls` and `authorityGranted` (or no `result`
+  at all), yet the page renders `result.X === true ? 'YES' : 'NO'`, so `Destination root exists /
+  directory` and `Target exists` print `NO` for determinations that were never made. That is the defect
+  Phase 22.6-J fixes.
+- Verdict: **PASS**. Phase 22.6-I is **CLOSED** and Phase 22.6 remains open. The next legal Slice is
+  **Phase 22.6-J** (Web presentation only: an absent or non-boolean destination determination must
+  render as a bounded `NOT DETERMINED` instead of a fabricated `NO`, in both precheck branches), now
+  written to `TASK.md`. Remote SMB/OpenList/S3 destination prechecks, mutation-based capability
+  probing, multiple RecognitionTypes or destination Storages per request, known-media duplicate
+  detection, attachment prechecks, absolute mounted-path display, evidence-shape changes and any
+  execution or authority change must not start.
 
 ## Completed
 
