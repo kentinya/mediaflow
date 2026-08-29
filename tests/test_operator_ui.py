@@ -538,7 +538,7 @@ class OperatorUiTests(unittest.TestCase):
         )
         self.assertIn("field(list, 'Sample count', String(sampleCount));", precheck)
         self.assertIn(
-            "if (sampleCount > 1) detailContent.append(text('h4', 'First sample destination'));",
+            "if (sampleCount > 1) {\n        const runList = document.createElement('dl');",
             precheck,
         )
         self.assertIn("if (Array.isArray(result.items)) {", precheck)
@@ -574,6 +574,55 @@ class OperatorUiTests(unittest.TestCase):
             precheck,
         )
         self.assertIn("const body = {expectedVersion: revision.version,", precheck)
+
+    def test_destination_precheck_run_level_summary_precedes_first_sample_block(self) -> None:
+        script = APP_JS.decode()
+        precheck = _js_function_body(script, "renderDestinationPrecheck")
+
+        multi_start = precheck.index("if (sampleCount > 1) {")
+        multi_branch = _js_braced_body(precheck, precheck.index("{", multi_start))
+        heading = "detailContent.append(text('h4', 'First sample destination'));"
+        run_verdict = "field(runList, 'Run verdict (most severe sample)',"
+        destination_path = "field(firstList, 'Destination path',"
+        target_exists = "field(firstList, 'Target exists',"
+        self.assertIn(heading, multi_branch)
+        self.assertLess(multi_branch.index(run_verdict), multi_branch.index(heading))
+        self.assertLess(
+            multi_branch.index("detailContent.append(runList);"),
+            multi_branch.index(heading),
+        )
+        self.assertLess(
+            multi_branch.index(heading),
+            multi_branch.index("detailContent.append(firstList);"),
+        )
+        self.assertLess(multi_branch.index(heading), multi_branch.index(destination_path))
+        self.assertLess(multi_branch.index(destination_path), multi_branch.index(target_exists))
+        self.assertIn("const firstList = document.createElement('dl');", multi_branch)
+        self.assertIn("const runList = document.createElement('dl');", multi_branch)
+        self.assertNotIn("field(list, 'Destination path',", multi_branch)
+        self.assertNotIn("field(list, 'Target exists',", multi_branch)
+        rows = precheck.index("detailContent.append(text('h4', 'Per-sample destination rows'));")
+        self.assertLess(precheck.index(destination_path), rows)
+
+    def test_destination_precheck_multi_sample_verdict_label_names_the_run(self) -> None:
+        script = APP_JS.decode()
+        precheck = _js_function_body(script, "renderDestinationPrecheck")
+
+        multi_start = precheck.index("if (sampleCount > 1) {")
+        multi_branch = _js_braced_body(precheck, precheck.index("{", multi_start))
+        single_branch = _js_braced_body(
+            precheck, precheck.index("{", precheck.index("} else {", multi_start))
+        )
+        self.assertIn(
+            "field(runList, 'Run verdict (most severe sample)', "
+            "boundedSetupText(result.verdict || evidence.failureCategory));",
+            multi_branch,
+        )
+        self.assertIn(
+            "field(list, 'Verdict', boundedSetupText(result.verdict || evidence.failureCategory));",
+            single_branch,
+        )
+        self.assertNotIn("Run verdict (most severe sample)", single_branch)
 
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
         script = APP_JS.decode()
