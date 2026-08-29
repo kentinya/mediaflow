@@ -742,6 +742,99 @@ true; inconsistent Jobs fail closed. Scheduler remains scan/preview-only. This b
 overwrite/delete bypass: the existing Task, conflict, Storage capability, plan validation, and sole
 OrganizerExecutor mutation boundary remain authoritative.
 
+## Scheduled unattended organization: TARGET V1 (not implemented)
+
+### CURRENT foundation
+
+The CURRENT runtime already provides interval/Cron evaluation, atomic and idempotent schedule
+emission, durable AutomationJob claim/cancellation/audit, immutable configuration snapshot pinning,
+the Worker-to-existing-Task/TaskItem/Result boundary, independent RecognitionTypePolicy references,
+and OrganizerExecutor-only mutation. Runtime schedule definitions and ordinary AutomationJob
+submission accept only scan/preview. Protected manual/remote organization instead consumes the
+one-time authorization described above and persists only that Job's execute-authorized decision.
+
+CURRENT does not provide one operator-managed Automation Task Definition that combines a bounded
+ResourceLibrary/source scope, schedule, enabled state, managed configuration authority and a
+persistent scoped unattended execution grant. The TARGET below is V1 product scope, not a claim
+about current tables, APIs or Web behavior.
+
+### TARGET V1 responsibility flow
+
+```text
+Automation Task Definition
+  - ResourceLibrary / bounded source scope
+  - schedule / timezone / enabled state
+  - managed configuration authority
+  - explicit scoped unattended execution authority
+        ↓
+Scheduler (when to emit which definition)
+        ↓
+Automation Job (one occurrence)
+        ↓
+pinned immutable configuration snapshot
+        ↓
+Worker
+        ↓
+Task / TaskItem (persistent execution state)
+        ↓
+Scan → Parse → Recognition → RecognitionType
+        ↓
+RecognitionTypePolicy
+  ├─ MetadataPolicy → MetadataProvider
+  ├─ NamingPolicy
+  ├─ ClassificationPolicy → MediaLibrary + Storage-relative destination
+  └─ OrganizePolicy → Move / Copy / HardLink / SoftLink
+        ↓
+OrganizePlanner / equivalent Preview
+        ↓
+scope + authority + capability + conflict + safety validation
+        ↓
+OrganizerExecutor
+        ↓
+Result / Log
+```
+
+Automation Task Definition is a long-lived operator intent. AutomationJob remains one durable
+occurrence, while the existing Task/TaskItem/Result model remains the execution and per-item outcome
+model. These objects require traceable identities but not a parallel media-work lifecycle.
+
+Scheduler owns only due-time evaluation and durable occurrence emission. It does not resolve or
+copy Provider, NamingPolicy, ClassificationPolicy, MediaLibrary, destination or OrganizePolicy, and
+it never invokes Storage. Different RecognitionTypes in one occurrence therefore continue to use
+independently resolved policy mappings. Metadata Provider comes from MetadataPolicy, destination
+comes from ClassificationPolicy, and operation comes from OrganizePolicy.
+
+Metadata selection continues through the existing Provider abstraction and registry. TMDB remains
+the first required V1 production Provider. V1 Provider switching means changing the Provider
+reference owned by MetadataPolicy through the managed Draft → Validate/Test → Activate lifecycle;
+it is not a Scheduler decision and does not require a second production adapter solely as proof.
+
+Each AutomationJob pins the immutable Active configuration selected at its creation boundary.
+Later activation, including a MetadataPolicy Provider switch, applies only to subsequently created
+Jobs. A queued or running Job must never silently replace its RecognitionTypePolicy, Provider,
+NamingPolicy, ClassificationPolicy or OrganizePolicy from a newer Active snapshot.
+
+### TARGET execution authority and safety boundary
+
+Scheduled unattended authority is persistent, explicitly granted, revocable and bound to exactly
+one Automation Task Definition plus its permitted source/run scope. It is separate from the CURRENT
+one-shot manual/remote ticket and does not consume a fresh ticket for every due run. It also does
+not grant policy selection, Storage capability, Overwrite, Delete, source cleanup, operation
+fallback or access beyond the definition's bounds.
+
+Configuration follows Configure → Validate/Test → Preview/DryRun → explicit unattended
+enablement → Scheduled Runs. An equivalent zero-mutation Preview remains available, but a valid
+grant removes the need for another interactive Preview or Execute click on each occurrence. Every
+run still builds a normal immutable plan and validates the pinned snapshot/references, source
+scope, live authority, permissions, Storage capabilities, conflicts and all other safety gates.
+The authority boundary must be checked before each not-yet-performed mutation so revocation can
+stop future effects without rewriting completed effects.
+
+Any missing/invalid pinned revision, broken reference, unavailable Provider, invalid permission,
+capability gap, revoked/expanded/mismatched authority, out-of-scope path or unresolved safety
+decision fails closed before media mutation and persists actionable Job/TaskItem/Result evidence.
+OrganizerExecutor remains the only application component allowed to call mutating Storage methods.
+
 ## API principals, RBAC, and security audit
 
 The API transport resolves environment-owned bearer credentials into provider-neutral principals

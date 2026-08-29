@@ -277,7 +277,7 @@ This offline action constructs no Storage, Provider, Planner or Executor, applie
 prefix, and performs no existence, collision or capability probe. Phase 22.6-D is independently
 accepted at `c7ec192b3b20f236cca5a70ed59cad43e0851242` and does not change checked activation.
 
-## Phase 22.6-E-N Local destination precheck and checked activation (CURRENT; Slice PASS)
+## Local destination precheck and checked activation (CURRENT implementation)
 
 Before activating a Draft, the operator can now ask one question about the real destination without
 changing it: would this composed path actually work. The same revision view takes one
@@ -343,9 +343,9 @@ Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
 multiple RecognitionTypes or destination Storages in one request, `ConflictType.DUPLICATE_MEDIA` /
 known-media detection, attachment prechecks, absolute mounted-path display and execution remain
 TARGET. Provider switching, generic Task resume, per-item Processing Checkpoint recovery and
-unattended execute also remain outside Phase 22.6. Phase 22.6-A through 22.6-N are Slice-accepted;
-the phase remains open pending this CURRENT-documentation review and a separate Final Closure Audit.
-Active runtime-consumption semantics are unchanged.
+unattended execute also remain outside Slice 22.6. This CURRENT behavior is implementation evidence
+inside that Slice; lifecycle authority remains root `SLICE.md`. Active runtime-consumption semantics
+are unchanged.
 
 ## A. First-time setup
 
@@ -662,6 +662,101 @@ was never captured, the UI says unavailable rather than fabricating an explanati
 
 The operator must not join FileIndex, TaskResult, review, or history records manually, decode cursor
 formats, or understand internal pipeline object names.
+
+## I. Scheduled unattended organization (TARGET V1; not implemented)
+
+### CURRENT foundation
+
+MediaFlow currently has managed immutable configuration snapshots, interval/Cron schedule
+evaluation, durable scan/preview AutomationJobs, a Worker that delegates into the existing media
+Task/TaskItem/Result pipeline, and an independent one-time authorization boundary for protected
+manual/remote organization. Current Scheduler definitions remain scan/preview-only. There is no
+complete operator-managed Automation Task Definition with source scope and persistent unattended
+execution authority, so the journey below must not be presented as CURRENT.
+
+### Starting point
+
+The operator opens Automation and creates or edits one long-lived Automation Task Definition for a
+configured ResourceLibrary. The definition is distinct from each scheduled AutomationJob and from
+the Task/TaskItems created when that Job runs.
+
+### Information shown
+
+- Name and enabled state
+- ResourceLibrary, source folder and bounded source scope
+- Schedule, timezone and next run
+- Active configuration identity used for future Job creation
+- Referenced RecognitionTypePolicy mappings and their Metadata, Naming, Classification and Organize
+  policy ownership, without copying those policy values into the Automation definition
+- Unattended execution state, authority scope, granting actor/time and revocation availability
+- Last run, current run and linked AutomationJob/Task state
+- Per-item outcomes, destinations, operations and Results
+- Failures requiring manual action and the currently permitted recovery action
+
+### Actions
+
+```text
+Create Automation Task
+→ Select ResourceLibrary / bounded source scope
+→ Configure schedule / timezone
+→ Inspect referenced policies and configuration identity
+→ Validate / Test
+→ Preview / DryRun
+→ Explicitly enable unattended execution
+→ Scheduled
+→ Inspect run history / Result / recovery
+```
+
+The operator may disable scheduling or revoke unattended execution authority independently. A
+change that widens source or execution scope cannot silently inherit the narrower grant.
+
+### Runtime behavior
+
+At each due occurrence Scheduler creates one AutomationJob pinned to the immutable Active
+configuration at that creation boundary. The Worker uses the existing chain:
+
+```text
+Task / TaskItem → Scan → Parse → Recognition → RecognitionType → RecognitionTypePolicy
+→ MetadataPolicy / Provider → NamingPolicy
+→ ClassificationPolicy / MediaLibrary destination
+→ OrganizePolicy → OrganizePlan → Execute → Result / Log
+```
+
+Different RecognitionTypes in one run may therefore select different Providers, names,
+MediaLibraries, destinations and operations. Scheduler owns none of those decisions. A later Active
+configuration changes only Jobs created afterward; queued or running Jobs keep their pinned policy
+and Provider semantics.
+
+### Safe defaults
+
+The definition starts disabled or without unattended mutation authority. Preview/DryRun remains
+available and zero-mutation. Once the operator explicitly grants persistent, scoped and revocable
+authority, subsequent due runs do not require another manual Preview or Execute click, but every
+item still passes planning, source-scope, conflict, Storage-capability, current-authority and safety
+validation before OrganizerExecutor can mutate Storage. The grant never implies Overwrite, Delete,
+source cleanup, operation fallback or access outside the configured scope.
+
+### Success
+
+The due Job runs automatically, each item follows its RecognitionType-selected policy chain, and
+the Automation view links the definition, occurrence, Task/TaskItems and Results. The operator can
+see what ran, which immutable configuration was used, what changed, what did not run and why.
+
+### Errors and recovery
+
+Missing or invalid pinned configuration, broken references, unavailable Provider, invalid
+credentials/permissions, unsupported Storage capability, revoked authority, scope mismatch,
+unstable input, unresolved identity/classification/conflict or another failed safety gate stops the
+affected mutation fail-closed. The item preserves durable state, known effects, retry safety and a
+specific recovery action. Successful siblings remain complete; uncertain mutation is not
+automatically replayed. Disabling the definition prevents future occurrences, while revoking its
+authority prevents not-yet-performed mutation without rewriting completed history.
+
+### Must not require internal knowledge
+
+The operator must not create queue records, construct an OrganizePlan, select policies per file,
+calculate Storage-relative destinations, manage one-shot tickets for every scheduled run, or inspect
+database tables to connect an Automation definition to its Jobs, Tasks and Results.
 
 ## Journey acceptance rule
 
