@@ -8,21 +8,23 @@ Commit SHA: PENDING
 High Audit: PENDING
 Preceding closed checkpoint: f2db70b28edb8f753ebed0d3805be7143b521264
   (Phase 22.6-K PASS / CLOSED — 2026-08-29)
-Baseline for this Slice: the review-record commit that is `HEAD` when work starts. Its parent is
-  f2db70b28edb8f753ebed0d3805be7143b521264 and it changed only `docs/progress.md`,
-  `docs/roadmap.md` and `TASK.md`, so no code differs between them. Record that SHA in the
-  Completion Report as BASE, use BASE for file-scope commands and f2db70b for code byte-identity
-  commands
+Baseline for this Slice: the review-record commit that is `HEAD` when work starts. Every commit
+  between f2db70b28edb8f753ebed0d3805be7143b521264 and it (af9ca9a, then the 2026-08-29 push record)
+  changed only `docs/progress.md`, `docs/roadmap.md` and `TASK.md`, so no code differs between them.
+  Record that SHA in the Completion Report as BASE, use BASE for file-scope commands and f2db70b for
+  code byte-identity commands
 Preserved rejected checkpoints: d8c2ae04e578955ddbbd29c413f235bf4cf08f42 (Phase 22.6-H),
   b9cc35e2677a35920042b5695f87b50a80025ef0 (Phase 22.6-G),
   7353b0d22497e6e3e596c93c7052eea34daf27df (Phase 22.6-E),
   90ce13a6c6c39912dd389f71a1189314ff24eb5d (Phase 22.6-A) and
   08dfd4f921728755209b6d52347d28f221121c47 (Phase 22.5-E); never amended, squashed or rewritten
-Push gate: SATISFIED for Slice closure — Phase 22.6-A through 22.6-G and their review records were
-  pushed to origin/main on 2026-08-28 under explicit operator authorization. The 22.6-H through
-  22.6-K checkpoints, the preserved rejected 22.6-H checkpoint and every review record after them
-  stay local; Slice closure does not require a push, and phase-level Phase 22.6 closure still
-  requires the Final Closure Audit plus a new explicit authorization
+Push gate: SATISFIED — Phase 22.6-A through 22.6-G were pushed to origin/main on 2026-08-28, and
+  Phase 22.6-H through 22.6-K plus every review record through af9ca9a were pushed on 2026-08-29,
+  both under explicit operator authorization; the push record commit that also carries this TASK was
+  pushed under the same authorization, so origin/main and local main agree. The preserved rejected
+  22.6-H checkpoint travels as an ancestor only, never as an acceptance. Slice closure does not
+  require a push, this Slice's own checkpoint needs no push, and phase-level Phase 22.6 closure still
+  requires the Final Closure Audit — the push satisfies the gate but closes nothing
 Phase: 22.6 Naming / Classification / Organize configuration journey (roadmap section 5)
 Slice scope: one evidence key plus its rendering. Every failing per-sample destination row must
   carry its own bounded `nextAction`, taken from the existing category-to-action map that already

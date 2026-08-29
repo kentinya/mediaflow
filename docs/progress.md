@@ -288,9 +288,12 @@ because Required Test 1's most-severe verdict aggregation was not falsifiable �
 PASS — 2026-08-28 on 4455198 after the Phase 22.6-H-F1 evidence correction: the aggregation is now
 pinned by two additive tests whose severe sample sits at index 1, and ten independent probes
 confirmed it
-Push: NOT PERFORMED — neither the rejected checkpoint, the correction checkpoint nor the review
-records were pushed; `main` is ahead of `origin/main` and Phase 22.6 closure still needs the Final
-Closure Audit plus a new explicit authorization
+Push: DONE — 2026-08-29 under explicit operator authorization, together with the Phase 22.6-I
+through 22.6-K checkpoints and every review record through `af9ca9a`; not pushed at the time this
+record was written. The rejected checkpoint `d8c2ae04e578955ddbbd29c413f235bf4cf08f42` was NOT
+pushed as an acceptance — a rejected checkpoint is never pushed as a closure; it is preserved as an
+ancestor and is therefore contained in `origin/main` (`af9ca9a`), never amended, squashed or
+rewritten. Phase 22.6 closure still needs the Final Closure Audit
 ```
 
 Implementation evidence is recorded by the implementation role in `TASK.md` at each SHA. The
@@ -317,9 +320,9 @@ Task-permitted assertion replacement and zero deletions or renames. All six Task
 falsification probes bit as required and six further independent probes were run; the complete
 offline suite is 863 tests OK (7 skipped), the focused modules 49 OK, and configuration marker 10
 and Runtime marker 22 are unchanged in an isolated wheel smoke run
-Push: NOT PERFORMED — neither the checkpoint nor this record was pushed; `main` is ahead of
-`origin/main` and Phase 22.6 closure still needs the Final Closure Audit plus a new explicit
-authorization
+Push: DONE — 2026-08-29 under explicit operator authorization, in the same fast-forward push that
+carried Phase 22.6-H through 22.6-K and every review record through `af9ca9a`; not pushed at the
+time this record was written. Phase 22.6 closure still needs the Final Closure Audit
 ```
 
 Implementation evidence is recorded by the implementation role in `TASK.md` at that SHA. The
@@ -348,9 +351,9 @@ style are byte-identical, so an undetermined root still blocks readiness, and ev
 falsification probes bit exactly as required with a clean control, and seven further independent
 probes were run. The complete offline suite is 866 tests OK (7 skipped), the focused modules 52 OK,
 and configuration marker 10 and Runtime marker 22 are unchanged in an isolated wheel smoke run
-Push: NOT PERFORMED — neither the checkpoint nor this record was pushed; `main` is ahead of
-`origin/main` and Phase 22.6 closure still needs the Final Closure Audit plus a new explicit
-authorization
+Push: DONE — 2026-08-29 under explicit operator authorization, in the same fast-forward push that
+carried Phase 22.6-H through 22.6-K and every review record through `af9ca9a`; not pushed at the
+time this record was written. Phase 22.6 closure still needs the Final Closure Audit
 ```
 
 Implementation evidence is recorded by the implementation role in `TASK.md` at that SHA. The
@@ -381,14 +384,34 @@ while the run-level message still comes from the lowest-index failure. All seven
 falsification probes bit as required with a clean control, and six further independent probes were
 run. The complete offline suite is 868 tests OK (7 skipped), the focused modules 54 OK, and
 configuration marker 10 and Runtime marker 22 are unchanged in an isolated wheel smoke run
-Push: NOT PERFORMED — neither the checkpoint nor this record was pushed; `main` is ahead of
-`origin/main` and Phase 22.6 closure still needs the Final Closure Audit plus a new explicit
-authorization
+Push: DONE — 2026-08-29 under explicit operator authorization, in the same fast-forward push that
+carried Phase 22.6-H through 22.6-K and every review record through `af9ca9a`; not pushed at the
+time this record was written. Phase 22.6 closure still needs the Final Closure Audit
 ```
 
 Implementation evidence is recorded by the implementation role in `TASK.md` at that SHA. The
 independent review record is "Phase 22.6-K High Review Result (2026-08-29): PASS". Phase 22.6 itself
 remains open; the next legal Slice is Phase 22.6-L.
+
+### Phase 22.6 Second Push Record (2026-08-29)
+
+```text
+Push: DONE — 2026-08-29 under explicit operator authorization ("推送到github"). `main` was
+fast-forwarded to `origin/main`: a9473c6 -> af9ca9a, ten commits, history linear, nothing amended,
+squashed or rewritten. The push carries the Phase 22.6-H, 22.6-H-F1, 22.6-I, 22.6-J and 22.6-K
+checkpoints, their review records, and the Phase 22.6-K review record plus the Phase 22.6-L TASK
+definition (af9ca9a). The preserved rejected Phase 22.6-H checkpoint
+d8c2ae04e578955ddbbd29c413f235bf4cf08f42 travels as an ancestor only; it is not pushed as an
+acceptance and remains rejected. Pre-push gates: working tree clean, `git diff --check` clean,
+`config/alist.json` still untracked, unstaged and ignored and never touched by any pushed commit,
+and a secret scan over the pushed `mediaflow`/`scripts`/`config`/`pyproject.toml` diff found no
+credential, token, endpoint, header, cookie or absolute user path. `origin/main` and local `main`
+now agree at af9ca9a. Earlier ledger entries and dated review narratives that say a 22.6-H..22.6-K
+checkpoint was not pushed were true when written; this record supersedes them
+```
+
+Slice-level closure never required a push. Phase-level Phase 22.6 closure still requires the Final
+Closure Audit; this push does not close the Phase and grants no closure authority.
 
 ## Phase 22.6-A High Review Result (2026-08-27)
 
@@ -1658,7 +1681,9 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   in `mediaflow/`; and the pre-existing `ResourceWarning: unclosed database` in unrelated suites is
   still open.
 - Verdict: **FIX REQUIRED**, with exactly one blocking item. The rejected checkpoint
-  `d8c2ae04e578955ddbbd29c413f235bf4cf08f42` is preserved and is not pushed. Phase 22.6-H is **not
+  `d8c2ae04e578955ddbbd29c413f235bf4cf08f42` is preserved and is not pushed (true when this record
+  was written; on 2026-08-29 it entered `origin/main` as a preserved ancestor, never as an
+  acceptance, unmodified). Phase 22.6-H is **not
   closed** and Phase 22.6 remains open. `TASK.md` now contains only Phase 22.6-H-F1, which is
   evidence-only: no production file may change, and the activation gate, both failure categories, the
   schema markers, the Web heading placement, the redundant defences and every 22.6-H non-goal
@@ -1734,7 +1759,9 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   corrected in this commit — the tenth file is `TASK.md`, no CLI module was touched, and the CLI has
   no destination-precheck command at all.
 - Verdict: **PASS**. Phase 22.6-H is **CLOSED**, accepted through Phase 22.6-H-F1 with the rejected
-  checkpoint preserved and unpushed. Phase 22.6 remains open. The next legal Slice is **Phase 22.6-I**
+  checkpoint preserved and unpushed (true when this record was written; on 2026-08-29 it entered
+  `origin/main` as a preserved ancestor, never as an acceptance, unmodified). Phase 22.6 remains
+  open. The next legal Slice is **Phase 22.6-I**
   (separate the run-level destination-precheck summary from the first-sample block in the Web
   surface, so the aggregate verdict is never presented as the first sample's), now written to
   `TASK.md`; remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing, multiple
