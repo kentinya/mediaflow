@@ -3,7 +3,7 @@
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: READY FOR IMPLEMENTATION
+Status: READY FOR HIGH REVIEW
 Commit SHA: PENDING
 High Audit: PENDING
 Preceding closed checkpoint: ccbddf2af92c1abf18d1162d0a6c37da9ee0a7cd
@@ -234,42 +234,122 @@ Run every command and report its actual output:
 
 ## Closure Checklist
 
-- [ ] Only `mediaflow/interfaces/operator_ui.py`, `tests/test_operator_ui.py`,
+- [x] Only `mediaflow/interfaces/operator_ui.py`, `tests/test_operator_ui.py`,
       `tests/test_configuration_destination_precheck.py`, `TASK.md` and — only under the stated rule —
       `docs/product-experience.md` changed
-- [ ] `git diff --exit-code ccbddf2 HEAD -- mediaflow/application mediaflow/domain
+- [x] `git diff --exit-code ccbddf2 HEAD -- mediaflow/application mediaflow/domain
       mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config
       pyproject.toml` is empty, proving probes 5 and 6 were restored
-- [ ] The rows table renders exactly five columns in the mandated order, with
+- [x] The rows table renders exactly five columns in the mandated order, with
       `boundedSetupText(item.message)` as the fifth cell and no `evidence.message` in the expression
-- [ ] The run-level `Message` and `Next action` fields are byte-identical in both branches
-- [ ] The `Per-sample destination rows` heading, the `Array.isArray(result.items)` guard, the first four
+- [x] The run-level `Message` and `Next action` fields are byte-identical in both branches
+- [x] The `Per-sample destination rows` heading, the `Array.isArray(result.items)` guard, the first four
       columns, the collision table, every bounded sentence, the not-ready gate and the Phase 22.6-J
       `determinationText` call sites are byte-identical
-- [ ] Exactly one existing assertion replaced — the header assertion named in Rule 2 — and no other
+- [x] Exactly one existing assertion replaced — the header assertion named in Rule 2 — and no other
       assertion weakened, deleted or renamed
-- [ ] Both Required Tests added, body-scoped where applicable, and the evidence-level test stays offline
-- [ ] All seven Required Falsification Probes executed with recorded output, control included, clean
+- [x] Both Required Tests added, body-scoped where applicable, and the evidence-level test stays offline
+- [x] All seven Required Falsification Probes executed with recorded output, control included, clean
       tree after each
-- [ ] Full offline suite green, total risen from 866 only by the added tests
-- [ ] Markers still 10 and 22; wheel smoke reports Runtime schema 22
-- [ ] No credential, endpoint, Storage `rootPath`, header, cookie, private path or raw exception text
+- [x] Full offline suite green, total risen from 866 only by the added tests
+- [x] Markers still 10 and 22; wheel smoke reports Runtime schema 22
+- [x] No credential, endpoint, Storage `rootPath`, header, cookie, private path or raw exception text
       in the page, tests, report or commit; `config/alist.json` still untracked, unstaged, ignored
-- [ ] Completion Report filled in with the actual commands, actual output, deviations and risks
-- [ ] Status set to READY FOR HIGH REVIEW; not pushed
+- [x] Completion Report filled in with the actual commands, actual output, deviations and risks
+- [x] Status set to READY FOR HIGH REVIEW; not pushed
 
 ## Completion Report
 
 ### Changed Files
 
+- `mediaflow/interfaces/operator_ui.py` — +3/-2, exactly one hunk in the per-sample rows-table
+  expression: the header list gains `'Message'` and the row mapper gains
+  `boundedSetupText(item.message)` as the fifth cell.
+- `tests/test_operator_ui.py` — +24/-1: the new Required Test 1 and the one permitted header
+  assertion extension (four → five columns).
+- `tests/test_configuration_destination_precheck.py` — +53/-0: the new Required Test 2.
+- `TASK.md` — status block, closure checklist and this Completion Report.
+- No documentation file changed: `docs/product-experience.md` needed no update because no CURRENT
+  sentence became inaccurate, and `docs/progress.md` / `docs/roadmap.md` remain review-owned.
+
 ### Implemented
+
+- The per-sample destination rows table now renders exactly five columns in order:
+  `Sample`, `Destination`, `Projected outcome`, `Failure category`, `Message`.
+- The fifth cell renders `boundedSetupText(item.message)` — each row's own bounded message; rows
+  without a message render the existing `-` fallback. The rows-table expression contains no
+  `evidence.message`.
+- The run-level `Message` and `Next action` fields, the `Per-sample destination rows` heading, the
+  `Array.isArray(result.items)` guard, the first four columns, the collision table, every bounded
+  sentence, the not-ready gate and the Phase 22.6-J `determinationText` call sites are byte-identical.
 
 ### Tests and Test Results
 
+- `test_destination_precheck_per_sample_rows_carry_each_sample_message`
+  (`tests/test_operator_ui.py:688`) pins the five-column header in order, the fifth cell
+  `boundedSetupText(item.message)` (exactly once, after the failure-category cell), the absence of
+  `evidence.message` in the rows expression, the unchanged heading/guard, and both run-level
+  `Message` fields.
+- `test_destination_precheck_multi_sample_independent_failures_keep_their_own_message`
+  (`tests/test_configuration_destination_precheck.py:532`) runs one offline multi-sample precheck in
+  which sample 0 fails with `invalid_input` and sample 1 with `invalid_rule`, each row keeps its own
+  category and message, the two messages differ, and the run-level category/message equal the
+  lowest-index failing sample while the higher-index message equals neither the run-level message
+  nor the run-level next action.
+
+Commands actually run, with results:
+
+- Focused modules (`test_operator_ui`, `test_configuration_destination_precheck`,
+  `test_configuration_destination_activation`): 54 tests, 0 failures.
+- Complete offline suite: `Ran 868 tests ... OK (skipped=7)` — 866 before, +2 tests, zero deletions.
+- `ruff check .`: All checks passed; `ruff format --check .`: 308 files already formatted.
+- `compileall -q mediaflow tests`: passed; `pip check`: No broken requirements found.
+- Both example `config validate` runs: `Configuration valid`.
+- Wheel build plus isolated `scripts/wheel_smoke_test.py`: exit 0, Runtime schema 22;
+  Configuration marker 10 remains asserted by the unchanged suite.
+- `git diff --check`: clean; FFmpeg/FFprobe audit: zero hits; business-layer filesystem-mutation
+  audit: only Storage-mediated `resolver.rename(...)` references; `config/alist.json` ignored,
+  untracked and unstaged; 120 tracked Markdown files, 25 links, 0 broken; secret scan of added
+  lines: no matches.
+- `git diff --exit-code ccbddf2 HEAD -- mediaflow/application mediaflow/domain
+  mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config
+  pyproject.toml`: empty, proving probes 5 and 6 were restored. The `operator_ui.py` diff is exactly
+  one hunk in the rows-table expression.
+
 ### Falsification Probes
+
+Each probe mutated one shipped line, ran the affected test, recorded the failure, then restored with
+`git checkout -- <file>` (from the staged intended implementation for `operator_ui.py`; from HEAD for
+the application file) and confirmed a clean, intended tree.
+
+| Probe | Temporary change | Result |
+| --- | --- | --- |
+| 1 | Remove `'Message'` from the rows-table header list | Required Test 1 failed at `tests/test_operator_ui.py:695` |
+| 2 | Remove the fifth cell from the row mapper | Required Test 1 failed at `tests/test_operator_ui.py:699` |
+| 3 | Point the fifth cell at `boundedSetupText(evidence.message)` | Required Test 1 failed at `tests/test_operator_ui.py:699` |
+| 4 | Move `'Message'` to the front of the header list | Required Test 1 failed at `tests/test_operator_ui.py:695` |
+| 5 | `_destination_sample_failure_row` stores `"message": None` | Required Test 2 failed at `tests/test_configuration_destination_precheck.py:575` |
+| 6 | Run-level selection changed from `failures[0]` to `failures[-1]` | Required Test 2 failed at `tests/test_configuration_destination_precheck.py:578` |
+| 7 (control) | Comment-only line inside `renderDestinationPrecheck` | No test failed; the full operator-UI module ran 28 tests OK |
 
 ### Decisions
 
+- The fifth cell reuses the existing `boundedSetupText` fallback so a completed row without a message
+  renders `-` exactly like every other optional text field; no new truncation, tooltip or style was
+  added.
+- The permitted assertion replacement only extends the header list, preserving every other assertion
+  and keeping the proof body-scoped.
+
 ### Remaining Work
 
+- Nothing inside this Slice. The known non-goals were not started: no per-sample `nextAction`
+  evidence, no extra columns/sort/filter/click handling, no run-level field or sentence changes, and
+  no Phase 22.6-J rendering change.
+- No push was performed; this checkpoint stays local pending High review.
+
 ### Risks, Assumptions and Newly Discovered Issues
+
+- Failing rows always carry their bounded message today (`_destination_sample_failure_row`); the new
+  column renders it, and the `-` fallback covers any future row type without one.
+- Per the workflow, this commit does not contain its own SHA; the full SHA is reported in the
+  review handoff and will be recorded by High in `docs/progress.md` after review.
