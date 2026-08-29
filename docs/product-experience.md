@@ -197,10 +197,12 @@ remain unchanged in every DryRun path.
 
 Provider switching, generic Task resume, automatic continuation retry, execution, and a broader
 checkpoint/recovery journey remain deferred TARGET work and are outside the closed Phase 22.5 scope.
-Managed Naming / Classification / Organize configuration with exact-revision offline preview is the
-next Phase (22.6) and is not claimed here.
+The subsequently delivered managed Naming / Classification / Organize journey is described below;
+the closed Metadata correction boundary above does not claim it.
 
-## Phase 22.6-A managed NamingPolicy and offline preview (CURRENT; PASS / CLOSED)
+## Slice 22.6 managed Naming / Classification / Organize journey (CURRENT; PASS / CLOSED)
+
+### Managed NamingPolicy and offline preview
 
 The managed Configuration view now exposes each NamingPolicy in an editable Draft, including its
 movie and TV templates, media-type mode, enabled state, missing-variable strategy, and exact inbound
@@ -217,10 +219,9 @@ action. A later Draft edit preserves the prior evidence but labels it stale and 
 rerun. Movie, single-episode TV, and multi-episode TV are supported without constructing Storage or
 Provider services and without creating Tasks, Jobs, queues, plans, or media effects.
 
-Phase 22.6-A is independently accepted at `30af69ac82b30f8a45ad66afbd3c9747597c8fe7` and does not
-change checked activation.
+This offline action does not by itself change checked activation.
 
-## Phase 22.6-B managed ClassificationPolicy and offline preview (CURRENT; PASS / CLOSED)
+### Managed ClassificationPolicy and offline preview
 
 The same managed Configuration revision view now exposes ClassificationPolicy create/edit/copy/
 delete, bounded rule summaries, RecognitionTypePolicy inbound references and reference-blocked
@@ -235,10 +236,9 @@ warnings and recovery. An absent MediaLibrary is an explicit completed-with-warn
 still rejected by existing Draft validation. No Storage, Provider, Task, Job, queue or media work is
 created.
 
-Phase 22.6-B is independently accepted at `5e2da5c634f1fa72a40e5f50b035260418fe1a37` and does not
-change checked activation.
+This offline action does not by itself change checked activation.
 
-## Phase 22.6-C managed OrganizePolicy and offline organize authority (CURRENT; PASS / CLOSED)
+### Managed OrganizePolicy and offline organize authority
 
 The same managed Configuration revision view now exposes OrganizePolicy create/edit/copy/delete with
 a bounded summary of operation, conflict strategy, attachments, duplicate detection and
@@ -261,9 +261,7 @@ failure with the action that resolves it, not an unexplained error. A later Draf
 prior explanation but labels it stale and names the rerun. No Storage, Provider, Planner, Executor,
 Task, Job, queue or media work is created.
 
-Phase 22.6-C is independently accepted at `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa`.
-
-## Phase 22.6-D exact-revision composed destination preview (CURRENT; PASS / CLOSED)
+### Exact-revision composed destination preview
 
 The same revision view accepts one RecognitionType and one bounded path or synthetic sample, then
 uses the production resolver, Naming engine, Classification engine and the exact composition/path
@@ -274,10 +272,10 @@ bounded category, durable state and explicit correction/rerun action; later edit
 evidence stale.
 
 This offline action constructs no Storage, Provider, Planner or Executor, applies no Storage mount
-prefix, and performs no existence, collision or capability probe. Phase 22.6-D is independently
-accepted at `c7ec192b3b20f236cca5a70ed59cad43e0851242` and does not change checked activation.
+prefix, performs no existence, collision or capability probe, and does not by itself change checked
+activation.
 
-## Local destination precheck and checked activation (CURRENT implementation)
+### Local destination precheck and checked activation
 
 Before activating a Draft, the operator can now ask one question about the real destination without
 changing it: would this composed path actually work. The same revision view takes one
@@ -317,8 +315,7 @@ Every row exposes the same ordered facts: index, relative destination, composed 
 target existence, planner conflicts, projected outcome, proposed relative destination, failure
 category, message and next action. At run level, uniformly ready rows produce `ready`; a missing
 required capability produces `capability_gap` even when every row is otherwise ready. Otherwise the
-most severe non-null projected outcome wins. This two-direction verdict and uniform-row contract is
-accepted at Phase 22.6-N checkpoint `5884905c2105cf8ff78ff10d1b872875045769d7`.
+most severe non-null projected outcome wins.
 
 Checked activation now enforces that result when the exact revision document declares at least one
 MediaLibrary backed by Local Storage. Missing, stale, failed and `capability_gap` evidence each
@@ -343,9 +340,9 @@ Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
 multiple RecognitionTypes or destination Storages in one request, `ConflictType.DUPLICATE_MEDIA` /
 known-media detection, attachment prechecks, absolute mounted-path display and execution remain
 TARGET. Provider switching, generic Task resume, per-item Processing Checkpoint recovery and
-unattended execute also remain outside Slice 22.6. This CURRENT behavior is implementation evidence
-inside that Slice; lifecycle authority remains root `SLICE.md`. Active runtime-consumption semantics
-are unchanged.
+unattended execute also remain outside Slice 22.6. Slice 22.6 is PASS / CLOSED with these items
+remaining non-claims; lifecycle authority remains root `SLICE.md`. Active runtime-consumption
+semantics are unchanged.
 
 ## A. First-time setup
 

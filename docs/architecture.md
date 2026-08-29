@@ -1137,7 +1137,9 @@ detail only. RecognitionType C remains C. Files detail renders queued/running/co
 stale, and cancelled states with bounded recovery; source files, source review, source Task, and
 sibling items are unchanged.
 
-Phase 22.6-A adds NamingPolicy as the next narrow object kind on the same managed whole-document
+### Slice 22.6 managed policy configuration architecture (CURRENT; PASS / CLOSED)
+
+The closed Slice adds NamingPolicy to the same managed whole-document
 authority. `ConfigurationObjectService` normalizes the exact runtime-loader shape, validates every
 template with the existing restricted renderer, reports RecognitionTypePolicy inbound references,
 and delegates create/update/copy/delete to the existing revision CAS and audit transaction. It does
@@ -1151,10 +1153,10 @@ durable evidence. SQLite configuration-management schema marker 6 adds one revis
 preview-evidence table. Evidence always carries exact revision ID/version/digest and becomes stale
 after an edit. Rendering and all failure paths construct no Storage/Provider/Task/Job/queue and grant
 no execute authority. Classification, MediaLibrary resolution, conflict/capability checks, and
-Organizer remain outside this service. Checked activation semantics are unchanged. Phase 22.6-A is
-independently accepted at `30af69ac82b30f8a45ad66afbd3c9747597c8fe7`.
+Organizer remain outside this service. This offline action does not by itself change checked
+activation semantics.
 
-Phase 22.6-B adds ClassificationPolicy to that same managed object authority. Normalization builds
+ClassificationPolicy uses that same managed object authority. Normalization builds
 the existing `ClassificationRule` and `ClassificationPolicy` domain types, so rule ordering and
 relative-path safety remain owned by the production classification stack. RecognitionTypePolicy
 inbound references block delete, while MediaLibrary existence remains a whole-Draft validation
@@ -1166,12 +1168,11 @@ MediaIdentity/ParseResult/RecognitionType/ClassificationContext types and calls
 revision-keyed bounded evidence records classified/unclassified state, matched rule and evidence,
 MediaLibrary resolution, relative path, warnings and recovery, and becomes stale after any edit.
 The path constructs no Storage/Provider/Task/Job/queue and has no execute authority. OrganizePolicy,
-composed destination paths and conflict/capability/existence prechecks remain outside this Slice.
-Phase 22.6-B is independently accepted at `5e2da5c634f1fa72a40e5f50b035260418fe1a37`; managed
-normalization was verified to be semantically identity for runtime, so an edited policy loads into
-the same domain `ClassificationRule` objects the loader produces from the original document.
+composed destination paths and conflict/capability/existence prechecks remain outside this preview.
+Managed normalization is semantically identical for runtime, so an edited policy loads into the
+same domain `ClassificationRule` objects the loader produces from the original document.
 
-Phase 22.6-C adds OrganizePolicy to that same managed object authority and an exact-revision offline
+OrganizePolicy uses that same managed object authority and provides an exact-revision offline
 organize authority explanation. Normalization delegates to the runtime loader entry point
 `parse_organize_policy`, so operation, conflict strategy, attachment, duplicate-detection, rollback
 and source-directory-cleanup bounds — including the `overwrite`/`conflictStrategy` cross-field rule —
@@ -1190,10 +1191,9 @@ capability is a failure rather than a silent fallback, destructive-authority war
 state and recovery. Required capabilities are declared from the resolved policy, never probed: the
 path constructs no Storage, Provider, Planner, Executor, Task, Job or queue, reports
 `sideEffects: none` with `retrySafe: true`, and grants no execute authority. Every
-`PolicyResolutionErrorCode` becomes an explained failure with a next action. Phase 22.6-C is
-independently accepted at `47096eeaf1769b79cf3d0c67bcdf0c75b6c344aa`.
+`PolicyResolutionErrorCode` becomes an explained failure with a next action.
 
-Phase 22.6-D extracts destination-root normalization, relative-path/filename safety and composition
+Destination-root normalization, relative-path/filename safety and composition are extracted
 into dependency-free domain organizer helpers. `OrganizePlanner` delegates to those helpers, and the
 exact-revision destination preview calls the same helpers after using the shared production policy
 catalog plus the production Naming and Classification engines. It resolves only the selected
@@ -1201,10 +1201,9 @@ MediaLibrary's `rootPath` and `storageId` label from that revision; it never rea
 Storage configuration root/mount prefix. Revision-keyed evidence attributes the RecognitionType,
 type policy, naming policy, classification policy/rule and MediaLibrary contributions, with both
 root-relative and composed Storage-relative results or a bounded unsafe/failure recovery. The path
-constructs no Storage, Provider, Planner or Executor and preserves C identity. Phase 22.6-D is
-independently accepted at `c7ec192b3b20f236cca5a70ed59cad43e0851242`.
+constructs no Storage, Provider, Planner or Executor and preserves C identity.
 
-Phase 22.6-E adds the first managed read-only destination precheck, for Local destination Storage
+The managed read-only destination precheck supports Local destination Storage
 only. It reuses the Phase 22.6-D resolution and composition unchanged, then constructs the
 destination Storage adapter from the unmodified revision document, reads its declared capabilities
 before wrapping, and performs every probe through a `ReadOnlyStorageGuard` subclass whose
@@ -1218,12 +1217,12 @@ Copy or Move. Evidence is revision-keyed with exact version/digest CAS, and reco
 `pathScope: storage_relative` and `sideEffects: none` together with guard mutation counters that
 must all be zero and a bounded read-operation list. It grants no overwrite, delete or execute
 authority. Storage errors, capacity exhaustion and the overall deadline map to bounded categories
-with explicit recovery. Phase 22.6-F makes that evidence part of checked activation for documents
+with explicit recovery. That evidence is part of checked activation for documents
 that declare at least one MediaLibrary backed by Local Storage. The gate reads only the immutable
 revision document and persisted evidence: missing, stale, failed and `capability_gap` evidence
 refuse with bounded recovery, while remote-only or MediaLibrary-free documents report the
 requirement as not applicable and retain the existing two gates. Unchecked activation is unchanged.
-Phase 22.6-G gives both Web checked-activation controls this same decision before they offer the
+Both Web checked-activation controls use this same decision before they offer the
 action: the shared Local applicability/current/completed/non-`capability_gap` predicate also feeds
 the destination-precheck section, the guided control's bounded recovery line, and the
 revision-detail compatibility warning. Both control sites name the destination requirement only once
@@ -1231,7 +1230,7 @@ the Local setup check and Recognition Strategy Test are current, so the sentence
 requirement the server refuses on first. A missing `mediaLibraries` document section is likewise not
 applicable at the activation gate. The gate still reads only the revision document and persisted
 evidence; it constructs no Storage, Provider, Planner or Executor and performs no probe.
-Phase 22.6-H extends the same precheck from one sample to one to eight samples under one
+The same precheck supports one to eight samples under one
 RecognitionType. Each sample is validated and composed independently through the same production
 path; all samples must resolve to one destination Storage, and the whole run keeps one capacity
 lease, one `_ReadOnlyDestinationStorage` guard, one worker submission and one overall deadline.
@@ -1261,10 +1260,8 @@ Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
 multiple RecognitionTypes or destination Storages in one request, `ConflictType.DUPLICATE_MEDIA` /
 known-media detection, attachment prechecks, absolute mounted-path display and execution remain
 TARGET. Provider switching, generic Task resume, per-item Processing Checkpoint recovery and
-unattended execute also remain outside Phase 22.6. Phase 22.6-A through 22.6-N are independently
-Slice-accepted, most recently at checkpoint `5884905c2105cf8ff78ff10d1b872875045769d7` for the
-two-direction verdict and uniform-row evidence; Phase 22.6 remains open pending CURRENT-documentation
-High Review and a separate Final Closure Audit.
+unattended execute also remain outside Slice 22.6. Slice 22.6 is PASS / CLOSED with those items
+remaining TARGET rather than CURRENT claims.
 
 ## Deferred work
 
@@ -1277,7 +1274,8 @@ boundary. Decision audit records are append-only, and invalid destinations canno
 
 Metadata and classification review/resolution APIs and bounded operator UI views exist. The broader
 in-context decision → continuation → result/recovery Web journey remains incomplete, but the bounded
-resolved File correction → single DryRun continuation path is implemented here pending High Review.
+resolved File correction → single DryRun continuation path is implemented and accepted within the
+closed Metadata configuration Slice.
 Unresolved conflicts/reviews block execution, and silent delete remains unavailable.
 
 ## Minimal operator Web UI
@@ -1856,11 +1854,10 @@ Phase 22.5-B. Candidate confirmation and its F1/F2 corrections were accepted in 
 Phase 22.5-D same-Provider managed live correction testing passed independent High re-review.
 Phase 22.5-E is limited to one resolved correction's pinned DryRun continuation and passed
 independent High re-review at `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62`, closing Phase 22.5;
-Phase 22.6-A through 22.6-N have independently accepted the bounded managed
-Naming/Classification/Organize journey: Local-only destination precheck for one RecognitionType and
-one to eight samples routed to one destination Storage, independent row recovery, collision and
-capability verdicts, and checked activation without mutation or execution authority. Phase 22.6
-remains open pending its CURRENT-documentation review and separate Final Closure Audit. Remote
+Slice 22.6 has closed the bounded managed Naming/Classification/Organize journey: Local-only
+destination precheck for one RecognitionType and one to eight samples routed to one destination
+Storage, independent row recovery, collision and capability verdicts, and checked activation
+without mutation or execution authority. Remote
 SMB/OpenList/S3 destination precheck, mutation-based capability probing, multiple RecognitionTypes
 or destination Storages per request, known-media duplicate detection, attachment precheck and
 absolute mounted-path display remain TARGET; Provider switching, generic Task resume, broader
