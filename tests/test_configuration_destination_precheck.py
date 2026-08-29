@@ -781,6 +781,8 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 self.assertEqual(len(result["items"]), 2)
                 self.assertEqual(result["collisions"], [])
                 self.assertIsNone(result["items"][0]["projectedOutcome"])
+                self.assertIsNone(result["items"][0]["nextAction"])
+                self.assertIsNone(result["items"][1]["nextAction"])
             finally:
                 repository.close()
 
