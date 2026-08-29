@@ -2162,6 +2162,82 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   byte-identical to `74919a3`, and no next feature Slice may start until it is accepted. No roadmap
   priority changes, and the six capabilities deferred out of Phase 22.6 stay deferred.
 
+## Phase 22.6-L-F1 High Review Result (2026-08-29): PASS
+
+- Status: PASS / CLOSED for Phase 22.6-L, accepted through the focused Phase 22.6-L-F1 correction;
+  accepted checkpoint SHA: `b198c9662595c3e9c92d70602170561867763c10` (commit
+  `test(configuration): prove resolution row recovery absence`); High Audit: PASS — 2026-08-29. The
+  rejected Phase 22.6-L checkpoint `74919a33ac5ec9cde5b104a591ef3fdfb25a1bf3` and its `FIX REQUIRED`
+  record remain preserved and unmodified, as do the earlier preserved rejected SHAs
+  `d8c2ae04e578955ddbbd29c413f235bf4cf08f42`, `b9cc35e2677a35920042b5695f87b50a80025ef0`,
+  `7353b0d22497e6e3e596c93c7052eea34daf27df`, `90ce13a6c6c39912dd389f71a1189314ff24eb5d` and
+  `08dfd4f921728755209b6d52347d28f221121c47`. Push: NOT PERFORMED; `main` is three commits ahead of
+  `origin/main` and no push authorization was requested or used.
+- Scope held exactly. The checkpoint changes two files:
+  `tests/test_configuration_destination_precheck.py` (+2/-0) and `TASK.md` (+75/-9). Production is
+  byte-identical to the rejected checkpoint — `git diff --exit-code 74919a3 HEAD -- mediaflow scripts
+  config pyproject.toml` is EMPTY — and the implementer's own window is clean too:
+  `git diff --exit-code cf99c6b HEAD -- mediaflow docs scripts config pyproject.toml` is EMPTY, so no
+  production line, no documentation line and no review-owned document moved. `git diff --exit-code
+  74919a3 HEAD -- tests/test_operator_ui.py tests/test_configuration_destination_activation.py` is
+  EMPTY, no test was added, renamed or deleted, and markers stay Configuration 10 and Runtime 22.
+- The mandated correction is present verbatim and in the mandated position: inside
+  `test_multiple_destination_storages_is_bounded_failure`, immediately after its
+  `result["items"][0]["projectedOutcome"]` assertion, two direct-subscript assertions
+  (`tests/test_configuration_destination_precheck.py:784-785`) pin `nextAction` to `None` for both
+  rows that run produces — and both of those rows come from `_destination_sample_resolution_row`,
+  the builder Phase 22.6-L left unproven.
+- Proof strength verified by my own probes, not by the report. Nine mutations, one at a time on the
+  shipped tree, `git checkout --` restore and a clean-tree check after each: (1) resolution row stores
+  the default sentence → `test_multiple_destination_storages_is_bounded_failure` FAILS
+  (`'correct the destination or conflict policy, then rerun precheck' is not None`) — this is the exact
+  mutation that stayed green at `74919a3`, so the sole blocking defect is closed; (2) the
+  `"nextAction": None` line deleted → the same test ERRORS with `KeyError: 'nextAction'`, proving the
+  subscript form and not `.get` is in use; (3) `_destination_sample_failure_row`'s map lookup replaced
+  by `None` → `test_destination_precheck_per_sample_rows_carry_their_own_next_action` still FAILS, so
+  the correction neither displaced nor weakened the Phase 22.6-L proofs; (4) comment-only control →
+  `Ran 21 tests ... OK`. Three extra mutations were also caught by the named test (`""`, `False`, and
+  the `:1491` call site building a failure row instead), and two observational probes are recorded
+  below. Tree clean after every restore.
+- Gates re-run independently at the checkpoint: full suite `Ran 871 tests ... OK (skipped=7)`; focused
+  `Ran 57 tests ... OK` (29 + 21 + 7); `ruff check .` `All checks passed!`; `ruff format --check .`
+  `308 files already formatted`; `compileall`; `pip check` `No broken requirements found.`; both CLI
+  `config validate` runs print `Configuration valid`; isolated wheel build, install and
+  `scripts/wheel_smoke_test.py` exit 0 reporting `Schema: 22`; `git diff --check 74919a3 HEAD` clean;
+  FFmpeg/FFprobe audit no matches; `git check-ignore config/alist.json` returns the path with an empty
+  `git ls-files`; Markdown local-link check 120 files, 25 links, 0 broken; secret scan of the
+  correction diff no matches.
+- Non-blocking observations. First, two Closure Checklist boxes are literally false at `HEAD`: the
+  `74919a3`-relative commands they quote include `docs`, which my own intervening review record
+  `cf99c6b` changed, and `git diff --numstat 74919a3 HEAD` therefore lists four paths, not two. The
+  report's Validation Evidence says so explicitly and supplies the correct BASE-relative and
+  production-only equivalents, both of which I re-verified as EMPTY and exact; the imprecision is in
+  my own Task wording, so the next Task states identity commands against BASE for documentation and
+  against the accepted code checkpoint for code. Second, a precision correction to my own previous
+  record: Phase 22.6-L's `.get(...)` assertion was not entirely without content — giving
+  `_probe_destination_sample`'s inline row a non-null action does fail that test (probe X4). What it
+  never covered was `_destination_sample_resolution_row`, which is exactly what this correction pins.
+  Third, my probes found a sibling gap of the same class, out of this Slice's scope: deleting
+  `"message": None` from `_destination_sample_resolution_row` fails nothing (`Ran 21 tests ... OK`), so
+  that Phase 22.6-H-era key is asserted nowhere. Fourth, the row-shape asymmetry is wider than I
+  recorded at `74919a3`: four sites produce per-sample rows, and two of them omit `nextAction`
+  entirely — `_probe_destination_sample` (`:2201`) and the single-sample completed-run row
+  (`:1768-1780`) — so an API consumer subscripting `row["nextAction"]` still risks `KeyError` and the
+  CURRENT documentation claim that `result.items[]` carries per-sample `nextAction` is very slightly
+  ahead of the code. I verified read-only that adding the key at both sites makes all five observed row
+  shapes identical ten-key tuples in identical order with the full suite still `871 ... OK`; that is
+  Phase 22.6-M. Fifth, the residual proof gaps recorded in 22.6-H-F1 and 22.6-I remain open: no
+  multi-sample all-`ready` run asserts `verdict == "ready"`, single-sample field order is unpinned, and
+  no test compares the two branches' field lists.
+- Verdict: **PASS**. Phase 22.6-L is **CLOSED**, accepted through Phase 22.6-L-F1 with the rejected
+  checkpoint preserved, and Phase 22.6 remains open. The next legal Slice is **Phase 22.6-M** (one
+  uniform per-sample destination row shape, provably: two added `"nextAction": None` lines at the two
+  inline row sites, one shape test across all branches, and subscript proofs for the resolution row's
+  remaining always-`None` keys), now written to `TASK.md`. Remote SMB/OpenList/S3 destination
+  prechecks, mutation-based capability probing, multiple RecognitionTypes or destination Storages per
+  request, known-media duplicate detection, attachment prechecks and absolute mounted-path display stay
+  deferred out of Phase 22.6, and no execution or authority change may start.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration
