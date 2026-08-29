@@ -2076,6 +2076,92 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   absolute mounted-path display are recorded in `docs/roadmap.md` as deferred out of Phase 22.6, and
   no execution or authority change may start.
 
+## Phase 22.6-L High Review Result (2026-08-29): FIX REQUIRED
+
+- Status: FIX REQUIRED; rejected checkpoint SHA:
+  `74919a33ac5ec9cde5b104a591ef3fdfb25a1bf3` (commit `feat(web): render per-sample destination
+  recovery actions`); High Audit: FIX REQUIRED — 2026-08-29, audited against the Phase 22.6-L
+  `TASK.md`, `AGENTS.md`, the Chinese product requirements, `docs/product-experience.md`,
+  `docs/architecture.md`, `docs/roadmap.md`, the accepted Phase 22.6-K tree
+  `f2db70b28edb8f753ebed0d3805be7143b521264` and the BASE
+  `23adc9ba51b9f9cf085bee3ee613b824869f786e`. The rejected checkpoint is preserved as it stands and
+  must not be amended, squashed or rewritten. Push: NOT PERFORMED for this checkpoint; `main` is one
+  commit ahead of `origin/main` and no push authorization was requested for it.
+- Scope held, and every mechanical scope proof reproduced independently. The checkpoint changes
+  exactly the seven permitted files: `mediaflow/application/configuration_objects.py` (+2/-0),
+  `mediaflow/interfaces/operator_ui.py` (one hunk), `tests/test_operator_ui.py` (+28/-2),
+  `tests/test_configuration_destination_precheck.py` (+133/-0), `docs/product-experience.md` (+7/-5),
+  `docs/architecture.md` (+5/-0) and `TASK.md`. `git diff --exit-code f2db70b HEAD -- mediaflow/domain
+  mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config
+  pyproject.toml` is EMPTY and `git diff BASE HEAD -- docs/progress.md docs/roadmap.md` is EMPTY, so
+  no request or response field, aggregation rule, failure category, activation gate, route,
+  permission, table, migration or schema marker moved, and no review-owned document was touched.
+  Markers stay Configuration 10 and Runtime 22, confirmed in the installed-wheel smoke run.
+- The mandated behaviour is present. `_destination_sample_failure_row` gains exactly
+  `"nextAction": ConfigurationObjectService._destination_sample_next_action(category)`,
+  `_destination_sample_resolution_row` gains `"nextAction": None`,
+  `_destination_sample_next_action` is byte-identical to `f2db70b`, and the rows table renders
+  `table(['Sample', 'Destination', 'Projected outcome', 'Failure category', 'Message', 'Next
+  action'], ...)` with `boundedSetupText(item.nextAction)` sixth. Everything the Slice promised to
+  leave alone is byte-identical: the run-level and single-sample `Next action` fields, `failures[0]`
+  selection, the collision table, the not-ready gate and its sentence, the Phase 22.6-J
+  `determinationText` call sites and the `1-8 samples` control.
+- Quality gates are green at the rejected checkpoint, so this is not a build or regression failure:
+  full suite `Ran 871 tests ... OK (skipped=7)`, focused three modules `Ran 57 tests ... OK`, ruff
+  check and format (308 files), `compileall`, `pip check`, both CLI `config validate` runs, isolated
+  wheel build/install/smoke exit 0, `git diff --check`, FFmpeg/FFprobe audit, business-layer
+  mutation audit, alist-ignore gate, Markdown local-link check (120 files, 25 links, 0 broken) and
+  the Slice secret scan all pass. My own eight-sample worst-case measurement encoded `result` to
+  5,751 bytes against `CONFIGURATION_STRATEGY_RESULT_LIMIT = 32 * 1024` (the report's 2,723 bytes
+  used shorter fixture messages); both are far below the limit, and `nextAction` contributes roughly
+  720 bytes across eight failing rows.
+- Blocking defect — one of the two mandated production changes is not proven by any test. I ran 16
+  falsification probes one edit at a time on the shipped tree with `git checkout --` restores and a
+  clean-tree check after each. Fifteen bit exactly as required, including all eight TASK-mandated
+  probes and the comment-only control (871/57 unaffected). The sixteenth did not: replacing
+  `_destination_sample_resolution_row`'s mandated `"nextAction": None`
+  (`mediaflow/application/configuration_objects.py:2259`) with the default failure sentence leaves
+  `tests.test_configuration_destination_precheck` at `Ran 21 tests ... OK`, with no failing test.
+  Cause, established in code rather than inferred: `_destination_sample_resolution_row` is reachable
+  only from the `multiple_destination_storages` early return (`:1491`), while the successful sample in
+  Required Test 1 is built inline by `_probe_destination_sample` (`:2192-2202`), whose row carries no
+  `nextAction` key at all — so the mandated assertion `assertIsNone(items[2].get("nextAction"))`
+  passes vacuously against a different builder and proves nothing about the line it names. Closure
+  Checklist item "`_destination_sample_resolution_row` stores `"nextAction": None`" is therefore
+  marked `[x]` on unproven ground, and `.get(...)` is a weakened form standing in for a required
+  proof, which `AGENTS.md` review criteria forbid treating as completion. Were that line to drift,
+  every successfully resolved sample on a `multiple_destination_storages` page would display a
+  failure recovery action — the exact per-sample misattribution this Slice exists to remove.
+- The defect is an authoring gap in my own Phase 22.6-L Task, not an implementation deviation. Required
+  Test 1 named "the successful row's `nextAction` is `None`" without saying which builder produces it,
+  and the Technical Scope forbade touching any other line of `configuration_objects.py`, so the
+  implementer could not have covered `_probe_destination_sample` and complied with the Task as written.
+  This is recorded here so the correction is not charged to the implementation role.
+- The precedent is settled and applies unchanged. Phase 22.6-H was rejected on 2026-08-28 for exactly
+  this class of defect — TASK-mandated behaviour that, when replaced, left the suite green — and was
+  accepted through the evidence-only Phase 22.6-H-F1. The correction here is the same shape and
+  smaller: two assertions, zero production change. I verified before defining it that the fix is both
+  satisfiable and falsifying: adding `assertIsNone(result["items"][0]["nextAction"])` and the
+  `items[1]` equivalent to the existing `test_multiple_destination_storages_is_bounded_failure`
+  (`tests/test_configuration_destination_precheck.py:783`) passes on the shipped tree — subscript, so
+  an absent key would raise `KeyError` — and fails that named test under the mutation above.
+- Non-blocking observations, recorded and not made blockers. First, `_probe_destination_sample`'s row
+  omits `nextAction` entirely while setting `failureCategory` and `message` to `None` explicitly; the
+  page renders `-` either way through the unchanged `boundedSetupText`, and UX Acceptance 2 explicitly
+  anticipates rows without the key, but an API consumer subscripting `row["nextAction"]` would
+  `KeyError`. Shape uniformity across the three row builders is a later scoped decision, not this
+  correction. Second, the probe restorations used inverse patches instead of the mandated `git
+  checkout -- <file>`; the final tree is byte-correct, independently confirmed by my own diffs, so this
+  has no consequence beyond procedure. Third, the new column's label is pinned only by the one exact
+  header string, unchanged from the Phase 22.6-K acceptance. Fourth, the residual proof gaps recorded
+  in 22.6-H-F1 and 22.6-I remain open: no multi-sample all-`ready` run asserts `verdict == "ready"`,
+  single-sample field order is unpinned, and no test compares the two branches' field lists.
+- Verdict: **FIX REQUIRED** at `74919a33ac5ec9cde5b104a591ef3fdfb25a1bf3`. Phase 22.6-L is **not
+  closed** and Phase 22.6 remains open. `TASK.md` now contains only the focused Phase 22.6-L-F1
+  correction, which is evidence-only: no production file may change, the production tree must stay
+  byte-identical to `74919a3`, and no next feature Slice may start until it is accepted. No roadmap
+  priority changes, and the six capabilities deferred out of Phase 22.6 stay deferred.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration
