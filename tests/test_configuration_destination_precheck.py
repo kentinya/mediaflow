@@ -529,6 +529,59 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             finally:
                 repository.close()
 
+    def test_destination_precheck_multi_sample_independent_failures_keep_their_own_message(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target-private" / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            repository, _, objects, draft = self._open(root)
+            try:
+                evidence = objects.destination_precheck(
+                    draft.revision_id,
+                    expected_version=draft.version,
+                    expected_digest=draft.digest,
+                    actor="operator",
+                    recognition_type="C",
+                    samples=[
+                        {
+                            "title": "",
+                            "mediaType": "movie",
+                            "year": 1999,
+                            "genres": ["Action"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Show",
+                            "mediaType": "tv",
+                            "year": 2020,
+                            "genres": ["Action"],
+                        },
+                        {
+                            "title": "The Matrix",
+                            "mediaType": "movie",
+                            "year": 1999,
+                            "genres": ["Action"],
+                            "extension": "mkv",
+                        },
+                    ],
+                )
+                result = evidence.result
+                failing = [row for row in result["items"] if row["failureCategory"] is not None]
+                self.assertEqual([row["index"] for row in failing], [0, 1])
+                self.assertEqual(failing[0]["failureCategory"], "invalid_input")
+                self.assertEqual(failing[1]["failureCategory"], "invalid_rule")
+                self.assertIsNotNone(failing[0]["message"])
+                self.assertIsNotNone(failing[1]["message"])
+                self.assertNotEqual(failing[0]["message"], failing[1]["message"])
+                self.assertEqual(evidence.failure_category, failing[0]["failureCategory"])
+                self.assertEqual(evidence.message, failing[0]["message"])
+                self.assertNotEqual(failing[1]["message"], evidence.message)
+                self.assertNotEqual(failing[1]["message"], evidence.next_action)
+            finally:
+                repository.close()
+
     def test_multiple_destination_storages_is_bounded_failure(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

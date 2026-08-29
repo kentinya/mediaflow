@@ -545,7 +545,7 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("detailContent.append(text('h4', 'Per-sample destination rows'));", precheck)
         self.assertIn(
             "detailContent.append(table(['Sample', 'Destination', 'Projected outcome', "
-            "'Failure category'],",
+            "'Failure category', 'Message'],",
             precheck,
         )
         self.assertIn("if (Array.isArray(result.collisions)) {", precheck)
@@ -684,6 +684,29 @@ class OperatorUiTests(unittest.TestCase):
             "was granted.', 'error'));",
             precheck,
         )
+
+    def test_destination_precheck_per_sample_rows_carry_each_sample_message(self) -> None:
+        script = APP_JS.decode()
+        precheck = _js_function_body(script, "renderDestinationPrecheck")
+        header = (
+            "detailContent.append(table(['Sample', 'Destination', 'Projected outcome', "
+            "'Failure category', 'Message'],"
+        )
+        self.assertIn(header, precheck)
+        rows_start = precheck.index(header)
+        rows_end = precheck.index("])));", rows_start) + len("])));")
+        rows_expression = precheck[rows_start:rows_end]
+        self.assertIn("boundedSetupText(item.message)", rows_expression)
+        self.assertEqual(rows_expression.count("boundedSetupText(item.message)"), 1)
+        self.assertLess(
+            rows_expression.index("boundedSetupText(item.failureCategory)"),
+            rows_expression.index("boundedSetupText(item.message)"),
+        )
+        self.assertNotIn("evidence.message", rows_expression)
+        self.assertIn("detailContent.append(text('h4', 'Per-sample destination rows'));", precheck)
+        self.assertIn("if (Array.isArray(result.items)) {", precheck)
+        self.assertIn("field(runList, 'Message', boundedSetupText(evidence.message));", precheck)
+        self.assertIn("field(list, 'Message', boundedSetupText(evidence.message));", precheck)
 
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
         script = APP_JS.decode()
