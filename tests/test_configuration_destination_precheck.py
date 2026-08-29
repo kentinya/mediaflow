@@ -645,7 +645,7 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 items = sorted(result["items"], key=lambda row: row["index"])
                 failing = [row for row in items if row["failureCategory"] is not None]
                 self.assertEqual([row["index"] for row in failing], [0, 1])
-                self.assertIsNone(items[2].get("nextAction"))
+                self.assertIsNone(items[2]["nextAction"])
                 self.assertTrue(all(isinstance(row["nextAction"], str) for row in failing))
                 self.assertNotEqual(failing[0]["nextAction"], failing[1]["nextAction"])
                 for row in failing:
@@ -783,6 +783,11 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 self.assertIsNone(result["items"][0]["projectedOutcome"])
                 self.assertIsNone(result["items"][0]["nextAction"])
                 self.assertIsNone(result["items"][1]["nextAction"])
+                self.assertIsNone(result["items"][0]["message"])
+                self.assertIsNone(result["items"][0]["targetExists"])
+                self.assertIsNone(result["items"][0]["proposedRelativeDestination"])
+                self.assertIsNone(result["items"][0]["failureCategory"])
+                self.assertEqual(result["items"][0]["plannerConflicts"], [])
             finally:
                 repository.close()
 
@@ -808,9 +813,168 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                     result["conflictProjection"]["projectedOutcome"],
                 )
                 self.assertIsNone(row["failureCategory"])
+                self.assertIsNone(row["nextAction"])
                 self.assertEqual(result["verdict"], "ready")
             finally:
                 repository.close()
+
+    def test_destination_precheck_rows_share_one_key_shape_across_branches(self) -> None:
+        expected = (
+            "index",
+            "relativeDestination",
+            "destinationPath",
+            "targetExists",
+            "plannerConflicts",
+            "projectedOutcome",
+            "proposedRelativeDestination",
+            "failureCategory",
+            "message",
+            "nextAction",
+        )
+        rows = []
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target-private" / "Movies" / "Action").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            repository, _, objects, draft = self._open(root)
+            try:
+                single = self._run(objects, draft)
+                rows.extend(single.result["items"])
+            finally:
+                repository.close()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target-private" / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            document = self._document(root)
+            document["mediaLibraries"][1]["rootPath"] = "TV Missing"
+            document["classificationPolicies"][0]["rules"].insert(
+                0,
+                {
+                    "id": "missing-root-movie",
+                    "priority": 300,
+                    "conditions": {"mediaType": ["movie"], "genres": ["Drama"]},
+                    "result": {
+                        "mediaLibraryId": "tv",
+                        "library": "TV Shows",
+                        "path": ["Drama"],
+                    },
+                },
+            )
+            repository, _, objects, draft = self._open(root, document)
+            try:
+                mixed = objects.destination_precheck(
+                    draft.revision_id,
+                    expected_version=draft.version,
+                    expected_digest=draft.digest,
+                    actor="operator",
+                    recognition_type="C",
+                    samples=[
+                        {
+                            "title": "",
+                            "mediaType": "movie",
+                            "year": 1999,
+                            "genres": ["Action"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Missing Root",
+                            "mediaType": "movie",
+                            "year": 2024,
+                            "genres": ["Drama"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Your Name",
+                            "mediaType": "movie",
+                            "year": 2016,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                    ],
+                )
+                rows.extend(mixed.result["items"])
+            finally:
+                repository.close()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target-private" / "Movies").mkdir(parents=True)
+            (root / "target-private-2" / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            document = self._document(root)
+            document["storages"].append(
+                {
+                    "id": "media-target-2",
+                    "name": "Target 2",
+                    "type": "local",
+                    "rootPath": str(root / "target-private-2"),
+                    "readOnly": False,
+                }
+            )
+            document["mediaLibraries"].append(
+                {
+                    "id": "movies2",
+                    "name": "Movies 2",
+                    "storageId": "media-target-2",
+                    "rootPath": "Movies",
+                    "enabled": True,
+                }
+            )
+            for rule in document["classificationPolicies"][0]["rules"]:
+                if rule["id"] == "japanese-animation":
+                    rule["result"]["mediaLibraryId"] = "movies2"
+                    rule["result"]["path"] = ["Anime"]
+            repository, _, objects, draft = self._open(root, document)
+            try:
+                multiple_storage = objects.destination_precheck(
+                    draft.revision_id,
+                    expected_version=draft.version,
+                    expected_digest=draft.digest,
+                    actor="operator",
+                    recognition_type="C",
+                    samples=[
+                        {
+                            "title": "The Matrix",
+                            "mediaType": "movie",
+                            "year": 1999,
+                            "genres": ["Action"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Your Name",
+                            "mediaType": "movie",
+                            "year": 2016,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                    ],
+                )
+                rows.extend(multiple_storage.result["items"])
+            finally:
+                repository.close()
+
+        self.assertGreaterEqual(len(rows), 6)
+        for row in rows:
+            self.assertEqual(tuple(row.keys()), expected)
+        self.assertTrue(
+            any(
+                row["failureCategory"] is not None and isinstance(row["nextAction"], str)
+                for row in rows
+            )
+        )
+        self.assertTrue(
+            any(row["failureCategory"] is None and row["nextAction"] is None for row in rows)
+        )
+        self.assertEqual(single.status.value, "completed")
+        self.assertEqual(
+            multiple_storage.failure_category,
+            "multiple_destination_storages",
+        )
 
     def test_capability_gap_hardlink_cleanup_and_declared_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

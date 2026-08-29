@@ -3,7 +3,7 @@
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: NOT STARTED
+Status: READY FOR HIGH REVIEW
 Commit SHA: PENDING
 High Audit: PENDING
 Baseline for this Slice (BASE): the review-record commit that is `HEAD` when work starts — the
@@ -256,22 +256,22 @@ Run every command and report its actual output:
 
 ## Closure Checklist
 
-- [ ] Exactly two added production lines, zero deleted, both `"nextAction": None,` immediately after
+- [x] Exactly two added production lines, zero deleted, both `"nextAction": None,` immediately after
       their row's `"message": None,`; `git diff --numstat BASE HEAD -- mediaflow` shows `2	0` for
       `mediaflow/application/configuration_objects.py` only.
-- [ ] The new shape test exists, asserts the ten-key tuple in order for every row of three offline
+- [x] The new shape test exists, asserts the ten-key tuple in order for every row of three offline
       runs, and proves all four builders were covered.
-- [ ] Changes 2, 3 and 4 are exactly one added line, one replaced line and five added lines; no other
+- [x] Changes 2, 3 and 4 are exactly one added line, one replaced line and five added lines; no other
       assertion moved; no `.get("nextAction")` remains in the module.
-- [ ] `git diff --exit-code BASE HEAD -- mediaflow/domain mediaflow/infrastructure mediaflow/interfaces
+- [x] `git diff --exit-code BASE HEAD -- mediaflow/domain mediaflow/infrastructure mediaflow/interfaces
       mediaflow/cli.py scripts config pyproject.toml docs` is EMPTY.
-- [ ] Full suite `872` `OK (skipped=7)`, focused `58` `OK`; no test removed, renamed or split.
-- [ ] All eight probes ran one at a time with `git checkout --` restores, actual failing test names
+- [x] Full suite `872` `OK (skipped=7)`, focused `58` `OK`; no test removed, renamed or split.
+- [x] All eight probes ran one at a time with `git checkout --` restores, actual failing test names
       recorded, probes 1-7 failed their named tests and the control failed nothing.
-- [ ] Static, dependency, CLI, wheel, schema-marker, whitespace, FFmpeg, mutation-boundary, Markdown
+- [x] Static, dependency, CLI, wheel, schema-marker, whitespace, FFmpeg, mutation-boundary, Markdown
       link, alist-ignore and secret gates all pass; eight-sample `result` size reported.
-- [ ] One coherent commit at the end; no push.
-- [ ] Completion Report filled in with actual command output.
+- [x] One coherent commit at the end; no push.
+- [x] Completion Report filled in with actual command output.
 
 ## Completion Report
 
@@ -280,18 +280,91 @@ Run every command and report its actual output:
 
 ### Changed Files
 
+- `mediaflow/application/configuration_objects.py`
+- `tests/test_configuration_destination_precheck.py`
+- `TASK.md`
+
+BASE for this Slice: `32e6e76f348c5c10d08ca247eaf01112aa109f0c`.
+
 ### Implemented
+
+- Added exactly two production lines, both `"nextAction": None,`, immediately after the
+  successful-row `"message": None,` entries in the single-sample and `_probe_destination_sample`
+  builders. No production line was deleted or reordered.
+- Added the cross-branch ten-key ordered-shape test over single-sample, mixed three-sample and
+  multiple-destination-Storage offline runs.
+- Added the required single-sample and resolution-row direct-subscript assertions and replaced the
+  last destination-precheck `.get("nextAction")` assertion with a subscript.
+- No Web/API/schema/marker/documentation behavior changed.
 
 ### Tests
 
+- `.venv/bin/python -m unittest tests.test_operator_ui tests.test_configuration_destination_precheck tests.test_configuration_destination_activation`
+  — `Ran 58 tests ... OK`.
+- `.venv/bin/python -m unittest` — `Ran 872 tests ... OK (skipped=7)`.
+- `.venv/bin/ruff check .` — `All checks passed!`.
+- `.venv/bin/ruff format --check .` — `308 files already formatted`.
+- `.venv/bin/python -m compileall -q mediaflow tests` — passed.
+- `.venv/bin/python -m pip check` — `No broken requirements found.`
+- Both example `config validate` commands — `Configuration valid`.
+- `python -m pip wheel . --no-deps --no-build-isolation -w dist` — wheel built successfully;
+  `scripts/wheel_smoke_test.py` exited 0.
+
 ### Test Results
+
+The complete and focused suites are green at the required 872/58 totals with exactly the existing
+seven skips. The wheel smoke retained Configuration schema 10 and Runtime schema 22. The focused
+and full test processes emitted pre-existing SQLite `ResourceWarning` messages, but no test failed.
 
 ### Falsification Probes
 
+All probes ran one at a time against the current Slice tree; each mutated file was restored with
+`git checkout -- <file>` and the intended Slice diff was rechecked.
+
+| # | Mutation | Actual result |
+| - | -------- | ------------- |
+| 1 | Delete single-sample inline `nextAction` | `test_destination_precheck_rows_share_one_key_shape_across_branches` FAIL and `test_single_sample_result_gains_sample_count_items_and_empty_collisions` ERROR (`KeyError`) |
+| 2 | Delete `_probe_destination_sample` inline `nextAction` | shape test FAIL and `test_destination_precheck_per_sample_rows_carry_their_own_next_action` ERROR (`KeyError`) |
+| 3 | Delete resolution-row `message` | shape test FAIL and `test_multiple_destination_storages_is_bounded_failure` ERROR (`KeyError`) |
+| 4 | Change resolution-row `targetExists` to `True` | `test_multiple_destination_storages_is_bounded_failure` FAIL (`True is not None`) |
+| 5 | Add spurious `debugNote` key to failure row | shape test FAIL (extra key) |
+| 6 | Swap resolution-row `failureCategory`/`message` order | shape test FAIL (key order) |
+| 7 | Replace resolution-row `nextAction` with a recovery sentence | `test_multiple_destination_storages_is_bounded_failure` FAIL (non-`None` action) |
+| 8 | Comment-only edit in `_probe_destination_sample` | `Ran 22 tests ... OK` (control) |
+
 ### Validation Evidence
+
+- `git diff --check` passed. FFmpeg/FFprobe audit returned no matches. Business-layer direct
+  filesystem/network mutation audit found 0 findings.
+- `git check-ignore config/alist.json` returned `config/alist.json`; `git ls-files` and staged diff
+  for that path were empty.
+- Markdown local-link audit scanned 125 files and 25 local links with 0 broken links.
+- Slice diff secret/endpoint scan reported 0 hits.
+- `git diff --numstat BASE -- mediaflow` reported exactly
+  `2  0  mediaflow/application/configuration_objects.py`; the forbidden code/documentation diff
+  against BASE was empty.
+- `grep -n 'get("nextAction")' tests/test_configuration_destination_precheck.py` printed nothing.
+- Offline eight-sample bounded-field measurement encoded the compact `result` as `11049` bytes;
+  `CONFIGURATION_STRATEGY_RESULT_LIMIT` is `32768` bytes.
 
 ### Decisions
 
+- Kept the change strictly at the two approved row builders and the named precheck test module;
+  successful rows now expose an explicit `None` while the Web rendering remains unchanged.
+- Used direct subscripting for all strengthened assertions so missing keys fail loudly.
+- Kept all six roadmap-deferred capabilities and the residual non-blocking proof gaps outside this
+  Slice.
+
 ### Remaining Work
 
+- High must independently review this checkpoint and return `PASS`, `FIX REQUIRED` or
+  `PARTIAL / DEFERRED`.
+- Phase 22.6 Final Closure Audit, closure documentation and any phase-level push remain outside this
+  implementation checkpoint.
+
 ### Risks
+
+- Existing test runs emit SQLite `ResourceWarning` messages for unclosed connections; this Slice does
+  not alter that unrelated behavior.
+- Persisted historical evidence remains governed by the existing schema markers (Configuration 10,
+  Runtime 22); no migration or compatibility behavior changed.

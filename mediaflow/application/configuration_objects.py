@@ -1776,6 +1776,7 @@ class ConfigurationObjectService:
                         "proposedRelativeDestination": proposed,
                         "failureCategory": None,
                         "message": None,
+                        "nextAction": None,
                     }
                 ],
                 "collisions": [],
@@ -2198,6 +2199,7 @@ class ConfigurationObjectService:
             "proposedRelativeDestination": proposed,
             "failureCategory": None,
             "message": None,
+            "nextAction": None,
         }
         details: dict[str, object] = {
             "relativeDestination": resolution.composition.relative_destination,
