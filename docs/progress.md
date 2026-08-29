@@ -272,24 +272,31 @@ legal Slice is Phase 22.6-H.
 ### Phase 22.6-H Bounded Multi-Sample Local Destination Precheck with Cross-Item Collision Detection
 
 ```text
-Status: FIX REQUIRED
+Status: PASS / CLOSED (accepted through Phase 22.6-H-F1)
+Accepted checkpoint SHA: 4455198a6ef3b93fe1e92cef73660039620e756e (Phase 22.6-H-F1 evidence
+correction; production tree byte-identical to the rejected checkpoint)
 Rejected checkpoint SHA: d8c2ae04e578955ddbbd29c413f235bf4cf08f42 (preserved, never amended,
 squashed or rewritten)
-High Audit: FIX REQUIRED — 2026-08-28; independently reviewed with all seven Task-mandated
+High Audit: FIX REQUIRED — 2026-08-28 on d8c2ae0; independently reviewed with all seven Task-mandated
 falsification probes plus thirteen further independent probes, the complete offline suite, the
 isolated wheel smoke run and a byte-restored production tree. Multi-sample composition, per-sample
 independent state and recovery, production-Planner cross-item collision detection, both new bounded
 categories, the byte-identical activation gate, single-sample and stored-evidence compatibility,
-zero mutation and every safety boundary were verified and accepted; the checkpoint is rejected
-because Required Test 1's most-severe verdict aggregation is not falsifiable — the complete
-859-test suite stays green when that aggregation is replaced by the first sample's outcome
-Push: NOT PERFORMED — a rejected checkpoint is not pushed; `main` stays one commit ahead of
-`origin/main` and no push authorization was requested or used
+zero mutation and every safety boundary were verified and accepted; the checkpoint was rejected
+because Required Test 1's most-severe verdict aggregation was not falsifiable — the complete
+859-test suite stayed green when that aggregation was replaced by the first sample's outcome.
+PASS — 2026-08-28 on 4455198 after the Phase 22.6-H-F1 evidence correction: the aggregation is now
+pinned by two additive tests whose severe sample sits at index 1, and ten independent probes
+confirmed it
+Push: NOT PERFORMED — neither the rejected checkpoint, the correction checkpoint nor the review
+records were pushed; `main` is ahead of `origin/main` and Phase 22.6 closure still needs the Final
+Closure Audit plus a new explicit authorization
 ```
 
-Implementation evidence is recorded by the implementation role in `TASK.md` at that SHA and is
-preserved unchanged. The independent review record is "Phase 22.6-H High Review Result
-(2026-08-28): FIX REQUIRED". The only allowed next Slice is Phase 22.6-H-F1.
+Implementation evidence is recorded by the implementation role in `TASK.md` at each SHA. The
+independent review records are "Phase 22.6-H High Review Result (2026-08-28): FIX REQUIRED" and
+"Phase 22.6-H-F1 High Review Result (2026-08-28): PASS". Phase 22.6 itself remains open; the next
+legal Slice is Phase 22.6-I.
 
 ## Phase 22.6-A High Review Result (2026-08-27)
 
@@ -1467,11 +1474,10 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   Earlier rejected SHAs of this Phase family remain preserved and untouched.
 - Scope conformance verified: the checkpoint touches exactly ten allowed files (+1338/-71) —
   `mediaflow/application/configuration_objects.py`, `mediaflow/interfaces/service_api.py`,
-  `mediaflow/interfaces/operator_ui.py`, `mediaflow/interfaces/cli.py`,
-  `tests/test_configuration_destination_precheck.py`,
+  `mediaflow/interfaces/operator_ui.py`, `tests/test_configuration_destination_precheck.py`,
   `tests/test_configuration_destination_activation.py`, `tests/test_operator_ui.py`,
-  `docs/architecture.md`, `docs/product-experience.md`, `docs/requirements.md` — plus `TASK.md`
-  status/report. `docs/progress.md` and `docs/roadmap.md` were correctly left to the review role. No
+  `docs/architecture.md`, `docs/product-experience.md`, `docs/requirements.md` and `TASK.md`
+  (status/report). `docs/progress.md` and `docs/roadmap.md` were correctly left to the review role. No
   new route, HTTP status, permission, database table, migration or schema marker: Configuration
   schema stays 10 and Runtime schema stays 22, reconfirmed by the isolated wheel smoke run. Test
   count rose 850 → 859 with zero deletions and no weakened assertion.
@@ -1568,6 +1574,81 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   destination Storages per request, known-media duplicate detection, attachment prechecks, absolute
   mounted-path display, execution or authority change) must not be touched. After the correction
   commit the Phase returns to High re-review.
+
+## Phase 22.6-H-F1 High Review Result (2026-08-28): PASS
+
+- Reviewed checkpoint: `4455198a6ef3b93fe1e92cef73660039620e756e`
+  ("test(config): prove multi-sample verdict is most severe sample"), the evidence-only correction of
+  the rejected Phase 22.6-H checkpoint `d8c2ae04e578955ddbbd29c413f235bf4cf08f42`, which stays
+  preserved and unmodified.
+- Scope conformance verified: the checkpoint changes only
+  `tests/test_configuration_destination_precheck.py` (+138/-0) and `TASK.md` (status block, closure
+  checklist, Completion Report). `git diff --exit-code d8c2ae0 HEAD -- mediaflow scripts config
+  pyproject.toml` is empty, so the production tree is byte-identical to the rejected checkpoint, and
+  `git diff --stat d8c2ae0 HEAD` lists exactly four files: the two above plus the review-owned
+  `docs/progress.md` and `docs/roadmap.md` from the intervening review-record commit. No file under
+  `docs/` was touched by the implementation role. The test diff contains no deletion line at all
+  (16 → 18 tests in that module, 859 → 861 overall).
+- Required Test 1 (`test_multi_sample_verdict_is_most_severe_not_first_or_last_sample`) verified
+  assertion by assertion: COMPLETED status and `failure_category is None`; `sampleCount == 3` and
+  `collisions == []`; the pinned per-sample list `["ready", "manual_confirmation_required", "ready"]`,
+  so the severe sample is index 1 — neither first nor last; `verdict` equals that severe outcome and
+  differs from both `items[0]` and `items[-1]`; three distinct destinations; the severe row's own
+  `DESTINATION_EXISTS` planner conflict; `authorityGranted == "none"`, all guard mutation counters
+  zero and the destination tree snapshot unchanged. The severe outcome is produced by the production
+  resolver from a pre-created target, not asserted into existence by the test.
+- Required Test 2 (`test_multi_sample_top_level_keys_describe_the_first_sample`) verified: top-level
+  `destinationPath`, `conflictProjection.projectedOutcome` and `targetExists` all equal `items[0]`,
+  the first sample's projection is pinned to `ready`, and the aggregate `verdict` is asserted to
+  differ from it — the distinction that was previously unprovable. It repeats the zero-mutation and
+  no-authority proofs.
+- Falsification evidence re-run independently, one edit at a time with `git checkout --` restore and
+  a clean tree confirmed after each: aggregation → `outcomes[0]` fails both new tests; →
+  `outcomes[-1]` fails three tests including the original Phase 22.6-H test; → `min(outcomes,
+  key=severity)` fails the same three; taking the top-level details from the last successful sample
+  instead of the first fails Required Test 2 alone; and the comment-only control probe leaves the
+  module at 18 tests OK. Five further probes of my own: dropping the aggregate `"verdict"` override so
+  the first sample's own details verdict survives fails both new tests; raising `ready` above
+  `manual_confirmation_required` inside the severity map fails both new tests, so the map's ordering
+  is pinned and not merely the severe sample's position; emitting the per-sample rows in reverse index
+  order fails four tests in the module; composing the run identity from the last sample's resolution
+  fails nothing, which is correct because RecognitionType, MediaLibrary and OrganizePolicy are shared
+  by every sample of a run; and replacing the aggregation with a literal constant fails nothing (see
+  the observations).
+- Validation independently re-run at the checkpoint: `.venv/bin/python -m unittest` → `Ran 861 tests
+  … OK (skipped=7)`, exactly the two added tests above the 859 of the rejected checkpoint; the three
+  focused modules → 47 OK; `ruff check` and `ruff format --check` clean over 308 files; `compileall`
+  clean; `pip check` clean; both example configurations report `Configuration valid`; the wheel builds
+  and `scripts/wheel_smoke_test.py` installs it in an isolated environment reporting Runtime schema 22
+  while `CONFIGURATION_SCHEMA_VERSION` stays 10; `git diff --check` clean; FFmpeg/FFprobe audit and
+  business-layer filesystem-mutation audit both empty; Markdown link check 120 files / 25 local links
+  / 0 broken; `config/alist.json` still untracked, unstaged and ignored; secret scan of the Slice diff
+  empty, and the new fixtures use only temporary directories with neutral relative names.
+- No regression and no journey break is possible from this Slice and none was found: production and
+  documentation are byte-identical to the reviewed 22.6-H tree, so entry point, visible state, action,
+  outcomes and recovery are exactly what was already accepted, and the full suite confirms it. The
+  Completion Report's probe table matches what I reproduced, including the honest note that `Commit
+  SHA` cannot be recorded inside its own commit.
+- Non-blocking observations, none of them closure conditions: no multi-sample run in which every
+  sample is `ready` asserts `verdict == "ready"`, so replacing the aggregation with a literal severe
+  constant survives — every positional, ordering and severity-map mutation is now caught, and the
+  `ready` floor is proven on the single-sample path, so this is a residual two-sidedness gap rather
+  than an unproven behaviour; the new test's outcome list is palindromic, so row-order reversal is
+  caught by three other tests in the module rather than by this one; the Web surface still renders
+  run-level fields, including the aggregate verdict, under the "First sample destination" heading for
+  multi-sample runs, which is exactly what the next Slice addresses; and the pre-existing
+  `ResourceWarning: unclosed database` in unrelated suites is still open. The Phase 22.6-H record
+  above also wrongly listed `mediaflow/interfaces/cli.py` among that checkpoint's ten files; it is
+  corrected in this commit — the tenth file is `TASK.md`, no CLI module was touched, and the CLI has
+  no destination-precheck command at all.
+- Verdict: **PASS**. Phase 22.6-H is **CLOSED**, accepted through Phase 22.6-H-F1 with the rejected
+  checkpoint preserved and unpushed. Phase 22.6 remains open. The next legal Slice is **Phase 22.6-I**
+  (separate the run-level destination-precheck summary from the first-sample block in the Web
+  surface, so the aggregate verdict is never presented as the first sample's), now written to
+  `TASK.md`; remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing, multiple
+  RecognitionTypes or multiple destination Storages per request, known-media duplicate detection,
+  attachment prechecks, absolute mounted-path display and any execution or authority change must not
+  start.
 
 ## Completed
 
