@@ -9,8 +9,8 @@ Local parsing accepts filename/path evidence and optional same-directory Kodi/Je
 evidence through a bounded, read-only Storage flow. NFO parsing never generates files or creates a
 metadata identity by itself.
 
-The core workflow and the bounded Phase 19 production-release profile are complete. Production
-adapters passed isolated Local, Samba, OpenList, and MinIO lifecycle/transfer matrices plus a
+The core workflow has a bounded production-release profile. Production adapters passed isolated
+Local, Samba, OpenList, and MinIO lifecycle/transfer matrices plus a
 128-object, 128 MiB streaming and interrupted-transfer profile. This does not certify AWS S3,
 Cloudflare R2, third-party OpenList drivers, remote atomic publication, multi-hour soak, or host
 power-loss behavior. Fake-client tests are never counted as real-service evidence. See the
@@ -158,21 +158,33 @@ Cross-storage MOVE streams Copy, verifies the destination, and only then deletes
 
 The developer strategy inspector remains available as `strategy-test`.
 
-`config draft-import` stages the current JSON as Draft; validation and activation are separate
-explicit steps. Before the first activation, `config status` reports `JSON_BOOTSTRAP`. After
-activation, the managed revision ID/digest is the workflow runtime authority, new Tasks/Jobs and
-resident Scheduler emissions pin that identity, and a missing/corrupt/runtime-invalid Active revision
+`config draft-import` stages the current JSON as Draft; the managed lifecycle is Draft →
+Validate/Test → explicit Activate. Before the first activation, `config status` reports
+`JSON_BOOTSTRAP`. After activation, the managed revision ID/digest is the workflow runtime authority.
+New Tasks/Jobs and resident Scheduler emissions pin that identity, and a
+missing/corrupt/runtime-invalid Active revision
 fails closed for media work with structured last-known identity, side-effect, retry-safety, and recovery
 details. The resident API captures one immutable Active binding per request, so queue and protected
 execute admission, schedules/status, and Job pins cannot mix revisions. A queued Job whose saved
 published revision is unavailable fails before workflow construction and exposes actionable,
-secret-free recovery evidence in API/Web detail. The Configuration tab in the authenticated Operator UI exposes status, whole-document
-import/edit, validation, diff, activation, and replacement recovery actions through the bootstrap
-database locator. Phase 22.3 now adds Local Storage/ResourceLibrary/MediaLibrary Draft object forms,
-direct reference impact/deletion blocking, redacted remote read-only summaries, bounded read-only
-setup checks, checked activation, and a first Preview Job action. Remote/provider and policy object
-editors remain out of scope and independent review of the Phase 22.3 implementation is pending. The
-F2 atomic-binding and pinned-revision recovery correction passed independent review on 2026-08-24.
+secret-free recovery evidence in API/Web detail.
+
+The Configuration tab in the authenticated Operator UI exposes status, whole-document import/edit,
+validation, diff, activation, and replacement recovery actions through the bootstrap database
+locator. Guided Draft editing currently covers Local Storage, ResourceLibrary, MediaLibrary,
+RecognitionType, RecognitionRule, RecognitionTypePolicy, MetadataPolicy, NamingPolicy,
+ClassificationPolicy, and OrganizePolicy. It shows direct reference impact, blocks referenced
+deletion, keeps remote Storage summaries redacted/read-only, and provides exact-revision Local setup,
+recognition, metadata, naming, classification, organize-authority, destination-preview, and Local
+destination-precheck actions where applicable. Checked activation consumes current evidence for the
+exact revision and atomically publishes an immutable runtime snapshot; queued and in-flight work
+retains its pinned revision identity even after a later activation.
+
+Configuration validation, preview, precheck, and activation grant no media execution authority and
+perform no media mutation. Real execution uses a separate explicit authority boundary, and only
+`OrganizerExecutor` may invoke mutating Storage operations. Provider switching, guided remote
+destination precheck, broader manual organization, and scheduled unattended real organization are
+not current capabilities.
 
 ## Configuration and architecture
 
@@ -234,8 +246,8 @@ later disabled-by-default one-time authorization boundary documented below. Remo
 delete, and conflict resolution remain rejected. This standard-library server is for trusted
 loopback development use, not direct Internet exposure.
 
-Phase 18.2 adds a resident Worker and opt-in interval schedules. Example schedules are disabled by
-default. `automation.maximumActiveJobs` defaults to 100 and atomically limits the combined Pending
+MediaFlow provides a resident Worker and opt-in interval schedules. Example schedules are disabled
+by default. `automation.maximumActiveJobs` defaults to 100 and atomically limits the combined Pending
 and Running backlog across manual DryRun submissions, schedules, and protected remote organize.
 Completed, failed, and cancelled Jobs release capacity. Run Scheduler and Worker separately.
 `automation.staleJobAgeSeconds` defaults to 3600 (allowed range 60–604800). The authenticated Jobs
@@ -252,7 +264,7 @@ later claim. The signal remains conservative during a blocking external call, so
 still stop and inspect the owning Worker and Storage outcome before local requeue. Automatic and
 remote recovery remain unavailable.
 
-Phase 18.3 supports a validated five-field Cron subset with an explicit IANA time zone:
+The Scheduler supports a validated five-field Cron subset with an explicit IANA time zone:
 
 ```json
 {"id": "cn-morning-preview", "command": "preview", "cron": "0 8 * * *",
@@ -263,8 +275,8 @@ Cron supports numeric `*`, lists, inclusive ranges, and positive steps. It has n
 macros, shell commands, or catch-up backlog. Nonexistent DST wall times are skipped and an ambiguous
 wall time fires once. Every emission is appended to SQLite schedule audit.
 
-Phase 18.4 adds an asynchronous notification Outbox for terminal Automation Job and Scheduler
-emission events. Enable a configured HTTPS Webhook, set its `secretEnv`, then run
+Notifications use an asynchronous Outbox for terminal Automation Job and Scheduler emission events.
+Enable a configured HTTPS Webhook, set its `secretEnv`, then run
 `mediaflow notification-worker run`. Payloads are HMAC-SHA256 signed over
 `timestamp + "." + exact UTF-8 body`; 429/5xx/transport failures retry with bounded backoff and
 other 4xx responses enter dead-letter. Delivery failures never change completed media work.
@@ -275,8 +287,8 @@ Claimed deliveries use the configured `deliveryLeaseSeconds` (300 by default). A
 crash, an expired claim is safely eligible for another attempt; its stable delivery ID lets
 receivers deduplicate the unavoidable at-least-once crash window.
 
-Phase 18.5 optionally permits a remote real organize Job through a locally issued, short-lived,
-single-use authorization. It is disabled by default and the normal API bearer token is never
+Remote real organize Jobs optionally use a locally issued, short-lived, single-use authorization.
+This capability is disabled by default and the normal API bearer token is never
 sufficient mutation authority. Enable it explicitly:
 
 ```json
@@ -503,21 +515,21 @@ validation does not create the database. Resume/retry creates a separately audit
 mutation requires both original execute authorization and a fresh `--execute`. Existing JSONL
 operation history remains compatible.
 
-## Current milestone
+## Current capabilities
 
-The managed Configuration view/API now covers the accepted Local setup, Recognition Strategy,
-MetadataPolicy offline/live test, and candidate-confirmation slices. Phase 22.5-D adds an explicit
-same-Provider Metadata correction test for exact current live evidence: enter corrected
-query/year/Movie-TV or a direct Provider ID, then inspect persisted bounded identity, candidates,
-failure, and recovery evidence. It never activates a revision, starts a scan/Task/Preview, or mutates
-media. Independent High re-review accepted this slice. The current Phase 22.5-E boundary is one
-explicit, pinned DryRun continuation for a resolved File correction, with no sibling replay or
-execute authority; Provider switching and generic Task continuation remain future work.
+The managed Configuration view/API supports Local guided setup, Recognition Strategy Test,
+MetadataPolicy offline/live tests and candidate confirmation, plus same-Provider Metadata correction
+testing against the exact current revision. A correction can use a bounded query/year/Movie-TV input
+or a direct Provider ID and returns persisted, secret-free identity, candidate, failure, and recovery
+evidence without activating a revision, starting media work, or mutating Storage. One resolved File
+correction can be submitted as a separately auditable, one-item DryRun continuation pinned to the
+source work's immutable configuration; it does not replay siblings or inherit execute authority.
+Provider switching and generic per-item checkpoint recovery are not current capabilities.
 
 For Local guided setup, Storage `rootPath` is host-absolute while ResourceLibrary `storagePath` and
 MediaLibrary `rootPath` are Storage-relative. The Web action never creates roots or calls a Storage
-mutation. Use the raw JSON editor only as the explicitly labelled compatibility path for remote or
-policy changes.
+mutation. The raw JSON editor remains the explicitly labelled compatibility path for remote Storage
+definitions and configuration families without guided forms.
 
 The authenticated operator console now includes a read-only **System** tab. It is backed by a
 precomputed `GET /api/v1/system/status` snapshot and shows bounded Storage/library/policy wiring plus
@@ -530,10 +542,11 @@ The core pipeline, persistent recovery/conflict decisions, attachments, read-onl
 persistent scan/preview jobs, Cron schedules, and signed Webhook notifications are complete.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
 Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
-The operational Dashboard and explicit metadata-review resolution are available without a Web UI.
-Database-managed users/login, automatic secret rotation, scheduled execute, and extended Web UI
-remain planned;
-unattended scheduled real organization is not supported.
+The authenticated Operator UI exposes the operational Dashboard, Files, managed Configuration,
+Task/Job/Scheduler/Notification/Log views, and bounded conflict, Recognition, Metadata, and
+Classification review actions through the same application and permission boundaries as the API.
+Database-managed users/login, automatic secret rotation, broader end-to-end per-item recovery, and
+scheduled unattended real organization are not current capabilities.
 
 Organizer rollback is an explicit per-policy option and remains disabled by default:
 
