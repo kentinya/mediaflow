@@ -3,7 +3,7 @@
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: NOT STARTED
+Status: READY FOR HIGH REVIEW
 Commit SHA: PENDING
 High Audit: PENDING
 Baseline for this Slice (BASE): the review-record commit that is `HEAD` when work starts — the
@@ -39,9 +39,7 @@ The multi-sample verdict is computed in one expression
 (`mediaflow/application/configuration_objects.py:2043-2045`):
 
 ```python
-verdict = (
-    "capability_gap" if any_missing else max(outcomes, key=lambda value: severity[value])
-)
+verdict = "capability_gap" if any_missing else max(outcomes, key=lambda value: severity[value])
 ```
 
 Review probing at Phase 22.6-M measured that this expression is only half-proved. Replacing the whole
@@ -248,26 +246,26 @@ Run every command and report its actual output:
 
 ## Closure Checklist
 
-- [ ] Zero production change: `git diff --numstat BASE HEAD -- mediaflow` prints nothing, and the
+- [x] Zero production change: `git diff --numstat BASE HEAD -- mediaflow` prints nothing, and the
       BASE identity diff over `mediaflow scripts config pyproject.toml docs` and the requirements
       specification is EMPTY.
-- [ ] `test_multi_sample_all_ready_verdict_is_ready_not_inflated` exists, asserts
+- [x] `test_multi_sample_all_ready_verdict_is_ready_not_inflated` exists, asserts
       `verdict == "ready"` on a three-sample all-`ready` offline run, and pins every row's
       `projectedOutcome`, `failureCategory`, `message` and `nextAction` by direct subscript.
-- [ ] `test_multi_sample_capability_gap_overrides_ready_rows` exists, asserts
+- [x] `test_multi_sample_capability_gap_overrides_ready_rows` exists, asserts
       `verdict == "capability_gap"` with `missingStorageCapabilities == ["can_hard_link"]` and
       `requiredByOperation == "hard_link"` while every row is still `projectedOutcome == "ready"`.
-- [ ] Both new runs proved read-only: all `guardMutationCalls` `0`, `authorityGranted` `"none"`,
+- [x] Both new runs proved read-only: all `guardMutationCalls` `0`, `authorityGranted` `"none"`,
       destination tree snapshot byte-identical before and after.
-- [ ] No existing test, helper or assertion was renamed, deleted, weakened, reordered or added to.
-- [ ] Full suite `874` `OK (skipped=7)`, focused `60` `OK`.
-- [ ] All eight probes ran one at a time with `git checkout --` restores, actual failing test names
+- [x] No existing test, helper or assertion was renamed, deleted, weakened, reordered or added to.
+- [x] Full suite `874` `OK (skipped=7)`, focused `60` `OK`.
+- [x] All eight probes ran one at a time with `git checkout --` restores, actual failing test names
       recorded; probes 1-4 failed their named new tests, probes 5-7 reported their real observed
       results without overclaiming, and the control failed nothing.
-- [ ] Static, dependency, CLI, wheel, schema-marker, whitespace, FFmpeg, mutation-boundary, Markdown
+- [x] Static, dependency, CLI, wheel, schema-marker, whitespace, FFmpeg, mutation-boundary, Markdown
       link, alist-ignore and secret gates all pass.
-- [ ] One coherent commit at the end; no push.
-- [ ] Completion Report filled in with actual command output.
+- [x] One coherent commit at the end; no push.
+- [x] Completion Report filled in with actual command output.
 
 ## Completion Report
 
@@ -276,18 +274,89 @@ Run every command and report its actual output:
 
 ### Changed Files
 
+- `tests/test_configuration_destination_precheck.py`: exactly two new offline tests; no existing
+  test/helper/assertion changed.
+- `TASK.md`: status, closure checklist and Completion Report; the existing verdict code excerpt was
+  formatter-normalized without semantic change so the repository format gate passes.
+
 ### Implemented
+
+- Added the all-`ready` three-sample proof (`verdict == "ready"`, row shape, distinct destinations,
+  collision/read-only assertions).
+- Added the two-sample HardLink capability-gap proof (`verdict == "capability_gap"` while rows stay
+  `ready`, required capability fields and read-only assertions).
+- No production, Web, API, schema-marker, route, permission, migration or product-documentation
+  behavior changed.
 
 ### Tests
 
+- `.venv/bin/python -m unittest tests.test_configuration_destination_precheck` — `Ran 24 tests ...
+  OK`.
+- `.venv/bin/python -m unittest tests.test_operator_ui tests.test_configuration_destination_precheck
+  tests.test_configuration_destination_activation` — `Ran 60 tests ... OK`.
+- `.venv/bin/python -m unittest` — `Ran 874 tests ... OK (skipped=7)`.
+- The focused and full runs emitted only pre-existing SQLite `ResourceWarning` messages.
+
 ### Test Results
+
+The two new assertions pass in the shipped implementation. Full and focused totals are exactly
+874/60 with the existing seven skips. The Phase 22.6-M bounded-result measurement remains authoritative
+because production is byte-identical to BASE: 11049 bytes for the eight-sample worst case against
+the 32768-byte limit; no remeasurement was needed.
 
 ### Falsification Probes
 
+Each probe ran alone against the 24-test destination-precheck module. Every production mutation was
+restored with `git checkout -- mediaflow/application/configuration_objects.py`, and the intended
+test-only diff remained clean after each restore.
+
+| # | Mutation | Actual result |
+| - | -------- | ------------- |
+| 1 | Whole verdict expression replaced by `"manual_confirmation_required"` | BASE evidence: full `872` remained `OK`; post-Slice `24` had exactly the two new tests fail. |
+| 2 | Whole verdict expression replaced by `"overwrite_requires_confirmation"` | `4` failures: both new tests plus `test_multi_sample_verdict_is_most_severe_not_first_or_last_sample` and `test_multiple_samples_success_most_severe_verdict_and_distinct_rows`. |
+| 3 | Capability guard dropped (`max(...)` unconditionally) | `test_multi_sample_capability_gap_overrides_ready_rows` failed with observed `ready`. |
+| 4 | Guard inverted (`if not any_missing`) | `4` failures: both new tests plus the two existing mixed-severity tests above. |
+| 5 | `max` replaced by `min` | `3` existing failures: `test_multi_sample_top_level_keys_describe_the_first_sample`, `test_multi_sample_verdict_is_most_severe_not_first_or_last_sample`, `test_multiple_samples_success_most_severe_verdict_and_distinct_rows`. |
+| 6 | Severity map changed to `"ready": 5` | The same `3` existing mixed-severity tests failed; the new all-`ready` test passed, as a single outcome is indifferent to the numeric rank. |
+| 7 | `outcomes` `None` filter dropped | `Ran 24 tests ... OK`; no row in this module supplied a `None` projected outcome. |
+| 8 | Comment-only edit in the verdict block (control) | `Ran 24 tests ... OK`. |
+
 ### Validation Evidence
+
+- `.venv/bin/ruff check .` — `All checks passed!`; `.venv/bin/ruff format --check .` — `308 files
+  already formatted`.
+- `.venv/bin/python -m compileall -q mediaflow tests` passed; `.venv/bin/python -m pip check` —
+  `No broken requirements found.`
+- Both example `config validate` commands returned `Configuration valid` (the expected rule/policy
+  counts were printed).
+- `pip wheel . --no-deps --no-build-isolation -w dist` and `scripts/wheel_smoke_test.py` both exited
+  `0`; smoke output retained Configuration schema `10` and Runtime schema `22`.
+- `git diff --check` passed. FFmpeg/FFprobe audit and business-layer direct filesystem mutation
+  audit returned no matches/findings.
+- `git check-ignore config/alist.json` returned `config/alist.json`; `git ls-files` and its staged
+  diff were empty.
+- Markdown audit used tracked paths from `git ls-files -z '*.md'`: `120` files, `25` local links,
+  `0` broken links.
+- Identity against BASE `dbde27979ed964614a6cfd51ad4f9338fce652f4`: the forbidden
+  `mediaflow scripts config pyproject.toml docs` plus requirements-specification diff was empty;
+  `git diff --numstat BASE -- mediaflow` printed nothing; the complete diff listed only `TASK.md`
+  and `tests/test_configuration_destination_precheck.py`.
+- `grep -n 'get("nextAction")' tests/test_configuration_destination_precheck.py` printed nothing;
+  Slice credential/endpoint scan reported `0` hits.
 
 ### Decisions
 
+- Kept the implementation test-only as required; no production workaround or refactor was needed.
+- Kept all probes, fixtures and validation offline and read-only. No push was performed.
+
 ### Remaining Work
 
+- Await independent High review of this checkpoint. No next Slice or Phase work is authorized by
+  this report.
+
 ### Risks
+
+- The existing test process emits SQLite `ResourceWarning` messages; they are non-failing and
+  unchanged by this Slice.
+- Probe 7 survives because the current module has no `None` projected-outcome row; this is recorded
+  honestly and does not change shipped behavior.

@@ -976,6 +976,122 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             "multiple_destination_storages",
         )
 
+    def test_multi_sample_all_ready_verdict_is_ready_not_inflated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target_root = root / "target-private"
+            (target_root / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            before = self._tree_snapshot(target_root)
+            repository, _, objects, draft = self._open(root)
+            try:
+                evidence = objects.destination_precheck(
+                    draft.revision_id,
+                    expected_version=draft.version,
+                    expected_digest=draft.digest,
+                    actor="operator",
+                    recognition_type="C",
+                    samples=[
+                        {
+                            "title": "The Matrix",
+                            "mediaType": "movie",
+                            "year": 1999,
+                            "genres": ["Action"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Your Name",
+                            "mediaType": "movie",
+                            "year": 2016,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Spirited Away",
+                            "mediaType": "movie",
+                            "year": 2001,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                    ],
+                )
+                result = evidence.result
+                self.assertEqual(evidence.status.value, "completed")
+                self.assertEqual(result["verdict"], "ready")
+                self.assertEqual(result["sampleCount"], 3)
+                self.assertEqual(result["collisions"], [])
+                self.assertEqual([row["index"] for row in result["items"]], [0, 1, 2])
+                self.assertEqual(
+                    [row["projectedOutcome"] for row in result["items"]],
+                    ["ready", "ready", "ready"],
+                )
+                for row in result["items"]:
+                    self.assertIsNone(row["failureCategory"])
+                    self.assertIsNone(row["message"])
+                    self.assertIsNone(row["nextAction"])
+                    self.assertFalse(row["targetExists"])
+                destinations = [row["destinationPath"] for row in result["items"]]
+                self.assertEqual(len(set(destinations)), 3)
+                self.assertEqual(result["authorityGranted"], "none")
+                self.assertEqual(set(result["guardMutationCalls"].values()), {0})
+                self.assertEqual(self._tree_snapshot(target_root), before)
+            finally:
+                repository.close()
+
+    def test_multi_sample_capability_gap_overrides_ready_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target_root = root / "target-private"
+            (target_root / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            before = self._tree_snapshot(target_root)
+            document = self._document(root)
+            document["organizePolicies"][0]["operation"] = "HARD_LINK"
+            with patch.object(LocalStorage, "_can_hard_link", return_value=False):
+                repository, _, objects, draft = self._open(root, document)
+                try:
+                    evidence = objects.destination_precheck(
+                        draft.revision_id,
+                        expected_version=draft.version,
+                        expected_digest=draft.digest,
+                        actor="operator",
+                        recognition_type="C",
+                        samples=[
+                            {
+                                "title": "The Matrix",
+                                "mediaType": "movie",
+                                "year": 1999,
+                                "genres": ["Action"],
+                                "extension": "mkv",
+                            },
+                            {
+                                "title": "Your Name",
+                                "mediaType": "movie",
+                                "year": 2016,
+                                "genres": ["Animation"],
+                                "countries": ["JP"],
+                                "extension": "mkv",
+                            },
+                        ],
+                    )
+                    result = evidence.result
+                    self.assertEqual(evidence.status.value, "completed")
+                    self.assertEqual(result["verdict"], "capability_gap")
+                    self.assertEqual(result["missingStorageCapabilities"], ["can_hard_link"])
+                    self.assertEqual(result["requiredByOperation"], "hard_link")
+                    self.assertEqual(result["sampleCount"], 2)
+                    self.assertEqual(result["collisions"], [])
+                    for row in result["items"]:
+                        self.assertEqual(row["projectedOutcome"], "ready")
+                        self.assertIsNone(row["failureCategory"])
+                    self.assertEqual(result["authorityGranted"], "none")
+                    self.assertEqual(set(result["guardMutationCalls"].values()), {0})
+                    self.assertEqual(self._tree_snapshot(target_root), before)
+                finally:
+                    repository.close()
+
     def test_capability_gap_hardlink_cleanup_and_declared_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
