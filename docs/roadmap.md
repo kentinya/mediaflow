@@ -13,7 +13,7 @@ only in [the development workflow](development-workflow.md).
 | 22.6 — Naming / Classification / Organize configuration | Complete managed policy editing, exact-revision preview, Local destination precheck and checked activation | READY FOR B READINESS CHECK | 22.5 |
 | 23 — Batch per-item recovery | Provide stage-aware per-item recovery without replaying successful siblings | PLANNED | 22.6 closure |
 | 24 — Files / Media detail and manual organize | Complete the operator journey from explanation and review to safe manual Preview/Organize and recovery | PLANNED | 23 |
-| 25 — Automation and production hardening | Complete scheduled-operation safety, operational readiness and release hardening | PLANNED | 24 |
+| 25 — Automation and production hardening | Complete operator-configured scheduled scanning and unattended organization using RecognitionType-selected policies under explicit bounded execution authority, plus production-loop hardening | PLANNED | 24 |
 
 ## Current boundary
 
