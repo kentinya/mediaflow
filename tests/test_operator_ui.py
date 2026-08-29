@@ -624,6 +624,67 @@ class OperatorUiTests(unittest.TestCase):
         )
         self.assertNotIn("Run verdict (most severe sample)", single_branch)
 
+    def test_destination_precheck_absent_determinations_render_as_not_determined(self) -> None:
+        script = APP_JS.decode()
+        precheck = _js_function_body(script, "renderDestinationPrecheck")
+
+        multi_start = precheck.index("if (sampleCount > 1) {")
+        multi_branch = _js_braced_body(precheck, precheck.index("{", multi_start))
+        single_branch = _js_braced_body(
+            precheck, precheck.index("{", precheck.index("} else {", multi_start))
+        )
+        root_field = (
+            "field(runList, 'Destination root exists / directory', "
+            "`${determinationText(result.destinationRootExists)} / "
+            "${determinationText(result.destinationRootIsDirectory)}`);"
+        )
+        single_root_field = root_field.replace("runList", "list")
+        self.assertIn(root_field, multi_branch)
+        self.assertIn(
+            "field(firstList, 'Target exists', determinationText(result.targetExists));",
+            multi_branch,
+        )
+        self.assertIn(single_root_field, single_branch)
+        self.assertIn(
+            "field(list, 'Target exists', determinationText(result.targetExists));",
+            single_branch,
+        )
+        self.assertEqual(precheck.count("determinationText(result.destinationRootExists)"), 2)
+        self.assertEqual(precheck.count("determinationText(result.destinationRootIsDirectory)"), 2)
+        self.assertEqual(precheck.count("determinationText(result.targetExists)"), 2)
+        for expression in (
+            "result.destinationRootExists === true ? 'YES' : 'NO'",
+            "result.destinationRootIsDirectory === true ? 'YES' : 'NO'",
+            "result.targetExists === true ? 'YES' : 'NO'",
+        ):
+            self.assertNotIn(expression, precheck)
+
+    def test_determination_text_maps_true_false_and_undetermined_separately(self) -> None:
+        script = APP_JS.decode()
+        helper = _js_function_body(script, "determinationText")
+        self.assertIn("if (value === true) return 'YES';", helper)
+        self.assertIn("if (value === false) return 'NO';", helper)
+        self.assertIn("return 'NOT DETERMINED';", helper)
+        self.assertLess(
+            script.index("function boundedSetupText(value, fallback = '-') {"),
+            script.index("function determinationText(value) {"),
+        )
+
+    def test_destination_precheck_not_ready_gate_still_blocks_an_undetermined_root(self) -> None:
+        script = APP_JS.decode()
+        precheck = _js_function_body(script, "renderDestinationPrecheck")
+        self.assertIn(
+            "if (evidence.status !== 'completed' || result.verdict === 'capability_gap' ||\n"
+            "          !result.destinationRootExists || !result.destinationPath)",
+            precheck,
+        )
+        self.assertIn(
+            "detailContent.append(text('p',\n"
+            "          'Destination is not ready. Follow the recovery action; no authority "
+            "was granted.', 'error'));",
+            precheck,
+        )
+
     def test_configuration_identity_mismatch_returns_before_all_normal_controls(self) -> None:
         script = APP_JS.decode()
         mismatch_start = script.index("function renderConfigurationIdentityMismatch")

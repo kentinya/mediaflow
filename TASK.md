@@ -3,7 +3,7 @@
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: READY FOR IMPLEMENTATION
+Status: READY FOR HIGH REVIEW
 Commit SHA: PENDING
 High Audit: PENDING
 Preceding closed checkpoint: 6c0ba745772e315b941c1c3b314ab47e66e8f35a
@@ -239,51 +239,123 @@ Run every command and report its actual output:
 
 ## Closure Checklist
 
-- [ ] Only `mediaflow/interfaces/operator_ui.py`, `tests/test_operator_ui.py`, `TASK.md` and — only
+- [x] Only `mediaflow/interfaces/operator_ui.py`, `tests/test_operator_ui.py`, `TASK.md` and — only
       under the stated rule — `docs/product-experience.md` changed
-- [ ] `git diff --exit-code 6c0ba74 HEAD -- mediaflow/application mediaflow/domain
+- [x] `git diff --exit-code 6c0ba74 HEAD -- mediaflow/application mediaflow/domain
       mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config
       pyproject.toml` is empty
-- [ ] `determinationText` exists once, sits immediately after `boundedSetupText`, and maps `true` /
+- [x] `determinationText` exists once, sits immediately after `boundedSetupText`, and maps `true` /
       `false` / everything else to `YES` / `NO` / `NOT DETERMINED`
-- [ ] All four render sites use it: run-level and first-sample in the multi-sample branch, both
+- [x] All four render sites use it: run-level and first-sample in the multi-sample branch, both
       equivalents in the single-sample branch
-- [ ] No `=== true ? 'YES' : 'NO'` expression remains for `destinationRootExists`,
+- [x] No `=== true ? 'YES' : 'NO'` expression remains for `destinationRootExists`,
       `destinationRootIsDirectory` or `targetExists`
-- [ ] `evidence.retrySafe` and every `YES`/`NO` render outside `renderDestinationPrecheck` are
+- [x] `evidence.retrySafe` and every `YES`/`NO` render outside `renderDestinationPrecheck` are
       byte-identical
-- [ ] The not-ready gate expression, its sentence and its `'error'` style are byte-identical
-- [ ] Every other field, label, order, list, table, heading and bounded sentence in the precheck block
+- [x] The not-ready gate expression, its sentence and its `'error'` style are byte-identical
+- [x] Every other field, label, order, list, table, heading and bounded sentence in the precheck block
       is byte-identical
-- [ ] Zero existing assertions replaced, weakened, deleted or renamed; the three new tests are additive
+- [x] Zero existing assertions replaced, weakened, deleted or renamed; the three new tests are additive
       and body-scoped
-- [ ] All six Required Falsification Probes executed with recorded output, control included, clean tree
+- [x] All six Required Falsification Probes executed with recorded output, control included, clean tree
       after each
-- [ ] Full offline suite green, total risen from 863 only by the added tests
-- [ ] Markers still 10 and 22; wheel smoke reports Runtime schema 22
-- [ ] No credential, endpoint, Storage `rootPath`, header, cookie, private path or raw exception text
+- [x] Full offline suite green, total risen from 863 only by the added tests
+- [x] Markers still 10 and 22; wheel smoke reports Runtime schema 22
+- [x] No credential, endpoint, Storage `rootPath`, header, cookie, private path or raw exception text
       in the page, tests, report or commit; `config/alist.json` still untracked, unstaged, ignored
-- [ ] Completion Report filled in with the actual commands, actual output, deviations and risks
-- [ ] Status set to READY FOR HIGH REVIEW; not pushed
+- [x] Completion Report filled in with the actual commands, actual output, deviations and risks
+- [x] Status set to READY FOR HIGH REVIEW; not pushed
 
 ## Completion Report
 
-To be filled in by the implementation role at the checkpoint commit. Report actual commands and actual
-output, not intentions.
-
 ### Changed Files
+
+- `mediaflow/interfaces/operator_ui.py` — +9/-4: the new `determinationText` helper immediately after
+  `boundedSetupText`, and the four render sites inside `renderDestinationPrecheck`.
+- `tests/test_operator_ui.py` — +61/-0: the three Required Tests, all additive and body-scoped.
+- `TASK.md` — status block, closure checklist and this Completion Report.
+- No documentation file changed: `docs/product-experience.md` needed no update because no CURRENT
+  sentence became inaccurate, and `docs/progress.md` / `docs/roadmap.md` remain review-owned.
 
 ### Implemented
 
+- `determinationText(value)` is the single three-way decision: `value === true` → `'YES'`,
+  `value === false` → `'NO'`, everything else → exactly `'NOT DETERMINED'`. It is defined
+  immediately after `boundedSetupText`, which is unchanged.
+- All four render sites use it: the multi-sample run-level
+  `Destination root exists / directory` (both halves), the multi-sample first-sample
+  `Target exists`, and the single-sample equivalents. `evidence.retrySafe` and every other
+  `YES`/`NO` render outside `renderDestinationPrecheck` are byte-identical.
+- The not-ready gate still reads `!result.destinationRootExists`, so an undetermined root keeps
+  counting as not ready; the sentence and `'error'` style are unchanged.
+
 ### Tests and Test Results
+
+- `test_destination_precheck_absent_determinations_render_as_not_determined`
+  (`tests/test_operator_ui.py:627`) asserts each branch routes all three fields through
+  `determinationText(...)`, that each of the four render sites carries its own call (counts of 2 per
+  key), and that no `=== true ? 'YES' : 'NO'` expression remains for the three keys in the body.
+- `test_determination_text_maps_true_false_and_undetermined_separately`
+  (`tests/test_operator_ui.py:662`) body-scopes the helper and pins all three arms, plus the helper's
+  position after `boundedSetupText`.
+- `test_destination_precheck_not_ready_gate_still_blocks_an_undetermined_root`
+  (`tests/test_operator_ui.py:673`) pins the gate expression, sentence and `'error'` style
+  byte-identically.
+
+Commands actually run, with results:
+
+- Focused modules (`test_operator_ui`, `test_configuration_destination_precheck`,
+  `test_configuration_destination_activation`): 52 tests, 0 failures.
+- Complete offline suite: `Ran 866 tests ... OK (skipped=7)` — 863 before, +3 tests, zero deletions.
+- `ruff check .`: All checks passed; `ruff format --check .`: 308 files already formatted.
+- `compileall -q mediaflow tests`: passed; `pip check`: No broken requirements found.
+- Both example `config validate` runs: `Configuration valid`.
+- Wheel build plus isolated `scripts/wheel_smoke_test.py`: exit 0, Runtime schema 22;
+  Configuration marker 10 remains asserted by the unchanged suite.
+- `git diff --check`: clean; FFmpeg/FFprobe audit: zero hits; business-layer filesystem-mutation
+  audit: only Storage-mediated `resolver.rename(...)` references; `config/alist.json` ignored,
+  untracked and unstaged; 120 tracked Markdown files, 25 links, 0 broken; secret scan of added
+  lines: no matches.
+- `git diff --exit-code 6c0ba74 HEAD -- mediaflow/application mediaflow/domain
+  mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config
+  pyproject.toml`: empty. The `operator_ui.py` diff contains only the helper hunk and the three
+  `renderDestinationPrecheck` hunks.
 
 ### Falsification Probes
 
+Each probe mutated `mediaflow/interfaces/operator_ui.py` once, ran the affected tests, recorded the
+failure, then restored with `git checkout -- mediaflow/interfaces/operator_ui.py` from the staged
+intended implementation and confirmed the worktree matched the staged file byte-for-byte.
+
 | Probe | Temporary change | Result |
 | --- | --- | --- |
+| 1 | Undetermined arm of `determinationText` collapsed so non-`true` yields `'NO'` | Required Test 2 failed at `tests/test_operator_ui.py:666` |
+| 2 | `false` arm collapsed so `false` also yields `'NOT DETERMINED'` | Required Test 2 failed at `tests/test_operator_ui.py:666` |
+| 3 | Old inline `result.targetExists === true ? 'YES' : 'NO'` restored in the multi-sample first-sample list | Required Test 1 failed (determination call missing) |
+| 4 | Old inline root expression restored in the single-sample branch | Required Test 1 failed (single-branch determination call missing) |
+| 5 | Not-ready gate changed to `result.destinationRootExists === false` | Required Test 3 failed (gate expression not byte-identical) |
+| 6 (control) | Comment-only line inside `renderDestinationPrecheck` | No test failed; the full operator-UI module ran 27 tests OK |
 
 ### Decisions
 
+- One helper owns the three-way mapping so every render site and every future site stays consistent;
+  `boundedSetupText`'s `-` fallback for text fields is untouched.
+- The not-ready gate is deliberately not softened: presentation now says `NOT DETERMINED`, but the
+  readiness decision still treats an absent root as blocking.
+- No documentation change was needed; the existing CURRENT sentences remain accurate.
+
 ### Remaining Work
 
+- Nothing inside this Slice. The known non-goals listed above were not started: no evidence payload
+  change, no `YES`/`NO` change outside `renderDestinationPrecheck`, no explanation/tooltip/style for
+  the undetermined state.
+- No push was performed; this checkpoint stays local pending High review.
+
 ### Risks, Assumptions and Newly Discovered Issues
+
+- Failed evidence that carries no observation now renders `NOT DETERMINED` for the three fields,
+  while the two genuine root-failure categories (`missing_destination_root`,
+  `destination_root_not_directory`) keep their real `NO` / `YES` values because those keys are real
+  booleans there; completed evidence is unchanged.
+- Per the workflow, this commit does not contain its own SHA; the full SHA is reported in the
+  review handoff and will be recorded by High in `docs/progress.md` after review.

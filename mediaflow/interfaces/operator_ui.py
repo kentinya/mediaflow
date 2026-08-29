@@ -424,6 +424,11 @@ APP_JS = b"""(() => {
   function boundedSetupText(value, fallback = '-') {
     return typeof value === 'string' && value.length > 0 && value.length <= 4096 ? value : fallback;
   }
+  function determinationText(value) {
+    if (value === true) return 'YES';
+    if (value === false) return 'NO';
+    return 'NOT DETERMINED';
+  }
   function namingEvidenceIsCurrent(revision, evidence) {
     return Boolean(evidence && evidence.stale === false &&
       evidence.revisionId === revision.revisionId &&
@@ -744,7 +749,7 @@ APP_JS = b"""(() => {
         field(runList, 'Destination Storage', `${boundedSetupText(result.destinationStorageId)} (${boundedSetupText(result.destinationStorageType)})`);
         field(runList, 'Storage support', boundedSetupText(result.storageSupport));
         field(runList, 'MediaLibrary and Storage-relative root', `${boundedSetupText(result.mediaLibraryId)}: ${boundedSetupText(result.mediaLibraryRootPath)}`);
-        field(runList, 'Destination root exists / directory', `${result.destinationRootExists === true ? 'YES' : 'NO'} / ${result.destinationRootIsDirectory === true ? 'YES' : 'NO'}`);
+        field(runList, 'Destination root exists / directory', `${determinationText(result.destinationRootExists)} / ${determinationText(result.destinationRootIsDirectory)}`);
         field(runList, 'Required capabilities', Array.isArray(result.requiredStorageCapabilities) ? result.requiredStorageCapabilities.join(', ') : '-');
         field(runList, 'Declared destination capabilities', Array.isArray(result.destinationStorageCapabilities) ? result.destinationStorageCapabilities.join(', ') : '-');
         field(runList, 'Missing capabilities', Array.isArray(result.missingStorageCapabilities) ? result.missingStorageCapabilities.join(', ') : '-');
@@ -761,7 +766,7 @@ APP_JS = b"""(() => {
         field(firstList, 'Deepest existing ancestor', boundedSetupText(result.deepestExistingAncestor));
         field(firstList, 'Directories that would be created', Array.isArray(result.directoriesToCreate) ? result.directoriesToCreate.join(', ') : '-');
         field(firstList, 'Destination path', boundedSetupText(result.destinationPath));
-        field(firstList, 'Target exists', result.targetExists === true ? 'YES' : 'NO');
+        field(firstList, 'Target exists', determinationText(result.targetExists));
         field(firstList, 'Configured conflict strategy', boundedSetupText(conflict.configuredStrategy));
         field(firstList, 'Projected conflict outcome', boundedSetupText(conflict.projectedOutcome));
         field(firstList, 'Proposed relative destination', boundedSetupText(conflict.proposedRelativeDestination));
@@ -776,11 +781,11 @@ APP_JS = b"""(() => {
         field(list, 'Destination Storage', `${boundedSetupText(result.destinationStorageId)} (${boundedSetupText(result.destinationStorageType)})`);
         field(list, 'Storage support', boundedSetupText(result.storageSupport));
         field(list, 'MediaLibrary and Storage-relative root', `${boundedSetupText(result.mediaLibraryId)}: ${boundedSetupText(result.mediaLibraryRootPath)}`);
-        field(list, 'Destination root exists / directory', `${result.destinationRootExists === true ? 'YES' : 'NO'} / ${result.destinationRootIsDirectory === true ? 'YES' : 'NO'}`);
+        field(list, 'Destination root exists / directory', `${determinationText(result.destinationRootExists)} / ${determinationText(result.destinationRootIsDirectory)}`);
         field(list, 'Deepest existing ancestor', boundedSetupText(result.deepestExistingAncestor));
         field(list, 'Directories that would be created', Array.isArray(result.directoriesToCreate) ? result.directoriesToCreate.join(', ') : '-');
         field(list, 'Destination path', boundedSetupText(result.destinationPath));
-        field(list, 'Target exists', result.targetExists === true ? 'YES' : 'NO');
+        field(list, 'Target exists', determinationText(result.targetExists));
         field(list, 'Configured conflict strategy', boundedSetupText(conflict.configuredStrategy));
         field(list, 'Projected conflict outcome', boundedSetupText(conflict.projectedOutcome));
         field(list, 'Proposed relative destination', boundedSetupText(conflict.proposedRelativeDestination));
