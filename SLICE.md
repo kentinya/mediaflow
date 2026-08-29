@@ -6,7 +6,7 @@ rules are defined only in [`docs/development-workflow.md`](docs/development-work
 ```text
 Slice ID: 22.6
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR B READINESS CHECK
+Status: READY FOR A REVIEW
 Base SHA: 7339a8b21b244e57bdb8067f688df91c7dc03280
 Implementation Head: 89f064b22be5c1f04ae75bfc0d6fbe72c9147e7d
 A Final Review: PENDING
@@ -32,13 +32,13 @@ checked activation without granting execution authority or mutating media.
 
 | ID | Required Outcome | Migrated evidence state |
 |---|---|---|
-| RO-1 | NamingPolicy, ClassificationPolicy and OrganizePolicy are managed through the same Draft/version/digest, validation, reference protection, audit and immutable activation authority | IMPLEMENTED — B verification pending |
-| RO-2 | The exact selected revision provides bounded, secret-free naming, classification, organize-authority and composed-destination preview using production policy/engine semantics | IMPLEMENTED — B verification pending |
-| RO-3 | Destination composition preserves RecognitionType identity, attributes policy/library contributions, uses Storage-relative safe paths and exposes actionable unsafe/unresolved outcomes | IMPLEMENTED — B verification pending |
-| RO-4 | Local destination precheck is read-only, bounded and supports one sample or 1–8 samples under one RecognitionType, one destination Storage, independent rows/recovery and cross-item collision detection | IMPLEMENTED — B verification pending |
-| RO-5 | Run verdict uses capability-gap precedence and otherwise the most severe projected outcome; every sample row retains the accepted uniform evidence contract | IMPLEMENTED — B verification pending |
-| RO-6 | API and Web expose the same persisted current/stale/completed/failed evidence, visible failure/recovery, and all applicable Local setup/Strategy/precheck requirements before checked activation | IMPLEMENTED — B verification pending |
-| RO-7 | Analysis/precheck/activation paths perform zero media mutation, grant no overwrite/delete/execute authority, never silently fall back, and keep Active equal to the immutable runtime-consumed snapshot | IMPLEMENTED — B verification pending |
+| RO-1 | NamingPolicy, ClassificationPolicy and OrganizePolicy are managed through the same Draft/version/digest, validation, reference protection, audit and immutable activation authority | COMPLETE |
+| RO-2 | The exact selected revision provides bounded, secret-free naming, classification, organize-authority and composed-destination preview using production policy/engine semantics | COMPLETE |
+| RO-3 | Destination composition preserves RecognitionType identity, attributes policy/library contributions, uses Storage-relative safe paths and exposes actionable unsafe/unresolved outcomes | COMPLETE |
+| RO-4 | Local destination precheck is read-only, bounded and supports one sample or 1–8 samples under one RecognitionType, one destination Storage, independent rows/recovery and cross-item collision detection | COMPLETE |
+| RO-5 | Run verdict uses capability-gap precedence and otherwise the most severe projected outcome; every sample row retains the accepted uniform evidence contract | COMPLETE |
+| RO-6 | API and Web expose the same persisted current/stale/completed/failed evidence, visible failure/recovery, and all applicable Local setup/Strategy/precheck requirements before checked activation | COMPLETE |
+| RO-7 | Analysis/precheck/activation paths perform zero media mutation, grant no overwrite/delete/execute authority, never silently fall back, and keep Active equal to the immutable runtime-consumed snapshot | COMPLETE |
 
 ## Required Surfaces
 
@@ -115,13 +115,9 @@ falsification probes need not be mechanically replayed unless B finds a concrete
 
 ## Current Closure Blockers
 
-No unimplemented product Required Outcome or current P0/P1 blocker was identified by the governance
-migration audit. Remaining gates are:
-
-1. B independently checks all Required Outcomes and performs the single Slice-final validation.
-2. B fills the Closure Packet and decides either `SLICE READY FOR A REVIEW` or identifies a genuine
-   blocker; optional test/copy/documentation polish cannot create another micro-Task.
-3. A reviews Base..Implementation Head and returns the final Slice decision.
+The B readiness check found no unimplemented Required Outcome, unresolved in-Slice P0/P1 defect or
+failed final-validation gate. B completed the Slice-final validation and submitted the Closure
+Packet below. The only remaining lifecycle gate is A review of Base..Implementation Head.
 
 The canonical Chinese specification's opening CURRENT-status narrative still stops before the
 completed Phase 22.6 journey, and stable product/architecture documents retain some pre-migration
@@ -135,17 +131,55 @@ Slice: 22.6 — Naming / Classification / Organize Configuration Journey
 Base SHA: 7339a8b21b244e57bdb8067f688df91c7dc03280
 Head SHA: 89f064b22be5c1f04ae75bfc0d6fbe72c9147e7d
 
-Required Outcomes: PENDING B READINESS CHECK
-Implemented: PENDING B CLOSURE PACKET
-Tasks completed: legacy implementation history; compact mapping pending B
-Final Tests: PENDING SLICE FINAL
-Safety Evidence: PENDING B CLOSURE PACKET
-Known Non-blocking Issues: PENDING B CLOSURE PACKET
-Explicitly Deferred: see Contract above
-Documentation Reconciliation Needed: canonical Chinese CURRENT-status header; decide whether to
-  normalize remaining legacy checkpoint annotations in stable CURRENT documents during A closure
+Required Outcomes:
+- RO-1: COMPLETE
+- RO-2: COMPLETE
+- RO-3: COMPLETE
+- RO-4: COMPLETE
+- RO-5: COMPLETE
+- RO-6: COMPLETE
+- RO-7: COMPLETE
 
-Decision: PENDING
+Required Surfaces:
+- Domain policy/configuration models and destination path-safety helpers: COMPLETE
+- SQLite revision-keyed managed-configuration evidence: COMPLETE
+- Application preview, precheck and checked-activation services: COMPLETE
+- Authenticated API and Operator Web journey: COMPLETE
+- Acceptance, regression and safety evidence: COMPLETE
+
+Implemented:
+- Managed NamingPolicy, ClassificationPolicy and OrganizePolicy lifecycle and previews
+- Exact-revision destination composition and attributed organize authority
+- Local read-only destination precheck, checked activation and Web/API recovery journey
+- Multi-sample independent rows, collision detection, uniform evidence and run verdict
+
+Tasks completed:
+- Legacy 22.6-A through O/F1 implementation history; no current micro-Slice lifecycle objects
+
+Final Tests:
+- Focused Naming/Classification/Organize/destination/activation/API/Web: 198 passed
+- Complete offline regression: 874 passed, 7 explicit external-service skips
+- Ruff check/format (311 files), compileall, pip check and both example validations: passed
+- Wheel build and isolated install/configuration/database smoke: passed
+- Markdown links: 123 tracked files, 36 local links, 0 broken; git diff --check: passed
+
+Safety Evidence:
+- Configuration schema marker 10 and Runtime schema marker 22 remain valid
+- FFmpeg/FFprobe production audit and direct business-filesystem mutation audit: 0 findings
+- Storage mutation calls remain confined to OrganizerExecutor
+- Private config is ignored/untracked/unstaged; high-confidence secret/private-path scan: 0 findings
+- Exact-revision, zero-mutation/authority, RecognitionType C and immutable activation regressions pass
+
+Known Non-blocking Issues:
+- Python 3.13 emitted existing unclosed-SQLite ResourceWarning messages without test failures
+- Stable documents retain some legacy Phase/SHA lifecycle annotations for A reconciliation
+Explicitly Deferred: see Contract above
+Documentation Reconciliation Needed:
+- A decides whether to update the canonical Chinese CURRENT-status header and normalize remaining
+  legacy checkpoint annotations in stable CURRENT documents during closure
+- A records the final Slice decision and reconciles authoritative closure documents once
+
+Decision: SLICE READY FOR A REVIEW
 ```
 
 ## A Final Review
