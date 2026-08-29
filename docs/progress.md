@@ -357,6 +357,39 @@ Implementation evidence is recorded by the implementation role in `TASK.md` at t
 independent review record is "Phase 22.6-J High Review Result (2026-08-29): PASS". Phase 22.6 itself
 remains open; the next legal Slice is Phase 22.6-K.
 
+### Phase 22.6-K Per-Sample Destination Rows Carry Each Sample's Own Bounded Message
+
+```text
+Status: PASS / CLOSED
+Accepted checkpoint SHA: f2db70b28edb8f753ebed0d3805be7143b521264
+High Audit: PASS — 2026-08-29; independently reviewed against the Phase 22.6-K `TASK.md`, the real
+code state and the Phase 22.6-J tree. Scope is exactly `mediaflow/interfaces/operator_ui.py`
+(+3/-2, one hunk), `tests/test_operator_ui.py` (+24/-1),
+`tests/test_configuration_destination_precheck.py` (+53/-0) and `TASK.md`; the diff against every
+forbidden path (`mediaflow/application`, `mediaflow/domain`, `mediaflow/infrastructure`,
+`mediaflow/interfaces/service_api.py`, `mediaflow/cli.py`, `scripts`, `config`, `pyproject.toml`,
+`docs`) is EMPTY, so evidence keys, aggregation, failure categories, the activation gate, routes,
+permissions and both schema markers are untouched. The per-sample rows table now carries five
+columns in the mandated order and renders each row's own `message` through the unchanged
+`boundedSetupText`, so a row that persists no message still prints `-` and older evidence keeps
+rendering; the run-level `Message`/`Next action` fields, the 22.6-J `determinationText` sites, the
+collision table and the not-ready gate are byte-identical. `tests/` grew 27 to 28 in
+`test_operator_ui.py` with exactly one Task-permitted header-assertion replacement and zero
+deletions, and 18 to 19 in `test_configuration_destination_precheck.py` purely additively; the new
+evidence test proves two independently failing samples keep their own distinct bounded messages
+while the run-level message still comes from the lowest-index failure. All seven Task-mandated
+falsification probes bit as required with a clean control, and six further independent probes were
+run. The complete offline suite is 868 tests OK (7 skipped), the focused modules 54 OK, and
+configuration marker 10 and Runtime marker 22 are unchanged in an isolated wheel smoke run
+Push: NOT PERFORMED — neither the checkpoint nor this record was pushed; `main` is ahead of
+`origin/main` and Phase 22.6 closure still needs the Final Closure Audit plus a new explicit
+authorization
+```
+
+Implementation evidence is recorded by the implementation role in `TASK.md` at that SHA. The
+independent review record is "Phase 22.6-K High Review Result (2026-08-29): PASS". Phase 22.6 itself
+remains open; the next legal Slice is Phase 22.6-L.
+
 ## Phase 22.6-A High Review Result (2026-08-27)
 
 - Status: FIX REQUIRED; Rejected checkpoint SHA:
@@ -1903,6 +1936,118 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   mutation-based capability probing, multiple RecognitionTypes or destination Storages per request,
   known-media duplicate detection, attachment prechecks, absolute mounted-path display and any
   execution or authority change must not start.
+
+## Phase 22.6-K High Review Result (2026-08-29): PASS
+
+- Reviewed checkpoint SHA: `f2db70b28edb8f753ebed0d3805be7143b521264` (commit
+  `feat(web): show each destination precheck sample's own failure message`), audited against the
+  Phase 22.6-K `TASK.md`, `AGENTS.md`, the Chinese product requirements,
+  `docs/product-experience.md`, `docs/architecture.md`, `docs/roadmap.md` and the accepted Phase
+  22.6-J tree `ccbddf2af92c1abf18d1162d0a6c37da9ee0a7cd`.
+- Scope held. The checkpoint changes exactly four files: `mediaflow/interfaces/operator_ui.py`
+  (+3/-2, a single hunk), `tests/test_operator_ui.py` (+24/-1),
+  `tests/test_configuration_destination_precheck.py` (+53/-0) and `TASK.md` (+94/-14).
+  `git diff --exit-code 37202cf f2db70b -- mediaflow/application mediaflow/domain
+  mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config
+  pyproject.toml docs` is EMPTY; the intervening commit `37202cf` is my own Phase 22.6-J review
+  record, which touched only `docs/progress.md`, `docs/roadmap.md` and `TASK.md`, so no evidence
+  key, request or response field, aggregation rule, failure category, activation gate, route,
+  permission, table, migration or schema marker moved in this Slice.
+- Journey outcome verified in code. The per-sample rows table now renders
+  `table(['Sample', 'Destination', 'Projected outcome', 'Failure category', 'Message'], ...)` with
+  `boundedSetupText(item.message)` as the fifth cell, inside the unchanged
+  `if (Array.isArray(result.items))` block under the unchanged
+  `text('h4', 'Per-sample destination rows')` heading. Rows have persisted their own bounded
+  message since Phase 22.6-H (`configuration_objects.py:2241`,
+  `_bounded_utf8(message, 384)`), while the run-level `Message` and `Next action` are taken from the
+  lowest-index failing sample only (`:2015-2023`, `failures[0]`), so before this Slice a second
+  failing sample's own explanation existed in evidence and in the API response but was rendered
+  nowhere.
+- Reproduced the fix read-only rather than trusting the report: a three-sample run whose sample 0
+  fails composition, sample 1 fails a ClassificationPolicy rule and sample 2 succeeds persists
+  run-level message `Destination composition failed (invalid_input)` with next action `correct the
+  destination or conflict policy, then rerun precheck`, while row 1 carries its own 46-byte
+  `ClassificationPolicy 'A' failed (invalid_rule)` — previously invisible, now the fifth cell of its
+  own row. Row 2 stores `message: None`, which the unchanged `boundedSetupText` prints as `-`, so
+  successful rows gain no text and pre-22.6-K evidence without the key still renders. Destination
+  paths stay Storage-relative and no message carries a credential, endpoint, host path or raw
+  exception text.
+- Safety held. No evidence key, permission, route or request field was added; the block remains
+  read-only and grants no authority; the not-ready gate with `!result.destinationRootExists`, its
+  sentence and its `'error'` style are byte-identical; the run-level field list, the 22.6-J
+  `determinationText` definition and all six of its call sites, the collision table and the
+  `1-8 samples` control are byte-identical; `CONFIGURATION_SCHEMA_VERSION = 10` and
+  `SCHEMA_VERSION = 22` are unchanged.
+- Test analysis. `tests/test_operator_ui.py` grew 27 to 28 with exactly one replacement — the
+  header-string assertion the Task named — and zero deletions, weakenings or renames;
+  `tests/test_configuration_destination_precheck.py` grew 18 to 19 purely additively. The new UI
+  test is body-scoped through `_js_function_body` and then slices the rows expression between the
+  header and its closing `])));`, so it pins the message cell's presence, its single occurrence, its
+  position after the failure-category cell and the absence of `evidence.message` inside the rows
+  expression rather than anywhere in the script. The new evidence test drives the offline SQLite
+  repository plus `ManagedConfigurationService` and `ConfigurationObjectService` with three samples
+  and asserts that both failing rows keep their own non-null, mutually different messages, that
+  run-level `failure_category`/`message` equal row 0's, and that row 1's message equals neither the
+  run-level message nor the run-level next action.
+- All seven Task-mandated falsification probes were re-run independently on the shipped tree, one
+  edit at a time, with `git checkout --` and a status check after each. Dropping `'Message'` from the
+  header, dropping the fifth cell, pointing the fifth cell at `boundedSetupText(evidence.message)`
+  and moving `'Message'` to the front of the header each failed
+  `test_destination_precheck_per_sample_rows_carry_each_sample_message`; storing `"message": None` in
+  `_destination_sample_failure_row` and changing the run-level selection from `failures[0]` to
+  `failures[-1]` each failed
+  `test_destination_precheck_multi_sample_independent_failures_keep_their_own_message`; and the
+  comment-only control inside the changed block failed nothing (28 tests OK). The header probes
+  additionally failed the pre-existing
+  `test_destination_precheck_multi_sample_web_surface_is_falsifiable`, and the row-payload probe
+  additionally broke `test_per_sample_isolation_when_middle_sample_fails_composition`, which is
+  overlapping coverage rather than a defect.
+- Six further independent probes confirmed the boundary: swapping the failure-category and message
+  cells, rendering the message cell twice, lowercasing the column label to `'message'` and moving
+  `'Message'` to the third header position were each caught by the new UI test; making every failing
+  row store one constant message and redirecting the run-level next action to the last sample's
+  message were each caught by the new evidence test. No probe passed silently. The probe script's own
+  clean-tree assertion reported only my concurrent edit to this file; neither probed production file
+  remained modified after restore.
+- Validation re-run by me on the checkpoint tree: complete offline suite `Ran 868 tests ... OK
+  (skipped=7)` — 866 before, exactly the two added tests, zero deletions; focused modules 28 + 19 + 7
+  = 54 OK; `ruff check .` all checks passed; `ruff format --check .` 308 files already formatted;
+  `compileall -q mediaflow tests` clean; `pip check` no broken requirements; `git diff --check` clean;
+  `config validate` on `config/mediaflow.phase13.2.example.json` and `config/strategy.example.json`
+  both `Configuration valid`; wheel build plus isolated `scripts/wheel_smoke_test.py` exit 0
+  reporting supported/runtime/backup schema 22 with `CONFIGURATION_SCHEMA_VERSION = 10` and
+  `SCHEMA_VERSION = 22` unchanged in source; FFmpeg/FFprobe audit zero hits; business-layer
+  filesystem-mutation audit shows no direct mutation in `mediaflow/application` or
+  `mediaflow/domain`; 120 tracked Markdown files with 25 local links and 0 broken;
+  `config/alist.json` untracked, unstaged and ignored; and the secret scan over this Slice's diff
+  matched only the Task's own policy prose.
+- Zero documentation change is accepted for this Slice with one recorded qualification.
+  `docs/product-experience.md:301-302` still enumerates the per-sample row as "index,
+  Storage-relative destination, projected outcome and, when present, its bounded failure category",
+  which is now incomplete rather than wrong; the same is true of the CURRENT destination-precheck
+  paragraph in `docs/architecture.md`, which stops at Phase 22.6-H. Bringing both CURRENT statements
+  up to date through 22.6-I, 22.6-J, 22.6-K and 22.6-L is folded into the Phase 22.6-L Task and
+  remains a Phase 22.6 Final Closure condition.
+- Non-blocking observations, none of them closure conditions for this Slice. First, evidence still
+  carries no per-sample `nextAction`: `_destination_sample_failure_row`
+  (`configuration_objects.py:2229-2242`) stores no action, so every failing sample still shares the
+  single run-level action derived from `failures[0]`, and a sample failing on MediaLibrary-root
+  grounds is told to fix the draft composition. Phase 22.6-L addresses exactly this. Second,
+  `_destination_sample_next_action` (`:2273-2289`) differentiates only six storage-level categories
+  and defaults every composition category to one sentence, so a per-sample action column will
+  legitimately repeat that sentence across composition failures; the differentiation it must prove is
+  composition versus storage-level, not category versus category. Third, the fifth column's label
+  text is pinned only by the new test's exact header string, so a synonym would be caught but only
+  through that one assertion. Fourth, the residual proof gaps recorded in 22.6-H-F1 and 22.6-I remain
+  open: no multi-sample all-`ready` run asserts `verdict == "ready"`, single-sample field order is
+  unpinned, and no test compares the two branches' field lists.
+- Verdict: **PASS**. Phase 22.6-K is **CLOSED** and Phase 22.6 remains open. The next legal Slice is
+  **Phase 22.6-L** (each failing destination-precheck sample carries and renders its own recovery
+  action, plus the bounded CURRENT documentation refresh), now written to `TASK.md`. Remote
+  SMB/OpenList/S3 destination prechecks, mutation-based capability probing, multiple RecognitionTypes
+  or destination Storages per request, known-media duplicate detection, attachment prechecks and
+  absolute mounted-path display are recorded in `docs/roadmap.md` as deferred out of Phase 22.6, and
+  no execution or authority change may start.
 
 ## Completed
 

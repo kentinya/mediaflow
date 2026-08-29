@@ -24,6 +24,7 @@ Phase gate，不复制测试日志或流程正文。
 | Phase 22.6-H Bounded Multi-Sample Local Destination Precheck + Cross-Item Collision Detection | PASS / CLOSED | `4455198a6ef3b93fe1e92cef73660039620e756e`（经 Phase 22.6-H-F1 证据修正接受；被拒 checkpoint `d8c2ae04e578955ddbbd29c413f235bf4cf08f42` 保留，不得 amend/squash/改写） | FIX REQUIRED — 2026-08-28 于 `d8c2ae0`：TASK 要求的七项可证伪探针全部被捕获且每次只有其命名测试失败，另加十三项独立探针；多样本 composition、逐样本独立状态与恢复、经生产 `OrganizePlanner` + `claimed_destinations` 真实产生的 `TARGET_COLLISION`、`duplicate_destination` 与 `multiple_destination_storages` 两类有界失败、逐字节未变的 activation gate、单样本与既存 evidence 兼容、零变更零授权、有界无机密证据、marker 10 与 Runtime marker 22 不变、`tests/` 零删除（850 → 859）、三份文档 CURRENT 声明均已复核接受；唯一被拒原因是 most-severe verdict 聚合不可证伪（换成 `outcomes[0]` 后 859 项套件仍全绿）。PASS — 2026-08-28 于 `4455198`：修正仅改 `tests/test_configuration_destination_precheck.py`（+138/-0）与 `TASK.md`，`git diff --exit-code d8c2ae0 HEAD -- mediaflow scripts config pyproject.toml` 为空即生产树逐字节未改，两项新测试把最严重样本置于 index 1；独立复跑五项 TASK 探针（`outcomes[0]`、`outcomes[-1]`、`min(...)` 各使 Required Test 1 失败，末样本 details 使 Required Test 2 单独失败，comment-only control 不触发）与五项自选探针（删除聚合 `verdict` 覆盖、颠倒 severity 表均使两项新测试失败；逆序行使模块内四项失败；末样本 identity 因运行内策略同一而无差异；常量 verdict 未被捕获，记为非阻塞观察）；861 项离线回归 `OK (skipped=7)`、47 项聚焦、ruff/format/compileall/`pip check`/两份示例配置/Markdown 链接/机密扫描/FFmpeg 与业务层写操作审计全绿、wheel 隔离 smoke 报告 Runtime schema 22；未推送；下一合法 Slice 为 Phase 22.6-I |
 | Phase 22.6-I Web Run-Level Destination Precheck Summary Separated From the First Sample | PASS / CLOSED | `6c0ba745772e315b941c1c3b314ab47e66e8f35a` | PASS — 2026-08-29 独立审核：checkpoint 仅改三个文件（`mediaflow/interfaces/operator_ui.py` +62/-29、`tests/test_operator_ui.py` +50/-1、`TASK.md`），且生产改动全部落在 `renderDestinationPrecheck` 之内，`git diff 4455198 6c0ba74 -- mediaflow/application mediaflow/domain mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config pyproject.toml` 为空；多样本分支先渲染 18 项 run 级字段（含 `Run verdict (most severe sample)`）并 `append(runList)`，再输出「First sample destination」标题与 8 项真正逐样本字段（共 26 项，与单样本列表同一集合、各自保持原相对顺序，仅 verdict 标签不同）；单样本 `else` 分支 26 组标签与表达式逐字节未改（标签仍为 `Verdict`），分支之后的逐样本行表、碰撞表与九条有界文案（含 `!result.destinationRootExists` 未改的 not-ready 门禁）逐字节未改且各出现一次，evidence key 读取方式不变，故既存 22.6-H 证据仍可渲染；`tests/` 22 → 24（零删除零改名，仅一处 TASK 明确许可的断言替换），两项新测试均经 `_js_function_body` + 计括号的 `_js_braced_body` 限定在分支体内；TASK 要求的六项探针全部被捕获（run 列表移回标题之后、`Destination path` 移入 run 列表、`if (true)` 去掉 `sampleCount > 1` 守卫、多样本分支改用普通 `Verdict` 标签、删除无碰撞文案，comment-only control 不触发），另六项自选探针确认边界（单样本分支误用 run 标签被捕获；删除 run 级 `Message`、改标题文案、单样本字段换序、改写 not-ready 文案不被捕获——字段划分本轮由源码分析核验，与 TASK 要求一致，已记为非阻塞观察）；离线回归 863 项 `OK (skipped=7)`、聚焦三模块 49 项、ruff/format/compileall/`pip check`/示例配置校验/Markdown 链接（120 文件 25 链接 0 断链）/机密扫描/FFmpeg 与业务层写操作审计全绿、wheel 隔离 smoke 报告 Runtime schema 22 且 configuration marker 10 不变；零文档改动本轮正确（无 CURRENT 声明描述字段分组）；未推送；下一合法 Slice 为 Phase 22.6-J |
 | Phase 22.6-J An Undetermined Destination Observation Stops Printing as "NO" | PASS / CLOSED | `ccbddf2af92c1abf18d1162d0a6c37da9ee0a7cd` | PASS — 2026-08-29 独立审核：checkpoint 仅改三个文件（`mediaflow/interfaces/operator_ui.py` +9/-4、`tests/test_operator_ui.py` +61/-0、`TASK.md`），`git diff --exit-code 6c0ba74 HEAD -- mediaflow/application mediaflow/domain mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config pyproject.toml` 为空，故 evidence key、聚合规则、失败类别、route、权限、表与两个 marker 均未动；生产改动为四行渲染加五行新 helper，除 helper 自身外全部落在 `renderDestinationPrecheck` 之内。`determinationText` 只定义一次且紧随未改的 `boundedSetupText`，`true`/`false`/其他分别映射为 `YES`/`NO`/`NOT DETERMINED`，六处调用正是 TASK 指定的四个渲染点（多样本 run 级 root 组合、多样本首样本 `Target exists`、单样本两处），且全文件对这三个 key 再无 `=== true ? 'YES' : 'NO'`；因 `:739` 把缺失载荷归一化为 `{}`，此前无 `result` 的 FAILED 运行会把从未判定的项印成 `NO`，现在读作 `NOT DETERMINED`。完成态与两类 root 失败类别逐字未变，已在 application 侧独立复核（`:1742`/`:2046` 身份为 `(True, True)`，`:1747`/`:2207` 的 `targetExists` 为真布尔，`:1639` `(False, False)`、`:1651` `(True, False)`；`:2236`/`:2252` 的 `None` 仅存在于逐样本行，而行表只渲染 index/destinationPath/projectedOutcome/failureCategory）。not-ready 门禁（含 `!result.destinationRootExists`）、其文案与 `'error'` 样式逐字节未改，未判定的 root 仍算 not ready，呈现层未软化门禁；十处 `evidence.retrySafe` 与块外全部 `YES`/`NO` 未改。`tests/` 24 → 27 为纯增量（零替换零删除零改名），三项新测试均经 `_js_function_body` 与计括号的 `_js_braced_body` 限定在函数体内，且把每个 key 的调用计数钉为 2。TASK 要求的六项探针全部只让其命名测试失败（折叠未判定分支、折叠 `false` 分支、首样本恢复旧内联 `targetExists`、单样本恢复旧内联 root、门禁改 `=== false`），comment-only control 27 项全绿；另七项自选探针（改文案为 `UNKNOWN`、helper 移到 `boundedSetupText` 之前、多样本恢复旧内联 root、单样本恢复旧内联 `targetExists`、改写 not-ready 文案（同时触发既有 blocking-sentence 契约测试）、单样本右半误用 `destinationRootExists`）均被捕获，唯一未被捕获的是把块内 `Retry safe` 改走 `determinationText`，记为非阻塞观察。离线回归 866 项 `OK (skipped=7)`（863 + 3）、聚焦三模块 52 项、ruff/format（308 文件）/compileall/`pip check`/`git diff --check`/两份示例配置校验/Markdown 链接（120 文件 25 链接 0 断链）/机密扫描/FFmpeg 与业务层写操作审计全绿、wheel 隔离 smoke 退出 0 且 schema 22 与 marker 10 不变；零文档改动本轮正确；未推送；下一合法 Slice 为 Phase 22.6-K |
+| Phase 22.6-K Per-Sample Destination Rows Carry Each Sample's Own Bounded Message | PASS / CLOSED | `f2db70b28edb8f753ebed0d3805be7143b521264` | PASS — 2026-08-29 独立审核：checkpoint 仅改四个文件（`mediaflow/interfaces/operator_ui.py` +3/-2 单一 hunk、`tests/test_operator_ui.py` +24/-1、`tests/test_configuration_destination_precheck.py` +53/-0、`TASK.md` +94/-14），`git diff --exit-code 37202cf f2db70b -- mediaflow/application mediaflow/domain mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config pyproject.toml docs` 为空（中间的 `37202cf` 是我自己的 22.6-J 审核记录，只动 `docs/progress.md`、`docs/roadmap.md` 与 `TASK.md`），故 evidence key、聚合、失败类别、激活门禁、route、权限与两个 marker 均未动。逐样本行表改为五列并以未改的 `boundedSetupText(item.message)` 渲染每行自己的 `message`：该字段自 22.6-H 起就已持久化（`configuration_objects.py:2241`，`_bounded_utf8(message, 384)`），而 run 级 `Message`/`Next action` 只取最小下标失败样本（`:2015-2023`，`failures[0]`），因此在本 Slice 之前第二个失败样本自己的解释存在于证据与 API 响应却无处可见。已只读复现：三样本运行中 run 级为 `Destination composition failed (invalid_input)`，而 row 1 携带自己的 46 字节 `ClassificationPolicy 'A' failed (invalid_rule)`；row 2 的 `message: None` 经未改的 `boundedSetupText` 印为 `-`，故成功行不新增文本、22.6-K 之前的证据仍可渲染；路径仍为 Storage-relative，无凭证、端点、主机路径或原始异常文本。not-ready 门禁（含 `!result.destinationRootExists`）、其文案与 `'error'` 样式、run 级字段清单、22.6-J `determinationText` 定义与六处调用、碰撞表与 `1-8 samples` 控件逐字节未改。`tests/test_operator_ui.py` 27 → 28 且仅有 TASK 点名的一处表头断言替换（零删除零弱化），`tests/test_configuration_destination_precheck.py` 18 → 19 纯增量；新 UI 测试经 `_js_function_body` 后再把行表达式切在表头与 `])));` 之间，钉住 message 单元格存在、只出现一次、位于失败类别之后且行表达式内无 `evidence.message`；新证据测试用离线 SQLite 仓库驱动三样本，证明两个失败行各自保留互不相同的有界 message、run 级取 row 0、row 1 的 message 既不等于 run 级 message 也不等于 run 级 next action。TASK 要求的七项探针全部只让其命名测试失败（表头删列、删第五单元格、改读 `evidence.message`、`'Message'` 移到首位、行内 `"message": None`、`failures[0]` 改 `failures[-1]`），comment-only control 28 项全绿；另六项自选探针（互换类别与 message 单元格、重复渲染 message、表头改小写 `'message'`、`'Message'` 移到第三位、所有失败行写同一常量 message、run 级 next action 改取末样本 message）全部被捕获，无一静默通过。离线回归 868 项 `OK (skipped=7)`（866 + 2）、聚焦三模块 54 项、ruff/format（308 文件）/compileall/`pip check`/`git diff --check`/两份示例配置校验/Markdown 链接（120 文件 25 链接 0 断链）/机密扫描/FFmpeg 与业务层写操作审计全绿、wheel 隔离 smoke 退出 0 且 schema 22 与 marker 10 不变；零文档改动本轮接受但已记录限定：`docs/product-experience.md:301-302` 与 `docs/architecture.md` 的 CURRENT 逐样本行描述现在是不完整而非错误，其刷新并入 22.6-L 且仍是 Final Closure 条件；未推送；下一合法 Slice 为 Phase 22.6-L |
 
 ## 当前节点
 
@@ -334,6 +335,32 @@ evidence 仍无逐样本 `nextAction`，不同类别的失败样本仍共用一�
 known-media 重复检测、附件预检、绝对挂载路径展示与任何执行或授权改动仍为 TARGET，不得开始。本轮 checkpoint
 与审核记录均未推送；Phase 22.6 收口关闭仍需 phase-level Final Closure Audit 与新的显式授权。
 
+2026-08-29 独立审核 Phase 22.6-K checkpoint `f2db70b28edb8f753ebed0d3805be7143b521264` 判定 **PASS /
+CLOSED**。该 Slice 只做 Web 呈现：逐样本目标行表由四列扩为五列，末列以未改的
+`boundedSetupText(item.message)` 渲染每个样本自己的有界 `message`；生产改动是一个 hunk（+3/-2），禁改路径与
+`docs` 的 diff 为空。该字段自 22.6-H 起就已持久化（`configuration_objects.py:2241`，384 字节上界），而 run 级
+`Message`/`Next action` 只取最小下标失败样本（`:2015-2023`，`failures[0]`），因此在本 Slice 之前第二个失败
+样本自己的解释存在于证据与 API 响应却在页面上无处可见——违反「一个项目不得遮蔽另一个项目的诊断」。已只读
+复现：三样本运行的 run 级为 `Destination composition failed (invalid_input)`，row 1 现在自带 46 字节
+`ClassificationPolicy 'A' failed (invalid_rule)`；成功行的 `message: None` 经未改的 `boundedSetupText` 印为
+`-`，故 22.6-K 之前的证据仍可渲染，路径仍为 Storage-relative 且无机密。not-ready 门禁、run 级字段清单、
+22.6-J 的 `determinationText` 六处调用、碰撞表与两个 marker 逐字节未改。测试 27 → 28（仅一处 TASK 点名的表头
+断言替换）与 18 → 19（纯增量），七项 TASK 探针全部只让其命名测试失败且 control 全绿，另六项自选探针全部被
+捕获；离线回归 868 项、聚焦 54 项与全套静态门禁、示例配置、Markdown 链接、机密扫描、FFmpeg 与写操作审计、
+wheel 隔离 smoke 全绿。非阻塞观察：证据仍无逐样本 `nextAction`，所有失败样本共用 `failures[0]` 派生的单一
+run 级动作，因 MediaLibrary root 缺失而失败的样本会被要求去改 Draft 组合；`_destination_sample_next_action`
+（`:2273-2289`）只区分六类 storage 级类别、把全部 composition 类别归入同一句，故逐样本动作列必须证明的是
+composition 与 storage 级之间有区别，而不是类别两两不同；22.6-H-F1 与 22.6-I 记下的三处证明缺口依旧开放。
+零文档改动本轮接受但已记录限定：`docs/product-experience.md:301-302` 与 `docs/architecture.md` 的 CURRENT
+逐样本行描述现在是不完整而非错误，其刷新并入 22.6-L 且仍是 Phase 22.6 Final Closure 条件。
+下一合法 Slice 是 **Phase 22.6-L**（每个失败样本自带并渲染自己的恢复动作：`_destination_sample_failure_row`
+增加取自既有 `_destination_sample_next_action` 的 `nextAction`、成功行为 `None`、Web 行表增加末列
+`Next action`，句子集合逐字节不变，run 级聚合、激活门禁、route、权限与 marker 均不动，另加有界的 CURRENT
+文档刷新），已写入 `TASK.md`。远端 SMB/OpenList/S3 目标预检、写入式能力探测、单次请求多 RecognitionType 或
+多目标 Storage、known-media 重复检测、附件预检与绝对挂载路径展示自本轮起正式记录为**移出 Phase 22.6**，
+在后续 Phase 交付；任何执行或授权改动仍不得开始。本轮 checkpoint 与审核记录均未推送；Phase 22.6 收口关闭
+仍需 phase-level Final Closure Audit 与新的显式授权。
+
 本次 Product/UX Rebaseline 明确：内部模块完成不等于
 最终产品完成，后续按 `docs/product-experience.md` 的纵向用户旅程验收。
 
@@ -366,13 +393,13 @@ Runtime Configuration
 | Parser | 已完成 | 文件名/路径/NFO、电影/剧集、多集、标签、受限 XML 与冲突证据合并 | NFO 生成不属于 Parser；更多格式按样本扩展 |
 | Recognition | 已完成当前配置旅程 | 引擎、Web 规则配置、优先级/引用校验、持久 Strategy Test 解释/恢复、C 身份保持、人工决策和重评请求 | 后续按真实样本扩展，不作为当前 blocker |
 | Metadata | 部分完成（引擎成熟） | TMDB、缓存、候选评分、本地化标题、年份语义、持久人工候选/查询修正 | Provider 切换、配置激活、同页恢复闭环 |
-| Naming | Phase 22.6-A/22.6-D PASS / CLOSED；22.6-E PASS / CLOSED（经 22.6-E-F1 修正接受，被拒 checkpoint 保留）；22.6-F PASS / CLOSED | 安全模板、Unicode、多集、Managed Draft 编辑、引用影响、exact-revision 离线预览（含可证伪 Web 挂载回归），以及与 Planner 同源的组合目标贡献归属 | 组合目标已可只读预检（22.6-E PASS / CLOSED，仅 Local）；combined activation evidence 已落地：checked activation 要求当前目标预检证据（22.6-F PASS / CLOSED，仅 Local）；22.6-G PASS / CLOSED（经 22.6-G-F1 修正接受，被拒 checkpoint `b9cc35e2677a35920042b5695f87b50a80025ef0` 保留）；下一 Slice 为 Phase 22.6-H（有界多样本 Local 目标预检与跨项目标碰撞检测：单一 RecognitionType、最多 8 个样本、逐项独立状态与恢复、碰撞与跨 Storage 均为有界 FAILED，不改激活门禁与 marker） |
-| Classification | Phase 22.6-B/22.6-D PASS / CLOSED；22.6-E PASS / CLOSED（经 22.6-E-F1 修正接受，被拒 checkpoint 保留）；22.6-F PASS / CLOSED | 确定性规则、媒体库选择、持久人工规则选择/恢复、Managed Draft CRUD、引用阻断、exact-revision 离线分类预览（含可证伪 Web 挂载回归），以及 MediaLibrary/relativePath 在组合目标中的归属 | 自由路径修正明确禁止；目标存在性/冲突/能力预检已在 22.6-E 实现（PASS / CLOSED，仅 Local）；combined activation evidence 已落地：checked activation 要求当前目标预检证据（22.6-F PASS / CLOSED，仅 Local）；22.6-G PASS / CLOSED（经 22.6-G-F1 修正接受，被拒 checkpoint `b9cc35e2677a35920042b5695f87b50a80025ef0` 保留）；下一 Slice 为 Phase 22.6-H（有界多样本 Local 目标预检与跨项目标碰撞检测：单一 RecognitionType、最多 8 个样本、逐项独立状态与恢复、碰撞与跨 Storage 均为有界 FAILED，不改激活门禁与 marker） |
-| Organize | Phase 22.6-C/22.6-D PASS / CLOSED（配置、授权解释与组合目标预览）；22.6-E PASS / CLOSED（经 22.6-E-F1 修正接受，被拒 checkpoint 保留）；22.6-F PASS / CLOSED | managed OrganizePolicy CRUD、引用阻断、仅 Move/Copy/HardLink/SoftLink 的编辑限制、exact-revision 零副作用组织授权解释（所需 Storage 能力声明而非探测、显式无回退、破坏性告警），以及与 Planner 同源的 Storage-relative 组合目标预览 | 远端目标预检与写入式能力探测待做；combined activation evidence 已落地：checked activation 要求当前目标预检证据（22.6-F PASS / CLOSED，仅 Local）；22.6-G PASS / CLOSED（经 22.6-G-F1 修正接受，被拒 checkpoint `b9cc35e2677a35920042b5695f87b50a80025ef0` 保留）；下一 Slice 为 Phase 22.6-H（有界多样本 Local 目标预检与跨项目标碰撞检测：单一 RecognitionType、最多 8 个样本、逐项独立状态与恢复、碰撞与跨 Storage 均为有界 FAILED，不改激活门禁与 marker） |
+| Naming | Phase 22.6-A/22.6-D PASS / CLOSED；22.6-E PASS / CLOSED（经 22.6-E-F1 修正接受，被拒 checkpoint 保留）；22.6-F 至 22.6-K 均 PASS / CLOSED（22.6-G 与 22.6-H 各经其 F1 修正接受，被拒 checkpoint 保留） | 安全模板、Unicode、多集、Managed Draft 编辑、引用影响、exact-revision 离线预览（含可证伪 Web 挂载回归），以及与 Planner 同源的组合目标贡献归属 | 组合目标已可只读预检（22.6-E PASS / CLOSED，仅 Local）；combined activation evidence 已落地：checked activation 要求当前目标预检证据（22.6-F PASS / CLOSED，仅 Local）；22.6-G PASS / CLOSED（经 22.6-G-F1 修正接受，被拒 checkpoint `b9cc35e2677a35920042b5695f87b50a80025ef0` 保留）；下一 Slice 为 Phase 22.6-L（每个失败样本自带并渲染自己的恢复动作：逐样本行增加取自既有 `_destination_sample_next_action` 的 `nextAction`、成功行为 `None`、Web 行表增加末列 `Next action`，句子集合逐字节不变，不改 run 级聚合、激活门禁与 marker） |
+| Classification | Phase 22.6-B/22.6-D PASS / CLOSED；22.6-E PASS / CLOSED（经 22.6-E-F1 修正接受，被拒 checkpoint 保留）；22.6-F 至 22.6-K 均 PASS / CLOSED（22.6-G 与 22.6-H 各经其 F1 修正接受，被拒 checkpoint 保留） | 确定性规则、媒体库选择、持久人工规则选择/恢复、Managed Draft CRUD、引用阻断、exact-revision 离线分类预览（含可证伪 Web 挂载回归），以及 MediaLibrary/relativePath 在组合目标中的归属 | 自由路径修正明确禁止；目标存在性/冲突/能力预检已在 22.6-E 实现（PASS / CLOSED，仅 Local）；combined activation evidence 已落地：checked activation 要求当前目标预检证据（22.6-F PASS / CLOSED，仅 Local）；22.6-G PASS / CLOSED（经 22.6-G-F1 修正接受，被拒 checkpoint `b9cc35e2677a35920042b5695f87b50a80025ef0` 保留）；下一 Slice 为 Phase 22.6-L（每个失败样本自带并渲染自己的恢复动作：逐样本行增加取自既有 `_destination_sample_next_action` 的 `nextAction`、成功行为 `None`、Web 行表增加末列 `Next action`，句子集合逐字节不变，不改 run 级聚合、激活门禁与 marker） |
+| Organize | Phase 22.6-C/22.6-D PASS / CLOSED（配置、授权解释与组合目标预览）；22.6-E PASS / CLOSED（经 22.6-E-F1 修正接受，被拒 checkpoint 保留）；22.6-F 至 22.6-K 均 PASS / CLOSED（22.6-G 与 22.6-H 各经其 F1 修正接受，被拒 checkpoint 保留） | managed OrganizePolicy CRUD、引用阻断、仅 Move/Copy/HardLink/SoftLink 的编辑限制、exact-revision 零副作用组织授权解释（所需 Storage 能力声明而非探测、显式无回退、破坏性告警），以及与 Planner 同源的 Storage-relative 组合目标预览 | 远端目标预检与写入式能力探测待做；combined activation evidence 已落地：checked activation 要求当前目标预检证据（22.6-F PASS / CLOSED，仅 Local）；22.6-G PASS / CLOSED（经 22.6-G-F1 修正接受，被拒 checkpoint `b9cc35e2677a35920042b5695f87b50a80025ef0` 保留）；下一 Slice 为 Phase 22.6-L（每个失败样本自带并渲染自己的恢复动作：逐样本行增加取自既有 `_destination_sample_next_action` 的 `nextAction`、成功行为 `None`、Web 行表增加末列 `Next action`，句子集合逐字节不变，不改 run 级聚合、激活门禁与 marker） |
 | Planner/Executor | 部分完成 | 计划、冲突、附件、Hash 证据、同次调用 Rollback、空目录清理、DryRun、跨存储执行 | 历史/崩溃恢复、Hash 持久复用、逐项恢复体验 |
 | Task/History | 部分完成 | 持久 Task/Item/Result/Job、Worker、取消、pause/resume、批量请求、claim fencing/心跳 | 统一 Processing Checkpoint 与 stage-aware recovery |
 | API/UI/Scheduler | 部分完成 | API/RBAC/审计、操作台、Dashboard、Files 列表/筛选/详情/部分动作、Cron/通知 | 完整人工/配置/恢复旅程、登录/外部身份源 |
-| Managed Configuration | Phase 22.3/22.4/22.5 与 Phase 22.6-A/22.6-B/22.6-C/22.6-D 均 PASS / CLOSED；22.6-E PASS / CLOSED（经 22.6-E-F1 修正接受，被拒 checkpoint 保留）；22.6-F PASS / CLOSED | 既有能力加 NamingPolicy、ClassificationPolicy 与 OrganizePolicy CRUD、引用阻断、exact-revision 离线命名/分类/组织授权与 Storage-relative 组合目标预览，以及仅 Local 目标的只读目标预检（configuration marker 10） | combined activation evidence 已落地：checked activation 要求当前目标预检证据（22.6-F PASS / CLOSED，仅 Local）；22.6-G PASS / CLOSED（经 22.6-G-F1 修正接受，被拒 checkpoint `b9cc35e2677a35920042b5695f87b50a80025ef0` 保留）；下一 Slice 为 Phase 22.6-H（有界多样本 Local 目标预检与跨项目标碰撞检测：单一 RecognitionType、最多 8 个样本、逐项独立状态与恢复、碰撞与跨 Storage 均为有界 FAILED，不改激活门禁与 marker）；远端目标预检、写入式能力探测、Provider switching、通用 Task resume 后置 |
+| Managed Configuration | Phase 22.3/22.4/22.5 与 Phase 22.6-A/22.6-B/22.6-C/22.6-D 均 PASS / CLOSED；22.6-E PASS / CLOSED（经 22.6-E-F1 修正接受，被拒 checkpoint 保留）；22.6-F 至 22.6-K 均 PASS / CLOSED（22.6-G 与 22.6-H 各经其 F1 修正接受，被拒 checkpoint 保留） | 既有能力加 NamingPolicy、ClassificationPolicy 与 OrganizePolicy CRUD、引用阻断、exact-revision 离线命名/分类/组织授权与 Storage-relative 组合目标预览，以及仅 Local 目标的只读目标预检（configuration marker 10） | combined activation evidence 已落地：checked activation 要求当前目标预检证据（22.6-F PASS / CLOSED，仅 Local）；22.6-G PASS / CLOSED（经 22.6-G-F1 修正接受，被拒 checkpoint `b9cc35e2677a35920042b5695f87b50a80025ef0` 保留）；下一 Slice 为 Phase 22.6-L（每个失败样本自带并渲染自己的恢复动作：逐样本行增加取自既有 `_destination_sample_next_action` 的 `nextAction`、成功行为 `None`、Web 行表增加末列 `Next action`，句子集合逐字节不变，不改 run 级聚合、激活门禁与 marker）；远端目标预检、写入式能力探测、Provider switching、通用 Task resume 后置 |
 
 ## 总体阶段计划
 
@@ -790,15 +817,25 @@ Domain
   **PASS / CLOSED**。22.6-G（Web checked-activation 控件与告警覆盖 Local setup check、
   Recognition Strategy Test 与目标预检三项要求）已 **PASS / CLOSED**
   （`5ca1247156e6de4615dff53f5fc8e421bd8bf264`，经 22.6-G-F1 修正接受；被拒 checkpoint
-  `b9cc35e2677a35920042b5695f87b50a80025ef0` 与其记录保留）；当前 Slice 是 22.6-H（有界多样本 Local
-  目标预检与跨项目标碰撞检测：单一 RecognitionType、最多 8 个样本、复用生产 Planner 的
-  `claimed_destinations` 与 `TARGET_COLLISION`、逐项独立状态与恢复、碰撞判为 FAILED
-  `duplicate_destination`、样本跨目标 Storage 判为 FAILED `multiple_destination_storages`，仍为只读、
-  零变更、不改激活门禁与 marker）；远端目标预检、写入式 Storage 能力探测、单次请求多 RecognitionType 或
-  多目标 Storage、known-media 重复检测、附件预检与绝对挂载路径展示在后续 Slice 交付，均不授予 execute
-  权限。
+  `b9cc35e2677a35920042b5695f87b50a80025ef0` 与其记录保留）；22.6-H（有界多样本 Local 目标预检与跨项
+  目标碰撞检测：单一 RecognitionType、最多 8 个样本、复用生产 Planner 的 `claimed_destinations` 与
+  `TARGET_COLLISION`、逐项独立状态与恢复、碰撞判为 FAILED `duplicate_destination`、样本跨目标 Storage
+  判为 FAILED `multiple_destination_storages`）已 **PASS / CLOSED**
+  （`4455198a6ef3b93fe1e92cef73660039620e756e`，经 22.6-H-F1 证据修正接受；被拒 checkpoint
+  `d8c2ae04e578955ddbbd29c413f235bf4cf08f42` 与其记录保留）；随后三个纯 Web 呈现 Slice 亦已
+  **PASS / CLOSED**：22.6-I（run 级摘要与首样本分离，`6c0ba745772e315b941c1c3b314ab47e66e8f35a`）、
+  22.6-J（未判定的目标观测渲染为 `NOT DETERMINED` 而非伪造的 `NO`，
+  `ccbddf2af92c1abf18d1162d0a6c37da9ee0a7cd`）、22.6-K（逐样本行携带各自的有界 `message`，
+  `f2db70b28edb8f753ebed0d3805be7143b521264`）；当前 Slice 是 22.6-L（每个失败样本自带并渲染自己的恢复
+  动作：逐样本失败行增加取自既有 `_destination_sample_next_action` 的 `nextAction`、成功行为 `None`、
+  Web 行表增加末列 `Next action`，句子集合逐字节不变，run 级聚合、激活门禁、route、权限与 marker 均不动，
+  另加有界的 CURRENT 文档刷新），仍为只读、零变更、不授予 execute 权限。
+- Phase 22.6 边界决定（2026-08-29 由审核角色记录）：远端 SMB/OpenList/S3 目标预检、写入式 Storage 能力
+  探测、单次请求多 RecognitionType 或多目标 Storage、known-media 重复检测、附件预检与绝对挂载路径展示
+  **移出 Phase 22.6**，在后续 Phase 交付；Phase 22.6 以仅 Local、有界、只读的目标预检旅程收口，其
+  Final Closure Audit 不因这六项缺失而阻塞，但它们在交付前不得被当作已实现。
 - 明确不在 Phase 22.6 范围：Provider switching、通用 Task resume、逐项 Processing Checkpoint
-  恢复（第 6 项）、手工整理旅程（第 7 项）、无人值守 `organize --execute`。
+  恢复（第 6 项）、手工整理旅程（第 7 项）、无人值守 `organize --execute`，以及上一条记录的六项延后能力。
 
 ### 6. 批处理逐项恢复
 
@@ -839,9 +876,12 @@ Phase 22.6-A（含被拒 checkpoint `90ce13a6c6c39912dd389f71a1189314ff24eb5d` �
 2026-08-28 在 correction checkpoint `30af69ac82b30f8a45ad66afbd3c9747597c8fe7` 通过独立 High
 re-review，判定 **PASS / CLOSED**。Phase 22.6-B 亦已于 2026-08-28 在
 `5e2da5c634f1fa72a40e5f50b035260418fe1a37` 通过独立 High Review，判定 **PASS / CLOSED**。
-下一正式 Task 是 **Phase 22.6-C — Managed OrganizePolicy Configuration + Offline Organize
-Authority Explanation**；`dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62`
-已推送 `origin/main`，Phase 22.6 的实现不受 push gate 阻塞。不得借此提前开展 Provider switching、通用 Task resume、兄弟项重放、
+下一正式 Task 是 **Phase 22.6-L — Each Failing Destination Precheck Sample Carries Its Own Recovery
+Action**；Phase 22.6-A 至 22.6-K 已全部通过独立 High Review 判定 **PASS / CLOSED**（22.6-E、22.6-G、
+22.6-H 各经其 F1 修正接受，被拒 checkpoint 与其 FIX REQUIRED 记录保留不改写）。22.6-A 至 22.6-G 已推送
+`origin/main`；22.6-H 至 22.6-K 的 checkpoint 与审核记录均未推送，`main` 领先 `origin/main`，Phase 22.6
+的 phase-level Final Closure Audit 仍需先满足 push gate 并取得新的显式授权。不得借此提前开展 Provider
+switching、通用 Task resume、兄弟项重放、
 逐项 Processing Checkpoint 恢复或
 更宽的自动化。Interval/Cron 仍只允许 scan/preview；
 无人值守定时 `organize --execute` 继续不支持。
