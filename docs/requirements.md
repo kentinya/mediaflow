@@ -64,8 +64,9 @@
 > detail Web section 未挂载），F1 correction checkpoint
 > `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已于 2026-08-27 通过独立 High re-review 并
 > PASS/CLOSED；同日 phase-level Final Closure Audit 判定 Phase 22.5（A/B/C/D/E）
-> **PASS / CLOSED**。远端 Storage、Provider switching、通用 Task resume 和
-> Naming/Classification/Organize 配置旅程（Phase 22.6）仍未完成。
+> **PASS / CLOSED**。远端 Storage、Provider switching 和通用 Task resume 仍为后续工作。
+> Phase 22.6-A 至 22.6-N 的实现/证据 Slice 已分别通过独立 High Review；Phase 22.6 本身仍保持
+> open，等待 CURRENT 文档同步 Slice 通过 High Review 后执行单独的 Final Closure Audit。
 
 ---
 
@@ -1589,7 +1590,7 @@ NamingPolicy ID
 启用状态
 ```
 
-> 当前实现（Phase 22.6-A/B/C/D 已 PASS/CLOSED；Phase 22.6-E 等待独立 High Review）：NamingPolicy 已接入现有 Managed Draft 的
+> 当前实现（Phase 22.6-A 至 22.6-N 均已独立 PASS；Phase 级 Final Closure Audit 待执行）：NamingPolicy 已接入现有 Managed Draft 的
 > Web/API 对象编辑、乐观版本、Before/After 审计和 RecognitionTypePolicy 引用阻断。操作员可对
 > 精确 revision ID/version/digest 提交一个有界合成样本或由既有 Parser 解析的路径，并通过既有
 > NamingPolicyRegistry/NamingPreviewService/安全 renderer/sanitizer 得到持久离线命名证据；证据
@@ -1621,8 +1622,15 @@ NamingPolicy ID
 > `claimed_destinations` 检测跨样本目标碰撞（失败类别 `duplicate_destination`，碰撞行列出目标
 > 与样本索引），样本路由到多个目标 Storage 时以 `multiple_destination_storages` 在任何探测前
 > 拒绝；completed 证据聚合各样本最严重投影结果并新增 `sampleCount`、`items` 与 `collisions`，
-> 单样本请求与既有 evidence 不变。远端 SMB/OpenList/S3 目标预检、写入式能力探测、
-> `ConflictType.DUPLICATE_MEDIA`/已知媒体检测、附件预检、绝对挂载路径展示与执行仍为后续 TARGET。
+> `capability_gap` 对 run-level verdict 具有优先级，否则选择最严重的非空投影结果；全部行均为
+> ready 时 run-level verdict 为 `ready`，即使其他行均 ready，只要任一行缺少所需能力则为
+> `capability_gap`。每行保留独立的目标、冲突、结果、失败与恢复证据，单样本请求与既有 evidence
+> 不变。该双向 verdict 与统一行契约由 Phase 22.6-N checkpoint
+> `5884905c2105cf8ff78ff10d1b872875045769d7` 验收固定。
+> Phase 22.6 仍不包括远端 SMB/OpenList/S3 目标预检、写入式能力探测、一次请求内多个
+> RecognitionType 或多个目标 Storage、`ConflictType.DUPLICATE_MEDIA`/已知媒体检测、附件预检、
+> 绝对挂载路径展示与执行；Provider switching、通用 Task resume、逐项 Processing Checkpoint
+> 恢复和无人值守 execute 同样仍为后续 TARGET。
 > Phase 22.6-F 已把当前、completed 且非 `capability_gap` 的
 > Local 目标预检证据纳入 checked activation；missing/stale/failed/capability-gap 均拒绝且给出恢复，
 > remote-only 或无 MediaLibrary 文档明确为不适用，unchecked activation 不变。
@@ -3177,7 +3185,9 @@ System Settings
 > 的 F1 correction checkpoint `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` 已于 2026-08-27 通过
 > 独立 High re-review，其被拒 checkpoint `08dfd4f921728755209b6d52347d28f221121c47` 的
 > FIX REQUIRED 记录保留；同日 phase-level Final Closure Audit 判定 Phase 22.5 PASS / CLOSED。
-> 下一 Phase 22.6 Naming/Classification/Organize 配置旅程尚未实现。
+> Phase 22.6-A 至 22.6-N 的有界 Naming/Classification/Organize 配置旅程 Slice 已分别通过独立
+> High Review；Phase 22.6 尚未关闭，仍须先完成 CURRENT 文档同步的独立 High Review，再执行
+> 单独的 Final Closure Audit。
 >
 > 当前实现覆盖：Files detail 中 exact resolved correction/version、source Task/TaskItem 与 snapshot
 > ID/digest 的可见性；API/Web 共用的原子单项 admission；以及 pinned Worker 对新 DryRun

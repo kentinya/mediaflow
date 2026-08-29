@@ -276,18 +276,18 @@ This offline action constructs no Storage, Provider, Planner or Executor, applie
 prefix, and performs no existence, collision or capability probe. Phase 22.6-D is independently
 accepted at `c7ec192b3b20f236cca5a70ed59cad43e0851242` and does not change checked activation.
 
-## Phase 22.6-E/F Local destination precheck and checked activation (CURRENT)
+## Phase 22.6-E-N Local destination precheck and checked activation (CURRENT; Slice PASS)
 
 Before activating a Draft, the operator can now ask one question about the real destination without
 changing it: would this composed path actually work. The same revision view takes one
-RecognitionType and one bounded sample and reports whether the configured MediaLibrary root exists
-and is a directory, the deepest ancestor that already exists, the bounded list of directories that
-would have to be created, whether the target file already exists, and what the configured conflict
-strategy would do about it — Skip, Rename with the proposed name, Overwrite requiring confirmation,
-or Manual confirmation. It also compares the capabilities the destination Storage declares against
-the capabilities the resolved OrganizePolicy requires, and reports a `capability_gap` verdict when
-one is missing, stating that an unsupported capability is a failure with no fallback to Copy or
-Move.
+RecognitionType and either one bounded sample or a bounded array of up to eight samples, and reports
+whether the configured MediaLibrary root exists and is a directory, the deepest ancestor that
+already exists, the bounded list of directories that would have to be created, whether each target
+file already exists, and what the configured conflict strategy would do about it — Skip, Rename with
+the proposed name, Overwrite requiring confirmation, or Manual confirmation. It also compares the
+capabilities the destination Storage declares against the capabilities the resolved OrganizePolicy
+requires, and reports a `capability_gap` verdict when one is missing, stating that an unsupported
+capability is a failure with no fallback to Copy or Move.
 
 Every probe runs through a read-only guard, so nothing on the destination is created, renamed,
 overwritten or deleted; the evidence reports zeroed mutation counters, `sideEffects: none`, the
@@ -312,6 +312,13 @@ never hides, overwrites or blocks the rows or recovery of the other samples. Und
 observations render as `NOT DETERMINED` rather than `NO`; the run-level summary describes the
 lowest-index failing sample only. The single-sample journey is unchanged.
 
+Every row exposes the same ordered facts: index, relative destination, composed destination path,
+target existence, planner conflicts, projected outcome, proposed relative destination, failure
+category, message and next action. At run level, uniformly ready rows produce `ready`; a missing
+required capability produces `capability_gap` even when every row is otherwise ready. Otherwise the
+most severe non-null projected outcome wins. This two-direction verdict and uniform-row contract is
+accepted at Phase 22.6-N checkpoint `5884905c2105cf8ff78ff10d1b872875045769d7`.
+
 Checked activation now enforces that result when the exact revision document declares at least one
 MediaLibrary backed by Local Storage. Missing, stale, failed and `capability_gap` evidence each
 refuse activation before publication, preserve the Draft, previous Active revision and evidence,
@@ -332,9 +339,12 @@ still blocks activation. A remote-only or MediaLibrary-free Draft, and a documen
 completed non-`capability_gap` precheck leaves the checked control and its label unchanged.
 
 Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
-`ConflictType.DUPLICATE_MEDIA` / known-media detection, attachment prechecks, absolute
-mounted-path display and execution remain TARGET. Active runtime-consumption semantics are
-unchanged.
+multiple RecognitionTypes or destination Storages in one request, `ConflictType.DUPLICATE_MEDIA` /
+known-media detection, attachment prechecks, absolute mounted-path display and execution remain
+TARGET. Provider switching, generic Task resume, per-item Processing Checkpoint recovery and
+unattended execute also remain outside Phase 22.6. Phase 22.6-A through 22.6-N are Slice-accepted;
+the phase remains open pending this CURRENT-documentation review and a separate Final Closure Audit.
+Active runtime-consumption semantics are unchanged.
 
 ## A. First-time setup
 
