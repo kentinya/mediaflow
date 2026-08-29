@@ -1,122 +1,93 @@
-# Phase X.Y — [Vertical User Journey Slice]
+# Task [ID] — [Coherent implementation unit]
 
-This Task follows [the authoritative development workflow](../docs/development-workflow.md).
-
-## User Problem
-
-Describe the operator's problem in product language. State why the current experience is incomplete;
-do not describe only a missing repository, model, endpoint, or screen.
-
-## User Journey
-
-Identify the journey in `docs/product-experience.md` and describe this slice:
+This Task follows [the development workflow](../docs/development-workflow.md) and is subordinate to
+the current [`SLICE.md`](../SLICE.md).
 
 ```text
-Starting point → visible state → user action → outcome → next safe action
+Task ID: [ID]
+Parent Slice: [Slice ID / Name]
+Status: PLANNED
+Task Base: [full SHA]
+Difficulty: Low | Medium | High
+Test Level: T0 | T1 | T2 | T3 | T4
+Planner / Reviewer: B
 ```
 
-List the entry points covered (Web/API/CLI where applicable) and the exact boundary of the slice.
+## Goal
 
-## User-visible Outcome
+State the one coherent behavior this Task completes and name the parent Slice Required Outcome it
+advances. This is an implementation unit, not a smaller Slice.
 
-State what the operator can see and accomplish after this task. Include status, explanations,
-confirmation, and audit visibility. Say explicitly if the full V1 journey remains incomplete.
+## Why This Task Exists
 
-## Failure and Recovery
+Describe the actual user/product/architecture gap found in code and tests. Explain why this is the
+largest reasonable next unit and why it belongs inside the current Slice.
 
-For each expected failure class, define:
+## Implementation Scope
 
-- visible error/category
-- durable state and known side effects
-- whether retry is safe
-- explicit recovery action
-- behavior when recovery also fails
-
-Do not use “can retry” as the complete recovery design.
-
-## UX Acceptance Criteria
-
-- [ ] User goal can be completed through the promised final surface.
-- [ ] Entry point and available actions are discoverable from current state.
-- [ ] Success, partial, waiting, ignored, conflict, and failure states are distinguishable where relevant.
-- [ ] Automated decisions expose bounded secret-free explanations.
-- [ ] Batch items retain independent state and recovery where relevant.
-- [ ] Active configuration shown to the user is the runtime-consumed immutable snapshot.
-- [ ] API/Web behavior and permissions are consistent where both apply.
-- [ ] Preview/DryRun and explicit mutation authority preserve safety boundaries.
-- [ ] User acceptance tests cover success, failure, recovery, stale/concurrent state, and zero mutation.
-
-Remove criteria that genuinely do not apply and explain why; do not leave them silently unchecked.
-
-## Technical Scope
-
-Describe the smallest coherent vertical implementation, normally including as applicable:
+List the affected behavior and required layers. Prefer a complete vertical or architectural unit,
+for example:
 
 ```text
-Domain → persistence → Application → API → Web UI → validation/test → activation → acceptance
+Domain → Persistence → Application → API → Web → Tests
 ```
 
-Reuse existing services and engines. List migrations, compatibility boundaries, and observable
-evidence. Technical scope follows UX acceptance; it does not define product completion by itself.
+List any files or areas that are explicitly frozen when that matters.
 
-## Non-goals
+## Acceptance Criteria
 
-List adjacent journeys, future phases, framework/style decisions, and unsafe shortcuts explicitly
-excluded from this task.
+- [ ] The promised behavior works through every required affected surface.
+- [ ] Success, failure and recovery semantics match the parent Slice where applicable.
+- [ ] Safety and architecture invariants remain intact.
+- [ ] Required compatibility, concurrency, stale-state or per-item behavior is covered where
+      applicable.
+- [ ] The assigned Test Level passes with actual evidence.
+- [ ] The checkpoint contains only this Task and is coherent/reviewable.
 
-## Safety and Architecture Invariants
-
-- Scanner/Parser/Recognition/Metadata/Naming/Classification/Planner/DryRun do not mutate Storage.
-- Only OrganizerExecutor mutates Storage.
-- No silent overwrite/delete or implicit operation fallback.
-- RecognitionType C remains C while reusing configured policies.
-- Credentials do not enter configuration output, logs, audit, or test fixtures.
-- Add journey-specific invariants.
+Replace or extend these with concrete Task-specific criteria; do not retain inapplicable boilerplate.
 
 ## Required Tests
 
-List product acceptance tests first, then unit/integration/regression tests. Include failure and
-recovery, per-item batch state when applicable, stale/concurrent decisions, CURRENT/TARGET claims,
-and zero-mutation evidence.
+List exact focused/related/quality commands required by the assigned Test Level. Full regression is
+required only for T4 or when B gives a concrete risk-based reason. Real external services require an
+explicit isolated acceptance plan and never use production data.
 
-## Validation
+## Non-goals
 
-Run focused and full regressions plus formatter, lint, typecheck if configured, compile, dependency,
-configuration, forbidden-dependency, build, and diff checks. Real service evidence follows
-`docs/storage-acceptance.md` and never uses production data.
+- Work outside the parent Slice Contract.
+- The next Task or next Slice.
+- Optional proof, copy polish, P2 cleanup or refactor not required by these Acceptance Criteria.
+- Any Task-specific exclusion.
 
-## Documentation
+## Developer Completion Report
 
-Update product-experience, canonical requirements/status, architecture CURRENT/TARGET, roadmap,
-configuration guidance, progress, and README only where facts or user instructions changed. Never
-rewrite historical Phase evidence.
+### Changed Files
 
-## Closure Checklist
+### Implemented
 
-- [ ] Workspace preflight records worktree, `.git`, index, sandbox, and approval mode.
-- [ ] Capability mode is classified as Git-writable / Full Access or Git-read-only / workspace-write.
-- [ ] The preceding dependent Phase/Slice is `PASS / CLOSED` with its commit SHA recorded.
-- [ ] Implementation and all required focused/full quality gates pass with actual evidence.
-- [ ] `git status` and the commit manifest contain every required file and no unrelated/private file.
-- [ ] Private runtime configuration remains ignored/untracked; no secret is staged or committed.
-- [ ] A coherent, buildable commit has been created: `Commit SHA: ________________________________`.
-- [ ] High Review inspected that exact SHA and returned: `High Audit: ___________________________`.
-- [ ] `docs/progress.md` records Status / Commit SHA / High Audit.
-- [ ] `docs/roadmap.md` records the resulting Phase gate.
-- [ ] The next Slice has not started before every preceding gate is complete.
-- [ ] Required major-closure/integration push is recorded, or push is explicitly not required.
+### Tests and Results
 
-If Git metadata or the index is not writable, stop at `READY FOR COMMIT` and hand the exact manifest
-to a Git-capable environment. Commit ownership is capability-based, not user-based. High Review may
-begin only after the handoff identifies an explicit commit SHA.
+### Decisions
 
-## Completion Report
+### Remaining In-Slice Work
 
-Use the AGENTS.md completion structure and additionally report:
+### Risks / Deviations
 
-- user journey result
-- visible outcomes
-- failures and recovery
-- safety evidence
-- CURRENT versus remaining TARGET
-- exact next journey gap
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: [full SHA]
+```
+
+## B Review Result
+
+```text
+Reviewed: [Head SHA or Task Base..Head]
+Decision: PENDING | PASS | FIX REQUIRED
+Slice Required Outcomes all satisfied: PENDING | YES | NO
+Next: PENDING | SAME TASK FIX LOOP | NEXT TASK | SLICE READY FOR A REVIEW
+```
+
+If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
+finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.

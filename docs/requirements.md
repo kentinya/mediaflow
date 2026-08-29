@@ -6,8 +6,9 @@
 > 当前实现状态与最终产品范围以根目录
 > [《影视媒体资源自动整理系统需求规格说明书》](../影视媒体资源自动整理系统需求规格说明书.md)
 > 为准；规范化用户旅程见 [product-experience.md](product-experience.md)，分阶段交付计划见
-> [roadmap.md](roadmap.md)。开发、commit、High Review、关闭与下一 Slice 门禁仅以
-> [development-workflow.md](development-workflow.md) 为准，本需求文档不重复定义流程。
+> [roadmap.md](roadmap.md)，当前大 Slice Contract 见 [SLICE.md](../SLICE.md)。Slice/Task 生命周期、
+> A/B/Developer、测试分级、commit、review 与关闭规则仅以
+> [development-workflow.md](development-workflow.md) 为准，本需求文档不定义流程。
 > 截至 2026-08-24，核心 CLI、持久任务、
 > 目标冲突确认、元数据/分类复核、可选附件文件集合和全 Storage JSON Runtime 已完成；
 > 服务 API 已具备 RBAC、审计、凭证运维护栏；Web 已覆盖操作台、文件列表/筛选/详情、

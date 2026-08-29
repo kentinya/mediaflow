@@ -7,12 +7,13 @@ interpretation of that scope.
 
 ## Guidance hierarchy
 
-`AGENTS.md` supplies permanent safety/workflow rules; the root Chinese specification supplies V1
-product scope; this document supplies journey and product-completion semantics;
-`docs/requirements.md` and `docs/architecture.md` supply stable engineering requirements and
-CURRENT/TARGET design; `docs/roadmap.md` supplies priority; and `TASK.md` narrows the one slice that
-may be implemented now. Lower-level guidance may narrow but must not weaken a higher-level safety or
-user outcome.
+`AGENTS.md` supplies permanent safety and role principles; `docs/development-workflow.md` supplies
+the detailed development workflow; the root Chinese specification supplies V1 product scope; this
+document supplies journey and product-completion semantics; `docs/requirements.md` and
+`docs/architecture.md` supply stable engineering requirements and CURRENT/TARGET design;
+`docs/roadmap.md` supplies large-Slice priority; root `SLICE.md` supplies the current A-owned
+contract; and an active `TASK.md` supplies the current B-owned implementation unit. Lower-level
+guidance may narrow but must not weaken a higher-level safety or user outcome.
 
 ## Product experience contract
 

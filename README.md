@@ -180,8 +180,8 @@ F2 atomic-binding and pinned-revision recovery correction passed independent rev
 - [Architecture](docs/architecture.md)
 - [Product requirements](影视媒体资源自动整理系统需求规格说明书.md)
 - [Engineering requirements](docs/requirements.md)
-- [Roadmap and current milestone](docs/roadmap.md)
-- [Progress and validation](docs/progress.md)
+- [Large-Slice roadmap](docs/roadmap.md)
+- [Slice closure ledger](docs/progress.md)
 
 Operation history is appended as JSON Lines at the configured `historyPath`.
 All runtime strategy content is loaded from `MEDIAFLOW_CONFIG`; use
