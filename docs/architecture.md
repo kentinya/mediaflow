@@ -1153,7 +1153,11 @@ per-sample projected outcome by severity (`manual_confirmation_required`,
 `overwrite_requires_confirmation`, `rename`, `skip`, `ready`, most severe first, or
 `capability_gap` when any required capability is missing) and adds `sampleCount`, `items` and
 `collisions`; the single-sample request and evidence keep their existing keys and add the same
-three keys. The activation gate is byte-identical and refuses both new categories through its
+three keys. `capability_gap` has run-level precedence; otherwise the most severe non-null projected
+outcome wins, including `ready` when all rows are ready. Every `result.items[]` row has the same
+ordered ten-key contract: `index`, `relativeDestination`, `destinationPath`, `targetExists`,
+`plannerConflicts`, `projectedOutcome`, `proposedRelativeDestination`, `failureCategory`, `message`,
+`nextAction`. The activation gate is byte-identical and refuses both new categories through its
 existing failed branch.
 Each `result.items[]` row carries its per-sample `failureCategory`, bounded `message` and, for a
 failure, its own `nextAction`; that action comes from the same `_destination_sample_next_action`
@@ -1161,9 +1165,13 @@ map as the run-level action, while a row without one retains the bounded `-` fal
 The read-only Web rows table renders all six columns — Sample, Destination, Projected outcome,
 Failure category, Message and Next action — without deriving or changing them.
 Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
-`ConflictType.DUPLICATE_MEDIA` / known-media detection, attachment prechecks, absolute mounted-path
-display and execution remain TARGET. Phase 22.6-E is PASS / CLOSED at
-`ee5225dd0e74a7382b6747c6315776413f7fd249`, accepted through the Phase 22.6-E-F1 correction.
+multiple RecognitionTypes or destination Storages in one request, `ConflictType.DUPLICATE_MEDIA` /
+known-media detection, attachment prechecks, absolute mounted-path display and execution remain
+TARGET. Provider switching, generic Task resume, per-item Processing Checkpoint recovery and
+unattended execute also remain outside Phase 22.6. Phase 22.6-A through 22.6-N are independently
+Slice-accepted, most recently at checkpoint `5884905c2105cf8ff78ff10d1b872875045769d7` for the
+two-direction verdict and uniform-row evidence; Phase 22.6 remains open pending CURRENT-documentation
+High Review and a separate Final Closure Audit.
 
 ## Deferred work
 
@@ -1755,8 +1763,16 @@ Phase 22.5-B. Candidate confirmation and its F1/F2 corrections were accepted in 
 Phase 22.5-D same-Provider managed live correction testing passed independent High re-review.
 Phase 22.5-E is limited to one resolved correction's pinned DryRun continuation and passed
 independent High re-review at `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62`, closing Phase 22.5;
-Provider switching, generic Task resume, broader Files/Task recovery, and managed
-Naming/Classification/Organize configuration (Phase 22.6) remain later work.
+Phase 22.6-A through 22.6-N have independently accepted the bounded managed
+Naming/Classification/Organize journey: Local-only destination precheck for one RecognitionType and
+one to eight samples routed to one destination Storage, independent row recovery, collision and
+capability verdicts, and checked activation without mutation or execution authority. Phase 22.6
+remains open pending its CURRENT-documentation review and separate Final Closure Audit. Remote
+SMB/OpenList/S3 destination precheck, mutation-based capability probing, multiple RecognitionTypes
+or destination Storages per request, known-media duplicate detection, attachment precheck and
+absolute mounted-path display remain TARGET; Provider switching, generic Task resume, broader
+Files/Task recovery including per-item Processing Checkpoints, and unattended execute also remain
+later work.
 
 ## Configuration architecture: TARGET (partially implemented; remaining work explicit)
 
