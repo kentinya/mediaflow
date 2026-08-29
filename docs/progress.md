@@ -326,6 +326,37 @@ Implementation evidence is recorded by the implementation role in `TASK.md` at t
 independent review record is "Phase 22.6-I High Review Result (2026-08-29): PASS". Phase 22.6 itself
 remains open; the next legal Slice is Phase 22.6-J.
 
+### Phase 22.6-J An Undetermined Destination Observation Stops Printing as "NO"
+
+```text
+Status: PASS / CLOSED
+Accepted checkpoint SHA: ccbddf2af92c1abf18d1162d0a6c37da9ee0a7cd
+High Audit: PASS — 2026-08-29; independently reviewed against the Phase 22.6-J `TASK.md`, the real
+code state and the Phase 22.6-I tree. Scope is exactly `mediaflow/interfaces/operator_ui.py`
+(+9/-4), `tests/test_operator_ui.py` (+61/-0) and `TASK.md`; the diff against every forbidden path
+(`mediaflow/application`, `mediaflow/domain`, `mediaflow/infrastructure`,
+`mediaflow/interfaces/service_api.py`, `mediaflow/cli.py`, `scripts`, `config`, `pyproject.toml`)
+is EMPTY, so evidence semantics, the service boundary, the CLI and both schema markers are
+untouched. `determinationText` exists exactly once, immediately after an unchanged
+`boundedSetupText`, and maps `true`/`false`/anything else to `YES`/`NO`/`NOT DETERMINED`; all six
+calls sit at the four mandated render sites in the two branches, and no
+`=== true ? 'YES' : 'NO'` expression remains anywhere in the file for `destinationRootExists`,
+`destinationRootIsDirectory` or `targetExists`. The not-ready gate, its sentence and its `'error'`
+style are byte-identical, so an undetermined root still blocks readiness, and every
+`evidence.retrySafe` render plus every `YES`/`NO` outside `renderDestinationPrecheck` is unchanged.
+`tests/` grew 24 to 27 with zero replacements, deletions or renames; all six Task-mandated
+falsification probes bit exactly as required with a clean control, and seven further independent
+probes were run. The complete offline suite is 866 tests OK (7 skipped), the focused modules 52 OK,
+and configuration marker 10 and Runtime marker 22 are unchanged in an isolated wheel smoke run
+Push: NOT PERFORMED — neither the checkpoint nor this record was pushed; `main` is ahead of
+`origin/main` and Phase 22.6 closure still needs the Final Closure Audit plus a new explicit
+authorization
+```
+
+Implementation evidence is recorded by the implementation role in `TASK.md` at that SHA. The
+independent review record is "Phase 22.6-J High Review Result (2026-08-29): PASS". Phase 22.6 itself
+remains open; the next legal Slice is Phase 22.6-K.
+
 ## Phase 22.6-A High Review Result (2026-08-27)
 
 - Status: FIX REQUIRED; Rejected checkpoint SHA:
@@ -1773,6 +1804,104 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   written to `TASK.md`. Remote SMB/OpenList/S3 destination prechecks, mutation-based capability
   probing, multiple RecognitionTypes or destination Storages per request, known-media duplicate
   detection, attachment prechecks, absolute mounted-path display, evidence-shape changes and any
+  execution or authority change must not start.
+
+## Phase 22.6-J High Review Result (2026-08-29): PASS
+
+- Reviewed checkpoint SHA: `ccbddf2af92c1abf18d1162d0a6c37da9ee0a7cd` (commit
+  `feat(web): render undetermined destination observations as NOT DETERMINED`), audited against the
+  Phase 22.6-J `TASK.md`, `AGENTS.md`, the Chinese product requirements, `docs/product-experience.md`,
+  `docs/architecture.md`, `docs/roadmap.md` and the accepted Phase 22.6-I tree
+  `6c0ba745772e315b941c1c3b314ab47e66e8f35a`.
+- Scope held. The checkpoint changes exactly three files: `mediaflow/interfaces/operator_ui.py`
+  (+9/-4), `tests/test_operator_ui.py` (+61/-0) and `TASK.md` (+91/-19).
+  `git diff --exit-code 6c0ba74 HEAD -- mediaflow/application mediaflow/domain
+  mediaflow/infrastructure mediaflow/interfaces/service_api.py mediaflow/cli.py scripts config
+  pyproject.toml` is EMPTY, so no evidence key, request or response field, aggregation rule, failure
+  category, route, permission, table, migration or schema marker moved. The production diff is four
+  changed lines plus the five-line helper, and every changed line is inside
+  `renderDestinationPrecheck` except the helper itself.
+- Journey outcome verified in code. `renderDestinationPrecheck` normalizes a missing payload with
+  `const result = evidence.result && typeof evidence.result === 'object' ? evidence.result : {};`, so
+  a FAILED run that carries no `result` at all previously printed `Destination root exists /
+  directory: NO / NO` and `Target exists: NO` from `undefined`. `determinationText` is defined once,
+  immediately after an unchanged `boundedSetupText`, and returns `'YES'` for `true`, `'NO'` for
+  `false` and exactly `'NOT DETERMINED'` otherwise; its six calls sit at the four mandated render
+  sites (multi-sample run-level root pair, multi-sample first-sample `Target exists`, and the two
+  single-sample equivalents), and no `=== true ? 'YES' : 'NO'` expression remains anywhere in the
+  file for `destinationRootExists`, `destinationRootIsDirectory` or `targetExists`.
+- Completed evidence is genuinely unchanged, which I verified in the application rather than
+  accepting the report: `_destination_probe_identity` supplies `(True, True)` on both COMPLETED paths
+  (`configuration_objects.py:1742`, `:2046`), `targetExists` is a real boolean in the single COMPLETED
+  result (`:1747`) and in the `first_details` the multi COMPLETED result spreads (`:2207`), and the two
+  genuine root-failure categories keep their real values (`:1639` `(False, False)` for
+  `missing_destination_root`, `:1651` `(True, False)` for `destination_root_not_directory`). The
+  `"targetExists": None` entries at `:2236` and `:2252` exist only in per-sample rows, and the Web rows
+  table renders `index`, `destinationPath`, `projectedOutcome` and `failureCategory` only, so no
+  completed run and no row changed its text.
+- Safety held. The not-ready gate is byte-identical, including `!result.destinationRootExists`, so an
+  undetermined root still evaluates as not ready and still prints `Destination is not ready. Follow
+  the recovery action; no authority was granted.` in the `'error'` style. Presentation did not soften
+  a gate, no authority is granted, and the block remains read-only. Every `evidence.retrySafe` render
+  (ten sites, two of them inside the precheck block) and every `YES`/`NO` outside
+  `renderDestinationPrecheck` are unchanged, as the Task required.
+- Test analysis. `tests/test_operator_ui.py` grew 24 to 27 with a purely additive diff (+61/-0): zero
+  assertions replaced, weakened, deleted or renamed. All three new tests are body-scoped through
+  `_js_function_body` and the brace-counting `_js_braced_body`, so they cannot be satisfied by
+  same-named text elsewhere in the script. Test 1 additionally pins each key's call count at 2, which
+  is what makes a single restored inline expression fail rather than merely reduce coverage.
+- All six Task-mandated falsification probes were re-run independently on the shipped tree, one edit
+  at a time, with `git checkout --` and a clean-tree check after each: collapsing the undetermined arm
+  and collapsing the `false` arm each failed only
+  `test_determination_text_maps_true_false_and_undetermined_separately`; restoring the old inline
+  `targetExists` expression in the first-sample list and the old inline root expression in the single
+  branch each failed only
+  `test_destination_precheck_absent_determinations_render_as_not_determined`; changing the gate to
+  `result.destinationRootExists === false` failed only
+  `test_destination_precheck_not_ready_gate_still_blocks_an_undetermined_root`; and the comment-only
+  control failed nothing (27 tests OK).
+- Seven further independent probes confirmed the boundary: renaming the bounded text to `UNKNOWN` and
+  moving `determinationText` above `boundedSetupText` each failed Test 2; restoring the inline root
+  expression in the multi branch and the inline `targetExists` in the single branch each failed Test 1;
+  rewording the not-ready sentence failed Test 3 *and* the pre-existing
+  `test_destination_precheck_blocking_sentence_contract_is_body_scoped`; making the single branch's
+  right half mirror `destinationRootExists` was caught by Test 1; and routing the precheck's own
+  `Retry safe` render through `determinationText` was caught by no test (recorded below as
+  non-blocking).
+- Validation re-run by me on the checkpoint tree: complete offline suite `Ran 866 tests ... OK
+  (skipped=7)` — 863 before, exactly the three added tests, zero deletions; focused modules 27 + 18 + 7
+  = 52 OK; `ruff check .` all checks passed; `ruff format --check .` 308 files already formatted;
+  `compileall -q mediaflow tests` clean; `pip check` no broken requirements; `git diff --check` clean;
+  `config validate` on `config/mediaflow.phase13.2.example.json` and `config/strategy.example.json`
+  both `Configuration valid`; wheel build plus isolated `scripts/wheel_smoke_test.py` exit 0 reporting
+  supported/runtime/backup schema 22 with `CONFIGURATION_SCHEMA_VERSION = 10` and `SCHEMA_VERSION = 22`
+  unchanged in source; FFmpeg/FFprobe audit zero hits; business-layer filesystem-mutation audit shows
+  no direct mutation in `mediaflow/application` or `mediaflow/domain`; 120 tracked Markdown files with
+  25 local links and 0 broken; `config/alist.json` untracked, unstaged and ignored; and the secret scan
+  over this Slice's diff matched only the Task's own policy prose.
+- Zero documentation change was correct. No CURRENT sentence in `docs/architecture.md` or
+  `docs/product-experience.md` describes how the precheck renders these three booleans, so nothing
+  became inaccurate. The only prose that described the old behaviour is my own historical review text
+  (`docs/progress.md:1040` and `:1767`), which records the defect in past tense and is now resolved by
+  this Slice.
+- Non-blocking observations, none of them closure conditions. First, the precheck's own `Retry safe`
+  render and every `YES`/`NO` outside the block are pinned by no test, so the Task's byte-identity
+  requirement held but is guarded manually rather than by a regression. Second, the per-sample rows
+  table still drops each sample's own bounded `message`: rows persist it
+  (`configuration_objects.py:2241`, bounded to 384 bytes, e.g. `ClassificationPolicy '...' failed
+  (invalid_rule)`), while the run-level `Message` and `Next action` come from the lowest-index failing
+  sample only (`:2009-2029`, `failures[0]`), so a second failing sample's own explanation is visible
+  nowhere on the page. Third, even after that column is added, no per-sample `nextAction` exists in
+  evidence, so samples failing with different categories still share one run-level action. Fourth, the
+  residual proof gaps recorded earlier remain open: no multi-sample all-`ready` run asserts
+  `verdict == "ready"`, single-sample field order is unpinned, and no test compares the two branches'
+  field lists.
+- Verdict: **PASS**. Phase 22.6-J is **CLOSED** and Phase 22.6 remains open. The next legal Slice is
+  **Phase 22.6-K** (Web presentation only: the per-sample destination rows must carry each sample's own
+  bounded `message`, so one failing sample no longer hides another's diagnosis), now written to
+  `TASK.md`. Per-sample `nextAction` in evidence, remote SMB/OpenList/S3 destination prechecks,
+  mutation-based capability probing, multiple RecognitionTypes or destination Storages per request,
+  known-media duplicate detection, attachment prechecks, absolute mounted-path display and any
   execution or authority change must not start.
 
 ## Completed
