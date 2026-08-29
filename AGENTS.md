@@ -12,13 +12,15 @@ Before making any changes, read:
 - docs/product-experience.md
 - docs/requirements.md
 - docs/architecture.md if it exists
-- docs/progress.md if it exists
 - docs/roadmap.md if it exists
-- TASK.md
+- SLICE.md
+- TASK.md when it contains an active implementation Task
 
 Do not implement the whole project at once.
 
-Always implement only the scope specified by the current TASK.md.
+The current `SLICE.md` is the A-owned business-capability contract. An active `TASK.md` is a
+B-owned implementation unit inside that contract. Developer work must satisfy both and may not
+expand either one.
 
 ---
 
@@ -33,12 +35,14 @@ Use this hierarchy when interpreting future work:
 4. `docs/product-experience.md` defines canonical user journeys and product-completion semantics.
 5. `docs/requirements.md` provides stable engineering/UX requirement IDs, while
    `docs/architecture.md` distinguishes CURRENT implementation from TARGET design.
-6. `docs/roadmap.md` sets journey priority and records Phase gates.
-7. `TASK.md` narrows the current implementation slice and is the only scope to implement now.
+6. `docs/roadmap.md` records only large Slice priority and status.
+7. `SLICE.md` is the current A-owned Slice Contract: user goal, required outcomes, boundaries,
+   safety invariants, deferrals, acceptance criteria, Base, and review state.
+8. `TASK.md` is the current B-owned implementation Task inside `SLICE.md`, when a Task is active.
 
 A lower document may refine or narrow a higher one but must not silently weaken its safety or user
-outcome. A broad product requirement does not authorize implementation beyond TASK.md, and a TASK
-cannot declare product completion without the required journey outcome.
+outcome. A broad product requirement does not authorize implementation beyond `SLICE.md`; a Task
+cannot expand the Slice or declare the Slice complete.
 
 ---
 
@@ -77,9 +81,9 @@ Permanent product rules:
 7. Safety remains stronger than convenience: default DryRun, no silent overwrite/delete, explicit
    authority, zero-mutation analysis stages, and OrganizerExecutor-only mutation remain mandatory.
 
-Read `docs/product-experience.md` before implementing any user-facing feature. TASK.md must define
-the user problem, journey, visible outcome, failures/recovery, and UX acceptance before technical
-scope. If those sections are absent, correct the task before coding.
+Read `docs/product-experience.md` before implementing any user-facing feature. `SLICE.md` must define
+the user goal, journey outcome, failures/recovery and Slice acceptance. `TASK.md` must identify the
+coherent part of that journey it implements and its Task-level acceptance before coding.
 
 ---
 
@@ -686,105 +690,46 @@ RecognitionType == C
 ---
 
 
-# Development Roles and Independent Review Gate
+# Development Roles
 
-MediaFlow separates planning/review responsibility from implementation responsibility.
-Checkpoint ordering, status vocabulary, commit requirements, and next-slice authorization are
-defined only in `docs/development-workflow.md`.
+MediaFlow has two formal management objects—Slice and Task—and three responsibilities. Detailed
+lifecycle, status, testing, Git and review rules live only in `docs/development-workflow.md`.
 
-## Planning / Architecture / Review Role
+## A — Slice Owner / Architect / Final Reviewer
 
-The planning/review role is responsible for:
+A owns the large business-capability boundary in `SLICE.md`, its user outcome, required surfaces,
+safety invariants, explicit deferrals and final acceptance. Only A may materially change the Slice
+Contract, change Roadmap Slice boundaries, conduct the final Base..Head Slice review, or declare a
+Slice `PASS / CLOSED`. A does not turn individual assertions, fields, labels or non-blocking test
+ideas into new Slices.
 
-- auditing the actual repository state;
-- reconciling product requirements, product experience, architecture, roadmap, progress, code, and tests;
-- defining CURRENT versus TARGET behavior;
-- identifying product, architecture, safety, and user-experience gaps;
-- defining the next TASK.md;
-- defining user journey, failure/recovery behavior, acceptance criteria, and non-goals;
-- independently reviewing completed implementation.
+## B — Task Planner / Task Reviewer
 
-The planning/review role decides whether a Task or Phase is accepted.
+B reads `SLICE.md`, plans coherent implementation Tasks inside it, assigns Difficulty and Test
+Level, and reviews each Task's actual checkpoint. Fixes normally remain in the same Task review
+loop. After every Task PASS, B reevaluates all Slice Required Outcomes; once they are satisfied, B
+must stop creating Tasks and prepare the Slice Closure Packet for A.
 
-## Implementation Role
+## Developer — Implementation Role
 
-The implementation role is responsible for:
-
-- reading the required project guidance and current TASK.md;
-- inspecting existing implementation before editing;
-- implementing only the current TASK.md;
-- preserving stable tested architecture unless the Task explicitly requires a change;
-- avoiding unrelated refactors and future-scope implementation;
-- adding and running appropriate tests;
-- reporting actual implementation and actual test evidence;
-- reporting deviations, limitations, and newly discovered issues.
-
-The implementation role may report that implementation is complete and ready for review.
-
-The implementation role MUST NOT independently declare a Phase CLOSED or redefine the roadmap.
-
-## Independent Review Gate
-
-Every implementation Task must receive independent review before Phase closure.
-
-Independent review must inspect the actual code and tests and must not rely only on the implementer's completion report.
-
-Review must verify, where applicable:
-
-- TASK requirements are actually implemented;
-- the promised user journey is complete;
-- Engine, Persistence, API, and Web UI are correctly connected;
-- failure and recovery behavior is actionable;
-- batch items retain independent state and recovery;
-- successful items are not unnecessarily reprocessed;
-- Active configuration is the configuration actually consumed by runtime;
-- safety and destructive-operation boundaries remain intact;
-- no placeholder, TODO, bypass, or weakened test is being treated as completion;
-- documentation CURRENT claims match actual behavior;
-- tests genuinely prove the claimed semantics.
-
-The High Review decision must be exactly one of:
-
-- `PASS`
-- `FIX REQUIRED`
-- `PARTIAL / DEFERRED`
-
-If the result is `FIX REQUIRED`, create a focused correction TASK and do not proceed to the next feature Phase.
-
-If the result is `PASS`, record the reviewed commit SHA and High Audit as required by
-`docs/development-workflow.md`. Only that completed record changes repository status to
-`PASS / CLOSED`; then update factual progress/documentation and define the next TASK according to
-the current roadmap and product priorities.
-
-## Phase Closure Authority
-
-Implementation completion is not Phase closure.
-
-A Phase may be considered CLOSED only after the commit/checkpoint requirements in
-`docs/development-workflow.md` are complete and independent review confirms:
-
-1. technical acceptance criteria;
-2. user-experience acceptance criteria;
-3. failure/recovery acceptance where applicable;
-4. regression safety;
-5. architecture and safety invariants;
-6. documentation accuracy;
-7. no unresolved P0/P1 defect remains inside the declared Task scope.
+Developer implements only the active `TASK.md` within `SLICE.md`, preserves architecture and safety,
+runs the assigned Test Level, creates a coherent checkpoint, and reports actual results and risks.
+Developer does not define the next Task, modify the Slice boundary or Roadmap, or close a Slice.
 
 
 
 
 # Development Workflow
 
-Follow `docs/development-workflow.md`. It is the sole authoritative development workflow, including
-workspace preflight, implementation, tests, commit checkpoint, High Review, closure records, and
-next-slice authorization. This file does not define a competing sequence.
+Follow `docs/development-workflow.md`. It is the sole authority for Slice/Task lifecycle, planning,
+review, testing levels, checkpoints, fixes, closure packets, final review, and legacy migration.
+This file defines permanent principles only and does not define a competing state machine.
 
 ---
 
 # Scope Control
 
-Do NOT implement unrelated future modules.
+Do NOT implement work outside the active `SLICE.md` and `TASK.md`.
 
 Do NOT perform large unrelated refactors.
 
@@ -795,37 +740,3 @@ If an architecture adjustment is necessary:
 - keep backward compatibility where practical
 - document the reason
 - update architecture documentation
-
----
-
-# Completion Report
-
-At the end of every task report:
-
-## Changed Files
-
-List files added/modified.
-
-## Implemented
-
-Summarize completed behavior.
-
-## Tests
-
-List commands executed.
-
-## Test Results
-
-Report pass/fail.
-
-## Decisions
-
-Explain important design decisions.
-
-## Remaining Work
-
-List items intentionally left for future tasks.
-
-## Risks
-
-List assumptions, technical debt, or safety concerns.

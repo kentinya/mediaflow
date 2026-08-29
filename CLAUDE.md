@@ -2,11 +2,13 @@
 
 @AGENTS.md
 
-`AGENTS.md` is the authoritative repository-wide development policy.
+`AGENTS.md` is the authoritative permanent repository policy. Detailed Slice/Task workflow is owned
+only by `docs/development-workflow.md`; current scope is `SLICE.md` plus an active `TASK.md`.
 
 ## Execution Behavior
 
-For an already approved task, proceed autonomously through all clearly required in-scope steps.
+For an already approved Task inside the current Slice, proceed autonomously through all clearly
+required in-scope steps.
 
 Do not stop to ask whether to:
 - continue with the next obvious implementation step;
