@@ -804,13 +804,14 @@ APP_JS = b"""(() => {
       }
       if (Array.isArray(result.items)) {
         detailContent.append(text('h4', 'Per-sample destination rows'));
-        detailContent.append(table(['Sample', 'Destination', 'Projected outcome', 'Failure category', 'Message'],
+        detailContent.append(table(['Sample', 'Destination', 'Projected outcome', 'Failure category', 'Message', 'Next action'],
           result.items.map(item => [
             Number.isFinite(item.index) ? String(item.index) : '-',
             boundedSetupText(item.destinationPath),
             boundedSetupText(item.projectedOutcome),
             boundedSetupText(item.failureCategory),
-            boundedSetupText(item.message)
+            boundedSetupText(item.message),
+            boundedSetupText(item.nextAction)
           ])));
       }
       if (Array.isArray(result.collisions)) {

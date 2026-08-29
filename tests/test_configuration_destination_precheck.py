@@ -582,6 +582,139 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             finally:
                 repository.close()
 
+    def test_destination_precheck_per_sample_rows_carry_their_own_next_action(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target-private" / "Movies").mkdir(parents=True)
+            (root / "source-private").mkdir()
+            document = self._document(root)
+            document["mediaLibraries"][1]["rootPath"] = "TV Missing"
+            document["classificationPolicies"][0]["rules"].insert(
+                0,
+                {
+                    "id": "missing-root-movie",
+                    "priority": 300,
+                    "conditions": {"mediaType": ["movie"], "genres": ["Drama"]},
+                    "result": {
+                        "mediaLibraryId": "tv",
+                        "library": "TV Shows",
+                        "path": ["Drama"],
+                    },
+                },
+            )
+            fixture_root_paths = [
+                str(value["rootPath"])
+                for value in [*document["storages"], *document["mediaLibraries"]]
+            ]
+            repository, _, objects, draft = self._open(root, document)
+            try:
+                evidence = objects.destination_precheck(
+                    draft.revision_id,
+                    expected_version=draft.version,
+                    expected_digest=draft.digest,
+                    actor="operator",
+                    recognition_type="C",
+                    samples=[
+                        {
+                            "title": "",
+                            "mediaType": "movie",
+                            "year": 1999,
+                            "genres": ["Action"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Missing Root",
+                            "mediaType": "movie",
+                            "year": 2024,
+                            "genres": ["Drama"],
+                            "extension": "mkv",
+                        },
+                        {
+                            "title": "Your Name",
+                            "mediaType": "movie",
+                            "year": 2016,
+                            "genres": ["Animation"],
+                            "countries": ["JP"],
+                            "extension": "mkv",
+                        },
+                    ],
+                )
+                self.assertEqual(evidence.status.value, "failed")
+                result = evidence.result
+                self.assertEqual(result["collisions"], [])
+                items = sorted(result["items"], key=lambda row: row["index"])
+                failing = [row for row in items if row["failureCategory"] is not None]
+                self.assertEqual([row["index"] for row in failing], [0, 1])
+                self.assertIsNone(items[2].get("nextAction"))
+                self.assertTrue(all(isinstance(row["nextAction"], str) for row in failing))
+                self.assertNotEqual(failing[0]["nextAction"], failing[1]["nextAction"])
+                for row in failing:
+                    self.assertEqual(
+                        row["nextAction"],
+                        ConfigurationObjectService._destination_sample_next_action(
+                            row["failureCategory"]
+                        ),
+                    )
+                    self.assertFalse(Path(row["nextAction"]).is_absolute())
+                    for fixture_root_path in fixture_root_paths:
+                        self.assertNotIn(fixture_root_path, row["nextAction"])
+                    self.assertNotIn("/", row["nextAction"])
+                    self.assertNotIn("\\", row["nextAction"])
+                    self.assertNotIn("://", row["nextAction"])
+                mapped_categories = {
+                    "missing_destination_root",
+                    "destination_root_not_directory",
+                    "read_only_violation",
+                    "permission_denied",
+                    "unavailable",
+                    "timeout",
+                }
+                self.assertNotIn(failing[0]["failureCategory"], mapped_categories)
+                self.assertEqual(
+                    failing[0]["nextAction"],
+                    "correct the destination or conflict policy, then rerun precheck",
+                )
+                self.assertEqual(failing[1]["failureCategory"], "missing_destination_root")
+                self.assertEqual(evidence.next_action, failing[0]["nextAction"])
+            finally:
+                repository.close()
+
+    def test_destination_sample_next_action_sentences_are_bounded_unchanged_constants(
+        self,
+    ) -> None:
+        expected = {
+            "missing_destination_root": (
+                "create the root out of band or correct MediaLibrary.rootPath, then rerun"
+            ),
+            "destination_root_not_directory": (
+                "correct MediaLibrary.rootPath, then rerun destination precheck"
+            ),
+            "read_only_violation": (
+                "do not activate; inspect the destination-precheck implementation"
+            ),
+            "permission_denied": (
+                "correct availability, permissions or path, then rerun destination precheck"
+            ),
+            "unavailable": ("inspect service health and configuration, then rerun precheck"),
+            "timeout": ("wait for the in-flight check to finish, fix availability, then rerun"),
+        }
+        for category, sentence in expected.items():
+            with self.subTest(category=category):
+                self.assertEqual(
+                    ConfigurationObjectService._destination_sample_next_action(category),
+                    sentence,
+                )
+                self.assertTrue(sentence.isascii())
+                self.assertGreater(len(sentence), 0)
+                self.assertLessEqual(len(sentence.encode("utf-8")), 500)
+                self.assertNotIn("/", sentence)
+                self.assertNotIn("\\", sentence)
+                self.assertNotIn("://", sentence)
+        self.assertEqual(
+            ConfigurationObjectService._destination_sample_next_action("invalid_input"),
+            "correct the destination or conflict policy, then rerun precheck",
+        )
+
     def test_multiple_destination_storages_is_bounded_failure(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

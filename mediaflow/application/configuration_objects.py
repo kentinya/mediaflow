@@ -2239,6 +2239,7 @@ class ConfigurationObjectService:
             "proposedRelativeDestination": None,
             "failureCategory": category,
             "message": ConfigurationObjectService._bounded_utf8(message, 384),
+            "nextAction": ConfigurationObjectService._destination_sample_next_action(category),
         }
 
     @staticmethod
@@ -2255,6 +2256,7 @@ class ConfigurationObjectService:
             "proposedRelativeDestination": None,
             "failureCategory": None,
             "message": None,
+            "nextAction": None,
         }
 
     @staticmethod

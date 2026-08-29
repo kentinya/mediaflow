@@ -3,7 +3,7 @@
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: READY FOR IMPLEMENTATION
+Status: READY FOR HIGH REVIEW
 Commit SHA: PENDING
 High Audit: PENDING
 Preceding closed checkpoint: f2db70b28edb8f753ebed0d3805be7143b521264
@@ -307,26 +307,26 @@ Run every command and report its actual output:
 
 ## Closure Checklist
 
-- [ ] `_destination_sample_failure_row` stores `nextAction` from
+- [x] `_destination_sample_failure_row` stores `nextAction` from
       `_destination_sample_next_action(category)` for the row's own category.
-- [ ] `_destination_sample_resolution_row` stores `"nextAction": None`.
-- [ ] `_destination_sample_next_action` is byte-identical to `f2db70b`.
-- [ ] `configuration_objects.py` shows zero deleted lines and at most four added lines.
-- [ ] The rows table renders six columns, `'Next action'` sixth, from
+- [x] `_destination_sample_resolution_row` stores `"nextAction": None`.
+- [x] `_destination_sample_next_action` is byte-identical to `f2db70b`.
+- [x] `configuration_objects.py` shows zero deleted lines and at most four added lines.
+- [x] The rows table renders six columns, `'Next action'` sixth, from
       `boundedSetupText(item.nextAction)`.
-- [ ] Only the two permitted header-assertion sites in `tests/test_operator_ui.py` were edited.
-- [ ] Three Required Tests exist, are named as specified, and fail for the mutations named in the
+- [x] Only the two permitted header-assertion sites in `tests/test_operator_ui.py` were edited.
+- [x] Three Required Tests exist, are named as specified, and fail for the mutations named in the
       probes.
-- [ ] All eight probes were run one at a time on the shipped tree, with actual failing test names, and
+- [x] All eight probes were run one at a time on the shipped tree, with actual failing test names, and
       the control probe failed nothing.
-- [ ] Full suite `871`, focused `57`, both green.
-- [ ] Static, dependency, CLI, wheel, schema-marker, whitespace, FFmpeg, mutation-boundary, Markdown
+- [x] Full suite `871`, focused `57`, both green.
+- [x] Static, dependency, CLI, wheel, schema-marker, whitespace, FFmpeg, mutation-boundary, Markdown
       link, alist-ignore and secret gates all pass.
-- [ ] `docs/product-experience.md` and `docs/architecture.md` CURRENT text describes the six-column
+- [x] `docs/product-experience.md` and `docs/architecture.md` CURRENT text describes the six-column
       surface in at most three sentences each; no TARGET section changed.
-- [ ] `docs/progress.md`, `docs/roadmap.md` and every forbidden path are untouched.
-- [ ] One coherent commit at the end; no push.
-- [ ] Completion Report filled in with actual command output.
+- [x] `docs/progress.md`, `docs/roadmap.md` and every forbidden path are untouched.
+- [x] One coherent commit at the end; no push.
+- [x] Completion Report filled in with actual command output.
 
 ## Completion Report
 
@@ -335,21 +335,97 @@ Run every command and report its actual output:
 
 ### Changed Files
 
+- `mediaflow/application/configuration_objects.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `tests/test_configuration_destination_precheck.py`
+- `tests/test_operator_ui.py`
+- `docs/product-experience.md`
+- `docs/architecture.md`
+- `TASK.md`
+
+BASE for this Slice: `23adc9ba51b9f9cf085bee3ee613b824869f786e` (the review-record push at worktree
+start); the code byte-identity base is `f2db70b28edb8f753ebed0d3805be7143b521264`.
+
 ### Implemented
+
+- Added the existing category-to-action lookup to failing multi-sample rows and `None` to the
+  resolution-row builder; the lookup itself is byte-identical to the preceding checkpoint.
+- Added the read-only Web table's sixth `Next action` column using each row's
+  `boundedSetupText(item.nextAction)`. Run-level and single-sample action fields remain unchanged.
+- Added two offline evidence tests, one body-scoped Web test, and only the two TASK-authorized
+  existing header assertion updates. Refreshed the two CURRENT documentation statements.
 
 ### Tests
 
+- `.venv/bin/python -m unittest tests.test_operator_ui tests.test_configuration_destination_precheck tests.test_configuration_destination_activation`
+  — `Ran 57 tests ... OK`.
+- `.venv/bin/python -m unittest` — `Ran 871 tests ... OK (skipped=7)`.
+- `.venv/bin/python -m ruff check .` — `All checks passed!`.
+- `.venv/bin/python -m ruff format --check .` — `308 files already formatted`.
+- `.venv/bin/python -m compileall -q mediaflow tests` — passed.
+- `.venv/bin/python -m pip check` — `No broken requirements found.`
+- `.venv/bin/python -m mediaflow.cli --config config/mediaflow.phase13.2.example.json config validate`
+  and the equivalent `strategy.example.json` command — both `Configuration valid`.
+
 ### Test Results
+
+All required tests and quality checks passed. The focused suite was 57 tests and the complete suite
+was 871 tests with exactly the existing 7 skips.
 
 ### Falsification Probes
 
 | # | Mutation | Module run | Actual failing tests | Expected |
 | - | -------- | ---------- | -------------------- | -------- |
+| 1 | Removed the `Next action` header | `tests.test_operator_ui.OperatorUiTests.test_destination_precheck_per_sample_rows_render_each_sample_next_action` | Same test failed at the exact-header `assertIn` | Required failure; restored |
+| 2 | Removed the sixth row cell | Same UI test | Same test failed with `0 != 1` for `item.nextAction` count | Required failure; restored |
+| 3 | Used `evidence.nextAction` for the sixth cell | Same UI test | Same test failed with `0 != 1` for the row-action count | Required failure; restored |
+| 4 | Moved `Next action` before `Message` | Same UI test | Same test failed at the exact-header `assertIn` | Required failure; restored |
+| 5 | Stored `None` for every failure-row action | `tests.test_configuration_destination_precheck.ManagedDestinationPrecheckTests.test_destination_precheck_per_sample_rows_carry_their_own_next_action` | Same test failed at the non-null action assertion | Required failure; restored |
+| 6 | Stored the default action for every failure category | Same evidence test | Same test failed at the two-actions-differ assertion | Required failure; restored |
+| 7 | Reworded the mapped `missing_destination_root` sentence | `tests.test_configuration_destination_precheck.ManagedDestinationPrecheckTests.test_destination_sample_next_action_sentences_are_bounded_unchanged_constants` | The `missing_destination_root` subtest failed with `then retry` versus `then rerun` | Required failure; restored |
+| 8 | Added only a comment inside the rows block | Same UI test | `Ran 1 test ... OK` | Control passed; restored |
 
 ### Validation Evidence
 
+- `git diff --check` passed. The production FFmpeg/FFprobe audit returned no matches. The
+  application/domain mutation audit found no direct filesystem mutator; organizer mutations remain
+  behind Storage interfaces and OrganizerExecutor.
+- `git check-ignore config/alist.json` returned `config/alist.json`; `git ls-files` and the staged
+  diff were empty for that path. The Markdown check scanned 120 files and 25 local links with 0
+  broken links. The Slice diff secret scan found no token, credential, endpoint or private path.
+- The forbidden code-boundary diff from `f2db70b` was empty, as was the BASE diff for
+  `docs/progress.md` and `docs/roadmap.md`. `configuration_objects.py` is `2 added / 0 deleted`
+  lines, both in the two named builders; the operator UI production diff is one normal hunk in the
+  rows expression.
+- The isolated wheel build/install/smoke completed with exit 0. The smoke markers stayed at
+  Configuration schema 10 and Runtime schema 22. An eight-sample all-failing result encoded to
+  2,723 bytes versus the 32,768-byte `CONFIGURATION_STRATEGY_RESULT_LIMIT`, far below the limit.
+- Final documentation refresh sentences:
+
+  > Undetermined observations render as `NOT DETERMINED` rather than `NO`; the run-level summary describes the lowest-index failing sample only.
+
+  > The read-only Web rows table renders all six columns — Sample, Destination, Projected outcome, Failure category, Message and Next action — without deriving or changing them.
+
 ### Decisions
+
+- Kept all action vocabulary in the existing application helper; the page only reads and bounds the
+  row value. Successful and legacy rows without an action continue to render the existing `-`
+  fallback, while the resolution-row builder explicitly carries `None`.
+- Used the existing one-Storage offline fixture and a temporary same-Storage missing MediaLibrary
+  root to prove two distinct mapped actions without changing request/response contracts or probes.
+- Used inverse `apply_patch` restorations for the required temporary probes to preserve the clean
+  accepted history and the final scoped diff.
 
 ### Remaining Work
 
+- High must independently review this checkpoint and decide `PASS`, `FIX REQUIRED` or
+  `PARTIAL / DEFERRED`; no Phase closure or next Slice is declared here.
+- Remote destination prechecks, execution/authority changes and all other roadmap-deferred work
+  remain outside this Slice.
+
 ### Risks
+
+- Existing persisted evidence may omit `nextAction`; the unchanged bounded Web fallback renders it
+  as `-`, as covered by the compatibility contract.
+- ResourceWarning messages observed in the test process are pre-existing and did not fail any
+  required command; they were not changed in this Slice.

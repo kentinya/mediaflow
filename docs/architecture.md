@@ -1155,6 +1155,11 @@ per-sample projected outcome by severity (`manual_confirmation_required`,
 `collisions`; the single-sample request and evidence keep their existing keys and add the same
 three keys. The activation gate is byte-identical and refuses both new categories through its
 existing failed branch.
+Each `result.items[]` row carries its per-sample `failureCategory`, bounded `message` and, for a
+failure, its own `nextAction`; that action comes from the same `_destination_sample_next_action`
+map as the run-level action, while a row without one retains the bounded `-` fallback in the Web.
+The read-only Web rows table renders all six columns — Sample, Destination, Projected outcome,
+Failure category, Message and Next action — without deriving or changing them.
 Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
 `ConflictType.DUPLICATE_MEDIA` / known-media detection, attachment prechecks, absolute mounted-path
 display and execution remain TARGET. Phase 22.6-E is PASS / CLOSED at
