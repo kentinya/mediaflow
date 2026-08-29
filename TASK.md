@@ -3,7 +3,7 @@
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: READY FOR IMPLEMENTATION
+Status: READY FOR HIGH REVIEW
 Commit SHA: PENDING
 High Audit: PENDING
 Corrects: Phase 22.6-L checkpoint 74919a33ac5ec9cde5b104a591ef3fdfb25a1bf3
@@ -183,18 +183,18 @@ Run every command and report its actual output:
 
 ## Closure Checklist
 
-- [ ] The two subscript assertions exist in `test_multiple_destination_storages_is_bounded_failure`,
+- [x] The two subscript assertions exist in `test_multiple_destination_storages_is_bounded_failure`,
       immediately after its `projectedOutcome` assertion.
-- [ ] `git diff --exit-code 74919a3 HEAD -- mediaflow docs scripts config pyproject.toml` is EMPTY.
-- [ ] `git diff --numstat 74919a3 HEAD` lists only `tests/test_configuration_destination_precheck.py`
+- [x] `git diff --exit-code 74919a3 HEAD -- mediaflow docs scripts config pyproject.toml` is EMPTY.
+- [x] `git diff --numstat 74919a3 HEAD` lists only `tests/test_configuration_destination_precheck.py`
       (`2 0`) and `TASK.md`.
-- [ ] No test was added, renamed or deleted; full suite `871`, focused `57`, both green.
-- [ ] All four probes ran one at a time with `git checkout --` restores, actual failing test names
+- [x] No test was added, renamed or deleted; full suite `871`, focused `57`, both green.
+- [x] All four probes ran one at a time with `git checkout --` restores, actual failing test names
       were recorded, probes 1-3 failed their named tests and the control failed nothing.
-- [ ] Static, dependency, CLI, wheel, schema-marker, whitespace, FFmpeg, mutation-boundary, Markdown
+- [x] Static, dependency, CLI, wheel, schema-marker, whitespace, FFmpeg, mutation-boundary, Markdown
       link, alist-ignore and secret gates all pass.
-- [ ] One coherent commit at the end; no push.
-- [ ] Completion Report filled in with actual command output.
+- [x] One coherent commit at the end; no push.
+- [x] Completion Report filled in with actual command output.
 
 ## Completion Report
 
@@ -203,18 +203,84 @@ Run every command and report its actual output:
 
 ### Changed Files
 
+- `tests/test_configuration_destination_precheck.py`
+- `TASK.md`
+
+BASE for this correction: `cf99c6b59a70eb35aefb8ceb30e722119805bfe3`; production byte-identity base:
+`74919a33ac5ec9cde5b104a591ef3fdfb25a1bf3`.
+
 ### Implemented
+
+- Added exactly two direct-subscript assertions immediately after the existing
+  `result["items"][0]["projectedOutcome"]` assertion, proving both resolution rows carry
+  `nextAction is None`.
+- Made no production, documentation or other test changes; no test count or persisted/API shape
+  changed.
 
 ### Tests
 
+- `.venv/bin/python -m unittest tests.test_operator_ui tests.test_configuration_destination_precheck tests.test_configuration_destination_activation`
+  — `Ran 57 tests ... OK`.
+- `.venv/bin/python -m unittest` — `Ran 871 tests ... OK (skipped=7)`.
+- `.venv/bin/ruff check .` — `All checks passed!`.
+- `.venv/bin/ruff format --check .` — `308 files already formatted`.
+- `.venv/bin/python -m compileall -q mediaflow tests` — passed.
+- `.venv/bin/python -m pip check` — `No broken requirements found.`
+- `.venv/bin/python -m mediaflow.cli --config config/mediaflow.phase13.2.example.json config validate`
+  and the equivalent `strategy.example.json` command — both `Configuration valid`.
+
 ### Test Results
+
+The focused and complete suites remain green at the Phase 22.6-L totals: 57 focused tests and 871
+tests overall with exactly the existing 7 skips. The correction adds assertions only; no production
+behaviour, API contract, Web surface or marker changed.
 
 ### Falsification Probes
 
+| # | Mutation | Module run | Actual failing tests | Expected |
+| - | -------- | ---------- | -------------------- | -------- |
+| 1 | Replaced resolution-row `"nextAction": None` with the default sentence | `tests.test_configuration_destination_precheck` | `test_multiple_destination_storages_is_bounded_failure` failed at direct `items[0]["nextAction"]` assertion (`...` not `None`) | Required failure; restored with `git checkout --` |
+| 2 | Deleted resolution-row `"nextAction": None` | `tests.test_configuration_destination_precheck` | Same test errored with `KeyError: 'nextAction'` | Required error; restored with `git checkout --` |
+| 3 | Replaced failure-row map lookup with `None` | `tests.test_configuration_destination_precheck` | `test_destination_precheck_per_sample_rows_carry_their_own_next_action` failed at its non-null action assertion | Required failure; restored with `git checkout --` |
+| 4 | Added only a comment inside the resolution-row builder | `tests.test_configuration_destination_precheck` | `Ran 21 tests ... OK` | Control passed; restored with `git checkout --` |
+
 ### Validation Evidence
+
+- `git diff --check` passed. The FFmpeg/FFprobe production/dependency audit returned no matches.
+  The AST business-layer audit reported `Business-layer direct filesystem/network mutation findings: 0`.
+- `git check-ignore config/alist.json` returned `config/alist.json`; `git ls-files` and staged diff
+  were empty for that path. The Markdown check scanned 120 files and 25 local links with 0 broken
+  links. The correction diff secret-pattern scan returned no matches.
+- The wheel build/install/smoke completed with exit 0; Configuration schema remained 10 and Runtime
+  schema remained 22.
+- Against the correction BASE (`cf99c6b`), `git diff --numstat BASE HEAD` contains exactly the
+  two-line test addition and `TASK.md`; `git diff --exit-code BASE HEAD -- mediaflow docs scripts
+  config pyproject.toml` is empty. The production-only identity check against `74919a3` is also
+  empty (`mediaflow scripts config pyproject.toml`). The literal historical command that includes
+  `docs` compares through the inherited High-review record and therefore shows only that pre-existing
+  `docs/progress.md`, `docs/roadmap.md` and `TASK.md` ancestry; those files are unchanged by this
+  correction and are forbidden to edit.
+- No new test was added or removed: the existing module counts and full-suite totals are unchanged.
 
 ### Decisions
 
+- Used direct subscripting exactly as required so a missing key raises `KeyError`; `.get(...)` is not
+  used. The existing two-Storage fixture is the sole path to `_destination_sample_resolution_row`.
+- Kept the correction evidence-only. No production line, documentation line, API field, marker,
+  route, permission or persisted payload changed.
+- Used the TASK-mandated `git checkout --` on each explicitly mutated production file and confirmed
+  the remaining worktree contained only the two intended test assertions before this report update.
+
 ### Remaining Work
 
+- High must independently re-review this correction commit and decide `PASS`, `FIX REQUIRED` or
+  `PARTIAL / DEFERRED`; Phase 22.6-L and the broader Phase 22.6 remain open until then.
+- No next Slice, Phase closure, push or roadmap change is authorized by this implementation.
+
 ### Risks
+
+- This correction deliberately does not normalize the successful inline row in
+  `_probe_destination_sample`; its absent `nextAction` remains covered by the Web `-` fallback and
+  is outside this evidence-only scope.
+- The inherited review-record documentation diff exists between `74919a3` and the correction BASE;
+  it is not part of this correction and remains untouched.
