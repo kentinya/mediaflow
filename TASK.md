@@ -1,362 +1,216 @@
-# Phase 22.6-N — Prove The Multi-Sample Verdict In Both Directions
+# Phase 22.6-O — Reconcile Phase 22.6 CURRENT Documentation Before Final Closure
 
 This Task follows [the authoritative development workflow](docs/development-workflow.md).
 
 ```text
-Status: READY FOR HIGH REVIEW
+Status: NOT STARTED
 Commit SHA: PENDING
 High Audit: PENDING
-Baseline for this Slice (BASE): the review-record commit that is `HEAD` when work starts — the
-  2026-08-29 record that closed Phase 22.6-M. It changes only `docs/progress.md`, `docs/roadmap.md`
-  and `TASK.md`. Record that SHA in the Completion Report as BASE and anchor EVERY identity command
-  on BASE. Do not anchor identity commands on an older SHA: that is what made two Phase 22.6-L-F1
-  checklist boxes literally false
-Preceding closed checkpoint: 03e64d40023753be13b2cce18b8c5a63492d344a
-  (Phase 22.6-M — PASS / CLOSED, 2026-08-29)
-Preserved rejected checkpoints: 74919a33ac5ec9cde5b104a591ef3fdfb25a1bf3 (Phase 22.6-L),
-  d8c2ae04e578955ddbbd29c413f235bf4cf08f42 (Phase 22.6-H),
-  b9cc35e2677a35920042b5695f87b50a80025ef0 (Phase 22.6-G),
-  7353b0d22497e6e3e596c93c7052eea34daf27df (Phase 22.6-E),
-  90ce13a6c6c39912dd389f71a1189314ff24eb5d (Phase 22.6-A) and
-  08dfd4f921728755209b6d52347d28f221121c47 (Phase 22.5-E); never amended, squashed or rewritten
-Push gate: SATISFIED — every checkpoint through af9ca9a was pushed to origin/main on 2026-08-28 and
-  2026-08-29 under explicit operator authorization. The rejected 74919a3, the review record cf99c6b,
-  the accepted b198c96, the 22.6-L closure record 32e6e76, the accepted 03e64d4 and the 2026-08-29
-  22.6-M closure record are NOT pushed and need no push: Slice closure does not require one, and
-  phase-level Phase 22.6 closure still requires the Final Closure Audit plus a new explicit
-  authorization
-Phase: 22.6 Naming / Classification / Organize configuration journey (roadmap section 5)
-Slice scope: prove the multi-sample destination-precheck verdict in the two directions no test
-  currently observes — an all-`ready` multi-sample run must report `verdict == "ready"`, and a
-  capability gap must override otherwise-`ready` rows. Tests only: exactly two added tests in
-  `tests/test_configuration_destination_precheck.py`, ZERO added or deleted production lines, and no
-  documentation, Web, API, schema-marker, route or permission change; markers stay 10 and 22
+Baseline for this Slice (BASE): the Phase 22.6-N PASS review-record commit that is HEAD when work
+  starts. Record its full SHA in the Completion Report and anchor every identity command on it
+Preceding accepted checkpoint: 5884905c2105cf8ff78ff10d1b872875045769d7
+  (Phase 22.6-N — PASS / CLOSED, 2026-08-29)
+Phase: 22.6 Naming / Classification / Organize configuration journey
+Slice scope: documentation only. Reconcile stale CURRENT claims in requirements, Product Experience
+  and Architecture with the already accepted Phase 22.6-A through 22.6-N behavior. Zero production,
+  test, schema, route, permission, configuration, script, roadmap or progress change
+Next gate: independent High Review of this Slice, then a separate phase-level Final Closure Audit;
+  this Slice MUST NOT declare Phase 22.6 PASS / CLOSED and MUST NOT define or begin Phase 23
 ```
 
 ## Why This Slice Exists
 
-The multi-sample verdict is computed in one expression
-(`mediaflow/application/configuration_objects.py:2043-2045`):
+Phase 22.6-N is independently accepted, and every implementation/evidence Slice from 22.6-A through
+22.6-N now has its own High PASS. The runtime journey is therefore ready for phase-level closure
+inspection, but several stable CURRENT documents still contain pre-Phase-22.6 status sentences:
 
-```python
-verdict = "capability_gap" if any_missing else max(outcomes, key=lambda value: severity[value])
-```
+- `docs/requirements.md` still says Phase 22.6-E awaits High Review and elsewhere says the whole
+  Naming/Classification/Organize journey is unimplemented;
+- `docs/architecture.md` still calls managed Phase 22.6 configuration later work and closes its
+  destination-precheck narrative only at Phase 22.6-E even though the paragraph describes later
+  accepted slices;
+- `docs/product-experience.md` labels the complete destination-precheck journey as only E/F and its
+  opening sentence still says one sample before the same section describes the accepted 1-8 sample
+  behavior.
 
-Review probing at Phase 22.6-M measured that this expression is only half-proved. Replacing the whole
-expression with the constant `"manual_confirmation_required"` leaves the full suite at `Ran 872 tests
-... OK`, because no test runs a multi-sample precheck in which every sample is `ready` and then
-asserts the verdict, and no test observes `capability_gap` on a multi-sample run at all. The opposite
-directions are already covered: substituting `min` for `max`, or hard-coding `"ready"`, each fails
-three existing multi-sample tests.
-
-That matters to the operator, not only to the test count. `verdict` is the run-level sentence the Web
-panel and the activation gate read: an inflated verdict would tell an operator that a clean 3-sample
-batch needs manual confirmation, and a swallowed `capability_gap` would tell an operator that a
-HardLink destination is `ready` when the destination Storage cannot hard-link at all. Both are
-"Configuration displayed as Active must be what runtime consumes" failures in miniature, and both are
-currently unobserved by any test.
-
-This Slice adds the two missing observations. It writes no production line: the behaviour is already
-correct, and the gap is purely one of proof.
+Those statements predate Phase 22.6-N and were explicitly outside that test-only Slice. They are not
+a reason to reopen N, but documentation accuracy is a mandatory Final Closure condition. This Slice
+corrects only those facts and records the already-shipped row/verdict contract; it changes no runtime
+behavior and does not itself close the Phase.
 
 ## Journey Framing
 
-- **User problem**: the operator cannot trust a run-level destination verdict that no test pins in
-  the clean case or in the capability-gap case.
-- **Entry point**: unchanged — Web operator panel, managed configuration revision, read-only
-  destination precheck over 1-8 samples.
-- **Visible state**: unchanged — the run-level verdict line, the six-column per-sample table, the
-  collision table and the capability fields.
-- **Available action**: unchanged — run precheck, read the verdict, then either activate or correct
-  the configuration.
-- **Success outcome**: unchanged — an all-`ready` batch reports `ready`; the operator may proceed.
-- **Failure outcome**: unchanged — a capability gap reports `capability_gap` with
-  `missingStorageCapabilities` and `requiredByOperation`, and the activation gate keeps refusing.
-- **Recovery path**: unchanged — the operator changes the organize operation or the destination
-  Storage, then reruns the precheck.
+- **User problem**: operators and reviewers cannot tell which Phase 22.6 behavior is CURRENT when
+  stable documents simultaneously describe the implemented journey and call it unimplemented.
+- **Entry point**: the canonical requirements, Product Experience and Architecture documents.
+- **Visible state**: one consistent account of the accepted Local, bounded, read-only configuration
+  journey through Phase 22.6-N and its explicitly deferred boundaries.
+- **Available action**: read the exact CURRENT capability and use its documented recovery/actions;
+  no product control changes.
+- **Success outcome**: all three documents agree with actual code, tests and accepted checkpoint
+  history, without claiming phase-level closure before the Final Closure Audit.
+- **Failure outcome**: any stale status, invented capability, omitted safety boundary or premature
+  phase-closure claim blocks this Slice.
+- **Recovery path**: correct only the inaccurate documentation sentence, rerun documentation and
+  regression gates, and resubmit this same Slice for High Review.
 
-## UX Acceptance
+## Acceptance Criteria
 
-1. No user-visible change whatsoever. `mediaflow/interfaces/operator_ui.py`,
-   `mediaflow/interfaces/service_api.py` and every other production file stay byte-identical to BASE.
-2. An offline multi-sample run whose every sample is `ready` reports `verdict == "ready"` — not an
-   inflated severity — with `sampleCount == 3`, `collisions == []`, `status == "completed"`, and every
-   row `projectedOutcome == "ready"`, `failureCategory is None`, `nextAction is None`.
-3. An offline multi-sample run whose destination Storage cannot satisfy the required capability
-   reports `verdict == "capability_gap"` even though every row is `projectedOutcome == "ready"`, with
-   `missingStorageCapabilities == ["can_hard_link"]` and `requiredByOperation == "hard_link"`.
-4. Both new runs stay read-only: `guardMutationCalls` values are all `0`, `authorityGranted` is
-   `"none"`, and the destination tree snapshot is byte-identical before and after.
-5. The ten-key per-sample row shape closed at Phase 22.6-M, the severity map, failure categories, the
-   collision table, `failures[0]` selection, the activation gate, permissions, HTTP statuses, routes,
-   tables, migrations and both schema markers (Configuration 10, Runtime 22) stay unchanged.
-6. `docs/product-experience.md` and `docs/architecture.md` stay byte-identical; their CURRENT text
-   already describes verdict aggregation, and this Slice only proves it.
-7. Test totals become exactly `874` full and `60` focused — two added tests, none removed, renamed or
-   split.
+1. `docs/requirements.md` no longer says Phase 22.6-E awaits review, that Phase 22.6 is unimplemented,
+   or that its Naming/Classification/Organize journey has not started. It states instead that A-N
+   have independent Slice PASS while the phase-level Final Closure Audit remains pending.
+2. The requirements CURRENT block accurately summarizes the accepted Local-only precheck: 1-8
+   samples under one RecognitionType, independent rows/recovery, same-Storage requirement,
+   cross-item collision detection, most-severe run verdict, capability-gap precedence, checked
+   activation, and zero mutation/authority.
+3. `docs/product-experience.md` identifies the destination-precheck/activation section as the
+   accepted E-N journey, says the input is one sample or a bounded array of up to eight, and states
+   both verdict directions proved in N: uniformly ready rows produce `ready`; any missing required
+   capability produces `capability_gap` even when all rows are otherwise ready.
+4. Product Experience retains the full user journey: entry point, visible run summary and per-item
+   rows, collision/failure outcomes, explicit recovery, stale evidence behavior, checked-activation
+   refusal and safe retry. No user-visible feature is invented.
+5. `docs/architecture.md` no longer calls managed Phase 22.6 configuration later work. Its CURRENT
+   destination-precheck section identifies A-N as Slice-accepted and Phase closure as pending, and
+   records the uniform ordered row contract:
+   `index`, `relativeDestination`, `destinationPath`, `targetExists`, `plannerConflicts`,
+   `projectedOutcome`, `proposedRelativeDestination`, `failureCategory`, `message`, `nextAction`.
+6. Architecture records the existing verdict rule without changing it: `capability_gap` has
+   run-level precedence; otherwise the most severe non-null projected outcome wins. It must not claim
+   that a filter, truncation ladder or remote capability exists when code does not provide it.
+7. All three documents retain these explicit TARGET/non-claims: remote SMB/OpenList/S3 destination
+   precheck, mutation-based capability probing, multiple RecognitionTypes or destination Storages per
+   request, known-media duplicate detection, attachment precheck and absolute mounted-path display.
+   Provider switching, generic Task resume, per-item checkpoint recovery and unattended execute also
+   remain outside Phase 22.6.
+8. No phase-level closure claim is added. The only allowed next gate is the separate Phase 22.6 Final
+   Closure Audit after this Slice receives independent PASS.
+9. No production or test file changes. Full/focused totals stay exactly 874/60 with seven full-suite
+   skips; Configuration marker remains 10 and Runtime marker remains 22.
 
 ## Technical Scope
 
 Files this Slice may change — nothing else:
 
-- `tests/test_configuration_destination_precheck.py`: exactly two added tests, zero deleted or
-  modified existing lines.
-- `TASK.md` (status block, closure checklist and Completion Report).
+- `docs/requirements.md`;
+- `docs/product-experience.md`;
+- `docs/architecture.md`;
+- `TASK.md` (status, closure checklist and Completion Report only after implementation begins).
 
-Explicitly forbidden: every file under `mediaflow/`, every other test module (including
-`tests/test_operator_ui.py` and `tests/test_configuration_destination_activation.py`), `docs/**`
-(including the review-owned `docs/progress.md` and `docs/roadmap.md`), `scripts/`, `config/`,
-`pyproject.toml` and the Chinese requirements specification.
+Explicitly forbidden:
 
-Rules:
+- every file under `mediaflow/` and `tests/`;
+- `docs/progress.md` and `docs/roadmap.md` (the High review record already owns their current gate);
+- `scripts/`, `config/`, `pyproject.toml`, the canonical Chinese product specification and all files
+  under `Task/`;
+- schema markers, migrations, routes, permissions, API/Web/CLI behavior, evidence fields or ordering;
+- any production comment, formatting or type-only change.
 
-1. Zero production lines. `git diff --numstat BASE HEAD -- mediaflow` must print NOTHING. If the
-   implementer believes a production change is needed to make either test pass, stop and report
-   instead of editing: both directions were verified reachable against the shipped code.
-2. No existing test, helper, fixture or assertion may be renamed, deleted, weakened, reordered or
-   added to. The two new tests must build their own documents and run their own
-   `tempfile.TemporaryDirectory()` roots, reusing the module's existing helpers (`_document`,
-   `_tree_snapshot`, `_open`) as-is.
-3. Subscript, not `.get`, for every new assertion, so a missing key raises `KeyError`.
-4. Offline only: no TMDB, SMB, OpenList or S3 service, and no Storage type beyond the `local`
-   fixtures the module already builds. The capability gap must be produced exactly as
-   `test_capability_gap_hardlink_cleanup_and_declared_read_only` (`:979-1014`) already does — set
-   `organizePolicies[0]["operation"] = "HARD_LINK"` and wrap the run in
-   `patch.object(LocalStorage, "_can_hard_link", return_value=False)`. Do not add a new fake Storage,
-   a new capability flag or a new patch target.
-5. No credential, endpoint, Storage `rootPath` value, header, cookie, private path or raw exception
-   text may enter the tests, the report or the commit.
+## Required Documentation Changes
 
-## Required Test Changes
+### 1. Requirements
 
-Exactly two added tests in `tests/test_configuration_destination_precheck.py`, both inserted
-immediately after `test_destination_precheck_rows_share_one_key_shape_across_branches` (after `:977`)
-and before `test_capability_gap_hardlink_cleanup_and_declared_read_only` (`:979`). Line numbers are
-BASE line numbers.
+Update only the Phase 22.6 CURRENT/status paragraphs around the existing overview, NamingPolicy
+configuration section and Managed Configuration section. Preserve all stable requirement IDs and
+normative product rules. The following stale phrases must have zero matches after the Slice:
 
-1. **`test_multi_sample_all_ready_verdict_is_ready_not_inflated`** — three samples that all project
-   `ready`. Use the three distinct-destination samples of
-   `test_multiple_samples_success_most_severe_verdict_and_distinct_rows` (`:248-272`) but do NOT
-   pre-create any target file, so no sample hits `DESTINATION_EXISTS`. Snapshot the destination tree
-   with `self._tree_snapshot` before the run. Assert, by direct subscript:
-   - `evidence.status.value == "completed"`;
-   - `result["verdict"] == "ready"` — the assertion this Slice exists for;
-   - `result["sampleCount"] == 3` and `result["collisions"] == []`;
-   - `[row["index"] for row in result["items"]] == [0, 1, 2]`;
-   - `[row["projectedOutcome"] for row in result["items"]] == ["ready", "ready", "ready"]`;
-   - every row has `failureCategory is None`, `message is None`, `nextAction is None` and
-     `targetExists` false;
-   - three distinct `destinationPath` values;
-   - `result["authorityGranted"] == "none"`, `set(result["guardMutationCalls"].values()) == {0}`, and
-     the tree snapshot equals the pre-run snapshot.
-2. **`test_multi_sample_capability_gap_overrides_ready_rows`** — two samples that would each project
-   `ready`, run against a `HARD_LINK` organize policy with `_can_hard_link` patched to `False`.
-   Assert, by direct subscript:
-   - `evidence.status.value == "completed"`;
-   - `result["verdict"] == "capability_gap"` — proving the guard, not the severity `max`, decides;
-   - `result["missingStorageCapabilities"] == ["can_hard_link"]` and
-     `result["requiredByOperation"] == "hard_link"`;
-   - `result["sampleCount"] == 2` and `result["collisions"] == []`;
-   - every row still reports `projectedOutcome == "ready"` and `failureCategory is None` — the point
-     being that the run-level verdict overrides uniformly `ready` rows rather than being derived from
-     them;
-   - `result["authorityGranted"] == "none"`, `set(result["guardMutationCalls"].values()) == {0}`, and
-     the destination tree snapshot is byte-identical before and after.
+- `Phase 22.6-E 等待独立 High Review`;
+- `下一 Phase 22.6 Naming/Classification/Organize 配置旅程尚未实现`;
+- the unqualified statement that Phase 22.6 Naming/Classification/Organize remains unfinished.
 
-Both tests must close their repository in a `finally:` block, exactly as every existing test in the
-module does.
+Replace them with precise Slice-vs-Phase language: A-N are independently accepted; Phase 22.6 itself
+is still open pending this documentation Slice and the later Final Closure Audit.
 
-## Required Falsification Probes
+### 2. Product Experience
 
-Mutate the tree one edit at a time, run `tests.test_configuration_destination_precheck`, record the
-actual failing test names and output, restore with `git checkout -- <file>` — not an inverse patch —
-and confirm a clean tree after each probe. Report every probe, including the control.
+Rename the current destination-precheck section so it covers Phase 22.6-E through N. Correct the
+opening single-sample sentence to the real one-or-1-8 input. Add only the missing CURRENT facts needed
+for closure: uniform row contents, run-level verdict directions, and N's accepted proof checkpoint.
+Keep the checked-activation behavior and all failure/recovery text semantically unchanged.
 
-1. Replace the whole `verdict = (...)` expression (`configuration_objects.py:2043-2045`) with the
-   constant `"manual_confirmation_required"` — `test_multi_sample_all_ready_verdict_is_ready_not_inflated`
-   AND `test_multi_sample_capability_gap_overrides_ready_rows` must FAIL. At BASE this mutation leaves
-   the full suite at `Ran 872 tests ... OK`; quote both the BASE and the post-Slice result.
-2. Replace the same expression with the constant `"overwrite_requires_confirmation"` — the all-`ready`
-   test must FAIL, proving the new assertion pins the value and not merely "some verdict".
-3. Drop the capability guard, i.e. `verdict = max(outcomes, key=lambda value: severity[value])` —
-   `test_multi_sample_capability_gap_overrides_ready_rows` must FAIL with `ready` observed where
-   `capability_gap` is required.
-4. Invert the guard to `verdict = "capability_gap" if not any_missing else max(...)` — the all-`ready`
-   test must FAIL, proving the two new tests bracket the guard from both sides.
-5. Replace `max` with `min` — record which tests fail. Expect existing severity tests, not the new
-   ones, to catch this; report the actual names rather than a prediction.
-6. Set the severity map's `"ready"` to `5` — record which tests fail. This is expected to be caught by
-   the existing mixed-severity tests and NOT by the new all-`ready` test (a single distinct outcome
-   makes `max` indifferent); state that honestly rather than claiming new coverage.
-7. Drop the `if row["projectedOutcome"] is not None` filter from the `outcomes` comprehension
-   (`:2040-2042`) — record which tests fail.
-8. Control probe: a comment-only edit inside the multi-sample verdict block must fail no test
-   (`Ran 24 tests ... OK`).
+### 3. Architecture
 
-## Validation
+In the CURRENT destination-precheck narrative, add the exact ordered ten-key row contract and the
+two-sided verdict rule already implemented and tested. Replace the E-only terminal acceptance
+sentence with an A-N Slice-acceptance statement plus an explicit pending Final Closure Audit. In the
+later Configuration CURRENT summary, replace the stale claim that Phase 22.6 remains later work with
+the accepted bounded scope and the six deferred capabilities. Do not alter TARGET architecture.
 
-Run every command and report its actual output:
+## Required Verification
 
-- `.venv/bin/python -m unittest` — exactly `874` tests, `OK`, with only the existing 7 skips.
+Run and report actual output:
+
+- `rg` negative checks for every stale phrase named above and the architecture phrase
+  `Naming/Classification/Organize configuration (Phase 22.6) remain later work`;
+- `rg` positive checks for Phase 22.6-N checkpoint
+  `5884905c2105cf8ff78ff10d1b872875045769d7`, pending Final Closure Audit, the ten ordered row keys,
+  `ready`, `capability_gap`, and all six deferred destination capabilities;
+- Markdown local-link audit using exactly the tracked `.md` paths from `git ls-files -z '*.md'`;
 - `.venv/bin/python -m unittest tests.test_operator_ui
-  tests.test_configuration_destination_precheck tests.test_configuration_destination_activation` —
-  exactly `60` tests, `OK`.
-- `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .`.
-- `.venv/bin/python -m compileall -q mediaflow tests` and `.venv/bin/python -m pip check`.
-- CLI `config validate` on `config/mediaflow.phase13.2.example.json` and
-  `config/strategy.example.json`.
-- Wheel build, isolated install and `scripts/wheel_smoke_test.py` (report the markers; Configuration
-  10 and Runtime 22 must be unchanged).
-- `git diff --check`; FFmpeg/FFprobe audit; business-layer filesystem-mutation audit;
-  `git check-ignore config/alist.json` plus empty `git ls-files` and `git diff --cached` for it;
-  Markdown local-link check (`TASK.md` changes). Report the count of tracked `.md` files from
-  `git ls-files -z '*.md'`, not a `find` sweep that includes `.venv/`.
-- Identity, all anchored on BASE: `git diff --exit-code BASE HEAD -- mediaflow scripts config
-  pyproject.toml docs 影视媒体资源自动整理系统需求规格说明书.md` must be EMPTY;
-  `git diff --numstat BASE HEAD -- mediaflow` must print nothing; `git diff --numstat BASE HEAD` must
-  list only `tests/test_configuration_destination_precheck.py` and `TASK.md`.
-- No `result` size measurement is required: production is byte-identical to BASE, so the Phase 22.6-M
-  measurement (`11049` bytes for the eight-sample worst case, limit `32768`) still stands. Say so
-  explicitly instead of re-deriving it.
-- Secret scan of this Slice's own diff.
+  tests.test_configuration_destination_precheck tests.test_configuration_destination_activation`
+  — exactly 60 tests, OK;
+- `.venv/bin/python -m unittest` — exactly 874 tests, OK, seven skips;
+- `.venv/bin/ruff check .` and `.venv/bin/ruff format --check .`;
+- `.venv/bin/python -m compileall -q mediaflow tests` and `.venv/bin/python -m pip check`;
+- both example `config validate` commands;
+- wheel build and `scripts/wheel_smoke_test.py`, retaining markers 10 / 22;
+- `git diff --check`, FFmpeg/FFprobe audit, business-layer filesystem-mutation audit,
+  `config/alist.json` ignored/untracked/unstaged checks and Slice-diff credential scan;
+- identity against BASE: the complete diff lists only the three named CURRENT documents and
+  `TASK.md`; diffs over `mediaflow`, `tests`, `scripts`, `config`, `pyproject.toml`,
+  `docs/progress.md`, `docs/roadmap.md`, the Chinese requirements specification and `Task/` are empty.
 
-## Non-goals — must not start
+No result-size measurement is required because production is byte-identical. Record that Phase
+22.6-M's measured 11049-byte eight-sample result and 32768-byte limit remain unchanged; do not turn
+the known absence of a destination-side truncation ladder into this Slice's implementation work.
 
-- Any production change at all, including "harmless" reformatting, comments, type hints, extracting
-  the verdict expression into a helper, or renaming `any_missing`, `outcomes` or `severity`.
-- Changing the severity map, adding a verdict value, changing `capability_gap` precedence, run-level
-  field order or names, `failures[0]` selection, the collision table, `boundedSetupText`, the Web
-  table, its column count, labels or styles; touching `service_api.py`, routes, permissions, HTTP
-  statuses, schema markers, tables or migrations.
-- Any documentation change. Both CURRENT paragraphs already describe verdict aggregation. The
-  still-undocumented items recorded at Phase 22.6-M — the uniform ten-key row shape, and the absence
-  of a destination-side truncation ladder (the 32 KiB cap is enforced by raising `ValueError`, with
-  76% headroom measured) — are known, non-blocking and NOT this Slice's business.
-- Adding, renaming, deleting, splitting or reordering any test other than the two new ones, and any
-  change to `tests/test_operator_ui.py` or `tests/test_configuration_destination_activation.py`.
-- Closing the other residual proof gaps recorded in 22.6-H-F1 and 22.6-I: run-level field ORDER of
-  the single-sample `result` stays unpinned, and no test pins the `YES`/`NO` renders outside the
-  determination fields. Both are known and non-blocking.
-- Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing, multiple
-  RecognitionTypes or multiple destination Storages per request, known-media duplicate detection,
-  attachment prechecks and absolute mounted-path display — all six are recorded in `docs/roadmap.md`
-  as deferred out of Phase 22.6 — and any execution or authority change.
-- Amending, squashing or rewriting any preserved rejected checkpoint; no push, force push,
-  `git reset --hard` or destructive `git clean`.
+## Non-goals — Must Not Start
+
+- Phase 22.6 Final Closure Audit or any `PASS / CLOSED` claim for the whole phase.
+- Any Phase 23 capability or any of Roadmap sections 6-8.
+- New production behavior, tests, evidence fields, UI labels, API payloads, routes, permissions,
+  schema/table/migration changes or marker bumps.
+- Closing non-blocking proof observations: single-sample run-level field order, other `YES`/`NO`
+  render sites, or the semantically redundant non-null outcomes filter.
+- Adding a destination-result truncation ladder or changing the 32 KiB limit.
+- Implementing any of the six deferred destination capabilities, Provider switching, generic Task
+  resume, per-item Processing Checkpoint recovery, manual organize or unattended execute.
+- Push, force push, amend, squash, history rewrite, `git reset --hard` or destructive clean.
 
 ## Closure Checklist
 
-- [x] Zero production change: `git diff --numstat BASE HEAD -- mediaflow` prints nothing, and the
-      BASE identity diff over `mediaflow scripts config pyproject.toml docs` and the requirements
-      specification is EMPTY.
-- [x] `test_multi_sample_all_ready_verdict_is_ready_not_inflated` exists, asserts
-      `verdict == "ready"` on a three-sample all-`ready` offline run, and pins every row's
-      `projectedOutcome`, `failureCategory`, `message` and `nextAction` by direct subscript.
-- [x] `test_multi_sample_capability_gap_overrides_ready_rows` exists, asserts
-      `verdict == "capability_gap"` with `missingStorageCapabilities == ["can_hard_link"]` and
-      `requiredByOperation == "hard_link"` while every row is still `projectedOutcome == "ready"`.
-- [x] Both new runs proved read-only: all `guardMutationCalls` `0`, `authorityGranted` `"none"`,
-      destination tree snapshot byte-identical before and after.
-- [x] No existing test, helper or assertion was renamed, deleted, weakened, reordered or added to.
-- [x] Full suite `874` `OK (skipped=7)`, focused `60` `OK`.
-- [x] All eight probes ran one at a time with `git checkout --` restores, actual failing test names
-      recorded; probes 1-4 failed their named new tests, probes 5-7 reported their real observed
-      results without overclaiming, and the control failed nothing.
-- [x] Static, dependency, CLI, wheel, schema-marker, whitespace, FFmpeg, mutation-boundary, Markdown
-      link, alist-ignore and secret gates all pass.
-- [x] One coherent commit at the end; no push.
-- [x] Completion Report filled in with actual command output.
+- [ ] Only the three named CURRENT documents and `TASK.md` changed.
+- [ ] Every stale phrase has zero matches; every required positive CURRENT fact is present.
+- [ ] A-N are recorded as Slice PASS while Phase 22.6 remains open pending Final Closure Audit.
+- [ ] Product Experience describes the real one-or-1-8 entry, visible state, outcomes and recovery.
+- [ ] Architecture records the exact ten-key row order and two-sided verdict rule without inventing
+      runtime behavior.
+- [ ] All six deferred destination capabilities and broader later-work boundaries remain explicit.
+- [ ] Production/tests/schema/roadmap/progress/specification/history are byte-identical to BASE.
+- [ ] Focused 60 and full 874/7-skips suites pass; all static, package, Markdown and safety gates pass.
+- [ ] One coherent documentation-only checkpoint is created; no push.
+- [ ] Completion Report records BASE, exact diff, actual commands/results and remaining Final Closure
+      gate.
 
 ## Completion Report
 
-> Fill this in at the checkpoint. Report what actually happened, not what was intended. If any item
-> was skipped or failed, say so explicitly.
+> Fill this in at the checkpoint. Report actual results and any deviation. Do not mark Phase 22.6
+> closed and do not define Phase 23.
 
 ### Changed Files
 
-- `tests/test_configuration_destination_precheck.py`: exactly two new offline tests; no existing
-  test/helper/assertion changed.
-- `TASK.md`: status, closure checklist and Completion Report; the existing verdict code excerpt was
-  formatter-normalized without semantic change so the repository format gate passes.
-
 ### Implemented
-
-- Added the all-`ready` three-sample proof (`verdict == "ready"`, row shape, distinct destinations,
-  collision/read-only assertions).
-- Added the two-sample HardLink capability-gap proof (`verdict == "capability_gap"` while rows stay
-  `ready`, required capability fields and read-only assertions).
-- No production, Web, API, schema-marker, route, permission, migration or product-documentation
-  behavior changed.
 
 ### Tests
 
-- `.venv/bin/python -m unittest tests.test_configuration_destination_precheck` — `Ran 24 tests ...
-  OK`.
-- `.venv/bin/python -m unittest tests.test_operator_ui tests.test_configuration_destination_precheck
-  tests.test_configuration_destination_activation` — `Ran 60 tests ... OK`.
-- `.venv/bin/python -m unittest` — `Ran 874 tests ... OK (skipped=7)`.
-- The focused and full runs emitted only pre-existing SQLite `ResourceWarning` messages.
-
 ### Test Results
 
-The two new assertions pass in the shipped implementation. Full and focused totals are exactly
-874/60 with the existing seven skips. The Phase 22.6-M bounded-result measurement remains authoritative
-because production is byte-identical to BASE: 11049 bytes for the eight-sample worst case against
-the 32768-byte limit; no remeasurement was needed.
-
-### Falsification Probes
-
-Each probe ran alone against the 24-test destination-precheck module. Every production mutation was
-restored with `git checkout -- mediaflow/application/configuration_objects.py`, and the intended
-test-only diff remained clean after each restore.
-
-| # | Mutation | Actual result |
-| - | -------- | ------------- |
-| 1 | Whole verdict expression replaced by `"manual_confirmation_required"` | BASE evidence: full `872` remained `OK`; post-Slice `24` had exactly the two new tests fail. |
-| 2 | Whole verdict expression replaced by `"overwrite_requires_confirmation"` | `4` failures: both new tests plus `test_multi_sample_verdict_is_most_severe_not_first_or_last_sample` and `test_multiple_samples_success_most_severe_verdict_and_distinct_rows`. |
-| 3 | Capability guard dropped (`max(...)` unconditionally) | `test_multi_sample_capability_gap_overrides_ready_rows` failed with observed `ready`. |
-| 4 | Guard inverted (`if not any_missing`) | `4` failures: both new tests plus the two existing mixed-severity tests above. |
-| 5 | `max` replaced by `min` | `3` existing failures: `test_multi_sample_top_level_keys_describe_the_first_sample`, `test_multi_sample_verdict_is_most_severe_not_first_or_last_sample`, `test_multiple_samples_success_most_severe_verdict_and_distinct_rows`. |
-| 6 | Severity map changed to `"ready": 5` | The same `3` existing mixed-severity tests failed; the new all-`ready` test passed, as a single outcome is indifferent to the numeric rank. |
-| 7 | `outcomes` `None` filter dropped | `Ran 24 tests ... OK`; no row in this module supplied a `None` projected outcome. |
-| 8 | Comment-only edit in the verdict block (control) | `Ran 24 tests ... OK`. |
+### Documentation Evidence
 
 ### Validation Evidence
 
-- `.venv/bin/ruff check .` — `All checks passed!`; `.venv/bin/ruff format --check .` — `308 files
-  already formatted`.
-- `.venv/bin/python -m compileall -q mediaflow tests` passed; `.venv/bin/python -m pip check` —
-  `No broken requirements found.`
-- Both example `config validate` commands returned `Configuration valid` (the expected rule/policy
-  counts were printed).
-- `pip wheel . --no-deps --no-build-isolation -w dist` and `scripts/wheel_smoke_test.py` both exited
-  `0`; smoke output retained Configuration schema `10` and Runtime schema `22`.
-- `git diff --check` passed. FFmpeg/FFprobe audit and business-layer direct filesystem mutation
-  audit returned no matches/findings.
-- `git check-ignore config/alist.json` returned `config/alist.json`; `git ls-files` and its staged
-  diff were empty.
-- Markdown audit used tracked paths from `git ls-files -z '*.md'`: `120` files, `25` local links,
-  `0` broken links.
-- Identity against BASE `dbde27979ed964614a6cfd51ad4f9338fce652f4`: the forbidden
-  `mediaflow scripts config pyproject.toml docs` plus requirements-specification diff was empty;
-  `git diff --numstat BASE -- mediaflow` printed nothing; the complete diff listed only `TASK.md`
-  and `tests/test_configuration_destination_precheck.py`.
-- `grep -n 'get("nextAction")' tests/test_configuration_destination_precheck.py` printed nothing;
-  Slice credential/endpoint scan reported `0` hits.
-
 ### Decisions
-
-- Kept the implementation test-only as required; no production workaround or refactor was needed.
-- Kept all probes, fixtures and validation offline and read-only. No push was performed.
 
 ### Remaining Work
 
-- Await independent High review of this checkpoint. No next Slice or Phase work is authorized by
-  this report.
-
 ### Risks
-
-- The existing test process emits SQLite `ResourceWarning` messages; they are non-failing and
-  unchanged by this Slice.
-- Probe 7 survives because the current module has no `None` projected-outcome row; this is recorded
-  honestly and does not change shipped behavior.
