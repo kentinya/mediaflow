@@ -229,6 +229,17 @@ Phase 22.6-A 至 22.6-G 的全部已关闭 checkpoint、被保留的被拒 check
 `origin/main` 与本地 `main` 保持一致。Slice 级关闭仍不要求推送；Phase 22.6 的收口关闭仍需
 phase-level Final Closure Audit，Phase 22.6-H 的 checkpoint 在获得新授权前仍只保留在本地。
 
+2026-08-29 在新的显式操作员授权（"推送到github"）下执行了 Phase 22.6 的第二次推送：`main` 快进推送至
+`origin/main`（`a9473c6` → `af9ca9a`，共 10 个 commit），历史保持线性，未 amend/squash/改写。本次推送把
+Phase 22.6-H、22.6-H-F1、22.6-I、22.6-J、22.6-K 的 checkpoint、它们的审核记录，以及 22.6-K 的 PASS 记录与
+Phase 22.6-L 的 TASK 定义（`af9ca9a`）一并送上 `origin/main`。被保留的被拒 Phase 22.6-H checkpoint
+`d8c2ae04e578955ddbbd29c413f235bf4cf08f42` 仅作为祖先随历史进入远端，并非作为接受被推送，仍然是被拒状态。
+推送前复核：工作树干净、`git diff --check` 干净、`config/alist.json` 仍被忽略且未跟踪且未被任何被推送
+commit 触碰、被推送 `mediaflow`/`scripts`/`config`/`pyproject.toml` diff 中无凭据、token、私有端点、
+header、cookie 或绝对用户路径。`origin/main` 与本地 `main` 现同为 `af9ca9a`。Slice 级关闭仍不要求推送；
+本次推送满足了 Phase 22.6 的 push gate，但**不构成 Phase 关闭**，phase-level Final Closure Audit 仍未执行。
+上文 2026-08-28 段落中"Phase 22.6-H checkpoint 仍只保留在本地"的说法按当时事实记录，由本段取代。
+
 Phase 22.6-H checkpoint `d8c2ae04e578955ddbbd29c413f235bf4cf08f42` 已于 2026-08-28 经独立 High 审核判定
 **FIX REQUIRED**，被拒 checkpoint 保留且未推送，`main` 仍只领先 `origin/main` 一个 commit；Phase 22.6-H
 未关闭，Phase 22.6 仍未关闭。本次审核接受的部分包括：恰好十个允许文件（+1338/-71）且
@@ -878,9 +889,9 @@ re-review，判定 **PASS / CLOSED**。Phase 22.6-B 亦已于 2026-08-28 在
 `5e2da5c634f1fa72a40e5f50b035260418fe1a37` 通过独立 High Review，判定 **PASS / CLOSED**。
 下一正式 Task 是 **Phase 22.6-L — Each Failing Destination Precheck Sample Carries Its Own Recovery
 Action**；Phase 22.6-A 至 22.6-K 已全部通过独立 High Review 判定 **PASS / CLOSED**（22.6-E、22.6-G、
-22.6-H 各经其 F1 修正接受，被拒 checkpoint 与其 FIX REQUIRED 记录保留不改写）。22.6-A 至 22.6-G 已推送
-`origin/main`；22.6-H 至 22.6-K 的 checkpoint 与审核记录均未推送，`main` 领先 `origin/main`，Phase 22.6
-的 phase-level Final Closure Audit 仍需先满足 push gate 并取得新的显式授权。不得借此提前开展 Provider
+22.6-H 各经其 F1 修正接受，被拒 checkpoint 与其 FIX REQUIRED 记录保留不改写）。22.6-A 至 22.6-K 的全部
+checkpoint 与审核记录已推送 `origin/main`（2026-08-29 第二次授权推送，`main` 与 `origin/main` 同为
+`af9ca9a`），Phase 22.6 的 phase-level Final Closure Audit 仍未执行，推送本身不构成 Phase 关闭。不得借此提前开展 Provider
 switching、通用 Task resume、兄弟项重放、
 逐项 Processing Checkpoint 恢复或
 更宽的自动化。Interval/Cron 仍只允许 scan/preview；
