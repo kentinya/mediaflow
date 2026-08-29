@@ -2238,6 +2238,114 @@ Push: NOT REQUIRED BEFORE INDEPENDENT REVIEW
   request, known-media duplicate detection, attachment prechecks and absolute mounted-path display stay
   deferred out of Phase 22.6, and no execution or authority change may start.
 
+## Phase 22.6-M High Review Result (2026-08-29): PASS
+
+- Status: PASS / CLOSED; reviewed checkpoint SHA: `03e64d40023753be13b2cce18b8c5a63492d344a`
+  (commit `feat(config): make destination sample rows uniform`); High Audit: PASS — 2026-08-29,
+  reviewed against the Phase 22.6-M `TASK.md`, BASE `32e6e76f348c5c10d08ca247eaf01112aa109f0c`, the
+  real code state and my own probes. The preserved rejected SHAs
+  `d8c2ae04e578955ddbbd29c413f235bf4cf08f42`, `b9cc35e2677a35920042b5695f87b50a80025ef0`,
+  `7353b0d22497e6e3e596c93c7052eea34daf27df`, `90ce13a6c6c39912dd389f71a1189314ff24eb5d`,
+  `08dfd4f921728755209b6d52347d28f221121c47` and
+  `74919a33ac5ec9cde5b104a591ef3fdfb25a1bf3` remain unmodified. Push: NOT PERFORMED; `main` is five
+  commits ahead of `origin/main` and no push authorization was requested or used.
+- Scope held exactly. `git diff --numstat 32e6e76 HEAD` lists three files: `TASK.md` (+83/-10),
+  `mediaflow/application/configuration_objects.py` (+2/-0) and
+  `tests/test_configuration_destination_precheck.py` (+165/-1). The production numstat is exactly
+  `2	0`, and `git diff --exit-code 32e6e76 HEAD -- mediaflow/domain mediaflow/infrastructure
+  mediaflow/interfaces mediaflow/cli.py scripts config pyproject.toml docs` is EMPTY, so the Web
+  surface (`operator_ui.py`), both CURRENT documents, the API, the CLI, the packaging metadata and
+  the review-owned documents are byte-identical; the other two test modules are untouched, and
+  markers stay Configuration 10 and Runtime 22.
+- The production change is the two mandated lines and nothing else: `"nextAction": None,` added
+  after `"message": None,` in the single-sample completed-run row (`:1779`) and in
+  `_probe_destination_sample`'s row (`:2201`), zero deletions. An AST audit of the file at BASE and
+  at HEAD returns identical call-name sets (added `[]`, removed `[]`), so no call, no branch and no
+  storage operation was introduced; the business-layer mutator sweep still finds only the four
+  pre-existing Storage-interface `.rename()`/`.move()` sites, all in files this Slice never opens.
+- The ten-key claim is complete, not merely sampled. Every `result.items[]` row originates at one of
+  four sites — the single-sample inline row (`:1768-1780`), `_probe_destination_sample`,
+  `_destination_sample_failure_row` (`:2231-2244`) and `_destination_sample_resolution_row`
+  (`:2246-2259`) — assembled at `:2051` and wrapped by `_destination_multi_result` (`:2265-2274`);
+  `"items":` appears at `:1768`, `:2051` and `:2272` only. My own offline runs (single-sample,
+  all-success eight-sample, all-failure eight-sample, collision and multi-Storage) report
+  `distinct row shapes = 1` with exactly `index`, `relativeDestination`, `destinationPath`,
+  `targetExists`, `plannerConflicts`, `projectedOutcome`, `proposedRelativeDestination`,
+  `failureCategory`, `message`, `nextAction` in that order.
+- Tests match the Task exactly. The single authorized deletion is the `.get("nextAction")` →
+  subscript replacement at `:648`; `grep 'get("nextAction")'` now returns nothing. The five
+  resolution-row subscript assertions sit after `:785`, the single-sample `row["nextAction"]`
+  assertion after `:810`, and the new
+  `test_destination_precheck_rows_share_one_key_shape_across_branches` (`:821-977`) drives three
+  offline `tempfile.TemporaryDirectory()` runs, asserts `tuple(row.keys())` per row, and pins
+  `nextAction` two-sidedly (one failure row `str`, one success row `None`) plus branch identity
+  (`completed`, `multiple_destination_storages`). The module goes 21 → 22 tests; full suite
+  `Ran 872 tests ... OK (skipped=7)`; focused `Ran 58 tests ... OK` (29 + 22 + 7).
+- Proof strength verified by my own fourteen probes plus a control, one mutation at a time with
+  `git checkout --` restore and a clean-tree check after each. Deleting the new single-sample key
+  fails the shape test and ERRORS the single-sample `sampleCount`/`items`/`collisions` test with
+  `KeyError`; deleting the new probed-row key fails the shape test and
+  `..._carry_their_own_next_action`; deleting the resolution row's `"message": None` now fails the
+  shape test and `test_multiple_destination_storages_is_bounded_failure` — the exact mutation that
+  passed silently at 22.6-L, so that recorded observation is closed. Setting the resolution row's
+  `targetExists` to `True` or its `nextAction` to the default sentence fails the named bounded-
+  failure test; a spurious `debugNote` key and every key-order swap I tried (resolution, probed and
+  single-sample rows) fail the shape test; `""` instead of `None` at either inline site fails that
+  site's own test, proving values and not only key presence; deleting the failure row's `message`
+  fails five tests and deleting its `nextAction` fails two, so the earlier proofs were not
+  displaced. The comment-only control is `Ran 22 tests ... OK`. No probe passed silently, and the
+  probes jointly show the one shape test observes all four builders.
+- Gates re-run independently at the checkpoint: `ruff check .` `All checks passed!`;
+  `ruff format --check .` `308 files already formatted`; `compileall -q mediaflow tests`;
+  `pip check` `No broken requirements found.`; both CLI `config validate` runs print
+  `Configuration valid`; wheel built with `pip wheel --no-deps`, installed into a throwaway venv,
+  `scripts/wheel_smoke_test.py` exit 0 reporting `Supported schema: 22`, `Runtime schema: 22`,
+  `Schema: 22`; `git diff --check 32e6e76 HEAD` clean; FFmpeg/FFprobe audit no matches;
+  `git check-ignore config/alist.json` returns the path with zero tracked and zero staged entries;
+  Markdown local-link check 120 tracked files, 25 local links, 0 broken; secret scan of the Slice
+  diff finds only the words "secret"/"alist" inside `TASK.md` prose describing these gates — no
+  credential, token, endpoint, header, cookie or absolute user path.
+- Size evidence independently reproduced. The domain entity enforces the cap with
+  `json.dumps(value, ensure_ascii=False, separators=(",", ":"))` against
+  `CONFIGURATION_STRATEGY_RESULT_LIMIT` (`mediaflow/domain/configuration_management.py:596-598`),
+  which is the metric I measured. The report's `11049` bytes reproduces exactly for eight samples
+  with 200-character ASCII titles, all `completed`. The added key costs 144 bytes for eight
+  `null` rows and 704 bytes when all eight rows fail (longest action string 74 bytes; analytic worst
+  case 720). The saturating worst case I could construct is 25,035 bytes — eight long CJK titles,
+  where the destination fields stop growing at 408 characters — 76 % of the 32,768-byte cap.
+- Non-blocking observations, none of them closure conditions. The report's Markdown audit says 125
+  files; the repository has 120 tracked `.md` files and `find . -name '*.md'` including `.venv/`
+  returns exactly 125, so the count includes five dependency-vendored files while the link count
+  (25) and 0 broken links are correct. My own Phase 22.6-M Task estimated "roughly 22 bytes per
+  row" for the added key; measured cost is 18 bytes per `null` row and up to 90 per failure row, so
+  the implementer's measurement is the accurate one and the conclusion is unchanged. The shape test
+  guards `assertGreaterEqual(len(rows), 6)` where the fixture produces exactly 6, a floor rather
+  than an exact count — not vacuous, since every row is asserted individually and every probe bites.
+  The destination result has no truncation ladder comparable to the recognition path's
+  candidate-shedding loop (`configuration_objects.py:3382-3423`); the cap is enforced by a raising
+  `ValueError`, and at 76 % headroom that is pre-existing and outside this Slice. Finally,
+  `docs/architecture.md:1158-1160` is now literally true for all four builders rather than slightly
+  ahead of the code, so byte-identical documentation was the right call, though the uniform ten-key
+  shape itself is still undocumented.
+- One newly measured residual gap, which becomes the next Slice. Replacing the whole multi-sample
+  verdict expression (`configuration_objects.py:2043-2045`) with the constant
+  `"manual_confirmation_required"` leaves the full suite green (`Ran 872 tests ... OK`), because no
+  multi-sample run in which every sample is `ready` asserts `verdict == "ready"` and no multi-sample
+  run asserts the `capability_gap` override; the `min`-instead-of-`max` and constant-`"ready"`
+  directions are both caught by three existing tests. I verified read-only that both missing
+  directions are reachable offline: three distinct ready samples yield `verdict == "ready"`, and a
+  two-sample HARD_LINK run with `_can_hard_link` patched to `False` yields
+  `verdict == "capability_gap"` with `missingStorageCapabilities == ["can_hard_link"]` while every
+  row's `projectedOutcome` is `ready`. The other residual gaps recorded in 22.6-H-F1 and 22.6-I are
+  unchanged.
+- Verdict: **PASS**. Phase 22.6-M is **CLOSED** and Phase 22.6 remains open. The next legal Slice is
+  **Phase 22.6-N** (prove the multi-sample verdict in both directions: two added evidence tests,
+  zero production lines, byte-identical Web and documentation), now written to `TASK.md`. Remote
+  SMB/OpenList/S3 destination prechecks, mutation-based capability probing, multiple
+  RecognitionTypes or destination Storages per request, known-media duplicate detection, attachment
+  prechecks and absolute mounted-path display stay deferred out of Phase 22.6, and no execution or
+  authority change may start.
+
 ## Completed
 
 - Dependency-free Python bootstrap and quality configuration
