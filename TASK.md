@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 23.3
 Parent Slice: 23 — Stage-Aware Per-Item Recovery
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: e9a68986d50ec8c0dfb651738574f48a5c8d05bf
 Difficulty: High
 Test Level: T4
@@ -255,6 +255,12 @@ TMDB service or production data.
 
 ### Changed Files
 
+- `mediaflow/infrastructure/sqlite_runtime.py` — integrated pending
+  `RECOVERY_CONTINUATION` Job cancellation with the continuation and parent
+  recovery-request terminal transition in the same SQLite transaction; running
+  continuations retain cooperative cancellation behavior.
+- `tests/test_recovery_continuation.py` — added production-path coverage for
+  pending cancellation and injected admission/terminal-transition rollback.
 - `mediaflow/domain/recovery_continuation.py` (new) — `RecoveryContinuationStatus`,
   `RecoveryContinuationReason`, `RecoveryContinuationError`, the durable `RecoveryContinuation`
   dataclass (continuation id, request id, source task/item ids, bound checkpoint version, pinned
@@ -301,6 +307,15 @@ TMDB service or production data.
 
 ### Implemented
 
+- Fixed the B-review blocker where cancelling a pending recovery continuation
+  Job left the continuation queued and its parent recovery request active.
+  `AutomationJobService.cancel()` now durably cancels the queued continuation
+  and resolves its parent request to `cancelled` atomically with the Job
+  cancellation.
+- Added rollback coverage proving a failure while creating the Job/continuation
+  pair leaves neither admission row, and a failure while resolving terminal
+  state leaves the continuation, parent request, and original evidence
+  unchanged.
 - An active admitted recovery request is continued exactly once: a durable continuation is bound to
   the same item, the confirmed checkpoint version, the same Storage-relative source scope and the
   same pinned configuration snapshot pair, and carries an analysis-only authority statement.
@@ -333,6 +348,17 @@ TMDB service or production data.
 
 ### Tests and Results
 
+- `.venv/bin/python -m unittest tests.test_recovery_continuation` —
+  **PASS** (15 tests, including pending Job cancellation and admission/terminal
+  atomic rollback).
+- `.venv/bin/python -m unittest discover -s tests` — **PASS** (911 tests; 7
+  pre-existing real SMB/OpenList/S3/endurance external-service acceptance
+  gates skipped).
+- `.venv/bin/ruff format --check .` / `.venv/bin/ruff check .` —
+  **PASS**.
+- `.venv/bin/python -m compileall -q mediaflow tests` / `.venv/bin/pip check`
+  / both example `config validate` commands / ffprobe/ffmpeg audit /
+  `git diff --check` — **PASS**.
 - `python -m unittest tests.test_recovery_continuation` — **PASS** (12 tests: full single-item
   pinned DryRun continuation, uncertain-effects refusal, stale/duplicate/inactive, concurrent
   single-continuation, queue full, snapshot-unavailable, worker snapshot mismatch, worker preflight
@@ -356,6 +382,13 @@ TMDB service or production data.
 
 ### Decisions
 
+- Pending recovery cancellation is handled only for queued continuation rows;
+  running work continues through the existing Job heartbeat/cooperative
+  cancellation path, preserving fenced worker semantics.
+- Job, continuation, and parent-request cancellation are updated under the
+  existing `BEGIN IMMEDIATE` transaction. Injected failures are tested at both
+  admission and terminal resolution boundaries to prove rollback without
+  orphaned linkage or lost original evidence.
 - The continuation is bound to the checkpoint version the operator confirms at submission (the
   version that includes the active admitted request), and the repository re-projects the same
   bounded context inside an IMMEDIATE transaction — the same optimistic-concurrency pattern as the
@@ -396,14 +429,32 @@ TMDB service or production data.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 4d01472ef195f5916814ea0dc48c96c59cf0c12a
+Head SHA: 856f0c500d0888cb345da7fedb3933904b9ffdd0
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: e9a68986d50ec8c0dfb651738574f48a5c8d05bf..4d01472ef195f5916814ea0dc48c96c59cf0c12a
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- Pending Job cancellation does not terminate the recovery continuation or its parent request.
+  Evidence: after creating a real admitted continuation, invoking the production
+  `AutomationJobService.cancel(job_id)` path produced `Job=cancelled` while the same persisted
+  `RecoveryContinuation` remained `queued` and its `RecoveryRequest` remained `pending`/active.
+  The Worker will never claim that cancelled Job, so the item is permanently stuck and cannot be
+  decided again. Integrate `RECOVERY_CONTINUATION` with the existing atomic Job-cancellation path so
+  pending cancellation durably records a cancelled continuation and resolves the parent request;
+  preserve the existing cooperative/fenced semantics for running work and keep all original item,
+  Result and recovery evidence.
+- The Task's Required Tests were not completed for the terminal/atomic lifecycle. Evidence:
+  `.venv/bin/python -m unittest tests.test_recovery_continuation` passes 12 tests, but that suite has
+  no cancelled-continuation test and no injected mid-submission or mid-terminal-transition rollback
+  test, despite explicitly requiring `prepare / started / finish / failed / cancelled` and
+  transactional atomicity. Add production-path coverage that catches the pending-cancellation defect
+  above (plus cooperative running cancellation where applicable), and inject failures proving
+  {Job + continuation admission} and {continuation terminal state + parent-request resolution} each
+  roll back without an orphan Job, partial linkage or lost original evidence.
