@@ -1712,10 +1712,12 @@ APP_JS = b"""(() => {
       const batches = Array.isArray(data.recovery_batches) ? data.recovery_batches : [];
       if (batches.length) {
         detailContent.append(text('h3', 'Recovery batches'), table(
-          ['Batch', 'Status', 'Selected', 'Queued', 'Running', 'Completed', 'Failed', 'Next action'],
+          ['Batch', 'Status', 'Selected', 'Queued', 'Running', 'Completed', 'Failed',
+            'Ignored', 'Unchanged', 'Next action'],
           batches.map(batch => [batch.batch_id, batch.status, batch.selected_count,
             batch.counts && batch.counts.queued, batch.counts && batch.counts.running,
             batch.counts && batch.counts.completed, batch.counts && batch.counts.failed,
+            batch.counts && batch.counts.ignored, batch.counts && batch.counts.unchanged,
             batch.next_action]),
           index => showRecoveryBatch(batches[index].batch_id)));
       }
@@ -1761,9 +1763,32 @@ APP_JS = b"""(() => {
       clear(detailContent); detailContent.append(text('h2', 'Recovery batch detail'),
         scalarDetails(data, ['items', 'counts']));
       detailContent.append(cards(Object.entries(data.counts || {}).map(([key, value]) => [key, value])));
-      detailContent.append(table(['Item', 'Status', 'Reason', 'Error', 'Next action'],
-        (data.items || []).map(item => [item.source_item_id, item.status,
-          item.reason || '-', item.error || '-', item.next_action || '-'])));
+      const batchItems = data.items || [];
+      detailContent.append(table(
+        ['Item', 'Status', 'Checkpoint version', 'Request', 'Continuation', 'Job',
+          'New Task', 'New Result', 'Reason', 'Error', 'Next action'],
+        batchItems.map(item => [item.source_item_id, item.status,
+          item.checkpoint_version || '-', item.request_id || '-',
+          item.continuation_id || '-', item.job_id || '-', item.new_task_id || '-',
+          item.new_result_id || '-', item.reason || '-', item.error || '-',
+          item.next_action || '-']),
+        index => showTaskItem(batchItems[index].source_task_id,
+          batchItems[index].source_item_id)));
+      const linked = batchItems.filter(item => item.new_task_id);
+      if (linked.length) {
+        const links = text('div', '', 'choices');
+        linked.forEach(item => {
+          links.append(actionButton(
+            `Open linked Task/Result for ${item.source_item_id}`,
+            () => showTask(item.new_task_id)));
+          if (item.job_id) {
+            links.append(actionButton(
+              `Open linked Job for ${item.source_item_id}`,
+              () => showJob(item.job_id)));
+          }
+        });
+        detailContent.append(text('h3', 'Linked DryRun Tasks/Results'), links);
+      }
       const stranded = (data.items || []).some(item => item.status === 'selected');
       if (stranded) {
         const controls = text('div', '', 'choices');

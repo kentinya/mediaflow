@@ -867,7 +867,14 @@ class SQLiteTaskRepository:
             items = tuple(self._recovery_batch_item(row) for row in rows)
             unchanged = self._connection.execute(
                 """SELECT COUNT(*) AS count FROM task_items
-                WHERE task_id=? AND status IN ('success', 'skipped', 'dry_run', 'ignored')
+                WHERE task_id=? AND status IN ('success', 'skipped', 'dry_run')
+                AND item_id NOT IN
+                (SELECT source_item_id FROM recovery_batch_items WHERE batch_id=?)""",
+                (batch_row["source_task_id"], batch_id),
+            ).fetchone()["count"]
+            ignored = self._connection.execute(
+                """SELECT COUNT(*) AS count FROM task_items
+                WHERE task_id=? AND status = 'ignored'
                 AND item_id NOT IN
                 (SELECT source_item_id FROM recovery_batch_items WHERE batch_id=?)""",
                 (batch_row["source_task_id"], batch_id),
@@ -885,6 +892,7 @@ class SQLiteTaskRepository:
             status,
             items,
             unchanged,
+            ignored_count=ignored,
         )
 
     def list_recovery_batches(

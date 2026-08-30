@@ -179,16 +179,20 @@ media.
 
 - `mediaflow/application/recovery_batch.py` — failed-item batch admission through the shared
   recovery gate, per-child isolation, request linkage, bounded actor redaction and reload resume.
-- `mediaflow/domain/recovery_batch.py` — durable child outcome fields and parent count derivation.
+- `mediaflow/domain/recovery_batch.py` — durable child outcome fields and parent count derivation,
+  including a separate durable ignored-sibling count.
 - `mediaflow/infrastructure/sqlite_runtime.py` — continuation-backed child result/status projection
-  and parent updated-at reconciliation without a schema bump.
+  and parent updated-at reconciliation without a schema bump; ignored siblings are counted
+  separately from unchanged (success/skipped/dry_run) siblings.
 - `mediaflow/interfaces/service_api.py` — authenticated batch resume POST with the same
   `SUBMIT_DRY_RUN` RBAC/error conventions and reloaded per-item evidence.
 - `mediaflow/interfaces/operator_ui.py` — batch detail explicit resume confirmation for stranded
-  `selected` children.
+  `selected` children; batch summary and detail render ignored/unchanged counts and per-child
+  checkpoint/linkage evidence with navigation to the source checkpoint and linked Task/Result/Job.
 - `tests/test_recovery_batch.py` — multi-child Worker independence, mixed parent summary,
   continuation failure isolation, stranded-child resume (application and API/Web surface),
-  API/Web assertions and secret-free evidence coverage.
+  ignored-sibling reconciliation, completed-child API/Web evidence coverage, API/Web assertions
+  and secret-free evidence coverage.
 - Existing Task implementation files from the prior checkpoint remain part of this Task: the
   continuation batch API/Web surfaces and atomic batch child linkage.
 
@@ -212,13 +216,20 @@ media.
   surface: `POST /api/v1/recovery-batches/{id}/resume` re-drives only `selected` children through
   the same shared admission, and the batch detail renders an explicit-confirmation resume action
   when stranded children exist.
+- The parent summary now reconciles ignored siblings separately from unchanged siblings: the
+  domain exposes `ignored_count`, counts include an `ignored` key, the repository counts
+  `ignored` TaskItems independently of success/skipped/dry_run, and the Task detail batch table
+  renders both columns without double counting.
+- The batch detail renders each child's checkpoint version, request/continuation/Job linkage,
+  linked new Task/Result and next action, with row navigation to the source checkpoint and
+  buttons opening the linked DryRun Task/Result and Job after completion.
 
 ### Tests and Results
 
-- `.venv/bin/python -m unittest tests.test_recovery_batch` — **PASS** (33 tests).
+- `.venv/bin/python -m unittest tests.test_recovery_batch` — **PASS** (35 tests).
 - Related recovery, checkpoint, automation, migration, persistence and API suites — **PASS** (127
   tests).
-- `.venv/bin/python -m unittest discover -s tests` from the repository root — **PASS** (944 tests;
+- `.venv/bin/python -m unittest discover -s tests` from the repository root — **PASS** (946 tests;
   7 external SMB, OpenList, S3 and endurance gates skipped) after the pre-existing ignored local
   `.mediaflow/mediaflow.sqlite3` schema-27 database was removed.
 - `.venv/bin/ruff format --check .` / `.venv/bin/ruff check .` — **PASS**.
@@ -244,6 +255,10 @@ media.
 - Batch resume is the same service method used at submit time: it re-drives only children that are
   durably `selected`, leaves every other child's evidence untouched, and never grants execute,
   overwrite, delete or rollback authority.
+- Ignored siblings are a distinct reconciliation category from untouched siblings, matching the
+  existing TaskItem `ignored` status, and are excluded from `unchanged` to avoid double counting.
+- Batch detail evidence reuses the API-provided per-item document fields and existing
+  `showTask`/`showTaskItem`/`showJob` views rather than duplicating a parallel result view.
 
 ### Remaining In-Slice Work
 
@@ -263,47 +278,42 @@ media.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 3f710617df27b8e1cd39575a81b32bbb69c8c335
+Head SHA: PENDING CHECKPOINT COMMIT
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 43d42f3e4f054ca217773550410ecc3c805d7620 (536f600..43d42f3)
+Reviewed: fe3063149fc591cdeabb783b3be3edc01a07f395..3f710617df27b8e1cd39575a81b32bbb69c8c335
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-Verified independently: `tests.test_recovery_batch` (32 PASS = 17 batch tests + 15 imported
-single-item helper tests), the related recovery/UI/automation/persistence/security suites
-(independently re-run, PASS), the full regression `python -m unittest discover -s tests`
-(943 PASS, 7 external SMB/OpenList/S3/endurance gates skipped), ruff format/check, compileall,
-pip check and `git diff --check`. Concurrent duplicate batch submission was independently
-reproduced (4 threads → 1 queued + 3 refused, exactly one continuation). No credential, token,
-private endpoint or private path entered the reviewed range; `config/alist.json` remains ignored
-and untracked. All three previously listed blockers are closed except the residual below.
-
 The following Acceptance Criteria are not satisfied.
 
-1. **A child left durably `selected` after reload has no operator-reachable recovery action,
-   and that path has no real test.** (AC 7, AC 9, RO-6.)
-   Evidence: `_drive` deliberately leaves a child `selected` when
-   `update_recovery_batch_item` raises (mediaflow/application/recovery_batch.py), and after
-   reload that child carries no reason/error and only the generic default next action. The
-   only re-drive path, `RecoveryBatchContinuationService.resume`, is not exposed: the API has
-   only GET `/api/v1/recovery-batches/{id}` and `showRecoveryBatch` renders no action.
-   `test_resume_finishes_orphaned_selected_children` never creates an orphan (its child is
-   admitted to `queued` during submit), so the resume path is not covered. Independently
-   reproduced: a one-shot injected persistence failure leaves the child `selected` with no
-   reason/next action after reload; calling `resume()` re-drives it correctly.
-   Required: expose resume through the same authenticated API/Web batch journey (e.g.,
-   POST `/api/v1/recovery-batches/{id}/resume` under `SUBMIT_DRY_RUN` with explicit Web
-   confirmation, the same RBAC/error conventions and reloaded per-item evidence), and add a
-   focused test that leaves a child durably `selected`, reloads with fresh
-   repository/service instances, resumes through the operator surface, and asserts the child
-   reaches a terminal or waiting outcome with bounded reason + concrete next action while
-   already-terminal siblings remain untouched.
+1. **The durable parent summary does not distinguish ignored items from unchanged siblings.**
+   (Implementation Scope summary contract; AC 8; RO-5; Slice Acceptance Criteria 1 and 9.)
+   Evidence: `RecoveryBatch.counts` has no `ignored` key, and
+   `SQLiteTaskRepository.get_recovery_batch` counts `success`, `skipped`, `dry_run` and `ignored`
+   together into the single `unchanged_count`. The focused suite passes 33 tests, but it has no
+   ignored-sibling summary assertion; `test_mixed_selection_preserves_refusal_and_admits_valid_child`
+   proves only a successful sibling contributes to `unchanged`. Required: derive and expose a
+   separate durable ignored count/item classification without double counting, keep unchanged
+   reconciliation truthful for the remaining untouched siblings, render the resulting summary
+   through API/Web, and add reload coverage for a mixed batch containing an ignored sibling.
+
+2. **Operator Web batch detail omits each child's checkpoint and linked DryRun Task/Result.**
+   (Goal; Implementation Scope API/Web behavior; AC 7 and AC 9; RO-6.) Evidence:
+   `RecoveryBatchItem.document()` and the API already return `checkpoint_version`,
+   `new_task_id`, `new_result_id`, request/continuation/Job linkage and next action, but
+   `showRecoveryBatch` renders only Item, Status, Reason, Error and Next action and supplies no
+   row navigation. After a completed continuation the operator therefore cannot open the source
+   checkpoint or linked new Task/Result from the batch journey. The focused Web assertions check
+   only static batch/resume labels and do not cover this reloaded completed-child path. Required:
+   render the API-provided checkpoint/linkage evidence in batch detail, provide navigation to the
+   existing source checkpoint and linked Task/Result views, and add focused API/Web reload coverage
+   proving those identities and actions remain reachable after completion.
 
 Task ID, Task Base, Goal and Implementation Scope are unchanged. Continue in this Task and
 produce a new checkpoint; do not amend reviewed history.
