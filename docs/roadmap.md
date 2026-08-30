@@ -11,19 +11,17 @@ only in [the development workflow](development-workflow.md).
 | 22.4 — Recognition configuration | Complete managed recognition editing, Strategy Test, explanation and activation | PASS / CLOSED | 22.3 |
 | 22.5 — Metadata configuration and correction | Complete managed MetadataPolicy testing, candidate decision, correction and bounded DryRun continuation | PASS / CLOSED | 22.4 |
 | 22.6 — Naming / Classification / Organize configuration | Complete managed policy editing, exact-revision preview, Local destination precheck and checked activation | PASS / CLOSED | 22.5 |
-| 23 — Batch per-item recovery | Provide stage-aware per-item recovery without replaying successful siblings | PLANNED | 22.6 closure |
+| 23 — Stage-aware per-item recovery | Provide checkpoint-aware single and bounded batch recovery without replaying successful siblings or uncertain mutation | ACTIVE | 22.6 closure |
 | 24 — Files / Media detail and manual organize | Complete the operator journey from explanation and review to safe manual Preview/Organize and recovery | PLANNED | 23 |
 | 25 — Automation and production hardening | Complete operator-configured scheduled scanning and unattended organization using RecognitionType-selected policies under explicit bounded execution authority, plus production-loop hardening | PLANNED | 24 |
 
 ## Current boundary
 
-The most recently closed boundary is [Slice 22.6](../SLICE.md). Its legacy A–O/F1 history is
-evidence inside that one Slice, not a set of current lifecycle objects. No Phase 22.6-P/Q/R or
-other micro-Slice is authorized.
+The current work boundary is [Slice 23](../SLICE.md): stage-aware per-item recovery over the existing
+Task/TaskItem/Result model. Slice 22.6 remains closed; its legacy A–O/F1 history is evidence inside
+that closed Slice, not authorization for another configuration micro-Slice.
 
-Slice 23 remains a large planned boundary only. It was not selected or activated as part of Slice
-22.6 closure, and no Implementation Task may be defined until A separately selects and activates
-the next large Slice.
+Slices 24 and 25 remain large planned boundaries only. B may plan Tasks only inside active Slice 23.
 
 ## Roadmap rules
 
