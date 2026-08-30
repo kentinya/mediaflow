@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 23.2
 Parent Slice: 23 — Stage-Aware Per-Item Recovery
-Status: FIX REQUIRED
+Status: PASS
 Task Base: f196da8563b1db60659b88ab17a2cfcaabea167c
 Difficulty: High
 Test Level: T4
@@ -381,51 +381,77 @@ Head SHA: 834ee464456362e5f43ca8617feb4deae2cdae3a
 ## B Review Result
 
 ```text
-Reviewed: f196da8563b1db60659b88ab17a2cfcaabea167c..d92eb1e2d67f1d87cce456adf2d8561672ee47c5
-Decision: FIX REQUIRED
+Reviewed: f196da8563b1db60659b88ab17a2cfcaabea167c..07f30ce5cd8636eceb1aa3ab73877611155fee6c (implementation head 834ee464456362e5f43ca8617feb4deae2cdae3a)
+Decision: PASS
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK
 ```
 
-Round 1 raised three points; two are closed. I read the actual fix diff `0eafbbb..d92eb1e`
-(`tests/test_operator_ui.py` +16, `tests/test_processing_recovery_admission.py` +388/-5; the five
-removed lines are only the `api_request` and `_task` helper signatures, whose previous defaults are
-preserved), and re-ran Test Level T4 independently: the focused
-`tests.test_processing_recovery_admission tests.test_operator_ui` run is 41 tests OK; full
-`discover -s tests` is 896 tests OK with the same 7 pre-existing conditional skips;
-`ruff format --check .` 317 files; `ruff check .`; `compileall`;
-`pip check`; both `config validate`; ffprobe/ffmpeg audit clean; `git diff --check` clean; tree
-clean; `config/alist.json` still ignored (`.gitignore:21`) and unknown to git. No production file
-was touched, no test was deleted, no skip was added, no assertion was loosened, and no credential,
-private endpoint or private path appears in the added lines (only the existing synthetic
-`operator-token` / `viewer-token` fixtures).
+### Round 2 blocker closed — Acceptance Criterion 14 is now falsifiable
 
-### Unmet — Acceptance Criterion 14 is still not falsifiable for the Storage/Provider half
+The unreachable `StrictStorageSpy` / `StrictProviderSpy` doubles and their two dead assertions are
+gone. `test_recovery_admission_falsifies_storage_provider_and_durable_side_effects` now patches the
+real production construction seams for the duration of one real admission driven through
+`POST /api/v1/tasks/{taskId}/items/{itemId}/recovery`, and snapshots the on-disk trees of the item's
+source and destination roots.
 
-`test_recovery_admission_falsifies_storage_provider_and_durable_side_effects` asserts zero calls on
-spies that no production code can reach. `StrictStorageSpy` and `StrictProviderSpy` are instantiated
-only as attributes of `StrictSnapshotValidator`
-(`tests/test_processing_recovery_admission.py:829-830`) and are never passed to the gate, the
-repository or the API; the gate is built as `RecoveryAdmissionService(repository,
-snapshot_validator=validator)`, which takes no Storage or Provider argument. The only other
-references to them are the assertions themselves (`:872-873`), so
-`assertEqual(validator.storage.calls, [])` and `assertEqual(validator.provider.calls, [])` cannot
-fail for any change to `admit`. A regression that made admission open a Storage or call a metadata
-Provider would keep this test green, which is exactly what the Required Test "a zero-mutation
-falsification test using strict Storage/Provider spies" exists to prevent.
+I confirmed both halves are reachable rather than trusting the report. Injecting a simulated
+regression into `RecoveryAdmissionService.admit` inside the test's patch context:
 
-The durable-work half of the same test is genuine and should stay as it is: the Task, Task list, Job
-list, Result list and `file_locks` snapshots are compared before and after a real admission.
+- `RuntimeConfiguration.create_storages(...)` (the real Storage construction seam used by
+  `mediaflow/application/configuration_objects.py:1620,1875,3793` and
+  `mediaflow/final_cli.py:1205,1431,2868`) — test FAILS (`500 != 200`).
+- `LazyMetadataProviderRegistryFactory()(("tmdb",))` (the registry factory wired into
+  `ConfigurationObjectService` at `mediaflow/interfaces/service_api.py:130` and constructed at
+  `mediaflow/final_cli.py:1419-1421`) — test FAILS.
+- writing `destination/Movies/zero-mutation.mkv` under the item's destination root — test FAILS on
+  the tree snapshot (`First tuple contains 1 additional elements`).
+- unmodified baseline — test PASSES.
 
-Required direction: place the strict doubles where the production admission path would actually
-reach them and assert they were never used — for example patch the configuration-service
-`create_storage` seam and the metadata provider registry construction with doubles that raise on any
-attribute access (the `unittest.mock` pattern already used elsewhere in this suite) for the duration
-of one real admission, and/or snapshot the on-disk tree (relative paths, sizes, mtimes) of the
-item's source root and destination root before and after admission and assert it is unchanged
-apart from the runtime SQLite files. Drive at least one admission through the API route as well,
-so the wired seam covers the transport path. Then drop or replace the two unreachable-spy
-assertions so the suite does not present an unreachable double as evidence.
+The durable-work half (Task, Task list, Job list, Result list, `file_locks` before/after a real
+admission) is unchanged and remains genuine.
 
-Task ID, Task Base, Goal and Scope are unchanged. Fix in this same Task and resubmit with a new
-Head SHA; do not change anything beyond this one point.
+### Task acceptance re-verified at the reviewed head
+
+- One shared gate: `TaskRetryRequestService.request_item`
+  (`mediaflow/application/task_retry.py:109-133`) now delegates to `RecoveryAdmissionService.admit`,
+  so the API `re-plan` path and the CLI reach admission only through the gate.
+- Unsafe replay closed: `request_task_retries` (`mediaflow/infrastructure/sqlite_runtime.py:392-422`)
+  matches `status='failed'` only — `PARTIAL` is no longer admissible anywhere.
+- Evidence preserved: neither `request_task_retries` nor `_admit_retry_locked` /
+  `_admit_ignore_locked` nulls `task_items.error`; the retry test asserts the item error and the
+  stored Result (with `effect_certainty` / `uncertain_effects`) are unchanged after admission.
+- Atomic and version-bound: `admit_recovery_request` runs one `BEGIN IMMEDIATE`, re-projects the
+  bounded checkpoint context inside the transaction, rejects unknown/not-admissible actions, stale
+  versions and drifted checkpoint identity, returns the existing pending request for a duplicate,
+  and rolls back on any `BaseException` before commit.
+- Migration: `SCHEMA_VERSION = 24`; the new suite migrates a schema-23 database forward and asserts
+  the pre-existing item error survives and `recovery_requests` is recreated empty.
+
+### Gates re-run independently at HEAD
+
+`python -m unittest discover -s tests` — 896 tests, OK (skipped=7, the same pre-existing conditional
+external-service/endurance skips); `tests.test_processing_recovery_admission
+tests.test_processing_checkpoint tests.test_operator_ui` — 51 tests OK; `ruff format --check .` (317
+files); `ruff check .`; `compileall`; `pip check`; both example `config validate`; ffprobe/ffmpeg
+audit clean (no hits in `mediaflow/`, `tests/`, `scripts/`); `git diff --check` clean over
+`f196da8..HEAD`; working tree clean; `config/alist.json` untracked and ignored (`.gitignore:21`).
+
+Diff integrity over the whole Task range: 33 files — `TASK.md`, 12 production modules, 20 test
+modules including the new suite. No test deleted, no skip or `expectedFailure` added. The only
+removed assertions are the schema-version `23` expectations replaced by `24` (migrate-from-older
+setups kept) and the operator-UI `assertNotIn("actor", script.lower())`, replaced by the narrower
+`assertNotRegex(recovery_body, r"(?:actor|principal)\s*:")` — the Web now legitimately renders
+`request.actor`, and the invariant that matters (the browser must not submit an actor) is asserted on
+the recovery POST body. No credential, token, private endpoint or private path is introduced; the
+matching added lines are the redaction regex and synthetic fixtures asserting redaction/rejection.
+
+### Non-blocking observations (not Task blockers)
+
+- Commit `07f30ce` is labelled `docs(task): record B review round 3 for task 23.2` but contains the
+  Developer's round-2 correction report and the new Head SHA, not a B review. History is not
+  rewritten; carry this to the Slice Closure Packet as a documentation reconciliation note.
+- In the falsification test the tree-snapshot roots mirror the item's declared Storage-relative
+  source path but no Storage mapping is wired (the API is constructed with no configuration
+  service), so that half proves "nothing was written where this item's media lives" rather than a
+  resolved-Storage round trip. The patched production seams carry the reachable evidence.
