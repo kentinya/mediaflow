@@ -1,13 +1,13 @@
-# Task 23.1 — Durable per-item Processing Checkpoint with stage-aware permitted actions
+# Task 23.2 — Version-bound single-item recovery admission with preserved evidence and audit
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to the
 current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 23.1
+Task ID: 23.2
 Parent Slice: 23 — Stage-Aware Per-Item Recovery
-Status: PASS
-Task Base: 5b12ef92ed2720692fb1a1cfc39520d180780588
+Status: PLANNED
+Task Base: f196da8563b1db60659b88ab17a2cfcaabea167c
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,51 +15,70 @@ Planner / Reviewer: B
 
 ## Goal
 
-Give every persisted media TaskItem a durable, restart-safe **Processing Checkpoint** that
-truthfully states where the item stopped, which effects are already durable, which effects are
-explicitly uncertain, what is blocking it, and exactly which recovery actions are permitted right
-now — readable through the authenticated API and the Operator Web Task detail with zero mutation.
+Make an operator's chosen recovery action for **one** media TaskItem become a durable, auditable
+request that is bound to the exact Processing Checkpoint version, the item's original source scope
+and its parent Task's pinned configuration snapshot — admitted through **one** shared gate that
+accepts only what the stage-aware decision already permits, never erases prior failure evidence,
+never elevates execute / overwrite / delete / cleanup authority, and rejects stale or duplicate
+requests. Submittable from the authenticated API and the Operator Web checkpoint drill-in with
+explicit confirmation.
 
-Advances Slice Required Outcomes **RO-1** (durable per-item checkpoint) and **RO-3** (one shared
-stage-aware decision that never presents a generic Retry when safety cannot be established), plus
-the read half of **RO-6** (API + Operator Web parity of the same facts). It also establishes the
-checkpoint version identity that RO-4 admission will later bind to.
+Advances Slice Required Outcomes **RO-2** (transactional consistency, preserved prior evidence,
+stale/concurrent rejection, bounded secret-free audit of who requested which recovery action) and
+**RO-4** (admission bound to the exact TaskItem/checkpoint version, original source scope and pinned
+configuration, with no authority upgrade), completes the admission half of **RO-3** (the same shared
+decision now also gates the write path, so no surface can act on an action the decision refuses),
+and delivers the single-item write half of **RO-6** (API and Operator Web submit the same action,
+confirmation, outcome and next step).
 
-This is an implementation unit inside Slice 23, not a smaller Slice: it does not accept or execute
-any recovery action.
+This is an implementation unit inside Slice 23, not a smaller Slice: it admits and records a request
+only. It executes nothing, re-enters no pipeline and produces no new Result.
 
 ## Why This Task Exists
 
 Actual gaps found in code, not in documents:
 
-1. **No checkpoint concept exists.** `mediaflow/domain/task_persistence.py` stores `stage` as a
-   free-form string, written independently by many services (`pipeline`, `lock`, `scanned`,
-   `waiting_confirm`, `strategy`, `paused`, `cancelled`, `completed`, `failed`, `*_resolved`,
-   `*_retry_requested`, `ignored_by_operator`). There is no stage contract, no per-item decision,
-   and no place that answers "what may I safely do with this item".
-2. **Effect certainty is not durable.** `PersistentResultRecord` persists `completed_operations`,
-   `cleanup_status` and `cleanup_step_count`, but the rollback outcome is not persisted:
-   `mediaflow/application/organizer.py` appends rollback step actions into `completed_operations`
-   and only writes `rollback ... failed` into the error text. Today the sole way to distinguish a
-   fully rolled-back failure from a genuinely partial mutation is parsing exception text, which
-   REQ-RECOVERY-001 / UX-002 forbid and which RO-1 explicitly rules out.
-3. **Blockers are per-item in storage but never joined.** `get_recognition_review_for_item`,
-   `get_metadata_review_for_item`, `get_metadata_correction_for_item`,
-   `get_classification_review_for_item` and conflict confirmations all exist, yet nothing assembles
-   them into a single per-item answer; `list_file_review_links` is File-scoped and covers only three
-   of the five blocker kinds.
-4. **Neither surface shows recovery state.** `GET /api/v1/tasks/{id}` returns raw item and result
-   rows; the Operator Web Task detail renders read-only Items/Results tables with no drill-in, no
-   blocker link, no effect certainty and no permitted action.
-5. `docs/architecture.md` records "Per-item recovery architecture: CURRENT" as not implemented and
-   fragmented, which matches items 1–4.
+1. **The existing item retry path contradicts the checkpoint it should obey.**
+   `mediaflow/application/task_retry.py:64` `request_item` admits any item whose status is `FAILED`
+   **or `PARTIAL`**, with no checkpoint-version binding, no effect-certainty gate and no pinned-
+   snapshot validation. Task 23.1 makes a `PARTIAL` / `attempted_unverified` item report
+   `retry_safety` unsafe/unknown with only `investigate` permitted, yet this write path will still
+   mark that exact item `PENDING`. The Slice Safety Invariant that uncertain effects are never
+   labelled retry-safe or replayed is therefore enforced on the read side only.
+2. **It is reachable from the API today.** `POST /api/v1/files/{fileId}/re-plan`
+   (`mediaflow/interfaces/service_api.py:1177`, `SUBMIT_DRY_RUN`) calls
+   `FileReplanRequestService.request` → `TaskRetryRequestService.request_item`, so the unsafe
+   admission above is live over HTTP, not only in the CLI.
+3. **Prior evidence is destroyed on admission.** `request_task_retries`
+   (`mediaflow/infrastructure/sqlite_runtime.py:394`) issues `UPDATE task_items SET status=?,
+   stage=?, updated_at=?, error=NULL`, and `ManualIgnoreService.ignore`
+   (`mediaflow/application/manual_ignore.py:56`) likewise rewrites the item with `error=None`. RO-2
+   requires prior evidence to be preserved across recovery attempts; today the failure text an
+   operator was just shown is deleted by the act of requesting recovery.
+4. **No admission identity exists.** `TaskRetryRequestDecision`
+   (`mediaflow/domain/task_retry.py:11`) records `decision_id`, task, item, time, actor and note —
+   but not which checkpoint version was accepted, which action was chosen, or which configuration
+   snapshot the request is pinned to. Nothing can reject a decision made against a checkpoint that
+   has since changed, and nothing proves the request did not follow a newer Active configuration.
+   The `checkpoint_version` digest that Task 23.1 established has no consumer.
+5. **No concurrency or duplicate rule.** `request_task_retries` re-checks only `status IN
+   ('failed','partial')`, so two concurrent operators (or one double-submit) create two audit rows
+   for the same item, and no table prevents a second active request.
+6. **`ignore` is a production path the shared decision never offers.** `ManualIgnoreService` and
+   `manual_ignore_audit` exist and the Slice acceptance criteria require ignored items to be
+   distinguishable, but `_actions` in `mediaflow/application/processing_checkpoint.py` emits only
+   `resolve_<kind>`, `investigate`, `retry` and `resume`. A waiting item therefore has no permitted
+   way to be dropped, while the unreviewed CLI path can still drop it.
+7. **Neither surface can act.** The Task 23.1 API document and Web drill-in render permitted action
+   labels but expose no submission, so RO-6's action/confirmation/outcome half is unimplemented for
+   Task items.
 
-This is the largest reasonable first unit because every remaining Slice 23 outcome must bind to an
-exact checkpoint version and to one shared allowed-action decision. Implementing admission or
-continuation first would force an ad-hoc version identity and a per-surface duplicate of the
-decision, which RO-3 forbids. It is also the safe first unit: it is pure diagnosis with zero
-mutation, while still crossing Domain → Persistence → Application → API → Web → Tests, and it
-delivers Slice Acceptance Criteria 1–2 on its own (REQ-RECOVERY-006, UX-002, Journey E).
+This is the largest reasonable next unit and it must precede continuation: RO-7 continuation may
+only start from an admitted, version-bound request, and RO-5 batch recovery is defined as the
+bounded composition of independent single-item admissions. Building continuation or batch first
+would force an ad-hoc admission identity and would leave the live unsafe `PARTIAL` retry path in
+place. It is also the natural pairing with Task 23.1: the same shared decision now governs both
+reading and writing.
 
 ## Implementation Scope
 
@@ -67,85 +86,106 @@ delivers Slice Acceptance Criteria 1–2 on its own (REQ-RECOVERY-006, UX-002, J
 Domain → Persistence (+ forward migration) → Application → API → Web → Tests
 ```
 
-1. **Domain** — Processing Checkpoint contract and its value objects: a bounded durable stage
-   classification derived from `TaskItemStatus` plus the stage strings production code actually
-   writes (map them; do not rename or rewrite persisted values); effect certainty
-   (`verified_complete` / `attempted_unverified` / `none` / `unknown`); blocker link (kind, id,
-   status, existing resolution surface); a stable error-category taxonomy (codes, never parsed
-   exception text); a retry-safety verdict; a recovery-action contract (action identity, whether it
-   needs confirmation, which authority it would require, which existing journey it targets)
-   including an explicit refusal with reason; and the checkpoint version digest.
-2. **Persistence** — persist durable effect-certainty evidence (rollback outcome / verified effect
-   state) for newly completed executions through the existing completion path; forward-only additive
-   migration with a `SCHEMA_VERSION` bump that leaves pre-existing rows at `unknown` and never
-   rewrites or fabricates legacy history; one item-scoped consistent bounded read returning the
-   item, its Task's pinned configuration identity, its latest and preserved prior results, all five
-   blocker kinds, and the existing per-item recovery audit rows. Bounded queries only; no unbounded
-   scans.
-3. **Application** — a checkpoint projection service built on that single read, plus one shared
-   stage-aware recovery-decision function that every surface consumes. Pinned-snapshot availability
-   is reported through the existing `RuntimeSnapshotUnavailable` reason codes with zero Storage,
-   Provider or media work, and never silently substitutes the current Active configuration. No Task,
-   Job, review or Storage write of any kind.
-4. **API** — `GET /api/v1/tasks/{taskId}/items/{itemId}` returns the full checkpoint document under
-   the existing read permission; the existing `GET /api/v1/tasks/{id}` item rows gain a bounded
-   checkpoint summary (durable stage, blocker kind, effect certainty, retry safety, permitted action
-   ids, checkpoint version). Unknown ids, an item that does not belong to that Task, and unexpected
-   input fail closed using existing error conventions.
-5. **Web** — Operator Task detail item rows become a drill-in that renders, from the API document
-   only: durable stage, pinned configuration identity and availability, plan/result linkage,
-   verified and explicitly uncertain effects, the blocker with a link into its existing resolution
-   journey, the error category, the retry-safety statement, and either the permitted action labels
-   or the explicit refusal reason. No action submission in this Task. No generic "Retry" label
-   anywhere the decision does not establish safety.
+1. **Domain** — a recovery-request contract: request identity, task/item identity, the requested
+   action id, the bound checkpoint version, the pinned configuration snapshot id and digest, the
+   original source scope (source storage id and Storage-relative source path), actor, requested
+   time, request status, optional bounded note, and the explicit authority statement the request
+   carries (never execute, overwrite, delete, source-cleanup or rollback). Add the bounded rejection
+   reasons admission can return (action not permitted, stale checkpoint version, duplicate active
+   request, snapshot unavailable, insufficient authority, unknown item, item/Task mismatch). Extend
+   the stage-aware action contract with `ignore` for items whose blocker is a pending review, and
+   mark which permitted actions are admissible here versus which remain links into an existing
+   journey (`resolve_*`) or a non-admitting outcome (`investigate`). `resume` stays Task-scoped and
+   is not admissible in this Task.
+2. **Persistence** — one additive bounded table for recovery requests with a `SCHEMA_VERSION` bump,
+   a uniqueness rule that prevents a second active request for the same item, and an item-scoped
+   bounded read joined into the existing single checkpoint context read. Admission commits the
+   request row, the action-specific existing audit row and the item transition in **one**
+   transaction, and the item transition must **preserve** the existing `error` evidence instead of
+   nulling it. Forward-only migration: pre-existing rows and databases open unchanged, and no legacy
+   history is rewritten or fabricated.
+3. **Application** — one shared admission service that reads the checkpoint through the Task 23.1
+   projection, verifies the requested action against `permitted_action_ids`, compares the caller's
+   expected checkpoint version against the current one, validates the parent Task's pinned snapshot
+   through the existing `RuntimeSnapshotUnavailable` reason codes, then delegates the durable state
+   change to the **existing** per-action production paths (task retry request, manual ignore) rather
+   than writing item state itself. `TaskRetryRequestService.request_item` and
+   `ManualIgnoreService.ignore` must stop being independently reachable admission points: every
+   caller, including `FileReplanRequestService`, goes through the gate. No Storage operation, no
+   Provider request, no Job, no Task, no Result, no lock.
+4. **API** — a `POST` recovery endpoint under the existing Task-item path that accepts the action
+   id, the expected checkpoint version and an optional bounded note under an existing write
+   permission; it returns the admitted request, the bound checkpoint version and a concrete next
+   action, and fails closed with existing error conventions for a refused action, a stale version, a
+   duplicate active request, an unavailable snapshot, insufficient permission, unknown ids,
+   Task/item mismatch and unexpected input. `GET /api/v1/tasks/{taskId}/items/{itemId}` gains the
+   bounded admitted request and its audit; the Task-detail item summary gains bounded evidence that
+   a recovery request is pending.
+5. **Web** — the Task-item drill-in gains, for permitted admissible actions only, an explicit
+   confirmation that names the action and the bound checkpoint version, submits it through the API,
+   and after reload shows the durable admitted request, its actor and time, and the concrete next
+   action. A refused action is never rendered as a submittable control, and no label or decision is
+   recomputed in the browser.
 6. **Tests** — as specified under Required Tests.
 
-Explicitly frozen in this Task: OrganizerExecutor mutation behavior (other than recording durable
-effect-certainty evidence for new results); Recognition, Metadata, Naming, Classification and
-Planner policy ownership; `SLICE.md` Contract sections; `docs/roadmap.md`; `docs/progress.md`.
+Explicitly frozen in this Task: OrganizerExecutor and all Storage mutation behavior; the Task 23.1
+checkpoint document fields other than the additive recovery-request/pending-request evidence; the
+`ignore` production semantics inside `ManualIgnoreService` other than evidence preservation and the
+gate; Recognition, Metadata, Naming, Classification and Planner policy ownership; the Files/Media
+journey beyond routing its existing re-plan call through the gate; `SLICE.md` Contract sections;
+`docs/roadmap.md`; `docs/progress.md`.
 
 ## Acceptance Criteria
 
-- [ ] Every `TaskItemStatus` value and every stage string production code currently writes projects
-      a checkpoint carrying durable stage, effect certainty, error category (when failed),
-      retry-safety verdict, and either permitted actions or an explicit refusal reason. No status
-      raises, returns a placeholder, or falls through to a default "retry".
-- [ ] `SUCCESS`, `DRY_RUN`, `SKIPPED` and `IGNORED` items expose no replay action and an explicit
-      refusal reason stating why replay is not offered; a generic Retry label is never produced.
-- [ ] A `PARTIAL` or otherwise unverified execution reports its known completed operations **and**
-      its explicitly uncertain effects, refuses automatic replay, and still offers investigation as
-      a valid outcome.
-- [ ] Rows written before this Task report effect certainty `unknown` and are never inferred from
-      error text, `completed_operations` content or status alone.
-- [ ] Each of `WAITING_CONFIRM`, `WAITING_RECOGNITION`, `WAITING_METADATA`,
-      `WAITING_METADATA_CORRECTION` and `WAITING_CLASSIFICATION` exposes the blocking review or
-      conflict id, its current status, and the existing resolution surface as the stage-appropriate
-      next step.
-- [ ] The checkpoint reports the parent Task's pinned configuration snapshot id and digest plus
-      whether that snapshot is still resolvable, using the existing bounded reason codes; an
-      unpinned or unresolvable snapshot is visible as such and is never replaced by the current
-      Active configuration.
-- [ ] The checkpoint version digest is stable across repeated reads of unchanged durable state and
-      changes when item status, stage, attempts, the latest result, or blocker resolution changes.
-      It survives a process restart and a fresh repository instance over the same database.
-- [ ] `GET /api/v1/tasks/{taskId}/items/{itemId}` and the Task-detail item summary expose the same
-      facts as the application projection; the read permission is required, an unauthenticated or
-      insufficiently permissioned request is rejected, and unknown ids or a Task/item mismatch fail
-      closed without leaking existence details beyond current conventions.
-- [ ] Operator Web Task detail shows per-item durable stage, blocker, effect certainty and retry
-      safety and opens the full checkpoint; all rendered evidence and action labels come from the
-      API document rather than being recomputed in the browser.
-- [ ] Reading a checkpoint through application, API and Web performs zero Storage operations, zero
-      metadata Provider requests, and creates zero Tasks, Jobs, reviews, locks or Result rows.
-- [ ] The new durable effect-certainty evidence is written by the existing completion path for new
-      executions; a database created before this Task migrates forward with all prior rows
-      preserved, and a database already at the new version still opens. `tests/test_api_security.py`
-      schema expectation is updated to the new version while keeping its migrate-from-old-version
-      assertion.
+- [ ] Exactly one shared gate admits a per-item recovery request. An action that the Task 23.1
+      stage-aware decision does not list for that exact checkpoint is refused with a bounded reason
+      and changes no durable state, from every surface and for every caller.
+- [ ] A `PARTIAL`, `attempted_unverified` or `unknown`-certainty item cannot be admitted for replay
+      through any path, including `POST /api/v1/files/{fileId}/re-plan` and the CLI; the refusal
+      states why and investigation remains available.
+- [ ] `SUCCESS`, `DRY_RUN`, `SKIPPED` and `IGNORED` items cannot be admitted for replay at all.
+- [ ] An admitted request records the requested action, the bound checkpoint version, the item's
+      original source storage id and Storage-relative source path, the parent Task's pinned
+      configuration snapshot id and digest, the actor and the time; it carries no execute,
+      overwrite, delete, source-cleanup or rollback authority, and admission never consults or
+      substitutes the current Active configuration.
+- [ ] A request whose expected checkpoint version does not match the current one is rejected as
+      stale, with the current version returned so the operator can re-read and decide again; nothing
+      is admitted and no evidence is lost.
+- [ ] A second active request for the same item is rejected as a duplicate rather than creating a
+      second audit row or a second durable request; the existing request is returned.
+- [ ] Admission of an item whose parent Task has no pinned snapshot, or whose snapshot is no longer
+      resolvable, fails closed using the existing bounded reason codes.
+- [ ] Prior failure evidence survives admission: the item's recorded error and its persisted Result
+      rows, including `effect_certainty` and `uncertain_effects`, are unchanged by requesting
+      recovery. No path nulls the item error as part of admission.
+- [ ] Request, action audit and item transition commit atomically. A failure in any part leaves no
+      partially admitted request, no orphan audit row and no transitioned item.
+- [ ] A waiting item whose blocker is a pending review can be admitted for `ignore`, and its
+      resulting `IGNORED` state and audit are visible in its checkpoint; a waiting item with no
+      pending review cannot.
+- [ ] `POST` on the Task-item recovery endpoint requires an existing write permission; an
+      unauthenticated request, an insufficiently permissioned request, an unknown Task or item, a
+      Task/item mismatch, an unknown action id, a malformed expected version, an over-long note and
+      unexpected fields or query parameters all fail closed without leaking existence details beyond
+      current conventions.
+- [ ] The checkpoint document and the Task-detail item summary expose the admitted request and its
+      audit; after reload, API and Operator Web show the same durable request, actor, time, bound
+      version and concrete next action.
+- [ ] Operator Web submits only actions the API document permits, requires explicit confirmation
+      naming the action and the bound checkpoint version, and renders no recomputed decision or
+      generic Retry label.
+- [ ] Admitting a request performs zero Storage operations, zero metadata Provider requests and
+      creates zero Tasks, Jobs, Results or locks, and executes no continuation.
+- [ ] A database created before this Task migrates forward with all prior rows preserved, and a
+      database already at the new version still opens. Schema-version expectations in the affected
+      test modules are updated to the new version while keeping their migrate-from-old-version
+      assertions.
 - [ ] A `RecognitionType C` item using NamingPolicy A and ClassificationPolicy A still reports
-      RecognitionType C in its checkpoint.
+      RecognitionType C after its recovery request is admitted.
 - [ ] No secret, token, credential, authorization header, cookie, private endpoint, absolute
-      user-private path or raw exception text appears in the checkpoint document or in logs.
+      user-private path or raw exception text appears in the request record, the API response, the
+      audit or the logs.
 - [ ] Test Level T4 passes with actual recorded evidence.
 - [ ] The checkpoint contains only this Task and is coherent and reviewable.
 
@@ -153,21 +193,28 @@ Planner policy ownership; `SLICE.md` Contract sections; `docs/roadmap.md`; `docs
 
 Focused (new):
 
-- `python -m unittest tests.test_processing_checkpoint` — domain contract and application projection
-  across all statuses and production stage strings, effect-certainty combinations, legacy `unknown`,
-  blocker linkage for all five kinds, refusal reasons, version digest stability/change,
-  pinned-snapshot reporting, RecognitionType C preservation, and the zero-mutation falsification
-  test using strict Storage/Provider/repository spies.
+- `python -m unittest tests.test_processing_recovery_admission` — the shared gate across permitted
+  and refused actions for every relevant status, the `PARTIAL`/unverified replay refusal, stale
+  version rejection, duplicate active request rejection, missing and unresolvable pinned snapshot,
+  evidence preservation (item error plus Result `effect_certainty` / `uncertain_effects` unchanged),
+  atomic commit of request + audit + item transition, `ignore` admission with and without a pending
+  review, authority statement, RecognitionType C preservation, and a zero-mutation falsification
+  test using strict Storage/Provider spies.
 
 Related (extend existing suites, do not weaken existing assertions):
 
-- persistence/migration coverage for the additive column(s), forward migration from a pre-existing
-  database, preserved prior results, and bounded item-scoped read.
-- API coverage for the new endpoint and the extended Task-detail item rows: success, permissions,
-  unauthenticated rejection, unknown ids, Task/item mismatch, and payload boundedness.
-- Operator Web coverage asserting the item drill-in renders stage, blocker link, effect certainty,
-  retry-safety statement and permitted actions / refusal from the API document.
-- `tests/test_api_security.py` schema-version expectation updated for the bump.
+- `tests/test_processing_checkpoint.py` — the decision now offers `ignore` where applicable and the
+  checkpoint document/summary carry the admitted request; existing assertions stay intact.
+- the existing task-retry, manual-ignore and File re-plan suites — the unsafe admission paths are
+  now gated, evidence is preserved, and the previously permitted `PARTIAL` retry is refused.
+- persistence/migration coverage for the additive table and index, forward migration from a
+  pre-existing database, atomicity, and the bounded item-scoped read.
+- API coverage for the new `POST` endpoint and the extended read payloads: success, permissions,
+  unauthenticated rejection, unknown ids, Task/item mismatch, refused action, stale version,
+  duplicate request, unavailable snapshot, input validation and payload boundedness.
+- Operator Web coverage asserting the confirmation, the submitted action, and the post-reload
+  admitted-request rendering come from the API document.
+- schema-version expectations in the affected persistence/API/configuration test modules.
 
 Quality gates (T4):
 
@@ -187,169 +234,49 @@ TMDB service and no production data may be used.
 
 ## Non-goals
 
-- Accepting, admitting or persisting a recovery request, including version-bound admission,
-  authority validation and audit (next Task in this Slice).
-- Executing a continuation, re-entering the pipeline, or producing a new linked Result (later Task).
+- Executing a continuation, re-entering the pipeline, or producing a new linked Result (next Task in
+  this Slice).
 - Bounded batch recovery, sibling independence and parent/continuation summary reconciliation (later
   Task).
+- Item-level `resume` of a paused Task, which remains a Task-scoped continuation.
+- Any new Files/Media journey behavior beyond routing the existing re-plan call through the shared
+  gate.
 - The Files/Media manual-organize journey, Metadata Provider switching, and scheduled unattended
   real organization (Slices 24 and 25, explicitly deferred).
 - Automatic replay or compensation of uncertain mutations, historical cross-run rollback, and
   distributed Task leases (explicitly deferred).
+- Granting, renewing or elevating execute, overwrite, delete, source-cleanup or rollback authority.
 - Any change to Required Outcomes, Required Surfaces, Safety Invariants, the Slice Base, `SLICE.md`
   Contract sections, `docs/roadmap.md` or `docs/progress.md`.
-- Refactors, copy polish or P2 cleanup not required by these Acceptance Criteria.
+- Refactors, copy polish or P2 cleanup not required by these Acceptance Criteria, including the
+  non-blocking items recorded in the Task 23.1 review.
 
 ## Developer Completion Report
 
 ### Changed Files
-- `mediaflow/domain/organizer.py`
-- `mediaflow/application/organizer.py`
-- `mediaflow/domain/processing_checkpoint.py`
-- `mediaflow/application/processing_checkpoint.py`
-- `mediaflow/domain/task_persistence.py`
-- `mediaflow/application/task_runtime.py`
-- `mediaflow/infrastructure/sqlite_runtime.py`
-- `mediaflow/infrastructure/sqlite_file_index.py`
-- `mediaflow/interfaces/service_api.py`
-- `mediaflow/interfaces/operator_ui.py`
-- `tests/test_processing_checkpoint.py`
-- schema-version expectations in the affected persistence/API/configuration test modules
 
 ### Implemented
-- Added a bounded, read-only Processing Checkpoint domain contract and shared application
-  projection with durable stage, effect certainty, blocker/audit links, error category,
-  retry-safety decision, permitted actions/refusal, pinned configuration identity, and a stable
-  version digest.
-- Added schema-23 additive effect-certainty evidence and bounded item-scoped SQLite context reads;
-  legacy result rows remain `unknown`, while new completion results record verified, unverified,
-  or no-effect evidence without parsing error text.
-- Added explicit OrganizerExecutor-owned effect evidence at the mutation-attempt boundary. A
-  mutating Storage call that raises before its outcome can be verified is now recorded as
-  `attempted_unverified`, never inferred as no-effect from an empty operation list.
-- Changed checkpoint completion to persist only executor-owned effect certainty. Direct or invalid
-  execution results fail closed as `unknown`, while `none` is reserved for execution that did not
-  reach a mutation attempt or whose effects were successfully rolled back.
-- Exposed the projection through authenticated `GET /api/v1/tasks/{taskId}/items/{itemId}` and
-  bounded Task-detail summaries, including fail-closed Task/item matching and review detail links.
-- Added a read-only Operator Web Task-item drill-in that renders only API-provided checkpoint facts
-  and action/refusal information; no recovery mutation is submitted.
-- Preserved RecognitionType C identity, OrganizerExecutor mutation boundaries, pinned snapshot
-  semantics, and secret/path redaction.
 
 ### Tests and Results
-- `.venv/bin/python -m unittest tests.test_processing_checkpoint` — PASS (10 tests).
-- `.venv/bin/python -m unittest tests.test_processing_checkpoint tests.test_organizer tests.test_attachments tests.test_source_directory_cleanup` — PASS (52 tests).
-- `.venv/bin/python -m unittest discover -s tests` — PASS (884 tests, 7 skipped).
-- `.venv/bin/ruff format --check .` — PASS.
-- `.venv/bin/ruff check .` — PASS.
-- `python3 -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/python -m pip check` — PASS.
-- `mediaflow --config config/strategy.example.json config validate` — PASS.
-- `mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
-- ffprobe/ffmpeg repository audit — PASS (no production/test/script references).
-- `git diff --check` — PASS.
 
 ### Decisions
-- Effect certainty is persisted only by the existing completion path; legacy rows are never
-  inferred from status, operation text, or exception text.
-- OrganizerExecutor is the authority for per-invocation effect evidence. Its result defaults to
-  `unknown` for external/direct construction, and transitions to explicit `none`,
-  `attempted_unverified`, or `verified_complete` based on the actual mutation boundary and
-  rollback outcome.
-- Unknown/uncertain effects and unavailable or unvalidated pinned snapshots fail closed to
-  investigation/refusal; only explicitly verified pre-mutation failures can expose a safe retry.
-- API/Web reads use one bounded repository projection and do not refresh or substitute Active
-  configuration on the checkpoint path.
-- Absolute/private paths and unbounded/raw exception evidence are redacted from the checkpoint
-  document; blocker links target existing read/resolution surfaces.
 
 ### Remaining In-Slice Work
-- Recovery admission/continuation, version-bound authority checks, and bounded batch recovery remain
-  outside this Task and are not implemented here.
 
 ### Risks / Deviations
-- The system interpreter lacks the optional `httpx` dependency, so its full-suite attempt was
-  unavailable/failed for that pre-existing environment condition; the project `.venv` (with the
-  optional dependency) passed the complete suite.
-- The suite reported 7 existing skips; no external Storage, Provider, credentials, or user media
-  were used.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 08baa42b879af23ebc95311e9e5de3bb5527f5c1
+Head SHA: [full SHA]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 5b12ef92ed2720692fb1a1cfc39520d180780588..939c1fe3283a0e2f36bb23da134bb1c19213a871
-Decision: PASS
-Slice Required Outcomes all satisfied: NO
-Next: NEXT TASK
+Reviewed: [Head SHA or Task Base..Head]
+Decision: PENDING | PASS | FIX REQUIRED
+Slice Required Outcomes all satisfied: PENDING | YES | NO
+Next: PENDING | SAME TASK FIX LOOP | NEXT TASK | SLICE READY FOR A REVIEW
 ```
-
-Reviewed range covers the reported implementation head `08baa42` plus the one-line TASK.md status
-commit `939c1fe`. Working tree clean; no unrelated or private file in the range.
-
-### Previous blocker closed
-
-The recorded FIX REQUIRED blocker is fixed at its true owner rather than at the projection.
-`ExecutionResult` now carries executor-owned `effect_certainty` / `uncertain_effects` defaulting to
-`unknown`, `_execute` sets `mutation_attempted` immediately **before** every mutating Storage call
-(parent `create_directory`, each attachment `_mutate_and_record`, the primary `_mutate_and_record`),
-and `_failure_result` maps an attempted-but-unverified outcome to `attempted_unverified` +
-`("mutation_outcome",)`. `_effect_evidence` no longer infers anything: it copies executor evidence
-and falls closed to `unknown` for a missing or invalid value. I checked every pre-mutation early
-return in `_execute` (source missing, destination exists, attachment checks, plan/storage
-validation, DryRun, rollback+overwrite conflict) and each is read-only, so the default `none`
-remains honest. `test_mutate_then_raise_is_unverified_and_never_retry_safe` reproduces the exact
-probe from the prior review (Storage mutates, then raises) and asserts `attempted_unverified`, retry
-safety `unknown`, actions `("investigate",)` and no `retry` after persistence.
-
-### Acceptance Criteria verified against code and tests
-
-- All 15 `TaskItemStatus` values and the production stage strings project a checkpoint; no raise, no
-  placeholder, no default retry. `SUCCESS` / `DRY_RUN` / `SKIPPED` / `IGNORED` expose zero actions
-  with a `replay_not_offered` reason; `PARTIAL` reports known completed operations plus explicit
-  uncertain effects and offers only `investigate`.
-- Legacy rows stay `unknown`: schema 22 → 23 is additive with `DEFAULT 'unknown'`, verified by a
-  test that builds a schema-22 database with a pre-existing `task_results` row, migrates, and
-  asserts the row survives with `unknown` / `()`.
-- All five blocker kinds are inserted as real rows and each resolves to an existing detail endpoint
-  containing the blocker id; the two added review GET routes make every `resolution_path`
-  resolvable.
-- Pinned snapshot id/digest are reported with bounded `RuntimeSnapshotUnavailable` reason codes and
-  never replaced by current Active; unresolvable/unvalidated snapshots suppress `retry`.
-- `checkpoint_version` is stable across repeated reads, changes on attempts/updated_at change, and
-  is identical from a fresh repository instance over the same database file.
-- API parity asserted field-by-field between `GET /api/v1/tasks/{taskId}/items/{itemId}` and the
-  Task-detail `checkpoint` summary; unknown ids and Task/item mismatch both 404, unauthenticated
-  401, unexpected query 400.
-- Zero-mutation falsification uses a strict spy repository (exactly one bounded context read) and
-  asserts the Operator Web drill-in strings come from the API document.
-- RecognitionType C preserved with NamingPolicy A / ClassificationPolicy A in the checkpoint
-  payload.
-
-### Gates re-run independently
-
-`python -m unittest discover -s tests` — Ran 884 tests, OK (skipped=7); focused
-`tests.test_processing_checkpoint` — 10 tests OK; `ruff format --check .` (314 files) and `ruff
-check .` clean; `compileall` clean; `pip check` clean; both `config validate` PASS; ffprobe/ffmpeg
-audit clean; `git diff --check` clean. The 7 skips are all pre-existing external-service/endurance
-acceptance skips (OpenList, S3, SMB, four endurance gates), not new. I diffed all 13 touched test
-modules: every change is only the schema expectation 22 → 23, with the migrate-from-older-version
-setup and assertions intact. No test deleted, no assertion loosened.
-
-### Non-blocking (P2, recorded for the Closure Packet, not fixed in this Task)
-
-- A cleanup-stage `FAILED` labels the whole invocation `attempted_unverified` even when the primary
-  move was verified; conservative and safe, but coarser than necessary.
-- The `PAUSED → resume` decision branch is effectively unreachable, since a paused item without a
-  result already fails closed to `unknown` certainty earlier.
-- `list_file_review_links` still omits classification reviews and conflict confirmations; the new
-  item-scoped checkpoint covers all five kinds, so no journey depends on it.
-- Task detail performs one bounded checkpoint read per item row (bounded by the existing item
-  limit).
