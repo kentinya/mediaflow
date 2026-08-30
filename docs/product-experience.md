@@ -90,8 +90,9 @@ lifecycle, activation/request, protected-execute pin, production Web → Worker 
 saved-revision failure, and zero-I/O regressions and found no Task-scope P0/P1 defect. Phase 22.2's
 bounded whole-document snapshot journey is accepted; object-level setup remains the next journey.
 
-This is not the full first-time setup journey: remote/provider Storage forms, policy editing, provider
-switching, and generic per-item stage-aware recovery remain TARGET work.
+This is not the full first-time setup journey: remote/provider Storage forms and Provider switching
+remain TARGET work. Generic per-item stage-aware recovery was subsequently delivered by Slice 23;
+it does not make those configuration gaps complete.
 
 ## Phase 22.3 Local setup slice (CURRENT implementation; PASS / CLOSED)
 
@@ -339,10 +340,44 @@ completed non-`capability_gap` precheck leaves the checked control and its label
 Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
 multiple RecognitionTypes or destination Storages in one request, `ConflictType.DUPLICATE_MEDIA` /
 known-media detection, attachment prechecks, absolute mounted-path display and execution remain
-TARGET. Provider switching, generic Task resume, per-item Processing Checkpoint recovery and
-unattended execute also remain outside Slice 22.6. Slice 22.6 is PASS / CLOSED with these items
-remaining non-claims; lifecycle authority remains root `SLICE.md`. Active runtime-consumption
-semantics are unchanged.
+TARGET. Provider switching, generic Task resume and unattended execute also remain outside Slice
+22.6. Per-item Processing Checkpoint recovery was subsequently delivered by Slice 23; Slice 22.6
+remains PASS / CLOSED without claiming it as part of that earlier boundary. Lifecycle authority
+remains root `SLICE.md`, and Active runtime-consumption semantics are unchanged.
+
+## Slice 23 stage-aware per-item recovery (CURRENT; PASS / CLOSED)
+
+The authenticated Task detail and bounded batch summary now provide the complete Slice 23 segment
+of journey E. Every persisted TaskItem can be opened as a restart-safe Processing Checkpoint showing
+its durable stage, Storage-relative source, pinned configuration identity, current/prior Results,
+known completed and uncertain effects, linked review/conflict, error category, retry safety and only
+the actions valid for that exact checkpoint. Legacy or unavailable evidence is labelled unknown or
+unavailable rather than inferred. The Task summary embeds the same bounded checkpoint decision, and
+the detail links an applicable blocker to its existing resolution surface.
+
+For a verified pre-mutation failure, the operator explicitly confirms an exact-version recovery
+request and then an analysis-only continuation. The continuation creates one new Job and re-enters
+the existing production pipeline for exactly that source item under the original immutable
+configuration snapshot, always with `execute=false`. After reload the original checkpoint/request,
+the continuation state and the linked new DryRun Task/Result remain visible. Stale versions,
+duplicate ownership, missing snapshots, invalid source scope, queue capacity and cancellation fail
+closed with durable bounded evidence and a concrete next action. Successful, skipped, DryRun and
+ignored terminal items are never offered replay; uncertain mutation offers investigation rather
+than automatic continuation.
+
+The same behavior supports a deterministic selection of at most 100 eligible TaskItems. Every child
+keeps its own checkpoint, request, continuation, Job, outcome, error and recovery action, while the
+durable parent summary independently reconciles selected, queued/running, completed, failed,
+cancelled, refused/waiting, recovered, ignored and unchanged states. A stranded child whose outcome
+could not be persisted can be explicitly resumed without replaying siblings. API and Web share the
+same application services, RBAC, validation and confirmation rules; viewing checkpoint or batch
+state performs no Storage/Provider work.
+
+This Slice grants no execute, overwrite, delete, cleanup or rollback authority. It does not replay
+uncertain mutations, provide distributed crash recovery, switch Metadata Providers, complete the
+broader Files/Media manual-organize journey or enable scheduled unattended execution. Any future
+real mutation still requires current authority and the normal plan/conflict/capability checks and
+can occur only through OrganizerExecutor.
 
 ## A. First-time setup
 
