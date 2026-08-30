@@ -1695,6 +1695,30 @@ class MediaFlowApi:
                 200,
                 self._repository.get_recovery_batch(parts[3]).document(),
             )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "recovery-batches"]
+            and parts[4] == "resume"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+            self._require_empty_query(environ, "recovery batch resume")
+            self._require_empty_body(environ, "recovery batch resume")
+            binding = self._runtime_binding
+            batch = self._recovery_batch.resume(
+                parts[3],
+                actor=principal.principal_id,
+                maximum_active_jobs=binding.maximum_active_jobs,
+            )
+            return self._response(
+                start_response,
+                202,
+                {
+                    **batch.document(),
+                    "executionMode": "dry_run",
+                    "sideEffects": "none",
+                },
+            )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "tasks"] and method == "GET":
             item_limit, result_limit, item_cursor, result_cursor = self._task_detail_page(environ)
             task = self._repository.get_task(parts[3])
@@ -2342,6 +2366,12 @@ class MediaFlowApi:
             return "/api/v1/tasks/{task_id}/items/{item_id}/recovery"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"]:
             return "/api/v1/recovery-batches/{id}"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "recovery-batches"]
+            and parts[4] == "resume"
+        ):
+            return "/api/v1/recovery-batches/{id}/resume"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
             return "/api/v1/jobs/{id}/cancel"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":

@@ -1764,6 +1764,29 @@ APP_JS = b"""(() => {
       detailContent.append(table(['Item', 'Status', 'Reason', 'Error', 'Next action'],
         (data.items || []).map(item => [item.source_item_id, item.status,
           item.reason || '-', item.error || '-', item.next_action || '-'])));
+      const stranded = (data.items || []).some(item => item.status === 'selected');
+      if (stranded) {
+        const controls = text('div', '', 'choices');
+        controls.append(text('p',
+          'Some selected items never reached a durable outcome. Resume re-drives only those ' +
+          'stranded items under the same analysis-only guarantees; no media mutation or ' +
+          'execution authority is granted.'));
+        controls.append(actionButton('Resume stranded items (DryRun)', () => {
+          const confirmation = text('div', '', 'choices');
+          confirmation.append(text('p', 'Confirm resume of stranded analysis-only items?'));
+          confirmation.append(actionButton('Confirm resume', async () => {
+            try {
+              const updated = await api(
+                `/api/v1/recovery-batches/${encodeURIComponent(batchId)}/resume`,
+                {method: 'POST', body: ''});
+              message(`Recovery batch ${updated.batch_id} resumed.`);
+              confirmation.remove(); controls.remove(); await showRecoveryBatch(batchId);
+            } catch (error) { message(errorText(error), true); }
+          }), actionButton('Keep unchanged', () => confirmation.remove()));
+          controls.append(confirmation);
+        }));
+        detailContent.append(controls);
+      }
       detail.hidden = false;
     } catch (error) { message(errorText(error), true); }
   }

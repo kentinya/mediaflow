@@ -844,7 +844,7 @@ class RecoveryBatchTests(unittest.TestCase):
                 self.assertEqual(loaded_batch.counts["partial"], 1)
 
     def test_resume_finishes_orphaned_selected_children(self) -> None:
-        """AC 2: Resume deterministically completes selected children after reload."""
+        """AC 7, AC 9: Resume re-drives only children still durably `selected` after reload."""
         with tempfile.TemporaryDirectory() as directory:
             helper = _RecoveryContinuationTests()
             environment = helper._environment(directory)
@@ -866,23 +866,42 @@ class RecoveryBatchTests(unittest.TestCase):
                 checkpoint = continuation_service.checkpoint_service.get(
                     source_item.item_id, task_id=source_task.task_id
                 )
-                # Create a batch with a selected child
-                batch = service.submit(
-                    source_task.task_id,
-                    [
-                        {
-                            "itemId": source_item.item_id,
-                            "expectedCheckpointVersion": checkpoint.checkpoint_version,
-                        }
-                    ],
-                    actor="operator",
-                    maximum_active_jobs=100,
+                original_update = repository.update_recovery_batch_item
+                failed_once = [False]
+
+                def fail_first_persist(child):
+                    if not failed_once[0]:
+                        failed_once[0] = True
+                        raise RuntimeError("simulated outcome persist failure")
+                    return original_update(child)
+
+                with patch.object(repository, "update_recovery_batch_item", fail_first_persist):
+                    batch = service.submit(
+                        source_task.task_id,
+                        [
+                            {
+                                "itemId": source_item.item_id,
+                                "expectedCheckpointVersion": checkpoint.checkpoint_version,
+                            },
+                            {
+                                "itemId": "missing-item",
+                                "expectedCheckpointVersion": checkpoint.checkpoint_version,
+                            },
+                        ],
+                        actor="operator",
+                        maximum_active_jobs=100,
+                    )
+                by_id = {item.source_item_id: item for item in batch.items}
+                self.assertEqual(
+                    by_id[source_item.item_id].status,
+                    RecoveryBatchItemStatus.QUEUED,
+                )
+                self.assertEqual(
+                    by_id["missing-item"].status,
+                    RecoveryBatchItemStatus.SELECTED,
                 )
 
-            # Verify it was accepted
-            self.assertEqual(batch.items[0].status, RecoveryBatchItemStatus.QUEUED)
-
-            # Simulate a reload by creating a new service instance
+            # Reload with fresh repository/service instances and resume the orphan.
             with SQLiteTaskRepository(environment["database"]) as repository2:
                 service2 = RecoveryBatchContinuationService(
                     repository2,
@@ -897,11 +916,120 @@ class RecoveryBatchTests(unittest.TestCase):
                         ).checkpoint_service,
                     ),
                 )
-                # Resume should return the same batch without changes
                 resumed = service2.resume(batch.batch_id, actor="operator", maximum_active_jobs=100)
 
             self.assertEqual(resumed.batch_id, batch.batch_id)
-            self.assertEqual(resumed.items[0].status, RecoveryBatchItemStatus.QUEUED)
+            by_id = {item.source_item_id: item for item in resumed.items}
+            self.assertEqual(
+                by_id[source_item.item_id].status,
+                RecoveryBatchItemStatus.QUEUED,
+            )
+            self.assertEqual(
+                by_id["missing-item"].status,
+                RecoveryBatchItemStatus.REFUSED,
+            )
+            self.assertEqual(by_id["missing-item"].reason, "unknown_item")
+            self.assertIsNotNone(by_id["missing-item"].next_action)
+            self.assertEqual(
+                by_id[source_item.item_id].continuation_id,
+                batch.items[0].continuation_id,
+            )
+
+    def test_batch_resume_api_recovers_orphaned_selected_child(self) -> None:
+        """AC 7, AC 9: API resume re-drives stranded children with the same RBAC and evidence."""
+        with tempfile.TemporaryDirectory() as directory:
+            helper = _RecoveryContinuationTests()
+            environment = helper._environment(directory)
+            source_task, source_item = helper._seed_failed_item(environment)
+            api = helper._api(environment)
+            status, checkpoint = api_request(
+                api,
+                f"/api/v1/tasks/{source_task.task_id}/items/{source_item.item_id}",
+            )
+            self.assertEqual(status, 200)
+            version = checkpoint["checkpoint_version"]
+            original_update = api._repository.update_recovery_batch_item
+            failed_once = [False]
+
+            def fail_first_persist(child):
+                if not failed_once[0]:
+                    failed_once[0] = True
+                    raise RuntimeError("simulated outcome persist failure")
+                return original_update(child)
+
+            with patch.object(api._repository, "update_recovery_batch_item", fail_first_persist):
+                status, batch_doc = api_request(
+                    api,
+                    f"/api/v1/tasks/{source_task.task_id}/recovery/continue-batch",
+                    method="POST",
+                    body={
+                        "items": [
+                            {
+                                "itemId": source_item.item_id,
+                                "expectedCheckpointVersion": version,
+                            },
+                            {
+                                "itemId": "missing-item",
+                                "expectedCheckpointVersion": version,
+                            },
+                        ]
+                    },
+                )
+            self.assertEqual(status, 202)
+            by_id = {item["source_item_id"]: item for item in batch_doc["items"]}
+            self.assertEqual(by_id[source_item.item_id]["status"], "queued")
+            self.assertEqual(by_id["missing-item"]["status"], "selected")
+
+            status, detail = api_request(
+                api,
+                f"/api/v1/recovery-batches/{batch_doc['batch_id']}",
+            )
+            self.assertEqual(status, 200)
+            by_id = {item["source_item_id"]: item for item in detail["items"]}
+            self.assertEqual(by_id["missing-item"]["status"], "selected")
+            self.assertEqual(by_id[source_item.item_id]["status"], "queued")
+
+            status, resumed = api_request(
+                api,
+                f"/api/v1/recovery-batches/{batch_doc['batch_id']}/resume",
+                method="POST",
+            )
+            self.assertEqual(status, 202)
+            self.assertEqual(resumed["executionMode"], "dry_run")
+            self.assertEqual(resumed["sideEffects"], "none")
+            by_id = {item["source_item_id"]: item for item in resumed["items"]}
+            self.assertEqual(by_id["missing-item"]["status"], "refused")
+            self.assertEqual(by_id["missing-item"]["reason"], "unknown_item")
+            self.assertIsNotNone(by_id["missing-item"]["next_action"])
+            self.assertEqual(by_id[source_item.item_id]["status"], "queued")
+
+            status, _ = api_request(
+                api,
+                "/api/v1/recovery-batches/unknown-batch/resume",
+                method="POST",
+            )
+            self.assertEqual(status, 404)
+            self.assertEqual(
+                _["error"]["code"],
+                "not_found",
+            )
+
+            api._principals = (
+                ResolvedApiPrincipal("reader", "reader-token", frozenset({ApiPermission.READ})),
+            )
+            status, _ = api_request(
+                api,
+                f"/api/v1/recovery-batches/{batch_doc['batch_id']}/resume",
+                method="POST",
+                token="reader-token",
+            )
+            self.assertEqual(status, 403)
+            self.assertEqual(_["error"]["code"], "forbidden")
+
+            script = ASSETS["/ui/app.js"][1].decode("utf-8")
+            self.assertIn("Resume stranded items (DryRun)", script)
+            self.assertIn("Confirm resume of stranded analysis-only items?", script)
+            self.assertIn("/resume", script)
 
     def test_recognition_type_c_preserved_through_continuation_with_a_policies(self) -> None:
         """Required Tests: RecognitionType C remains C through continuation."""
