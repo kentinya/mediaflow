@@ -3238,6 +3238,32 @@ class SQLiteTaskRepository:
                         MetadataCorrectionContinuationStatus.QUEUED.value,
                     ),
                 )
+            elif existing_row["command"] == AutomationCommand.RECOVERY_CONTINUATION.value:
+                # A pending Job is terminally cancelled here, so its queued
+                # continuation cannot remain active after the Worker loses it.
+                cursor = self._connection.execute(
+                    """UPDATE recovery_continuations
+                    SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
+                    WHERE job_id=? AND status=?""",
+                    (
+                        RecoveryContinuationStatus.CANCELLED.value,
+                        now.isoformat(),
+                        now.isoformat(),
+                        "recovery continuation Job was cancelled before completion",
+                        "refresh the Task item checkpoint and explicitly continue again",
+                        job_id,
+                        RecoveryContinuationStatus.QUEUED.value,
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    row = self._connection.execute(
+                        "SELECT request_id FROM recovery_continuations WHERE job_id=?",
+                        (job_id,),
+                    ).fetchone()
+                    if row is not None:
+                        self._resolve_recovery_request_locked(
+                            row["request_id"], RecoveryRequestStatus.CANCELLED, now
+                        )
             row = self._connection.execute(
                 "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
             ).fetchone()
