@@ -1,13 +1,13 @@
-# Task 23.3 — Single-item safe recovery continuation
+# Task 23.4 — Bounded batch recovery continuation
 
-This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to the
-current [`SLICE.md`](SLICE.md).
+This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
+the current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 23.3
+Task ID: 23.4
 Parent Slice: 23 — Stage-Aware Per-Item Recovery
-Status: PASS
-Task Base: e9a68986d50ec8c0dfb651738574f48a5c8d05bf
+Status: PLANNED
+Task Base: fe3063149fc591cdeabb783b3be3edc01a07f395
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,213 +15,137 @@ Planner / Reviewer: B
 
 ## Goal
 
-Turn one admitted recovery request into a durable, bounded continuation that actually continues the
-item: it re-enters the existing production pipeline at the checkpoint-supported boundary for exactly
-that one TaskItem's original source scope under the item's pinned configuration snapshot, produces a
-new linked Task/TaskItem/Result while the original item keeps its own record and evidence, resolves
-the admitted request to a terminal state, and reports queued / running / completed / failed /
-cancelled state, bounded secret-free failure evidence and one concrete next action identically from
-API and Operator Web.
+From the authenticated Task detail and batch summary, let an operator select a bounded set of
+eligible TaskItems and recover them as independent, version-bound continuations. Each selected item
+must use the same reviewed single-item admission and continuation behavior, preserve its own source,
+checkpoint, Result and recovery evidence, produce its own linked DryRun Task/Result, and reconcile
+into a durable parent batch summary without replaying successful, skipped, DryRun, unselected or
+uncertain siblings.
 
-The continuation is analysis-only: it runs with execution disabled, grants no execute, overwrite,
-delete, source-cleanup or rollback authority, inherits no historical authority, and performs zero
-Storage mutation.
-
-Primary Required Outcome: RO-7 (safe continuation re-enters the production pipeline at a
-checkpoint-supported boundary and produces a new linked Result, with zero-mutation analysis and
-OrganizerExecutor-only mutation). This Task also completes the continuation halves of RO-3 (the
-stage-aware decision is now consumed, not merely offered), RO-2 (continuation transitions are
-transactionally consistent, preserve prior evidence, and reject stale/duplicate/concurrent requests)
-and RO-6 (the surfaces expose the linked new Task/Result and a concrete next action after reload).
+This Task advances Slice Required Outcome RO-5 and the batch half of RO-6. It composes the accepted
+single-item continuation from Task 23.3; it does not redefine the checkpoint decision or introduce a
+second recovery pipeline.
 
 ## Why This Task Exists
 
-Task 23.1 produced the durable checkpoint projection and Task 23.2 produced the version-bound
-admission gate. Admission is where the product promise currently stops, and the code says so:
+Task 23.1 through Task 23.3 established durable checkpoints, version-bound single-item admission and
+the analysis-only continuation worker. The remaining product gap is at the batch boundary:
 
-1. `mediaflow/domain/recovery.py:16-22` — `RecoveryRequestStatus` declares `COMPLETED`, `CANCELLED`
-   and `REJECTED`, but its own docstring records that "only pending is active in this Task". Nothing
-   in the repository reads the `recovery_requests` table to do work. An admitted request is inert, so
-   the operator's stage-aware decision never continues the item and the request stays active forever,
-   blocking any fresh decision through the duplicate-active-request rule.
-2. `mediaflow/application/recovery_admission.py:222-227` — `_next_action("retry")` tells the operator
-   to "inspect the admitted request, then run the supported single-item recovery". That single-item
-   recovery does not exist. The Slice exists precisely because "Retry is not equivalent to recovery";
-   right now the recovery journey ends at a promise.
-3. `mediaflow/infrastructure/sqlite_runtime.py:600-633` — `_admit_retry_locked` flips the TaskItem
-   back to a pending/`task_retry_requested` state. Whether that item is ever reprocessed depends on
-   somebody separately running a whole-library CLI workflow, and no new Result is ever linked back to
-   the original item, so the Slice requirement for "new auditable Task/TaskItem/Result linkage" is
-   unmet.
-4. The only per-item continuation that exists is metadata-correction-specific:
-   `mediaflow/application/metadata_correction_continuation.py` (submit → `AutomationJob` + durable
-   continuation row + stale-version/existing-continuation conflicts) with
-   `AutomationCommand.FILE_METADATA_CORRECTION` (`mediaflow/domain/automation.py:13`) and the worker
-   `_run_metadata_correction_continuation` (`mediaflow/final_cli.py:2817-2960`). It proves the safe
-   shape — pinned-snapshot validation, bounded child Task with `item_limit=1` and
-   `execute_authorized=False`, `process_file(..., execute=False)`, `coordinator.finish(...)`,
-   cancel/fail evidence — but it keys on a file id and a metadata correction decision and cannot
-   serve a stage-aware TaskItem recovery bound to a `checkpoint_version`.
-5. `mediaflow/final_cli.py:2751-2790` — `_run_queued_workflow` dispatches every non-metadata command
-   by re-invoking a whole CLI workflow with a `--limit`. That cannot be bound to one TaskItem, one
-   Storage-relative source, or one checkpoint version, so it is not a safe recovery executor.
-6. `mediaflow/interfaces/service_api.py:1498-1548` — the recovery POST returns the admitted request
-   plus `sideEffects: "none"` and advisory text. No surface exposes a continuation, its Job, its new
-   Task/Result or its failure, so RO-6's "linked new Task/Result and concrete next action after
-   reload" is unimplemented and the Web drill-in has nothing to render past the admitted request.
-
-This is the largest reasonable next unit. RO-5's bounded batch recovery is defined by the Contract as
-bounded composition of independent single-item recoveries, and its parent/continuation summary
-reconciliation must reconcile per-item continuation outcomes; building batch first would require
-inventing a throwaway per-item outcome model and then rewriting it. Continuation pairs directly with
-the admission gate reviewed in 23.2 — same shared decision, now consumed — and stays inside the
-Slice: it adds no new mutating surface and no new authority path.
+1. The Task collection/detail surfaces expose per-item checkpoint facts and single-item actions, but
+   there is no bounded batch selection or durable parent summary.
+2. Repeating the single-item endpoint manually does not provide one auditable batch intent, does not
+   reconcile accepted/refused/queued/running/terminal item outcomes, and makes it too easy for an
+   operator to lose which siblings were intentionally excluded.
+3. A batch implementation must preserve the single-item safety rules under concurrency: each item
+   needs its own checkpoint version, source scope, pinned configuration pair, Job, continuation and
+   terminal recovery action. One stale, invalid, queue-full or failed item must not erase or block
+   another selected item's evidence.
+4. RO-5 and the batch portion of RO-6 are the largest remaining coherent behavior in this Slice.
+   Batch recovery is therefore the next implementation unit; Slice Final is not appropriate while
+   these required outcomes remain incomplete.
 
 ## Implementation Scope
 
 ```text
-Domain → Persistence (+ forward migration) → Application → API → Web → CLI worker → Tests
+Domain -> Persistence/Migration -> Application -> API -> Operator Web -> Tests
 ```
 
-1. **Domain** — a recovery continuation contract: continuation id, admitted request id, source
-   task/item ids, the bound `checkpoint_version`, the pinned snapshot id/digest, the re-entry boundary
-   derived from the checkpoint (which supported stage the continuation restarts from, plus the
-   explicit refusal when the checkpoint supports no boundary), a status lifecycle
-   (`queued → running → completed | failed | cancelled`), the linked new task id and new result id,
-   bounded secret-free failure evidence (category, what is durable, what is safe to repeat, one
-   concrete next action) and an analysis-only authority statement. Terminal transitions resolve the
-   parent `RecoveryRequest` to a terminal `RecoveryRequestStatus` so the item can be decided again.
-   Extend the stage-aware action contract only as far as exposing the continuation action and the
-   post-continuation next action requires.
-2. **Persistence** — one additive bounded table for recovery continuations plus the index that makes
-   the item-scoped read cheap, with a forward-only `SCHEMA_VERSION` bump. At most one active
-   continuation per admitted request. Submission atomically writes {continuation row +
-   `AutomationJob` + request status transition} inside one transaction under the existing
-   maximum-active-Jobs bound; job → new-Task and continuation → new-Result binding and terminal
-   transitions are equally atomic and never rewrite the original TaskItem error or its existing
-   Result rows. The bounded continuation view joins into the existing checkpoint context read.
-3. **Application** — a continuation service pair mirroring the reviewed metadata-correction
-   precedent. A submit service reads the admitted request and the checkpoint through the 23.1
-   projection and refuses, with bounded reasons, when the request is not active, the bound checkpoint
-   version has moved, the pinned snapshot is missing or unresolvable, the checkpoint supports no
-   continuation boundary, a continuation already exists, or the Job queue bound is reached. A worker
-   service (`prepare` / `started` / `finish` / `failed` / `cancelled`) validates that the worker's
-   resolved configuration snapshot equals the pinned pair, creates a bounded Task
-   (`item_limit=1`, `execute_authorized=False`, `require_configuration_snapshot=True`), re-enters the
-   existing production pipeline for exactly that item's Storage-relative source, links the new
-   Task/Result to the original item and records bounded failure evidence. No new pipeline, no policy
-   re-decision, no Storage mutation, no reuse of historical authority.
-4. **API** — a continuation submit route on the existing Task-item recovery path under an existing
-   write permission, and bounded continuation state added to the Task-item checkpoint read and the
-   Task-detail item summary (status, job id, new task/result ids, failure evidence, next action).
-   Fail closed with the existing response conventions for unauthenticated, insufficient permission,
-   unknown Task/item/request, item/Task mismatch, inactive request, stale version, existing
-   continuation, unavailable snapshot, queue full, unsupported boundary, malformed body and
-   unexpected fields.
-5. **Web** — the Task-item drill-in submits the continuation with an explicit confirmation naming the
-   action, the bound checkpoint version and the analysis-only authority, and after reload renders the
-   durable continuation status, the job/new Task/new Result links, the bounded failure evidence and
-   the concrete next action strictly from the API document, recomputing no decision and never showing
-   a generic Retry label.
-6. **CLI worker** — `_run_queued_workflow` dispatches exactly one new `AutomationCommand` to the
-   recovery continuation handler with the same snapshot-mismatch, cancellation, failure and
-   secret-free error behavior as the reviewed metadata-correction handler, plus an administrative
-   read of a Task item's continuation.
-7. **Tests** — as listed under Required Tests.
+- Add a bounded batch recovery identity and parent summary built on existing Task, TaskItem,
+  RecoveryRequest, RecoveryContinuation, AutomationJob and Result identities.
+- Persist the batch request and one independent per-item admission/continuation outcome. Preserve
+  accepted, refused, stale, duplicate, queue-full, cancelled, completed, failed, unchanged and
+  uncertain-effect outcomes after restart/reload.
+- Reuse the existing stage-aware checkpoint and single-item continuation services for every child.
+  Do not bypass checkpoint versions, pinned snapshot validation, source-relative scope checks,
+  active-request rules, Job capacity, or worker fencing.
+- Define bounded selection and deterministic ordering. Validate that selected items belong to the
+  requested Task, reject malformed/duplicate/out-of-scope selections, and enforce a documented
+  maximum without unbounded SQL, Job or response work.
+- Make admission and summary transitions transactionally consistent. A child admission failure must
+  not create an orphan Job or continuation; independent children must retain their own durable
+  result when another child fails or is refused.
+- Reconcile the parent summary from durable child state after every relevant transition and reload.
+  The summary must distinguish selected, accepted, refused, waiting, queued, running, completed,
+  failed, cancelled, ignored, partial, recovered and unchanged counts/items as applicable.
+- Expose one authenticated API batch entry point and the Task detail/batch Operator Web flow with
+  the same application behavior, RBAC, validation, confirmation, concurrency responses, per-item
+  evidence and concrete next actions.
+- Keep the whole batch continuation analysis-only: child Tasks use `execute=false`, no execute,
+  overwrite, delete, cleanup or rollback authority, and no Storage/Provider mutation in admission,
+  selection, projection or DryRun continuation.
+- Add only the additive persistence/migration changes directly required by the batch identity and
+  summary. Keep `config/alist.json` ignored/untracked and keep Slice Contract documents frozen.
 
-Explicitly frozen: OrganizerExecutor internals and all Storage mutation behavior; the 23.1 checkpoint
-fields other than the additive continuation view; the 23.2 admission semantics other than terminal
-request resolution; Recognition / Metadata / Naming / Classification / Planner policy ownership; the
-Files/Media metadata-correction continuation behavior; `ExecutionAuthorizationService` issuing and
-organize submission; `SLICE.md`; `docs/roadmap.md`; `docs/progress.md`.
+Frozen scope:
+
+- `SLICE.md` Required Outcomes, Required Surfaces, Safety Invariants, Base SHA and Explicitly
+  Deferred list.
+- Real execution or mutation, uncertain-effect replay, generic Task resume, authority issuance,
+  cross-run rollback/compensation, distributed leases and remote destination precheck.
+- Redesign of Recognition, Metadata, Naming, Classification, OrganizePlan or OrganizerExecutor.
 
 ## Acceptance Criteria
 
-- [ ] An active admitted recovery request whose checkpoint supports continuation can be continued
-      exactly once. The continuation is durable, bound to the same item, the same
-      `checkpoint_version`, the same original Storage-relative source scope and the same pinned
-      configuration snapshot pair, and carries an analysis-only authority statement.
-- [ ] The continuation re-enters the existing production pipeline for exactly that one TaskItem under
-      the pinned snapshot and produces a new Task (`item_limit=1`, `execute_authorized=False`) plus a
-      new Result linked back to the original item; the original TaskItem row, its error and its
-      existing Result rows (including `effect_certainty` and `uncertain_effects`) are unchanged.
-- [ ] Siblings are untouched: the new Task contains exactly one item, and every sibling TaskItem and
-      Result row of the original Task is identical before and after the continuation. Successful,
-      DryRun, skipped and ignored items are never reprocessed.
-- [ ] A continuation never executes and never inherits authority: execution is disabled, neither the
-      new Task nor the Job is execute-authorized, an execute-shaped continuation request is refused
-      with a bounded reason plus the concrete existing authorized-organize next action, and zero
-      Storage mutation occurs — falsified by patching the real production Storage/Provider
-      construction seams and by an on-disk tree snapshot of the item's source and destination roots
-      taken before and after a real continuation run.
-- [ ] Uncertain effects are never continued: a `PARTIAL` / `attempted_unverified` / `unknown` item has
-      no continuable admitted request, a direct continuation attempt is refused with a bounded reason,
-      and investigation remains the offered action.
-- [ ] Stale, duplicate and inactive: a continuation whose bound checkpoint version no longer matches
-      the current checkpoint is refused and the current version is returned; a second continuation for
-      the same admitted request is refused and the existing continuation is returned; a request that is
-      already terminal cannot be continued.
-- [ ] Snapshot integrity: submission refuses a missing or unresolvable pinned snapshot with the
-      existing bounded reason codes, and the worker refuses to run when its resolved configuration
-      snapshot id/digest pair does not equal the continuation's pinned pair. Neither path substitutes
-      the current Active configuration.
-- [ ] Terminal outcomes are durable and reconciled: completed / failed / cancelled continuations record
-      the linked new Task and Result where one exists, resolve the parent request to a terminal status
-      so the item can be decided again, leave the source item diagnosable, and expose bounded
-      secret-free evidence plus one concrete next action. A failure mid-submission or mid-transition
-      leaves no partially linked continuation, no orphan Job and no lost original evidence.
-- [ ] Queue and concurrency bounds hold: the continuation Job respects the existing maximum-active-Jobs
-      bound, a queue-full submission is refused without creating a continuation or a Job, and two
-      concurrent submissions for the same request produce exactly one continuation and one Job.
-- [ ] API parity and fail-closed behavior: continuation submit requires an existing write permission
-      and returns bounded errors for unauthenticated, insufficient permission, unknown Task/item/
-      request, item/Task mismatch, inactive request, stale version, existing continuation, unavailable
-      snapshot, queue full, unsupported boundary, malformed body and unexpected fields; the Task-item
-      checkpoint read and the Task-detail item summary expose the same bounded continuation values
-      before and after reload.
-- [ ] Operator Web parity: the drill-in submits only fields the API accepts, requires explicit
-      confirmation naming the action, the bound checkpoint version and the analysis-only authority, and
-      after reload renders the continuation status, job/new Task/new Result links, bounded failure
-      evidence and next action from the API document without recomputing a decision, without a generic
-      Retry label and without submitting an actor or any authority field.
-- [ ] Migration: a database created before this Task migrates forward with all pre-existing Task,
-      TaskItem, Result and recovery-request rows preserved, and a database already at the new schema
-      version still opens. Schema-version expectations are updated while migrate-from-older-version
-      assertions are retained.
-- [ ] A RecognitionType C item using NamingPolicy A and ClassificationPolicy A still reports
-      RecognitionType C in the continuation's new Result.
+- [ ] An authenticated Task detail/batch summary can submit one bounded selection of eligible
+      TaskItems through one shared API/Web application behavior with explicit confirmation.
+- [ ] Selection is bounded, deterministic and fail-closed for malformed, duplicate, out-of-Task,
+      missing or unauthorized items; the response identifies each refused item without hiding valid
+      selected items.
+- [ ] Every accepted child is bound to its exact checkpoint version, original Storage-relative source
+      scope and immutable configuration snapshot pair. A newer Active configuration is never used as
+      a substitute.
+- [ ] Each child creates at most one active RecoveryRequest, one RecoveryContinuation and one
+      analysis-only Job. Duplicate/concurrent child submission is idempotent or returns the current
+      durable child state without creating duplicate work.
+- [ ] Queue capacity, optimistic concurrency and transaction failures cannot leave orphan Jobs,
+      continuations, parent rows or partial child linkage. Independent children already admitted
+      remain diagnosable when another child is refused or fails.
+- [ ] The existing Worker processes children independently. Successful, skipped, DryRun, ignored,
+      unselected and uncertain-effect siblings are never replayed, and no child can overwrite
+      another child's checkpoint, Result, error or next action.
+- [ ] Every selected child has a durable terminal or waiting outcome after reload, including bounded
+      secret-free failure evidence and one concrete next action; original TaskItem/Result/effect
+      evidence remains preserved.
+- [ ] The parent batch summary is derived from durable child state and reconciles accepted, refused,
+      queued, running, completed, failed, cancelled, waiting, partial, recovered and unchanged
+      items without double counting or losing per-item diagnosis.
+- [ ] API and Operator Web expose the same batch selection, confirmation, RBAC, validation,
+      concurrency, per-item outcome, parent summary and recovery semantics after reload.
+- [ ] Batch continuation remains DryRun-only and zero-mutation; no historical execution authority is
+      inherited, and any future real mutation remains outside this Task.
+- [ ] A RecognitionType C child remains C when its continuation reuses NamingPolicy A and
+      ClassificationPolicy A.
 - [ ] No secret, token, credential, authorization header, cookie, private endpoint, absolute
-      user-private path or raw exception text appears in the continuation record, API responses, audit
-      entries, CLI output or logs.
+      user-private path or raw external exception text appears in batch records, API/Web responses,
+      audit entries, CLI output or logs.
 - [ ] Test Level T4 passes with actual recorded evidence.
-- [ ] The checkpoint contains only this Task and is coherent and reviewable.
+- [ ] The checkpoint contains only this Task and is coherent/reviewable.
 
 ## Required Tests
 
-Focused (new suite):
+Focused:
 
 ```text
-python -m unittest tests.test_recovery_continuation
+python -m unittest tests.test_recovery_batch
 ```
 
-covering submission and every refusal, the worker lifecycle (prepare / started / finish / failed /
-cancelled), pinned-snapshot mismatch, single-item scope with sibling row identity, non-execute
-authority plus zero-Storage-mutation falsification through the real production seams and an on-disk
-tree snapshot, terminal parent-request resolution, transactional atomicity, the Job queue bound,
-RecognitionType C preservation and secret-free bounded evidence.
+The focused suite must cover bounded selection, mixed valid/refused items, duplicate/concurrent
+submission, queue capacity, per-item pinned checkpoints, independent Worker outcomes, parent summary
+reconciliation, cancellation/failure/reload, uncertain-effect refusal, zero-mutation falsification
+through real production seams, RecognitionType C preservation and secret-free evidence.
 
-Related suites (existing assertions must remain intact):
+Related:
 
 ```text
-python -m unittest tests.test_processing_checkpoint tests.test_processing_recovery_admission \
-  tests.test_operator_ui
+python -m unittest tests.test_recovery_continuation \
+  tests.test_processing_checkpoint tests.test_processing_recovery_admission \
+  tests.test_operator_ui tests.test_automation_admission tests.test_automation_api \
+  tests.test_automation_job_fencing tests.test_operator_job_submission \
+  tests.test_operator_job_cancellation tests.test_migration_rehearsal \
+  tests.test_upgrade_preflight tests.test_task_persistence tests.test_api_security
 ```
 
-plus the automation Job/worker suites (new command dispatch, snapshot fail-closed, cancellation), the
-persistence/migration suites for the additive table, index and schema version, and the service API
-suites for the new route and the extended reads.
-
-Quality gates (T4):
+Quality and T4 gates:
 
 ```text
 python -m unittest discover -s tests
@@ -229,224 +153,52 @@ ruff format --check .
 ruff check .
 python -m compileall -q mediaflow tests
 pip check
-mediaflow config validate  (both example configurations)
+mediaflow --config config/strategy.example.json config validate
+mediaflow --config config/mediaflow.phase13.2.example.json config validate
 ffprobe/ffmpeg audit over mediaflow/, tests/, scripts/
-git diff --check <Task Base>..HEAD  + private-file scan (config/alist.json stays untracked)
+git diff --check <Task Base>..HEAD
+private-file/secret scan; config/alist.json remains ignored and untracked
 ```
 
-Packaging/wheel smoke remains a Slice Final gate. No test may require a real SMB / OpenList / S3 /
-TMDB service or production data.
+No test may require a real SMB, OpenList, S3 or TMDB service, production credentials or production
+media.
 
 ## Non-goals
 
-- Bounded batch recovery, sibling-independence summaries and parent/continuation summary
-  reconciliation (RO-5 and the batch half of RO-6) — the next Task.
-- Any real executing or mutating recovery path, item-scoped authorized organize, and any new
-  execute-authority issuing path. The continuation stays analysis-only and points at the existing
-  authorized organize journey; manual organize execution is Slice-24 deferred work.
-- Item-level resume of a paused Task (resume remains Task-scoped).
-- Automatic replay or compensation of uncertain mutations, cross-run rollback, distributed leases and
-  remote destination precheck (Contract deferrals).
-- Any change to Required Outcomes, Required Surfaces, Safety Invariants, Slice Base, `SLICE.md`,
-  `docs/roadmap.md` or `docs/progress.md`.
-- Refactors, copy polish or P2 cleanup not required by these Acceptance Criteria.
+- Work outside the parent Slice Contract.
+- The next Task or Slice Final.
+- Real executing or mutating recovery, authority issuance, overwrite/delete/cleanup or rollback.
+- Automatic replay or compensation of uncertain effects.
+- Generic Task resume, cross-run recovery, distributed leases or remote destination precheck.
+- A second batch pipeline that bypasses the accepted single-item checkpoint/continuation behavior.
+- Optional proof, copy polish, P2 cleanup or unrelated refactors.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-- `mediaflow/infrastructure/sqlite_runtime.py` — integrated pending
-  `RECOVERY_CONTINUATION` Job cancellation with the continuation and parent
-  recovery-request terminal transition in the same SQLite transaction; running
-  continuations retain cooperative cancellation behavior.
-- `tests/test_recovery_continuation.py` — added production-path coverage for
-  pending cancellation and injected admission/terminal-transition rollback.
-- `mediaflow/domain/recovery_continuation.py` (new) — `RecoveryContinuationStatus`,
-  `RecoveryContinuationReason`, `RecoveryContinuationError`, the durable `RecoveryContinuation`
-  dataclass (continuation id, request id, source task/item ids, bound checkpoint version, pinned
-  snapshot pair, re-entry boundary, status lifecycle, linked new Task/Result ids, bounded
-  secret-free failure evidence, analysis-only authority statement) and the continuation
-  repository Protocol.
-- `mediaflow/domain/recovery.py` — added `FAILED` to `RecoveryRequestStatus` for terminal request
-  resolution; added `get_recovery_request` to the repository Protocol.
-- `mediaflow/domain/automation.py` — added `AutomationCommand.RECOVERY_CONTINUATION`.
-- `mediaflow/domain/processing_checkpoint.py` — additive `recovery_continuations` on the checkpoint
-  context and `recovery_continuation` on `ProcessingCheckpoint`; summary/document expose the
-  bounded continuation view.
-- `mediaflow/infrastructure/sqlite_runtime.py` — runtime `SCHEMA_VERSION` 24 → 25 with the additive
-  `recovery_continuations` table, one-active-per-request index and item-scoped index; repository
-  methods for continuation get/list/admit/mark-running/bind-task/complete/fail-queued/cancel with
-  atomic optimistic-concurrency re-projection and atomic parent-request terminal resolution;
-  `_admit_retry_locked` extended to support re-admission after a terminal continuation (legacy
-  one-row-per-item audit upsert while `recovery_requests` keeps full history); checkpoint context
-  read now joins the bounded continuation view.
-- `mediaflow/application/processing_checkpoint.py` — projection carries the continuation view and
-  extends the stage-aware action contract: a `continue` action for a pending admitted retry item,
-  `retry` re-offered after a terminal continuation, and the in-flight refusal; secret/path-safe
-  continuation projection.
-- `mediaflow/application/recovery_continuation.py` (new) — `RecoveryContinuationService` (submit:
-  active-request, duplicate, stale-version, boundary, snapshot and queue gates) and
-  `RecoveryContinuationWorkerService` (prepare/started/finish/failed/cancelled with durable-fact
-  and pinned-snapshot validation).
-- `mediaflow/application/recovery_admission.py` — retry next-action now points at the continuation.
-- `mediaflow/interfaces/service_api.py` — `POST /api/v1/tasks/{taskId}/items/{itemId}/recovery/continue`
-  under `SUBMIT_DRY_RUN`; bounded `RecoveryContinuationError` mapping (404/400/403/409/503 with
-  `configuration_unavailable` for snapshot); checkpoint read and Task-detail summary expose the
-  continuation via the projection.
-- `mediaflow/interfaces/operator_ui.py` — Task-item drill-in renders the durable continuation
-  status/job/new-Task/new-Result links/bounded failure evidence/next action and submits the
-  continuation with an explicit confirmation naming the action, the bound checkpoint version and
-  the analysis-only authority; no actor or authority field is submitted.
-- `mediaflow/final_cli.py` — `_run_queued_workflow` dispatches `recovery-continuation`; new
-  `_run_recovery_continuation` worker (single-item, `execute_authorized=False`,
-  `require_configuration_snapshot=True`, `process_file(..., execute=False)`), snapshot-unavailable
-  failure handler, and an administrative `tasks show-item` checkpoint/continuation read.
-- `tests/test_recovery_continuation.py` (new) — focused suite; schema-version expectations in
-  related persistence/migration tests updated to 25; additive continuation summary field in
-  `test_processing_checkpoint`; operator-UI continuation assertions in `test_operator_ui`.
-
 ### Implemented
-
-- Fixed the B-review blocker where cancelling a pending recovery continuation
-  Job left the continuation queued and its parent recovery request active.
-  `AutomationJobService.cancel()` now durably cancels the queued continuation
-  and resolves its parent request to `cancelled` atomically with the Job
-  cancellation.
-- Added rollback coverage proving a failure while creating the Job/continuation
-  pair leaves neither admission row, and a failure while resolving terminal
-  state leaves the continuation, parent request, and original evidence
-  unchanged.
-- An active admitted recovery request is continued exactly once: a durable continuation is bound to
-  the same item, the confirmed checkpoint version, the same Storage-relative source scope and the
-  same pinned configuration snapshot pair, and carries an analysis-only authority statement.
-- The continuation re-enters the existing production pipeline for exactly that one TaskItem under
-  the pinned snapshot (`item_limit=1`, `execute_authorized=False`) and links the new Task/Result;
-  the original TaskItem row, its error and its existing Result rows are unchanged.
-- Successful/selected-free siblings are untouched; the new Task contains exactly one item.
-- The continuation never executes and inherits no authority; zero Storage mutation is falsified by
-  patching the real production Storage/Provider construction seams and by on-disk source/destination
-  tree snapshots.
-- Uncertain effects are never continued: `PARTIAL`/`attempted_unverified`/`unknown` items expose no
-  continuable request and a direct attempt is refused with a bounded reason while investigation
-  remains the offered action.
-- Stale, duplicate and inactive refusals: stale version returns the current version; a second
-  continuation returns the existing continuation; a terminal request cannot be continued.
-- Snapshot integrity at submission and at the worker (resolved snapshot pair must equal the pinned
-  pair); neither path substitutes the current Active configuration.
-- Terminal outcomes are durable and reconcile the parent request to `completed`/`failed`/`cancelled`
-  so the item can be decided again, with bounded secret-free failure evidence and one concrete next
-  action; the legacy one-row audit is upserted while full request history is preserved.
-- Queue and concurrency bounds: the continuation Job respects the maximum-active-Jobs bound and two
-  concurrent submissions produce exactly one continuation and one Job.
-- API and Operator Web expose the same continuation semantics (status, job/new Task/new Result links,
-  failure evidence, next action) with fail-closed 401/403/400/404/409/503 responses; the drill-in
-  submits only the API-accepted field and renders strictly from the API document.
-- Migration is forward-only: databases before this Task open with all pre-existing Task, TaskItem,
-  Result and recovery-request rows preserved, and a database already at the new schema version opens.
-- A RecognitionType C item reusing NamingPolicy A and ClassificationPolicy A reports RecognitionType
-  C in the continuation's new Result.
 
 ### Tests and Results
 
-- `.venv/bin/python -m unittest tests.test_recovery_continuation` —
-  **PASS** (15 tests, including pending Job cancellation and admission/terminal
-  atomic rollback).
-- `.venv/bin/python -m unittest discover -s tests` — **PASS** (911 tests; 7
-  pre-existing real SMB/OpenList/S3/endurance external-service acceptance
-  gates skipped).
-- `.venv/bin/ruff format --check .` / `.venv/bin/ruff check .` —
-  **PASS**.
-- `.venv/bin/python -m compileall -q mediaflow tests` / `.venv/bin/pip check`
-  / both example `config validate` commands / ffprobe/ffmpeg audit /
-  `git diff --check` — **PASS**.
-- `python -m unittest tests.test_recovery_continuation` — **PASS** (12 tests: full single-item
-  pinned DryRun continuation, uncertain-effects refusal, stale/duplicate/inactive, concurrent
-  single-continuation, queue full, snapshot-unavailable, worker snapshot mismatch, worker preflight
-  stale-linkage, bounded secret-free provider failure + re-admission, zero-mutation falsification,
-  API fail-closed/permission/malformed, forward migration).
-- `python -m unittest tests.test_processing_checkpoint tests.test_processing_recovery_admission
-  tests.test_operator_ui` — **PASS**.
-- automation Job/worker suites (`test_automation_admission`, `test_automation_api`,
-  `test_automation_job_fencing`, `test_operator_job_submission`, `test_operator_job_cancellation`),
-  persistence/migration suites (`test_migration_rehearsal`, `test_upgrade_preflight`,
-  `test_task_persistence`) and `test_api_security` — **PASS**.
-- `python -m unittest discover -s tests` — **PASS** (908 tests; 7 skips are pre-existing real
-  SMB/OpenList/S3/endurance external-service acceptance gates, unrelated to this Task).
-- `ruff format --check .` / `ruff check .` / `python -m compileall -q mediaflow tests` /
-  `pip check` / `git diff --check` — **PASS**.
-- `mediaflow --config config/strategy.example.json config validate` and
-  `mediaflow --config config/mediaflow.phase13.2.example.json config validate` — **PASS**.
-- ffprobe/ffmpeg audit over `mediaflow/`, `tests/`, `scripts/` — **PASS** (no usage introduced).
-- private-file scan — `config/alist.json` remains ignored/untracked; no credentials, tokens,
-  authorization headers, private endpoints or user-private paths in the diff.
-
 ### Decisions
-
-- Pending recovery cancellation is handled only for queued continuation rows;
-  running work continues through the existing Job heartbeat/cooperative
-  cancellation path, preserving fenced worker semantics.
-- Job, continuation, and parent-request cancellation are updated under the
-  existing `BEGIN IMMEDIATE` transaction. Injected failures are tested at both
-  admission and terminal resolution boundaries to prove rollback without
-  orphaned linkage or lost original evidence.
-- The continuation is bound to the checkpoint version the operator confirms at submission (the
-  version that includes the active admitted request), and the repository re-projects the same
-  bounded context inside an IMMEDIATE transaction — the same optimistic-concurrency pattern as the
-  reviewed 23.2 admission gate. The request's original admission version remains preserved on the
-  request row as prior evidence.
-- Terminal request resolution uses `RecoveryRequestStatus.FAILED` (added) for failed continuations,
-  `COMPLETED` for completed ones and `CANCELLED` for cancelled ones; resolution is atomic with the
-  continuation terminal transition.
-- After a terminal continuation the item can be decided again: the checkpoint re-offers the
-  admissible `retry` action for the pending `task_retry_requested` state, and re-admission updates
-  the legacy one-row-per-item `task_retry_audit` while full request history stays in
-  `recovery_requests`.
-- The stage-aware action contract is extended only as far as the continuation needs: a `continue`
-  action when an active admitted retry request has no continuation, and the in-flight refusal when
-  the continuation is queued/running.
-- Continuation serialization is snake_case via `RecoveryContinuation.document()` (including a
-  derived `next_action`), matching the existing `RecoveryRequest.document()` transport convention.
-- The worker mirrors the reviewed metadata-correction continuation: bounded Task under the pinned
-  snapshot, `process_file(..., execute=False)`, `secret_free_errors=True`, cancel/fail evidence and
-  snapshot-mismatch fail-closed before any Storage/Provider construction.
 
 ### Remaining In-Slice Work
 
-- Bounded batch recovery, sibling-independence summaries and parent/continuation summary
-  reconciliation (RO-5 and the batch half of RO-6) are the next Task; this Task only implemented the
-  single-item continuation that batch composes.
-
 ### Risks / Deviations
-
-- The 7 skipped tests are pre-existing external-service acceptance gates (real SMB/OpenList/S3 and
-  isolated endurance environments); they are unrelated to this Task and were not run.
-- A missing/unresolvable pinned snapshot at continuation submission returns HTTP 503
-  `configuration_unavailable`, matching the reviewed metadata-correction continuation precedent.
-- `docs/architecture.md`/`docs/progress.md`/`docs/roadmap.md` were not updated (frozen by the Task's
-  explicit frozen-scope list); factual reconciliation remains A's closure responsibility.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 856f0c500d0888cb345da7fedb3933904b9ffdd0
+Head SHA: [full SHA]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: e9a68986d50ec8c0dfb651738574f48a5c8d05bf..856f0c500d0888cb345da7fedb3933904b9ffdd0
-Decision: PASS
-Slice Required Outcomes all satisfied: NO
-Next: NEXT TASK
+Reviewed: PENDING
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
-
-- Review evidence:
-  - The pending cancellation blocker is closed by the production
-    `AutomationJobService.cancel()` path; the continuation and parent request
-    become `cancelled` atomically with the pending Job.
-  - Focused recovery tests cover pending cancellation plus injected admission
-    and terminal-transition rollback. The original TaskItem, sibling Result
-    evidence and recovery linkage remain intact.
-  - No test deletion, weakened assertion, hidden skip, private file, credential
-    or unrelated implementation change was found in the reviewed range.
