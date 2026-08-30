@@ -182,8 +182,13 @@ media.
 - `mediaflow/domain/recovery_batch.py` — durable child outcome fields and parent count derivation.
 - `mediaflow/infrastructure/sqlite_runtime.py` — continuation-backed child result/status projection
   and parent updated-at reconciliation without a schema bump.
+- `mediaflow/interfaces/service_api.py` — authenticated batch resume POST with the same
+  `SUBMIT_DRY_RUN` RBAC/error conventions and reloaded per-item evidence.
+- `mediaflow/interfaces/operator_ui.py` — batch detail explicit resume confirmation for stranded
+  `selected` children.
 - `tests/test_recovery_batch.py` — multi-child Worker independence, mixed parent summary,
-  continuation failure isolation, API/Web assertions and secret-free evidence coverage.
+  continuation failure isolation, stranded-child resume (application and API/Web surface),
+  API/Web assertions and secret-free evidence coverage.
 - Existing Task implementation files from the prior checkpoint remain part of this Task: the
   continuation batch API/Web surfaces and atomic batch child linkage.
 
@@ -203,13 +208,17 @@ media.
   and unchanged successful/skipped/DryRun/ignored siblings.
 - The batch remains DryRun-only and retains the existing authenticated API/Web behavior, RBAC,
   explicit confirmation, zero-mutation admission and RecognitionType/policy invariants.
+- A child left durably `selected` after a persist failure is now recoverable from the operator
+  surface: `POST /api/v1/recovery-batches/{id}/resume` re-drives only `selected` children through
+  the same shared admission, and the batch detail renders an explicit-confirmation resume action
+  when stranded children exist.
 
 ### Tests and Results
 
-- `.venv/bin/python -m unittest tests.test_recovery_batch` — **PASS** (32 tests).
+- `.venv/bin/python -m unittest tests.test_recovery_batch` — **PASS** (33 tests).
 - Related recovery, checkpoint, automation, migration, persistence and API suites — **PASS** (127
   tests).
-- `.venv/bin/python -m unittest discover -s tests` from the repository root — **PASS** (943 tests;
+- `.venv/bin/python -m unittest discover -s tests` from the repository root — **PASS** (944 tests;
   7 external SMB, OpenList, S3 and endurance gates skipped) after the pre-existing ignored local
   `.mediaflow/mediaflow.sqlite3` schema-27 database was removed.
 - `.venv/bin/ruff format --check .` / `.venv/bin/ruff check .` — **PASS**.
@@ -232,6 +241,9 @@ media.
   ordering is deterministic by TaskItem ID.
 - The submitted checkpoint version is the version displayed by the same API/Web checkpoint service;
   admission itself advances a failed item to a new checkpoint before continuation binding.
+- Batch resume is the same service method used at submit time: it re-drives only children that are
+  durably `selected`, leaves every other child's evidence untouched, and never grants execute,
+  overwrite, delete or rollback authority.
 
 ### Remaining In-Slice Work
 
@@ -251,7 +263,7 @@ media.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 43d42f3e4f054ca217773550410ecc3c805d7620
+Head SHA: PENDING CHECKPOINT COMMIT
 ```
 
 ## B Review Result
