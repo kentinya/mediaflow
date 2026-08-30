@@ -203,6 +203,8 @@ TMDB service and no production data may be used.
 ## Developer Completion Report
 
 ### Changed Files
+- `mediaflow/domain/organizer.py`
+- `mediaflow/application/organizer.py`
 - `mediaflow/domain/processing_checkpoint.py`
 - `mediaflow/application/processing_checkpoint.py`
 - `mediaflow/domain/task_persistence.py`
@@ -222,6 +224,12 @@ TMDB service and no production data may be used.
 - Added schema-23 additive effect-certainty evidence and bounded item-scoped SQLite context reads;
   legacy result rows remain `unknown`, while new completion results record verified, unverified,
   or no-effect evidence without parsing error text.
+- Added explicit OrganizerExecutor-owned effect evidence at the mutation-attempt boundary. A
+  mutating Storage call that raises before its outcome can be verified is now recorded as
+  `attempted_unverified`, never inferred as no-effect from an empty operation list.
+- Changed checkpoint completion to persist only executor-owned effect certainty. Direct or invalid
+  execution results fail closed as `unknown`, while `none` is reserved for execution that did not
+  reach a mutation attempt or whose effects were successfully rolled back.
 - Exposed the projection through authenticated `GET /api/v1/tasks/{taskId}/items/{itemId}` and
   bounded Task-detail summaries, including fail-closed Task/item matching and review detail links.
 - Added a read-only Operator Web Task-item drill-in that renders only API-provided checkpoint facts
@@ -230,8 +238,9 @@ TMDB service and no production data may be used.
   semantics, and secret/path redaction.
 
 ### Tests and Results
-- `.venv/bin/python -m unittest tests.test_processing_checkpoint` — PASS (9 tests).
-- `.venv/bin/python -m unittest discover -s tests` — PASS (883 tests, 7 skipped).
+- `.venv/bin/python -m unittest tests.test_processing_checkpoint` — PASS (10 tests).
+- `.venv/bin/python -m unittest tests.test_processing_checkpoint tests.test_organizer tests.test_attachments tests.test_source_directory_cleanup` — PASS (52 tests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (884 tests, 7 skipped).
 - `.venv/bin/ruff format --check .` — PASS.
 - `.venv/bin/ruff check .` — PASS.
 - `python3 -m compileall -q mediaflow tests scripts` — PASS.
@@ -244,6 +253,10 @@ TMDB service and no production data may be used.
 ### Decisions
 - Effect certainty is persisted only by the existing completion path; legacy rows are never
   inferred from status, operation text, or exception text.
+- OrganizerExecutor is the authority for per-invocation effect evidence. Its result defaults to
+  `unknown` for external/direct construction, and transitions to explicit `none`,
+  `attempted_unverified`, or `verified_complete` based on the actual mutation boundary and
+  rollback outcome.
 - Unknown/uncertain effects and unavailable or unvalidated pinned snapshots fail closed to
   investigation/refusal; only explicitly verified pre-mutation failures can expose a safe retry.
 - API/Web reads use one bounded repository projection and do not refresh or substitute Active
@@ -266,14 +279,28 @@ TMDB service and no production data may be used.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: df8c9dc550177f2715c847bd1e497c5f0423bc66
+Head SHA: TO BE RECORDED AFTER THE CORRECTION COMMIT
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 5b12ef92ed2720692fb1a1cfc39520d180780588..df8c9dc550177f2715c847bd1e497c5f0423bc66
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- **Uncertain post-mutation failures are incorrectly marked safe to retry.** The completion helper
+  `_effect_evidence` returns `none` whenever an `ExecutionResult` is `FAILED` with no recorded
+  `completed_operations` or `created_directories`, even though the Storage operation may already
+  have taken effect before its adapter raised. An independent mutate-then-raise probe produced
+  `storage_target_exists=True`, `execution_status=FAILED`, `rollback_status=disabled` and an empty
+  operation list; the persisted checkpoint then reported `effect_certainty=none`,
+  `retry_safety=safe` and action `retry`. This violates the Task criteria for otherwise-unverified
+  execution and the Slice invariant that unknown/uncertain effects fail closed. Record explicit
+  mutation-attempt/outcome evidence at the OrganizerExecutor result boundary (without inferring it
+  from error text or an empty operation list), project an ambiguous post-attempt failure as
+  `attempted_unverified`/non-replayable, and add a regression in which Storage mutates then raises.
+  `none` may remain retry-safe only when durable evidence explicitly proves the failure occurred
+  before any mutation attempt.

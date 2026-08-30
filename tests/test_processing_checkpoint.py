@@ -10,10 +10,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mediaflow.application.media_organizer import MediaOrganizerItemResult
+from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
-from mediaflow.domain.organizer import ExecutionResult, ExecutionStatus, PlanOperation
+from mediaflow.domain.organizer import (
+    ExecutionEffectCertainty,
+    ExecutionResult,
+    ExecutionStatus,
+    OrganizePlan,
+    PlanOperation,
+)
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
@@ -204,6 +211,7 @@ class ProcessingCheckpointTests(unittest.TestCase):
                     item.source_path,
                     "Movies/new.mkv",
                     completed_operations=("MOVE",),
+                    effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
                 )
                 coordinator.complete_item(
                     item, MediaOrganizerItemResult(item.source_path, execution=execution)
@@ -212,6 +220,81 @@ class ProcessingCheckpointTests(unittest.TestCase):
                 self.assertEqual(result.effect_certainty, "verified_complete")
                 checkpoint = ProcessingCheckpointService(repository).get(item.item_id)
                 self.assertEqual(checkpoint.effect_certainty.value, "verified_complete")
+
+    def test_mutate_then_raise_is_unverified_and_never_retry_safe(self) -> None:
+        class MutateThenRaiseStorage:
+            storage_id = "source"
+
+            def __init__(self) -> None:
+                self.target_exists = False
+
+            def exists(self, path: str) -> bool:
+                return path in {"folder/uncertain.mkv", "Movies"} or (
+                    path == "Movies/uncertain.mkv" and self.target_exists
+                )
+
+            @staticmethod
+            def stat(path: str):
+                return type("Entry", (), {"size": 5})()
+
+            def copy(self, source: str, target: str, *, overwrite: bool = False) -> None:
+                self.target_exists = True
+                raise OSError("response lost after target mutation")
+
+        storage = MutateThenRaiseStorage()
+        plan = OrganizePlan(
+            "source",
+            "source",
+            "folder/uncertain.mkv",
+            "Movies/uncertain.mkv",
+            "C",
+            "naming-a",
+            "classification-a",
+            "organize-copy",
+            operation=PlanOperation.COPY,
+        )
+        execution = OrganizerExecutor().execute(plan, {"source": storage}, execute=True)
+        self.assertTrue(storage.target_exists)
+        self.assertEqual(execution.status, ExecutionStatus.FAILED)
+        self.assertEqual(
+            execution.effect_certainty,
+            ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+        )
+        self.assertEqual(execution.uncertain_effects, ("mutation_outcome",))
+
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                task = coordinator.create(
+                    "organize",
+                    execute_authorized=True,
+                    configuration_snapshot_id="revision-1",
+                    configuration_snapshot_digest="digest-1",
+                )
+                item = self._item(
+                    task.task_id,
+                    "uncertain",
+                    TaskItemStatus.PROCESSING,
+                    "pipeline",
+                )
+                repository.upsert_item(item)
+                coordinator.complete_item(
+                    item,
+                    MediaOrganizerItemResult(
+                        item.source_path,
+                        plan=plan,
+                        execution=execution,
+                    ),
+                )
+                checkpoint = ProcessingCheckpointService(
+                    repository,
+                    snapshot_validator=lambda _snapshot_id, _digest: None,
+                ).get(item.item_id)
+                self.assertEqual(checkpoint.effect_certainty.value, "attempted_unverified")
+                self.assertEqual(checkpoint.uncertain_effects, ("mutation_outcome",))
+                self.assertEqual(checkpoint.retry_safety.value, "unknown")
+                self.assertEqual(checkpoint.permitted_action_ids, ("investigate",))
+                self.assertNotIn("retry", checkpoint.permitted_action_ids)
 
     def test_all_five_blocker_kinds_link_to_existing_resolution_surfaces(self) -> None:
         cases = (

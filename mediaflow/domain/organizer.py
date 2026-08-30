@@ -119,6 +119,15 @@ class ExecutionStatus(StrEnum):
     SKIPPED = "SKIPPED"
 
 
+class ExecutionEffectCertainty(StrEnum):
+    """Executor-owned evidence about the net effect of one invocation."""
+
+    VERIFIED_COMPLETE = "verified_complete"
+    ATTEMPTED_UNVERIFIED = "attempted_unverified"
+    NONE = "none"
+    UNKNOWN = "unknown"
+
+
 class ConflictType(StrEnum):
     DESTINATION_EXISTS = "DESTINATION_EXISTS"
     TARGET_COLLISION = "TARGET_COLLISION"
@@ -376,6 +385,8 @@ class ExecutionResult:
     rollback_steps: tuple[RollbackStep, ...] = ()
     cleanup_status: DirectoryCleanupStatus = DirectoryCleanupStatus.DISABLED
     cleanup_steps: tuple[DirectoryCleanupStep, ...] = ()
+    effect_certainty: ExecutionEffectCertainty = ExecutionEffectCertainty.UNKNOWN
+    uncertain_effects: tuple[str, ...] = ()
 
     @property
     def createdDirectories(self) -> tuple[str, ...]:

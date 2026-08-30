@@ -17,6 +17,7 @@ from mediaflow.domain.organizer import (
     DirectoryCleanupStatus,
     DirectoryCleanupStep,
     DuplicateIdentity,
+    ExecutionEffectCertainty,
     ExecutionResult,
     ExecutionStatus,
     OrganizeOperationType,
@@ -399,6 +400,7 @@ class OrganizerExecutor:
         created: list[str] = []
         completed: list[str] = []
         effects: list[_OwnedEffect] = []
+        mutation_attempted = False
         try:
             if not source_storage.exists(storage_source):
                 return self._result(
@@ -455,6 +457,7 @@ class OrganizerExecutor:
                     if plan.rollback_policy.enabled
                     else (parent,)
                 )
+                mutation_attempted = True
                 target_storage.create_directory(parent)
                 created.extend(missing_directories)
                 completed.append("CREATE_DIRECTORY")
@@ -478,6 +481,7 @@ class OrganizerExecutor:
                 attachment_target = storages[attachment.destination.storage_id]
                 marker = f"ATTACHMENT:{attachment.attachment_type.value}:{attachment.source.path}"
                 try:
+                    mutation_attempted = True
                     self._mutate_and_record(
                         plan,
                         attachment_source,
@@ -507,6 +511,7 @@ class OrganizerExecutor:
                     raise RuntimeError(
                         f"attachment move verification failed: {attachment.source.path}"
                     )
+            mutation_attempted = True
             self._mutate_and_record(
                 plan,
                 source_storage,
@@ -532,6 +537,7 @@ class OrganizerExecutor:
                 created,
                 completed,
                 effects,
+                mutation_attempted,
                 str(error),
                 display_destination,
             )
@@ -543,6 +549,7 @@ class OrganizerExecutor:
                 created,
                 completed,
                 effects,
+                mutation_attempted,
                 str(error),
                 display_destination,
             )
@@ -560,6 +567,8 @@ class OrganizerExecutor:
                 resolved_destination=display_destination,
                 cleanup_status=cleanup.status,
                 cleanup_steps=cleanup.steps,
+                effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                uncertain_effects=("mutation_outcome",),
             )
         return self._result(
             plan,
@@ -574,6 +583,7 @@ class OrganizerExecutor:
             resolved_destination=display_destination,
             cleanup_status=cleanup.status,
             cleanup_steps=cleanup.steps,
+            effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
         )
 
     @staticmethod
@@ -774,10 +784,16 @@ class OrganizerExecutor:
         created: list[str],
         completed: list[str],
         effects: list[_OwnedEffect],
+        mutation_attempted: bool,
         error: str,
         display_destination: str,
     ) -> ExecutionResult:
         if not plan.rollback_policy.enabled:
+            certainty = (
+                ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED
+                if mutation_attempted
+                else ExecutionEffectCertainty.NONE
+            )
             return self._result(
                 plan,
                 ExecutionStatus.PARTIAL if completed else ExecutionStatus.FAILED,
@@ -788,8 +804,15 @@ class OrganizerExecutor:
                 errors=(error,),
                 resolved_destination=display_destination,
                 rollback_status=RollbackStatus.DISABLED,
+                effect_certainty=certainty,
+                uncertain_effects=("mutation_outcome",) if mutation_attempted else (),
             )
         if not effects:
+            certainty = (
+                ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED
+                if mutation_attempted
+                else ExecutionEffectCertainty.NONE
+            )
             return self._result(
                 plan,
                 ExecutionStatus.FAILED,
@@ -800,6 +823,8 @@ class OrganizerExecutor:
                 errors=(error,),
                 resolved_destination=display_destination,
                 rollback_status=RollbackStatus.NOT_NEEDED,
+                effect_certainty=certainty,
+                uncertain_effects=("mutation_outcome",) if mutation_attempted else (),
             )
         steps = self._rollback(effects, plan.rollback_policy.cleanup_created_directories)
         rollback_ok = all(step.success for step in steps)
@@ -819,6 +844,12 @@ class OrganizerExecutor:
             resolved_destination=display_destination,
             rollback_status=RollbackStatus.SUCCESS if rollback_ok else RollbackStatus.PARTIAL,
             rollback_steps=tuple(steps),
+            effect_certainty=(
+                ExecutionEffectCertainty.NONE
+                if rollback_ok
+                else ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED
+            ),
+            uncertain_effects=() if rollback_ok else ("mutation_outcome",),
         )
 
     def _rollback(
@@ -913,6 +944,8 @@ class OrganizerExecutor:
         rollback_steps: tuple[RollbackStep, ...] = (),
         cleanup_status: DirectoryCleanupStatus = DirectoryCleanupStatus.DISABLED,
         cleanup_steps: tuple[DirectoryCleanupStep, ...] = (),
+        effect_certainty: ExecutionEffectCertainty = ExecutionEffectCertainty.NONE,
+        uncertain_effects: tuple[str, ...] = (),
     ) -> ExecutionResult:
         result = ExecutionResult(
             status,
@@ -930,6 +963,8 @@ class OrganizerExecutor:
             rollback_steps=rollback_steps,
             cleanup_status=cleanup_status,
             cleanup_steps=cleanup_steps,
+            effect_certainty=effect_certainty,
+            uncertain_effects=uncertain_effects,
         )
         if self._logger:
             self._logger.log(
@@ -946,6 +981,8 @@ class OrganizerExecutor:
                 completed_operations=result.completed_operations,
                 rollback_status=result.rollback_status.value,
                 rollback_steps=tuple((step.action, step.success) for step in result.rollback_steps),
+                effect_certainty=result.effect_certainty.value,
+                uncertain_effects=result.uncertain_effects,
                 error=result.errors,
             )
         return result
