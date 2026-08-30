@@ -1675,12 +1675,14 @@ APP_JS = b"""(() => {
         return [item.item_id, item.status, checkpoint.stage || item.stage,
           checkpoint.blocker_kind ? `${checkpoint.blocker_kind}:${checkpoint.blocker_id || '-'}` : '-',
           checkpoint.effect_certainty || 'unknown', checkpoint.retry_safety || 'unknown',
+          checkpoint.recovery_request ?
+            `${checkpoint.recovery_request.action_id}:${checkpoint.recovery_request.request_id}` : '-',
           item.storage_id, item.source_display, item.destination_storage_id || '-',
           item.destination_path || '-'];
       });
       detailContent.append(text('h3', 'Items'), table(
-        ['ID', 'Status', 'Stage', 'Blocker', 'Effect certainty', 'Retry safety', 'Source storage',
-          'Source', 'Target storage', 'Target'], items,
+        ['ID', 'Status', 'Stage', 'Blocker', 'Effect certainty', 'Retry safety', 'Recovery request',
+          'Source storage', 'Source', 'Target storage', 'Target'], items,
         index => showTaskItem(id, (data.items || [])[index] && (data.items || [])[index].item_id)));
       if (data.items_truncated) detailContent.append(text('p',
         `Items truncated at ${data.item_limit}.`, 'warning'));
@@ -1752,9 +1754,27 @@ APP_JS = b"""(() => {
           actions.map(action => [action.label || action.action_id,
             action.confirmation_required ? 'required' : 'not required',
             action.required_authority || '-', action.resolution_surface || '-'])));
+        const admissible = actions.filter(action => action.admissible === true);
+        if (admissible.length && !data.recovery_request) {
+          const controls = text('div', '', 'choices');
+          admissible.forEach(action => controls.append(actionButton(
+            `Request ${action.label || action.action_id}`,
+            () => confirmTaskRecovery(taskId, itemId, data.checkpoint_version, action))));
+          detailContent.append(text('p',
+            'These are the only actions admitted by the current API checkpoint. Any real recovery is separately validated.',
+            'warning'), controls);
+        }
       } else {
         detailContent.append(text('p', data.refusal_reason || 'No action is currently permitted.',
           'warning'));
+      }
+      if (data.recovery_request && typeof data.recovery_request === 'object') {
+        const request = data.recovery_request;
+        detailContent.append(text('h3', 'Admitted recovery request'), cards([
+          ['Request', request.request_id], ['Action', request.action_id],
+          ['Actor', request.actor], ['Requested', request.requested_at],
+          ['Bound checkpoint', request.checkpoint_version], ['Next action', request.next_action]
+        ]));
       }
       const results = Array.isArray(data.prior_results) ? data.prior_results.slice() : [];
       if (data.latest_result) results.unshift(data.latest_result);
@@ -1766,6 +1786,23 @@ APP_JS = b"""(() => {
       }
       detail.hidden = false;
     } catch (error) { message(errorText(error), true); }
+  }
+  function confirmTaskRecovery(taskId, itemId, checkpointVersion, action) {
+    const confirmation = text('div', '', 'choices');
+    const label = action.label || action.action_id;
+    confirmation.append(text('p',
+      `Confirm ${label} for checkpoint ${checkpointVersion}? This records a bounded request only; no media mutation occurs now.`),
+      actionButton(`Confirm ${label}`, async () => {
+        try {
+          await api(`/api/v1/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/recovery`, {
+            method: 'POST',
+            body: JSON.stringify({actionId: action.action_id,
+              expectedCheckpointVersion: checkpointVersion})
+          });
+          await showTaskItem(taskId, itemId); message('Recovery request admitted.');
+        } catch (error) { message(errorText(error), true); }
+      }), actionButton('Keep item unchanged', () => confirmation.remove()));
+    detailContent.append(confirmation);
   }
   async function showCheckpointBlocker(path) {
     try {

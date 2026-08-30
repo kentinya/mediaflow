@@ -12,6 +12,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from mediaflow.domain.recovery import RecoveryRequest
     from mediaflow.domain.task_persistence import (
         PersistentResultRecord,
         PersistentTask,
@@ -80,6 +81,7 @@ class CheckpointAction:
     confirmation_required: bool
     required_authority: str
     resolution_surface: str | None = None
+    admissible: bool = False
 
 
 @dataclass(frozen=True)
@@ -140,6 +142,7 @@ class ProcessingCheckpointContext:
     results: tuple[PersistentResultRecord, ...] = ()
     blockers: tuple[CheckpointBlocker, ...] = ()
     audits: tuple[CheckpointAudit, ...] = ()
+    recovery_requests: tuple[RecoveryRequest, ...] = ()
 
 
 class ProcessingCheckpointRepository(Protocol):
@@ -172,6 +175,7 @@ class ProcessingCheckpoint:
     blockers: tuple[CheckpointBlocker, ...]
     blocker: CheckpointBlocker | None
     audits: tuple[CheckpointAudit, ...]
+    recovery_requests: tuple[RecoveryRequest, ...]
     effect_certainty: EffectCertainty
     completed_operations: tuple[str, ...]
     uncertain_effects: tuple[str, ...]
@@ -185,6 +189,13 @@ class ProcessingCheckpoint:
     @property
     def permitted_action_ids(self) -> tuple[str, ...]:
         return tuple(action.action_id for action in self.actions)
+
+    @property
+    def active_recovery_request(self) -> RecoveryRequest | None:
+        for request in reversed(self.recovery_requests):
+            if request.active:
+                return request
+        return None
 
     def summary(self) -> dict[str, object]:
         """Small bounded projection embedded in task collection/detail rows."""
@@ -200,6 +211,11 @@ class ProcessingCheckpoint:
             "permitted_action_ids": list(self.permitted_action_ids),
             "refusal_reason": self.refusal_reason,
             "checkpoint_version": self.checkpoint_version,
+            "recovery_request": (
+                self.active_recovery_request.document()
+                if self.active_recovery_request is not None
+                else None
+            ),
         }
 
     def document(self) -> dict[str, object]:
@@ -236,6 +252,12 @@ class ProcessingCheckpoint:
                 }
                 for value in self.audits
             ],
+            "recovery_requests": [value.document() for value in self.recovery_requests],
+            "recovery_request": (
+                self.active_recovery_request.document()
+                if self.active_recovery_request is not None
+                else None
+            ),
             "effects": {
                 "certainty": self.effect_certainty.value,
                 "completed_operations": list(self.completed_operations),
@@ -250,6 +272,7 @@ class ProcessingCheckpoint:
                     "confirmation_required": value.confirmation_required,
                     "required_authority": value.required_authority,
                     "resolution_surface": value.resolution_surface,
+                    "admissible": value.admissible,
                 }
                 for value in self.actions
             ],

@@ -89,9 +89,20 @@ def identification(
     )
 
 
-def create_processing_item(repository: SQLiteTaskRepository, number: int = 1):
+def create_processing_item(
+    repository: SQLiteTaskRepository,
+    number: int = 1,
+    *,
+    configuration_snapshot_id: str | None = None,
+    configuration_snapshot_digest: str | None = None,
+):
     coordinator = PersistentTaskCoordinator(repository, repository)
-    task = coordinator.create("preview", execute_authorized=False)
+    task = coordinator.create(
+        "preview",
+        execute_authorized=False,
+        configuration_snapshot_id=configuration_snapshot_id,
+        configuration_snapshot_digest=configuration_snapshot_digest,
+    )
     item = coordinator.begin_item(
         task.task_id, "source", "movies", f"Movie-{number}.mkv", f"Movie-{number}.mkv"
     )
@@ -325,5 +336,5 @@ class MetadataReviewTests(unittest.TestCase):
             connection.commit()
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 23)
+                self.assertEqual(repository.schema_version, 24)
                 self.assertEqual(repository.list_metadata_reviews(), ())

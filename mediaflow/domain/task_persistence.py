@@ -5,6 +5,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
+from mediaflow.domain.recovery import RecoveryRequest
+
 
 class PersistentTaskStatus(StrEnum):
     PENDING = "pending"
@@ -207,6 +209,13 @@ class PersistentTaskRepository(Protocol):
     ) -> tuple[ConflictDecisionAudit, ...]: ...
     def get_processing_checkpoint_context(
         self, item_id: str, *, result_limit: int = 32, audit_limit: int = 64
+    ): ...
+    def list_recovery_requests(
+        self, item_id: str, *, limit: int = 32
+    ) -> tuple[RecoveryRequest, ...]: ...
+    def get_active_recovery_request(self, item_id: str) -> RecoveryRequest | None: ...
+    def admit_recovery_request(
+        self, request: RecoveryRequest, *, expected_checkpoint_version: str
     ): ...
 
 
