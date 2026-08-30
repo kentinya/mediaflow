@@ -599,7 +599,7 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
                         "WHERE component='configuration_management'"
                     ).fetchone()[0]
                 self.assertEqual(marker, CONFIGURATION_SCHEMA_VERSION)
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 22)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 23)
 
                 optional = copy.deepcopy(document)
                 optional.pop("organizePolicies")

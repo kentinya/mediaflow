@@ -1670,11 +1670,18 @@ APP_JS = b"""(() => {
         `?itemLimit=100&resultLimit=100${itemSuffix}${resultSuffix}`);
       clear(detailContent); detailContent.append(text('h2', 'Task detail'),
         scalarDetails(data, ['items_truncated', 'results_truncated']));
-      const items = (data.items || []).map(item => [item.item_id, item.status, item.stage,
-        item.storage_id, item.source_display, item.destination_storage_id || '-',
-        item.destination_path || '-']);
+      const items = (data.items || []).map(item => {
+        const checkpoint = item.checkpoint && typeof item.checkpoint === 'object' ? item.checkpoint : {};
+        return [item.item_id, item.status, checkpoint.stage || item.stage,
+          checkpoint.blocker_kind ? `${checkpoint.blocker_kind}:${checkpoint.blocker_id || '-'}` : '-',
+          checkpoint.effect_certainty || 'unknown', checkpoint.retry_safety || 'unknown',
+          item.storage_id, item.source_display, item.destination_storage_id || '-',
+          item.destination_path || '-'];
+      });
       detailContent.append(text('h3', 'Items'), table(
-        ['ID', 'Status', 'Stage', 'Source storage', 'Source', 'Target storage', 'Target'], items));
+        ['ID', 'Status', 'Stage', 'Blocker', 'Effect certainty', 'Retry safety', 'Source storage',
+          'Source', 'Target storage', 'Target'], items,
+        index => showTaskItem(id, (data.items || [])[index] && (data.items || [])[index].item_id)));
       if (data.items_truncated) detailContent.append(text('p',
         `Items truncated at ${data.item_limit}.`, 'warning'));
       pageNavigation(detailContent, 'items', data.previous_item_cursor, data.next_item_cursor,
@@ -1693,6 +1700,79 @@ APP_JS = b"""(() => {
         () => showTask(id, itemCursor, data.next_result_cursor));
       detail.hidden = false;
         } catch (error) { message(errorText(error), true); }
+  }
+  async function showTaskItem(taskId, itemId) {
+    if (!itemId) { message('Task item identity is unavailable.', true); return; }
+    try {
+      const data = await api(`/api/v1/tasks/${encodeURIComponent(taskId)}/items/` +
+        `${encodeURIComponent(itemId)}`);
+      clear(detailContent); detailContent.append(text('h2', 'Task item checkpoint'));
+      detailContent.append(cards([
+        ['Status', data.status], ['Durable stage', data.stage],
+        ['Effect certainty', data.effects && data.effects.certainty],
+        ['Retry safety', data.retry_safety], ['Checkpoint version', data.checkpoint_version]
+      ]));
+      const list = document.createElement('dl');
+      field(list, 'Raw stage', data.raw_stage);
+      field(list, 'Attempts', data.attempts);
+      field(list, 'Source storage', data.source_storage_id);
+      field(list, 'ResourceLibrary', data.resource_library_id);
+      field(list, 'Storage-relative source', data.source_path);
+      field(list, 'Plan', data.plan_id);
+      field(list, 'Destination storage', data.destination_storage_id);
+      field(list, 'Destination', data.destination_path);
+      const configuration = data.configuration && typeof data.configuration === 'object' ?
+        data.configuration : {};
+      field(list, 'Pinned configuration', configuration.snapshot_id || '-');
+      field(list, 'Configuration digest', configuration.snapshot_digest || '-');
+      field(list, 'Configuration resolvable', configuration.resolvable === true ? 'YES' :
+        configuration.resolvable === false ? `NO (${configuration.reason || 'unavailable'})` :
+        'NOT DETERMINED');
+      field(list, 'Error category', data.error_category);
+      const effects = data.effects && typeof data.effects === 'object' ? data.effects : {};
+      field(list, 'Completed effects', Array.isArray(effects.completed_operations) &&
+        effects.completed_operations.length ? effects.completed_operations.join(', ') : 'none');
+      field(list, 'Uncertain effects', Array.isArray(effects.uncertain_effects) &&
+        effects.uncertain_effects.length ? effects.uncertain_effects.join(', ') : 'none');
+      field(list, 'Refusal reason', data.refusal_reason || 'none');
+      detailContent.append(list);
+      const blocker = data.blocker && typeof data.blocker === 'object' ? data.blocker : null;
+      if (blocker) {
+        const blockerSection = text('div', '', 'choices');
+        blockerSection.append(text('h3', 'Blocking review / conflict'));
+        blockerSection.append(text('p', `${blocker.kind}: ${blocker.id} (${blocker.status})`));
+        blockerSection.append(actionButton('Open blocker', () => showCheckpointBlocker(
+          blocker.resolution_path)));
+        detailContent.append(blockerSection);
+      }
+      const actions = Array.isArray(data.actions) ? data.actions : [];
+      detailContent.append(text('h3', 'Permitted actions'));
+      if (actions.length) {
+        detailContent.append(table(['Action', 'Confirmation', 'Authority', 'Resolution surface'],
+          actions.map(action => [action.label || action.action_id,
+            action.confirmation_required ? 'required' : 'not required',
+            action.required_authority || '-', action.resolution_surface || '-'])));
+      } else {
+        detailContent.append(text('p', data.refusal_reason || 'No action is currently permitted.',
+          'warning'));
+      }
+      const results = Array.isArray(data.prior_results) ? data.prior_results.slice() : [];
+      if (data.latest_result) results.unshift(data.latest_result);
+      if (results.length) {
+        detailContent.append(text('h3', 'Persisted results'), table(
+          ['Result', 'Status', 'Effect certainty', 'Operation', 'Destination'],
+          results.map(result => [result.result_id, result.status, result.effect_certainty,
+            result.operation || '-', result.destination_path || '-'])));
+      }
+      detail.hidden = false;
+    } catch (error) { message(errorText(error), true); }
+  }
+  async function showCheckpointBlocker(path) {
+    try {
+      const data = await api(path);
+      clear(detailContent); detailContent.append(text('h2', 'Blocking review / conflict'));
+      detailContent.append(scalarDetails(data)); detail.hidden = false;
+    } catch (error) { message(errorText(error), true); }
   }
   async function showJob(id) {
     try {

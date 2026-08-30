@@ -14,7 +14,7 @@ from mediaflow.application.execution_authorization import ExecutionAuthorization
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 PERMISSIONS = {
@@ -308,7 +308,7 @@ class ApiSecurityTests(unittest.TestCase):
             )
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 22)
+                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
                 self.assertEqual(repository.list_security_audit(), ())
 
 
