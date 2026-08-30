@@ -177,21 +177,78 @@ media.
 
 ### Changed Files
 
+- `mediaflow/domain/recovery_batch.py` — bounded batch/child status contracts, durable item
+  documents, count and parent-status derivation.
+- `mediaflow/application/recovery_batch.py` — shared bounded batch continuation admission with
+  deterministic selection, per-item refusal, queue-capacity handling and single-item service reuse.
+- `mediaflow/infrastructure/sqlite_runtime.py` — runtime schema 26, additive batch parent/child
+  tables and indexes, transactional persistence, dynamic child/parent summary projection and
+  unchanged-sibling counting.
+- `mediaflow/interfaces/service_api.py` — authenticated batch continuation POST, batch detail GET
+  and Task detail batch summaries with existing RBAC/error conventions.
+- `mediaflow/interfaces/operator_ui.py` — Task detail selection/confirmation flow and reloadable
+  batch summary/detail rendering.
+- `tests/test_recovery_batch.py` — focused batch admission, mixed/refused selection, capacity,
+  uncertain effects, cancellation/reload, API and production Worker coverage.
+- Runtime schema expectation updates in affected migration/runtime tests from 25 to 26.
+
 ### Implemented
+
+- Added a bounded selection of up to 100 TaskItems with duplicate, malformed, missing and
+  out-of-Task fail-closed handling.
+- Each accepted child reuses the reviewed single-item continuation service and preserves its exact
+  checkpoint version, source scope, pinned configuration pair, request, continuation and Job.
+- Persisted a batch parent plus independent child outcomes; parent status and counts are derived
+  from durable child continuation state, while eligible unselected successful/skipped/DryRun/ignored
+  siblings are reported as unchanged.
+- Added authenticated API and Operator Web entry/detail paths with the same DryRun-only behavior,
+  permissions, explicit confirmation, per-item outcomes and reloadable summary.
+- Kept all batch admission/selection/projection paths free of Storage/Provider construction and
+  all child continuations non-executable.
 
 ### Tests and Results
 
+- `.venv/bin/python -m unittest tests.test_recovery_batch` — **PASS** (22 tests).
+- Related recovery, checkpoint, automation, migration, persistence and API suites — **PASS** (153
+  tests).
+- `.venv/bin/python -m unittest discover -s tests` — **PASS** (933 tests; 7 pre-existing SMB,
+  OpenList, S3 and endurance external-service gates skipped).
+- `.venv/bin/ruff format --check .` / `.venv/bin/ruff check .` — **PASS**.
+- `.venv/bin/python -m compileall -q mediaflow tests` / `.venv/bin/pip check` — **PASS**.
+- Both example `config validate` commands — **PASS**.
+- ffprobe/ffmpeg audit over `mediaflow/`, `tests/`, `scripts/` — **PASS** (no matches).
+- `git diff --check` — **PASS**.
+
 ### Decisions
+
+- Batch continuation is composition over the accepted single-item continuation boundary; it does
+  not create a parallel recovery pipeline or re-admit the recovery action itself.
+- Runtime schema 26 is additive and forward-only. Existing schema 25 databases retain all prior
+  Task, TaskItem, Result and recovery evidence while the new batch tables are created if absent.
+- Parent summaries are read models derived from durable child continuation state, so Worker terminal
+  transitions remain owned by the existing single-item continuation repository path.
+- The batch limit is 100 items, matching the existing bounded operator batch conventions. Selection
+  ordering is deterministic by TaskItem ID.
 
 ### Remaining In-Slice Work
 
+- Slice-level final integration/validation and any Required Outcomes not independently accepted by B
+  remain outside this Developer checkpoint.
+
 ### Risks / Deviations
+
+- The full regression has 7 pre-existing external-service/endurance skips; no production service or
+  credential was used.
+- Existing tests emit SQLite `ResourceWarning` messages for unclosed test connections; they do not
+  fail the suites and are unrelated to this Task.
+- `config/alist.json` remains ignored and untracked; no credentials, tokens, private endpoints or
+  private paths were added.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 4f31f7ce7287fde25958add4c33511c5fdc89979
 ```
 
 ## B Review Result
