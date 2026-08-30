@@ -12,17 +12,18 @@ only in [the development workflow](development-workflow.md).
 | 22.5 — Metadata configuration and correction | Complete managed MetadataPolicy testing, candidate decision, correction and bounded DryRun continuation | PASS / CLOSED | 22.4 |
 | 22.6 — Naming / Classification / Organize configuration | Complete managed policy editing, exact-revision preview, Local destination precheck and checked activation | PASS / CLOSED | 22.5 |
 | 23 — Stage-aware per-item recovery | Provide checkpoint-aware single and bounded batch recovery without replaying successful siblings or uncertain mutation | PASS / CLOSED | 22.6 closure |
-| 24 — Files / Media detail and manual organize | Complete the operator journey from explanation and review to safe manual Preview/Organize and recovery | PLANNED | 23 |
+| 24 — Files / Media detail and manual organize | Complete the operator journey from explanation and review to safe manual Preview/Organize and recovery | ACTIVE | 23 |
 | 25 — Automation and production hardening | Complete operator-configured scheduled scanning and unattended organization using RecognitionType-selected policies under explicit bounded execution authority, plus production-loop hardening | PLANNED | 24 |
 
 ## Current boundary
 
-No Slice is currently active. [Slice 23](../SLICE.md) closed after A reviewed its immutable
-Base..Implementation Head and accepted the stage-aware single-item and bounded batch recovery
-journey. Selecting and activating the next large Slice is a separate A action.
+[Slice 24](../SLICE.md) is ACTIVE from immutable Base
+`4ff5479d9f4a81906ee52a9f784931b65cd9ab90`. It completes the bounded Files/Media explanation and
+manual Preview-to-exact-plan-execution journey while reusing the existing configuration, recovery
+and OrganizerExecutor safety authorities.
 
-Slices 24 and 25 remain planned boundaries only. B must not plan an implementation Task until A
-activates one of them.
+Slice 25 remains planned. B may plan only the first coherent implementation Task inside the active
+Slice 24 Contract.
 
 ## Roadmap rules
 
