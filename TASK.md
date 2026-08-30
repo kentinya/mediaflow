@@ -344,11 +344,38 @@ TMDB service and no production data may be used.
 - ffprobe/ffmpeg repository audit — PASS (no references in `mediaflow/`, `tests/`, or `scripts/`).
 - `git diff --check` — PASS.
 
+### Correction for B Review (round 2)
+- Replaced the unreachable `StrictStorageSpy` / `StrictProviderSpy` doubles with strict patches on
+  the real production seams for the duration of one real admission:
+  `RuntimeConfiguration.create_storages` (Storage construction) and the metadata provider registry
+  factory, both raising `AssertionError` on access. The two dead `validator.storage.calls` /
+  `validator.provider.calls` assertions were dropped.
+- Drove the falsification admission through the API recovery `POST` route so the wired seams cover
+  the transport path, and kept the reachable snapshot-validator recording plus the durable-work
+  snapshots (Task, Task list, Job list, Result list, file locks).
+- Added an on-disk tree snapshot (relative path, size, mtime) of the item's source and destination
+  roots before and after admission, asserted unchanged apart from the runtime SQLite file.
+
+### Correction Tests and Results (round 2)
+- `.venv/bin/python -m unittest tests.test_processing_recovery_admission` — PASS (12 tests).
+- `.venv/bin/python -m unittest tests.test_processing_recovery_admission tests.test_processing_checkpoint tests.test_operator_ui` — PASS (51 tests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (896 tests, 7 skipped; existing
+  ResourceWarning diagnostics only).
+- `.venv/bin/ruff format --check .` — PASS (317 files already formatted).
+- `.venv/bin/ruff check .` — PASS.
+- `python3 -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS (no broken requirements).
+- Both example `config validate` commands — PASS.
+- ffprobe/ffmpeg repository audit — PASS (no references in `mediaflow/`, `tests/`, or `scripts/`).
+- `git diff --check` — PASS.
+- Adversarial check: a simulated regression that constructs Storage or a metadata Provider inside
+  the admission write path is caught by the strict seams, confirming the doubles are reachable.
+
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: d92eb1e2d67f1d87cce456adf2d8561672ee47c5
+Head SHA: 834ee464456362e5f43ca8617feb4deae2cdae3a
 ```
 
 ## B Review Result
