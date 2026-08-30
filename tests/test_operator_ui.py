@@ -156,6 +156,9 @@ class OperatorUiTests(unittest.TestCase):
         self.assertNotIn("/api/v1/tasks/${encodeURIComponent(id)}/resume", script)
         self.assertIn("Admitted recovery request", script)
         self.assertIn("request.actor", script)
+        self.assertIn("Recovery continuation", script)
+        self.assertIn("confirmRecoveryContinuation", script)
+        self.assertIn("DRY_RUN_ONLY", script)
         self.assertIn(
             "const admissible = actions.filter(action => action.admissible === true);", script
         )
@@ -163,6 +166,12 @@ class OperatorUiTests(unittest.TestCase):
         item_body = _js_function_body(script, "showTaskItem")
         self.assertIn("admissible.forEach(action => controls.append(actionButton(", item_body)
         self.assertNotIn("actions.forEach(action => controls", item_body)
+        self.assertIn(
+            "field(continuationList, 'New Task', continuation.new_task_id || '-')", item_body
+        )
+        self.assertIn("Open linked Task", item_body)
+        self.assertNotIn("generic Retry", item_body)
+        self.assertNotIn("retrySafe: true", item_body)
         recovery_body = _js_function_body(script, "confirmTaskRecovery")
         self.assertIn("Confirm ${label} for checkpoint ${checkpointVersion}?", recovery_body)
         self.assertIn(
@@ -172,6 +181,16 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("actionId: action.action_id", recovery_body)
         self.assertIn("expectedCheckpointVersion: checkpointVersion", recovery_body)
         self.assertNotRegex(recovery_body, r"(?:actor|principal)\s*:")
+        continuation_body = _js_function_body(script, "confirmRecoveryContinuation")
+        self.assertIn("Confirm ${label} for checkpoint ${checkpointVersion}?", continuation_body)
+        self.assertIn(
+            "/recovery/continue",
+            continuation_body,
+        )
+        self.assertIn("expectedCheckpointVersion: checkpointVersion", continuation_body)
+        self.assertIn("analysis-only (DRY_RUN)", continuation_body)
+        self.assertNotRegex(continuation_body, r"(?:actor|principal)\s*:")
+        self.assertNotRegex(continuation_body, r"execute_authorized|authorityStatement")
         self.assertIn("mediaLibraryId", script)
         self.assertIn("Run Local setup check", script)
         self.assertIn("Activate checked Draft", script)

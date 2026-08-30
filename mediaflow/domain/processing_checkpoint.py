@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from mediaflow.domain.recovery import RecoveryRequest
+    from mediaflow.domain.recovery_continuation import RecoveryContinuation
     from mediaflow.domain.task_persistence import (
         PersistentResultRecord,
         PersistentTask,
@@ -143,6 +144,7 @@ class ProcessingCheckpointContext:
     blockers: tuple[CheckpointBlocker, ...] = ()
     audits: tuple[CheckpointAudit, ...] = ()
     recovery_requests: tuple[RecoveryRequest, ...] = ()
+    recovery_continuations: tuple[RecoveryContinuation, ...] = ()
 
 
 class ProcessingCheckpointRepository(Protocol):
@@ -176,6 +178,7 @@ class ProcessingCheckpoint:
     blocker: CheckpointBlocker | None
     audits: tuple[CheckpointAudit, ...]
     recovery_requests: tuple[RecoveryRequest, ...]
+    recovery_continuation: RecoveryContinuation | None
     effect_certainty: EffectCertainty
     completed_operations: tuple[str, ...]
     uncertain_effects: tuple[str, ...]
@@ -214,6 +217,11 @@ class ProcessingCheckpoint:
             "recovery_request": (
                 self.active_recovery_request.document()
                 if self.active_recovery_request is not None
+                else None
+            ),
+            "recovery_continuation": (
+                self.recovery_continuation.document()
+                if self.recovery_continuation is not None
                 else None
             ),
         }
@@ -256,6 +264,11 @@ class ProcessingCheckpoint:
             "recovery_request": (
                 self.active_recovery_request.document()
                 if self.active_recovery_request is not None
+                else None
+            ),
+            "recovery_continuation": (
+                self.recovery_continuation.document()
+                if self.recovery_continuation is not None
                 else None
             ),
             "effects": {
