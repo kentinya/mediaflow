@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 23.2
 Parent Slice: 23 — Stage-Aware Per-Item Recovery
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: f196da8563b1db60659b88ab17a2cfcaabea167c
 Difficulty: High
 Test Level: T4
@@ -324,11 +324,31 @@ TMDB service and no production data may be used.
 - The full suite emitted existing SQLite `ResourceWarning` diagnostics; no test failed and no new
   warning gate was introduced.
 
+### Correction for B Review
+- Extended the API recovery-route tests across authentication, permission, not-found, mismatch,
+  refusal, stale, duplicate, unavailable-snapshot, invalid-action/version/input, unexpected
+  field/query, bounded error details, and denial-audit paths.
+- Added strict Storage and metadata Provider boundary spies plus Task/Job/Result/file-lock
+  snapshots to falsify mutation or durable work creation during admission.
+- Restored focused Operator Web assertions for admissible-only controls, action/version
+  confirmation, exact recovery POST body, and the narrowed no-actor-submission guard.
+
+### Correction Tests and Results
+- `.venv/bin/python -m unittest tests.test_processing_recovery_admission tests.test_operator_ui` — PASS (41 tests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (896 tests, 7 skipped; existing ResourceWarning diagnostics only).
+- `.venv/bin/ruff format --check .` — PASS (317 files already formatted).
+- `.venv/bin/ruff check .` — PASS.
+- `python3 -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS (no broken requirements).
+- Both example `config validate` commands — PASS.
+- ffprobe/ffmpeg repository audit — PASS (no references in `mediaflow/`, `tests/`, or `scripts/`).
+- `git diff --check` — PASS.
+
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: fc6b04a8607800b9b70ec5ca8c2607641595007c
+Head SHA: d92eb1e2d67f1d87cce456adf2d8561672ee47c5
 ```
 
 ## B Review Result
