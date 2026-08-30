@@ -6,10 +6,10 @@ rules are defined only in [`docs/development-workflow.md`](docs/development-work
 ```text
 Slice ID: 23
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: PASS / CLOSED
 Base SHA: b3083c417849e744b1b9c4629ce9ef312dd194ff
-Implementation Head: NOT SET
-A Final Review: NOT STARTED
+Implementation Head: 26c0450054e4b3d65d6fbf3641d61e022e9561fd
+A Final Review: PASS
 ```
 
 The Base is the repository HEAD immediately before this Contract was activated. `NOT SET` is the
@@ -106,31 +106,31 @@ The following remain V1 or later work outside this Slice and are not closure blo
 
 ## Slice Acceptance Criteria
 
-- [ ] From an authenticated Task detail/batch summary, the operator can distinguish waiting, failed,
+- [x] From an authenticated Task detail/batch summary, the operator can distinguish waiting, failed,
       partial, ignored, recovered and unchanged items and open each item's durable checkpoint without
       consulting raw SQLite, JSONL or logs.
-- [ ] Checkpoint evidence truthfully identifies stage, pinned configuration, linked plan/result,
+- [x] Checkpoint evidence truthfully identifies stage, pinned configuration, linked plan/result,
       known completed/verified/uncertain effects, blocker/error, retry safety and only actions valid
       for the current version; missing legacy evidence is visibly unavailable.
-- [ ] A linked Recognition/Metadata/Classification review or conflict directs the operator to its
+- [x] A linked Recognition/Metadata/Classification review or conflict directs the operator to its
       existing resolution journey and returns with a current stage-aware continuation action rather
       than bypassing that decision.
-- [ ] A safe pre-mutation failure can be recovered as one item or a bounded selection and produces
+- [x] A safe pre-mutation failure can be recovered as one item or a bounded selection and produces
       new auditable Task/TaskItem/Result linkage while successful and unselected siblings retain
       their existing TaskItem/Result records and are not processed again.
-- [ ] A partial or uncertain mutation shows completed/known effects and refuses unsafe replay;
+- [x] A partial or uncertain mutation shows completed/known effects and refuses unsafe replay;
       investigation remains a valid explicit outcome when no safe automatic continuation exists.
-- [ ] Stale checkpoint versions, duplicate/concurrent requests, changed ownership, missing pinned
+- [x] Stale checkpoint versions, duplicate/concurrent requests, changed ownership, missing pinned
       snapshots, invalid references and insufficient authority fail closed without losing the
       original item/result/recovery evidence.
-- [ ] API and Web expose the same checkpoint, allowed actions, confirmations, outcomes and recovery
+- [x] API and Web expose the same checkpoint, allowed actions, confirmations, outcomes and recovery
       semantics under the same permissions; reload preserves every durable decision and link.
-- [ ] DryRun recovery cannot become execute, and real recovery cannot inherit historical authority;
+- [x] DryRun recovery cannot become execute, and real recovery cannot inherit historical authority;
       any permitted mutation uses the normal plan/conflict/capability checks and OrganizerExecutor.
-- [ ] Batch summaries reconcile item states after partial recovery, and one recovery failure never
+- [x] Batch summaries reconcile item states after partial recovery, and one recovery failure never
       erases another item's success, diagnosis or next action.
-- [ ] RecognitionType C remains C through re-evaluation/re-plan/continuation while reusing A policies.
-- [ ] Explicitly Deferred capabilities remain non-claims and no unresolved in-Slice P0/P1 defect
+- [x] RecognitionType C remains C through re-evaluation/re-plan/continuation while reusing A policies.
+- [x] Explicitly Deferred capabilities remain non-claims and no unresolved in-Slice P0/P1 defect
       remains.
 
 ## Final Validation Expectations
@@ -161,25 +161,94 @@ B performs one `SLICE FINAL` validation before readiness:
 ```text
 Slice: 23 — Stage-Aware Per-Item Recovery
 Base SHA: b3083c417849e744b1b9c4629ce9ef312dd194ff
-Head SHA: NOT SET
+Head SHA: 26c0450054e4b3d65d6fbf3641d61e022e9561fd
 
-Required Outcomes: PENDING
-Implemented: PENDING
-Tasks completed: PENDING
-Final Tests: PENDING
-Safety Evidence: PENDING
-Known Non-blocking Issues: PENDING
-Explicitly Deferred: see Contract above
-Documentation Reconciliation Needed: PENDING
+Required Outcomes:
+- RO-1: COMPLETE
+- RO-2: COMPLETE
+- RO-3: COMPLETE
+- RO-4: COMPLETE
+- RO-5: COMPLETE
+- RO-6: COMPLETE
+- RO-7: COMPLETE
 
-Decision: PENDING
+Required Surfaces:
+- Domain checkpoint, effect-certainty and recovery-action contracts: COMPLETE
+- SQLite persistence, migration, concurrency, audit and recovery queries: COMPLETE
+- Application checkpoint projection, exact-version admission and bounded continuation: COMPLETE
+- Existing review/conflict/configuration/operation/fencing/OrganizerExecutor boundaries: COMPLETE
+- Authenticated API and Operator Web single-item/batch recovery journey: COMPLETE
+- Automated acceptance, integration, concurrency and safety evidence: COMPLETE
+
+Implemented:
+- Durable stage-aware Processing Checkpoint projection with bounded effects, blockers, retry safety
+  and allowed actions
+- Exact-version recovery admission bound to source scope and immutable configuration, with audit and
+  fail-closed concurrency/authority checks
+- Analysis-only single-item continuation through the existing production pipeline with linked new
+  Task/TaskItem/Result evidence
+- Bounded independent batch continuation with per-child outcomes, resumable stranded admission,
+  and distinct ignored/recovered/failed/partial/unchanged reconciliation
+- Authenticated API and Operator Web entry, confirmation, checkpoint, outcome, linkage and recovery
+  actions using shared application behavior
+
+Tasks completed:
+- 23.1 — Durable Processing Checkpoint and stage-aware recovery actions
+- 23.2 — Exact-version recovery admission and audit
+- 23.3 — Single-item safe recovery continuation
+- 23.4 — Bounded batch recovery continuation
+
+Final Tests:
+- Focused batch recovery: 35 passed
+- Related checkpoint/recovery/API/Web/migration/persistence/security suites: 131 passed
+- Complete offline regression: 946 passed, 7 explicit external SMB/OpenList/S3/endurance skips
+- Ruff format/check (323 files), compileall, pip check and both example configuration validations:
+  passed
+- Wheel build and isolated install/configuration/backup/rehearsal/restore/preflight smoke: passed;
+  Runtime schema 26 and configuration schema 10 verified
+- Markdown links: 123 tracked files, 36 local links, 0 broken; git diff --check: passed
+- Real-service/endurance acceptance: 7 SKIP/UNAVAILABLE because dedicated isolated profiles were
+  absent; destructive safety regressions passed with temporary/fake Storage and no production data
+
+Safety Evidence:
+- Recovery selection and all continuations remain DryRun-only and grant no execute, overwrite,
+  delete, cleanup or historical mutation authority
+- Successful/skipped/DryRun/unselected siblings are not replayed; ignored siblings reconcile
+  independently; uncertain effects fail closed to investigation/refusal
+- Exact checkpoint version, source-relative scope, pinned configuration, request/Job fencing and
+  optimistic concurrency regressions pass
+- RecognitionType C remains C while NamingPolicy A and ClassificationPolicy A are reused
+- Storage mutation-call audit remains confined to OrganizerExecutor; recovery zero-mutation and
+  no-silent-fallback regressions pass
+- FFmpeg/FFprobe audit: 0 findings; private config remains ignored/untracked; production-code
+  high-confidence secret/private-path scan: 0 findings
+
+Known Non-blocking Issues:
+- Python 3.13 emits existing unclosed-SQLite ResourceWarning messages without test failures
+
+Explicitly Deferred:
+- Broader Files/Media detail and arbitrary multi-file manual organization (Slice 24)
+- Metadata Provider switching
+- Automation Task Definitions and scheduled unattended real organization (Slice 25)
+- Cross-run compensation or historical rollback beyond existing bounded Organizer rollback
+- Automatic replay of uncertain mutation or recovery-granted execution authority
+- Distributed Task leases, forced interruption and automatic crash replay
+- Remote destination precheck and mutation-based capability probing
+- Redesign of Recognition, Metadata, Naming, Classification, OrganizePlan or OrganizerExecutor
+
+Documentation Reconciliation Needed:
+- None; A reconciled the canonical CURRENT baseline, Product Experience, Architecture, Roadmap and
+  closure ledger in the single Slice-closure checkpoint; stable requirements required no change
+
+Decision: SLICE READY FOR A REVIEW
 ```
 
 ## A Final Review
 
 ```text
-Reviewed Range: NOT SET
-Decision: NOT STARTED
-P0/P1 Blockers: NOT ASSESSED
-Closure Reconciliation: NOT STARTED
+Reviewed Range: b3083c417849e744b1b9c4629ce9ef312dd194ff..26c0450054e4b3d65d6fbf3641d61e022e9561fd
+Decision: PASS
+P0/P1 Blockers: NONE
+Closure Reconciliation: SLICE.md, TASK.md, Roadmap, Progress, canonical CURRENT baseline,
+  Product Experience CURRENT and Architecture CURRENT reconciled once; stable requirements unchanged
 ```

@@ -11,17 +11,18 @@ only in [the development workflow](development-workflow.md).
 | 22.4 — Recognition configuration | Complete managed recognition editing, Strategy Test, explanation and activation | PASS / CLOSED | 22.3 |
 | 22.5 — Metadata configuration and correction | Complete managed MetadataPolicy testing, candidate decision, correction and bounded DryRun continuation | PASS / CLOSED | 22.4 |
 | 22.6 — Naming / Classification / Organize configuration | Complete managed policy editing, exact-revision preview, Local destination precheck and checked activation | PASS / CLOSED | 22.5 |
-| 23 — Stage-aware per-item recovery | Provide checkpoint-aware single and bounded batch recovery without replaying successful siblings or uncertain mutation | ACTIVE | 22.6 closure |
+| 23 — Stage-aware per-item recovery | Provide checkpoint-aware single and bounded batch recovery without replaying successful siblings or uncertain mutation | PASS / CLOSED | 22.6 closure |
 | 24 — Files / Media detail and manual organize | Complete the operator journey from explanation and review to safe manual Preview/Organize and recovery | PLANNED | 23 |
 | 25 — Automation and production hardening | Complete operator-configured scheduled scanning and unattended organization using RecognitionType-selected policies under explicit bounded execution authority, plus production-loop hardening | PLANNED | 24 |
 
 ## Current boundary
 
-The current work boundary is [Slice 23](../SLICE.md): stage-aware per-item recovery over the existing
-Task/TaskItem/Result model. Slice 22.6 remains closed; its legacy A–O/F1 history is evidence inside
-that closed Slice, not authorization for another configuration micro-Slice.
+No Slice is currently active. [Slice 23](../SLICE.md) closed after A reviewed its immutable
+Base..Implementation Head and accepted the stage-aware single-item and bounded batch recovery
+journey. Selecting and activating the next large Slice is a separate A action.
 
-Slices 24 and 25 remain large planned boundaries only. B may plan Tasks only inside active Slice 23.
+Slices 24 and 25 remain planned boundaries only. B must not plan an implementation Task until A
+activates one of them.
 
 ## Roadmap rules
 

@@ -1259,9 +1259,9 @@ Failure category, Message and Next action — without deriving or changing them.
 Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
 multiple RecognitionTypes or destination Storages in one request, `ConflictType.DUPLICATE_MEDIA` /
 known-media detection, attachment prechecks, absolute mounted-path display and execution remain
-TARGET. Provider switching, generic Task resume, per-item Processing Checkpoint recovery and
-unattended execute also remain outside Slice 22.6. Slice 22.6 is PASS / CLOSED with those items
-remaining TARGET rather than CURRENT claims.
+TARGET. Provider switching, generic Task resume and unattended execute also remain outside Slice
+22.6. Per-item Processing Checkpoint recovery was subsequently delivered by Slice 23; it is not a
+retroactive claim of the closed 22.6 boundary.
 
 ## Deferred work
 
@@ -1794,18 +1794,18 @@ The outer Worker command itself reads only the immutable database locator and ma
 boundary before claiming; it does not construct Storage or Providers until the claimed Job's saved
 snapshot is selected.
 
-The snapshot identity columns are additive compatibility migrations on the existing Runtime schema;
-the historical runtime schema marker remains `22` so accepted backup/restore and migration evidence
-is not rewritten. Fresh and older databases both receive the columns by presence checks, and Job
-inserts use an explicit column list so historical ALTER-table column order cannot corrupt authority
-fields. Phase 22.3 closed on configuration-management schema marker `4`; Phase 22.4 adds marker `5`
-for revision-bound Recognition Strategy Test evidence, Phase 22.6-A adds marker `6` for
-exact-revision Naming preview evidence, Phase 22.6-B adds marker `7` for exact-revision
-Classification preview evidence, Phase 22.6-C adds marker `8` for exact-revision organize
-authority evidence, Phase 22.6-D adds marker `9` for composed destination-preview evidence, and
-Phase 22.6-E adds marker `10` for read-only destination-precheck evidence. Its revision sequence,
-singleton authority pointer, Local setup-check evidence, Strategy Test evidence, and the
-Phase 22.5-E continuation table and indexes remain additive and do not rewrite the Runtime marker.
+The snapshot identity columns were additive compatibility migrations on Runtime schema 22. Slice 23
+advances the Runtime marker additively through 23–26 for effect-certainty evidence, exact-version
+recovery requests, recovery continuations and the bounded recovery-batch parent/child read model.
+Fresh and older databases receive the structures through forward migration, and Job inserts use an
+explicit column list so historical ALTER-table column order cannot corrupt authority fields. Phase
+22.3 closed on configuration-management schema marker `4`; Phase 22.4 adds marker `5` for
+revision-bound Recognition Strategy Test evidence, Phase 22.6-A adds marker `6` for exact-revision
+Naming preview evidence, Phase 22.6-B adds marker `7` for exact-revision Classification preview
+evidence, Phase 22.6-C adds marker `8` for exact-revision organize authority evidence, Phase 22.6-D
+adds marker `9` for composed destination-preview evidence, and Phase 22.6-E adds marker `10` for
+read-only destination-precheck evidence. The configuration-management marker remains `10`; the
+current Runtime schema marker is `26`.
 
 ### Phase 22.3 Local Storage + Library guided slice (CURRENT implementation; PASS / CLOSED)
 
@@ -1860,9 +1860,9 @@ Storage, independent row recovery, collision and capability verdicts, and checke
 without mutation or execution authority. Remote
 SMB/OpenList/S3 destination precheck, mutation-based capability probing, multiple RecognitionTypes
 or destination Storages per request, known-media duplicate detection, attachment precheck and
-absolute mounted-path display remain TARGET; Provider switching, generic Task resume, broader
-Files/Task recovery including per-item Processing Checkpoints, and unattended execute also remain
-later work.
+absolute mounted-path display remain TARGET; Provider switching, generic Task resume and unattended
+execute also remain later work. The broader Files/Media manual-organize journey remains planned,
+while per-item Task recovery was subsequently delivered by Slice 23.
 
 ## Configuration architecture: TARGET (partially implemented; remaining work explicit)
 
@@ -1900,29 +1900,54 @@ export/import UI, secret-store integration, and user administration remain futur
 `JSON_BOOTSTRAP`; after activation the managed snapshot is the sole workflow authority and JSON is
 not consulted for fallback.
 
-## Per-item recovery architecture: CURRENT
-
-Task, TaskItem, stage/status, Result, completed-operation evidence, reviews, conflicts, and several
-explicit retry/resume requests are durable. Recovery remains fragmented across commands and review
-flows. A generic Processing Checkpoint and unified stage-aware recovery strategy are not implemented;
-retry/resume alone must not be described as complete recovery.
-
-## Per-item recovery architecture: TARGET (not implemented)
+## Per-item recovery architecture: CURRENT (Slice 23; PASS / CLOSED)
 
 ```text
 Task
 → TaskItem
 → Processing Checkpoint
-→ stage-aware Recovery Strategy
+→ exact-version Recovery Request
+→ analysis-only Recovery Continuation / bounded Batch
+→ existing Worker pipeline
+→ linked DryRun Task / Result
 ```
 
-Each TaskItem checkpoint records the last durable stage, input/snapshot identity, completed and
-verified effects, uncertain effects, blocking review/conflict, retry safety, and allowed recovery
-actions. A stage-aware strategy chooses among re-evaluate, continue, re-plan, compensate, investigate,
-ignore, or refuse unsafe replay. Batch orchestration operates on items independently and never
-replays successful siblings. Web/API expose the same checkpoint and actions; logs are supporting
-evidence, not the only recovery interface.
+`ProcessingCheckpointService` projects one bounded restart-safe view from the persisted Task,
+TaskItem, Result, operation-effect evidence, review/conflict, audit, recovery-request and continuation
+records. The projection reports the durable/raw stage, Storage-relative source, immutable snapshot
+ID/digest, plan/result links, completed and uncertain effects, blocker, error category, retry safety
+and permitted actions. Its version is a digest of the bounded persisted facts. Missing legacy facts
+remain unknown; read paths redact unsafe paths and never construct Storage or Provider objects.
 
-This target does not move business logic into Task orchestration and does not authorize automatic
-replay of uncertain Organizer operations. OrganizerExecutor remains the only Storage mutation
-boundary, and explicit authority remains required.
+`RecoveryAdmissionService` is the shared exact-version write gate used by API/Web and the adapted
+retry/ignore/re-plan entry points. SQLite re-projects the checkpoint inside an IMMEDIATE transaction,
+then atomically validates Task/item/source/snapshot identity, action admissibility and active-request
+uniqueness before recording the request and its existing action-specific transition. A later Active
+snapshot is never substituted. Requests grant only `task_recovery`; no historical execute,
+overwrite, delete, cleanup or rollback authority is copied.
+
+An admitted safe pre-mutation request may create one `RECOVERY_CONTINUATION` AutomationJob pinned to
+the same immutable snapshot, limited to one item and always `execute_authorized=false`. Job,
+continuation and optional batch-child linkage commit together. The Worker validates current request,
+source ownership, checkpoint boundary, snapshot equality, fencing/cancellation and one-item scope,
+then calls the existing `MediaOrganizerService.process_file(..., execute=False)`. Completion links a
+new DryRun Task/TaskItem/Result while retaining the original evidence. Uncertain or unknown effects
+fail closed to investigation; terminal success/skipped/DryRun/ignored items receive no replay action.
+
+`RecoveryBatchContinuationService` composes that same single-item gate for a deterministic maximum
+of 100 selections. Each child owns independent checkpoint/request/continuation/Job and terminal or
+waiting evidence; the persisted parent read model derives queued, running, completed, failed,
+cancelled, refused, waiting, recovered, ignored and unchanged counts after reload. A persist-failed
+`selected` child can be explicitly resumed without touching already admitted or terminal siblings.
+Authenticated API and Operator Web use these same services, RBAC and confirmations and link the
+source checkpoint, blocker, Job and new Task/Result.
+
+### Remaining recovery TARGET
+
+Slice 23 does not implement automatic replay of uncertain media mutation, cross-run compensation or
+historical rollback beyond the existing per-invocation Organizer rollback, distributed Task leases,
+forced interruption of external calls, automatic crash replay, Metadata Provider switching, the
+broader Files/Media manual-organize journey or scheduled unattended real execution. These are not
+dependencies of the current checkpoint and DryRun continuation path. OrganizerExecutor remains the
+only Storage mutation boundary, and any future real continuation must independently satisfy current
+authority, Storage capability and conflict/destructive-operation gates.
