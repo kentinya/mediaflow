@@ -156,6 +156,7 @@ class RecoveryContinuationRepository(Protocol):
         continuation: RecoveryContinuation,
         *,
         maximum_active_jobs: int,
+        batch_item_id: str | None = None,
     ) -> tuple[RecoveryContinuation, bool]: ...
     def mark_recovery_continuation_running(
         self, job_id: str, now: datetime | None = None

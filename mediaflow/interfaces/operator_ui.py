@@ -1687,7 +1687,8 @@ APP_JS = b"""(() => {
       const eligible = (data.items || []).filter(item => {
         const checkpoint = item.checkpoint && typeof item.checkpoint === 'object' ? item.checkpoint : {};
         return Array.isArray(checkpoint.permitted_action_ids) &&
-          checkpoint.permitted_action_ids.includes('continue');
+          (checkpoint.permitted_action_ids.includes('continue') ||
+            checkpoint.permitted_action_ids.includes('retry'));
       });
       if (eligible.length) {
         const controls = text('div', '', 'choices');

@@ -902,6 +902,7 @@ class SQLiteTaskRepository:
         *,
         maximum_active_jobs: int,
         checkpoint_projector=None,
+        batch_item_id: str | None = None,
     ) -> tuple[RecoveryContinuation, bool]:
         """Atomically record one continuation and its Job for an active request.
 
@@ -1026,6 +1027,28 @@ class SQLiteTaskRepository:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     self._recovery_continuation_values(continuation),
                 )
+                if batch_item_id is not None:
+                    cursor = self._connection.execute(
+                        """UPDATE recovery_batch_items
+                        SET status=?, updated_at=?, request_id=?, continuation_id=?,
+                            job_id=?, reason=NULL, error=NULL, next_action=?
+                        WHERE batch_item_id=? AND batch_id IN
+                            (SELECT batch_id FROM recovery_batches
+                             WHERE source_task_id=?) AND status=?""",
+                        (
+                            RecoveryBatchItemStatus.QUEUED.value,
+                            datetime.now(UTC).isoformat(),
+                            continuation.request_id,
+                            continuation.continuation_id,
+                            continuation.job_id,
+                            continuation.next_action(),
+                            batch_item_id,
+                            continuation.source_task_id,
+                            RecoveryBatchItemStatus.SELECTED.value,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ValueError("recovery batch child linkage is unavailable")
                 self._connection.commit()
                 return continuation, True
             except Exception:
