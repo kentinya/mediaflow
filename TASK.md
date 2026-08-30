@@ -279,7 +279,7 @@ TMDB service and no production data may be used.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: TO BE RECORDED AFTER THE CORRECTION COMMIT
+Head SHA: 08baa42b879af23ebc95311e9e5de3bb5527f5c1
 ```
 
 ## B Review Result
