@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -9,6 +10,7 @@ from uuid import uuid4
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_continuation import RecoveryContinuationService
 from mediaflow.domain.automation import AutomationQueueFull
+from mediaflow.domain.recovery import RecoveryAdmissionError
 from mediaflow.domain.recovery_batch import (
     RecoveryBatch,
     RecoveryBatchItem,
@@ -16,6 +18,14 @@ from mediaflow.domain.recovery_batch import (
     RecoveryBatchStatus,
 )
 from mediaflow.domain.recovery_continuation import RecoveryContinuationError
+
+_REFRESH = "refresh the Task item checkpoint and select it again"
+_SENSITIVE_ACTOR = re.compile(
+    r"(?ix)(?:bearer\s+\S+|"
+    r"(?:password|passwd|secret|token|api[_-]?key|authorization|cookie)\s*[:=]\s*\S+)"
+)
+_PRIVATE_ENDPOINT = re.compile(r"(?i)(?:https?|s3|file)://[^\s]+")
+_ABSOLUTE_PATH = re.compile(r"(?<![\w])(?:/[\w.~-]+(?:/[\w. .~+\-]+)*|[A-Za-z]:[\\/][^\s]+)")
 
 
 class RecoveryBatchContinuationService:
@@ -36,7 +46,7 @@ class RecoveryBatchContinuationService:
         maximum_active_jobs: int,
     ) -> RecoveryBatch:
         task_id = self._required_text(task_id, "Task ID")
-        actor = self._required_text(actor, "batch actor")[: self.MAX_ACTOR]
+        actor = self._actor(actor)
         if not isinstance(selections, (list, tuple)) or not selections:
             raise ValueError("batch recovery selection must not be empty")
         if len(selections) > self.MAX_BATCH_SIZE:
@@ -81,6 +91,7 @@ class RecoveryBatchContinuationService:
             )
             for item_id, version in normalized
         )
+        initial_items = tuple(replace(item, batch_id=batch_id) for item in initial_items)
         self._repository.create_recovery_batch(
             RecoveryBatch(
                 batch_id,
@@ -93,17 +104,66 @@ class RecoveryBatchContinuationService:
             )
         )
 
-        for item in initial_items:
-            updated = self._admit_item(item, actor, maximum_active_jobs)
-            if updated.status is not RecoveryBatchItemStatus.QUEUED:
-                self._repository.update_recovery_batch_item(updated)
+        self._drive(initial_items, actor, maximum_active_jobs)
         return self._repository.get_recovery_batch(batch_id)
 
+    def resume(self, batch_id: str, *, actor: str, maximum_active_jobs: int) -> RecoveryBatch:
+        """Deterministically finish children still durably `selected` after reload.
+
+        A repository/transaction failure while recording one child's outcome must
+        never strand the parent. Resume re-drives exactly the children that never
+        reached a terminal or waiting outcome; every other child keeps its own
+        durable evidence and is not touched or replayed.
+        """
+        batch_id = self._required_text(batch_id, "recovery batch ID")
+        actor = self._actor(actor)
+        batch = self._repository.get_recovery_batch(batch_id)
+        pending = tuple(
+            item for item in batch.items if item.status is RecoveryBatchItemStatus.SELECTED
+        )
+        if pending:
+            self._drive(pending, actor, maximum_active_jobs)
+        return self._repository.get_recovery_batch(batch_id)
+
+    def _drive(
+        self,
+        items: tuple[RecoveryBatchItem, ...],
+        actor: str,
+        maximum_active_jobs: int,
+    ) -> None:
+        """Admit each selected child independently of its siblings' fate."""
+        for item in items:
+            updated = self._admit_item(item, actor, maximum_active_jobs)
+            if updated.status is RecoveryBatchItemStatus.QUEUED:
+                # Accepted children are linked inside the continuation transaction.
+                continue
+            try:
+                self._repository.update_recovery_batch_item(updated)
+            except Exception:
+                # This child stays durably `selected` and is reported as resumable;
+                # its siblings must still reach their own durable outcome.
+                continue
+
     def _admit_item(self, batch_item: RecoveryBatchItem, actor: str, maximum_active_jobs: int):
+        request = None
         try:
             checkpoint = self._continuation_service.checkpoint_service.get(
                 batch_item.source_item_id, task_id=batch_item.source_task_id
             )
+            # Validate the selected version before following either retry or continue
+            if batch_item.checkpoint_version != checkpoint.checkpoint_version:
+                # Reject a stale decision before admitting a request or queueing a Job.
+                return replace(
+                    batch_item,
+                    status=RecoveryBatchItemStatus.REFUSED,
+                    reason="stale_checkpoint",
+                    error=(
+                        "the selected checkpoint version is stale; this item was not changed "
+                        "and no recovery work was created"
+                    ),
+                    next_action=_REFRESH,
+                    updated_at=datetime.now(UTC),
+                )
             if "continue" not in checkpoint.permitted_action_ids:
                 if "retry" in checkpoint.permitted_action_ids:
                     request = self._admission_service.admit(
@@ -174,7 +234,13 @@ class RecoveryBatchContinuationService:
             return replace(
                 batch_item,
                 status=status,
-                request_id=existing.request_id if existing else None,
+                request_id=(
+                    request.request_id
+                    if request is not None
+                    else existing.request_id
+                    if existing
+                    else None
+                ),
                 continuation_id=existing.continuation_id if existing else None,
                 job_id=existing.job_id if existing else None,
                 reason=error.reason.value,
@@ -186,10 +252,31 @@ class RecoveryBatchContinuationService:
                 ),
                 updated_at=datetime.now(UTC),
             )
+        except RecoveryAdmissionError as error:
+            return replace(
+                batch_item,
+                status=RecoveryBatchItemStatus.REFUSED,
+                request_id=(
+                    error.existing_request.request_id
+                    if error.existing_request is not None
+                    else request.request_id
+                    if request is not None
+                    else None
+                ),
+                reason=error.reason.value,
+                error=str(error),
+                next_action=(
+                    _REFRESH
+                    if error.current_checkpoint_version
+                    else "inspect the item checkpoint and follow its offered action"
+                ),
+                updated_at=datetime.now(UTC),
+            )
         except AutomationQueueFull as error:
             return replace(
                 batch_item,
                 status=RecoveryBatchItemStatus.WAITING,
+                request_id=request.request_id if request is not None else None,
                 reason="queue_full",
                 error=str(error),
                 next_action="wait for active Jobs to finish, then continue this item again",
@@ -199,6 +286,7 @@ class RecoveryBatchContinuationService:
             return replace(
                 batch_item,
                 status=RecoveryBatchItemStatus.WAITING,
+                request_id=request.request_id if request is not None else None,
                 reason="batch_child_failed",
                 error=f"batch child admission failed ({type(error).__name__})",
                 next_action="inspect this item's checkpoint and continue it again",
@@ -210,3 +298,12 @@ class RecoveryBatchContinuationService:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{label} is required")
         return value.strip()
+
+    @staticmethod
+    def _actor(value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("actor is required")
+        normalized = " ".join(value.split())[:200]
+        normalized = _SENSITIVE_ACTOR.sub("[redacted]", normalized)
+        normalized = _PRIVATE_ENDPOINT.sub("[redacted]", normalized)
+        return _ABSOLUTE_PATH.sub("[redacted]", normalized)

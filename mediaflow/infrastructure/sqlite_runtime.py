@@ -856,7 +856,9 @@ class SQLiteTaskRepository:
                 raise LookupError(f"recovery batch {batch_id!r} was not found")
             rows = self._connection.execute(
                 """SELECT b.*, c.status AS continuation_status, c.error AS continuation_error,
-                c.recovery AS continuation_recovery
+                c.recovery AS continuation_recovery,
+                c.new_task_id AS continuation_new_task_id,
+                c.new_result_id AS continuation_new_result_id
                 FROM recovery_batch_items b
                 LEFT JOIN recovery_continuations c ON c.continuation_id=b.continuation_id
                 WHERE b.batch_id=? ORDER BY b.source_item_id""",
@@ -876,7 +878,10 @@ class SQLiteTaskRepository:
             batch_row["source_task_id"],
             batch_row["actor"],
             datetime.fromisoformat(batch_row["created_at"]),
-            datetime.fromisoformat(batch_row["updated_at"]),
+            max(
+                datetime.fromisoformat(batch_row["updated_at"]),
+                *(item.updated_at for item in items),
+            ),
             status,
             items,
             unchanged,
@@ -4827,6 +4832,10 @@ class SQLiteTaskRepository:
                 RecoveryContinuationStatus.FAILED.value: RecoveryBatchItemStatus.FAILED,
                 RecoveryContinuationStatus.CANCELLED.value: RecoveryBatchItemStatus.CANCELLED,
             }.get(continuation_status, status)
+        new_task_id = row["continuation_new_task_id"]
+        new_result_id = row["continuation_new_result_id"]
+        recovery_status = continuation_status
+        recovery_action = row["continuation_recovery"]
         return RecoveryBatchItem(
             row["batch_item_id"],
             row["batch_id"],
@@ -4839,6 +4848,10 @@ class SQLiteTaskRepository:
             row["request_id"],
             row["continuation_id"],
             row["job_id"],
+            new_task_id,
+            new_result_id,
+            recovery_status,
+            recovery_action,
             row["reason"],
             row["continuation_error"] or row["error"],
             (
