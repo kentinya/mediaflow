@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from mediaflow.application.automation import AutomationJobService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.metadata import MetadataProviderRegistry
@@ -464,6 +465,95 @@ class RecoveryContinuationTests(unittest.TestCase):
             )
             self.assertEqual(status, 409)
             self.assertEqual(document["error"]["details"]["reason"], "uncertain_effects")
+
+    def test_pending_job_cancellation_cancels_continuation_and_request(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            source_task, source_item = self._seed_failed_item(environment)
+            admitted, _ = self._admit(environment, source_task, source_item)
+            submitted = self._continue(environment, source_task, source_item)
+
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                cancelled_job = AutomationJobService(repository).cancel(submitted.job.job_id)
+                continuation = repository.get_recovery_continuation_for_job(submitted.job.job_id)
+                request = repository.get_recovery_request(admitted.request_id)
+
+                self.assertEqual(cancelled_job.status, AutomationJobStatus.CANCELLED)
+                self.assertIsNotNone(continuation)
+                self.assertEqual(continuation.status, RecoveryContinuationStatus.CANCELLED)
+                self.assertEqual(request.status.value, "cancelled")
+                self.assertFalse(request.active)
+                self.assertEqual(repository.get_item(source_item.item_id).error, "original failure")
+                self.assertEqual(len(repository.list_results(source_task.task_id)), 2)
+
+    def test_continuation_admission_rolls_back_job_and_row_together(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            source_task, source_item = self._seed_failed_item(environment)
+            admitted, _ = self._admit(environment, source_task, source_item)
+
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                service = RecoveryContinuationService(
+                    repository,
+                    snapshot_validator=lambda _id, _digest: None,
+                )
+                current_checkpoint = service.checkpoint_service.get(
+                    source_item.item_id, task_id=source_task.task_id
+                )
+                with patch.object(
+                    repository,
+                    "_insert_job",
+                    side_effect=RuntimeError("injected admission failure"),
+                ):
+                    with self.assertRaises(RuntimeError):
+                        service.submit(
+                            source_task.task_id,
+                            source_item.item_id,
+                            expected_checkpoint_version=current_checkpoint.checkpoint_version,
+                            actor="operator",
+                            maximum_active_jobs=100,
+                        )
+
+                self.assertIsNone(
+                    repository.get_recovery_continuation_for_request(admitted.request_id)
+                )
+                self.assertEqual(repository.list_jobs(limit=100), ())
+                self.assertEqual(
+                    repository.get_recovery_request(admitted.request_id).status.value,
+                    "pending",
+                )
+                self.assertEqual(repository.get_item(source_item.item_id).error, "original failure")
+
+    def test_continuation_terminal_resolution_rolls_back_together(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            source_task, source_item = self._seed_failed_item(environment)
+            admitted, _ = self._admit(environment, source_task, source_item)
+            submitted = self._continue(environment, source_task, source_item)
+
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                repository.mark_recovery_continuation_running(submitted.job.job_id)
+                with patch.object(
+                    repository,
+                    "_resolve_recovery_request_locked",
+                    side_effect=RuntimeError("injected terminal failure"),
+                ):
+                    with self.assertRaises(RuntimeError):
+                        repository.complete_recovery_continuation(
+                            submitted.job.job_id,
+                            new_task_id="child-task",
+                            new_result_id="child-result",
+                            success=True,
+                        )
+
+                continuation = repository.get_recovery_continuation_for_job(submitted.job.job_id)
+                request = repository.get_recovery_request(admitted.request_id)
+                self.assertEqual(continuation.status, RecoveryContinuationStatus.RUNNING)
+                self.assertIsNone(continuation.new_task_id)
+                self.assertIsNone(continuation.new_result_id)
+                self.assertEqual(request.status.value, "pending")
+                self.assertEqual(repository.get_item(source_item.item_id).error, "original failure")
+                self.assertEqual(len(repository.list_results(source_task.task_id)), 2)
 
     def test_stale_duplicate_and_inactive_refusals(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
