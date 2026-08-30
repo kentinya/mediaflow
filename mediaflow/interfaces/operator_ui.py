@@ -1684,6 +1684,40 @@ APP_JS = b"""(() => {
         ['ID', 'Status', 'Stage', 'Blocker', 'Effect certainty', 'Retry safety', 'Recovery request',
           'Source storage', 'Source', 'Target storage', 'Target'], items,
         index => showTaskItem(id, (data.items || [])[index] && (data.items || [])[index].item_id)));
+      const eligible = (data.items || []).filter(item => {
+        const checkpoint = item.checkpoint && typeof item.checkpoint === 'object' ? item.checkpoint : {};
+        return Array.isArray(checkpoint.permitted_action_ids) &&
+          checkpoint.permitted_action_ids.includes('continue');
+      });
+      if (eligible.length) {
+        const controls = text('div', '', 'choices');
+        controls.append(text('h3', 'Batch recovery'));
+        const selection = text('div', 'Select eligible items for one analysis-only continuation batch.');
+        eligible.forEach(item => {
+          const checkpoint = item.checkpoint;
+          const label = document.createElement('label');
+          const input = document.createElement('input');
+          input.type = 'checkbox'; input.value = item.item_id; input.checked = true;
+          input.dataset.checkpointVersion = checkpoint.checkpoint_version;
+          label.append(input, text('span', ` ${item.item_id}`)); selection.append(label);
+        });
+        controls.append(selection, actionButton('Continue selected items (DryRun)', () => {
+          const values = Array.from(selection.querySelectorAll('input[type="checkbox"]:checked'))
+            .map(input => ({itemId: input.value, expectedCheckpointVersion: input.dataset.checkpointVersion}));
+          confirmBatchRecovery(id, values, controls);
+        }));
+        detailContent.append(controls);
+      }
+      const batches = Array.isArray(data.recovery_batches) ? data.recovery_batches : [];
+      if (batches.length) {
+        detailContent.append(text('h3', 'Recovery batches'), table(
+          ['Batch', 'Status', 'Selected', 'Queued', 'Running', 'Completed', 'Failed', 'Next action'],
+          batches.map(batch => [batch.batch_id, batch.status, batch.selected_count,
+            batch.counts && batch.counts.queued, batch.counts && batch.counts.running,
+            batch.counts && batch.counts.completed, batch.counts && batch.counts.failed,
+            batch.next_action]),
+          index => showRecoveryBatch(batches[index].batch_id)));
+      }
       if (data.items_truncated) detailContent.append(text('p',
         `Items truncated at ${data.item_limit}.`, 'warning'));
       pageNavigation(detailContent, 'items', data.previous_item_cursor, data.next_item_cursor,
@@ -1702,6 +1736,35 @@ APP_JS = b"""(() => {
         () => showTask(id, itemCursor, data.next_result_cursor));
       detail.hidden = false;
         } catch (error) { message(errorText(error), true); }
+  }
+  function confirmBatchRecovery(taskId, items, container) {
+    if (!items.length) { message('Select at least one eligible item.', true); return; }
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p',
+      `Confirm analysis-only recovery for ${items.length} selected item(s)? ` +
+      'Each item keeps independent checkpoint, Job, Task and Result evidence. ' +
+      'No media mutation or execution authority is granted.'));
+    confirmation.append(actionButton('Confirm batch recovery', async () => {
+      try {
+        const batch = await api(`/api/v1/tasks/${encodeURIComponent(taskId)}/recovery/continue-batch`,
+          {method: 'POST', body: JSON.stringify({items})});
+        message(`Recovery batch ${batch.batch_id} admitted.`);
+        confirmation.remove(); container.remove(); await showTask(taskId);
+      } catch (error) { message(errorText(error), true); }
+    }), actionButton('Keep items unchanged', () => confirmation.remove()));
+    container.append(confirmation);
+  }
+  async function showRecoveryBatch(batchId) {
+    try {
+      const data = await api(`/api/v1/recovery-batches/${encodeURIComponent(batchId)}`);
+      clear(detailContent); detailContent.append(text('h2', 'Recovery batch detail'),
+        scalarDetails(data, ['items', 'counts']));
+      detailContent.append(cards(Object.entries(data.counts || {}).map(([key, value]) => [key, value])));
+      detailContent.append(table(['Item', 'Status', 'Reason', 'Error', 'Next action'],
+        (data.items || []).map(item => [item.source_item_id, item.status,
+          item.reason || '-', item.error || '-', item.next_action || '-'])));
+      detail.hidden = false;
+    } catch (error) { message(errorText(error), true); }
   }
   async function showTaskItem(taskId, itemId) {
     if (!itemId) { message('Task item identity is unavailable.', true); return; }

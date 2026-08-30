@@ -502,7 +502,7 @@ class ClassificationReviewTests(unittest.TestCase):
                 )
                 repository._connection.commit()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 25)
+                self.assertEqual(repository.schema_version, 26)
                 tables = {
                     row["name"]
                     for row in repository._connection.execute(

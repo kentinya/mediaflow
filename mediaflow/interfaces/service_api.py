@@ -30,6 +30,7 @@ from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
+from mediaflow.application.recovery_batch import RecoveryBatchContinuationService
 from mediaflow.application.recovery_continuation import RecoveryContinuationService
 from mediaflow.domain.automation import AutomationCommand, AutomationQueueFull
 from mediaflow.domain.configuration_management import (
@@ -158,6 +159,10 @@ class MediaFlowApi:
             repository,
             snapshot_validator=snapshot_validator,
             checkpoint_service=self._checkpoint_service,
+        )
+        self._recovery_batch = RecoveryBatchContinuationService(
+            repository,
+            continuation_service=self._recovery_continuation,
         )
         self._runtime_binding_lock = threading.RLock()
         self._runtime_binding = self._build_runtime_binding(
@@ -1652,6 +1657,43 @@ class MediaFlowApi:
                     "sideEffects": "none",
                 },
             )
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4:6] == ["recovery", "continue-batch"]
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+            self._require_empty_query(environ, "task batch recovery continuation")
+            document = self._document(environ)
+            if set(document) != {"items"}:
+                raise ValueError("task batch recovery continuation requires only items")
+            if not isinstance(document["items"], list):
+                raise ValueError("task batch recovery items must be a list")
+            binding = self._runtime_binding
+            batch = self._recovery_batch.submit(
+                parts[3],
+                document["items"],
+                actor=principal.principal_id,
+                maximum_active_jobs=binding.maximum_active_jobs,
+            )
+            return self._response(
+                start_response,
+                202,
+                {
+                    **batch.document(),
+                    "executionMode": "dry_run",
+                    "sideEffects": "none",
+                },
+            )
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "recovery batch")
+            return self._response(
+                start_response,
+                200,
+                self._repository.get_recovery_batch(parts[3]).document(),
+            )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "tasks"] and method == "GET":
             item_limit, result_limit, item_cursor, result_cursor = self._task_detail_page(environ)
             task = self._repository.get_task(parts[3])
@@ -1687,6 +1729,14 @@ class MediaFlowApi:
                     **self._value(task),
                     "items": checkpoint_items,
                     "results": [self._value(item) for item in result_page],
+                    "recovery_batches": [
+                        batch.document()
+                        for batch in (
+                            self._repository.list_recovery_batches(task.task_id)
+                            if callable(getattr(self._repository, "list_recovery_batches", None))
+                            else ()
+                        )
+                    ],
                     "item_limit": item_limit,
                     "result_limit": result_limit,
                     "items_truncated": has_next_items,
@@ -2264,6 +2314,7 @@ class MediaFlowApi:
             ("api", "v1", "classification-reviews"),
             ("api", "v1", "recognition-reviews"),
             ("api", "v1", "metadata-corrections"),
+            ("api", "v1", "recovery-batches"),
         }
         key = tuple(parts)
         if key in exact:
@@ -2276,12 +2327,20 @@ class MediaFlowApi:
         if len(parts) == 6 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "items":
             return "/api/v1/tasks/{task_id}/items/{item_id}"
         if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4:6] == ["recovery", "continue-batch"]
+        ):
+            return "/api/v1/tasks/{task_id}/recovery/continue-batch"
+        if (
             len(parts) == 7
             and parts[:3] == ["api", "v1", "tasks"]
             and parts[4] == "items"
             and parts[6] == "recovery"
         ):
             return "/api/v1/tasks/{task_id}/items/{item_id}/recovery"
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"]:
+            return "/api/v1/recovery-batches/{id}"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
             return "/api/v1/jobs/{id}/cancel"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":

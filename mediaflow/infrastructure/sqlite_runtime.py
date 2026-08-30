@@ -84,6 +84,11 @@ from mediaflow.domain.recovery import (
     RecoveryRequest,
     RecoveryRequestStatus,
 )
+from mediaflow.domain.recovery_batch import (
+    RecoveryBatch,
+    RecoveryBatchItem,
+    RecoveryBatchItemStatus,
+)
 from mediaflow.domain.recovery_continuation import (
     RecoveryContinuation,
     RecoveryContinuationError,
@@ -103,10 +108,8 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestDecision
 
-# Runtime schema 25 adds the additive recovery_continuations table and its
-# item-scoped index. The table is created via CREATE TABLE IF NOT EXISTS, so
-# databases at schema 24 open unchanged while the marker is bumped forward.
-SCHEMA_VERSION = 25
+# Runtime schema 26 adds the additive recovery batch parent/child read model.
+SCHEMA_VERSION = 26
 
 
 class SQLiteTaskRepository:
@@ -789,6 +792,108 @@ class SQLiteTaskRepository:
                 (item_id, limit),
             ).fetchall()
         return tuple(self._recovery_continuation(row) for row in rows)
+
+    def create_recovery_batch(self, batch: RecoveryBatch) -> None:
+        if not batch.items or len(batch.items) > 100:
+            raise ValueError("recovery batch must contain between 1 and 100 items")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._connection.execute(
+                    """INSERT INTO recovery_batches
+                    (batch_id, source_task_id, actor, status, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        batch.batch_id,
+                        batch.source_task_id,
+                        batch.actor,
+                        batch.status.value,
+                        batch.created_at.isoformat(),
+                        batch.updated_at.isoformat(),
+                    ),
+                )
+                for item in batch.items:
+                    self._connection.execute(
+                        """INSERT INTO recovery_batch_items
+                        (batch_item_id, batch_id, source_task_id, source_item_id,
+                         checkpoint_version, status, created_at, updated_at, request_id,
+                         continuation_id, job_id, reason, error, next_action)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        self._recovery_batch_item_values(item),
+                    )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def update_recovery_batch_item(self, item: RecoveryBatchItem) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE recovery_batch_items SET status=?, updated_at=?, request_id=?,
+                continuation_id=?, job_id=?, reason=?, error=?, next_action=?
+                WHERE batch_item_id=?""",
+                (
+                    item.status.value,
+                    item.updated_at.isoformat(),
+                    item.request_id,
+                    item.continuation_id,
+                    item.job_id,
+                    item.reason,
+                    item.error,
+                    item.next_action,
+                    item.batch_item_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"recovery batch item {item.batch_item_id!r} was not found")
+
+    def get_recovery_batch(self, batch_id: str) -> RecoveryBatch:
+        with self._lock:
+            batch_row = self._connection.execute(
+                "SELECT * FROM recovery_batches WHERE batch_id=?", (batch_id,)
+            ).fetchone()
+            if batch_row is None:
+                raise LookupError(f"recovery batch {batch_id!r} was not found")
+            rows = self._connection.execute(
+                """SELECT b.*, c.status AS continuation_status, c.error AS continuation_error,
+                c.recovery AS continuation_recovery
+                FROM recovery_batch_items b
+                LEFT JOIN recovery_continuations c ON c.continuation_id=b.continuation_id
+                WHERE b.batch_id=? ORDER BY b.source_item_id""",
+                (batch_id,),
+            ).fetchall()
+            items = tuple(self._recovery_batch_item(row) for row in rows)
+            unchanged = self._connection.execute(
+                """SELECT COUNT(*) AS count FROM task_items
+                WHERE task_id=? AND status IN ('success', 'skipped', 'dry_run', 'ignored')
+                AND item_id NOT IN
+                (SELECT source_item_id FROM recovery_batch_items WHERE batch_id=?)""",
+                (batch_row["source_task_id"], batch_id),
+            ).fetchone()["count"]
+        status = RecoveryBatch.derive_status(items)
+        return RecoveryBatch(
+            batch_row["batch_id"],
+            batch_row["source_task_id"],
+            batch_row["actor"],
+            datetime.fromisoformat(batch_row["created_at"]),
+            datetime.fromisoformat(batch_row["updated_at"]),
+            status,
+            items,
+            unchanged,
+        )
+
+    def list_recovery_batches(
+        self, source_task_id: str, *, limit: int = 20
+    ) -> tuple[RecoveryBatch, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("recovery batch limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT batch_id FROM recovery_batches
+                WHERE source_task_id=? ORDER BY created_at DESC, batch_id DESC LIMIT ?""",
+                (source_task_id, limit),
+            ).fetchall()
+        return tuple(self.get_recovery_batch(row["batch_id"]) for row in rows)
 
     def admit_recovery_continuation(
         self,
@@ -4074,6 +4179,28 @@ class SQLiteTaskRepository:
                     WHERE status IN ('queued', 'running');
                 CREATE INDEX IF NOT EXISTS recovery_continuations_item_created
                     ON recovery_continuations(source_item_id, created_at, continuation_id);
+                CREATE TABLE IF NOT EXISTS recovery_batches (
+                    batch_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL, actor TEXT NOT NULL,
+                    status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    FOREIGN KEY(source_task_id) REFERENCES tasks(task_id)
+                );
+                CREATE TABLE IF NOT EXISTS recovery_batch_items (
+                    batch_item_id TEXT PRIMARY KEY, batch_id TEXT NOT NULL,
+                    source_task_id TEXT NOT NULL, source_item_id TEXT NOT NULL,
+                    checkpoint_version TEXT NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    request_id TEXT, continuation_id TEXT, job_id TEXT,
+                    reason TEXT, error TEXT, next_action TEXT,
+                    FOREIGN KEY(batch_id) REFERENCES recovery_batches(batch_id),
+                    FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(source_item_id) REFERENCES task_items(item_id),
+                    FOREIGN KEY(request_id) REFERENCES recovery_requests(request_id),
+                    FOREIGN KEY(continuation_id) REFERENCES recovery_continuations(continuation_id),
+                    FOREIGN KEY(job_id) REFERENCES automation_jobs(job_id),
+                    UNIQUE(batch_id, source_item_id)
+                );
+                CREATE INDEX IF NOT EXISTS recovery_batch_items_batch
+                    ON recovery_batch_items(batch_id, source_item_id);
                 CREATE TABLE IF NOT EXISTS task_results (
                     result_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, item_id TEXT NOT NULL,
                     source_storage_id TEXT NOT NULL, source_path TEXT NOT NULL,
@@ -4644,6 +4771,72 @@ class SQLiteTaskRepository:
             continuation.error,
             continuation.recovery,
             continuation.authority_statement,
+        )
+
+    @staticmethod
+    def _recovery_batch_item_values(item: RecoveryBatchItem) -> tuple[object, ...]:
+        return (
+            item.batch_item_id,
+            item.batch_id,
+            item.source_task_id,
+            item.source_item_id,
+            item.checkpoint_version,
+            item.status.value,
+            item.created_at.isoformat(),
+            item.updated_at.isoformat(),
+            item.request_id,
+            item.continuation_id,
+            item.job_id,
+            item.reason,
+            item.error,
+            item.next_action,
+        )
+
+    @staticmethod
+    def _recovery_batch_item(row: sqlite3.Row) -> RecoveryBatchItem:
+        status = RecoveryBatchItemStatus(row["status"])
+        continuation_status = row["continuation_status"]
+        if continuation_status:
+            status = {
+                RecoveryContinuationStatus.QUEUED.value: RecoveryBatchItemStatus.QUEUED,
+                RecoveryContinuationStatus.RUNNING.value: RecoveryBatchItemStatus.RUNNING,
+                RecoveryContinuationStatus.COMPLETED.value: RecoveryBatchItemStatus.COMPLETED,
+                RecoveryContinuationStatus.FAILED.value: RecoveryBatchItemStatus.FAILED,
+                RecoveryContinuationStatus.CANCELLED.value: RecoveryBatchItemStatus.CANCELLED,
+            }.get(continuation_status, status)
+        return RecoveryBatchItem(
+            row["batch_item_id"],
+            row["batch_id"],
+            row["source_task_id"],
+            row["source_item_id"],
+            row["checkpoint_version"],
+            status,
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["request_id"],
+            row["continuation_id"],
+            row["job_id"],
+            row["reason"],
+            row["continuation_error"] or row["error"],
+            (
+                row["continuation_recovery"]
+                or {
+                    RecoveryContinuationStatus.QUEUED.value: (
+                        "wait for the Worker, then inspect the linked DryRun Task/Result"
+                    ),
+                    RecoveryContinuationStatus.RUNNING.value: (
+                        "wait for the Worker, then inspect the linked DryRun Task/Result"
+                    ),
+                    RecoveryContinuationStatus.COMPLETED.value: (
+                        "inspect the linked DryRun Task/Result; the source item remains unchanged"
+                    ),
+                    RecoveryContinuationStatus.CANCELLED.value: (
+                        "refresh the Task item checkpoint and explicitly continue again"
+                    ),
+                }.get(row["continuation_status"])
+                if row["continuation_status"]
+                else row["next_action"]
+            ),
         )
 
     @staticmethod
