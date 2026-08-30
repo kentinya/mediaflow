@@ -9,6 +9,7 @@ from enum import StrEnum
 
 class RecoveryBatchItemStatus(StrEnum):
     SELECTED = "selected"
+    ACCEPTED = "accepted"
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -41,6 +42,10 @@ class RecoveryBatchItem:
     request_id: str | None = None
     continuation_id: str | None = None
     job_id: str | None = None
+    new_task_id: str | None = None
+    new_result_id: str | None = None
+    recovery_status: str | None = None
+    recovery_action: str | None = None
     reason: str | None = None
     error: str | None = None
     next_action: str | None = None
@@ -58,6 +63,10 @@ class RecoveryBatchItem:
             "request_id": self.request_id,
             "continuation_id": self.continuation_id,
             "job_id": self.job_id,
+            "new_task_id": self.new_task_id,
+            "new_result_id": self.new_result_id,
+            "recovery_status": self.recovery_status,
+            "recovery_action": self.recovery_action,
             "reason": self.reason,
             "error": self.error,
             "next_action": self.next_action or "inspect this item's checkpoint",
@@ -85,6 +94,24 @@ class RecoveryBatch:
         for item in self.items:
             values[item.status.value] += 1
         values["unchanged"] = self.unchanged_count
+        # Derive additional summary states from child/sibling/continuation state
+        accepted = sum(1 for item in self.items if item.request_id is not None)
+        refused = sum(1 for item in self.items if item.status is RecoveryBatchItemStatus.REFUSED)
+        recovered = sum(1 for item in self.items if item.new_result_id is not None)
+        partial = sum(
+            1
+            for item in self.items
+            if item.status
+            in {
+                RecoveryBatchItemStatus.FAILED,
+                RecoveryBatchItemStatus.CANCELLED,
+                RecoveryBatchItemStatus.REFUSED,
+                RecoveryBatchItemStatus.WAITING,
+            }
+        )
+        values.update(
+            {"accepted": accepted, "refused": refused, "recovered": recovered, "partial": partial}
+        )
         return values
 
     @staticmethod

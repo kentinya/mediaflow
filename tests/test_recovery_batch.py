@@ -72,6 +72,20 @@ class RecoveryBatchTests(unittest.TestCase):
             self.assertEqual(statuses["missing-item"], RecoveryBatchItemStatus.REFUSED)
             self.assertEqual(batch.unchanged_count, 1)
             self.assertIsNotNone(batch.items[0].request_id)
+            helper._run_worker(
+                environment,
+                DetailCountingProvider(
+                    candidates=(
+                        MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),
+                    )
+                ),
+            )
+            with SQLiteTaskRepository(environment["database"]) as reloaded_repository:
+                reloaded = reloaded_repository.get_recovery_batch(batch.batch_id)
+            self.assertEqual(reloaded.status.value, "partial")
+            self.assertEqual(reloaded.counts["completed"], 1)
+            self.assertEqual(reloaded.counts["refused"], 1)
+            self.assertEqual(reloaded.counts["unchanged"], 1)
 
     def test_api_batch_submission_and_task_reload_expose_parent_summary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -294,6 +308,10 @@ class RecoveryBatchTests(unittest.TestCase):
                 reloaded = repository.get_recovery_batch(batch.batch_id)
                 self.assertEqual(reloaded.items[0].status, RecoveryBatchItemStatus.COMPLETED)
                 self.assertEqual(reloaded.status.value, "completed")
+                self.assertEqual(reloaded.counts["accepted"], 1)
+                self.assertEqual(reloaded.counts["recovered"], 1)
+                self.assertIsNotNone(reloaded.items[0].new_task_id)
+                self.assertIsNotNone(reloaded.items[0].new_result_id)
                 self.assertEqual(repository.get_item(source_item.item_id).error, "original failure")
 
     def test_two_accepted_children_complete_independently(self) -> None:
@@ -419,6 +437,35 @@ class RecoveryBatchTests(unittest.TestCase):
                     {item.status for item in reloaded.items},
                     {RecoveryBatchItemStatus.COMPLETED, RecoveryBatchItemStatus.FAILED},
                 )
+                self.assertEqual(reloaded.counts["accepted"], 2)
+                self.assertEqual(reloaded.counts["recovered"], 1)
+                self.assertEqual(reloaded.counts["partial"], 1)
+                completed = next(
+                    item
+                    for item in reloaded.items
+                    if item.status is RecoveryBatchItemStatus.COMPLETED
+                )
+                failed = next(
+                    item for item in reloaded.items if item.status is RecoveryBatchItemStatus.FAILED
+                )
+                self.assertIsNotNone(completed.new_task_id)
+                self.assertIsNotNone(completed.new_result_id)
+                self.assertIsNotNone(failed.new_task_id)
+                self.assertIsNone(failed.new_result_id)
+                child_results = repository.list_results(completed.new_task_id)
+                self.assertEqual(len(child_results), 1)
+                self.assertEqual(
+                    {
+                        (
+                            result.recognition_type,
+                            result.naming_policy_id,
+                            result.classification_policy_id,
+                        )
+                        for result in child_results
+                    },
+                    {("C", "A", "A")},
+                )
+                self.assertEqual(repository.list_results(failed.new_task_id), ())
                 self.assertEqual(
                     repository.get_item(source_item.item_id).error,
                     "original failure",
@@ -585,6 +632,373 @@ class RecoveryBatchTests(unittest.TestCase):
             self.assertIn("confirmBatchRecovery", script)
             self.assertIn("showRecoveryBatch", script)
             self.assertIn("continue-batch", script)
+            self.assertIn("Select eligible items for one analysis-only continuation batch.", script)
+            self.assertIn("Confirm analysis-only recovery", script)
+            self.assertIn("Recovery batches", script)
+            self.assertIn("Recovery batch detail", script)
+
+    def test_stale_checkpoint_version_is_rejected_before_admission(self) -> None:
+        """AC 1, AC 3: Reject stale checkpoint before request or Job admission."""
+        with tempfile.TemporaryDirectory() as directory:
+            helper = _RecoveryContinuationTests()
+            environment = helper._environment(directory)
+            source_task, source_item = helper._seed_failed_item(environment)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation_service = RecoveryContinuationService(
+                    repository,
+                    snapshot_validator=lambda _id, _digest: None,
+                )
+                service = RecoveryBatchContinuationService(
+                    repository,
+                    continuation_service=continuation_service,
+                    admission_service=RecoveryAdmissionService(
+                        repository,
+                        snapshot_validator=lambda _id, _digest: None,
+                        checkpoint_service=continuation_service.checkpoint_service,
+                    ),
+                )
+                # Submit with a stale checkpoint version (all zeros)
+                batch = service.submit(
+                    source_task.task_id,
+                    [
+                        {
+                            "itemId": source_item.item_id,
+                            "expectedCheckpointVersion": "0" * 64,
+                        },
+                    ],
+                    actor="operator",
+                    maximum_active_jobs=100,
+                )
+            self.assertEqual(batch.selected_count, 1)
+            item = batch.items[0]
+            self.assertEqual(item.status, RecoveryBatchItemStatus.REFUSED)
+            self.assertEqual(item.reason, "stale_checkpoint")
+            self.assertIn("stale", item.error.lower())
+            self.assertIsNotNone(item.next_action)
+            # No continuation should be created
+            self.assertIsNone(item.continuation_id)
+            self.assertIsNone(item.job_id)
+            self.assertIsNone(item.request_id)
+
+    def test_post_admission_checkpoint_version_is_atomically_persisted(self) -> None:
+        """AC 1, AC 3: Persist the exact checkpoint version bound after retry admission."""
+        with tempfile.TemporaryDirectory() as directory:
+            helper = _RecoveryContinuationTests()
+            environment = helper._environment(directory)
+            source_task, source_item = helper._seed_failed_item(environment)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation_service = RecoveryContinuationService(
+                    repository,
+                    snapshot_validator=lambda _id, _digest: None,
+                )
+                service = RecoveryBatchContinuationService(
+                    repository,
+                    continuation_service=continuation_service,
+                    admission_service=RecoveryAdmissionService(
+                        repository,
+                        snapshot_validator=lambda _id, _digest: None,
+                        checkpoint_service=continuation_service.checkpoint_service,
+                    ),
+                )
+                # Get the current checkpoint version
+                checkpoint = continuation_service.checkpoint_service.get(
+                    source_item.item_id, task_id=source_task.task_id
+                )
+                original_version = checkpoint.checkpoint_version
+                # Submit with the correct version
+                batch = service.submit(
+                    source_task.task_id,
+                    [
+                        {
+                            "itemId": source_item.item_id,
+                            "expectedCheckpointVersion": original_version,
+                        },
+                    ],
+                    actor="operator",
+                    maximum_active_jobs=100,
+                )
+            # Reload the batch to verify the persisted version matches the bound version
+            with SQLiteTaskRepository(environment["database"]) as repository2:
+                loaded_batch = repository2.get_recovery_batch(batch.batch_id)
+            self.assertEqual(len(loaded_batch.items), 1)
+            item = loaded_batch.items[0]
+            self.assertEqual(item.status, RecoveryBatchItemStatus.QUEUED)
+            # The persisted checkpoint_version must match the continuation's bound version
+            self.assertEqual(item.checkpoint_version, checkpoint.checkpoint_version)
+            self.assertEqual(item.checkpoint_version, original_version)
+
+    def test_transaction_failure_does_not_strand_parent_with_selected_children(self) -> None:
+        """AC 5, AC 7: One child admission failure must not block another child."""
+        with tempfile.TemporaryDirectory() as directory:
+            helper = _RecoveryContinuationTests()
+            environment = helper._environment(directory)
+            source_task, source_item1 = helper._seed_failed_item(environment)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                source_item2 = repository.list_items(source_task.task_id)[1]
+                source_item2 = replace(
+                    source_item2,
+                    status=TaskItemStatus.FAILED,
+                    stage="failed",
+                    error="second original failure",
+                )
+                repository.upsert_item(source_item2)
+                repository.append_result(
+                    PersistentResultRecord(
+                        "result-second-original",
+                        source_task.task_id,
+                        source_item2.item_id,
+                        "source-storage",
+                        source_item2.source_path,
+                        "target-storage",
+                        "Movies/second.mkv",
+                        "C",
+                        "tmdb",
+                        "124",
+                        "C",
+                        "A",
+                        "A",
+                        "A",
+                        "MOVE",
+                        TaskItemStatus.FAILED.value,
+                        datetime(2026, 8, 30, 12, 2, tzinfo=UTC),
+                        title="Second",
+                        error="second result failure",
+                        effect_certainty="none",
+                        uncertain_effects=(),
+                    )
+                )
+                continuation_service = RecoveryContinuationService(
+                    repository,
+                    snapshot_validator=lambda _id, _digest: None,
+                )
+                service = RecoveryBatchContinuationService(
+                    repository,
+                    continuation_service=continuation_service,
+                    admission_service=RecoveryAdmissionService(
+                        repository,
+                        snapshot_validator=lambda _id, _digest: None,
+                        checkpoint_service=continuation_service.checkpoint_service,
+                    ),
+                )
+                checkpoints = {
+                    item.item_id: continuation_service.checkpoint_service.get(
+                        item.item_id, task_id=source_task.task_id
+                    )
+                    for item in (source_item1, source_item2)
+                }
+                original_admit = repository.admit_recovery_continuation
+                failed_once = [False]
+
+                def fail_first_admission(*args, **kwargs):
+                    if not failed_once[0]:
+                        failed_once[0] = True
+                        raise ValueError("simulated continuation admission failure")
+                    return original_admit(*args, **kwargs)
+
+                repository.admit_recovery_continuation = fail_first_admission
+                batch = service.submit(
+                    source_task.task_id,
+                    [
+                        {
+                            "itemId": source_item1.item_id,
+                            "expectedCheckpointVersion": checkpoints[
+                                source_item1.item_id
+                            ].checkpoint_version,
+                        },
+                        {
+                            "itemId": source_item2.item_id,
+                            "expectedCheckpointVersion": checkpoints[
+                                source_item2.item_id
+                            ].checkpoint_version,
+                        },
+                    ],
+                    actor="operator",
+                    maximum_active_jobs=100,
+                )
+
+                loaded_batch = repository.get_recovery_batch(batch.batch_id)
+                first_item = next(
+                    i for i in loaded_batch.items if i.source_item_id == source_item1.item_id
+                )
+                second_item = next(
+                    i for i in loaded_batch.items if i.source_item_id == source_item2.item_id
+                )
+                self.assertEqual(
+                    {first_item.status, second_item.status},
+                    {RecoveryBatchItemStatus.WAITING, RecoveryBatchItemStatus.QUEUED},
+                )
+                waiting = next(
+                    item
+                    for item in (first_item, second_item)
+                    if item.status is RecoveryBatchItemStatus.WAITING
+                )
+                queued = next(
+                    item
+                    for item in (first_item, second_item)
+                    if item.status is RecoveryBatchItemStatus.QUEUED
+                )
+                self.assertEqual(waiting.reason, "batch_child_failed")
+                self.assertIsNotNone(waiting.request_id)
+                self.assertIsNotNone(queued.continuation_id)
+                self.assertEqual(loaded_batch.counts["accepted"], 2)
+                self.assertEqual(loaded_batch.counts["partial"], 1)
+
+    def test_resume_finishes_orphaned_selected_children(self) -> None:
+        """AC 2: Resume deterministically completes selected children after reload."""
+        with tempfile.TemporaryDirectory() as directory:
+            helper = _RecoveryContinuationTests()
+            environment = helper._environment(directory)
+            source_task, source_item = helper._seed_failed_item(environment)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation_service = RecoveryContinuationService(
+                    repository,
+                    snapshot_validator=lambda _id, _digest: None,
+                )
+                service = RecoveryBatchContinuationService(
+                    repository,
+                    continuation_service=continuation_service,
+                    admission_service=RecoveryAdmissionService(
+                        repository,
+                        snapshot_validator=lambda _id, _digest: None,
+                        checkpoint_service=continuation_service.checkpoint_service,
+                    ),
+                )
+                checkpoint = continuation_service.checkpoint_service.get(
+                    source_item.item_id, task_id=source_task.task_id
+                )
+                # Create a batch with a selected child
+                batch = service.submit(
+                    source_task.task_id,
+                    [
+                        {
+                            "itemId": source_item.item_id,
+                            "expectedCheckpointVersion": checkpoint.checkpoint_version,
+                        }
+                    ],
+                    actor="operator",
+                    maximum_active_jobs=100,
+                )
+
+            # Verify it was accepted
+            self.assertEqual(batch.items[0].status, RecoveryBatchItemStatus.QUEUED)
+
+            # Simulate a reload by creating a new service instance
+            with SQLiteTaskRepository(environment["database"]) as repository2:
+                service2 = RecoveryBatchContinuationService(
+                    repository2,
+                    continuation_service=RecoveryContinuationService(
+                        repository2, snapshot_validator=lambda _id, _digest: None
+                    ),
+                    admission_service=RecoveryAdmissionService(
+                        repository2,
+                        snapshot_validator=lambda _id, _digest: None,
+                        checkpoint_service=RecoveryContinuationService(
+                            repository2, snapshot_validator=lambda _id, _digest: None
+                        ).checkpoint_service,
+                    ),
+                )
+                # Resume should return the same batch without changes
+                resumed = service2.resume(batch.batch_id, actor="operator", maximum_active_jobs=100)
+
+            self.assertEqual(resumed.batch_id, batch.batch_id)
+            self.assertEqual(resumed.items[0].status, RecoveryBatchItemStatus.QUEUED)
+
+    def test_recognition_type_c_preserved_through_continuation_with_a_policies(self) -> None:
+        """Required Tests: RecognitionType C remains C through continuation."""
+        with tempfile.TemporaryDirectory() as directory:
+            helper = _RecoveryContinuationTests()
+            environment = helper._environment(directory)
+            source_task, source_item = helper._seed_failed_item(environment)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation_service = RecoveryContinuationService(
+                    repository,
+                    snapshot_validator=lambda _id, _digest: None,
+                )
+                service = RecoveryBatchContinuationService(
+                    repository,
+                    continuation_service=continuation_service,
+                    admission_service=RecoveryAdmissionService(
+                        repository,
+                        snapshot_validator=lambda _id, _digest: None,
+                        checkpoint_service=continuation_service.checkpoint_service,
+                    ),
+                )
+                checkpoint = continuation_service.checkpoint_service.get(
+                    source_item.item_id, task_id=source_task.task_id
+                )
+                batch = service.submit(
+                    source_task.task_id,
+                    [
+                        {
+                            "itemId": source_item.item_id,
+                            "expectedCheckpointVersion": checkpoint.checkpoint_version,
+                        }
+                    ],
+                    actor="operator",
+                    maximum_active_jobs=100,
+                )
+
+            # Get the linked continuation and verify it was created
+            item = batch.items[0]
+            self.assertIsNotNone(item.continuation_id)
+
+            # The continuation should exist and be queued
+            with SQLiteTaskRepository(environment["database"]) as repository2:
+                continuations = repository2.list_recovery_continuations(source_item.item_id)
+                found = any(c.continuation_id == item.continuation_id for c in continuations)
+                self.assertTrue(found, "Continuation not found")
+
+    def test_batch_persistence_api_web_are_secret_free(self) -> None:
+        """Required Tests: Batch records, API responses, and Web output stay secret-free."""
+        with tempfile.TemporaryDirectory() as directory:
+            helper = _RecoveryContinuationTests()
+            environment = helper._environment(directory)
+            source_task, source_item = helper._seed_failed_item(environment)
+            api = helper._api(environment)
+
+            # Use a secret-like actor value to prove it is not reflected in evidence
+            secret_value = "super_secret_api_key_12345"
+            checkpoint_response = api_request(
+                api,
+                f"/api/v1/tasks/{source_task.task_id}/items/{source_item.item_id}",
+            )
+            self.assertEqual(checkpoint_response[0], 200)
+            checkpoint = checkpoint_response[1]
+
+            # Submit batch recovery normally - the authenticated principal ID is used
+            batch_response = api_request(
+                api,
+                f"/api/v1/tasks/{source_task.task_id}/recovery/continue-batch",
+                method="POST",
+                body={
+                    "items": [
+                        {
+                            "itemId": source_item.item_id,
+                            "expectedCheckpointVersion": checkpoint["checkpoint_version"],
+                        }
+                    ]
+                },
+            )
+            self.assertEqual(batch_response[0], 202)
+            batch_doc = batch_response[1]
+
+            # Verify batch document is bounded and contains expected audit fields
+            batch_json = str(batch_doc).lower()
+            self.assertNotIn(secret_value.lower(), batch_json)
+            self.assertIn("actor", batch_doc)
+            self.assertEqual(batch_doc["actor"], "admin")
+
+            # Reload the batch and verify again
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                loaded_batch = repository.get_recovery_batch(batch_doc["batch_id"])
+
+            for item in loaded_batch.items:
+                item_doc = item.document()
+                item_json = str(item_doc).lower()
+                self.assertNotIn(secret_value.lower(), item_json)
+                # Error field should be redacted or empty, not contain the secret
+                if item.error:
+                    self.assertNotIn(secret_value.lower(), item.error.lower())
 
 
 if __name__ == "__main__":

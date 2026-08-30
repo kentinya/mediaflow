@@ -177,55 +177,44 @@ media.
 
 ### Changed Files
 
-- `mediaflow/domain/recovery_batch.py` — bounded batch/child status contracts, durable item
-  documents, count and parent-status derivation.
-- `mediaflow/application/recovery_batch.py` — shared bounded batch continuation admission with
-  deterministic selection, per-item admission/refusal, queue-capacity handling and single-item
-  service reuse.
-- `mediaflow/application/recovery_continuation.py` and
-  `mediaflow/domain/recovery_continuation.py` — optional batch-child identity passed through the
-  existing continuation admission contract.
-- `mediaflow/infrastructure/sqlite_runtime.py` — runtime schema 26, additive batch parent/child
-  tables and indexes, transactional persistence, dynamic child/parent summary projection and
-  unchanged-sibling counting; accepted child linkage is committed in the continuation admission
-  transaction.
-- `mediaflow/interfaces/service_api.py` — authenticated batch continuation POST, batch detail GET
-  and Task detail batch summaries with existing RBAC/error conventions.
-- `mediaflow/interfaces/operator_ui.py` — Task detail selection/confirmation flow and reloadable
-  batch summary/detail rendering.
-- `tests/test_recovery_batch.py` — focused batch admission, mixed/refused selection, capacity,
-  uncertain effects, cancellation/reload, multiple accepted children, mixed terminal outcomes,
-  API/Web/security and production Worker coverage.
-- Runtime schema expectation updates in affected migration/runtime tests from 25 to 26.
+- `mediaflow/application/recovery_batch.py` — failed-item batch admission through the shared
+  recovery gate, per-child isolation, request linkage, bounded actor redaction and reload resume.
+- `mediaflow/domain/recovery_batch.py` — durable child outcome fields and parent count derivation.
+- `mediaflow/infrastructure/sqlite_runtime.py` — continuation-backed child result/status projection
+  and parent updated-at reconciliation without a schema bump.
+- `tests/test_recovery_batch.py` — multi-child Worker independence, mixed parent summary,
+  continuation failure isolation, API/Web assertions and secret-free evidence coverage.
+- Existing Task implementation files from the prior checkpoint remain part of this Task: the
+  continuation batch API/Web surfaces and atomic batch child linkage.
 
 ### Implemented
 
-- Added a bounded selection of up to 100 TaskItems with duplicate, malformed, missing and
-  out-of-Task fail-closed handling. Failed items now pass through the shared `retry` admission gate
-  and then continue through the existing single-item continuation service.
-- Wired the API and Web batch path to the same configured recovery admission and continuation
-  services used by single-item recovery.
-- Each accepted child preserves its exact post-admission checkpoint version, source scope, pinned
-  configuration pair, request, continuation and Job.
-- Child admission errors are isolated to the selected item with bounded failure evidence, so later
-  selected children still reach their own durable outcome.
-- Accepted child batch linkage is written inside the existing Job + continuation admission
-  transaction; no second linkage write is required.
-- Persisted a batch parent plus independent child outcomes; parent status and counts are derived
-  from durable child continuation state, while eligible unselected successful/skipped/DryRun/ignored
-  siblings are reported as unchanged.
-- Added authenticated API and Operator Web entry/detail paths with the same DryRun-only behavior,
-  permissions, explicit confirmation, per-item outcomes and reloadable summary.
-- Kept all batch admission/selection/projection paths free of Storage/Provider construction and
-  all child continuations non-executable.
+- Failed items now pass through the existing single-item `retry` admission gate before the
+  analysis-only continuation, so one bounded batch request is sufficient for safe pre-mutation
+  failures.
+- Each child remains independently checkpoint/version, source-scope, configuration-snapshot,
+  request, continuation and Job bound. Admission errors, queue-full, stale state and continuation
+  failures are converted to bounded per-child waiting/refusal evidence without stopping siblings.
+- Accepted child linkage is committed in the existing Job + continuation admission transaction;
+  no second linkage write is needed or observable.
+- Batch detail projects terminal continuation status, linked new Task/Result and recovery action
+  from durable continuation rows, and parent timestamps advance with child transitions.
+- Parent counts distinguish accepted requests, refused/waiting/partial outcomes, recovered results
+  and unchanged successful/skipped/DryRun/ignored siblings.
+- The batch remains DryRun-only and retains the existing authenticated API/Web behavior, RBAC,
+  explicit confirmation, zero-mutation admission and RecognitionType/policy invariants.
 
 ### Tests and Results
 
-- `.venv/bin/python -m unittest tests.test_recovery_batch` — **PASS** (26 tests).
-- Related recovery, checkpoint, automation, migration, persistence and API suites — **PASS** (131
+- `.venv/bin/python -m unittest tests.test_recovery_batch` — **PASS** (32 tests).
+- Related recovery, checkpoint, automation, migration, persistence and API suites — **PASS** (127
   tests).
-- `.venv/bin/python -m unittest discover -s tests` — **PASS** (937 tests; 7 pre-existing SMB,
-  OpenList, S3 and endurance external-service gates skipped).
+- `.venv/bin/python -m unittest discover -s tests` from the repository root — **FAIL /
+  PRE-EXISTING / UNRELATED** (1 test): the ignored local `.mediaflow/mediaflow.sqlite3` is schema
+  27, while this checkpoint intentionally retains runtime schema 26; no source file was changed
+  to cause or repair that local database state.
+- The same full command in a clean copy of this working tree without the ignored local database —
+  **PASS** (943 tests; 7 external SMB, OpenList, S3 and endurance gates skipped).
 - `.venv/bin/ruff format --check .` / `.venv/bin/ruff check .` — **PASS**.
 - `.venv/bin/python -m compileall -q mediaflow tests` / `.venv/bin/pip check` — **PASS**.
 - Both example `config validate` commands — **PASS**.
@@ -237,8 +226,9 @@ media.
 - Batch continuation is composition over the accepted single-item continuation boundary; it does
   not create a parallel recovery pipeline. It uses the existing recovery admission gate for failed
   items and the existing continuation worker for all children.
-- Runtime schema 26 is additive and forward-only. Existing schema 25 databases retain all prior
-  Task, TaskItem, Result and recovery evidence while the new batch tables are created if absent.
+- Continuation-linked fields are projected from the existing continuation table instead of being
+  duplicated into batch rows; this keeps the Task's runtime schema at 26 and preserves existing
+  migration expectations.
 - Parent summaries are read models derived from durable child continuation state, so Worker terminal
   transitions remain owned by the existing single-item continuation repository path.
 - The batch limit is 100 items, matching the existing bounded operator batch conventions. Selection
@@ -255,6 +245,9 @@ media.
 
 - The full regression has 7 pre-existing external-service/endurance skips; no production service or
   credential was used.
+- A direct repository-root full regression is blocked by the pre-existing ignored
+  `.mediaflow/mediaflow.sqlite3` schema-27 marker. The clean-copy full regression is the truthful
+  T4 result for source state; the ignored database was not modified.
 - Existing tests emit SQLite `ResourceWarning` messages for unclosed test connections; they do not
   fail the suites and are unrelated to this Task.
 - `config/alist.json` remains ignored and untracked; no credentials, tokens, private endpoints or
@@ -264,7 +257,7 @@ media.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: b868995de2f06e2c31d09fce9437add71aa32fa5
+Head SHA: PENDING CHECKPOINT COMMIT
 ```
 
 ## B Review Result
