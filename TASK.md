@@ -257,77 +257,41 @@ Head SHA: 43d42f3e4f054ca217773550410ecc3c805d7620
 ## B Review Result
 
 ```text
-Reviewed: 4f31f7ce7287fde25958add4c33511c5fdc89979 (fe30631..d38a603)
+Reviewed: 43d42f3e4f054ca217773550410ecc3c805d7620 (536f600..43d42f3)
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-Verified independently: `tests.test_recovery_batch` (22 PASS), the 13 related suites
-(131 PASS), `python -m unittest discover -s tests` (933 PASS, 7 skips), and the reviewed
-diff of every changed file. `config/alist.json` remains untracked and no credential,
-token, endpoint or private path was added. The reported test results are truthful.
+Verified independently: `tests.test_recovery_batch` (32 PASS = 17 batch tests + 15 imported
+single-item helper tests), the related recovery/UI/automation/persistence/security suites
+(independently re-run, PASS), the full regression `python -m unittest discover -s tests`
+(943 PASS, 7 external SMB/OpenList/S3/endurance gates skipped), ruff format/check, compileall,
+pip check and `git diff --check`. Concurrent duplicate batch submission was independently
+reproduced (4 threads → 1 queued + 3 refused, exactly one continuation). No credential, token,
+private endpoint or private path entered the reviewed range; `config/alist.json` remains ignored
+and untracked. All three previously listed blockers are closed except the residual below.
 
 The following Acceptance Criteria are not satisfied.
 
-1. **The batch entry point cannot recover a failed item; it still requires N manual
-   single-item calls first.** (Goal: "the same reviewed single-item **admission** and
-   continuation behavior"; Why §2; AC 1.)
-   Evidence: a Task item in the natural post-failure state (`status=failed`,
-   `effect_certainty=none`) projects `permitted_action_ids == ('retry',)`. Submitting it
-   through `RecoveryBatchContinuationService.submit` returns
-   `status=refused, reason=action_not_permitted` and creates no continuation, because
-   `_admit_item` only accepts a checkpoint that already offers `continue` — a state that
-   exists only after `RecoveryAdmissionService.admit` has been called for that item
-   individually. `mediaflow/interfaces/operator_ui.py` mirrors this: the "Batch recovery"
-   block is filtered to `checkpoint.permitted_action_ids.includes('continue')`, so it never
-   appears for a batch of failed items.
-   Required: one bounded batch submission must carry the selected items through the same
-   shared admission *and* continuation behavior, so a batch of safe pre-mutation failures is
-   recoverable as one auditable batch intent. Keep it fail-closed and checkpoint-version
-   bound per item; do not present a generic Retry where the checkpoint refuses one, and do
-   not add a second admission pipeline.
-
-2. **Per-child admission is not isolated, and child linkage is not committed with the
-   child's continuation.** (AC 5, AC 7.)
-   - `_admit_item` handles only `LookupError`, `RecoveryContinuationError` and
-     `AutomationQueueFull`. `admit_recovery_continuation` also raises plain `ValueError`
-     ("recovery request is no longer active", "recovery continuation snapshot pin is stale",
-     "recovery continuation source item is no longer pending", "recovery request was not
-     found"). Any of those aborts `submit` mid-loop, leaving every later child durably
-     `selected` with no reason, error or terminal/waiting outcome and no path that ever
-     re-drives it. That breaks "one item must not block another item's durable diagnosis".
-   - `admit_recovery_continuation` commits the Job + continuation, then
-     `update_recovery_batch_item` commits the child linkage in a *separate* transaction. An
-     interruption between them leaves `continuation_id IS NULL` permanently, and
-     `get_recovery_batch` derives child state only through
-     `LEFT JOIN recovery_continuations c ON c.continuation_id=b.continuation_id`, so that
-     child is stuck at `selected` while its continuation and Job run — the "partial child
-     linkage" AC 5 forbids.
-   Required: every selected child reaches a durable terminal or waiting outcome with bounded
-   secret-free evidence and one concrete next action, whatever happens to its siblings, and
-   child linkage must not be observable-only through a second uncommitted write.
-
-3. **Required Tests are materially incomplete for a T4 batch-independence Task.**
-   (AC 6, AC 8, AC 10, AC 11, Required Tests.)
-   `tests/test_recovery_batch.py` never admits more than one child. Missing, and required:
-   - two or more accepted children processed by the existing Worker, proving independent
-     outcomes and that no child overwrites another child's checkpoint, Result, error or
-     next action (the core of RO-5, currently unverified at batch level);
-   - parent summary reconciliation across a genuinely mixed terminal set
-     (completed + failed/refused + waiting/unchanged) after reload;
-   - concurrent/duplicate *batch* submission over the same item (only duplicate itemIds
-     inside one request is covered);
-   - zero-mutation falsification through the real production seams for a multi-child batch
-     (`tests.test_recovery_continuation` has this for one item; the batch suite has none);
-   - a RecognitionType C child that stays C while reusing NamingPolicy A and
-     ClassificationPolicy A;
-   - API fail-closed coverage for the batch endpoints: missing permission, malformed body,
-     non-list/oversized/foreign selection, unknown batch id;
-   - secret-free assertions over the batch records, API responses and Web surface;
-   - Operator Web assertions for the batch selection, explicit confirmation and batch
-     summary/detail rendering (`tests/test_operator_ui.py` currently asserts nothing about
-     `confirmBatchRecovery`, `showRecoveryBatch` or `continue-batch`).
+1. **A child left durably `selected` after reload has no operator-reachable recovery action,
+   and that path has no real test.** (AC 7, AC 9, RO-6.)
+   Evidence: `_drive` deliberately leaves a child `selected` when
+   `update_recovery_batch_item` raises (mediaflow/application/recovery_batch.py), and after
+   reload that child carries no reason/error and only the generic default next action. The
+   only re-drive path, `RecoveryBatchContinuationService.resume`, is not exposed: the API has
+   only GET `/api/v1/recovery-batches/{id}` and `showRecoveryBatch` renders no action.
+   `test_resume_finishes_orphaned_selected_children` never creates an orphan (its child is
+   admitted to `queued` during submit), so the resume path is not covered. Independently
+   reproduced: a one-shot injected persistence failure leaves the child `selected` with no
+   reason/next action after reload; calling `resume()` re-drives it correctly.
+   Required: expose resume through the same authenticated API/Web batch journey (e.g.,
+   POST `/api/v1/recovery-batches/{id}/resume` under `SUBMIT_DRY_RUN` with explicit Web
+   confirmation, the same RBAC/error conventions and reloaded per-item evidence), and add a
+   focused test that leaves a child durably `selected`, reloads with fresh
+   repository/service instances, resumes through the operator surface, and asserts the child
+   reaches a terminal or waiting outcome with bounded reason + concrete next action while
+   already-terminal siblings remain untouched.
 
 Task ID, Task Base, Goal and Implementation Scope are unchanged. Continue in this Task and
 produce a new checkpoint; do not amend reviewed history.
