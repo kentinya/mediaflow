@@ -257,7 +257,7 @@ media.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: PENDING CHECKPOINT COMMIT
+Head SHA: 43d42f3e4f054ca217773550410ecc3c805d7620
 ```
 
 ## B Review Result
