@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 23.2
 Parent Slice: 23 — Stage-Aware Per-Item Recovery
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: f196da8563b1db60659b88ab17a2cfcaabea167c
 Difficulty: High
 Test Level: T4
@@ -334,8 +334,66 @@ Head SHA: fc6b04a8607800b9b70ec5ca8c2607641595007c
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING | PASS | FIX REQUIRED
-Slice Required Outcomes all satisfied: PENDING | YES | NO
-Next: PENDING | SAME TASK FIX LOOP | NEXT TASK | SLICE READY FOR A REVIEW
+Reviewed: f196da8563b1db60659b88ab17a2cfcaabea167c..fc6b04a8607800b9b70ec5ca8c2607641595007c
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+The implementation itself is accepted: I read the whole range and re-ran Test Level T4
+independently (894 tests OK, 7 pre-existing conditional skips; `ruff format --check .` 317 files;
+`ruff check .`; `compileall`; `pip check`; both `config validate`; ffprobe/ffmpeg audit clean;
+`git diff --check` clean; no secret, token, private endpoint or private path introduced;
+`config/alist.json` still ignored and untracked; no file outside the Task scope touched). No test
+was deleted, no skip was added, and the two message-based assertions that changed
+(`tests/test_manual_ignore.py` "matching pending" -> "unknown") changed because the gate now
+refuses earlier and more strictly, which is not a weakening.
+
+Three Acceptance Criteria are not evidenced by the test suite. The behaviour is present — I
+verified each one by hand against the reported Head — but the Required Tests that must guard it
+were not delivered, so nothing in the suite would catch a regression.
+
+### Unmet 1 — Acceptance Criterion 11 has no test at all
+
+The whole `RecoveryAdmissionError` -> HTTP mapping added at
+`mediaflow/interfaces/service_api.py:217-267` (404 / 503 / 403 / 400 / 409, the `reason` /
+`currentCheckpointVersion` / `existingRequest` / `nextAction` details, the not-found suppression and
+the denial audit) is never executed by a test. The entire suite makes exactly two requests to the
+new route: `tests/test_processing_recovery_admission.py:472` (success) and `:494`, whose 403 comes
+from the pre-existing `ApiPermissionDenied` handler at `service_api.py:205` and therefore never
+enters the new block.
+
+Required direction: extend the API test so the endpoint itself covers unauthenticated, unknown
+Task, unknown item, Task/item mismatch, a refused action, a stale version, a duplicate active
+request (asserting `existingRequest` and `nextAction`), an unavailable pinned snapshot, an unknown
+action id, a malformed expected version, an over-long note, an unexpected field and an unexpected
+query parameter — asserting the bounded status and reason for each, and that the not-found
+responses expose no `reason`.
+
+### Unmet 2 — Acceptance Criterion 14 has no falsification test
+
+Required Tests named "a zero-mutation falsification test using strict Storage/Provider spies".
+`tests/test_processing_recovery_admission.py` imports no Storage or Provider double, and no test
+asserts that admission creates no new Task, Job, Result or file lock.
+`test_retry_admission_is_version_bound_audited_and_preserves_evidence` asserts only
+`list_results_for_item(...)[0] == result`, which does not bound the row count.
+
+Required direction: add a test that admits a request with strict Storage and metadata Provider
+spies wired in and asserts zero calls on both, plus unchanged Task, Job, Result and lock counts.
+
+### Unmet 3 — Acceptance Criterion 13 is only half covered, and a negative guard was dropped
+
+`tests/test_operator_ui.py:157` replaced `assertNotIn("actor", script.lower())` with
+`assertIn("Admitted recovery request")` and `assertIn("request.actor")`. Rendering the actor is
+required by this Task, so that guard had to change — but the replacement asserts only the
+post-reload card. Nothing asserts that the confirmation names the action and the bound checkpoint
+version, that only `action.admissible` actions get a control, or that the submission goes to the
+recovery route with exactly `actionId` and `expectedCheckpointVersion`; and the original property
+(the Web layer never supplies an actor) is now unguarded on the Web side.
+
+Required direction: assert the confirmation text, the admissible-only control, and the POST route
+plus its exact body fields from `APP_JS`, and re-add a narrowed negative guard that the script
+never submits an actor field.
+
+Task ID, Task Base, Goal and Scope are unchanged. Fix in this same Task and resubmit with a new
+Head SHA; do not add anything beyond the three points above.
