@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_ignore import ManualIgnoreService
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult
 from mediaflow.application.metadata_correction import MetadataCorrectionService
@@ -24,17 +25,41 @@ from mediaflow.domain.recognition_review import RecognitionReviewStatus
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
+from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from tests.test_metadata_review import create_processing_item, identification
+
+SNAPSHOT_ID = "test-recovery-revision"
+SNAPSHOT_DIGEST = "a" * 64
 
 
 class ManualIgnoreTests(unittest.TestCase):
     def setUp(self) -> None:
         self.strategy = development_strategy_configuration()
 
-    def _create_waiting(self, repository, kind):
-        coordinator, task, item = create_processing_item(repository)
+    @staticmethod
+    def _snapshot_validator(snapshot_id: str, digest: str) -> None:
+        if snapshot_id != SNAPSHOT_ID or digest != SNAPSHOT_DIGEST:
+            raise ValueError("snapshot unavailable")
+
+    def _service(self, repository):
+        return ManualIgnoreService(repository, snapshot_validator=self._snapshot_validator)
+
+    def _create_waiting(
+        self,
+        repository,
+        kind,
+        *,
+        snapshot_id: str = SNAPSHOT_ID,
+        snapshot_digest: str = SNAPSHOT_DIGEST,
+    ):
+        coordinator, task, item = create_processing_item(
+            repository,
+            configuration_snapshot_id=snapshot_id,
+            configuration_snapshot_digest=snapshot_digest,
+        )
+
         if kind == "recognition":
             review = RecognitionReviewService(repository, self.strategy.recognition_types).create(
                 item, RecognitionResult(status=RecognitionStatus.UNRECOGNIZED)
@@ -53,6 +78,18 @@ class ManualIgnoreTests(unittest.TestCase):
             )
         return coordinator, task, item, review
 
+    @staticmethod
+    def _activate_document(database: Path, document: dict) -> object:
+        with SQLiteConfigurationRepository(database) as repository:
+            service = ManagedConfigurationService(repository)
+            draft = service.import_draft(document, actor="tester")
+            validated = service.validate(draft.revision_id, actor="tester")
+            return service.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="tester",
+            )
+
     def test_each_supported_waiting_review_can_be_ignored_atomically(self) -> None:
         expected = {
             "recognition": RecognitionReviewStatus.IGNORED,
@@ -68,7 +105,7 @@ class ManualIgnoreTests(unittest.TestCase):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
                 with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                     coordinator, task, item, review = self._create_waiting(repository, kind)
-                    decision = ManualIgnoreService(repository).ignore(
+                    decision = self._service(repository).ignore(
                         task.task_id,
                         item.item_id,
                         actor=" operator ",
@@ -93,7 +130,7 @@ class ManualIgnoreTests(unittest.TestCase):
                     self.assertEqual(summary.status, PersistentTaskStatus.PARTIAL_SUCCESS)
                     self.assertEqual(summary.completed_items, 0)
                     with self.assertRaises(ValueError):
-                        ManualIgnoreService(repository).ignore(
+                        self._service(repository).ignore(
                             task.task_id, item.item_id, actor="operator"
                         )
                     self.assertEqual(repository.schema_version, SCHEMA_VERSION)
@@ -103,27 +140,27 @@ class ManualIgnoreTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 _, task, item, _ = self._create_waiting(repository, "recognition")
                 with self.assertRaises(LookupError):
-                    ManualIgnoreService(repository).ignore(
-                        "wrong-task", item.item_id, actor="operator"
-                    )
+                    self._service(repository).ignore("wrong-task", item.item_id, actor="operator")
                 with self.assertRaises(ValueError):
-                    ManualIgnoreService(repository).ignore(task.task_id, item.item_id, actor="   ")
+                    self._service(repository).ignore(task.task_id, item.item_id, actor="   ")
                 repository._connection.execute(
                     "UPDATE recognition_reviews SET status='resolved' WHERE item_id=?",
                     (item.item_id,),
                 )
-                with self.assertRaisesRegex(ValueError, "matching pending"):
-                    ManualIgnoreService(repository).ignore(
-                        task.task_id, item.item_id, actor="operator"
-                    )
+                repository._connection.commit()
+                with self.assertRaisesRegex(ValueError, "unknown"):
+                    self._service(repository).ignore(task.task_id, item.item_id, actor="operator")
                 second = PersistentTaskCoordinator(repository, repository).create(
-                    "preview", execute_authorized=False
+                    "preview",
+                    execute_authorized=False,
+                    configuration_snapshot_id=SNAPSHOT_ID,
+                    configuration_snapshot_digest=SNAPSHOT_DIGEST,
                 )
                 pending = PersistentTaskCoordinator(repository, repository).begin_item(
                     second.task_id, "source", "movies", "Other.mkv", "Other.mkv"
                 )
                 with self.assertRaises(ValueError):
-                    ManualIgnoreService(repository).ignore(
+                    self._service(repository).ignore(
                         second.task_id, pending.item_id, actor="operator"
                     )
                 self.assertEqual(repository.list_manual_ignore_audit(item.item_id), ())
@@ -142,9 +179,7 @@ class ManualIgnoreTests(unittest.TestCase):
             connection.close()
             with SQLiteTaskRepository(database) as repository:
                 with self.assertRaises(sqlite3.IntegrityError):
-                    ManualIgnoreService(repository).ignore(
-                        task.task_id, item.item_id, actor="operator"
-                    )
+                    self._service(repository).ignore(task.task_id, item.item_id, actor="operator")
                 self.assertEqual(
                     repository.get_item(item.item_id).status, TaskItemStatus.WAITING_METADATA
                 )
@@ -165,9 +200,7 @@ class ManualIgnoreTests(unittest.TestCase):
                 try:
                     with SQLiteTaskRepository(database) as repository:
                         barrier.wait()
-                        ManualIgnoreService(repository).ignore(
-                            task.task_id, item.item_id, actor=actor
-                        )
+                        self._service(repository).ignore(task.task_id, item.item_id, actor=actor)
                     outcomes.append("ok")
                 except (ValueError, sqlite3.OperationalError):
                     outcomes.append("rejected")
@@ -189,8 +222,14 @@ class ManualIgnoreTests(unittest.TestCase):
             document["persistence"]["databasePath"] = str(database)
             config_path = root / "strategy.json"
             config_path.write_text(json.dumps(document), encoding="utf-8")
+            active = self._activate_document(database, document)
             with SQLiteTaskRepository(database) as repository:
-                _, task, item, review = self._create_waiting(repository, "recognition")
+                _, task, item, review = self._create_waiting(
+                    repository,
+                    "recognition",
+                    snapshot_id=active.revision_id,
+                    snapshot_digest=active.digest,
+                )
             output, error = io.StringIO(), io.StringIO()
             with patch.object(
                 RuntimeConfiguration,

@@ -29,7 +29,7 @@ from mediaflow.application.metadata_correction_continuation import (
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recognition_retry import RecognitionRetryService
-from mediaflow.application.task_retry import TaskRetryRequestService
+from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.domain.automation import AutomationCommand, AutomationQueueFull
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
@@ -45,6 +45,7 @@ from mediaflow.domain.metadata_correction import (
 )
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
+from mediaflow.domain.recovery import RecoveryAdmissionError, RecoveryAdmissionReason
 from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.task_persistence import ConfirmationStatus
@@ -102,6 +103,7 @@ class MediaFlowApi:
         configuration_snapshot_digest: str | None = None,
         bootstrap_document: object | None = None,
         metadata_provider_registry_factory=None,
+        recovery_snapshot_validator: Callable[[str, str], None] | None = None,
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -133,13 +135,19 @@ class MediaFlowApi:
         self._bootstrap_document = bootstrap_document
         self._configuration_snapshot_id = configuration_snapshot_id
         self._configuration_snapshot_digest = configuration_snapshot_digest
+        snapshot_validator = (
+            configuration_service.validate_runtime_snapshot
+            if configuration_service is not None
+            else recovery_snapshot_validator
+        )
         self._checkpoint_service = ProcessingCheckpointService(
             repository,
-            snapshot_validator=(
-                configuration_service.validate_runtime_snapshot
-                if configuration_service is not None
-                else None
-            ),
+            snapshot_validator=snapshot_validator,
+        )
+        self._recovery_admission = RecoveryAdmissionService(
+            repository,
+            snapshot_validator=snapshot_validator,
+            checkpoint_service=self._checkpoint_service,
         )
         self._runtime_binding_lock = threading.RLock()
         self._runtime_binding = self._build_runtime_binding(
@@ -206,6 +214,57 @@ class MediaFlowApi:
                 403,
             )
             return self._error(start_response, 403, "forbidden", str(error))
+        except RecoveryAdmissionError as error:
+            reason = error.reason
+            status = (
+                404
+                if reason
+                in {
+                    RecoveryAdmissionReason.UNKNOWN_ITEM,
+                    RecoveryAdmissionReason.ITEM_TASK_MISMATCH,
+                }
+                else 503
+                if reason is RecoveryAdmissionReason.SNAPSHOT_UNAVAILABLE
+                else 403
+                if reason is RecoveryAdmissionReason.INSUFFICIENT_AUTHORITY
+                else 400
+                if reason
+                in {
+                    RecoveryAdmissionReason.INVALID_INPUT,
+                    RecoveryAdmissionReason.INVALID_ACTION,
+                    RecoveryAdmissionReason.INVALID_VERSION,
+                }
+                else 409
+            )
+            not_found = reason in {
+                RecoveryAdmissionReason.UNKNOWN_ITEM,
+                RecoveryAdmissionReason.ITEM_TASK_MISMATCH,
+            }
+            details: dict[str, object] = {"sideEffects": "none"}
+            if not not_found:
+                details["reason"] = reason.value
+            if error.current_checkpoint_version and not not_found:
+                details["currentCheckpointVersion"] = error.current_checkpoint_version
+            if error.existing_request is not None and not not_found:
+                details["existingRequest"] = error.existing_request.document()
+                details["nextAction"] = error.existing_request.next_action
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "recovery-admission",
+                "denied",
+                status,
+            )
+            return self._error(
+                start_response,
+                status,
+                "not_found" if not_found else "recovery_admission_rejected",
+                "TaskItem was not found" if not_found else "recovery request was not admitted",
+                details=details,
+            )
         except AutomationQueueFull as error:
             self._safe_audit(
                 environ,
@@ -1269,7 +1328,7 @@ class MediaFlowApi:
             else:
                 decision = FileReplanRequestService(
                     self._file_catalog,
-                    TaskRetryRequestService(self._repository),
+                    recovery_admission=self._recovery_admission,
                 ).request(parts[3], actor=principal.principal_id, note=note)
                 value = self._value(decision)
             return self._response(start_response, 200, value)
@@ -1432,6 +1491,59 @@ class MediaFlowApi:
             self._require_empty_query(environ, "task checkpoint")
             checkpoint = self._checkpoint_service.get(parts[5], task_id=parts[3])
             return self._response(start_response, 200, checkpoint.document())
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6] == "recovery"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+            self._require_empty_query(environ, "task item recovery")
+            document = self._document(environ)
+            allowed = {"actionId", "expectedCheckpointVersion", "note"}
+            if set(document).difference(allowed):
+                raise ValueError("task item recovery request fields are invalid")
+            if "actionId" not in document or "expectedCheckpointVersion" not in document:
+                raise ValueError(
+                    "task item recovery requires actionId and expectedCheckpointVersion"
+                )
+            action_id = document["actionId"]
+            expected = document["expectedCheckpointVersion"]
+            if not isinstance(action_id, str) or not action_id.strip():
+                raise ValueError("recovery actionId is required")
+            if not isinstance(expected, str) or not expected.strip():
+                raise ValueError("expectedCheckpointVersion is required")
+            if (
+                "note" in document
+                and document["note"] is not None
+                and not isinstance(document["note"], str)
+            ):
+                raise ValueError("recovery note must be a string")
+            request = self._recovery_admission.admit(
+                parts[3],
+                parts[5],
+                action_id=action_id,
+                expected_checkpoint_version=expected,
+                actor=principal.principal_id,
+                note=document.get("note"),
+            )
+            value = request.document()
+            return self._response(
+                start_response,
+                200,
+                {
+                    "request": value,
+                    "requestId": request.request_id,
+                    "taskId": request.task_id,
+                    "itemId": request.item_id,
+                    "actionId": request.action_id,
+                    "status": request.status.value,
+                    "checkpointVersion": request.checkpoint_version,
+                    "nextAction": request.next_action,
+                    "sideEffects": "none",
+                },
+            )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "tasks"] and method == "GET":
             item_limit, result_limit, item_cursor, result_cursor = self._task_detail_page(environ)
             task = self._repository.get_task(parts[3])
@@ -2055,6 +2167,13 @@ class MediaFlowApi:
             return f"/api/v1/{parts[2]}/{{id}}"
         if len(parts) == 6 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "items":
             return "/api/v1/tasks/{task_id}/items/{item_id}"
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6] == "recovery"
+        ):
+            return "/api/v1/tasks/{task_id}/items/{item_id}/recovery"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
             return "/api/v1/jobs/{id}/cancel"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":

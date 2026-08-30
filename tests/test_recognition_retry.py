@@ -22,11 +22,19 @@ from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 
+SNAPSHOT_ID = "test-recovery-revision"
+SNAPSHOT_DIGEST = "a" * 64
+
 
 class RecognitionRetryTests(unittest.TestCase):
     def _waiting(self, repository):
         coordinator = PersistentTaskCoordinator(repository, repository)
-        task = coordinator.create("preview", execute_authorized=False)
+        task = coordinator.create(
+            "preview",
+            execute_authorized=False,
+            configuration_snapshot_id=SNAPSHOT_ID,
+            configuration_snapshot_digest=SNAPSHOT_DIGEST,
+        )
         item = coordinator.begin_item(
             task.task_id, "source", "unmatched", "Unknown.mkv", "Unknown.mkv"
         )
@@ -34,6 +42,11 @@ class RecognitionRetryTests(unittest.TestCase):
             repository, development_strategy_configuration().recognition_types
         ).create(item, RecognitionResult(status=RecognitionStatus.UNRECOGNIZED))
         return coordinator, task, item, review
+
+    @staticmethod
+    def _snapshot_validator(snapshot_id: str, digest: str) -> None:
+        if snapshot_id != SNAPSHOT_ID or digest != SNAPSHOT_DIGEST:
+            raise ValueError("snapshot unavailable")
 
     def test_request_is_atomic_audited_and_retryable_without_selection(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -80,7 +93,9 @@ class RecognitionRetryTests(unittest.TestCase):
 
             with SQLiteTaskRepository(Path(directory, "ignored.sqlite3")) as repository:
                 _, task, item, review = self._waiting(repository)
-                ManualIgnoreService(repository).ignore(task.task_id, item.item_id, actor="operator")
+                ManualIgnoreService(repository, snapshot_validator=self._snapshot_validator).ignore(
+                    task.task_id, item.item_id, actor="operator"
+                )
                 with self.assertRaisesRegex(ValueError, "not pending"):
                     RecognitionRetryService(repository).request(review.review_id, actor="operator")
 

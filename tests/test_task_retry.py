@@ -10,19 +10,37 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.task_retry import TaskRetryRequestService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
-from mediaflow.domain.task_persistence import TaskItemStatus
+from mediaflow.domain.task_persistence import PersistentResultRecord, TaskItemStatus
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
+from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+
+SNAPSHOT_ID = "test-recovery-revision"
+SNAPSHOT_DIGEST = "a" * 64
 
 
 class TaskRetryTests(unittest.TestCase):
-    def _failed(self, repository, number=1, task=None):
+    def _failed(
+        self,
+        repository,
+        number=1,
+        task=None,
+        *,
+        snapshot_id: str | None = SNAPSHOT_ID,
+        snapshot_digest: str | None = SNAPSHOT_DIGEST,
+    ):
         coordinator = PersistentTaskCoordinator(repository, repository)
         if task is None:
-            task = coordinator.create("preview", execute_authorized=False)
+            task = coordinator.create(
+                "preview",
+                execute_authorized=False,
+                configuration_snapshot_id=snapshot_id,
+                configuration_snapshot_digest=snapshot_digest,
+            )
         item = coordinator.begin_item(
             task.task_id, "source", "movies", f"Bad-{number}.mkv", f"Bad-{number}.mkv"
         )
@@ -33,7 +51,42 @@ class TaskRetryTests(unittest.TestCase):
             error="original failure",
         )
         repository.upsert_item(failed)
+        repository.append_result(
+            PersistentResultRecord(
+                f"result-{failed.item_id}",
+                task.task_id,
+                failed.item_id,
+                failed.storage_id,
+                failed.source_path,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                TaskItemStatus.FAILED.value,
+                failed.updated_at,
+                error=failed.error,
+                effect_certainty="none",
+            )
+        )
         return coordinator, task, failed
+
+    @staticmethod
+    def _activate_document(database: Path, document: dict) -> object:
+        with SQLiteConfigurationRepository(database) as repository:
+            service = ManagedConfigurationService(repository)
+            draft = service.import_draft(document, actor="tester")
+            validated = service.validate(draft.revision_id, actor="tester")
+            return service.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="tester",
+            )
 
     def test_batch_retry_requests_oldest_first_failed_items(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -152,8 +205,13 @@ class TaskRetryTests(unittest.TestCase):
             document["persistence"]["databasePath"] = str(database)
             config_path = root / "strategy.json"
             config_path.write_text(json.dumps(document), encoding="utf-8")
+            active = self._activate_document(database, document)
             with SQLiteTaskRepository(database) as repository:
-                _, task, _ = self._failed(repository)
+                _, task, _ = self._failed(
+                    repository,
+                    snapshot_id=active.revision_id,
+                    snapshot_digest=active.digest,
+                )
             output, error = io.StringIO(), io.StringIO()
             with patch.object(
                 RuntimeConfiguration,

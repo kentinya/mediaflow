@@ -21,10 +21,58 @@ class ManualIgnoreService:
     MAX_NOTE = 500
     MAX_BATCH_SIZE = 100
 
-    def __init__(self, repository: ManualIgnoreRepository) -> None:
+    def __init__(
+        self,
+        repository: ManualIgnoreRepository,
+        *,
+        recovery_admission=None,
+        snapshot_validator=None,
+    ) -> None:
         self._repository = repository
+        if recovery_admission is None and snapshot_validator is not None:
+            from mediaflow.application.recovery_admission import RecoveryAdmissionService
+
+            recovery_admission = RecoveryAdmissionService(
+                repository, snapshot_validator=snapshot_validator
+            )
+        self._recovery_admission = recovery_admission
 
     def ignore(
+        self,
+        task_id: str,
+        item_id: str,
+        *,
+        actor: str,
+        note: str | None = None,
+        expected_checkpoint_version: str | None = None,
+    ) -> ManualIgnoreDecision:
+        from mediaflow.application.recovery_admission import RecoveryAdmissionService
+
+        admission = self._recovery_admission or RecoveryAdmissionService(self._repository)
+        expected = expected_checkpoint_version
+        if expected is None:
+            expected = admission.checkpoint_service.get(item_id, task_id=task_id).checkpoint_version
+        request = admission.admit(
+            task_id,
+            item_id,
+            action_id="ignore",
+            expected_checkpoint_version=expected,
+            actor=actor,
+            note=note,
+        )
+        review_kind = ManualReviewKind(request.review_kind or "recognition")
+        return ManualIgnoreDecision(
+            request.request_id,
+            request.task_id,
+            request.item_id,
+            review_kind,
+            request.review_id or "",
+            request.requested_at,
+            request.actor,
+            request.note,
+        )
+
+    def _legacy_ignore(
         self,
         task_id: str,
         item_id: str,
@@ -55,7 +103,6 @@ class ManualIgnoreService:
             status=TaskItemStatus.IGNORED,
             stage="ignored_by_operator",
             updated_at=now,
-            error=None,
         )
         self._repository.ignore_waiting_item(decision, ignored)
         return decision
@@ -81,6 +128,34 @@ class ManualIgnoreService:
         if not candidates:
             raise ValueError("no pending manual review items were selected")
 
+        if self._recovery_admission is not None:
+            decisions: list[ManualIgnoreDecision] = []
+            for candidate in candidates:
+                checkpoint = self._recovery_admission.checkpoint_service.get(
+                    candidate.item.item_id, task_id=candidate.item.task_id
+                )
+                request = self._recovery_admission.admit(
+                    candidate.item.task_id,
+                    candidate.item.item_id,
+                    action_id="ignore",
+                    expected_checkpoint_version=checkpoint.checkpoint_version,
+                    actor=normalized_actor,
+                    note=note,
+                )
+                decisions.append(
+                    ManualIgnoreDecision(
+                        request.request_id,
+                        request.task_id,
+                        request.item_id,
+                        ManualReviewKind(request.review_kind or candidate.review_kind.value),
+                        request.review_id or candidate.review_id,
+                        request.requested_at,
+                        request.actor,
+                        request.note,
+                    )
+                )
+            return tuple(decisions)
+
         now = datetime.now(UTC)
         normalized_note = self._text(note, self.MAX_NOTE)
         requests: list[ManualIgnoreBatchRequest] = []
@@ -100,7 +175,6 @@ class ManualIgnoreService:
                 status=TaskItemStatus.IGNORED,
                 stage="ignored_by_operator",
                 updated_at=now,
-                error=None,
             )
             requests.append(ManualIgnoreBatchRequest(decision, ignored))
 

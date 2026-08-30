@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_ignore import ManualIgnoreService
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult
 from mediaflow.application.metadata_correction import MetadataCorrectionService
@@ -25,19 +26,37 @@ from mediaflow.domain.recognition_review import RecognitionReviewStatus
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
+from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from tests.test_metadata_review import identification
+
+SNAPSHOT_ID = "test-recovery-revision"
+SNAPSHOT_DIGEST = "a" * 64
 
 
 class ManualIgnoreBatchTests(unittest.TestCase):
     def setUp(self) -> None:
         self.strategy = development_strategy_configuration()
 
-    def _create_waiting(self, repository, kind, number=1, task=None):
+    def _create_waiting(
+        self,
+        repository,
+        kind,
+        number=1,
+        task=None,
+        *,
+        snapshot_id: str = SNAPSHOT_ID,
+        snapshot_digest: str = SNAPSHOT_DIGEST,
+    ):
         coordinator = PersistentTaskCoordinator(repository, repository)
         if task is None:
-            task = coordinator.create("preview", execute_authorized=False)
+            task = coordinator.create(
+                "preview",
+                execute_authorized=False,
+                configuration_snapshot_id=snapshot_id,
+                configuration_snapshot_digest=snapshot_digest,
+            )
         item = coordinator.begin_item(
             task.task_id, "source", "movies", f"Movie-{number}.mkv", f"Movie-{number}.mkv"
         )
@@ -58,6 +77,18 @@ class ManualIgnoreBatchTests(unittest.TestCase):
                 ParseResult("Unknown", year=2025),
             )
         return coordinator, task, item, review
+
+    @staticmethod
+    def _activate_document(database: Path, document: dict) -> object:
+        with SQLiteConfigurationRepository(database) as repository:
+            service = ManagedConfigurationService(repository)
+            draft = service.import_draft(document, actor="tester")
+            validated = service.validate(draft.revision_id, actor="tester")
+            return service.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="tester",
+            )
 
     def test_batch_ignores_supported_waiting_kinds_atomically_oldest_first(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -242,8 +273,14 @@ class ManualIgnoreBatchTests(unittest.TestCase):
             document["persistence"]["databasePath"] = str(database)
             config_path = root / "strategy.json"
             config_path.write_text(json.dumps(document), encoding="utf-8")
+            active = self._activate_document(database, document)
             with SQLiteTaskRepository(database) as repository:
-                _, task, _, review = self._create_waiting(repository, "recognition")
+                _, task, _, review = self._create_waiting(
+                    repository,
+                    "recognition",
+                    snapshot_id=active.revision_id,
+                    snapshot_digest=active.digest,
+                )
             output, error = io.StringIO(), io.StringIO()
             with patch.object(
                 RuntimeConfiguration,

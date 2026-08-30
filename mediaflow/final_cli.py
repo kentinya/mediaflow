@@ -12,7 +12,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -51,6 +51,7 @@ from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.recognition_batch_retry import RecognitionBatchRetryService
 from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.recognition_review import RecognitionReviewService
+from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_retry import TaskRetryRequestService
@@ -974,7 +975,21 @@ def final_main(
             "ignore-pending",
             "retry-request",
         }:
-            with SQLiteTaskRepository(configuration.database_path) as repository:
+            with ExitStack() as stack:
+                repository = stack.enter_context(SQLiteTaskRepository(configuration.database_path))
+                recovery_admission = None
+                if arguments.task_command in {"ignore-item", "ignore-pending", "retry-request"}:
+                    configuration_repository = stack.enter_context(
+                        SQLiteConfigurationRepository(configuration.database_path)
+                    )
+                    managed_service = ManagedConfigurationService(
+                        configuration_repository,
+                        bootstrap_database_path=configuration.database_path,
+                    )
+                    recovery_admission = RecoveryAdmissionService(
+                        repository,
+                        snapshot_validator=managed_service.validate_runtime_snapshot,
+                    )
                 if arguments.task_command == "list":
                     stdout.write(render_tasks(repository.list_tasks(limit=arguments.limit)))
                 elif arguments.task_command == "show":
@@ -987,7 +1002,9 @@ def final_main(
                     task = coordinator.request_pause(arguments.task_id)
                     stdout.write(render_task(task, repository.list_items(task.task_id)))
                 elif arguments.task_command == "ignore-pending":
-                    decisions = ManualIgnoreService(repository).ignore_pending(
+                    decisions = ManualIgnoreService(
+                        repository, recovery_admission=recovery_admission
+                    ).ignore_pending(
                         actor=arguments.actor,
                         note=arguments.note,
                         limit=arguments.limit,
@@ -995,7 +1012,9 @@ def final_main(
                     )
                     stdout.write(render_manual_ignore_batch(decisions))
                 elif arguments.task_command == "retry-request":
-                    decisions = TaskRetryRequestService(repository).request(
+                    decisions = TaskRetryRequestService(
+                        repository, recovery_admission=recovery_admission
+                    ).request(
                         actor=arguments.actor,
                         note=arguments.note,
                         limit=arguments.limit,
@@ -1003,7 +1022,9 @@ def final_main(
                     )
                     stdout.write(render_task_retry_request(decisions))
                 else:
-                    decision = ManualIgnoreService(repository).ignore(
+                    decision = ManualIgnoreService(
+                        repository, recovery_admission=recovery_admission
+                    ).ignore(
                         arguments.task_id,
                         arguments.item_id,
                         actor=arguments.actor,
@@ -1053,10 +1074,28 @@ def final_main(
                 item.library_id for item in configuration.resource_libraries if item.enabled
             )
             storage_ids = tuple(item.storage_id for item in configuration.storage_definitions)
-            with (
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
-                SQLiteTaskRepository(configuration.database_path) as task_repository,
-            ):
+            with ExitStack() as stack:
+                file_index = stack.enter_context(
+                    SQLiteFileIndexRepository(configuration.database_path)
+                )
+                task_repository = stack.enter_context(
+                    SQLiteTaskRepository(configuration.database_path)
+                )
+                recovery_admission = None
+                if arguments.file_command == "re-plan":
+                    recovery_configuration_repository = stack.enter_context(
+                        SQLiteConfigurationRepository(configuration.database_path)
+                    )
+                    recovery_configuration_service = ManagedConfigurationService(
+                        recovery_configuration_repository,
+                        bootstrap_database_path=configuration.database_path,
+                    )
+                    recovery_admission = RecoveryAdmissionService(
+                        task_repository,
+                        snapshot_validator=(
+                            recovery_configuration_service.validate_runtime_snapshot
+                        ),
+                    )
                 service = FileCatalogService(
                     file_index,
                     library_ids,
@@ -1131,7 +1170,7 @@ def final_main(
                 elif arguments.file_command == "re-plan":
                     decision = FileReplanRequestService(
                         service,
-                        TaskRetryRequestService(task_repository),
+                        recovery_admission=recovery_admission,
                     ).request(
                         arguments.file_id,
                         actor=arguments.actor,

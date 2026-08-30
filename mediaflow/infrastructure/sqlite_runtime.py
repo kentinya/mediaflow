@@ -78,6 +78,12 @@ from mediaflow.domain.recognition_review import (
     RecognitionReviewDecisionAudit,
     RecognitionReviewStatus,
 )
+from mediaflow.domain.recovery import (
+    RecoveryAdmissionError,
+    RecoveryAdmissionReason,
+    RecoveryRequest,
+    RecoveryRequestStatus,
+)
 from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
@@ -95,7 +101,7 @@ from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestD
 # compatibility checks. Snapshot columns are additive and migrated by the
 # presence checks below, so older databases remain readable without a
 # destructive version jump.
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 
 class SQLiteTaskRepository:
@@ -391,8 +397,8 @@ class SQLiteTaskRepository:
                 decision = request.decision
                 item = request.item
                 cursor = self._connection.execute(
-                    """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
-                    WHERE item_id=? AND task_id=? AND status IN ('failed', 'partial')""",
+                    """UPDATE task_items SET status=?, stage=?, updated_at=?
+                    WHERE item_id=? AND task_id=? AND status='failed'""",
                     (
                         item.status.value,
                         item.stage,
@@ -402,7 +408,7 @@ class SQLiteTaskRepository:
                     ),
                 )
                 if cursor.rowcount != 1:
-                    raise ValueError("TaskItem is not failed or partial")
+                    raise ValueError("TaskItem is not failed")
                 self._connection.execute(
                     "INSERT INTO task_retry_audit VALUES (?, ?, ?, ?, ?, ?)",
                     (
@@ -432,6 +438,259 @@ class SQLiteTaskRepository:
                 row["note"],
             )
             for row in rows
+        )
+
+    def list_recovery_requests(
+        self, item_id: str, *, limit: int = 32
+    ) -> tuple[RecoveryRequest, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("recovery request limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM recovery_requests WHERE item_id=?
+                ORDER BY requested_at, request_id LIMIT ?""",
+                (item_id, limit),
+            ).fetchall()
+        return tuple(self._recovery_request(row) for row in rows)
+
+    def get_active_recovery_request(self, item_id: str) -> RecoveryRequest | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM recovery_requests
+                WHERE item_id=? AND status='pending'
+                ORDER BY requested_at, request_id LIMIT 1""",
+                (item_id,),
+            ).fetchone()
+        return self._recovery_request(row) if row else None
+
+    def admit_recovery_request(
+        self,
+        request: RecoveryRequest,
+        *,
+        expected_checkpoint_version: str,
+        checkpoint_projector=None,
+    ) -> RecoveryRequest:
+        """Atomically record one request and its existing action-specific transition.
+
+        The caller supplies the immutable checkpoint version it presented.  The repository
+        re-projects the same bounded context while holding an IMMEDIATE transaction, so a
+        concurrent review/result/request cannot be silently overwritten.
+        """
+
+        if request.status is not RecoveryRequestStatus.PENDING:
+            raise ValueError("recovery request must start pending")
+        if not isinstance(expected_checkpoint_version, str) or not expected_checkpoint_version:
+            raise RecoveryAdmissionError(
+                RecoveryAdmissionReason.INVALID_VERSION,
+                "checkpoint version is required",
+            )
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    """SELECT i.*, t.command AS task_command, t.status AS task_status,
+                        t.execute_authorized AS task_execute_authorized,
+                        t.created_at AS task_created_at, t.updated_at AS task_updated_at,
+                        t.started_at AS task_started_at, t.completed_at AS task_completed_at,
+                        t.total_items AS task_total_items,
+                        t.completed_items AS task_completed_items,
+                        t.failed_items AS task_failed_items, t.error AS task_error,
+                        t.pause_requested AS task_pause_requested, t.scope_path AS task_scope_path,
+                        t.item_limit AS task_item_limit,
+                        t.configuration_snapshot_id AS task_configuration_snapshot_id,
+                        t.configuration_snapshot_digest AS task_configuration_snapshot_digest
+                    FROM task_items i JOIN tasks t ON t.task_id=i.task_id
+                    WHERE i.item_id=?""",
+                    (request.item_id,),
+                ).fetchone()
+                if row is None:
+                    raise RecoveryAdmissionError(
+                        RecoveryAdmissionReason.UNKNOWN_ITEM,
+                        "TaskItem was not found",
+                    )
+                if row["task_id"] != request.task_id:
+                    raise RecoveryAdmissionError(
+                        RecoveryAdmissionReason.ITEM_TASK_MISMATCH,
+                        "TaskItem was not found in the specified Task",
+                    )
+                existing_row = self._connection.execute(
+                    """SELECT * FROM recovery_requests
+                    WHERE item_id=? AND status='pending'
+                    ORDER BY requested_at, request_id LIMIT 1""",
+                    (request.item_id,),
+                ).fetchone()
+                if existing_row is not None:
+                    existing = self._recovery_request(existing_row)
+                    self._connection.commit()
+                    return existing
+
+                context = self._get_processing_checkpoint_context_locked(
+                    request.item_id, result_limit=32, audit_limit=200
+                )
+                if checkpoint_projector is None:
+                    from mediaflow.application.processing_checkpoint import (
+                        ProcessingCheckpointService,
+                    )
+
+                    current = ProcessingCheckpointService(self)._project(context)
+                else:
+                    current = checkpoint_projector(context)
+                action = next(
+                    (value for value in current.actions if value.action_id == request.action_id),
+                    None,
+                )
+                if action is None:
+                    raise RecoveryAdmissionError(
+                        RecoveryAdmissionReason.INVALID_ACTION,
+                        "requested recovery action is unknown",
+                        current_checkpoint_version=current.checkpoint_version,
+                    )
+                if not action.admissible:
+                    raise RecoveryAdmissionError(
+                        RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
+                        "requested recovery action is not permitted",
+                        current_checkpoint_version=current.checkpoint_version,
+                    )
+                if expected_checkpoint_version != current.checkpoint_version:
+                    raise RecoveryAdmissionError(
+                        RecoveryAdmissionReason.STALE_CHECKPOINT,
+                        "checkpoint version is stale; refresh before requesting recovery",
+                        current_checkpoint_version=current.checkpoint_version,
+                    )
+                if (
+                    request.checkpoint_version != current.checkpoint_version
+                    or request.task_id != current.task_id
+                    or request.item_id != current.item_id
+                    or request.source_storage_id != current.source_storage_id
+                    or request.source_path != current.source_path
+                    or request.configuration_snapshot_id != current.configuration.snapshot_id
+                    or request.configuration_snapshot_digest
+                    != current.configuration.snapshot_digest
+                ):
+                    raise RecoveryAdmissionError(
+                        RecoveryAdmissionReason.STALE_CHECKPOINT,
+                        "checkpoint identity changed; refresh before requesting recovery",
+                        current_checkpoint_version=current.checkpoint_version,
+                    )
+                if request.action_id == "retry":
+                    self._admit_retry_locked(request, row)
+                elif request.action_id == "ignore":
+                    self._admit_ignore_locked(request, row)
+                else:
+                    raise RecoveryAdmissionError(
+                        RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
+                        "requested recovery action is not admissible",
+                        current_checkpoint_version=current.checkpoint_version,
+                    )
+                self._connection.execute(
+                    """INSERT INTO recovery_requests (
+                        request_id, task_id, item_id, action_id, checkpoint_version,
+                        source_storage_id, source_path, configuration_snapshot_id,
+                        configuration_snapshot_digest, actor, requested_at, status, note,
+                        authority_statement, next_action, review_kind, review_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    self._recovery_request_values(request),
+                )
+            except BaseException:
+                self._connection.rollback()
+                raise
+            self._connection.commit()
+            return request
+
+    def _admit_retry_locked(self, request: RecoveryRequest, row: sqlite3.Row) -> None:
+        if row["status"] != TaskItemStatus.FAILED.value:
+            raise RecoveryAdmissionError(
+                RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
+                "retry is not permitted for this TaskItem status",
+            )
+        cursor = self._connection.execute(
+            """UPDATE task_items SET status=?, stage=?, updated_at=?
+            WHERE item_id=? AND task_id=? AND status='failed'""",
+            (
+                TaskItemStatus.PENDING.value,
+                "task_retry_requested",
+                request.requested_at.isoformat(),
+                request.item_id,
+                request.task_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise RecoveryAdmissionError(
+                RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
+                "TaskItem is no longer failed or partial",
+            )
+        self._connection.execute(
+            "INSERT INTO task_retry_audit VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                request.request_id,
+                request.task_id,
+                request.item_id,
+                request.requested_at.isoformat(),
+                request.actor,
+                request.note,
+            ),
+        )
+
+    def _admit_ignore_locked(self, request: RecoveryRequest, row: sqlite3.Row) -> None:
+        review_tables = {
+            "recognition": ("recognition_reviews", TaskItemStatus.WAITING_RECOGNITION),
+            "metadata": ("metadata_reviews", TaskItemStatus.WAITING_METADATA),
+            "metadata_correction": (
+                "metadata_corrections",
+                TaskItemStatus.WAITING_METADATA_CORRECTION,
+            ),
+        }
+        if request.review_kind not in review_tables or not request.review_id:
+            raise RecoveryAdmissionError(
+                RecoveryAdmissionReason.REVIEW_NOT_PENDING,
+                "ignore requires a pending supported review",
+            )
+        table, waiting_status = review_tables[request.review_kind]
+        cursor = self._connection.execute(
+            f"""UPDATE {table} SET status='ignored', updated_at=?, decided_at=?, actor=?
+            WHERE review_id=? AND item_id=? AND status='pending'""",
+            (
+                request.requested_at.isoformat(),
+                request.requested_at.isoformat(),
+                request.actor,
+                request.review_id,
+                request.item_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise RecoveryAdmissionError(
+                RecoveryAdmissionReason.REVIEW_NOT_PENDING,
+                "manual review is not pending",
+            )
+        cursor = self._connection.execute(
+            """UPDATE task_items SET status=?, stage=?, updated_at=?
+            WHERE item_id=? AND task_id=? AND status=?""",
+            (
+                TaskItemStatus.IGNORED.value,
+                "ignored_by_operator",
+                request.requested_at.isoformat(),
+                request.item_id,
+                request.task_id,
+                waiting_status.value,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise RecoveryAdmissionError(
+                RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
+                "TaskItem is no longer waiting for the matching review",
+            )
+        self._connection.execute(
+            "INSERT INTO manual_ignore_audit VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                request.request_id,
+                request.task_id,
+                request.item_id,
+                request.review_kind,
+                request.review_id,
+                request.requested_at.isoformat(),
+                request.actor,
+                request.note,
+            ),
         )
 
     def list_ignorable_waiting_items(self, *, limit=100, task_id=None):
@@ -513,7 +772,7 @@ class SQLiteTaskRepository:
             if cursor.rowcount != 1:
                 raise ValueError("manual review is not pending")
             cursor = self._connection.execute(
-                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                """UPDATE task_items SET status=?, stage=?, updated_at=?
                 WHERE item_id=? AND task_id=? AND status=?""",
                 (
                     item.status.value,
@@ -576,7 +835,7 @@ class SQLiteTaskRepository:
                 if cursor.rowcount != 1:
                     raise ValueError("manual review is not pending")
                 cursor = self._connection.execute(
-                    """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                    """UPDATE task_items SET status=?, stage=?, updated_at=?
                     WHERE item_id=? AND task_id=? AND status=?""",
                     (
                         item.status.value,
@@ -874,6 +1133,21 @@ class SQLiteTaskRepository:
                 )
                 for value in audit_rows
             )
+            recovery_rows = self._connection.execute(
+                """SELECT * FROM recovery_requests WHERE item_id=?
+                ORDER BY requested_at, request_id LIMIT ?""",
+                (item_id, audit_limit),
+            ).fetchall()
+            recovery_requests = tuple(self._recovery_request(value) for value in recovery_rows)
+            audits.extend(
+                CheckpointAudit(
+                    value.request_id,
+                    "recovery_request",
+                    value.requested_at,
+                    value.actor,
+                )
+                for value in recovery_requests
+            )
             audits.sort(key=lambda value: (value.occurred_at, value.audit_id))
             return ProcessingCheckpointContext(
                 task=task,
@@ -881,6 +1155,7 @@ class SQLiteTaskRepository:
                 results=results,
                 blockers=tuple(blockers),
                 audits=tuple(audits[-audit_limit:]),
+                recovery_requests=recovery_requests,
             )
 
     def list_results(
@@ -3275,6 +3550,25 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS task_retry_task_decided
                     ON task_retry_audit(task_id, decided_at, decision_id);
+                CREATE TABLE IF NOT EXISTS recovery_requests (
+                    request_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL, action_id TEXT NOT NULL,
+                    checkpoint_version TEXT NOT NULL,
+                    source_storage_id TEXT NOT NULL, source_path TEXT NOT NULL,
+                    configuration_snapshot_id TEXT,
+                    configuration_snapshot_digest TEXT,
+                    actor TEXT NOT NULL, requested_at TEXT NOT NULL,
+                    status TEXT NOT NULL, note TEXT,
+                    authority_statement TEXT NOT NULL,
+                    next_action TEXT NOT NULL,
+                    review_kind TEXT, review_id TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(item_id) REFERENCES task_items(item_id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS one_active_recovery_request
+                    ON recovery_requests(item_id) WHERE status = 'pending';
+                CREATE INDEX IF NOT EXISTS recovery_requests_item_requested
+                    ON recovery_requests(item_id, requested_at, request_id);
                 CREATE TABLE IF NOT EXISTS task_results (
                     result_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, item_id TEXT NOT NULL,
                     source_storage_id TEXT NOT NULL, source_path TEXT NOT NULL,
@@ -3770,6 +4064,54 @@ class SQLiteTaskRepository:
             row["cleanup_step_count"],
             row["effect_certainty"],
             tuple(json.loads(row["uncertain_effects"] or "[]")),
+        )
+
+    @staticmethod
+    def _recovery_request_values(request: RecoveryRequest) -> tuple[object, ...]:
+        return (
+            request.request_id,
+            request.task_id,
+            request.item_id,
+            request.action_id,
+            request.checkpoint_version,
+            request.source_storage_id,
+            request.source_path,
+            request.configuration_snapshot_id,
+            request.configuration_snapshot_digest,
+            request.actor,
+            request.requested_at.isoformat(),
+            request.status.value,
+            request.note,
+            request.authority_statement,
+            request.next_action,
+            request.review_kind,
+            request.review_id,
+        )
+
+    @staticmethod
+    def _recovery_request(row: sqlite3.Row) -> RecoveryRequest:
+        try:
+            status = RecoveryRequestStatus(row["status"])
+        except ValueError:
+            status = RecoveryRequestStatus.REJECTED
+        return RecoveryRequest(
+            row["request_id"],
+            row["task_id"],
+            row["item_id"],
+            row["action_id"],
+            row["checkpoint_version"],
+            row["source_storage_id"],
+            row["source_path"],
+            row["configuration_snapshot_id"],
+            row["configuration_snapshot_digest"],
+            row["actor"],
+            datetime.fromisoformat(row["requested_at"]),
+            status,
+            row["note"],
+            row["authority_statement"],
+            row["next_action"],
+            row["review_kind"],
+            row["review_id"],
         )
 
     @staticmethod

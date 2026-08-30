@@ -242,12 +242,27 @@ class ProcessingCheckpointService:
                         )
                     )
         audits.sort(key=lambda value: (value.occurred_at, value.audit_id))
+        request_reader = getattr(self._repository, "list_recovery_requests", None)
+        recovery_requests = (
+            tuple(request_reader(item_id, limit=32)) if callable(request_reader) else ()
+        )
+        audits.extend(
+            CheckpointAudit(
+                value.request_id,
+                "recovery_request",
+                value.requested_at,
+                value.actor,
+            )
+            for value in recovery_requests
+        )
+        audits.sort(key=lambda value: (value.occurred_at, value.audit_id))
         return ProcessingCheckpointContext(
             task=task,
             item=item,
             results=results,
             blockers=tuple(blockers),
             audits=tuple(audits[-audit_limit:]),
+            recovery_requests=recovery_requests,
         )
 
     def _project(self, context: ProcessingCheckpointContext) -> ProcessingCheckpoint:
@@ -264,6 +279,9 @@ class ProcessingCheckpointService:
         )
         blockers = tuple(_safe_blocker(value) for value in context.blockers)
         audits = tuple(_safe_audit(value) for value in context.audits)
+        recovery_requests = tuple(
+            _safe_recovery_request(value) for value in context.recovery_requests
+        )
         latest = results[0] if results else None
         prior = results[1:]
         certainty = latest.effect_certainty if latest else EffectCertainty.UNKNOWN
@@ -307,6 +325,7 @@ class ProcessingCheckpointService:
                 }
                 for value in audits
             ],
+            "recovery_requests": [value.document() for value in recovery_requests],
         }
         checkpoint_version = hashlib.sha256(
             json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
@@ -330,6 +349,7 @@ class ProcessingCheckpointService:
             blockers=blockers,
             blocker=blocker,
             audits=audits,
+            recovery_requests=recovery_requests,
             effect_certainty=certainty,
             completed_operations=tuple(_bounded(value, 128) for value in completed),
             uncertain_effects=tuple(_bounded(value, 128) for value in uncertain),
@@ -507,6 +527,40 @@ def _safe_audit(value: CheckpointAudit) -> CheckpointAudit:
     )
 
 
+def _safe_recovery_request(value):
+    """Keep request projection bounded and path/secret-safe at the read boundary."""
+
+    from dataclasses import replace
+
+    request = replace(
+        value,
+        request_id=_safe_identifier(value.request_id),
+        task_id=_safe_identifier(value.task_id),
+        item_id=_safe_identifier(value.item_id),
+        action_id=_safe_identifier(value.action_id),
+        checkpoint_version=_safe_identifier(value.checkpoint_version),
+        source_storage_id=_safe_identifier(value.source_storage_id),
+        source_path=_safe_path(value.source_path) or "[unavailable]",
+        configuration_snapshot_id=(
+            _safe_identifier(value.configuration_snapshot_id)
+            if value.configuration_snapshot_id is not None
+            else None
+        ),
+        configuration_snapshot_digest=(
+            _safe_identifier(value.configuration_snapshot_digest)
+            if value.configuration_snapshot_digest is not None
+            else None
+        ),
+        actor=_bounded(value.actor, 256),
+        note=_bounded(value.note, 500),
+        authority_statement=_bounded(value.authority_statement, 256),
+        next_action=_bounded(value.next_action, 256),
+        review_kind=_safe_identifier(value.review_kind) if value.review_kind is not None else None,
+        review_id=_safe_identifier(value.review_id) if value.review_id is not None else None,
+    )
+    return request
+
+
 def _certainty(value) -> EffectCertainty:
     try:
         return EffectCertainty(_enum_value(value))
@@ -629,7 +683,18 @@ def _actions(
             True,
             "review_decision",
             blocker.resolution_path,
+            False,
         )
+        if blocker.kind in {"recognition", "metadata", "metadata_correction"}:
+            ignore = CheckpointAction(
+                "ignore",
+                "Ignore item",
+                True,
+                "review_decision",
+                None,
+                True,
+            )
+            return RetrySafety.UNSAFE, (action, ignore), None
         return RetrySafety.UNSAFE, (action,), None
     if certainty in {EffectCertainty.ATTEMPTED_UNVERIFIED, EffectCertainty.UNKNOWN}:
         return (
@@ -637,10 +702,7 @@ def _actions(
             (CheckpointAction("investigate", "Investigate effect state", False, "none"),),
             "automatic_replay_refused: effect certainty is not verified",
         )
-    if (
-        status in {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL}
-        and certainty is EffectCertainty.NONE
-    ):
+    if status is TaskItemStatus.FAILED and certainty is EffectCertainty.NONE:
         if snapshot_resolvable is not True:
             reason = (
                 "automatic_replay_refused: pinned configuration is unavailable"
@@ -651,24 +713,37 @@ def _actions(
                 RetrySafety.UNSAFE,
                 (
                     CheckpointAction(
-                        "investigate", "Inspect unavailable configuration", False, "none"
+                        "investigate",
+                        "Inspect unavailable configuration",
+                        False,
+                        "none",
+                        None,
+                        False,
                     ),
                 ),
                 reason,
             )
         return (
             RetrySafety.SAFE,
-            (CheckpointAction("retry", "Retry safe analysis", True, "task_recovery"),),
+            (CheckpointAction("retry", "Retry safe analysis", True, "task_recovery", None, True),),
             None,
         )
     if status is TaskItemStatus.PAUSED:
         return (
             RetrySafety.UNKNOWN,
-            (CheckpointAction("resume", "Resume from checkpoint", True, "task_recovery"),),
+            (
+                CheckpointAction(
+                    "resume", "Resume from checkpoint", True, "task_recovery", None, False
+                ),
+            ),
             None,
         )
     return (
         RetrySafety.UNKNOWN,
-        (CheckpointAction("investigate", "Investigate current checkpoint", False, "none"),),
+        (
+            CheckpointAction(
+                "investigate", "Investigate current checkpoint", False, "none", None, False
+            ),
+        ),
         "recovery_action_refused: current stage has no verified safe continuation",
     )
