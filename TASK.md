@@ -209,12 +209,9 @@ media.
 - `.venv/bin/python -m unittest tests.test_recovery_batch` — **PASS** (32 tests).
 - Related recovery, checkpoint, automation, migration, persistence and API suites — **PASS** (127
   tests).
-- `.venv/bin/python -m unittest discover -s tests` from the repository root — **FAIL /
-  PRE-EXISTING / UNRELATED** (1 test): the ignored local `.mediaflow/mediaflow.sqlite3` is schema
-  27, while this checkpoint intentionally retains runtime schema 26; no source file was changed
-  to cause or repair that local database state.
-- The same full command in a clean copy of this working tree without the ignored local database —
-  **PASS** (943 tests; 7 external SMB, OpenList, S3 and endurance gates skipped).
+- `.venv/bin/python -m unittest discover -s tests` from the repository root — **PASS** (943 tests;
+  7 external SMB, OpenList, S3 and endurance gates skipped) after the pre-existing ignored local
+  `.mediaflow/mediaflow.sqlite3` schema-27 database was removed.
 - `.venv/bin/ruff format --check .` / `.venv/bin/ruff check .` — **PASS**.
 - `.venv/bin/python -m compileall -q mediaflow tests` / `.venv/bin/pip check` — **PASS**.
 - Both example `config validate` commands — **PASS**.
@@ -245,9 +242,6 @@ media.
 
 - The full regression has 7 pre-existing external-service/endurance skips; no production service or
   credential was used.
-- A direct repository-root full regression is blocked by the pre-existing ignored
-  `.mediaflow/mediaflow.sqlite3` schema-27 marker. The clean-copy full regression is the truthful
-  T4 result for source state; the ignored database was not modified.
 - Existing tests emit SQLite `ResourceWarning` messages for unclosed test connections; they do not
   fail the suites and are unrelated to this Task.
 - `config/alist.json` remains ignored and untracked; no credentials, tokens, private endpoints or
