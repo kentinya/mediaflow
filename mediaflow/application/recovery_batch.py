@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_continuation import RecoveryContinuationService
 from mediaflow.domain.automation import AutomationQueueFull
 from mediaflow.domain.recovery_batch import (
@@ -21,9 +22,10 @@ class RecoveryBatchContinuationService:
     MAX_BATCH_SIZE = 100
     MAX_ACTOR = 200
 
-    def __init__(self, repository, *, continuation_service=None):
+    def __init__(self, repository, *, continuation_service=None, admission_service=None):
         self._repository = repository
         self._continuation_service = continuation_service or RecoveryContinuationService(repository)
+        self._admission_service = admission_service or RecoveryAdmissionService(repository)
 
     def submit(
         self,
@@ -93,7 +95,8 @@ class RecoveryBatchContinuationService:
 
         for item in initial_items:
             updated = self._admit_item(item, actor, maximum_active_jobs)
-            self._repository.update_recovery_batch_item(updated)
+            if updated.status is not RecoveryBatchItemStatus.QUEUED:
+                self._repository.update_recovery_batch_item(updated)
         return self._repository.get_recovery_batch(batch_id)
 
     def _admit_item(self, batch_item: RecoveryBatchItem, actor: str, maximum_active_jobs: int):
@@ -102,29 +105,45 @@ class RecoveryBatchContinuationService:
                 batch_item.source_item_id, task_id=batch_item.source_task_id
             )
             if "continue" not in checkpoint.permitted_action_ids:
-                reason = (
-                    "uncertain_effects"
-                    if checkpoint.effect_certainty.value in {"attempted_unverified", "unknown"}
-                    else "action_not_permitted"
-                )
-                return replace(
-                    batch_item,
-                    status=RecoveryBatchItemStatus.REFUSED,
-                    reason=reason,
-                    error="this item has no safe continuation action at its current checkpoint",
-                    next_action="inspect the item checkpoint and follow its offered action",
-                    updated_at=datetime.now(UTC),
-                )
+                if "retry" in checkpoint.permitted_action_ids:
+                    request = self._admission_service.admit(
+                        batch_item.source_task_id,
+                        batch_item.source_item_id,
+                        action_id="retry",
+                        expected_checkpoint_version=batch_item.checkpoint_version,
+                        actor=actor,
+                    )
+                    checkpoint = self._continuation_service.checkpoint_service.get(
+                        batch_item.source_item_id, task_id=batch_item.source_task_id
+                    )
+                    if request.request_id != checkpoint.active_recovery_request.request_id:
+                        raise ValueError("batch recovery request linkage changed")
+                else:
+                    reason = (
+                        "uncertain_effects"
+                        if checkpoint.effect_certainty.value in {"attempted_unverified", "unknown"}
+                        else "action_not_permitted"
+                    )
+                    return replace(
+                        batch_item,
+                        status=RecoveryBatchItemStatus.REFUSED,
+                        reason=reason,
+                        error="this item has no safe continuation action at its current checkpoint",
+                        next_action="inspect the item checkpoint and follow its offered action",
+                        updated_at=datetime.now(UTC),
+                    )
             submission = self._continuation_service.submit(
                 batch_item.source_task_id,
                 batch_item.source_item_id,
-                expected_checkpoint_version=batch_item.checkpoint_version,
+                expected_checkpoint_version=checkpoint.checkpoint_version,
                 actor=actor,
                 maximum_active_jobs=maximum_active_jobs,
+                batch_item_id=batch_item.batch_item_id,
             )
             continuation = submission.continuation
             return replace(
                 batch_item,
+                checkpoint_version=checkpoint.checkpoint_version,
                 status=RecoveryBatchItemStatus.QUEUED,
                 request_id=continuation.request_id,
                 continuation_id=continuation.continuation_id,
@@ -174,6 +193,15 @@ class RecoveryBatchContinuationService:
                 reason="queue_full",
                 error=str(error),
                 next_action="wait for active Jobs to finish, then continue this item again",
+                updated_at=datetime.now(UTC),
+            )
+        except Exception as error:
+            return replace(
+                batch_item,
+                status=RecoveryBatchItemStatus.WAITING,
+                reason="batch_child_failed",
+                error=f"batch child admission failed ({type(error).__name__})",
+                next_action="inspect this item's checkpoint and continue it again",
                 updated_at=datetime.now(UTC),
             )
 

@@ -96,6 +96,7 @@ class RecoveryContinuationService:
         expected_checkpoint_version: str,
         actor: str,
         maximum_active_jobs: int,
+        batch_item_id: str | None = None,
     ) -> RecoveryContinuationSubmission:
         task_id = self._required_id(task_id, "Task ID")
         item_id = self._required_id(item_id, "TaskItem ID")
@@ -196,6 +197,7 @@ class RecoveryContinuationService:
             continuation,
             maximum_active_jobs=maximum_active_jobs,
             checkpoint_projector=self._checkpoint_service._project,
+            batch_item_id=batch_item_id,
         )
         if not created:
             raise RecoveryContinuationError(
