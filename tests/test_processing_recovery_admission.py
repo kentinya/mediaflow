@@ -8,6 +8,7 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
@@ -17,6 +18,8 @@ from mediaflow.domain.recognition_review import RecognitionReviewStatus
 from mediaflow.domain.recovery import RecoveryAdmissionError, RecoveryAdmissionReason
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentResultRecord, TaskItemStatus
+from mediaflow.infrastructure.metadata_provider_bootstrap import LazyMetadataProviderRegistryFactory
+from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
@@ -802,32 +805,8 @@ class RecoveryAdmissionTests(unittest.TestCase):
                 )
 
     def test_recovery_admission_falsifies_storage_provider_and_durable_side_effects(self) -> None:
-        class StrictStorageSpy:
+        class RecordingValidator:
             def __init__(self) -> None:
-                self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
-
-            def __getattr__(self, name: str):
-                def forbidden(*args, **kwargs):
-                    self.calls.append((name, args, kwargs))
-                    raise AssertionError(f"unexpected Storage operation: {name}")
-
-                return forbidden
-
-        class StrictProviderSpy:
-            def __init__(self) -> None:
-                self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
-
-            def __getattr__(self, name: str):
-                def forbidden(*args, **kwargs):
-                    self.calls.append((name, args, kwargs))
-                    raise AssertionError(f"unexpected metadata Provider request: {name}")
-
-                return forbidden
-
-        class StrictSnapshotValidator:
-            def __init__(self) -> None:
-                self.storage = StrictStorageSpy()
-                self.provider = StrictProviderSpy()
                 self.calls: list[tuple[str, str]] = []
 
             def __call__(self, snapshot_id: str, digest: str) -> None:
@@ -847,31 +826,83 @@ class RecoveryAdmissionTests(unittest.TestCase):
             ).fetchall()
             return tuple(tuple(row) for row in rows)
 
+        def tree_snapshot(root: Path) -> tuple[tuple[str, int, int], ...]:
+            if not root.is_dir():
+                return ()
+            rows: list[tuple[str, int, int]] = []
+            for path in sorted(root.rglob("*")):
+                if path.is_file():
+                    stat = path.stat()
+                    rows.append((str(path.relative_to(root)), stat.st_size, stat.st_mtime_ns))
+            return tuple(rows)
+
         with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+            root = Path(directory)
+            source_root = root / "source"
+            destination_root = root / "destination"
+            source_file = source_root / "folder" / "zero-mutation.mkv"
+            source_file.parent.mkdir(parents=True)
+            source_file.write_bytes(b"fake media payload")
+            destination_root.mkdir()
+            source_before = tree_snapshot(source_root)
+            destination_before = tree_snapshot(destination_root)
+
+            with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
                 _, task = self._task(repository)
                 item, _ = self._failed_item(repository, task, item_id="zero-mutation")
-                validator = StrictSnapshotValidator()
-                gate = RecoveryAdmissionService(repository, snapshot_validator=validator)
-                checkpoint = gate.checkpoint_service.get(item.item_id, task_id=task.task_id)
+                validator = RecordingValidator()
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal(
+                            "operator",
+                            "operator-token",
+                            frozenset({ApiPermission.READ, ApiPermission.SUBMIT_DRY_RUN}),
+                        ),
+                    ),
+                    recovery_snapshot_validator=validator,
+                )
                 task_before = repository.get_task(task.task_id)
                 tasks_before = repository.list_tasks()
                 jobs_before = repository.list_jobs()
                 results_before = repository.list_results(task.task_id)
                 locks_before = lock_rows(repository)
 
-                admitted = gate.admit(
-                    task.task_id,
-                    item.item_id,
-                    action_id="retry",
-                    expected_checkpoint_version=checkpoint.checkpoint_version,
-                    actor="operator",
+                checkpoint_status, checkpoint = api_request(
+                    api,
+                    "GET",
+                    f"/api/v1/tasks/{task.task_id}/items/{item.item_id}",
                 )
-
-                self.assertEqual(admitted.action_id, "retry")
-                self.assertEqual(validator.storage.calls, [])
-                self.assertEqual(validator.provider.calls, [])
+                self.assertEqual(checkpoint_status, 200)
+                with (
+                    patch.object(
+                        RuntimeConfiguration,
+                        "create_storages",
+                        side_effect=AssertionError("recovery admission constructed Storage"),
+                    ),
+                    patch.object(
+                        LazyMetadataProviderRegistryFactory,
+                        "__call__",
+                        side_effect=AssertionError(
+                            "recovery admission constructed metadata Provider"
+                        ),
+                    ),
+                ):
+                    status, payload = api_request(
+                        api,
+                        "POST",
+                        f"/api/v1/tasks/{task.task_id}/items/{item.item_id}/recovery",
+                        body={
+                            "actionId": "retry",
+                            "expectedCheckpointVersion": checkpoint["checkpoint_version"],
+                        },
+                    )
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["sideEffects"], "none")
                 self.assertTrue(validator.calls)
+                self.assertEqual(tree_snapshot(source_root), source_before)
+                self.assertEqual(tree_snapshot(destination_root), destination_before)
                 self.assertEqual(repository.get_task(task.task_id), task_before)
                 self.assertEqual(repository.list_tasks(), tasks_before)
                 self.assertEqual(repository.list_jobs(), jobs_before)
