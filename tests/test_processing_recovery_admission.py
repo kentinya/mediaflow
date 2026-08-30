@@ -25,13 +25,21 @@ SNAPSHOT_ID = "revision-23"
 SNAPSHOT_DIGEST = "a" * 64
 
 
-def api_request(api, method: str, path: str, *, body=None, token="operator-token"):
+def api_request(
+    api,
+    method: str,
+    path: str,
+    *,
+    body=None,
+    token="operator-token",
+    query="",
+):
     statuses: list[str] = []
     raw = b"" if body is None else json.dumps(body).encode("utf-8")
     environ = {
         "REQUEST_METHOD": method,
         "PATH_INFO": path,
-        "QUERY_STRING": "",
+        "QUERY_STRING": query,
         "CONTENT_LENGTH": str(len(raw)),
         "REMOTE_ADDR": "127.0.0.1",
         "wsgi.input": io.BytesIO(raw),
@@ -54,11 +62,17 @@ class RecoveryAdmissionTests(unittest.TestCase):
             )
 
     @staticmethod
-    def _task(repository, *, pinned=True):
+    def _task(
+        repository,
+        *,
+        pinned=True,
+        snapshot_id=SNAPSHOT_ID,
+        snapshot_digest=SNAPSHOT_DIGEST,
+    ):
         coordinator = PersistentTaskCoordinator(repository, repository)
         kwargs = {
-            "configuration_snapshot_id": SNAPSHOT_ID,
-            "configuration_snapshot_digest": SNAPSHOT_DIGEST,
+            "configuration_snapshot_id": snapshot_id,
+            "configuration_snapshot_digest": snapshot_digest,
         }
         if not pinned:
             kwargs = {}
@@ -500,6 +514,370 @@ class RecoveryAdmissionTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 403)
                 self.assertEqual(denied["error"]["code"], "forbidden")
+
+    def test_api_recovery_route_maps_refusals_and_bounds_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                _, task = self._task(repository)
+                item, _ = self._failed_item(repository, task, item_id="api-base")
+                _, other_task = self._task(repository)
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal(
+                            "operator",
+                            "operator-token",
+                            frozenset({ApiPermission.READ, ApiPermission.SUBMIT_DRY_RUN}),
+                        ),
+                        ResolvedApiPrincipal(
+                            "viewer",
+                            "viewer-token",
+                            frozenset({ApiPermission.READ}),
+                        ),
+                    ),
+                    recovery_snapshot_validator=self._validator,
+                )
+
+                def route(task_id: str, item_id: str) -> str:
+                    return f"/api/v1/tasks/{task_id}/items/{item_id}/recovery"
+
+                def checkpoint(task_id: str, item_id: str) -> dict[str, object]:
+                    status, payload = api_request(
+                        api,
+                        "GET",
+                        f"/api/v1/tasks/{task_id}/items/{item_id}",
+                    )
+                    self.assertEqual(status, 200)
+                    return payload
+
+                def post(
+                    task_id: str,
+                    item_id: str,
+                    body: dict[str, object],
+                    *,
+                    token="operator-token",
+                    query="",
+                ) -> tuple[int, dict[str, object]]:
+                    return api_request(
+                        api,
+                        "POST",
+                        route(task_id, item_id),
+                        body=body,
+                        token=token,
+                        query=query,
+                    )
+
+                def assert_not_found(payload: dict[str, object]) -> None:
+                    self.assertEqual(payload["error"]["code"], "not_found")
+                    details = payload["error"].get("details", {})
+                    self.assertNotIn("reason", details)
+
+                base = checkpoint(task.task_id, item.item_id)
+                valid_body = {
+                    "actionId": "retry",
+                    "expectedCheckpointVersion": base["checkpoint_version"],
+                }
+
+                status, payload = post(
+                    task.task_id,
+                    item.item_id,
+                    valid_body,
+                    token=None,
+                )
+                self.assertEqual(status, 401)
+                self.assertEqual(payload["error"]["code"], "unauthorized")
+
+                status, payload = post("missing-task", item.item_id, valid_body)
+                self.assertEqual(status, 404)
+                assert_not_found(payload)
+
+                status, payload = post(task.task_id, "missing-item", valid_body)
+                self.assertEqual(status, 404)
+                assert_not_found(payload)
+
+                status, payload = post(other_task.task_id, item.item_id, valid_body)
+                self.assertEqual(status, 404)
+                assert_not_found(payload)
+
+                refused, _ = self._failed_item(
+                    repository,
+                    task,
+                    item_id="api-refused",
+                    status=TaskItemStatus.PARTIAL,
+                    certainty="attempted_unverified",
+                )
+                refused_checkpoint = checkpoint(task.task_id, refused.item_id)
+                status, payload = post(
+                    task.task_id,
+                    refused.item_id,
+                    {
+                        "actionId": "investigate",
+                        "expectedCheckpointVersion": refused_checkpoint["checkpoint_version"],
+                    },
+                )
+                self.assertEqual(status, 409)
+                self.assertEqual(
+                    payload["error"]["details"]["reason"],
+                    RecoveryAdmissionReason.ACTION_NOT_PERMITTED.value,
+                )
+                self.assertEqual(payload["error"]["details"]["sideEffects"], "none")
+                self.assertEqual(repository.list_recovery_requests(refused.item_id), ())
+
+                stale, _ = self._failed_item(repository, task, item_id="api-stale")
+                stale_checkpoint = checkpoint(task.task_id, stale.item_id)
+                repository.upsert_item(
+                    replace(stale, attempts=2, error="new failure", updated_at=NOW)
+                )
+                current_stale = checkpoint(task.task_id, stale.item_id)
+                status, payload = post(
+                    task.task_id,
+                    stale.item_id,
+                    {
+                        "actionId": "retry",
+                        "expectedCheckpointVersion": stale_checkpoint["checkpoint_version"],
+                    },
+                )
+                self.assertEqual(status, 409)
+                self.assertEqual(
+                    payload["error"]["details"]["reason"],
+                    RecoveryAdmissionReason.STALE_CHECKPOINT.value,
+                )
+                self.assertEqual(
+                    payload["error"]["details"]["currentCheckpointVersion"],
+                    current_stale["checkpoint_version"],
+                )
+                self.assertEqual(repository.list_recovery_requests(stale.item_id), ())
+
+                duplicate, _ = self._failed_item(repository, task, item_id="api-duplicate")
+                duplicate_checkpoint = checkpoint(task.task_id, duplicate.item_id)
+                duplicate_body = {
+                    "actionId": "retry",
+                    "expectedCheckpointVersion": duplicate_checkpoint["checkpoint_version"],
+                }
+                status, first = post(task.task_id, duplicate.item_id, duplicate_body)
+                self.assertEqual(status, 200)
+                status, payload = post(task.task_id, duplicate.item_id, duplicate_body)
+                self.assertEqual(status, 409)
+                details = payload["error"]["details"]
+                self.assertEqual(
+                    details["reason"],
+                    RecoveryAdmissionReason.DUPLICATE_ACTIVE_REQUEST.value,
+                )
+                self.assertEqual(details["existingRequest"]["request_id"], first["requestId"])
+                self.assertEqual(details["nextAction"], first["nextAction"])
+                self.assertEqual(len(repository.list_task_retry_audit(duplicate.item_id)), 1)
+                self.assertEqual(len(repository.list_recovery_requests(duplicate.item_id)), 1)
+
+                _, unavailable_task = self._task(
+                    repository,
+                    snapshot_id="missing-revision",
+                    snapshot_digest="b" * 64,
+                )
+                unavailable, _ = self._failed_item(
+                    repository, unavailable_task, item_id="api-unavailable"
+                )
+                unavailable_checkpoint = checkpoint(unavailable_task.task_id, unavailable.item_id)
+                self.assertFalse(unavailable_checkpoint["configuration"]["resolvable"])
+                status, payload = post(
+                    unavailable_task.task_id,
+                    unavailable.item_id,
+                    {
+                        "actionId": "retry",
+                        "expectedCheckpointVersion": unavailable_checkpoint["checkpoint_version"],
+                    },
+                )
+                self.assertEqual(status, 503)
+                self.assertEqual(
+                    payload["error"]["details"]["reason"],
+                    RecoveryAdmissionReason.SNAPSHOT_UNAVAILABLE.value,
+                )
+                self.assertEqual(repository.list_recovery_requests(unavailable.item_id), ())
+
+                unknown_action, _ = self._failed_item(repository, task, item_id="api-unknown")
+                unknown_checkpoint = checkpoint(task.task_id, unknown_action.item_id)
+                status, payload = post(
+                    task.task_id,
+                    unknown_action.item_id,
+                    {
+                        "actionId": "not-a-real-action",
+                        "expectedCheckpointVersion": unknown_checkpoint["checkpoint_version"],
+                    },
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(
+                    payload["error"]["details"]["reason"],
+                    RecoveryAdmissionReason.INVALID_ACTION.value,
+                )
+
+                malformed, _ = self._failed_item(repository, task, item_id="api-malformed")
+                status, payload = post(
+                    task.task_id,
+                    malformed.item_id,
+                    {"actionId": "retry", "expectedCheckpointVersion": "bad"},
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(
+                    payload["error"]["details"]["reason"],
+                    RecoveryAdmissionReason.INVALID_VERSION.value,
+                )
+
+                overlong, _ = self._failed_item(repository, task, item_id="api-overlong")
+                overlong_checkpoint = checkpoint(task.task_id, overlong.item_id)
+                status, payload = post(
+                    task.task_id,
+                    overlong.item_id,
+                    {
+                        "actionId": "retry",
+                        "expectedCheckpointVersion": overlong_checkpoint["checkpoint_version"],
+                        "note": "x" * 501,
+                    },
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(
+                    payload["error"]["details"]["reason"],
+                    RecoveryAdmissionReason.INVALID_INPUT.value,
+                )
+
+                unexpected_field, _ = self._failed_item(
+                    repository, task, item_id="api-unexpected-field"
+                )
+                unexpected_checkpoint = checkpoint(task.task_id, unexpected_field.item_id)
+                status, payload = post(
+                    task.task_id,
+                    unexpected_field.item_id,
+                    {
+                        "actionId": "retry",
+                        "expectedCheckpointVersion": unexpected_checkpoint["checkpoint_version"],
+                        "actor": "should-not-be-accepted",
+                    },
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(payload["error"]["code"], "invalid_request")
+                self.assertEqual(repository.list_recovery_requests(unexpected_field.item_id), ())
+
+                unexpected_query, _ = self._failed_item(
+                    repository, task, item_id="api-unexpected-query"
+                )
+                unexpected_query_checkpoint = checkpoint(task.task_id, unexpected_query.item_id)
+                status, payload = post(
+                    task.task_id,
+                    unexpected_query.item_id,
+                    {
+                        "actionId": "retry",
+                        "expectedCheckpointVersion": unexpected_query_checkpoint[
+                            "checkpoint_version"
+                        ],
+                    },
+                    query="unexpected=1",
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(payload["error"]["code"], "invalid_request")
+                self.assertEqual(repository.list_recovery_requests(unexpected_query.item_id), ())
+
+                permission, _ = self._failed_item(repository, task, item_id="api-permission")
+                permission_checkpoint = checkpoint(task.task_id, permission.item_id)
+                status, payload = post(
+                    task.task_id,
+                    permission.item_id,
+                    {
+                        "actionId": "retry",
+                        "expectedCheckpointVersion": permission_checkpoint["checkpoint_version"],
+                    },
+                    token="viewer-token",
+                )
+                self.assertEqual(status, 403)
+                self.assertEqual(payload["error"]["code"], "forbidden")
+                self.assertEqual(repository.list_recovery_requests(permission.item_id), ())
+
+                audit = repository.list_security_audit(limit=1000)
+                self.assertTrue(
+                    any(
+                        value.route == "/api/v1/tasks/{task_id}/items/{item_id}/recovery"
+                        and value.action == "recovery-admission"
+                        and value.outcome == "denied"
+                        and value.http_status == 409
+                        for value in audit
+                    )
+                )
+
+    def test_recovery_admission_falsifies_storage_provider_and_durable_side_effects(self) -> None:
+        class StrictStorageSpy:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+            def __getattr__(self, name: str):
+                def forbidden(*args, **kwargs):
+                    self.calls.append((name, args, kwargs))
+                    raise AssertionError(f"unexpected Storage operation: {name}")
+
+                return forbidden
+
+        class StrictProviderSpy:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+            def __getattr__(self, name: str):
+                def forbidden(*args, **kwargs):
+                    self.calls.append((name, args, kwargs))
+                    raise AssertionError(f"unexpected metadata Provider request: {name}")
+
+                return forbidden
+
+        class StrictSnapshotValidator:
+            def __init__(self) -> None:
+                self.storage = StrictStorageSpy()
+                self.provider = StrictProviderSpy()
+                self.calls: list[tuple[str, str]] = []
+
+            def __call__(self, snapshot_id: str, digest: str) -> None:
+                self.calls.append((snapshot_id, digest))
+                if snapshot_id != SNAPSHOT_ID or digest != SNAPSHOT_DIGEST:
+                    raise RuntimeSnapshotUnavailable(
+                        "snapshot unavailable",
+                        revision_id=snapshot_id,
+                        digest=digest,
+                        reason="snapshot_missing",
+                    )
+
+        def lock_rows(repository):
+            rows = repository._connection.execute(
+                "SELECT storage_id, path, task_id, acquired_at FROM file_locks "
+                "ORDER BY storage_id, path, task_id"
+            ).fetchall()
+            return tuple(tuple(row) for row in rows)
+
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                _, task = self._task(repository)
+                item, _ = self._failed_item(repository, task, item_id="zero-mutation")
+                validator = StrictSnapshotValidator()
+                gate = RecoveryAdmissionService(repository, snapshot_validator=validator)
+                checkpoint = gate.checkpoint_service.get(item.item_id, task_id=task.task_id)
+                task_before = repository.get_task(task.task_id)
+                tasks_before = repository.list_tasks()
+                jobs_before = repository.list_jobs()
+                results_before = repository.list_results(task.task_id)
+                locks_before = lock_rows(repository)
+
+                admitted = gate.admit(
+                    task.task_id,
+                    item.item_id,
+                    action_id="retry",
+                    expected_checkpoint_version=checkpoint.checkpoint_version,
+                    actor="operator",
+                )
+
+                self.assertEqual(admitted.action_id, "retry")
+                self.assertEqual(validator.storage.calls, [])
+                self.assertEqual(validator.provider.calls, [])
+                self.assertTrue(validator.calls)
+                self.assertEqual(repository.get_task(task.task_id), task_before)
+                self.assertEqual(repository.list_tasks(), tasks_before)
+                self.assertEqual(repository.list_jobs(), jobs_before)
+                self.assertEqual(repository.list_results(task.task_id), results_before)
+                self.assertEqual(lock_rows(repository), locks_before)
+                self.assertEqual(len(repository.list_results(task.task_id)), len(results_before))
 
     def test_recovery_table_migrates_forward_without_rewriting_existing_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

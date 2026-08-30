@@ -156,6 +156,22 @@ class OperatorUiTests(unittest.TestCase):
         self.assertNotIn("/api/v1/tasks/${encodeURIComponent(id)}/resume", script)
         self.assertIn("Admitted recovery request", script)
         self.assertIn("request.actor", script)
+        self.assertIn(
+            "const admissible = actions.filter(action => action.admissible === true);", script
+        )
+        self.assertIn("if (admissible.length && !data.recovery_request)", script)
+        item_body = _js_function_body(script, "showTaskItem")
+        self.assertIn("admissible.forEach(action => controls.append(actionButton(", item_body)
+        self.assertNotIn("actions.forEach(action => controls", item_body)
+        recovery_body = _js_function_body(script, "confirmTaskRecovery")
+        self.assertIn("Confirm ${label} for checkpoint ${checkpointVersion}?", recovery_body)
+        self.assertIn(
+            "/api/v1/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/recovery",
+            recovery_body,
+        )
+        self.assertIn("actionId: action.action_id", recovery_body)
+        self.assertIn("expectedCheckpointVersion: checkpointVersion", recovery_body)
+        self.assertNotRegex(recovery_body, r"(?:actor|principal)\s*:")
         self.assertIn("mediaLibraryId", script)
         self.assertIn("Run Local setup check", script)
         self.assertIn("Activate checked Draft", script)
