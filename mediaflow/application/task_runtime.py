@@ -8,7 +8,12 @@ from mediaflow.application.media_organizer import (
     MediaOrganizerBatchResult,
     MediaOrganizerItemResult,
 )
-from mediaflow.domain.organizer import ExecutionStatus, OrganizePlan, OrganizePolicy
+from mediaflow.domain.organizer import (
+    ExecutionEffectCertainty,
+    ExecutionStatus,
+    OrganizePlan,
+    OrganizePolicy,
+)
 from mediaflow.domain.task_persistence import (
     FileOperationLockRepository,
     PersistentResultRecord,
@@ -435,18 +440,12 @@ class PersistentTaskCoordinator:
 
 
 def _effect_evidence(execution) -> tuple[str, tuple[str, ...]]:
-    """Translate the executor's explicit outcome into durable, non-inferred evidence."""
+    """Persist only executor-owned effect evidence, never status/error inference."""
     if execution is None:
         # A failure before planning/execution is known to have no mutation in this invocation.
         return "none", ()
-    if execution.status in {ExecutionStatus.DRY_RUN, ExecutionStatus.SKIPPED}:
-        return "none", ()
-    if execution.status is ExecutionStatus.SUCCESS:
-        return "verified_complete", ()
-    if execution.rollback_status.value == "success":
-        return "none", ()
-    if execution.status is ExecutionStatus.PARTIAL or execution.rollback_status.value == "partial":
-        return "attempted_unverified", ("mutation_outcome",)
-    if execution.completed_operations or execution.created_directories:
-        return "attempted_unverified", ("mutation_outcome",)
-    return "none", ()
+    try:
+        certainty = ExecutionEffectCertainty(execution.effect_certainty)
+    except (AttributeError, ValueError):
+        return "unknown", ()
+    return certainty.value, tuple(execution.uncertain_effects)
