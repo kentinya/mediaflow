@@ -1,13 +1,13 @@
-# Task 23.2 — Version-bound single-item recovery admission with preserved evidence and audit
+# Task 23.3 — Single-item safe recovery continuation
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to the
 current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 23.2
+Task ID: 23.3
 Parent Slice: 23 — Stage-Aware Per-Item Recovery
-Status: PASS
-Task Base: f196da8563b1db60659b88ab17a2cfcaabea167c
+Status: PLANNED
+Task Base: e9a68986d50ec8c0dfb651738574f48a5c8d05bf
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,443 +15,268 @@ Planner / Reviewer: B
 
 ## Goal
 
-Make an operator's chosen recovery action for **one** media TaskItem become a durable, auditable
-request that is bound to the exact Processing Checkpoint version, the item's original source scope
-and its parent Task's pinned configuration snapshot — admitted through **one** shared gate that
-accepts only what the stage-aware decision already permits, never erases prior failure evidence,
-never elevates execute / overwrite / delete / cleanup authority, and rejects stale or duplicate
-requests. Submittable from the authenticated API and the Operator Web checkpoint drill-in with
-explicit confirmation.
+Turn one admitted recovery request into a durable, bounded continuation that actually continues the
+item: it re-enters the existing production pipeline at the checkpoint-supported boundary for exactly
+that one TaskItem's original source scope under the item's pinned configuration snapshot, produces a
+new linked Task/TaskItem/Result while the original item keeps its own record and evidence, resolves
+the admitted request to a terminal state, and reports queued / running / completed / failed /
+cancelled state, bounded secret-free failure evidence and one concrete next action identically from
+API and Operator Web.
 
-Advances Slice Required Outcomes **RO-2** (transactional consistency, preserved prior evidence,
-stale/concurrent rejection, bounded secret-free audit of who requested which recovery action) and
-**RO-4** (admission bound to the exact TaskItem/checkpoint version, original source scope and pinned
-configuration, with no authority upgrade), completes the admission half of **RO-3** (the same shared
-decision now also gates the write path, so no surface can act on an action the decision refuses),
-and delivers the single-item write half of **RO-6** (API and Operator Web submit the same action,
-confirmation, outcome and next step).
+The continuation is analysis-only: it runs with execution disabled, grants no execute, overwrite,
+delete, source-cleanup or rollback authority, inherits no historical authority, and performs zero
+Storage mutation.
 
-This is an implementation unit inside Slice 23, not a smaller Slice: it admits and records a request
-only. It executes nothing, re-enters no pipeline and produces no new Result.
+Primary Required Outcome: RO-7 (safe continuation re-enters the production pipeline at a
+checkpoint-supported boundary and produces a new linked Result, with zero-mutation analysis and
+OrganizerExecutor-only mutation). This Task also completes the continuation halves of RO-3 (the
+stage-aware decision is now consumed, not merely offered), RO-2 (continuation transitions are
+transactionally consistent, preserve prior evidence, and reject stale/duplicate/concurrent requests)
+and RO-6 (the surfaces expose the linked new Task/Result and a concrete next action after reload).
 
 ## Why This Task Exists
 
-Actual gaps found in code, not in documents:
+Task 23.1 produced the durable checkpoint projection and Task 23.2 produced the version-bound
+admission gate. Admission is where the product promise currently stops, and the code says so:
 
-1. **The existing item retry path contradicts the checkpoint it should obey.**
-   `mediaflow/application/task_retry.py:64` `request_item` admits any item whose status is `FAILED`
-   **or `PARTIAL`**, with no checkpoint-version binding, no effect-certainty gate and no pinned-
-   snapshot validation. Task 23.1 makes a `PARTIAL` / `attempted_unverified` item report
-   `retry_safety` unsafe/unknown with only `investigate` permitted, yet this write path will still
-   mark that exact item `PENDING`. The Slice Safety Invariant that uncertain effects are never
-   labelled retry-safe or replayed is therefore enforced on the read side only.
-2. **It is reachable from the API today.** `POST /api/v1/files/{fileId}/re-plan`
-   (`mediaflow/interfaces/service_api.py:1177`, `SUBMIT_DRY_RUN`) calls
-   `FileReplanRequestService.request` → `TaskRetryRequestService.request_item`, so the unsafe
-   admission above is live over HTTP, not only in the CLI.
-3. **Prior evidence is destroyed on admission.** `request_task_retries`
-   (`mediaflow/infrastructure/sqlite_runtime.py:394`) issues `UPDATE task_items SET status=?,
-   stage=?, updated_at=?, error=NULL`, and `ManualIgnoreService.ignore`
-   (`mediaflow/application/manual_ignore.py:56`) likewise rewrites the item with `error=None`. RO-2
-   requires prior evidence to be preserved across recovery attempts; today the failure text an
-   operator was just shown is deleted by the act of requesting recovery.
-4. **No admission identity exists.** `TaskRetryRequestDecision`
-   (`mediaflow/domain/task_retry.py:11`) records `decision_id`, task, item, time, actor and note —
-   but not which checkpoint version was accepted, which action was chosen, or which configuration
-   snapshot the request is pinned to. Nothing can reject a decision made against a checkpoint that
-   has since changed, and nothing proves the request did not follow a newer Active configuration.
-   The `checkpoint_version` digest that Task 23.1 established has no consumer.
-5. **No concurrency or duplicate rule.** `request_task_retries` re-checks only `status IN
-   ('failed','partial')`, so two concurrent operators (or one double-submit) create two audit rows
-   for the same item, and no table prevents a second active request.
-6. **`ignore` is a production path the shared decision never offers.** `ManualIgnoreService` and
-   `manual_ignore_audit` exist and the Slice acceptance criteria require ignored items to be
-   distinguishable, but `_actions` in `mediaflow/application/processing_checkpoint.py` emits only
-   `resolve_<kind>`, `investigate`, `retry` and `resume`. A waiting item therefore has no permitted
-   way to be dropped, while the unreviewed CLI path can still drop it.
-7. **Neither surface can act.** The Task 23.1 API document and Web drill-in render permitted action
-   labels but expose no submission, so RO-6's action/confirmation/outcome half is unimplemented for
-   Task items.
+1. `mediaflow/domain/recovery.py:16-22` — `RecoveryRequestStatus` declares `COMPLETED`, `CANCELLED`
+   and `REJECTED`, but its own docstring records that "only pending is active in this Task". Nothing
+   in the repository reads the `recovery_requests` table to do work. An admitted request is inert, so
+   the operator's stage-aware decision never continues the item and the request stays active forever,
+   blocking any fresh decision through the duplicate-active-request rule.
+2. `mediaflow/application/recovery_admission.py:222-227` — `_next_action("retry")` tells the operator
+   to "inspect the admitted request, then run the supported single-item recovery". That single-item
+   recovery does not exist. The Slice exists precisely because "Retry is not equivalent to recovery";
+   right now the recovery journey ends at a promise.
+3. `mediaflow/infrastructure/sqlite_runtime.py:600-633` — `_admit_retry_locked` flips the TaskItem
+   back to a pending/`task_retry_requested` state. Whether that item is ever reprocessed depends on
+   somebody separately running a whole-library CLI workflow, and no new Result is ever linked back to
+   the original item, so the Slice requirement for "new auditable Task/TaskItem/Result linkage" is
+   unmet.
+4. The only per-item continuation that exists is metadata-correction-specific:
+   `mediaflow/application/metadata_correction_continuation.py` (submit → `AutomationJob` + durable
+   continuation row + stale-version/existing-continuation conflicts) with
+   `AutomationCommand.FILE_METADATA_CORRECTION` (`mediaflow/domain/automation.py:13`) and the worker
+   `_run_metadata_correction_continuation` (`mediaflow/final_cli.py:2817-2960`). It proves the safe
+   shape — pinned-snapshot validation, bounded child Task with `item_limit=1` and
+   `execute_authorized=False`, `process_file(..., execute=False)`, `coordinator.finish(...)`,
+   cancel/fail evidence — but it keys on a file id and a metadata correction decision and cannot
+   serve a stage-aware TaskItem recovery bound to a `checkpoint_version`.
+5. `mediaflow/final_cli.py:2751-2790` — `_run_queued_workflow` dispatches every non-metadata command
+   by re-invoking a whole CLI workflow with a `--limit`. That cannot be bound to one TaskItem, one
+   Storage-relative source, or one checkpoint version, so it is not a safe recovery executor.
+6. `mediaflow/interfaces/service_api.py:1498-1548` — the recovery POST returns the admitted request
+   plus `sideEffects: "none"` and advisory text. No surface exposes a continuation, its Job, its new
+   Task/Result or its failure, so RO-6's "linked new Task/Result and concrete next action after
+   reload" is unimplemented and the Web drill-in has nothing to render past the admitted request.
 
-This is the largest reasonable next unit and it must precede continuation: RO-7 continuation may
-only start from an admitted, version-bound request, and RO-5 batch recovery is defined as the
-bounded composition of independent single-item admissions. Building continuation or batch first
-would force an ad-hoc admission identity and would leave the live unsafe `PARTIAL` retry path in
-place. It is also the natural pairing with Task 23.1: the same shared decision now governs both
-reading and writing.
+This is the largest reasonable next unit. RO-5's bounded batch recovery is defined by the Contract as
+bounded composition of independent single-item recoveries, and its parent/continuation summary
+reconciliation must reconcile per-item continuation outcomes; building batch first would require
+inventing a throwaway per-item outcome model and then rewriting it. Continuation pairs directly with
+the admission gate reviewed in 23.2 — same shared decision, now consumed — and stays inside the
+Slice: it adds no new mutating surface and no new authority path.
 
 ## Implementation Scope
 
 ```text
-Domain → Persistence (+ forward migration) → Application → API → Web → Tests
+Domain → Persistence (+ forward migration) → Application → API → Web → CLI worker → Tests
 ```
 
-1. **Domain** — a recovery-request contract: request identity, task/item identity, the requested
-   action id, the bound checkpoint version, the pinned configuration snapshot id and digest, the
-   original source scope (source storage id and Storage-relative source path), actor, requested
-   time, request status, optional bounded note, and the explicit authority statement the request
-   carries (never execute, overwrite, delete, source-cleanup or rollback). Add the bounded rejection
-   reasons admission can return (action not permitted, stale checkpoint version, duplicate active
-   request, snapshot unavailable, insufficient authority, unknown item, item/Task mismatch). Extend
-   the stage-aware action contract with `ignore` for items whose blocker is a pending review, and
-   mark which permitted actions are admissible here versus which remain links into an existing
-   journey (`resolve_*`) or a non-admitting outcome (`investigate`). `resume` stays Task-scoped and
-   is not admissible in this Task.
-2. **Persistence** — one additive bounded table for recovery requests with a `SCHEMA_VERSION` bump,
-   a uniqueness rule that prevents a second active request for the same item, and an item-scoped
-   bounded read joined into the existing single checkpoint context read. Admission commits the
-   request row, the action-specific existing audit row and the item transition in **one**
-   transaction, and the item transition must **preserve** the existing `error` evidence instead of
-   nulling it. Forward-only migration: pre-existing rows and databases open unchanged, and no legacy
-   history is rewritten or fabricated.
-3. **Application** — one shared admission service that reads the checkpoint through the Task 23.1
-   projection, verifies the requested action against `permitted_action_ids`, compares the caller's
-   expected checkpoint version against the current one, validates the parent Task's pinned snapshot
-   through the existing `RuntimeSnapshotUnavailable` reason codes, then delegates the durable state
-   change to the **existing** per-action production paths (task retry request, manual ignore) rather
-   than writing item state itself. `TaskRetryRequestService.request_item` and
-   `ManualIgnoreService.ignore` must stop being independently reachable admission points: every
-   caller, including `FileReplanRequestService`, goes through the gate. No Storage operation, no
-   Provider request, no Job, no Task, no Result, no lock.
-4. **API** — a `POST` recovery endpoint under the existing Task-item path that accepts the action
-   id, the expected checkpoint version and an optional bounded note under an existing write
-   permission; it returns the admitted request, the bound checkpoint version and a concrete next
-   action, and fails closed with existing error conventions for a refused action, a stale version, a
-   duplicate active request, an unavailable snapshot, insufficient permission, unknown ids,
-   Task/item mismatch and unexpected input. `GET /api/v1/tasks/{taskId}/items/{itemId}` gains the
-   bounded admitted request and its audit; the Task-detail item summary gains bounded evidence that
-   a recovery request is pending.
-5. **Web** — the Task-item drill-in gains, for permitted admissible actions only, an explicit
-   confirmation that names the action and the bound checkpoint version, submits it through the API,
-   and after reload shows the durable admitted request, its actor and time, and the concrete next
-   action. A refused action is never rendered as a submittable control, and no label or decision is
-   recomputed in the browser.
-6. **Tests** — as specified under Required Tests.
+1. **Domain** — a recovery continuation contract: continuation id, admitted request id, source
+   task/item ids, the bound `checkpoint_version`, the pinned snapshot id/digest, the re-entry boundary
+   derived from the checkpoint (which supported stage the continuation restarts from, plus the
+   explicit refusal when the checkpoint supports no boundary), a status lifecycle
+   (`queued → running → completed | failed | cancelled`), the linked new task id and new result id,
+   bounded secret-free failure evidence (category, what is durable, what is safe to repeat, one
+   concrete next action) and an analysis-only authority statement. Terminal transitions resolve the
+   parent `RecoveryRequest` to a terminal `RecoveryRequestStatus` so the item can be decided again.
+   Extend the stage-aware action contract only as far as exposing the continuation action and the
+   post-continuation next action requires.
+2. **Persistence** — one additive bounded table for recovery continuations plus the index that makes
+   the item-scoped read cheap, with a forward-only `SCHEMA_VERSION` bump. At most one active
+   continuation per admitted request. Submission atomically writes {continuation row +
+   `AutomationJob` + request status transition} inside one transaction under the existing
+   maximum-active-Jobs bound; job → new-Task and continuation → new-Result binding and terminal
+   transitions are equally atomic and never rewrite the original TaskItem error or its existing
+   Result rows. The bounded continuation view joins into the existing checkpoint context read.
+3. **Application** — a continuation service pair mirroring the reviewed metadata-correction
+   precedent. A submit service reads the admitted request and the checkpoint through the 23.1
+   projection and refuses, with bounded reasons, when the request is not active, the bound checkpoint
+   version has moved, the pinned snapshot is missing or unresolvable, the checkpoint supports no
+   continuation boundary, a continuation already exists, or the Job queue bound is reached. A worker
+   service (`prepare` / `started` / `finish` / `failed` / `cancelled`) validates that the worker's
+   resolved configuration snapshot equals the pinned pair, creates a bounded Task
+   (`item_limit=1`, `execute_authorized=False`, `require_configuration_snapshot=True`), re-enters the
+   existing production pipeline for exactly that item's Storage-relative source, links the new
+   Task/Result to the original item and records bounded failure evidence. No new pipeline, no policy
+   re-decision, no Storage mutation, no reuse of historical authority.
+4. **API** — a continuation submit route on the existing Task-item recovery path under an existing
+   write permission, and bounded continuation state added to the Task-item checkpoint read and the
+   Task-detail item summary (status, job id, new task/result ids, failure evidence, next action).
+   Fail closed with the existing response conventions for unauthenticated, insufficient permission,
+   unknown Task/item/request, item/Task mismatch, inactive request, stale version, existing
+   continuation, unavailable snapshot, queue full, unsupported boundary, malformed body and
+   unexpected fields.
+5. **Web** — the Task-item drill-in submits the continuation with an explicit confirmation naming the
+   action, the bound checkpoint version and the analysis-only authority, and after reload renders the
+   durable continuation status, the job/new Task/new Result links, the bounded failure evidence and
+   the concrete next action strictly from the API document, recomputing no decision and never showing
+   a generic Retry label.
+6. **CLI worker** — `_run_queued_workflow` dispatches exactly one new `AutomationCommand` to the
+   recovery continuation handler with the same snapshot-mismatch, cancellation, failure and
+   secret-free error behavior as the reviewed metadata-correction handler, plus an administrative
+   read of a Task item's continuation.
+7. **Tests** — as listed under Required Tests.
 
-Explicitly frozen in this Task: OrganizerExecutor and all Storage mutation behavior; the Task 23.1
-checkpoint document fields other than the additive recovery-request/pending-request evidence; the
-`ignore` production semantics inside `ManualIgnoreService` other than evidence preservation and the
-gate; Recognition, Metadata, Naming, Classification and Planner policy ownership; the Files/Media
-journey beyond routing its existing re-plan call through the gate; `SLICE.md` Contract sections;
-`docs/roadmap.md`; `docs/progress.md`.
+Explicitly frozen: OrganizerExecutor internals and all Storage mutation behavior; the 23.1 checkpoint
+fields other than the additive continuation view; the 23.2 admission semantics other than terminal
+request resolution; Recognition / Metadata / Naming / Classification / Planner policy ownership; the
+Files/Media metadata-correction continuation behavior; `ExecutionAuthorizationService` issuing and
+organize submission; `SLICE.md`; `docs/roadmap.md`; `docs/progress.md`.
 
 ## Acceptance Criteria
 
-- [ ] Exactly one shared gate admits a per-item recovery request. An action that the Task 23.1
-      stage-aware decision does not list for that exact checkpoint is refused with a bounded reason
-      and changes no durable state, from every surface and for every caller.
-- [ ] A `PARTIAL`, `attempted_unverified` or `unknown`-certainty item cannot be admitted for replay
-      through any path, including `POST /api/v1/files/{fileId}/re-plan` and the CLI; the refusal
-      states why and investigation remains available.
-- [ ] `SUCCESS`, `DRY_RUN`, `SKIPPED` and `IGNORED` items cannot be admitted for replay at all.
-- [ ] An admitted request records the requested action, the bound checkpoint version, the item's
-      original source storage id and Storage-relative source path, the parent Task's pinned
-      configuration snapshot id and digest, the actor and the time; it carries no execute,
-      overwrite, delete, source-cleanup or rollback authority, and admission never consults or
-      substitutes the current Active configuration.
-- [ ] A request whose expected checkpoint version does not match the current one is rejected as
-      stale, with the current version returned so the operator can re-read and decide again; nothing
-      is admitted and no evidence is lost.
-- [ ] A second active request for the same item is rejected as a duplicate rather than creating a
-      second audit row or a second durable request; the existing request is returned.
-- [ ] Admission of an item whose parent Task has no pinned snapshot, or whose snapshot is no longer
-      resolvable, fails closed using the existing bounded reason codes.
-- [ ] Prior failure evidence survives admission: the item's recorded error and its persisted Result
-      rows, including `effect_certainty` and `uncertain_effects`, are unchanged by requesting
-      recovery. No path nulls the item error as part of admission.
-- [ ] Request, action audit and item transition commit atomically. A failure in any part leaves no
-      partially admitted request, no orphan audit row and no transitioned item.
-- [ ] A waiting item whose blocker is a pending review can be admitted for `ignore`, and its
-      resulting `IGNORED` state and audit are visible in its checkpoint; a waiting item with no
-      pending review cannot.
-- [ ] `POST` on the Task-item recovery endpoint requires an existing write permission; an
-      unauthenticated request, an insufficiently permissioned request, an unknown Task or item, a
-      Task/item mismatch, an unknown action id, a malformed expected version, an over-long note and
-      unexpected fields or query parameters all fail closed without leaking existence details beyond
-      current conventions.
-- [ ] The checkpoint document and the Task-detail item summary expose the admitted request and its
-      audit; after reload, API and Operator Web show the same durable request, actor, time, bound
-      version and concrete next action.
-- [ ] Operator Web submits only actions the API document permits, requires explicit confirmation
-      naming the action and the bound checkpoint version, and renders no recomputed decision or
-      generic Retry label.
-- [ ] Admitting a request performs zero Storage operations, zero metadata Provider requests and
-      creates zero Tasks, Jobs, Results or locks, and executes no continuation.
-- [ ] A database created before this Task migrates forward with all prior rows preserved, and a
-      database already at the new version still opens. Schema-version expectations in the affected
-      test modules are updated to the new version while keeping their migrate-from-old-version
-      assertions.
-- [ ] A `RecognitionType C` item using NamingPolicy A and ClassificationPolicy A still reports
-      RecognitionType C after its recovery request is admitted.
+- [ ] An active admitted recovery request whose checkpoint supports continuation can be continued
+      exactly once. The continuation is durable, bound to the same item, the same
+      `checkpoint_version`, the same original Storage-relative source scope and the same pinned
+      configuration snapshot pair, and carries an analysis-only authority statement.
+- [ ] The continuation re-enters the existing production pipeline for exactly that one TaskItem under
+      the pinned snapshot and produces a new Task (`item_limit=1`, `execute_authorized=False`) plus a
+      new Result linked back to the original item; the original TaskItem row, its error and its
+      existing Result rows (including `effect_certainty` and `uncertain_effects`) are unchanged.
+- [ ] Siblings are untouched: the new Task contains exactly one item, and every sibling TaskItem and
+      Result row of the original Task is identical before and after the continuation. Successful,
+      DryRun, skipped and ignored items are never reprocessed.
+- [ ] A continuation never executes and never inherits authority: execution is disabled, neither the
+      new Task nor the Job is execute-authorized, an execute-shaped continuation request is refused
+      with a bounded reason plus the concrete existing authorized-organize next action, and zero
+      Storage mutation occurs — falsified by patching the real production Storage/Provider
+      construction seams and by an on-disk tree snapshot of the item's source and destination roots
+      taken before and after a real continuation run.
+- [ ] Uncertain effects are never continued: a `PARTIAL` / `attempted_unverified` / `unknown` item has
+      no continuable admitted request, a direct continuation attempt is refused with a bounded reason,
+      and investigation remains the offered action.
+- [ ] Stale, duplicate and inactive: a continuation whose bound checkpoint version no longer matches
+      the current checkpoint is refused and the current version is returned; a second continuation for
+      the same admitted request is refused and the existing continuation is returned; a request that is
+      already terminal cannot be continued.
+- [ ] Snapshot integrity: submission refuses a missing or unresolvable pinned snapshot with the
+      existing bounded reason codes, and the worker refuses to run when its resolved configuration
+      snapshot id/digest pair does not equal the continuation's pinned pair. Neither path substitutes
+      the current Active configuration.
+- [ ] Terminal outcomes are durable and reconciled: completed / failed / cancelled continuations record
+      the linked new Task and Result where one exists, resolve the parent request to a terminal status
+      so the item can be decided again, leave the source item diagnosable, and expose bounded
+      secret-free evidence plus one concrete next action. A failure mid-submission or mid-transition
+      leaves no partially linked continuation, no orphan Job and no lost original evidence.
+- [ ] Queue and concurrency bounds hold: the continuation Job respects the existing maximum-active-Jobs
+      bound, a queue-full submission is refused without creating a continuation or a Job, and two
+      concurrent submissions for the same request produce exactly one continuation and one Job.
+- [ ] API parity and fail-closed behavior: continuation submit requires an existing write permission
+      and returns bounded errors for unauthenticated, insufficient permission, unknown Task/item/
+      request, item/Task mismatch, inactive request, stale version, existing continuation, unavailable
+      snapshot, queue full, unsupported boundary, malformed body and unexpected fields; the Task-item
+      checkpoint read and the Task-detail item summary expose the same bounded continuation values
+      before and after reload.
+- [ ] Operator Web parity: the drill-in submits only fields the API accepts, requires explicit
+      confirmation naming the action, the bound checkpoint version and the analysis-only authority, and
+      after reload renders the continuation status, job/new Task/new Result links, bounded failure
+      evidence and next action from the API document without recomputing a decision, without a generic
+      Retry label and without submitting an actor or any authority field.
+- [ ] Migration: a database created before this Task migrates forward with all pre-existing Task,
+      TaskItem, Result and recovery-request rows preserved, and a database already at the new schema
+      version still opens. Schema-version expectations are updated while migrate-from-older-version
+      assertions are retained.
+- [ ] A RecognitionType C item using NamingPolicy A and ClassificationPolicy A still reports
+      RecognitionType C in the continuation's new Result.
 - [ ] No secret, token, credential, authorization header, cookie, private endpoint, absolute
-      user-private path or raw exception text appears in the request record, the API response, the
-      audit or the logs.
+      user-private path or raw exception text appears in the continuation record, API responses, audit
+      entries, CLI output or logs.
 - [ ] Test Level T4 passes with actual recorded evidence.
 - [ ] The checkpoint contains only this Task and is coherent and reviewable.
 
 ## Required Tests
 
-Focused (new):
+Focused (new suite):
 
-- `python -m unittest tests.test_processing_recovery_admission` — the shared gate across permitted
-  and refused actions for every relevant status, the `PARTIAL`/unverified replay refusal, stale
-  version rejection, duplicate active request rejection, missing and unresolvable pinned snapshot,
-  evidence preservation (item error plus Result `effect_certainty` / `uncertain_effects` unchanged),
-  atomic commit of request + audit + item transition, `ignore` admission with and without a pending
-  review, authority statement, RecognitionType C preservation, and a zero-mutation falsification
-  test using strict Storage/Provider spies.
+```text
+python -m unittest tests.test_recovery_continuation
+```
 
-Related (extend existing suites, do not weaken existing assertions):
+covering submission and every refusal, the worker lifecycle (prepare / started / finish / failed /
+cancelled), pinned-snapshot mismatch, single-item scope with sibling row identity, non-execute
+authority plus zero-Storage-mutation falsification through the real production seams and an on-disk
+tree snapshot, terminal parent-request resolution, transactional atomicity, the Job queue bound,
+RecognitionType C preservation and secret-free bounded evidence.
 
-- `tests/test_processing_checkpoint.py` — the decision now offers `ignore` where applicable and the
-  checkpoint document/summary carry the admitted request; existing assertions stay intact.
-- the existing task-retry, manual-ignore and File re-plan suites — the unsafe admission paths are
-  now gated, evidence is preserved, and the previously permitted `PARTIAL` retry is refused.
-- persistence/migration coverage for the additive table and index, forward migration from a
-  pre-existing database, atomicity, and the bounded item-scoped read.
-- API coverage for the new `POST` endpoint and the extended read payloads: success, permissions,
-  unauthenticated rejection, unknown ids, Task/item mismatch, refused action, stale version,
-  duplicate request, unavailable snapshot, input validation and payload boundedness.
-- Operator Web coverage asserting the confirmation, the submitted action, and the post-reload
-  admitted-request rendering come from the API document.
-- schema-version expectations in the affected persistence/API/configuration test modules.
+Related suites (existing assertions must remain intact):
+
+```text
+python -m unittest tests.test_processing_checkpoint tests.test_processing_recovery_admission \
+  tests.test_operator_ui
+```
+
+plus the automation Job/worker suites (new command dispatch, snapshot fail-closed, cancellation), the
+persistence/migration suites for the additive table, index and schema version, and the service API
+suites for the new route and the extended reads.
 
 Quality gates (T4):
 
-- `python -m unittest discover -s tests`
-- `ruff format --check .`
-- `ruff check .`
-- `python -m compileall -q mediaflow tests scripts`
-- `python -m pip check`
-- `mediaflow --config config/strategy.example.json config validate`
-- `mediaflow --config config/mediaflow.phase13.2.example.json config validate`
-- repository ffprobe / ffmpeg audit
-- `git diff --check` and a diff scan confirming no secret, token or private path is introduced and
-  that `config/alist.json` remains untracked and unstaged
+```text
+python -m unittest discover -s tests
+ruff format --check .
+ruff check .
+python -m compileall -q mediaflow tests
+pip check
+mediaflow config validate  (both example configurations)
+ffprobe/ffmpeg audit over mediaflow/, tests/, scripts/
+git diff --check <Task Base>..HEAD  + private-file scan (config/alist.json stays untracked)
+```
 
-Packaging and wheel smoke evidence stays concentrated at SLICE FINAL. No real SMB / OpenList / S3 /
-TMDB service and no production data may be used.
+Packaging/wheel smoke remains a Slice Final gate. No test may require a real SMB / OpenList / S3 /
+TMDB service or production data.
 
 ## Non-goals
 
-- Executing a continuation, re-entering the pipeline, or producing a new linked Result (next Task in
-  this Slice).
-- Bounded batch recovery, sibling independence and parent/continuation summary reconciliation (later
-  Task).
-- Item-level `resume` of a paused Task, which remains a Task-scoped continuation.
-- Any new Files/Media journey behavior beyond routing the existing re-plan call through the shared
-  gate.
-- The Files/Media manual-organize journey, Metadata Provider switching, and scheduled unattended
-  real organization (Slices 24 and 25, explicitly deferred).
-- Automatic replay or compensation of uncertain mutations, historical cross-run rollback, and
-  distributed Task leases (explicitly deferred).
-- Granting, renewing or elevating execute, overwrite, delete, source-cleanup or rollback authority.
-- Any change to Required Outcomes, Required Surfaces, Safety Invariants, the Slice Base, `SLICE.md`
-  Contract sections, `docs/roadmap.md` or `docs/progress.md`.
-- Refactors, copy polish or P2 cleanup not required by these Acceptance Criteria, including the
-  non-blocking items recorded in the Task 23.1 review.
+- Bounded batch recovery, sibling-independence summaries and parent/continuation summary
+  reconciliation (RO-5 and the batch half of RO-6) — the next Task.
+- Any real executing or mutating recovery path, item-scoped authorized organize, and any new
+  execute-authority issuing path. The continuation stays analysis-only and points at the existing
+  authorized organize journey; manual organize execution is Slice-24 deferred work.
+- Item-level resume of a paused Task (resume remains Task-scoped).
+- Automatic replay or compensation of uncertain mutations, cross-run rollback, distributed leases and
+  remote destination precheck (Contract deferrals).
+- Any change to Required Outcomes, Required Surfaces, Safety Invariants, Slice Base, `SLICE.md`,
+  `docs/roadmap.md` or `docs/progress.md`.
+- Refactors, copy polish or P2 cleanup not required by these Acceptance Criteria.
 
 ## Developer Completion Report
 
 ### Changed Files
-- `mediaflow/application/file_replan_request.py`
-- `mediaflow/application/manual_ignore.py`
-- `mediaflow/application/processing_checkpoint.py`
-- `mediaflow/application/recovery_admission.py`
-- `mediaflow/application/task_retry.py`
-- `mediaflow/domain/processing_checkpoint.py`
-- `mediaflow/domain/recovery.py`
-- `mediaflow/domain/task_persistence.py`
-- `mediaflow/final_cli.py`
-- `mediaflow/infrastructure/sqlite_runtime.py`
-- `mediaflow/interfaces/operator_ui.py`
-- `mediaflow/interfaces/service_api.py`
-- `tests/test_processing_recovery_admission.py`
-- affected retry/ignore/re-plan/checkpoint/API/UI/configuration schema-version test modules
 
 ### Implemented
-- Added one shared, version-bound admission gate for single-item `retry` and pending-review
-  `ignore` requests. The gate reuses the stage-aware checkpoint decision, rejects stale,
-  duplicate, unsafe, terminal, mismatched, or unavailable-snapshot requests, and performs no
-  continuation or media operation.
-- Persisted bounded recovery requests with the checkpoint version, original Storage-relative
-  source identity, pinned configuration identity, actor/time, explicit no-mutation authority,
-  next action, and request audit. Request, action-specific audit, and item transition commit in
-  one SQLite transaction with an active-request uniqueness guard.
-- Preserved prior TaskItem error and Result effect-certainty evidence across retry/ignore admission;
-  `PARTIAL` and uncertain effects are never admitted for replay. Added stage-aware admissible
-  `ignore` for pending recognition/metadata/metadata-correction reviews.
-- Routed Task-item API, Operator Web, File re-plan, and CLI recovery entry points through the
-  shared gate. API/Web expose the same bounded request/checkpoint evidence and explicit confirmation
-  without granting execute, overwrite, delete, source-cleanup, or rollback authority.
-- Added forward schema migration and regression coverage for admission identity, atomicity,
-  duplicate/stale handling, snapshot fail-closed behavior, evidence preservation, path/secret
-  safety, API/UI parity, and RecognitionType C preservation.
 
 ### Tests and Results
-- `.venv/bin/python -m unittest tests.test_processing_recovery_admission` — PASS (10 tests).
-- `.venv/bin/python -m unittest tests.test_processing_recovery_admission tests.test_processing_checkpoint` — PASS (20 tests).
-- `.venv/bin/python -m unittest tests.test_manual_ignore tests.test_manual_ignore_batch tests.test_file_replan_request tests.test_recognition_retry tests.test_task_retry tests.test_operator_ui` — PASS (55 tests).
-- `.venv/bin/python -m unittest discover -s tests` — PASS (894 tests, 7 skipped; existing ResourceWarning diagnostics only).
-- `.venv/bin/ruff format --check .` — PASS (317 files already formatted).
-- `.venv/bin/ruff check .` — PASS.
-- `python3 -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/python -m pip check` — PASS (no broken requirements).
-- `.venv/bin/mediaflow --config config/strategy.example.json config validate` — PASS.
-- `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
-- ffprobe/ffmpeg repository audit — PASS (no references in `mediaflow/`, `tests/`, or `scripts/`).
-- `git diff --check` — PASS.
 
 ### Decisions
-- The checkpoint projection is the single source of permitted/admissible action truth; linked
-  resolution journeys remain non-admitting and Task-scoped resume remains non-admissible here.
-- Recovery admission pins the presented checkpoint and existing Task configuration snapshot, then
-  reprojects and rechecks both under `BEGIN IMMEDIATE` before any transition. No current Active
-  configuration is substituted.
-- Retry is admitted only for a failed item with verified no-effect certainty and a resolvable
-  pinned snapshot. Ignore is limited to a matching pending manual review. Both transitions retain
-  the prior item error and all Result evidence.
-- Existing batch retry/ignore APIs remain outside this single-item continuation scope; CLI batch
-  entry points use the shared gate when admitting their individual candidates.
 
 ### Remaining In-Slice Work
-- Continuation execution, bounded batch recovery semantics, sibling independence, and
-  parent/continuation summary reconciliation remain outside this Task and are not started.
 
 ### Risks / Deviations
-- No real SMB/OpenList/S3/TMDB service, credentials, or production data were used.
-- Seven tests remain skipped by their existing conditional gates; the full suite otherwise passed.
-- The full suite emitted existing SQLite `ResourceWarning` diagnostics; no test failed and no new
-  warning gate was introduced.
-
-### Correction for B Review
-- Extended the API recovery-route tests across authentication, permission, not-found, mismatch,
-  refusal, stale, duplicate, unavailable-snapshot, invalid-action/version/input, unexpected
-  field/query, bounded error details, and denial-audit paths.
-- Added strict Storage and metadata Provider boundary spies plus Task/Job/Result/file-lock
-  snapshots to falsify mutation or durable work creation during admission.
-- Restored focused Operator Web assertions for admissible-only controls, action/version
-  confirmation, exact recovery POST body, and the narrowed no-actor-submission guard.
-
-### Correction Tests and Results
-- `.venv/bin/python -m unittest tests.test_processing_recovery_admission tests.test_operator_ui` — PASS (41 tests).
-- `.venv/bin/python -m unittest discover -s tests` — PASS (896 tests, 7 skipped; existing ResourceWarning diagnostics only).
-- `.venv/bin/ruff format --check .` — PASS (317 files already formatted).
-- `.venv/bin/ruff check .` — PASS.
-- `python3 -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/python -m pip check` — PASS (no broken requirements).
-- Both example `config validate` commands — PASS.
-- ffprobe/ffmpeg repository audit — PASS (no references in `mediaflow/`, `tests/`, or `scripts/`).
-- `git diff --check` — PASS.
-
-### Correction for B Review (round 2)
-- Replaced the unreachable `StrictStorageSpy` / `StrictProviderSpy` doubles with strict patches on
-  the real production seams for the duration of one real admission:
-  `RuntimeConfiguration.create_storages` (Storage construction) and the metadata provider registry
-  factory, both raising `AssertionError` on access. The two dead `validator.storage.calls` /
-  `validator.provider.calls` assertions were dropped.
-- Drove the falsification admission through the API recovery `POST` route so the wired seams cover
-  the transport path, and kept the reachable snapshot-validator recording plus the durable-work
-  snapshots (Task, Task list, Job list, Result list, file locks).
-- Added an on-disk tree snapshot (relative path, size, mtime) of the item's source and destination
-  roots before and after admission, asserted unchanged apart from the runtime SQLite file.
-
-### Correction Tests and Results (round 2)
-- `.venv/bin/python -m unittest tests.test_processing_recovery_admission` — PASS (12 tests).
-- `.venv/bin/python -m unittest tests.test_processing_recovery_admission tests.test_processing_checkpoint tests.test_operator_ui` — PASS (51 tests).
-- `.venv/bin/python -m unittest discover -s tests` — PASS (896 tests, 7 skipped; existing
-  ResourceWarning diagnostics only).
-- `.venv/bin/ruff format --check .` — PASS (317 files already formatted).
-- `.venv/bin/ruff check .` — PASS.
-- `python3 -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/python -m pip check` — PASS (no broken requirements).
-- Both example `config validate` commands — PASS.
-- ffprobe/ffmpeg repository audit — PASS (no references in `mediaflow/`, `tests/`, or `scripts/`).
-- `git diff --check` — PASS.
-- Adversarial check: a simulated regression that constructs Storage or a metadata Provider inside
-  the admission write path is caught by the strict seams, confirming the doubles are reachable.
 
 ### Checkpoint
 
 ```text
-Status: READY FOR B REVIEW
-Head SHA: 834ee464456362e5f43ca8617feb4deae2cdae3a
+Status: PLANNED
+Head SHA: NOT SET
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: f196da8563b1db60659b88ab17a2cfcaabea167c..07f30ce5cd8636eceb1aa3ab73877611155fee6c (implementation head 834ee464456362e5f43ca8617feb4deae2cdae3a)
-Decision: PASS
-Slice Required Outcomes all satisfied: NO
-Next: NEXT TASK
+Reviewed: PENDING
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
-
-### Round 2 blocker closed — Acceptance Criterion 14 is now falsifiable
-
-The unreachable `StrictStorageSpy` / `StrictProviderSpy` doubles and their two dead assertions are
-gone. `test_recovery_admission_falsifies_storage_provider_and_durable_side_effects` now patches the
-real production construction seams for the duration of one real admission driven through
-`POST /api/v1/tasks/{taskId}/items/{itemId}/recovery`, and snapshots the on-disk trees of the item's
-source and destination roots.
-
-I confirmed both halves are reachable rather than trusting the report. Injecting a simulated
-regression into `RecoveryAdmissionService.admit` inside the test's patch context:
-
-- `RuntimeConfiguration.create_storages(...)` (the real Storage construction seam used by
-  `mediaflow/application/configuration_objects.py:1620,1875,3793` and
-  `mediaflow/final_cli.py:1205,1431,2868`) — test FAILS (`500 != 200`).
-- `LazyMetadataProviderRegistryFactory()(("tmdb",))` (the registry factory wired into
-  `ConfigurationObjectService` at `mediaflow/interfaces/service_api.py:130` and constructed at
-  `mediaflow/final_cli.py:1419-1421`) — test FAILS.
-- writing `destination/Movies/zero-mutation.mkv` under the item's destination root — test FAILS on
-  the tree snapshot (`First tuple contains 1 additional elements`).
-- unmodified baseline — test PASSES.
-
-The durable-work half (Task, Task list, Job list, Result list, `file_locks` before/after a real
-admission) is unchanged and remains genuine.
-
-### Task acceptance re-verified at the reviewed head
-
-- One shared gate: `TaskRetryRequestService.request_item`
-  (`mediaflow/application/task_retry.py:109-133`) now delegates to `RecoveryAdmissionService.admit`,
-  so the API `re-plan` path and the CLI reach admission only through the gate.
-- Unsafe replay closed: `request_task_retries` (`mediaflow/infrastructure/sqlite_runtime.py:392-422`)
-  matches `status='failed'` only — `PARTIAL` is no longer admissible anywhere.
-- Evidence preserved: neither `request_task_retries` nor `_admit_retry_locked` /
-  `_admit_ignore_locked` nulls `task_items.error`; the retry test asserts the item error and the
-  stored Result (with `effect_certainty` / `uncertain_effects`) are unchanged after admission.
-- Atomic and version-bound: `admit_recovery_request` runs one `BEGIN IMMEDIATE`, re-projects the
-  bounded checkpoint context inside the transaction, rejects unknown/not-admissible actions, stale
-  versions and drifted checkpoint identity, returns the existing pending request for a duplicate,
-  and rolls back on any `BaseException` before commit.
-- Migration: `SCHEMA_VERSION = 24`; the new suite migrates a schema-23 database forward and asserts
-  the pre-existing item error survives and `recovery_requests` is recreated empty.
-
-### Gates re-run independently at HEAD
-
-`python -m unittest discover -s tests` — 896 tests, OK (skipped=7, the same pre-existing conditional
-external-service/endurance skips); `tests.test_processing_recovery_admission
-tests.test_processing_checkpoint tests.test_operator_ui` — 51 tests OK; `ruff format --check .` (317
-files); `ruff check .`; `compileall`; `pip check`; both example `config validate`; ffprobe/ffmpeg
-audit clean (no hits in `mediaflow/`, `tests/`, `scripts/`); `git diff --check` clean over
-`f196da8..HEAD`; working tree clean; `config/alist.json` untracked and ignored (`.gitignore:21`).
-
-Diff integrity over the whole Task range: 33 files — `TASK.md`, 12 production modules, 20 test
-modules including the new suite. No test deleted, no skip or `expectedFailure` added. The only
-removed assertions are the schema-version `23` expectations replaced by `24` (migrate-from-older
-setups kept) and the operator-UI `assertNotIn("actor", script.lower())`, replaced by the narrower
-`assertNotRegex(recovery_body, r"(?:actor|principal)\s*:")` — the Web now legitimately renders
-`request.actor`, and the invariant that matters (the browser must not submit an actor) is asserted on
-the recovery POST body. No credential, token, private endpoint or private path is introduced; the
-matching added lines are the redaction regex and synthetic fixtures asserting redaction/rejection.
-
-### Non-blocking observations (not Task blockers)
-
-- Commit `07f30ce` is labelled `docs(task): record B review round 3 for task 23.2` but contains the
-  Developer's round-2 correction report and the new Head SHA, not a B review. History is not
-  rewritten; carry this to the Slice Closure Packet as a documentation reconciliation note.
-- In the falsification test the tree-snapshot roots mirror the item's declared Storage-relative
-  source path but no Storage mapping is wired (the API is constructed with no configuration
-  service), so that half proves "nothing was written where this item's media lives" rather than a
-  resolved-Storage round trip. The patched production seams carry the reachable evidence.
