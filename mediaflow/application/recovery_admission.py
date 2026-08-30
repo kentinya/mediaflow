@@ -221,7 +221,7 @@ class RecoveryAdmissionService:
     @staticmethod
     def _next_action(action_id: str) -> str:
         if action_id == "retry":
-            return "inspect the admitted request, then run the supported single-item recovery"
+            return "inspect the admitted request, then continue the supported single-item recovery"
         if action_id == "ignore":
             return "reload the checkpoint and inspect the ignored item; no media mutation occurred"
         return "follow the linked resolution journey and reload the checkpoint"

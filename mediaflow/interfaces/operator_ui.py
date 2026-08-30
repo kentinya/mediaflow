@@ -1764,6 +1764,17 @@ APP_JS = b"""(() => {
             'These are the only actions admitted by the current API checkpoint. Any real recovery is separately validated.',
             'warning'), controls);
         }
+        const continuable = admissible.filter(action => action.action_id === 'continue');
+        if (continuable.length && data.recovery_request && !data.recovery_continuation) {
+          const controls = text('div', '', 'choices');
+          continuable.forEach(action => controls.append(actionButton(
+            'Continue safe analysis',
+            () => confirmRecoveryContinuation(taskId, itemId, data.checkpoint_version, action))));
+          detailContent.append(text('p',
+            'Continue the admitted safe analysis as a bounded DryRun-only continuation; ' +
+            'it grants no execute, overwrite, delete, source-cleanup or rollback authority.',
+            'warning'), controls);
+        }
       } else {
         detailContent.append(text('p', data.refusal_reason || 'No action is currently permitted.',
           'warning'));
@@ -1776,6 +1787,34 @@ APP_JS = b"""(() => {
           ['Bound checkpoint', request.checkpoint_version], ['Next action', request.next_action]
         ]));
       }
+      const continuation = data.recovery_continuation &&
+        typeof data.recovery_continuation === 'object' ? data.recovery_continuation : null;
+      if (continuation) {
+        const continuationSection = text('div', '', 'choices');
+        continuationSection.append(text('h3', 'Recovery continuation'), cards([
+          ['Status', continuation.status], ['Boundary', continuation.boundary],
+          ['Bound checkpoint', continuation.checkpoint_version], ['Authority', 'DRY_RUN_ONLY']
+        ]));
+        const continuationList = document.createElement('dl');
+        field(continuationList, 'Continuation', continuation.continuation_id);
+        field(continuationList, 'Request', continuation.request_id);
+        field(continuationList, 'Job', continuation.job_id || '-');
+        field(continuationList, 'New Task', continuation.new_task_id || '-');
+        field(continuationList, 'New Result', continuation.new_result_id || '-');
+        field(continuationList, 'Error', continuation.error || 'none');
+        field(continuationList, 'Recovery', continuation.recovery || '-');
+        field(continuationList, 'Next action', continuation.next_action || '-');
+        continuationSection.append(continuationList);
+        const continuationLinks = text('div', '', 'choices');
+        if (continuation.job_id) {
+          continuationLinks.append(actionButton('Open linked Job', () => showJob(continuation.job_id)));
+        }
+        if (continuation.new_task_id) {
+          continuationLinks.append(actionButton('Open linked Task', () => showTask(continuation.new_task_id)));
+        }
+        if (continuationLinks.childNodes.length) continuationSection.append(continuationLinks);
+        detailContent.append(continuationSection);
+      }
       const results = Array.isArray(data.prior_results) ? data.prior_results.slice() : [];
       if (data.latest_result) results.unshift(data.latest_result);
       if (results.length) {
@@ -1786,6 +1825,24 @@ APP_JS = b"""(() => {
       }
       detail.hidden = false;
     } catch (error) { message(errorText(error), true); }
+  }
+  function confirmRecoveryContinuation(taskId, itemId, checkpointVersion, action) {
+    const confirmation = text('div', '', 'choices');
+    const label = action.label || action.action_id;
+    confirmation.append(text('p',
+      `Confirm ${label} for checkpoint ${checkpointVersion}? This re-enters the production ` +
+      `pipeline for exactly this one item as analysis-only (DRY_RUN). It grants no execute, ` +
+      `overwrite, delete, source-cleanup or rollback authority and performs no media mutation.`),
+      actionButton(`Confirm ${label}`, async () => {
+        try {
+          await api(`/api/v1/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/recovery/continue`, {
+            method: 'POST',
+            body: JSON.stringify({expectedCheckpointVersion: checkpointVersion})
+          });
+          await showTaskItem(taskId, itemId); message('Recovery continuation admitted.');
+        } catch (error) { message(errorText(error), true); }
+      }), actionButton('Keep item unchanged', () => confirmation.remove()));
+    detailContent.append(confirmation);
   }
   function confirmTaskRecovery(taskId, itemId, checkpointVersion, action) {
     const confirmation = text('div', '', 'choices');

@@ -14,10 +14,16 @@ from typing import Protocol
 
 
 class RecoveryRequestStatus(StrEnum):
-    """Durable state for an admitted request (only pending is active in this Task)."""
+    """Durable state for an admitted request (only pending is active).
+
+    A request becomes terminal when its continuation reaches a terminal state
+    (completed / failed / cancelled) or when admission is refused (rejected),
+    so the item can be decided again.
+    """
 
     PENDING = "pending"
     COMPLETED = "completed"
+    FAILED = "failed"
     CANCELLED = "cancelled"
     REJECTED = "rejected"
 
@@ -117,6 +123,7 @@ class RecoveryRequest:
 
 
 class RecoveryRequestRepository(Protocol):
+    def get_recovery_request(self, request_id: str) -> RecoveryRequest | None: ...
     def list_recovery_requests(
         self, item_id: str, *, limit: int = 32
     ) -> tuple[RecoveryRequest, ...]: ...

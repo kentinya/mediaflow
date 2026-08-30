@@ -11,6 +11,7 @@ class AutomationCommand(StrEnum):
     PREVIEW = "preview"
     ORGANIZE = "organize"
     FILE_METADATA_CORRECTION = "file-metadata-correction"
+    RECOVERY_CONTINUATION = "recovery-continuation"
 
 
 class AutomationJobStatus(StrEnum):

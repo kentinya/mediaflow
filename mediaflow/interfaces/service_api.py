@@ -30,6 +30,7 @@ from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
+from mediaflow.application.recovery_continuation import RecoveryContinuationService
 from mediaflow.domain.automation import AutomationCommand, AutomationQueueFull
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
@@ -46,6 +47,10 @@ from mediaflow.domain.metadata_correction import (
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.recovery import RecoveryAdmissionError, RecoveryAdmissionReason
+from mediaflow.domain.recovery_continuation import (
+    RecoveryContinuationError,
+    RecoveryContinuationReason,
+)
 from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.task_persistence import ConfirmationStatus
@@ -145,6 +150,11 @@ class MediaFlowApi:
             snapshot_validator=snapshot_validator,
         )
         self._recovery_admission = RecoveryAdmissionService(
+            repository,
+            snapshot_validator=snapshot_validator,
+            checkpoint_service=self._checkpoint_service,
+        )
+        self._recovery_continuation = RecoveryContinuationService(
             repository,
             snapshot_validator=snapshot_validator,
             checkpoint_service=self._checkpoint_service,
@@ -263,6 +273,66 @@ class MediaFlowApi:
                 status,
                 "not_found" if not_found else "recovery_admission_rejected",
                 "TaskItem was not found" if not_found else "recovery request was not admitted",
+                details=details,
+            )
+        except RecoveryContinuationError as error:
+            reason = error.reason
+            status = (
+                404
+                if reason
+                in {
+                    RecoveryContinuationReason.UNKNOWN_ITEM,
+                    RecoveryContinuationReason.ITEM_TASK_MISMATCH,
+                }
+                else 503
+                if reason is RecoveryContinuationReason.SNAPSHOT_UNAVAILABLE
+                else 403
+                if reason is RecoveryContinuationReason.INSUFFICIENT_AUTHORITY
+                else 400
+                if reason
+                in {
+                    RecoveryContinuationReason.INVALID_INPUT,
+                    RecoveryContinuationReason.INVALID_VERSION,
+                }
+                else 409
+            )
+            not_found = reason in {
+                RecoveryContinuationReason.UNKNOWN_ITEM,
+                RecoveryContinuationReason.ITEM_TASK_MISMATCH,
+            }
+            details: dict[str, object] = {"sideEffects": "none"}
+            if not not_found:
+                details["reason"] = reason.value
+            if error.current_checkpoint_version and not not_found:
+                details["currentCheckpointVersion"] = error.current_checkpoint_version
+            if error.existing_continuation is not None and not not_found:
+                details["existingContinuation"] = error.existing_continuation.document()
+                details["nextAction"] = error.existing_continuation.next_action()
+            if reason is RecoveryContinuationReason.SNAPSHOT_UNAVAILABLE:
+                code = "configuration_unavailable"
+                message = "saved configuration snapshot is unavailable"
+            else:
+                code = "not_found" if not_found else "recovery_continuation_rejected"
+                message = (
+                    "TaskItem was not found"
+                    if not_found
+                    else "recovery continuation was not admitted"
+                )
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "recovery-continuation",
+                "denied",
+                status,
+            )
+            return self._error(
+                start_response,
+                status,
+                code,
+                message,
                 details=details,
             )
         except AutomationQueueFull as error:
@@ -1541,6 +1611,44 @@ class MediaFlowApi:
                     "status": request.status.value,
                     "checkpointVersion": request.checkpoint_version,
                     "nextAction": request.next_action,
+                    "sideEffects": "none",
+                },
+            )
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6:8] == ["recovery", "continue"]
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+            self._require_empty_query(environ, "task item recovery continuation")
+            document = self._document(environ)
+            allowed = {"expectedCheckpointVersion"}
+            if set(document).difference(allowed):
+                raise ValueError("task item recovery continuation request fields are invalid")
+            if set(document) != allowed:
+                raise ValueError(
+                    "task item recovery continuation requires expectedCheckpointVersion"
+                )
+            expected = document["expectedCheckpointVersion"]
+            if not isinstance(expected, str) or not expected.strip():
+                raise ValueError("expectedCheckpointVersion is required")
+            binding = self._runtime_binding
+            submission = self._recovery_continuation.submit(
+                parts[3],
+                parts[5],
+                expected_checkpoint_version=expected,
+                actor=principal.principal_id,
+                maximum_active_jobs=binding.maximum_active_jobs,
+            )
+            continuation = submission.continuation
+            return self._response(
+                start_response,
+                202,
+                {
+                    **continuation.document(),
+                    "executionMode": "dry_run",
                     "sideEffects": "none",
                 },
             )

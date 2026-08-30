@@ -84,6 +84,12 @@ from mediaflow.domain.recovery import (
     RecoveryRequest,
     RecoveryRequestStatus,
 )
+from mediaflow.domain.recovery_continuation import (
+    RecoveryContinuation,
+    RecoveryContinuationError,
+    RecoveryContinuationReason,
+    RecoveryContinuationStatus,
+)
 from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
@@ -97,11 +103,10 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestDecision
 
-# Keep the public runtime schema marker stable for existing Phase 19/22
-# compatibility checks. Snapshot columns are additive and migrated by the
-# presence checks below, so older databases remain readable without a
-# destructive version jump.
-SCHEMA_VERSION = 24
+# Runtime schema 25 adds the additive recovery_continuations table and its
+# item-scoped index. The table is created via CREATE TABLE IF NOT EXISTS, so
+# databases at schema 24 open unchanged while the marker is bumped forward.
+SCHEMA_VERSION = 25
 
 
 class SQLiteTaskRepository:
@@ -453,6 +458,13 @@ class SQLiteTaskRepository:
             ).fetchall()
         return tuple(self._recovery_request(row) for row in rows)
 
+    def get_recovery_request(self, request_id: str) -> RecoveryRequest | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM recovery_requests WHERE request_id=?", (request_id,)
+            ).fetchone()
+        return self._recovery_request(row) if row else None
+
     def get_active_recovery_request(self, item_id: str) -> RecoveryRequest | None:
         with self._lock:
             row = self._connection.execute(
@@ -598,38 +610,94 @@ class SQLiteTaskRepository:
             return request
 
     def _admit_retry_locked(self, request: RecoveryRequest, row: sqlite3.Row) -> None:
-        if row["status"] != TaskItemStatus.FAILED.value:
+        if row["status"] == TaskItemStatus.FAILED.value:
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?
+                WHERE item_id=? AND task_id=? AND status='failed'""",
+                (
+                    TaskItemStatus.PENDING.value,
+                    "task_retry_requested",
+                    request.requested_at.isoformat(),
+                    request.item_id,
+                    request.task_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RecoveryAdmissionError(
+                    RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
+                    "TaskItem is no longer failed or partial",
+                )
+            self._connection.execute(
+                "INSERT INTO task_retry_audit VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    request.request_id,
+                    request.task_id,
+                    request.item_id,
+                    request.requested_at.isoformat(),
+                    request.actor,
+                    request.note,
+                ),
+            )
+            return
+        elif (
+            row["status"] == TaskItemStatus.PENDING.value and row["stage"] == "task_retry_requested"
+        ):
+            # Re-admission after a prior request reached a terminal state.  The
+            # item stays pending and keeps its original evidence; only the
+            # admission timestamp and audit advance.
+            cursor = self._connection.execute(
+                """UPDATE task_items SET updated_at=?
+                WHERE item_id=? AND task_id=? AND status='pending'
+                AND stage='task_retry_requested'""",
+                (
+                    request.requested_at.isoformat(),
+                    request.item_id,
+                    request.task_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RecoveryAdmissionError(
+                    RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
+                    "TaskItem is no longer pending",
+                )
+            # The legacy action audit keeps one row per item (latest decision);
+            # the full request history is preserved in recovery_requests.
+            existing = self._connection.execute(
+                "SELECT decision_id FROM task_retry_audit WHERE item_id=?",
+                (request.item_id,),
+            ).fetchone()
+            if existing is None:
+                self._connection.execute(
+                    "INSERT INTO task_retry_audit VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        request.request_id,
+                        request.task_id,
+                        request.item_id,
+                        request.requested_at.isoformat(),
+                        request.actor,
+                        request.note,
+                    ),
+                )
+            else:
+                self._connection.execute(
+                    """UPDATE task_retry_audit
+                    SET decision_id=?, task_id=?, decided_at=?, actor=?, note=?
+                    WHERE item_id=?""",
+                    (
+                        request.request_id,
+                        request.task_id,
+                        request.requested_at.isoformat(),
+                        request.actor,
+                        request.note,
+                        request.item_id,
+                    ),
+                )
+            return
+        else:
             raise RecoveryAdmissionError(
                 RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
                 "retry is not permitted for this TaskItem status",
             )
-        cursor = self._connection.execute(
-            """UPDATE task_items SET status=?, stage=?, updated_at=?
-            WHERE item_id=? AND task_id=? AND status='failed'""",
-            (
-                TaskItemStatus.PENDING.value,
-                "task_retry_requested",
-                request.requested_at.isoformat(),
-                request.item_id,
-                request.task_id,
-            ),
-        )
-        if cursor.rowcount != 1:
-            raise RecoveryAdmissionError(
-                RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
-                "TaskItem is no longer failed or partial",
-            )
-        self._connection.execute(
-            "INSERT INTO task_retry_audit VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                request.request_id,
-                request.task_id,
-                request.item_id,
-                request.requested_at.isoformat(),
-                request.actor,
-                request.note,
-            ),
-        )
 
     def _admit_ignore_locked(self, request: RecoveryRequest, row: sqlite3.Row) -> None:
         review_tables = {
@@ -692,6 +760,388 @@ class SQLiteTaskRepository:
                 request.note,
             ),
         )
+
+    def get_recovery_continuation_for_request(self, request_id: str) -> RecoveryContinuation | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM recovery_continuations WHERE request_id=?
+                ORDER BY created_at DESC, continuation_id DESC LIMIT 1""",
+                (request_id,),
+            ).fetchone()
+        return self._recovery_continuation(row) if row else None
+
+    def get_recovery_continuation_for_job(self, job_id: str) -> RecoveryContinuation | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM recovery_continuations WHERE job_id=?", (job_id,)
+            ).fetchone()
+        return self._recovery_continuation(row) if row else None
+
+    def list_recovery_continuations(
+        self, item_id: str, *, limit: int = 32
+    ) -> tuple[RecoveryContinuation, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("recovery continuation limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM recovery_continuations WHERE source_item_id=?
+                ORDER BY created_at DESC, continuation_id DESC LIMIT ?""",
+                (item_id, limit),
+            ).fetchall()
+        return tuple(self._recovery_continuation(row) for row in rows)
+
+    def admit_recovery_continuation(
+        self,
+        job: AutomationJob,
+        continuation: RecoveryContinuation,
+        *,
+        maximum_active_jobs: int,
+        checkpoint_projector=None,
+    ) -> tuple[RecoveryContinuation, bool]:
+        """Atomically record one continuation and its Job for an active request.
+
+        The caller supplies the immutable checkpoint version it presented.  The
+        repository re-projects the same bounded context while holding an
+        IMMEDIATE transaction, so a concurrent review/result/request cannot be
+        silently overwritten.  The parent request stays active until the
+        continuation reaches a terminal state.
+        """
+
+        if (
+            isinstance(maximum_active_jobs, bool)
+            or not isinstance(maximum_active_jobs, int)
+            or not 1 <= maximum_active_jobs <= 10_000
+        ):
+            raise ValueError("maximum active Jobs must be between 1 and 10000")
+        if (
+            job.command is not AutomationCommand.RECOVERY_CONTINUATION
+            or job.status is not AutomationJobStatus.PENDING
+            or job.limit != 1
+            or job.execute_authorized
+            or job.task_id is not None
+            or job.schedule_id is not None
+            or job.claim_token is not None
+            or job.cancellation_requested
+            or not job.configuration_snapshot_id
+            or not job.configuration_snapshot_digest
+        ):
+            raise ValueError("recovery continuation Job identity is invalid")
+        if (
+            continuation.status is not RecoveryContinuationStatus.QUEUED
+            or continuation.job_id != job.job_id
+            or continuation.configuration_snapshot_id != job.configuration_snapshot_id
+            or continuation.configuration_snapshot_digest != job.configuration_snapshot_digest
+            or continuation.new_task_id is not None
+            or continuation.new_result_id is not None
+            or continuation.started_at is not None
+            or continuation.completed_at is not None
+            or continuation.error is not None
+            or continuation.recovery is not None
+        ):
+            raise ValueError("recovery continuation identity is invalid")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                request = self._connection.execute(
+                    """SELECT r.*, i.task_id AS item_task_id, i.status AS item_status,
+                    i.stage AS item_stage,
+                    t.configuration_snapshot_id AS task_snapshot_id,
+                    t.configuration_snapshot_digest AS task_snapshot_digest
+                    FROM recovery_requests r
+                    JOIN task_items i ON i.item_id=r.item_id
+                    JOIN tasks t ON t.task_id=r.task_id
+                    WHERE r.request_id=?""",
+                    (continuation.request_id,),
+                ).fetchone()
+                if request is None:
+                    raise ValueError("recovery request was not found")
+                if request["status"] != RecoveryRequestStatus.PENDING.value:
+                    raise ValueError("recovery request is no longer active")
+                if (
+                    request["task_id"] != continuation.source_task_id
+                    or request["item_id"] != continuation.source_item_id
+                    or request["item_task_id"] != continuation.source_task_id
+                ):
+                    raise ValueError("recovery continuation request identity is stale")
+                if (
+                    request["configuration_snapshot_id"] != continuation.configuration_snapshot_id
+                    or request["configuration_snapshot_digest"]
+                    != continuation.configuration_snapshot_digest
+                    or request["task_snapshot_id"] != continuation.configuration_snapshot_id
+                    or request["task_snapshot_digest"] != continuation.configuration_snapshot_digest
+                ):
+                    raise ValueError("recovery continuation snapshot pin is stale")
+                if request["item_status"] != TaskItemStatus.PENDING.value:
+                    raise ValueError("recovery continuation source item is no longer pending")
+                existing = self._connection.execute(
+                    """SELECT * FROM recovery_continuations
+                    WHERE request_id=? AND status IN (?, ?)
+                    ORDER BY created_at DESC, continuation_id DESC LIMIT 1""",
+                    (
+                        continuation.request_id,
+                        RecoveryContinuationStatus.QUEUED.value,
+                        RecoveryContinuationStatus.RUNNING.value,
+                    ),
+                ).fetchone()
+                if existing is not None:
+                    self._connection.commit()
+                    return self._recovery_continuation(existing), False
+                context = self._get_processing_checkpoint_context_locked(
+                    continuation.source_item_id, result_limit=32, audit_limit=200
+                )
+                if checkpoint_projector is None:
+                    from mediaflow.application.processing_checkpoint import (
+                        ProcessingCheckpointService,
+                    )
+
+                    current = ProcessingCheckpointService(self)._project(context)
+                else:
+                    current = checkpoint_projector(context)
+                if current.checkpoint_version != continuation.checkpoint_version:
+                    self._connection.rollback()
+                    raise RecoveryContinuationError(
+                        RecoveryContinuationReason.STALE_CHECKPOINT,
+                        "checkpoint version is stale; refresh before continuing recovery",
+                        current_checkpoint_version=current.checkpoint_version,
+                    )
+                if not self._has_job_capacity(maximum_active_jobs):
+                    self._connection.rollback()
+                    raise AutomationQueueFull(
+                        f"automation queue reached configured active Job limit "
+                        f"{maximum_active_jobs}"
+                    )
+                self._insert_job(job)
+                self._connection.execute(
+                    """INSERT INTO recovery_continuations
+                    (continuation_id, request_id, source_task_id, source_item_id,
+                     checkpoint_version, configuration_snapshot_id,
+                     configuration_snapshot_digest, boundary, status, created_at,
+                     updated_at, actor, job_id, new_task_id, new_result_id, started_at,
+                     completed_at, error, recovery, authority_statement)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    self._recovery_continuation_values(continuation),
+                )
+                self._connection.commit()
+                return continuation, True
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def mark_recovery_continuation_running(
+        self, job_id: str, now: datetime | None = None
+    ) -> RecoveryContinuation:
+        timestamp = now or datetime.now(UTC)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE recovery_continuations
+                SET status=?, updated_at=?, started_at=COALESCE(started_at, ?)
+                WHERE job_id=? AND status=?""",
+                (
+                    RecoveryContinuationStatus.RUNNING.value,
+                    timestamp.isoformat(),
+                    timestamp.isoformat(),
+                    job_id,
+                    RecoveryContinuationStatus.QUEUED.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("recovery continuation is not queued")
+        return self.require_recovery_continuation_by_job(job_id)
+
+    def bind_recovery_continuation_task(self, job_id: str, task_id: str) -> RecoveryContinuation:
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("continuation Task ID is required")
+        with self._lock, self._connection:
+            task = self._connection.execute(
+                "SELECT task_id FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if task is None:
+                raise LookupError(f"continuation Task {task_id!r} was not found")
+            cursor = self._connection.execute(
+                """UPDATE recovery_continuations
+                SET updated_at=?, new_task_id=?
+                WHERE job_id=? AND status=? AND new_task_id IS NULL""",
+                (
+                    datetime.now(UTC).isoformat(),
+                    task_id,
+                    job_id,
+                    RecoveryContinuationStatus.RUNNING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                continuation = self.get_recovery_continuation_for_job(job_id)
+                if continuation is None:
+                    raise LookupError(f"recovery continuation for Job {job_id!r} was not found")
+                raise ValueError("recovery continuation Task is already bound")
+        return self.require_recovery_continuation_by_job(job_id)
+
+    def complete_recovery_continuation(
+        self,
+        job_id: str,
+        *,
+        new_task_id: str | None = None,
+        new_result_id: str | None = None,
+        success: bool,
+        error: str | None = None,
+        recovery: str | None = None,
+        now: datetime | None = None,
+    ) -> RecoveryContinuation:
+        timestamp = now or datetime.now(UTC)
+        status = (
+            RecoveryContinuationStatus.COMPLETED if success else RecoveryContinuationStatus.FAILED
+        )
+        request_status = (
+            RecoveryRequestStatus.COMPLETED if success else RecoveryRequestStatus.FAILED
+        )
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self._connection.execute(
+                    """UPDATE recovery_continuations
+                    SET status=?, updated_at=?, new_task_id=?, new_result_id=?,
+                        completed_at=?, error=?, recovery=?
+                    WHERE job_id=? AND status=?""",
+                    (
+                        status.value,
+                        timestamp.isoformat(),
+                        new_task_id,
+                        new_result_id,
+                        timestamp.isoformat(),
+                        error,
+                        recovery,
+                        job_id,
+                        RecoveryContinuationStatus.RUNNING.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    self._connection.rollback()
+                    raise ValueError("recovery continuation is not running")
+                row = self._connection.execute(
+                    "SELECT request_id FROM recovery_continuations WHERE job_id=?",
+                    (job_id,),
+                ).fetchone()
+                if row is not None:
+                    self._resolve_recovery_request_locked(
+                        row["request_id"], request_status, timestamp
+                    )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return self.require_recovery_continuation_by_job(job_id)
+
+    def fail_queued_recovery_continuation(
+        self,
+        job_id: str,
+        *,
+        error: str,
+        recovery: str,
+        now: datetime | None = None,
+    ) -> RecoveryContinuation:
+        timestamp = now or datetime.now(UTC)
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self._connection.execute(
+                    """UPDATE recovery_continuations
+                    SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
+                    WHERE job_id=? AND status=?""",
+                    (
+                        RecoveryContinuationStatus.FAILED.value,
+                        timestamp.isoformat(),
+                        timestamp.isoformat(),
+                        error,
+                        recovery,
+                        job_id,
+                        RecoveryContinuationStatus.QUEUED.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    self._connection.rollback()
+                    raise ValueError("recovery continuation is not queued")
+                row = self._connection.execute(
+                    "SELECT request_id FROM recovery_continuations WHERE job_id=?",
+                    (job_id,),
+                ).fetchone()
+                if row is not None:
+                    self._resolve_recovery_request_locked(
+                        row["request_id"], RecoveryRequestStatus.FAILED, timestamp
+                    )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return self.require_recovery_continuation_by_job(job_id)
+
+    def cancel_recovery_continuation(
+        self, job_id: str, *, now: datetime | None = None
+    ) -> RecoveryContinuation:
+        timestamp = now or datetime.now(UTC)
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self._connection.execute(
+                    """UPDATE recovery_continuations
+                    SET status=?, updated_at=?, completed_at=?, error=?, recovery=?
+                    WHERE job_id=? AND status IN (?, ?)""",
+                    (
+                        RecoveryContinuationStatus.CANCELLED.value,
+                        timestamp.isoformat(),
+                        timestamp.isoformat(),
+                        "recovery continuation Job was cancelled before completion",
+                        "refresh the Task item checkpoint and explicitly continue again",
+                        job_id,
+                        RecoveryContinuationStatus.QUEUED.value,
+                        RecoveryContinuationStatus.RUNNING.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    continuation = self.get_recovery_continuation_for_job(job_id)
+                    if continuation is None:
+                        raise LookupError(f"recovery continuation for Job {job_id!r} was not found")
+                    if continuation.status is RecoveryContinuationStatus.CANCELLED:
+                        return continuation
+                    self._connection.rollback()
+                    raise ValueError("recovery continuation is not cancellable")
+                row = self._connection.execute(
+                    "SELECT request_id FROM recovery_continuations WHERE job_id=?",
+                    (job_id,),
+                ).fetchone()
+                if row is not None:
+                    self._resolve_recovery_request_locked(
+                        row["request_id"], RecoveryRequestStatus.CANCELLED, timestamp
+                    )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return self.require_recovery_continuation_by_job(job_id)
+
+    def require_recovery_continuation_by_job(self, job_id: str) -> RecoveryContinuation:
+        continuation = self.get_recovery_continuation_for_job(job_id)
+        if continuation is None:
+            raise LookupError(f"recovery continuation for Job {job_id!r} was not found")
+        return continuation
+
+    def _resolve_recovery_request_locked(
+        self,
+        request_id: str,
+        status: RecoveryRequestStatus,
+        timestamp: datetime,
+    ) -> None:
+        if status not in {
+            RecoveryRequestStatus.COMPLETED,
+            RecoveryRequestStatus.FAILED,
+            RecoveryRequestStatus.CANCELLED,
+        }:
+            raise ValueError("recovery request terminal status is invalid")
+        cursor = self._connection.execute(
+            """UPDATE recovery_requests SET status=?, requested_at=requested_at
+            WHERE request_id=? AND status='pending'""",
+            (status.value, request_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("recovery request is no longer active")
 
     def list_ignorable_waiting_items(self, *, limit=100, task_id=None):
         if not 1 <= limit <= 1000:
@@ -1139,6 +1589,14 @@ class SQLiteTaskRepository:
                 (item_id, audit_limit),
             ).fetchall()
             recovery_requests = tuple(self._recovery_request(value) for value in recovery_rows)
+            continuation_rows = self._connection.execute(
+                """SELECT * FROM recovery_continuations WHERE source_item_id=?
+                ORDER BY created_at DESC, continuation_id DESC LIMIT ?""",
+                (item_id, 32),
+            ).fetchall()
+            recovery_continuations = tuple(
+                self._recovery_continuation(value) for value in continuation_rows
+            )
             audits.extend(
                 CheckpointAudit(
                     value.request_id,
@@ -1156,6 +1614,7 @@ class SQLiteTaskRepository:
                 blockers=tuple(blockers),
                 audits=tuple(audits[-audit_limit:]),
                 recovery_requests=recovery_requests,
+                recovery_continuations=recovery_continuations,
             )
 
     def list_results(
@@ -3569,6 +4028,26 @@ class SQLiteTaskRepository:
                     ON recovery_requests(item_id) WHERE status = 'pending';
                 CREATE INDEX IF NOT EXISTS recovery_requests_item_requested
                     ON recovery_requests(item_id, requested_at, request_id);
+                CREATE TABLE IF NOT EXISTS recovery_continuations (
+                    continuation_id TEXT PRIMARY KEY, request_id TEXT NOT NULL,
+                    source_task_id TEXT NOT NULL, source_item_id TEXT NOT NULL,
+                    checkpoint_version TEXT NOT NULL,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    boundary TEXT NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, actor TEXT NOT NULL,
+                    job_id TEXT NOT NULL UNIQUE, new_task_id TEXT, new_result_id TEXT,
+                    started_at TEXT, completed_at TEXT, error TEXT, recovery TEXT,
+                    authority_statement TEXT NOT NULL,
+                    FOREIGN KEY(request_id) REFERENCES recovery_requests(request_id),
+                    FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(source_item_id) REFERENCES task_items(item_id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS one_active_recovery_continuation
+                    ON recovery_continuations(request_id)
+                    WHERE status IN ('queued', 'running');
+                CREATE INDEX IF NOT EXISTS recovery_continuations_item_created
+                    ON recovery_continuations(source_item_id, created_at, continuation_id);
                 CREATE TABLE IF NOT EXISTS task_results (
                     result_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, item_id TEXT NOT NULL,
                     source_storage_id TEXT NOT NULL, source_path TEXT NOT NULL,
@@ -4112,6 +4591,62 @@ class SQLiteTaskRepository:
             row["next_action"],
             row["review_kind"],
             row["review_id"],
+        )
+
+    @staticmethod
+    def _recovery_continuation_values(
+        continuation: RecoveryContinuation,
+    ) -> tuple[object, ...]:
+        return (
+            continuation.continuation_id,
+            continuation.request_id,
+            continuation.source_task_id,
+            continuation.source_item_id,
+            continuation.checkpoint_version,
+            continuation.configuration_snapshot_id,
+            continuation.configuration_snapshot_digest,
+            continuation.boundary,
+            continuation.status.value,
+            continuation.created_at.isoformat(),
+            continuation.updated_at.isoformat(),
+            continuation.actor,
+            continuation.job_id,
+            continuation.new_task_id,
+            continuation.new_result_id,
+            continuation.started_at.isoformat() if continuation.started_at else None,
+            continuation.completed_at.isoformat() if continuation.completed_at else None,
+            continuation.error,
+            continuation.recovery,
+            continuation.authority_statement,
+        )
+
+    @staticmethod
+    def _recovery_continuation(row: sqlite3.Row) -> RecoveryContinuation:
+        try:
+            status = RecoveryContinuationStatus(row["status"])
+        except ValueError:
+            status = RecoveryContinuationStatus.FAILED
+        return RecoveryContinuation(
+            row["continuation_id"],
+            row["request_id"],
+            row["source_task_id"],
+            row["source_item_id"],
+            row["checkpoint_version"],
+            row["configuration_snapshot_id"],
+            row["configuration_snapshot_digest"],
+            row["boundary"],
+            status,
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["actor"],
+            row["job_id"],
+            row["new_task_id"],
+            row["new_result_id"],
+            datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
+            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+            row["error"],
+            row["recovery"],
+            row["authority_statement"],
         )
 
     @staticmethod
