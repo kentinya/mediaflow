@@ -402,6 +402,7 @@ class PersistentTaskCoordinator:
         identity = strategy.metadata.identity if strategy and strategy.metadata else None
         plan = result.plan
         execution = result.execution
+        effect_certainty, uncertain_effects = _effect_evidence(execution)
         return PersistentResultRecord(
             f"{item.item_id}:{item.attempts}",
             item.task_id,
@@ -428,4 +429,24 @@ class PersistentTaskCoordinator:
             result.retry_events[-1].category.value if result.retry_events else None,
             execution.cleanup_status.value if execution else None,
             len(execution.cleanup_steps) if execution else 0,
+            effect_certainty,
+            uncertain_effects,
         )
+
+
+def _effect_evidence(execution) -> tuple[str, tuple[str, ...]]:
+    """Translate the executor's explicit outcome into durable, non-inferred evidence."""
+    if execution is None:
+        # A failure before planning/execution is known to have no mutation in this invocation.
+        return "none", ()
+    if execution.status in {ExecutionStatus.DRY_RUN, ExecutionStatus.SKIPPED}:
+        return "none", ()
+    if execution.status is ExecutionStatus.SUCCESS:
+        return "verified_complete", ()
+    if execution.rollback_status.value == "success":
+        return "none", ()
+    if execution.status is ExecutionStatus.PARTIAL or execution.rollback_status.value == "partial":
+        return "attempted_unverified", ("mutation_outcome",)
+    if execution.completed_operations or execution.created_directories:
+        return "attempted_unverified", ("mutation_outcome",)
+    return "none", ()

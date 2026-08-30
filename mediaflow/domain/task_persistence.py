@@ -112,6 +112,10 @@ class PersistentResultRecord:
     retry_category: str | None = None
     cleanup_status: str | None = None
     cleanup_step_count: int = 0
+    # Added in runtime schema 23.  Legacy result rows remain ``unknown`` rather than
+    # deriving effect certainty from status or the historical operation list.
+    effect_certainty: str = "unknown"
+    uncertain_effects: tuple[str, ...] = ()
 
 
 class ConfirmationStatus(StrEnum):
@@ -201,6 +205,9 @@ class PersistentTaskRepository(Protocol):
     def list_confirmation_audit(
         self, confirmation_id: str
     ) -> tuple[ConflictDecisionAudit, ...]: ...
+    def get_processing_checkpoint_context(
+        self, item_id: str, *, result_limit: int = 32, audit_limit: int = 64
+    ): ...
 
 
 class FileOperationLockRepository(Protocol):

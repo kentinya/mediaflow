@@ -27,6 +27,7 @@ from mediaflow.application.metadata_correction_continuation import (
     MetadataCorrectionContinuationConflict,
 )
 from mediaflow.application.metadata_review import MetadataReviewService
+from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.task_retry import TaskRetryRequestService
 from mediaflow.domain.automation import AutomationCommand, AutomationQueueFull
@@ -132,6 +133,14 @@ class MediaFlowApi:
         self._bootstrap_document = bootstrap_document
         self._configuration_snapshot_id = configuration_snapshot_id
         self._configuration_snapshot_digest = configuration_snapshot_digest
+        self._checkpoint_service = ProcessingCheckpointService(
+            repository,
+            snapshot_validator=(
+                configuration_service.validate_runtime_snapshot
+                if configuration_service is not None
+                else None
+            ),
+        )
         self._runtime_binding_lock = threading.RLock()
         self._runtime_binding = self._build_runtime_binding(
             snapshot_id=configuration_snapshot_id,
@@ -457,8 +466,9 @@ class MediaFlowApi:
     ):
         parts = [part for part in path.split("/") if part]
         configuration_route = parts[:3] == ["api", "v1", "configuration"]
+        task_read_route = parts[:3] == ["api", "v1", "tasks"] and method == "GET"
         binding = self._runtime_binding
-        if not configuration_route:
+        if not configuration_route and not task_read_route:
             binding = self._refresh_configuration_binding()
         if parts == ["api", "v1", "configuration"]:
             if method != "GET":
@@ -1327,6 +1337,50 @@ class MediaFlowApi:
             )
         if (
             len(parts) == 4
+            and parts[:3] == ["api", "v1", "recognition-reviews"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            review = self._repository.get_recognition_review(parts[3])
+            if review is None:
+                raise LookupError(f"recognition review {parts[3]!r} was not found")
+            return self._response(
+                start_response,
+                200,
+                {
+                    **self._value(review),
+                    "choices": [
+                        self._value(item)
+                        for item in self._repository.list_recognition_review_choices(parts[3])
+                    ],
+                    "audit": [
+                        self._value(item)
+                        for item in self._repository.list_recognition_review_audit(parts[3])
+                    ],
+                },
+            )
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "v1", "metadata-corrections"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            review = self._repository.get_metadata_correction(parts[3])
+            if review is None:
+                raise LookupError(f"metadata correction {parts[3]!r} was not found")
+            return self._response(
+                start_response,
+                200,
+                {
+                    **self._value(review),
+                    "audit": [
+                        self._metadata_correction_audit_value(item)
+                        for item in self._repository.list_metadata_correction_audit(parts[3])
+                    ],
+                },
+            )
+        if (
+            len(parts) == 4
             and parts[:3] == ["api", "v1", "classification-reviews"]
             and method == "GET"
         ):
@@ -1368,6 +1422,16 @@ class MediaFlowApi:
                     "next_cursor": self._page_cursor("tasks", page, has_next, CursorDirection.NEXT),
                 },
             )
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "task checkpoint")
+            checkpoint = self._checkpoint_service.get(parts[5], task_id=parts[3])
+            return self._response(start_response, 200, checkpoint.document())
         if len(parts) == 4 and parts[:3] == ["api", "v1", "tasks"] and method == "GET":
             item_limit, result_limit, item_cursor, result_cursor = self._task_detail_page(environ)
             task = self._repository.get_task(parts[3])
@@ -1389,12 +1453,19 @@ class MediaFlowApi:
             result_page, has_previous_results, has_next_results = self._page_window(
                 results, result_limit, result_cursor
             )
+            checkpoint_items = []
+            for item in item_page:
+                value = self._value(item)
+                value["checkpoint"] = self._checkpoint_service.summary(
+                    item.item_id, task_id=task.task_id
+                )
+                checkpoint_items.append(value)
             return self._response(
                 start_response,
                 200,
                 {
                     **self._value(task),
-                    "items": [self._value(item) for item in item_page],
+                    "items": checkpoint_items,
                     "results": [self._value(item) for item in result_page],
                     "item_limit": item_limit,
                     "result_limit": result_limit,
@@ -1971,6 +2042,8 @@ class MediaFlowApi:
             ("api", "v1", "system", "status"),
             ("api", "v1", "metadata-reviews"),
             ("api", "v1", "classification-reviews"),
+            ("api", "v1", "recognition-reviews"),
+            ("api", "v1", "metadata-corrections"),
         }
         key = tuple(parts)
         if key in exact:
@@ -1980,6 +2053,8 @@ class MediaFlowApi:
             ["api", "v1", "jobs"],
         ):
             return f"/api/v1/{parts[2]}/{{id}}"
+        if len(parts) == 6 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "items":
+            return "/api/v1/tasks/{task_id}/items/{item_id}"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
             return "/api/v1/jobs/{id}/cancel"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":
@@ -1990,6 +2065,10 @@ class MediaFlowApi:
             return "/api/v1/metadata-reviews/{id}"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "classification-reviews"]:
             return "/api/v1/classification-reviews/{id}"
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "recognition-reviews"]:
+            return "/api/v1/recognition-reviews/{id}"
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "metadata-corrections"]:
+            return "/api/v1/metadata-corrections/{id}"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "metadata-reviews"]
@@ -2303,6 +2382,12 @@ class MediaFlowApi:
 
     @classmethod
     def _metadata_review_audit_value(cls, value) -> dict:
+        document = cls._value(value)
+        document.pop("note", None)
+        return document
+
+    @classmethod
+    def _metadata_correction_audit_value(cls, value) -> dict:
         document = cls._value(value)
         document.pop("note", None)
         return document

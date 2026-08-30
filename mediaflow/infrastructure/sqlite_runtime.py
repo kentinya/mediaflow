@@ -64,6 +64,11 @@ from mediaflow.domain.notification import (
     NotificationDeliveryStatus,
     NotificationEventType,
 )
+from mediaflow.domain.processing_checkpoint import (
+    CheckpointAudit,
+    CheckpointBlocker,
+    ProcessingCheckpointContext,
+)
 from mediaflow.domain.recognition_review import (
     RecognitionBatchResolveRequest,
     RecognitionRetryBatchRequest,
@@ -90,7 +95,7 @@ from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestD
 # compatibility checks. Snapshot columns are additive and migrated by the
 # presence checks below, so older databases remain readable without a
 # destructive version jump.
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 
 class SQLiteTaskRepository:
@@ -629,8 +634,10 @@ class SQLiteTaskRepository:
                     provider_id, metadata_policy_id, naming_policy_id, classification_policy_id,
                     organize_policy_id, operation, status, created_at, title, error,
                     completed_operations, attachment_count, retry_attempts, retry_category,
-                    cleanup_status, cleanup_step_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cleanup_status, cleanup_step_count, effect_certainty, uncertain_effects
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     result.result_id,
@@ -658,7 +665,222 @@ class SQLiteTaskRepository:
                     result.retry_category,
                     result.cleanup_status,
                     result.cleanup_step_count,
+                    result.effect_certainty,
+                    json.dumps(result.uncertain_effects, ensure_ascii=False),
                 ),
+            )
+
+    def list_results_for_item(
+        self, item_id: str, *, limit: int = 32
+    ) -> tuple[PersistentResultRecord, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("item result limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM task_results WHERE item_id=?
+                ORDER BY created_at DESC, result_id DESC LIMIT ?""",
+                (item_id, limit),
+            ).fetchall()
+        return tuple(self._result(row) for row in rows)
+
+    def get_processing_checkpoint_context(
+        self, item_id: str, *, result_limit: int = 32, audit_limit: int = 64
+    ) -> ProcessingCheckpointContext | None:
+        """Read one checkpoint context from a single SQLite snapshot."""
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                context = self._get_processing_checkpoint_context_locked(
+                    item_id, result_limit=result_limit, audit_limit=audit_limit
+                )
+            except BaseException:
+                self._connection.rollback()
+                raise
+            self._connection.commit()
+            return context
+
+    def _get_processing_checkpoint_context_locked(
+        self, item_id: str, *, result_limit: int = 32, audit_limit: int = 64
+    ) -> ProcessingCheckpointContext | None:
+        """Read one TaskItem and all bounded recovery evidence under one repository lock."""
+        if (
+            isinstance(result_limit, bool)
+            or not isinstance(result_limit, int)
+            or not 1 <= result_limit <= 100
+        ):
+            raise ValueError("checkpoint result limit must be between 1 and 100")
+        if (
+            isinstance(audit_limit, bool)
+            or not isinstance(audit_limit, int)
+            or not 1 <= audit_limit <= 200
+        ):
+            raise ValueError("checkpoint audit limit must be between 1 and 200")
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT i.*, t.command AS task_command, t.status AS task_status,
+                    t.execute_authorized AS task_execute_authorized,
+                    t.created_at AS task_created_at,
+                    t.updated_at AS task_updated_at, t.started_at AS task_started_at,
+                    t.completed_at AS task_completed_at, t.total_items AS task_total_items,
+                    t.completed_items AS task_completed_items, t.failed_items AS task_failed_items,
+                    t.error AS task_error, t.pause_requested AS task_pause_requested,
+                    t.scope_path AS task_scope_path, t.item_limit AS task_item_limit,
+                    t.configuration_snapshot_id AS task_configuration_snapshot_id,
+                    t.configuration_snapshot_digest AS task_configuration_snapshot_digest
+                FROM task_items i JOIN tasks t ON t.task_id=i.task_id WHERE i.item_id=?""",
+                (item_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            task = PersistentTask(
+                row["task_id"],
+                row["task_command"],
+                PersistentTaskStatus(row["task_status"]),
+                bool(row["task_execute_authorized"]),
+                datetime.fromisoformat(row["task_created_at"]),
+                datetime.fromisoformat(row["task_updated_at"]),
+                datetime.fromisoformat(row["task_started_at"]) if row["task_started_at"] else None,
+                datetime.fromisoformat(row["task_completed_at"])
+                if row["task_completed_at"]
+                else None,
+                row["task_total_items"],
+                row["task_completed_items"],
+                row["task_failed_items"],
+                row["task_error"],
+                bool(row["task_pause_requested"]),
+                row["task_scope_path"],
+                row["task_item_limit"],
+                row["task_configuration_snapshot_id"],
+                row["task_configuration_snapshot_digest"],
+            )
+            item = self._item(row)
+            result_rows = self._connection.execute(
+                """SELECT * FROM task_results WHERE item_id=?
+                ORDER BY created_at DESC, result_id DESC LIMIT ?""",
+                (item_id, result_limit),
+            ).fetchall()
+            results = tuple(self._result(value) for value in result_rows)
+
+            blockers: list[CheckpointBlocker] = []
+            blocker_queries = (
+                ("recognition", "recognition_reviews", "review_id"),
+                ("metadata", "metadata_reviews", "review_id"),
+                ("metadata_correction", "metadata_corrections", "review_id"),
+                ("classification", "classification_reviews", "review_id"),
+                ("conflict", "conflict_confirmations", "confirmation_id"),
+            )
+            paths = {
+                "recognition": "/api/v1/recognition-reviews/",
+                "metadata": "/api/v1/metadata-reviews/",
+                "metadata_correction": "/api/v1/metadata-corrections/",
+                "classification": "/api/v1/classification-reviews/",
+                "conflict": "/api/v1/confirmations/",
+            }
+            for kind, table, identifier_column in blocker_queries:
+                blocker_row = self._connection.execute(
+                    f"""SELECT {identifier_column} AS blocker_id, task_id, item_id, status
+                    FROM {table} WHERE item_id=? ORDER BY updated_at DESC, {identifier_column} DESC
+                    LIMIT 32""",
+                    (item_id,),
+                ).fetchall()
+                blockers.extend(
+                    CheckpointBlocker(
+                        kind,
+                        value["blocker_id"],
+                        value["status"],
+                        value["task_id"],
+                        value["item_id"],
+                        paths[kind] + value["blocker_id"],
+                    )
+                    for value in blocker_row
+                )
+
+            audits: list[CheckpointAudit] = []
+            audit_queries = (
+                ("task_retry", "task_retry_audit", "decision_id", "decided_at", "actor"),
+                (
+                    "recognition_retry",
+                    "recognition_retry_audit",
+                    "decision_id",
+                    "decided_at",
+                    "actor",
+                ),
+                ("manual_ignore", "manual_ignore_audit", "decision_id", "decided_at", "actor"),
+            )
+            for kind, table, identifier_column, timestamp_column, actor_column in audit_queries:
+                audit_rows = self._connection.execute(
+                    f"""SELECT {identifier_column} AS audit_id, {timestamp_column} AS occurred_at,
+                    {actor_column} AS actor FROM {table} WHERE item_id=?
+                    ORDER BY {timestamp_column}, {identifier_column} LIMIT ?""",
+                    (item_id, audit_limit),
+                ).fetchall()
+                audits.extend(
+                    CheckpointAudit(
+                        value["audit_id"],
+                        kind,
+                        datetime.fromisoformat(value["occurred_at"]),
+                        value["actor"],
+                    )
+                    for value in audit_rows
+                )
+            review_audit_queries = (
+                (
+                    "recognition_review",
+                    "recognition_review_decision_audit",
+                    "recognition_reviews",
+                ),
+                ("metadata_review", "metadata_review_decision_audit", "metadata_reviews"),
+                (
+                    "metadata_correction",
+                    "metadata_correction_decision_audit",
+                    "metadata_corrections",
+                ),
+                (
+                    "classification_review",
+                    "classification_review_decision_audit",
+                    "classification_reviews",
+                ),
+            )
+            for kind, audit_table, parent_table in review_audit_queries:
+                audit_rows = self._connection.execute(
+                    f"""SELECT a.audit_id AS audit_id, a.decided_at AS occurred_at,
+                    a.actor AS actor FROM {audit_table} a JOIN {parent_table} p
+                    ON p.review_id=a.review_id WHERE p.item_id=?
+                    ORDER BY a.decided_at, a.audit_id LIMIT ?""",
+                    (item_id, audit_limit),
+                ).fetchall()
+                audits.extend(
+                    CheckpointAudit(
+                        value["audit_id"],
+                        kind,
+                        datetime.fromisoformat(value["occurred_at"]),
+                        value["actor"],
+                    )
+                    for value in audit_rows
+                )
+            audit_rows = self._connection.execute(
+                """SELECT a.audit_id AS audit_id, a.decided_at AS occurred_at,
+                a.actor AS actor FROM conflict_decision_audit a
+                JOIN conflict_confirmations p ON p.confirmation_id=a.confirmation_id
+                WHERE p.item_id=? ORDER BY a.decided_at, a.audit_id LIMIT ?""",
+                (item_id, audit_limit),
+            ).fetchall()
+            audits.extend(
+                CheckpointAudit(
+                    value["audit_id"],
+                    "conflict_decision",
+                    datetime.fromisoformat(value["occurred_at"]),
+                    value["actor"],
+                )
+                for value in audit_rows
+            )
+            audits.sort(key=lambda value: (value.occurred_at, value.audit_id))
+            return ProcessingCheckpointContext(
+                task=task,
+                item=item,
+                results=results,
+                blockers=tuple(blockers),
+                audits=tuple(audits[-audit_limit:]),
             )
 
     def list_results(
@@ -3067,6 +3289,8 @@ class SQLiteTaskRepository:
                     retry_category TEXT,
                     cleanup_status TEXT,
                     cleanup_step_count INTEGER NOT NULL DEFAULT 0,
+                    effect_certainty TEXT NOT NULL DEFAULT 'unknown',
+                    uncertain_effects TEXT NOT NULL DEFAULT '[]',
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
                     FOREIGN KEY(item_id) REFERENCES task_items(item_id)
                 );
@@ -3370,6 +3594,16 @@ class SQLiteTaskRepository:
                     "ALTER TABLE task_results ADD COLUMN cleanup_step_count "
                     "INTEGER NOT NULL DEFAULT 0"
                 )
+            if "effect_certainty" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE task_results ADD COLUMN effect_certainty "
+                    "TEXT NOT NULL DEFAULT 'unknown'"
+                )
+            if "uncertain_effects" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE task_results ADD COLUMN uncertain_effects "
+                    "TEXT NOT NULL DEFAULT '[]'"
+                )
             job_columns = {
                 row["name"]
                 for row in self._connection.execute("PRAGMA table_info(automation_jobs)").fetchall()
@@ -3534,6 +3768,8 @@ class SQLiteTaskRepository:
             row["retry_category"],
             row["cleanup_status"],
             row["cleanup_step_count"],
+            row["effect_certainty"],
+            tuple(json.loads(row["uncertain_effects"] or "[]")),
         )
 
     @staticmethod

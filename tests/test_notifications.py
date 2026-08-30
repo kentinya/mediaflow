@@ -328,7 +328,7 @@ class NotificationTests(unittest.TestCase):
             )
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 22)
+                self.assertEqual(repository.schema_version, 23)
                 self.assertEqual(repository.list_deliveries(), ())
 
     def test_terminal_job_and_schedule_events_enter_outbox(self) -> None:

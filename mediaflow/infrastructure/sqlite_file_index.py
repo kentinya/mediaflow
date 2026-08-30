@@ -190,7 +190,9 @@ class SQLiteFileIndexRepository:
                 r.retry_attempts AS r_retry_attempts,
                 r.retry_category AS r_retry_category,
                 r.cleanup_status AS r_cleanup_status,
-                r.cleanup_step_count AS r_cleanup_step_count
+                r.cleanup_step_count AS r_cleanup_step_count,
+                r.effect_certainty AS r_effect_certainty,
+                r.uncertain_effects AS r_uncertain_effects
             FROM file_index f
             LEFT JOIN task_results r ON r.result_id = (
                 SELECT r2.result_id FROM task_results r2
@@ -353,5 +355,9 @@ class SQLiteFileIndexRepository:
             row["r_retry_category"],
             row["r_cleanup_status"],
             row["r_cleanup_step_count"],
+            row["r_effect_certainty"] if "r_effect_certainty" in row.keys() else "unknown",
+            tuple(json.loads(row["r_uncertain_effects"] or "[]"))
+            if "r_uncertain_effects" in row.keys()
+            else (),
         )
         return FileCatalogEnrichedRecord(SQLiteFileIndexRepository._record(row), result)
