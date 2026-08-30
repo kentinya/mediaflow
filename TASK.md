@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 23.2
 Parent Slice: 23 — Stage-Aware Per-Item Recovery
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: f196da8563b1db60659b88ab17a2cfcaabea167c
 Difficulty: High
 Test Level: T4
@@ -254,22 +254,81 @@ TMDB service and no production data may be used.
 ## Developer Completion Report
 
 ### Changed Files
+- `mediaflow/application/file_replan_request.py`
+- `mediaflow/application/manual_ignore.py`
+- `mediaflow/application/processing_checkpoint.py`
+- `mediaflow/application/recovery_admission.py`
+- `mediaflow/application/task_retry.py`
+- `mediaflow/domain/processing_checkpoint.py`
+- `mediaflow/domain/recovery.py`
+- `mediaflow/domain/task_persistence.py`
+- `mediaflow/final_cli.py`
+- `mediaflow/infrastructure/sqlite_runtime.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `mediaflow/interfaces/service_api.py`
+- `tests/test_processing_recovery_admission.py`
+- affected retry/ignore/re-plan/checkpoint/API/UI/configuration schema-version test modules
 
 ### Implemented
+- Added one shared, version-bound admission gate for single-item `retry` and pending-review
+  `ignore` requests. The gate reuses the stage-aware checkpoint decision, rejects stale,
+  duplicate, unsafe, terminal, mismatched, or unavailable-snapshot requests, and performs no
+  continuation or media operation.
+- Persisted bounded recovery requests with the checkpoint version, original Storage-relative
+  source identity, pinned configuration identity, actor/time, explicit no-mutation authority,
+  next action, and request audit. Request, action-specific audit, and item transition commit in
+  one SQLite transaction with an active-request uniqueness guard.
+- Preserved prior TaskItem error and Result effect-certainty evidence across retry/ignore admission;
+  `PARTIAL` and uncertain effects are never admitted for replay. Added stage-aware admissible
+  `ignore` for pending recognition/metadata/metadata-correction reviews.
+- Routed Task-item API, Operator Web, File re-plan, and CLI recovery entry points through the
+  shared gate. API/Web expose the same bounded request/checkpoint evidence and explicit confirmation
+  without granting execute, overwrite, delete, source-cleanup, or rollback authority.
+- Added forward schema migration and regression coverage for admission identity, atomicity,
+  duplicate/stale handling, snapshot fail-closed behavior, evidence preservation, path/secret
+  safety, API/UI parity, and RecognitionType C preservation.
 
 ### Tests and Results
+- `.venv/bin/python -m unittest tests.test_processing_recovery_admission` — PASS (10 tests).
+- `.venv/bin/python -m unittest tests.test_processing_recovery_admission tests.test_processing_checkpoint` — PASS (20 tests).
+- `.venv/bin/python -m unittest tests.test_manual_ignore tests.test_manual_ignore_batch tests.test_file_replan_request tests.test_recognition_retry tests.test_task_retry tests.test_operator_ui` — PASS (55 tests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (894 tests, 7 skipped; existing ResourceWarning diagnostics only).
+- `.venv/bin/ruff format --check .` — PASS (317 files already formatted).
+- `.venv/bin/ruff check .` — PASS.
+- `python3 -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS (no broken requirements).
+- `.venv/bin/mediaflow --config config/strategy.example.json config validate` — PASS.
+- `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
+- ffprobe/ffmpeg repository audit — PASS (no references in `mediaflow/`, `tests/`, or `scripts/`).
+- `git diff --check` — PASS.
 
 ### Decisions
+- The checkpoint projection is the single source of permitted/admissible action truth; linked
+  resolution journeys remain non-admitting and Task-scoped resume remains non-admissible here.
+- Recovery admission pins the presented checkpoint and existing Task configuration snapshot, then
+  reprojects and rechecks both under `BEGIN IMMEDIATE` before any transition. No current Active
+  configuration is substituted.
+- Retry is admitted only for a failed item with verified no-effect certainty and a resolvable
+  pinned snapshot. Ignore is limited to a matching pending manual review. Both transitions retain
+  the prior item error and all Result evidence.
+- Existing batch retry/ignore APIs remain outside this single-item continuation scope; CLI batch
+  entry points use the shared gate when admitting their individual candidates.
 
 ### Remaining In-Slice Work
+- Continuation execution, bounded batch recovery semantics, sibling independence, and
+  parent/continuation summary reconciliation remain outside this Task and are not started.
 
 ### Risks / Deviations
+- No real SMB/OpenList/S3/TMDB service, credentials, or production data were used.
+- Seven tests remain skipped by their existing conditional gates; the full suite otherwise passed.
+- The full suite emitted existing SQLite `ResourceWarning` diagnostics; no test failed and no new
+  warning gate was introduced.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: fc6b04a8607800b9b70ec5ca8c2607641595007c
 ```
 
 ## B Review Result
