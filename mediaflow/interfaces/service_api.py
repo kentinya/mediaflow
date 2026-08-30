@@ -163,6 +163,7 @@ class MediaFlowApi:
         self._recovery_batch = RecoveryBatchContinuationService(
             repository,
             continuation_service=self._recovery_continuation,
+            admission_service=self._recovery_admission,
         )
         self._runtime_binding_lock = threading.RLock()
         self._runtime_binding = self._build_runtime_binding(
