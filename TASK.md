@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 23.3
 Parent Slice: 23 — Stage-Aware Per-Item Recovery
-Status: FIX REQUIRED
+Status: PASS
 Task Base: e9a68986d50ec8c0dfb651738574f48a5c8d05bf
 Difficulty: High
 Test Level: T4
@@ -435,26 +435,18 @@ Head SHA: 856f0c500d0888cb345da7fedb3933904b9ffdd0
 ## B Review Result
 
 ```text
-Reviewed: e9a68986d50ec8c0dfb651738574f48a5c8d05bf..4d01472ef195f5916814ea0dc48c96c59cf0c12a
-Decision: FIX REQUIRED
+Reviewed: e9a68986d50ec8c0dfb651738574f48a5c8d05bf..856f0c500d0888cb345da7fedb3933904b9ffdd0
+Decision: PASS
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK
 ```
 
-- Pending Job cancellation does not terminate the recovery continuation or its parent request.
-  Evidence: after creating a real admitted continuation, invoking the production
-  `AutomationJobService.cancel(job_id)` path produced `Job=cancelled` while the same persisted
-  `RecoveryContinuation` remained `queued` and its `RecoveryRequest` remained `pending`/active.
-  The Worker will never claim that cancelled Job, so the item is permanently stuck and cannot be
-  decided again. Integrate `RECOVERY_CONTINUATION` with the existing atomic Job-cancellation path so
-  pending cancellation durably records a cancelled continuation and resolves the parent request;
-  preserve the existing cooperative/fenced semantics for running work and keep all original item,
-  Result and recovery evidence.
-- The Task's Required Tests were not completed for the terminal/atomic lifecycle. Evidence:
-  `.venv/bin/python -m unittest tests.test_recovery_continuation` passes 12 tests, but that suite has
-  no cancelled-continuation test and no injected mid-submission or mid-terminal-transition rollback
-  test, despite explicitly requiring `prepare / started / finish / failed / cancelled` and
-  transactional atomicity. Add production-path coverage that catches the pending-cancellation defect
-  above (plus cooperative running cancellation where applicable), and inject failures proving
-  {Job + continuation admission} and {continuation terminal state + parent-request resolution} each
-  roll back without an orphan Job, partial linkage or lost original evidence.
+- Review evidence:
+  - The pending cancellation blocker is closed by the production
+    `AutomationJobService.cancel()` path; the continuation and parent request
+    become `cancelled` atomically with the pending Job.
+  - Focused recovery tests cover pending cancellation plus injected admission
+    and terminal-transition rollback. The original TaskItem, sibling Result
+    evidence and recovery linkage remain intact.
+  - No test deletion, weakened assertion, hidden skip, private file, credential
+    or unrelated implementation change was found in the reviewed range.
