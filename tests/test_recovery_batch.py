@@ -71,6 +71,9 @@ class RecoveryBatchTests(unittest.TestCase):
             self.assertEqual(statuses[source_item.item_id], RecoveryBatchItemStatus.QUEUED)
             self.assertEqual(statuses["missing-item"], RecoveryBatchItemStatus.REFUSED)
             self.assertEqual(batch.unchanged_count, 1)
+            self.assertEqual(batch.ignored_count, 0)
+            self.assertEqual(batch.counts["unchanged"], 1)
+            self.assertEqual(batch.counts["ignored"], 0)
             self.assertIsNotNone(batch.items[0].request_id)
             helper._run_worker(
                 environment,
@@ -86,6 +89,59 @@ class RecoveryBatchTests(unittest.TestCase):
             self.assertEqual(reloaded.counts["completed"], 1)
             self.assertEqual(reloaded.counts["refused"], 1)
             self.assertEqual(reloaded.counts["unchanged"], 1)
+            self.assertEqual(reloaded.counts["ignored"], 0)
+
+    def test_parent_summary_distinguishes_ignored_from_unchanged_siblings(self) -> None:
+        """AC 8, RO-5: ignored siblings reconcile separately from unchanged siblings."""
+        with tempfile.TemporaryDirectory() as directory:
+            helper = _RecoveryContinuationTests()
+            environment = helper._environment(directory)
+            source_task, source_item = helper._seed_failed_item(environment)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                sibling = repository.list_items(source_task.task_id)[1]
+                repository.upsert_item(
+                    replace(
+                        sibling,
+                        status=TaskItemStatus.IGNORED,
+                        stage="ignored_by_operator",
+                    )
+                )
+                continuation_service = RecoveryContinuationService(
+                    repository,
+                    snapshot_validator=lambda _id, _digest: None,
+                )
+                checkpoint = continuation_service.checkpoint_service.get(source_item.item_id)
+                service = RecoveryBatchContinuationService(
+                    repository,
+                    continuation_service=continuation_service,
+                    admission_service=RecoveryAdmissionService(
+                        repository,
+                        snapshot_validator=lambda _id, _digest: None,
+                        checkpoint_service=continuation_service.checkpoint_service,
+                    ),
+                )
+                batch = service.submit(
+                    source_task.task_id,
+                    [
+                        {
+                            "itemId": source_item.item_id,
+                            "expectedCheckpointVersion": checkpoint.checkpoint_version,
+                        }
+                    ],
+                    actor="operator",
+                    maximum_active_jobs=100,
+                )
+            self.assertEqual(batch.unchanged_count, 0)
+            self.assertEqual(batch.ignored_count, 1)
+            self.assertEqual(batch.counts["unchanged"], 0)
+            self.assertEqual(batch.counts["ignored"], 1)
+            self.assertEqual(batch.document()["ignored_count"], 1)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                reloaded = repository.get_recovery_batch(batch.batch_id)
+            self.assertEqual(reloaded.unchanged_count, 0)
+            self.assertEqual(reloaded.ignored_count, 1)
+            self.assertEqual(reloaded.counts["ignored"], 1)
+            self.assertEqual(reloaded.counts["unchanged"], 0)
 
     def test_api_batch_submission_and_task_reload_expose_parent_summary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -313,6 +369,61 @@ class RecoveryBatchTests(unittest.TestCase):
                 self.assertIsNotNone(reloaded.items[0].new_task_id)
                 self.assertIsNotNone(reloaded.items[0].new_result_id)
                 self.assertEqual(repository.get_item(source_item.item_id).error, "original failure")
+
+    def test_batch_detail_web_exposes_child_checkpoint_and_linked_result_after_reload(self) -> None:
+        """AC 7, AC 9, RO-6: API/Web batch detail keeps linked evidence reachable."""
+        with tempfile.TemporaryDirectory() as directory:
+            helper = _RecoveryContinuationTests()
+            environment = helper._environment(directory)
+            source_task, source_item = helper._seed_failed_item(environment)
+            api = helper._api(environment)
+            status, checkpoint = api_request(
+                api,
+                f"/api/v1/tasks/{source_task.task_id}/items/{source_item.item_id}",
+            )
+            self.assertEqual(status, 200)
+            status, batch_doc = api_request(
+                api,
+                f"/api/v1/tasks/{source_task.task_id}/recovery/continue-batch",
+                method="POST",
+                body={
+                    "items": [
+                        {
+                            "itemId": source_item.item_id,
+                            "expectedCheckpointVersion": checkpoint["checkpoint_version"],
+                        }
+                    ]
+                },
+            )
+            self.assertEqual(status, 202)
+            helper._run_worker(
+                environment,
+                DetailCountingProvider(
+                    candidates=(
+                        MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),
+                    )
+                ),
+            )
+            status, detail = api_request(
+                api,
+                f"/api/v1/recovery-batches/{batch_doc['batch_id']}",
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(len(detail["items"]), 1)
+            item = detail["items"][0]
+            self.assertEqual(item["status"], "completed")
+            self.assertEqual(item["source_item_id"], source_item.item_id)
+            self.assertIsNotNone(item["checkpoint_version"])
+            self.assertIsNotNone(item["request_id"])
+            self.assertIsNotNone(item["continuation_id"])
+            self.assertIsNotNone(item["job_id"])
+            self.assertIsNotNone(item["new_task_id"])
+            self.assertIsNotNone(item["new_result_id"])
+            self.assertIsNotNone(item["next_action"])
+            script = ASSETS["/ui/app.js"][1].decode("utf-8")
+            self.assertIn("Checkpoint version", script)
+            self.assertIn("Open linked Task/Result for", script)
+            self.assertIn("Linked DryRun Tasks/Results", script)
 
     def test_two_accepted_children_complete_independently(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

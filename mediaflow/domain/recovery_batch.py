@@ -83,6 +83,7 @@ class RecoveryBatch:
     status: RecoveryBatchStatus
     items: tuple[RecoveryBatchItem, ...]
     unchanged_count: int = 0
+    ignored_count: int = 0
 
     @property
     def selected_count(self) -> int:
@@ -94,6 +95,7 @@ class RecoveryBatch:
         for item in self.items:
             values[item.status.value] += 1
         values["unchanged"] = self.unchanged_count
+        values["ignored"] = self.ignored_count
         # Derive additional summary states from child/sibling/continuation state
         accepted = sum(1 for item in self.items if item.request_id is not None)
         refused = sum(1 for item in self.items if item.status is RecoveryBatchItemStatus.REFUSED)
@@ -153,6 +155,7 @@ class RecoveryBatch:
             "status": self.status.value,
             "selected_count": self.selected_count,
             "unchanged_count": self.unchanged_count,
+            "ignored_count": self.ignored_count,
             "counts": self.counts,
             "items": [item.document() for item in self.items],
             "next_action": (
