@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 23.2
 Parent Slice: 23 — Stage-Aware Per-Item Recovery
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: f196da8563b1db60659b88ab17a2cfcaabea167c
 Difficulty: High
 Test Level: T4
@@ -354,66 +354,51 @@ Head SHA: d92eb1e2d67f1d87cce456adf2d8561672ee47c5
 ## B Review Result
 
 ```text
-Reviewed: f196da8563b1db60659b88ab17a2cfcaabea167c..fc6b04a8607800b9b70ec5ca8c2607641595007c
+Reviewed: f196da8563b1db60659b88ab17a2cfcaabea167c..d92eb1e2d67f1d87cce456adf2d8561672ee47c5
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-The implementation itself is accepted: I read the whole range and re-ran Test Level T4
-independently (894 tests OK, 7 pre-existing conditional skips; `ruff format --check .` 317 files;
-`ruff check .`; `compileall`; `pip check`; both `config validate`; ffprobe/ffmpeg audit clean;
-`git diff --check` clean; no secret, token, private endpoint or private path introduced;
-`config/alist.json` still ignored and untracked; no file outside the Task scope touched). No test
-was deleted, no skip was added, and the two message-based assertions that changed
-(`tests/test_manual_ignore.py` "matching pending" -> "unknown") changed because the gate now
-refuses earlier and more strictly, which is not a weakening.
+Round 1 raised three points; two are closed. I read the actual fix diff `0eafbbb..d92eb1e`
+(`tests/test_operator_ui.py` +16, `tests/test_processing_recovery_admission.py` +388/-5; the five
+removed lines are only the `api_request` and `_task` helper signatures, whose previous defaults are
+preserved), and re-ran Test Level T4 independently: the focused
+`tests.test_processing_recovery_admission tests.test_operator_ui` run is 41 tests OK; full
+`discover -s tests` is 896 tests OK with the same 7 pre-existing conditional skips;
+`ruff format --check .` 317 files; `ruff check .`; `compileall`;
+`pip check`; both `config validate`; ffprobe/ffmpeg audit clean; `git diff --check` clean; tree
+clean; `config/alist.json` still ignored (`.gitignore:21`) and unknown to git. No production file
+was touched, no test was deleted, no skip was added, no assertion was loosened, and no credential,
+private endpoint or private path appears in the added lines (only the existing synthetic
+`operator-token` / `viewer-token` fixtures).
 
-Three Acceptance Criteria are not evidenced by the test suite. The behaviour is present — I
-verified each one by hand against the reported Head — but the Required Tests that must guard it
-were not delivered, so nothing in the suite would catch a regression.
+### Unmet — Acceptance Criterion 14 is still not falsifiable for the Storage/Provider half
 
-### Unmet 1 — Acceptance Criterion 11 has no test at all
+`test_recovery_admission_falsifies_storage_provider_and_durable_side_effects` asserts zero calls on
+spies that no production code can reach. `StrictStorageSpy` and `StrictProviderSpy` are instantiated
+only as attributes of `StrictSnapshotValidator`
+(`tests/test_processing_recovery_admission.py:829-830`) and are never passed to the gate, the
+repository or the API; the gate is built as `RecoveryAdmissionService(repository,
+snapshot_validator=validator)`, which takes no Storage or Provider argument. The only other
+references to them are the assertions themselves (`:872-873`), so
+`assertEqual(validator.storage.calls, [])` and `assertEqual(validator.provider.calls, [])` cannot
+fail for any change to `admit`. A regression that made admission open a Storage or call a metadata
+Provider would keep this test green, which is exactly what the Required Test "a zero-mutation
+falsification test using strict Storage/Provider spies" exists to prevent.
 
-The whole `RecoveryAdmissionError` -> HTTP mapping added at
-`mediaflow/interfaces/service_api.py:217-267` (404 / 503 / 403 / 400 / 409, the `reason` /
-`currentCheckpointVersion` / `existingRequest` / `nextAction` details, the not-found suppression and
-the denial audit) is never executed by a test. The entire suite makes exactly two requests to the
-new route: `tests/test_processing_recovery_admission.py:472` (success) and `:494`, whose 403 comes
-from the pre-existing `ApiPermissionDenied` handler at `service_api.py:205` and therefore never
-enters the new block.
+The durable-work half of the same test is genuine and should stay as it is: the Task, Task list, Job
+list, Result list and `file_locks` snapshots are compared before and after a real admission.
 
-Required direction: extend the API test so the endpoint itself covers unauthenticated, unknown
-Task, unknown item, Task/item mismatch, a refused action, a stale version, a duplicate active
-request (asserting `existingRequest` and `nextAction`), an unavailable pinned snapshot, an unknown
-action id, a malformed expected version, an over-long note, an unexpected field and an unexpected
-query parameter — asserting the bounded status and reason for each, and that the not-found
-responses expose no `reason`.
-
-### Unmet 2 — Acceptance Criterion 14 has no falsification test
-
-Required Tests named "a zero-mutation falsification test using strict Storage/Provider spies".
-`tests/test_processing_recovery_admission.py` imports no Storage or Provider double, and no test
-asserts that admission creates no new Task, Job, Result or file lock.
-`test_retry_admission_is_version_bound_audited_and_preserves_evidence` asserts only
-`list_results_for_item(...)[0] == result`, which does not bound the row count.
-
-Required direction: add a test that admits a request with strict Storage and metadata Provider
-spies wired in and asserts zero calls on both, plus unchanged Task, Job, Result and lock counts.
-
-### Unmet 3 — Acceptance Criterion 13 is only half covered, and a negative guard was dropped
-
-`tests/test_operator_ui.py:157` replaced `assertNotIn("actor", script.lower())` with
-`assertIn("Admitted recovery request")` and `assertIn("request.actor")`. Rendering the actor is
-required by this Task, so that guard had to change — but the replacement asserts only the
-post-reload card. Nothing asserts that the confirmation names the action and the bound checkpoint
-version, that only `action.admissible` actions get a control, or that the submission goes to the
-recovery route with exactly `actionId` and `expectedCheckpointVersion`; and the original property
-(the Web layer never supplies an actor) is now unguarded on the Web side.
-
-Required direction: assert the confirmation text, the admissible-only control, and the POST route
-plus its exact body fields from `APP_JS`, and re-add a narrowed negative guard that the script
-never submits an actor field.
+Required direction: place the strict doubles where the production admission path would actually
+reach them and assert they were never used — for example patch the configuration-service
+`create_storage` seam and the metadata provider registry construction with doubles that raise on any
+attribute access (the `unittest.mock` pattern already used elsewhere in this suite) for the duration
+of one real admission, and/or snapshot the on-disk tree (relative paths, sizes, mtimes) of the
+item's source root and destination root before and after admission and assert it is unchanged
+apart from the runtime SQLite files. Drive at least one admission through the API route as well,
+so the wired seam covers the transport path. Then drop or replace the two unreachable-spy
+assertions so the suite does not present an unreachable double as evidence.
 
 Task ID, Task Base, Goal and Scope are unchanged. Fix in this same Task and resubmit with a new
-Head SHA; do not add anything beyond the three points above.
+Head SHA; do not change anything beyond this one point.
