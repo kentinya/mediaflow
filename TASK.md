@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 23.1
 Parent Slice: 23 — Stage-Aware Per-Item Recovery
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 5b12ef92ed2720692fb1a1cfc39520d180780588
 Difficulty: High
 Test Level: T4
@@ -285,22 +285,71 @@ Head SHA: 08baa42b879af23ebc95311e9e5de3bb5527f5c1
 ## B Review Result
 
 ```text
-Reviewed: 5b12ef92ed2720692fb1a1cfc39520d180780588..df8c9dc550177f2715c847bd1e497c5f0423bc66
-Decision: FIX REQUIRED
+Reviewed: 5b12ef92ed2720692fb1a1cfc39520d180780588..939c1fe3283a0e2f36bb23da134bb1c19213a871
+Decision: PASS
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK
 ```
 
-- **Uncertain post-mutation failures are incorrectly marked safe to retry.** The completion helper
-  `_effect_evidence` returns `none` whenever an `ExecutionResult` is `FAILED` with no recorded
-  `completed_operations` or `created_directories`, even though the Storage operation may already
-  have taken effect before its adapter raised. An independent mutate-then-raise probe produced
-  `storage_target_exists=True`, `execution_status=FAILED`, `rollback_status=disabled` and an empty
-  operation list; the persisted checkpoint then reported `effect_certainty=none`,
-  `retry_safety=safe` and action `retry`. This violates the Task criteria for otherwise-unverified
-  execution and the Slice invariant that unknown/uncertain effects fail closed. Record explicit
-  mutation-attempt/outcome evidence at the OrganizerExecutor result boundary (without inferring it
-  from error text or an empty operation list), project an ambiguous post-attempt failure as
-  `attempted_unverified`/non-replayable, and add a regression in which Storage mutates then raises.
-  `none` may remain retry-safe only when durable evidence explicitly proves the failure occurred
-  before any mutation attempt.
+Reviewed range covers the reported implementation head `08baa42` plus the one-line TASK.md status
+commit `939c1fe`. Working tree clean; no unrelated or private file in the range.
+
+### Previous blocker closed
+
+The recorded FIX REQUIRED blocker is fixed at its true owner rather than at the projection.
+`ExecutionResult` now carries executor-owned `effect_certainty` / `uncertain_effects` defaulting to
+`unknown`, `_execute` sets `mutation_attempted` immediately **before** every mutating Storage call
+(parent `create_directory`, each attachment `_mutate_and_record`, the primary `_mutate_and_record`),
+and `_failure_result` maps an attempted-but-unverified outcome to `attempted_unverified` +
+`("mutation_outcome",)`. `_effect_evidence` no longer infers anything: it copies executor evidence
+and falls closed to `unknown` for a missing or invalid value. I checked every pre-mutation early
+return in `_execute` (source missing, destination exists, attachment checks, plan/storage
+validation, DryRun, rollback+overwrite conflict) and each is read-only, so the default `none`
+remains honest. `test_mutate_then_raise_is_unverified_and_never_retry_safe` reproduces the exact
+probe from the prior review (Storage mutates, then raises) and asserts `attempted_unverified`, retry
+safety `unknown`, actions `("investigate",)` and no `retry` after persistence.
+
+### Acceptance Criteria verified against code and tests
+
+- All 15 `TaskItemStatus` values and the production stage strings project a checkpoint; no raise, no
+  placeholder, no default retry. `SUCCESS` / `DRY_RUN` / `SKIPPED` / `IGNORED` expose zero actions
+  with a `replay_not_offered` reason; `PARTIAL` reports known completed operations plus explicit
+  uncertain effects and offers only `investigate`.
+- Legacy rows stay `unknown`: schema 22 → 23 is additive with `DEFAULT 'unknown'`, verified by a
+  test that builds a schema-22 database with a pre-existing `task_results` row, migrates, and
+  asserts the row survives with `unknown` / `()`.
+- All five blocker kinds are inserted as real rows and each resolves to an existing detail endpoint
+  containing the blocker id; the two added review GET routes make every `resolution_path`
+  resolvable.
+- Pinned snapshot id/digest are reported with bounded `RuntimeSnapshotUnavailable` reason codes and
+  never replaced by current Active; unresolvable/unvalidated snapshots suppress `retry`.
+- `checkpoint_version` is stable across repeated reads, changes on attempts/updated_at change, and
+  is identical from a fresh repository instance over the same database file.
+- API parity asserted field-by-field between `GET /api/v1/tasks/{taskId}/items/{itemId}` and the
+  Task-detail `checkpoint` summary; unknown ids and Task/item mismatch both 404, unauthenticated
+  401, unexpected query 400.
+- Zero-mutation falsification uses a strict spy repository (exactly one bounded context read) and
+  asserts the Operator Web drill-in strings come from the API document.
+- RecognitionType C preserved with NamingPolicy A / ClassificationPolicy A in the checkpoint
+  payload.
+
+### Gates re-run independently
+
+`python -m unittest discover -s tests` — Ran 884 tests, OK (skipped=7); focused
+`tests.test_processing_checkpoint` — 10 tests OK; `ruff format --check .` (314 files) and `ruff
+check .` clean; `compileall` clean; `pip check` clean; both `config validate` PASS; ffprobe/ffmpeg
+audit clean; `git diff --check` clean. The 7 skips are all pre-existing external-service/endurance
+acceptance skips (OpenList, S3, SMB, four endurance gates), not new. I diffed all 13 touched test
+modules: every change is only the schema expectation 22 → 23, with the migrate-from-older-version
+setup and assertions intact. No test deleted, no assertion loosened.
+
+### Non-blocking (P2, recorded for the Closure Packet, not fixed in this Task)
+
+- A cleanup-stage `FAILED` labels the whole invocation `attempted_unverified` even when the primary
+  move was verified; conservative and safe, but coarser than necessary.
+- The `PAUSED → resume` decision branch is effectively unreachable, since a paused item without a
+  result already fails closed to `unknown` certainty earlier.
+- `list_file_review_links` still omits classification reviews and conflict confirmations; the new
+  item-scoped checkpoint covers all five kinds, so no journey depends on it.
+- Task detail performs one bounded checkpoint read per item row (bounded by the existing item
+  limit).
