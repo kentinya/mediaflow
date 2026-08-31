@@ -522,7 +522,7 @@ class ProcessingCheckpointTests(unittest.TestCase):
             )
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 26)
+                self.assertEqual(repository.schema_version, 27)
                 result = repository.list_results_for_item("legacy-item")[0]
                 self.assertEqual(result.effect_certainty, "unknown")
                 self.assertEqual(result.uncertain_effects, ())

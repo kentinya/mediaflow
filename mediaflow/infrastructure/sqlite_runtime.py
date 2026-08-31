@@ -43,6 +43,7 @@ from mediaflow.domain.manual_ignore import (
     ManualIgnoreDecision,
     ManualReviewKind,
 )
+from mediaflow.domain.media_evidence import PipelineEvidence, evidence_from_document
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionBatchResolveRequest,
     MetadataCorrectionContinuation,
@@ -108,8 +109,8 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestDecision
 
-# Runtime schema 26 adds the additive recovery batch parent/child read model.
-SCHEMA_VERSION = 26
+# Runtime schema 27 adds the bounded pipeline evidence read model for File/Media detail.
+SCHEMA_VERSION = 27
 
 
 class SQLiteTaskRepository:
@@ -1520,6 +1521,149 @@ class SQLiteTaskRepository:
                 ),
             )
 
+    def append_evidence(self, evidence: PipelineEvidence) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT OR REPLACE INTO pipeline_evidence (
+                    evidence_id, task_id, item_id, attempts, source_storage_id, source_path,
+                    captured_at, configuration_snapshot_id, configuration_snapshot_digest,
+                    outcome, document
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                self._evidence_values(evidence),
+            )
+
+    def complete_item_with_evidence(
+        self,
+        item: PersistentTaskItem,
+        result: PersistentResultRecord,
+        evidence: PipelineEvidence | None,
+    ) -> None:
+        """Atomically publish item outcome, result, and bounded evidence."""
+
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT OR REPLACE INTO task_results (
+                    result_id, task_id, item_id, source_storage_id, source_path,
+                    destination_storage_id, destination_path, recognition_type, provider,
+                    provider_id, metadata_policy_id, naming_policy_id, classification_policy_id,
+                    organize_policy_id, operation, status, created_at, title, error,
+                    completed_operations, attachment_count, retry_attempts, retry_category,
+                    cleanup_status, cleanup_step_count, effect_certainty, uncertain_effects
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                """,
+                (
+                    result.result_id,
+                    result.task_id,
+                    result.item_id,
+                    result.source_storage_id,
+                    result.source_path,
+                    result.destination_storage_id,
+                    result.destination_path,
+                    result.recognition_type,
+                    result.provider,
+                    result.provider_id,
+                    result.metadata_policy_id,
+                    result.naming_policy_id,
+                    result.classification_policy_id,
+                    result.organize_policy_id,
+                    result.operation,
+                    result.status,
+                    result.created_at.isoformat(),
+                    result.title,
+                    result.error,
+                    json.dumps(result.completed_operations, ensure_ascii=False),
+                    result.attachment_count,
+                    result.retry_attempts,
+                    result.retry_category,
+                    result.cleanup_status,
+                    result.cleanup_step_count,
+                    result.effect_certainty,
+                    json.dumps(result.uncertain_effects, ensure_ascii=False),
+                ),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO task_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(item_id) DO UPDATE SET
+                    status=excluded.status, stage=excluded.stage, attempts=excluded.attempts,
+                    updated_at=excluded.updated_at, plan_id=excluded.plan_id,
+                    destination_storage_id=excluded.destination_storage_id,
+                    destination_path=excluded.destination_path,
+                    execution_status=excluded.execution_status, error=excluded.error
+                """,
+                self._item_values(item),
+            )
+            if evidence is not None:
+                self._connection.execute(
+                    """
+                    INSERT OR REPLACE INTO pipeline_evidence (
+                        evidence_id, task_id, item_id, attempts, source_storage_id, source_path,
+                        captured_at, configuration_snapshot_id, configuration_snapshot_digest,
+                        outcome, document
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    self._evidence_values(evidence),
+                )
+
+    def list_evidence_for_item(
+        self, item_id: str, *, limit: int = 32
+    ) -> tuple[PipelineEvidence, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("item evidence limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM pipeline_evidence WHERE item_id=?
+                ORDER BY captured_at DESC, evidence_id DESC LIMIT ?""",
+                (item_id, limit),
+            ).fetchall()
+        return tuple(self._evidence(row) for row in rows)
+
+    def list_evidence_for_source(
+        self, storage_id: str, path: str, *, limit: int = 32
+    ) -> tuple[PipelineEvidence, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("source evidence limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM pipeline_evidence
+                WHERE source_storage_id=? AND source_path=?
+                ORDER BY captured_at DESC, evidence_id DESC LIMIT ?""",
+                (storage_id, path, limit),
+            ).fetchall()
+        return tuple(self._evidence(row) for row in rows)
+
+    def list_task_items_for_source(
+        self, storage_id: str, path: str, *, limit: int = 32
+    ) -> tuple[PersistentTaskItem, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("source item limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM task_items WHERE storage_id=? AND source_path=?
+                ORDER BY updated_at DESC, item_id DESC LIMIT ?""",
+                (storage_id, path, limit),
+            ).fetchall()
+        return tuple(self._item(row) for row in rows)
+
+    def list_results_for_source(
+        self, storage_id: str, path: str, *, limit: int = 32
+    ) -> tuple[PersistentResultRecord, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("source result limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM task_results
+                WHERE source_storage_id=? AND source_path=?
+                ORDER BY created_at DESC, result_id DESC LIMIT ?""",
+                (storage_id, path, limit),
+            ).fetchall()
+        return tuple(self._result(row) for row in rows)
+
     def list_results_for_item(
         self, item_id: str, *, limit: int = 32
     ) -> tuple[PersistentResultRecord, ...]:
@@ -1804,7 +1948,11 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._result(row) if row else None
 
-    def list_file_review_links(self, storage_id: str, path: str) -> tuple[FileReviewLink, ...]:
+    def list_file_review_links(
+        self, storage_id: str, path: str, *, limit: int = 100
+    ) -> tuple[FileReviewLink, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise ValueError("file review link limit must be between 1 and 1000")
         query = """
             SELECT 'recognition' AS kind, review_id, status, task_id, item_id
             FROM recognition_reviews
@@ -1817,11 +1965,33 @@ class SQLiteTaskRepository:
             SELECT 'metadata_correction', review_id, status, task_id, item_id
             FROM metadata_corrections
             WHERE source_storage_id=? AND source_path=?
+            UNION ALL
+            SELECT 'classification', review_id, status, task_id, item_id
+            FROM classification_reviews
+            WHERE source_storage_id=? AND source_path=?
+            UNION ALL
+            SELECT 'conflict', confirmation_id, status, task_id, item_id
+            FROM conflict_confirmations
+            WHERE source_storage_id=? AND source_path=?
             ORDER BY kind, review_id
+            LIMIT ?
         """
         with self._lock:
             rows = self._connection.execute(
-                query, (storage_id, path, storage_id, path, storage_id, path)
+                query,
+                (
+                    storage_id,
+                    path,
+                    storage_id,
+                    path,
+                    storage_id,
+                    path,
+                    storage_id,
+                    path,
+                    storage_id,
+                    path,
+                    limit,
+                ),
             ).fetchall()
         return tuple(
             FileReviewLink(
@@ -4256,6 +4426,22 @@ class SQLiteTaskRepository:
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
                     FOREIGN KEY(item_id) REFERENCES task_items(item_id)
                 );
+                CREATE TABLE IF NOT EXISTS pipeline_evidence (
+                    evidence_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL, attempts INTEGER NOT NULL,
+                    source_storage_id TEXT NOT NULL, source_path TEXT NOT NULL,
+                    captured_at TEXT NOT NULL,
+                    configuration_snapshot_id TEXT,
+                    configuration_snapshot_digest TEXT,
+                    outcome TEXT NOT NULL,
+                    document TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(item_id) REFERENCES task_items(item_id)
+                );
+                CREATE INDEX IF NOT EXISTS pipeline_evidence_item_captured
+                    ON pipeline_evidence(item_id, captured_at, evidence_id);
+                CREATE INDEX IF NOT EXISTS pipeline_evidence_source_captured
+                    ON pipeline_evidence(source_storage_id, source_path, captured_at, evidence_id);
                 CREATE TABLE IF NOT EXISTS file_locks (
                     storage_id TEXT NOT NULL, path TEXT NOT NULL, task_id TEXT NOT NULL,
                     acquired_at TEXT NOT NULL, PRIMARY KEY(storage_id, path)
@@ -4733,6 +4919,26 @@ class SQLiteTaskRepository:
             row["effect_certainty"],
             tuple(json.loads(row["uncertain_effects"] or "[]")),
         )
+
+    @staticmethod
+    def _evidence_values(evidence: PipelineEvidence) -> tuple[object, ...]:
+        return (
+            evidence.evidence_id,
+            evidence.task_id,
+            evidence.item_id,
+            evidence.attempts,
+            evidence.source_storage_id,
+            evidence.source_path,
+            evidence.captured_at.isoformat(),
+            evidence.configuration_snapshot_id,
+            evidence.configuration_snapshot_digest,
+            evidence.outcome,
+            json.dumps(evidence.document(), ensure_ascii=False, sort_keys=True),
+        )
+
+    @staticmethod
+    def _evidence(row: sqlite3.Row) -> PipelineEvidence:
+        return evidence_from_document(json.loads(row["document"]))
 
     @staticmethod
     def _recovery_request_values(request: RecoveryRequest) -> tuple[object, ...]:

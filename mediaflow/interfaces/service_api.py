@@ -150,6 +150,8 @@ class MediaFlowApi:
             repository,
             snapshot_validator=snapshot_validator,
         )
+        if self._file_catalog is not None:
+            self._file_catalog.attach_checkpoint_service(self._checkpoint_service)
         self._recovery_admission = RecoveryAdmissionService(
             repository,
             snapshot_validator=snapshot_validator,
@@ -1294,6 +1296,42 @@ class MediaFlowApi:
                 {
                     "items": [self._file_catalog_value(item) for item in values],
                     "limit": filters.limit,
+                },
+            )
+        if parts == ["api", "v1", "files", "by-source"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if self._file_catalog is None:
+                return self._error(
+                    start_response, 503, "service_unavailable", "file catalog is unavailable"
+                )
+            storage_id, path, resource_library_id = self._file_by_source_query(environ)
+            record, unavailable_reason = self._file_catalog.resolve_by_source(
+                storage_id,
+                path,
+                resource_library_id=resource_library_id,
+            )
+            if record is None:
+                return self._response(
+                    start_response,
+                    200,
+                    {
+                        "available": False,
+                        "fileId": None,
+                        "unavailableReason": (
+                            "the source link is ambiguous; scope it by ResourceLibrary and reload"
+                            if unavailable_reason == "ambiguous"
+                            else "no current indexed FileIndex record matches this source link"
+                        ),
+                    },
+                )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "available": True,
+                    "fileId": record.file_id,
+                    "resourceLibraryId": record.resource_library_id,
+                    "detailUrl": f"/api/v1/files/{record.file_id}",
                 },
             )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "files"] and method == "GET":
@@ -2773,6 +2811,21 @@ class MediaFlowApi:
         return values.get("resourceLibrary", [None])[0]
 
     @staticmethod
+    def _file_by_source_query(environ: dict) -> tuple[str, str, str | None]:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"storageId", "path", "resourceLibrary"}) or any(
+            len(value) != 1 for value in values.values()
+        ):
+            raise ValueError(
+                "file by-source query accepts storageId, path, and resourceLibrary once"
+            )
+        storage_id = values.get("storageId", [None])[0]
+        path = values.get("path", [None])[0]
+        if not storage_id or not path:
+            raise ValueError("file by-source query requires storageId and path")
+        return storage_id, path, values.get("resourceLibrary", [None])[0]
+
+    @staticmethod
     def _file_catalog_query(environ: dict) -> FileCatalogFilter:
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
         allowed = {
@@ -2925,6 +2978,24 @@ class MediaFlowApi:
                             "inspect the stale Job and explicitly requeue it, then reload this File"
                         )
         document["relatedReviews"] = related_reviews
+        document["evidence"] = [self._pipeline_evidence_value(value) for value in detail.evidence]
+        document["evidenceAvailability"] = "available" if detail.evidence else "unavailable"
+        document["items"] = [self._file_detail_item_value(value) for value in detail.items]
+        document["results"] = [self._file_result_value(value) for value in detail.results]
+        document["currentActions"] = [
+            {
+                "actionId": value.action_id,
+                "label": value.label,
+                "confirmationRequired": value.confirmation_required,
+                "requiredAuthority": value.required_authority,
+                "resolutionSurface": value.resolution_surface,
+                "admissible": value.admissible,
+                "taskId": value.task_id,
+                "itemId": value.item_id,
+            }
+            for value in detail.actions
+        ]
+        document["truncated"] = dict(detail.truncated)
         if detail.latest_result is None:
             document["latestResult"] = None
             return document
@@ -2951,6 +3022,54 @@ class MediaFlowApi:
             "error": result.error,
         }
         return document
+
+    @staticmethod
+    def _pipeline_evidence_value(evidence) -> dict:
+        return evidence.document()
+
+    @staticmethod
+    def _file_detail_item_value(item) -> dict:
+        return {
+            "taskId": item.task_id,
+            "itemId": item.item_id,
+            "status": item.status,
+            "stage": item.stage,
+            "updatedAt": item.updated_at.isoformat(),
+            "sourceStorageId": item.source_storage_id,
+            "resourceLibraryId": item.resource_library_id,
+            "sourcePath": item.source_path,
+            "checkpoint": item.checkpoint,
+        }
+
+    @staticmethod
+    def _file_result_value(result) -> dict:
+        return {
+            "resultId": result.result_id,
+            "taskId": result.task_id,
+            "itemId": result.item_id,
+            "sourceStorageId": result.source_storage_id,
+            "sourcePath": result.source_path,
+            "status": result.status,
+            "recognitionType": result.recognition_type,
+            "provider": result.provider,
+            "providerId": result.provider_id,
+            "title": result.title,
+            "metadataPolicyId": result.metadata_policy_id,
+            "namingPolicyId": result.naming_policy_id,
+            "classificationPolicyId": result.classification_policy_id,
+            "organizePolicyId": result.organize_policy_id,
+            "operation": result.operation,
+            "destinationStorageId": result.destination_storage_id,
+            "destinationPath": result.destination_path,
+            "createdAt": result.created_at.isoformat(),
+            "retryAttempts": result.retry_attempts,
+            "cleanupStatus": result.cleanup_status,
+            "effectCertainty": result.effect_certainty,
+            "uncertainEffects": list(result.uncertain_effects),
+            "completedOperations": list(result.completed_operations),
+            "attachmentCount": result.attachment_count,
+            "error": result.error,
+        }
 
     @classmethod
     def _metadata_correction_continuation_value(

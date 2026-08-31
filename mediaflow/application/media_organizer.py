@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from mediaflow.application.attachments import AttachmentDiscovery, AttachmentPlanner
 from mediaflow.application.conflict_resolution import ConflictResolver
 from mediaflow.application.duplicates import apply_hash_duplicate_detection
+from mediaflow.application.evidence_capture import build_pipeline_evidence
 from mediaflow.application.library_pipeline import MediaLibraryResolver, ResourceLibraryScanner
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
 from mediaflow.application.strategy_test import StrategyTestResult, StrategyTestRunner
@@ -23,6 +24,7 @@ from mediaflow.domain.classification_review import ClassificationSelection
 from mediaflow.domain.history import OperationHistoryRecord, OperationHistoryRepository
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.logging import Logger, LogLevel
+from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.metadata import MetadataError, MetadataIdentificationStatus
 from mediaflow.domain.metadata_correction import MetadataCorrectionSelection
 from mediaflow.domain.metadata_review import MetadataSelection
@@ -53,6 +55,7 @@ class MediaOrganizerItemResult:
     execution: ExecutionResult | None = None
     error: str | None = None
     retry_events: tuple[RetryEvent, ...] = ()
+    evidence: PipelineEvidence | None = None
 
 
 @dataclass(frozen=True)
@@ -193,7 +196,8 @@ class MediaOrganizerService:
             if strategy.recognition.status is RecognitionStatus.UNRECOGNIZED:
                 if self._task_coordinator and tracked_item:
                     item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
-                    self._record(item)
+                    item = self._attach_evidence(item, tracked_item)
+                    self._record(item, tracked_item)
                     self._task_coordinator.wait_for_recognition(
                         tracked_item,
                         strategy.recognition,
@@ -215,7 +219,8 @@ class MediaOrganizerService:
                     and tracked_item
                 ):
                     item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
-                    self._record(item)
+                    item = self._attach_evidence(item, tracked_item)
+                    self._record(item, tracked_item)
                     self._task_coordinator.wait_for_metadata(
                         tracked_item,
                         strategy.metadata,
@@ -230,7 +235,8 @@ class MediaOrganizerService:
                     and tracked_item
                 ):
                     item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
-                    self._record(item)
+                    item = self._attach_evidence(item, tracked_item)
+                    self._record(item, tracked_item)
                     self._task_coordinator.wait_for_metadata_correction(
                         tracked_item,
                         strategy.metadata,
@@ -261,7 +267,8 @@ class MediaOrganizerService:
                     and tracked_item
                 ):
                     item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
-                    self._record(item)
+                    item = self._attach_evidence(item, tracked_item)
+                    self._record(item, tracked_item)
                     self._task_coordinator.wait_for_classification(
                         tracked_item,
                         strategy.classification,
@@ -340,7 +347,8 @@ class MediaOrganizerService:
                 )
             if replacement is None:
                 item = MediaOrganizerItemResult(source, strategy, plan, retry_events=retry_events)
-                self._record(item)
+                item = self._attach_evidence(item, tracked_item)
+                self._record(item, tracked_item)
                 if self._task_coordinator and tracked_item:
                     self._task_coordinator.wait_for_confirmation(
                         tracked_item, plan, type_policy.organize_policy
@@ -550,7 +558,8 @@ class MediaOrganizerService:
         item: MediaOrganizerItemResult,
         tracked_item: PersistentTaskItem | None,
     ) -> MediaOrganizerItemResult:
-        self._record(item)
+        item = self._attach_evidence(item, tracked_item)
+        self._record(item, tracked_item, persist_evidence=False)
         if self._task_coordinator and tracked_item:
             self._task_coordinator.complete_item(tracked_item, item)
         return item
@@ -559,7 +568,20 @@ class MediaOrganizerService:
         if self._logger:
             self._logger.log(level, message, **context)
 
-    def _record(self, item: MediaOrganizerItemResult) -> None:
+    def _record(
+        self,
+        item: MediaOrganizerItemResult,
+        tracked_item: PersistentTaskItem | None = None,
+        *,
+        persist_evidence: bool = True,
+    ) -> None:
+        if (
+            persist_evidence
+            and item.evidence is not None
+            and tracked_item is not None
+            and self._task_coordinator is not None
+        ):
+            self._task_coordinator.record_evidence(item.evidence)
         identity = (
             item.strategy.metadata.identity if item.strategy and item.strategy.metadata else None
         )
@@ -603,3 +625,55 @@ class MediaOrganizerService:
                 error=item.error or ("; ".join(execution.errors) if execution else None),
             )
         )
+
+    def _attach_evidence(
+        self,
+        item: MediaOrganizerItemResult,
+        tracked_item: PersistentTaskItem | None,
+    ) -> MediaOrganizerItemResult:
+        if item.evidence is not None or tracked_item is None or self._task_coordinator is None:
+            return item
+        task = self._task_coordinator.repository.get_task(tracked_item.task_id)
+        if task is None:
+            return item
+        evidence = build_pipeline_evidence(
+            task,
+            tracked_item,
+            strategy=item.strategy,
+            plan=item.plan,
+            execution=item.execution,
+            error=item.error,
+            outcome=self._evidence_outcome(item),
+            storages=self._storages,
+        )
+        return replace(item, evidence=evidence)
+
+    def _evidence_outcome(self, item: MediaOrganizerItemResult) -> str:
+        if item.execution is not None:
+            return item.execution.status.value.lower()
+        if item.error:
+            return "failed"
+        strategy = item.strategy
+        if strategy is not None:
+            if strategy.recognition.status is RecognitionStatus.UNRECOGNIZED:
+                return "waiting_recognition"
+            metadata = strategy.metadata
+            if metadata is not None:
+                if metadata.status in {
+                    MetadataIdentificationStatus.NEED_CONFIRM,
+                    MetadataIdentificationStatus.AMBIGUOUS,
+                }:
+                    return "waiting_metadata"
+                if metadata.status is MetadataIdentificationStatus.NOT_FOUND:
+                    return "waiting_metadata_correction"
+            if (
+                strategy.classification is not None
+                and strategy.classification.status is ClassificationStatus.UNCLASSIFIED
+            ):
+                return "waiting_classification"
+        if item.plan is not None:
+            if item.plan.conflicts or item.plan.status.value in {"conflict", "invalid"}:
+                return "waiting_confirm"
+            if item.plan.operation in {PlanOperation.NOOP, PlanOperation.SKIP}:
+                return "skipped"
+        return "processing"
