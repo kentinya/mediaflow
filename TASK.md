@@ -220,12 +220,18 @@ or tracked/staged `config/alist.json`.
 
 - `mediaflow/domain/media_evidence.py` (new): bounded immutable evidence contract.
 - `mediaflow/application/evidence_capture.py` (new): normalized evidence builder.
+- `mediaflow/application/classification_review.py`: atomic evidence-aware waiting publication.
+- `mediaflow/application/conflict_resolution.py`: atomic conflict confirmation publication.
 - `mediaflow/application/media_organizer.py`: evidence attachment/capture at pipeline boundaries.
+- `mediaflow/application/metadata_correction.py`: atomic evidence-aware waiting publication.
+- `mediaflow/application/metadata_review.py`: atomic evidence-aware waiting publication.
+- `mediaflow/application/recognition_review.py`: atomic evidence-aware waiting publication.
 - `mediaflow/application/task_runtime.py`: evidence persistence and atomic completion path.
 - `mediaflow/infrastructure/sqlite_runtime.py`: Runtime schema `27`, `pipeline_evidence`
   table/indexes, evidence/source history queries, atomic item/result/evidence write.
 - `mediaflow/application/file_catalog.py`: enriched File/Media detail projection, source-link
   resolution, checkpoint-derived current actions.
+- `mediaflow/domain/processing_checkpoint.py`: full bounded checkpoint document for detail joins.
 - `mediaflow/interfaces/service_api.py`: expanded `GET /api/v1/files/{file_id}` detail, additive
   `GET /api/v1/files/by-source`, zero-audit read behavior for File/Media detail reads.
 - `mediaflow/interfaces/operator_ui.py`: File/Media evidence/history/action rendering and inbound
@@ -245,17 +251,23 @@ or tracked/staged `config/alist.json`.
   ordering, bounded collections and explicit truncation; legacy records remain readable as
   section-level `unavailable` and are never reconstructed.
 - Writes completed item outcome, Result and evidence in one repository transaction; waiting
-  evidence is recorded before the existing review/conflict wait transition.
+  evidence is published with each existing review/conflict and waiting TaskItem transition in one
+  SQLite transaction, with rollback coverage for recognition, metadata, metadata-correction,
+  classification and conflict families.
 - Extends `FileCatalogDetail` with bounded evidence, related TaskItems/checkpoints, Results/effects,
   related reviews/conflicts and current checkpoint-derived actions; API and Web use the same
-  projection.
+  projection. Full checkpoint history now includes durable audits, recovery requests, effects,
+  errors and refusal/retry state, and TaskItem actions open the actual checkpoint surface.
 - Adds `GET /api/v1/files/by-source` for safe inbound navigation from TaskItem/checkpoint, review,
-  conflict and Result surfaces; missing or ambiguous links return an explicit unavailable reason.
+  conflict and Result surfaces; recognition and metadata-correction queues/detail routes are also
+  reachable, while missing or ambiguous links return an explicit unavailable reason.
 - Renders purposeful evidence/history/action sections and unavailable/truncation states in the
   Operator Web instead of a raw object dump, and adds File/Media navigation buttons to existing
   surfaces.
 - Preserves RecognitionType C independently from downstream Naming/Classification/Organize policy A
   in captured evidence, persisted rows, API output and Web rendering.
+- Persists bounded Metadata matcher score components/reasons and matched local/provider title/source
+  evidence for each captured candidate without retaining Provider DTO payloads.
 - Keeps File/Media detail reads free of Provider construction, Storage I/O, queue/work/authorization
   creation, and security-audit mutations for authorized detail reads.
 
@@ -265,7 +277,7 @@ All commands below passed in the repository's `.venv`.
 
 ```text
 .venv/bin/python -m unittest tests.test_file_media_detail
-  PASS (8 tests)
+  PASS (14 tests)
 
 .venv/bin/python -m unittest \
   tests.test_file_catalog tests.test_file_catalog_api tests.test_operator_ui \
@@ -274,7 +286,7 @@ All commands below passed in the repository's `.venv`.
   PASS (70 tests)
 
 .venv/bin/python -m unittest discover -s tests
-  PASS (954 tests, 7 skipped)
+  PASS (960 tests, 7 skipped)
 
 .venv/bin/ruff format --check .
   PASS
@@ -310,6 +322,12 @@ python scripts/wheel_smoke_test.py <temp release dir>/mediaflow-*.whl
   item remains actionable even when a later terminal attempt exists.
 - Authorized File/Media detail reads skip the generic security-audit write to satisfy the
   zero-audit-mutation requirement while denial/error paths and other API reads remain audited.
+- Waiting boundaries use repository-specific SQLite transactions that insert evidence and the
+  existing blocker plus TaskItem state together; the pre-existing non-atomic repository fallback is
+  retained only for compatibility adapters without the new optional methods.
+- File/Media detail follows the existing checkpoint/review resolution surfaces: supported blocker
+  paths open the review/conflict detail, while correction/recognition details link back to the
+  source-resolved File rather than introducing a second decision workflow.
 
 ### Remaining In-Slice Work
 
@@ -323,6 +341,8 @@ python scripts/wheel_smoke_test.py <temp release dir>/mediaflow-*.whl
 
 - No external Provider/Storage services were used; the full regression's 7 skipped tests are the
   pre-existing external/acceptance skips.
+- The full regression still emits pre-existing `ResourceWarning` messages for unclosed temporary
+  SQLite handles; it completed successfully and no new skip was introduced.
 - The CLI `files show` renderer remains the prior basic projection; the Task's operator-facing
   surface (API/Web) carries the new detail journey.
 - The existing WSGI security-audit boundary is intentionally suppressed only for authorized GET
@@ -332,14 +352,57 @@ python scripts/wheel_smoke_test.py <temp release dir>/mediaflow-*.whl
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 3fdcc1bea562469d1d0dc39fb6128a4efa3c4a7c
+Head SHA: 4d25787c8dd225bba1e9056baf9a305c87e6af18
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 74029a10ea9945d515bf4060ad27e1e826113451..3fdcc1bea562469d1d0dc39fb6128a4efa3c4a7c
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- The Operator Web File/Media detail does not expose the promised Processing Checkpoint/history and
+  recovery journey. `FileCatalogService._detail_item` embeds only `ProcessingCheckpoint.summary()`;
+  `renderFileMediaSections` renders only the checkpoint version and Result effect certainty, omits
+  checkpoint audits, completed/uncertain effects and error/retry/refusal detail, and its TaskItem
+  `Open` button resolves the source back to the same File instead of opening that TaskItem. A
+  retry/investigate action without `resolutionSurface` is rendered with no usable control or link.
+  Inspection with
+  `nl -ba mediaflow/application/file_catalog.py | sed -n '243,309p'` and
+  `nl -ba mediaflow/interfaces/operator_ui.py | sed -n '1951,2073p'` shows these paths. Project or
+  link the bounded full checkpoint and render its durable effects/errors/audits and existing
+  permitted recovery/investigation entry; do not create a second recovery behavior.
+- Review/conflict cross-links do not consistently reach the existing shared resolution surface.
+  File-detail action links call `showCheckpointBlocker`, which only renders scalar data and exposes
+  none of the existing conflict/metadata/classification decision controls; recognition and metadata-
+  correction reviews have no reachable queue/detail path that invokes the new `showDetail` inbound
+  File link. The same `nl -ba ...operator_ui.py | sed -n '1850,2195p'` inspection shows the split
+  between `showCheckpointBlocker` and the actual `showDetail` controls. Route every required blocker
+  and inbound review/conflict surface to its existing actionable detail behavior, with explicit
+  unavailable handling when source resolution is missing or ambiguous.
+- Captured Metadata matcher evidence is insufficient to explain why the selected/withheld candidate
+  received its score. The runtime probe constructing a `CandidateScore` with title/year components
+  and calling `_metadata_section` printed `has_components=False` and
+  `has_matched_title_evidence=False`; the persisted candidate row contains only total score and two
+  booleans. Persist and render bounded score components/reasons plus matched local/provider title
+  and title-source evidence already produced by `CandidateMatcher`, without persisting Provider DTOs.
+- Waiting evidence and its durable waiting/review/conflict state are not atomic. In every waiting
+  branch, `MediaOrganizerService` calls `_record`/`append_evidence` (which commits independently)
+  before `wait_for_recognition`, `wait_for_metadata`, `wait_for_metadata_correction`,
+  `wait_for_classification` or `wait_for_confirmation` starts the existing state transaction; a
+  process stop between those calls leaves evidence claiming `waiting_*` while the TaskItem remains
+  `processing` and no blocker exists. Inspection with
+  `nl -ba mediaflow/application/media_organizer.py | sed -n '185,365p'` proves the split. Publish
+  evidence with the applicable TaskItem+review/conflict transition in one SQLite transaction, and
+  add rollback/reopen proof for each waiting family.
+- The required focused test coverage was not delivered. Re-running
+  `.venv/bin/python -m unittest tests.test_file_media_detail` passes only 8 tests, and
+  `nl -ba tests/test_file_media_detail.py | rg 'def test_'` shows no production-path coverage for
+  waiting metadata, metadata-correction, classification or conflict; no success/failed/partial/
+  uncertain effect rendering, collection truncation, matcher components, actionable Web cross-links,
+  waiting-transition rollback, redaction probe, or complete Storage stat/exists/mutation and
+  queue/authorization falsification. Add the Task-required behavioral tests for those cases; keep
+  the already passing affected/full/T4 gates in the same Task fix loop.
