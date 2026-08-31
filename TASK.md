@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 24.1
 Parent Slice: 24 — Files / Media Detail and Manual Organize
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 74029a10ea9945d515bf4060ad27e1e826113451
 Difficulty: High
 Test Level: T4
@@ -218,21 +218,121 @@ or tracked/staged `config/alist.json`.
 
 ### Changed Files
 
+- `mediaflow/domain/media_evidence.py` (new): bounded immutable evidence contract.
+- `mediaflow/application/evidence_capture.py` (new): normalized evidence builder.
+- `mediaflow/application/media_organizer.py`: evidence attachment/capture at pipeline boundaries.
+- `mediaflow/application/task_runtime.py`: evidence persistence and atomic completion path.
+- `mediaflow/infrastructure/sqlite_runtime.py`: Runtime schema `27`, `pipeline_evidence`
+  table/indexes, evidence/source history queries, atomic item/result/evidence write.
+- `mediaflow/application/file_catalog.py`: enriched File/Media detail projection, source-link
+  resolution, checkpoint-derived current actions.
+- `mediaflow/interfaces/service_api.py`: expanded `GET /api/v1/files/{file_id}` detail, additive
+  `GET /api/v1/files/by-source`, zero-audit read behavior for File/Media detail reads.
+- `mediaflow/interfaces/operator_ui.py`: File/Media evidence/history/action rendering and inbound
+  cross-links from TaskItems, reviews, conflicts, Results and recovery surfaces.
+- `docs/architecture.md`: records the new CURRENT detail/evidence boundary and schema marker.
+- `tests/test_file_media_detail.py` (new): focused evidence, projection, cross-link, RBAC,
+  migration, rollback and zero-I/O coverage.
+- Updated schema-marker assertions in affected persistence tests.
+
 ### Implemented
+
+- Captures bounded provider-neutral evidence at existing tracked TaskItem boundaries for waiting,
+  DryRun, skipped, failed, partial and successful items, including Parse, Recognition, Metadata,
+  policy ownership, Naming, Classification, plan, operation/effect and declared Storage
+  capability sections.
+- Persists evidence in a forward-migrated SQLite table (`runtime` marker `27`) with stable
+  ordering, bounded collections and explicit truncation; legacy records remain readable as
+  section-level `unavailable` and are never reconstructed.
+- Writes completed item outcome, Result and evidence in one repository transaction; waiting
+  evidence is recorded before the existing review/conflict wait transition.
+- Extends `FileCatalogDetail` with bounded evidence, related TaskItems/checkpoints, Results/effects,
+  related reviews/conflicts and current checkpoint-derived actions; API and Web use the same
+  projection.
+- Adds `GET /api/v1/files/by-source` for safe inbound navigation from TaskItem/checkpoint, review,
+  conflict and Result surfaces; missing or ambiguous links return an explicit unavailable reason.
+- Renders purposeful evidence/history/action sections and unavailable/truncation states in the
+  Operator Web instead of a raw object dump, and adds File/Media navigation buttons to existing
+  surfaces.
+- Preserves RecognitionType C independently from downstream Naming/Classification/Organize policy A
+  in captured evidence, persisted rows, API output and Web rendering.
+- Keeps File/Media detail reads free of Provider construction, Storage I/O, queue/work/authorization
+  creation, and security-audit mutations for authorized detail reads.
 
 ### Tests and Results
 
+All commands below passed in the repository's `.venv`.
+
+```text
+.venv/bin/python -m unittest tests.test_file_media_detail
+  PASS (8 tests)
+
+.venv/bin/python -m unittest \
+  tests.test_file_catalog tests.test_file_catalog_api tests.test_operator_ui \
+  tests.test_processing_checkpoint tests.test_task_persistence \
+  tests.test_migration_rehearsal tests.test_upgrade_preflight tests.test_final_integration
+  PASS (70 tests)
+
+.venv/bin/python -m unittest discover -s tests
+  PASS (954 tests, 7 skipped)
+
+.venv/bin/ruff format --check .
+  PASS
+.venv/bin/ruff check .
+  PASS
+.venv/bin/python -m compileall -q mediaflow tests scripts
+  PASS
+.venv/bin/python -m pip check
+  PASS
+.venv/bin/mediaflow --config config/strategy.example.json config validate
+  PASS
+.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate
+  PASS
+test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"
+  PASS
+git diff --check
+  PASS
+
+python -m pip wheel . --no-deps --no-build-isolation -w <temp release dir>
+python scripts/wheel_smoke_test.py <temp release dir>/mediaflow-*.whl
+  PASS (schema 27 backup/rehearsal/restore/preflight)
+```
+
 ### Decisions
+
+- Evidence is stored as one immutable JSON document per TaskItem attempt with bounded section
+  documents, keeping the contract stable and avoiding a parallel domain model.
+- `PersistentTaskCoordinator.complete_item` uses `complete_item_with_evidence` when the repository
+  supports it so Result, item state and evidence publish or roll back together.
+- `GET /api/v1/files/by-source` is an additive read-only source-resolution endpoint rather than
+  guessing File IDs in the Web layer.
+- Current actions are taken from the latest actionable TaskItem checkpoint, so an older blocked
+  item remains actionable even when a later terminal attempt exists.
+- Authorized File/Media detail reads skip the generic security-audit write to satisfy the
+  zero-audit-mutation requirement while denial/error paths and other API reads remain audited.
 
 ### Remaining In-Slice Work
 
+- Durable manual-organize intent, bounded selection and per-item override choices (RO-2).
+- Persistent manual Preview/plan and stale-evidence invalidation (RO-3/RO-4).
+- Exact-plan execution admission, one-shot authority and OrganizerExecutor-only real mutation
+  (RO-5/RO-6).
+- Any later Slice 24 Tasks B plans after this read journey is reviewed.
+
 ### Risks / Deviations
+
+- No external Provider/Storage services were used; the full regression's 7 skipped tests are the
+  pre-existing external/acceptance skips.
+- The CLI `files show` renderer remains the prior basic projection; the Task's operator-facing
+  surface (API/Web) carries the new detail journey.
+- The existing WSGI security-audit boundary is intentionally suppressed only for authorized GET
+  File/Media detail and by-source reads; all other API requests retain their audit behavior.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 3fdcc1bea562469d1d0dc39fb6128a4efa3c4a7c
 ```
 
 ## B Review Result
