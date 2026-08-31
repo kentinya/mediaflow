@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -807,9 +807,8 @@ class ManualOrganizeIntentService:
                 next_action="correct the choice fields using the options shown for this intent",
             ) from error
 
-    @staticmethod
     def _validate_choice(
-        choice: ManualChoice, snapshot: ManualConfigurationSnapshot, record
+        self, choice: ManualChoice, snapshot: ManualConfigurationSnapshot, record
     ) -> None:
         maps = snapshot.option_maps()
         selected_type = maps["recognitionType"].get(choice.recognition_type_id)
@@ -871,6 +870,7 @@ class ManualOrganizeIntentService:
                 )
             if (
                 metadata_policy.media_type
+                and choice.metadata.media_type is not None
                 and choice.metadata.media_type != metadata_policy.media_type
             ):
                 raise ManualIntentError(
@@ -878,6 +878,9 @@ class ManualOrganizeIntentService:
                     code="incompatible_choice",
                     next_action="choose a normalized identity with the configured media type",
                 )
+            self._validate_metadata_reference(
+                choice.metadata, snapshot, record, choice.recognition_type_id
+            )
         metadata_default = maps["metadataPolicy"].get(required["metadataPolicy"])
         media_type = (
             choice.metadata.media_type
@@ -895,9 +898,314 @@ class ManualOrganizeIntentService:
                 code="incompatible_choice",
                 next_action="choose a compatible NamingPolicy shown for this identity",
             )
-        # The source argument intentionally remains unused beyond being part of
-        # the shared validation signature: no path/Storage operation is accepted.
-        _ = record
+
+    def _validate_metadata_reference(
+        self,
+        metadata: ManualMetadataReference,
+        snapshot: ManualConfigurationSnapshot,
+        record,
+        recognition_type_id: str,
+    ) -> None:
+        """Require an override to be grounded in a durable source authority.
+
+        A manual intent is an admission boundary, not a metadata lookup boundary.  The
+        caller may choose an identity that was already captured by the exact source's
+        Result/evidence or by a source-linked bounded metadata review.  It may not invent
+        a provider ID here, and this method deliberately performs only repository reads.
+        """
+
+        selected_type = snapshot.option_maps()["recognitionType"].get(recognition_type_id)
+        expected_metadata = (
+            snapshot.option_maps()["metadataPolicy"].get(selected_type.metadata_policy_id)
+            if selected_type is not None
+            else None
+        )
+        expected_media_type = getattr(expected_metadata, "media_type", None)
+        authorities = self._metadata_authorities(record, snapshot, expected_media_type)
+        if metadata.review_ref is not None:
+            authorities = tuple(
+                value for value in authorities if value.get("reviewRef") == metadata.review_ref
+            )
+        if metadata.candidate_ref is not None:
+            authorities = tuple(
+                value
+                for value in authorities
+                if metadata.candidate_ref in value.get("candidateRefs", ())
+            )
+        if not any(self._metadata_matches(metadata, value) for value in authorities):
+            raise ManualIntentError(
+                "metadata identity is not linked to durable source evidence or a source-linked "
+                "candidate/review",
+                code="metadata_unverified",
+                next_action=(
+                    "choose the normalized identity shown by this source's Result/evidence or "
+                    "linked metadata review, then retry"
+                ),
+                details={"fileId": record.file_id, "authority": "source_linked_only"},
+            )
+
+    def _metadata_authorities(
+        self,
+        record,
+        snapshot: ManualConfigurationSnapshot,
+        fallback_media_type: str | None,
+    ) -> tuple[dict[str, object], ...]:
+        authorities: list[dict[str, object]] = []
+
+        for result in self._source_results(record):
+            if (
+                getattr(result, "source_storage_id", record.storage_id) != record.storage_id
+                or getattr(result, "source_path", record.path) != record.path
+            ):
+                continue
+            policy_id = getattr(result, "metadata_policy_id", None)
+            media_type = self._metadata_policy_media_type(policy_id, snapshot, fallback_media_type)
+            self._append_metadata_authority(
+                authorities,
+                getattr(result, "provider", None),
+                getattr(result, "provider_id", None),
+                media_type,
+                getattr(result, "title", None),
+                getattr(result, "year", None),
+            )
+
+        for evidence in self._source_evidence(record):
+            if (
+                getattr(evidence, "source_storage_id", record.storage_id) != record.storage_id
+                or getattr(evidence, "source_path", record.path) != record.path
+            ):
+                continue
+            section = self._metadata_evidence_section(evidence)
+            if section is None or not bool(getattr(section, "available", False)):
+                continue
+            value = getattr(section, "value", None)
+            items = getattr(section, "items", ())
+            if isinstance(value, Mapping):
+                self._append_metadata_authority(
+                    authorities,
+                    value.get("provider"),
+                    value.get("providerId"),
+                    value.get("mediaType") or fallback_media_type,
+                    value.get("title"),
+                    value.get("year"),
+                )
+                best = value.get("bestCandidate")
+                if isinstance(best, Mapping):
+                    self._append_metadata_authority(
+                        authorities,
+                        best.get("provider"),
+                        best.get("providerId"),
+                        best.get("mediaType") or fallback_media_type,
+                        best.get("title"),
+                        best.get("year"),
+                    )
+            for item in items if isinstance(items, (tuple, list)) else ():
+                if isinstance(item, Mapping):
+                    self._append_metadata_authority(
+                        authorities,
+                        item.get("provider"),
+                        item.get("providerId"),
+                        item.get("mediaType") or fallback_media_type,
+                        item.get("title"),
+                        item.get("year"),
+                    )
+
+        for review in self._source_metadata_reviews(record):
+            review_ref = getattr(review, "review_id", None)
+            candidates = self._review_candidates(review_ref)
+            for candidate in candidates:
+                self._append_metadata_authority(
+                    authorities,
+                    getattr(candidate, "provider", None),
+                    getattr(candidate, "provider_id", None),
+                    getattr(candidate, "media_type", None) or fallback_media_type,
+                    getattr(candidate, "title", None),
+                    getattr(candidate, "canonical_year", None),
+                    review_ref=review_ref,
+                    candidate_refs=self._candidate_reference_aliases(review_ref, candidate),
+                )
+            self._append_metadata_authority(
+                authorities,
+                getattr(review, "selected_provider", None),
+                getattr(review, "selected_provider_id", None),
+                getattr(review, "selected_media_type", None) or fallback_media_type,
+                None,
+                None,
+                review_ref=review_ref,
+            )
+        return tuple(authorities)
+
+    @staticmethod
+    def _metadata_policy_media_type(
+        policy_id: str | None,
+        snapshot: ManualConfigurationSnapshot,
+        fallback: str | None,
+    ):
+        if policy_id is None:
+            return fallback
+        option = snapshot.option_maps()["metadataPolicy"].get(policy_id)
+        return getattr(option, "media_type", None) or fallback
+
+    @staticmethod
+    def _append_metadata_authority(
+        authorities: list[dict[str, object]],
+        provider,
+        provider_id,
+        media_type,
+        title,
+        year,
+        *,
+        review_ref: str | None = None,
+        candidate_refs: tuple[str, ...] = (),
+    ) -> None:
+        if (
+            not isinstance(provider, str)
+            or not provider.strip()
+            or not isinstance(provider_id, str)
+            or not provider_id.strip()
+        ):
+            return
+        if media_type is not None and media_type not in {"movie", "tv"}:
+            return
+        if title is not None and (not isinstance(title, str) or not title.strip()):
+            return
+        if year is not None and (
+            isinstance(year, bool) or not isinstance(year, int) or not 1800 <= year <= 2200
+        ):
+            return
+        authorities.append(
+            {
+                "provider": provider,
+                "providerId": provider_id,
+                "mediaType": media_type,
+                "title": title,
+                "year": year,
+                "reviewRef": review_ref,
+                "candidateRefs": tuple(candidate_refs),
+            }
+        )
+
+    @staticmethod
+    def _metadata_matches(metadata: ManualMetadataReference, authority: Mapping) -> bool:
+        for key, value in (
+            ("provider", metadata.provider),
+            ("providerId", metadata.provider_id),
+            ("mediaType", metadata.media_type),
+        ):
+            if value is not None and authority.get(key) != value:
+                return False
+        if metadata.title is not None:
+            current = authority.get("title")
+            if (
+                not isinstance(current, str)
+                or " ".join(current.split()).casefold()
+                != " ".join(metadata.title.split()).casefold()
+            ):
+                return False
+        if metadata.year is not None and authority.get("year") != metadata.year:
+            return False
+        return True
+
+    def _source_results(self, record) -> tuple[object, ...]:
+        method = getattr(self._repository, "list_results_for_source", None)
+        if callable(method):
+            try:
+                return tuple(method(record.storage_id, record.path, limit=100))
+            except Exception:
+                return ()
+        method = getattr(self._repository, "get_latest_result_for_source", None)
+        if callable(method):
+            try:
+                value = method(record.storage_id, record.path)
+            except Exception:
+                return ()
+            return (value,) if value is not None else ()
+        return ()
+
+    def _source_evidence(self, record) -> tuple[object, ...]:
+        method = getattr(self._repository, "list_evidence_for_source", None)
+        if not callable(method):
+            return ()
+        try:
+            return tuple(method(record.storage_id, record.path, limit=100))
+        except Exception:
+            return ()
+
+    def _source_metadata_reviews(self, record) -> tuple[object, ...]:
+        values: tuple[object, ...] = ()
+        method = getattr(self._repository, "list_metadata_reviews", None)
+        if callable(method):
+            try:
+                values = tuple(method(limit=100))
+            except Exception:
+                values = ()
+        if not values:
+            links = getattr(self._repository, "list_file_review_links", None)
+            get_review = getattr(self._repository, "get_metadata_review", None)
+            if callable(links) and callable(get_review):
+                try:
+                    values = tuple(
+                        review
+                        for link in links(record.storage_id, record.path, limit=100)
+                        if getattr(link, "kind", None) == "metadata"
+                        for review in (get_review(link.review_id),)
+                        if review is not None
+                    )
+                except Exception:
+                    values = ()
+        return tuple(
+            value
+            for value in values
+            if getattr(value, "source_storage_id", None) == record.storage_id
+            and getattr(value, "source_path", None) == record.path
+        )
+
+    def _review_candidates(self, review_id: str | None) -> tuple[object, ...]:
+        if not review_id:
+            return ()
+        method = getattr(self._repository, "list_metadata_review_candidates", None)
+        if not callable(method):
+            return ()
+        try:
+            return tuple(method(review_id))[:100]
+        except Exception:
+            return ()
+
+    @staticmethod
+    def _candidate_reference(review_id: str | None, candidate) -> str | None:
+        if not review_id or getattr(candidate, "rank", None) is None:
+            return None
+        return f"{review_id}:{candidate.rank}"
+
+    @classmethod
+    def _candidate_reference_aliases(cls, review_id: str | None, candidate) -> tuple[str, ...]:
+        reference = cls._candidate_reference(review_id, candidate)
+        if reference is None:
+            return ()
+        return (reference, f"{review_id}/{candidate.rank}")
+
+    @staticmethod
+    def _metadata_evidence_section(evidence):
+        section = getattr(evidence, "section", None)
+        if callable(section):
+            try:
+                return section("metadata")
+            except Exception:
+                return None
+        if isinstance(evidence, Mapping):
+            sections = evidence.get("sections")
+            value = sections.get("metadata") if isinstance(sections, Mapping) else None
+            if isinstance(value, Mapping):
+                return type(
+                    "MetadataEvidenceSection",
+                    (),
+                    {
+                        "available": value.get("available"),
+                        "value": value.get("value"),
+                        "items": value.get("items", ()),
+                    },
+                )()
+        return None
 
     @staticmethod
     def _with_options(
