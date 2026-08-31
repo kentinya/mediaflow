@@ -249,7 +249,11 @@ class FileCatalogService:
             checkpoint_service = ProcessingCheckpointService(self._task_repository)
         if checkpoint_service is not None:
             try:
-                checkpoint = checkpoint_service.get(item.item_id, task_id=item.task_id).summary()
+                # File/Media detail needs the same bounded checkpoint projection as the
+                # TaskItem surface: audits, effects, blocker and permitted actions must
+                # remain attributable after reload rather than being reduced to a status
+                # summary.
+                checkpoint = checkpoint_service.get(item.item_id, task_id=item.task_id).document()
             except (LookupError, ValueError):
                 checkpoint = None
         return FileDetailItem(

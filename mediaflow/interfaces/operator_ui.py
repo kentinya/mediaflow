@@ -24,7 +24,9 @@ INDEX_HTML = b"""<!doctype html>
     <button data-view="notifications">Notifications</button>
     <button data-view="logs">Logs</button>
     <button data-view="confirmations">Conflicts</button>
+    <button data-view="recognition-reviews">Recognition</button>
     <button data-view="metadata-reviews">Metadata</button>
+    <button data-view="metadata-corrections">Metadata correction</button>
     <button data-view="classification-reviews">Classification</button>
     <button data-view="configuration">Configuration</button>
     <button data-view="system">System</button>
@@ -1355,7 +1357,8 @@ APP_JS = b"""(() => {
   }
   function itemId(kind, item) {
     if (kind === 'confirmations') return item.confirmationId || item.confirmation_id;
-    if (kind === 'metadata-reviews') return item.review_id;
+    if (kind === 'metadata-reviews' || kind === 'recognition-reviews' ||
+      kind === 'metadata-corrections') return item.review_id || item.reviewId;
     if (kind === 'files') return item.fileId || item.file_id;
     return item.review_id;
   }
@@ -1363,7 +1366,8 @@ APP_JS = b"""(() => {
     const query = kind === 'confirmations' ? '?status=pending&limit=100' : '?limit=100';
     const data = await api(`/api/v1/${kind}${query}`); const items = data.items || [];
     clear(content); content.append(text('h2', {
-      confirmations: 'Conflict confirmations', 'metadata-reviews': 'Metadata reviews',
+      confirmations: 'Conflict confirmations', 'recognition-reviews': 'Recognition reviews',
+      'metadata-reviews': 'Metadata reviews', 'metadata-corrections': 'Metadata corrections',
       'classification-reviews': 'Classification reviews'}[kind]));
     const rows = items.map(item => [itemId(kind, item), item.status,
       item.recognition_type || item.conflictType || '-', item.updated_at || item.createdAt || '-']);
@@ -1993,20 +1997,76 @@ APP_JS = b"""(() => {
     detailContent.append(text('h3', `Related TaskItems / checkpoints (${items.length})`));
     if (items.length) {
       detailContent.append(table(
-        ['Task', 'Item', 'Status', 'Stage', 'Updated', 'Checkpoint', 'File'],
+        ['Task', 'Item', 'Status', 'Stage', 'Updated', 'Checkpoint', 'TaskItem'],
         items.map(item => [item.taskId, item.itemId, item.status, item.stage, item.updatedAt,
           item.checkpoint && item.checkpoint.checkpoint_version || '-',
-          actionButton('Open', () => openFileFromSource(item.sourceStorageId,
-            item.resourceLibraryId, item.sourcePath))])));
+          actionButton('Open checkpoint', () => showTaskItem(item.taskId, item.itemId))])));
+      items.forEach(item => {
+        const checkpoint = item.checkpoint && typeof item.checkpoint === 'object' ?
+          item.checkpoint : null;
+        if (!checkpoint) {
+          detailContent.append(text('p',
+            `Checkpoint for TaskItem ${item.itemId} is unavailable; no state is inferred.`,
+            'warning'));
+          return;
+        }
+        const effects = checkpoint.effects && typeof checkpoint.effects === 'object' ?
+          checkpoint.effects : {};
+        detailContent.append(text('h4', `Checkpoint history - ${item.itemId}`));
+        detailContent.append(table(['Field', 'Value'], [
+          ['Status', checkpoint.status || item.status],
+          ['Durable stage', checkpoint.stage || item.stage],
+          ['Raw stage', checkpoint.raw_stage || '-'],
+          ['Attempts', checkpoint.attempts],
+          ['Effect certainty', effects.certainty || 'unknown'],
+          ['Completed effects', Array.isArray(effects.completed_operations) &&
+            effects.completed_operations.length ? effects.completed_operations.join(', ') : 'none'],
+          ['Uncertain effects', Array.isArray(effects.uncertain_effects) &&
+            effects.uncertain_effects.length ? effects.uncertain_effects.join(', ') : 'none'],
+          ['Error category', checkpoint.error_category || 'none'],
+          ['Retry safety', checkpoint.retry_safety || 'unknown'],
+          ['Refusal reason', checkpoint.refusal_reason || 'none']
+        ]));
+        if (checkpoint.blocker) {
+          const blocker = checkpoint.blocker;
+          const blockerControls = text('div', '', 'choices');
+          blockerControls.append(text('p',
+            `${blocker.kind}: ${blocker.id} (${blocker.status})`));
+          if (blocker.resolution_path) blockerControls.append(actionButton('Open resolution',
+            () => showCheckpointBlocker(blocker.resolution_path)));
+          detailContent.append(blockerControls);
+        }
+        const audits = Array.isArray(checkpoint.audits) ? checkpoint.audits : [];
+        if (audits.length) {
+          detailContent.append(text('h5', `Checkpoint audits (${audits.length})`), table(
+            ['Audit', 'Kind', 'Occurred', 'Actor'],
+            audits.map(audit => [audit.audit_id, audit.kind, audit.occurred_at,
+              audit.actor || '-'])));
+        }
+        const recovery = Array.isArray(checkpoint.recovery_requests) ?
+          checkpoint.recovery_requests : [];
+        if (recovery.length) {
+          detailContent.append(text('h5', `Recovery requests (${recovery.length})`), table(
+            ['Request', 'Action', 'Status', 'Next action'],
+            recovery.map(request => [request.request_id, request.action_id, request.status,
+              request.next_action || '-'])));
+        }
+      });
     }
     const results = Array.isArray(data.results) ? data.results : [];
     detailContent.append(text('h3', `Results / effects (${results.length})`));
     if (results.length) {
       detailContent.append(table(
-        ['Result', 'Status', 'Type', 'Operation', 'Destination', 'Effect certainty', 'Created'],
+        ['Result', 'Status', 'Type', 'Operation', 'Destination', 'Effect certainty',
+          'Completed effects', 'Uncertain effects', 'Error', 'Created'],
         results.map(result => [result.resultId, result.status, result.recognitionType || '-',
           result.operation || '-', result.destinationPath || '-',
-          result.effectCertainty || 'unknown', result.createdAt])));
+          result.effectCertainty || 'unknown',
+          Array.isArray(result.completedOperations) && result.completedOperations.length ?
+            result.completedOperations.join(', ') : 'none',
+          Array.isArray(result.uncertainEffects) && result.uncertainEffects.length ?
+            result.uncertainEffects.join(', ') : 'none',
+          result.error || 'none', result.createdAt])));
     }
     const actions = Array.isArray(data.currentActions) ? data.currentActions : [];
     detailContent.append(text('h3', `Current valid actions (${actions.length})`));
@@ -2017,8 +2077,9 @@ APP_JS = b"""(() => {
           action.admissible ? 'yes' : 'no',
           action.confirmationRequired ? 'required' : 'not required',
           action.requiredAuthority || '-', action.resolutionSurface || '-',
-          action.resolutionSurface ? actionButton('Open',
-            () => showCheckpointBlocker(action.resolutionSurface)) : '-'])));
+          actionButton('Open checkpoint', () => action.resolutionSurface ?
+            showCheckpointBlocker(action.resolutionSurface) :
+            showTaskItem(action.taskId, action.itemId))])));
     } else {
       detailContent.append(text('p', items.length ?
         'No replay control is exposed for the current terminal or ineligible state.' :
@@ -2066,6 +2127,14 @@ APP_JS = b"""(() => {
     detailContent.append(confirmation);
   }
   async function showCheckpointBlocker(path) {
+    const match = typeof path === 'string' &&
+      path.match(/^\\/api\\/v1\\/([^/?]+)\\/([^/?]+)$/);
+    const detailKinds = new Set(['confirmations', 'recognition-reviews', 'metadata-reviews',
+      'metadata-corrections', 'classification-reviews']);
+    if (match && detailKinds.has(match[1])) {
+      await showDetail(match[1], decodeURIComponent(match[2]));
+      return;
+    }
     try {
       const data = await api(path);
       clear(detailContent); detailContent.append(text('h2', 'Blocking review / conflict'));
@@ -2140,9 +2209,13 @@ APP_JS = b"""(() => {
         if (Array.isArray(data.relatedReviews) && data.relatedReviews.length) {
           const rows = data.relatedReviews.map(item => [item.kind, item.reviewId,
             item.status, item.taskId, item.itemId || '-', item.continuation ?
-              item.continuation.status : '-']);
+              item.continuation.status : '-',
+            actionButton('Open review', () => showDetail(
+              item.kind === 'conflict' ? 'confirmations' :
+                item.kind === 'metadata_correction' ? 'metadata-corrections' :
+                `${item.kind}-reviews`, item.reviewId))]);
           detailContent.append(text('h3', 'Related reviews'),
-            table(['Kind', 'Review', 'Status', 'Task', 'Item', 'Continuation'], rows));
+            table(['Kind', 'Review', 'Status', 'Task', 'Item', 'Continuation', 'Open'], rows));
         }
         renderFileMediaSections(data);
       }
@@ -2153,11 +2226,16 @@ APP_JS = b"""(() => {
           () => openFileFromSource(data.source_storage_id || data.sourceStorageId,
             data.resource_library_id || data.resourceLibraryId,
             data.source_path || data.sourcePath)));
+      } else if (['confirmations', 'recognition-reviews', 'metadata-reviews',
+        'classification-reviews', 'metadata-corrections'].includes(kind)) {
+        detailContent.append(text('p',
+          'File/Media link unavailable: this review has no durable source identity; no File ID is guessed.',
+          'warning'));
       }
-      if (kind === 'confirmations') renderConflictActions(id);
-      if (kind === 'metadata-reviews') renderRankActions(kind, id, data.candidates || [],
+      if (kind === 'confirmations' && data.status === 'pending') renderConflictActions(id);
+      if (kind === 'metadata-reviews' && data.status === 'pending') renderRankActions(kind, id, data.candidates || [],
         'candidateRank', ['rank', 'title', 'year', 'provider_id']);
-      if (kind === 'classification-reviews') renderRankActions(kind, id, data.choices || [],
+      if (kind === 'classification-reviews' && data.status === 'pending') renderRankActions(kind, id, data.choices || [],
         'choiceRank', ['rank', 'rule_id', 'media_library_id', 'relative_path']);
       detail.hidden = false;
     } catch (error) { message(errorText(error), true); }

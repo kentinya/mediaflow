@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.metadata import (
     MetadataIdentificationResult,
     MetadataIdentificationStatus,
@@ -36,6 +37,8 @@ class MetadataReviewService:
         item: PersistentTaskItem,
         identification: MetadataIdentificationResult,
         metadata_policy_id: str,
+        *,
+        evidence: PipelineEvidence | None = None,
     ) -> MetadataReview:
         if identification.status not in {
             MetadataIdentificationStatus.NEED_CONFIRM,
@@ -73,7 +76,15 @@ class MetadataReviewService:
             updated_at=now,
             error=None,
         )
-        self._repository.create_metadata_review(review, candidates, waiting)
+        create_atomic = getattr(self._repository, "create_metadata_review_with_evidence", None)
+        if evidence is not None and callable(create_atomic):
+            create_atomic(review, candidates, waiting, evidence)
+        else:
+            if evidence is not None:
+                append = getattr(self._repository, "append_evidence", None)
+                if callable(append):
+                    append(evidence)
+            self._repository.create_metadata_review(review, candidates, waiting)
         return review
 
     def resolve(

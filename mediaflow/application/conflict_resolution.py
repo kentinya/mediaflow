@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.organizer import (
     AttachmentType,
     ConflictStrategy,
@@ -131,6 +132,8 @@ class ConfirmationService:
         item_id: str,
         plan: OrganizePlan,
         policy: OrganizePolicy,
+        item=None,
+        evidence: PipelineEvidence | None = None,
     ) -> ConflictConfirmation:
         if not plan.conflicts:
             raise ConflictResolutionError("a confirmation requires at least one conflict")
@@ -150,7 +153,17 @@ class ConfirmationService:
             now,
             now,
         )
-        self._repository.create_confirmation(value)
+        create_atomic = getattr(self._repository, "create_confirmation_with_evidence", None)
+        if item is not None and callable(create_atomic):
+            create_atomic(value, item, evidence)
+        else:
+            if evidence is not None:
+                append = getattr(self._repository, "append_evidence", None)
+                if callable(append):
+                    append(evidence)
+            if item is not None:
+                self._repository.upsert_item(item)
+            self._repository.create_confirmation(value)
         return value
 
     def resolve(

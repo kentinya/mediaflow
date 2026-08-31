@@ -27,6 +27,7 @@ _MAX_TEXT = 4096
 _MAX_ITEM_TEXT = 256
 _MAX_ERROR = 1000
 _MAX_ITEMS = 64
+_MAX_SCORE_COMPONENTS = 16
 
 
 def build_pipeline_evidence(
@@ -254,6 +255,15 @@ def _metadata_section(strategy) -> EvidenceSection:
     if match is not None:
         best = match.best_candidate
         if best is not None:
+            best_score = next(
+                (
+                    score
+                    for score in _bounded_tuple(match.candidate_scores)
+                    if score.candidate.provider == best.provider
+                    and score.candidate.provider_id == best.provider_id
+                ),
+                None,
+            )
             value["bestCandidate"] = {
                 "provider": _bounded(best.provider),
                 "providerId": _bounded(best.provider_id),
@@ -262,19 +272,49 @@ def _metadata_section(strategy) -> EvidenceSection:
                 "originalTitle": _bounded(best.original_title, _MAX_ITEM_TEXT),
                 "year": best.year,
                 "score": best.score,
+                "matchedLocalTitle": _bounded(
+                    getattr(best_score, "matched_local_title", None), _MAX_ITEM_TEXT
+                ),
+                "matchedProviderTitle": _bounded(
+                    getattr(best_score, "matched_provider_title", None), _MAX_ITEM_TEXT
+                ),
+                "matchedTitleSource": _bounded(
+                    getattr(best_score, "matched_title_source", None), 128
+                ),
             }
         for score in _bounded_tuple(match.candidate_scores):
             candidate = score.candidate
+            components = [
+                {
+                    "name": _bounded(component.name, 128),
+                    "score": component.score,
+                    "reason": _bounded(component.reason, _MAX_ITEM_TEXT),
+                }
+                for component in _bounded_tuple(getattr(score, "components", ()))[
+                    :_MAX_SCORE_COMPONENTS
+                ]
+            ]
             items.append(
                 {
                     "provider": _bounded(candidate.provider),
                     "providerId": _bounded(candidate.provider_id),
                     "mediaType": _bounded(candidate.media_type.value),
                     "title": _bounded(candidate.title, _MAX_ITEM_TEXT),
+                    "originalTitle": _bounded(candidate.original_title, _MAX_ITEM_TEXT),
                     "year": candidate.year,
                     "score": score.total_score,
                     "exactTitle": score.exact_title,
                     "exactYear": score.exact_year,
+                    "matchedLocalTitle": _bounded(
+                        getattr(score, "matched_local_title", None), _MAX_ITEM_TEXT
+                    ),
+                    "matchedProviderTitle": _bounded(
+                        getattr(score, "matched_provider_title", None), _MAX_ITEM_TEXT
+                    ),
+                    "matchedTitleSource": _bounded(
+                        getattr(score, "matched_title_source", None), 128
+                    ),
+                    "scoreComponents": components,
                 }
             )
     return EvidenceSection(
@@ -282,7 +322,13 @@ def _metadata_section(strategy) -> EvidenceSection:
         value,
         tuple(items),
         tuple(_bounded(item, _MAX_ITEM_TEXT) for item in _bounded_tuple(value["matchReasons"])),
-        truncated=_was_truncated((match.candidate_scores if match else (),)),
+        truncated=(
+            _was_truncated((match.candidate_scores if match else (),))
+            or any(
+                len(getattr(score, "components", ())) > _MAX_SCORE_COMPONENTS
+                for score in _bounded_tuple(match.candidate_scores if match else ())
+            )
+        ),
     )
 
 

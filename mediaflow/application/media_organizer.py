@@ -197,11 +197,12 @@ class MediaOrganizerService:
                 if self._task_coordinator and tracked_item:
                     item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
                     item = self._attach_evidence(item, tracked_item)
-                    self._record(item, tracked_item)
+                    self._record(item, tracked_item, persist_evidence=False)
                     self._task_coordinator.wait_for_recognition(
                         tracked_item,
                         strategy.recognition,
                         tuple(policy.recognition_type for policy in self._type_policies.values()),
+                        evidence=item.evidence,
                     )
                     return item
                 return self._failed(
@@ -220,11 +221,12 @@ class MediaOrganizerService:
                 ):
                     item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
                     item = self._attach_evidence(item, tracked_item)
-                    self._record(item, tracked_item)
+                    self._record(item, tracked_item, persist_evidence=False)
                     self._task_coordinator.wait_for_metadata(
                         tracked_item,
                         strategy.metadata,
                         strategy.policy.metadata_policy_id,
+                        evidence=item.evidence,
                     )
                     return item
                 if (
@@ -236,12 +238,13 @@ class MediaOrganizerService:
                 ):
                     item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
                     item = self._attach_evidence(item, tracked_item)
-                    self._record(item, tracked_item)
+                    self._record(item, tracked_item, persist_evidence=False)
                     self._task_coordinator.wait_for_metadata_correction(
                         tracked_item,
                         strategy.metadata,
                         strategy.metadata_policy,
                         strategy.parsed,
+                        evidence=item.evidence,
                     )
                     return item
                 return self._failed(
@@ -268,7 +271,7 @@ class MediaOrganizerService:
                 ):
                     item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
                     item = self._attach_evidence(item, tracked_item)
-                    self._record(item, tracked_item)
+                    self._record(item, tracked_item, persist_evidence=False)
                     self._task_coordinator.wait_for_classification(
                         tracked_item,
                         strategy.classification,
@@ -276,6 +279,7 @@ class MediaOrganizerService:
                             strategy.policy.classification_policy_id
                         ),
                         strategy.metadata.identity,
+                        evidence=item.evidence,
                     )
                     return item
                 return self._failed(
@@ -348,10 +352,13 @@ class MediaOrganizerService:
             if replacement is None:
                 item = MediaOrganizerItemResult(source, strategy, plan, retry_events=retry_events)
                 item = self._attach_evidence(item, tracked_item)
-                self._record(item, tracked_item)
+                self._record(item, tracked_item, persist_evidence=False)
                 if self._task_coordinator and tracked_item:
                     self._task_coordinator.wait_for_confirmation(
-                        tracked_item, plan, type_policy.organize_policy
+                        tracked_item,
+                        plan,
+                        type_policy.organize_policy,
+                        evidence=item.evidence,
                     )
                 return item
             plan = replacement

@@ -289,6 +289,7 @@ class ProcessingCheckpoint:
                 }
                 for value in self.actions
             ],
+            "permitted_action_ids": list(self.permitted_action_ids),
             "refusal_reason": self.refusal_reason,
             "checkpoint_version": self.checkpoint_version,
             "updated_at": self.updated_at.isoformat(),

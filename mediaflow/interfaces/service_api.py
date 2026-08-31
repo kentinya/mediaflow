@@ -1476,6 +1476,32 @@ class MediaFlowApi:
                     ]
                 },
             )
+        if parts == ["api", "v1", "recognition-reviews"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            limit = self._recognition_review_limit(environ)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [
+                        self._value(item)
+                        for item in self._repository.list_recognition_reviews(limit=limit)
+                    ]
+                },
+            )
+        if parts == ["api", "v1", "metadata-corrections"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            limit = self._metadata_correction_limit(environ)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [
+                        self._value(item)
+                        for item in self._repository.list_metadata_corrections(limit=limit)
+                    ]
+                },
+            )
         if parts == ["api", "v1", "classification-reviews"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             limit = self._classification_review_limit(environ)
@@ -2513,6 +2539,32 @@ class MediaFlowApi:
             raise ValueError("classification review limit must be an integer") from error
         if limit < 1 or limit > 100:
             raise ValueError("classification review limit must be between 1 and 100")
+        return limit
+
+    @staticmethod
+    def _recognition_review_limit(environ: dict) -> int:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("recognition review query accepts one limit field")
+        try:
+            limit = int(values.get("limit", ["100"])[0])
+        except ValueError as error:
+            raise ValueError("recognition review limit must be an integer") from error
+        if limit < 1 or limit > 100:
+            raise ValueError("recognition review limit must be between 1 and 100")
+        return limit
+
+    @staticmethod
+    def _metadata_correction_limit(environ: dict) -> int:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("metadata correction query accepts one limit field")
+        try:
+            limit = int(values.get("limit", ["100"])[0])
+        except ValueError as error:
+            raise ValueError("metadata correction limit must be an integer") from error
+        if limit < 1 or limit > 100:
+            raise ValueError("metadata correction limit must be between 1 and 100")
         return limit
 
     @staticmethod

@@ -290,7 +290,12 @@ class PersistentTaskCoordinator:
             append(evidence)
 
     def wait_for_confirmation(
-        self, item: PersistentTaskItem, plan: OrganizePlan, policy: OrganizePolicy
+        self,
+        item: PersistentTaskItem,
+        plan: OrganizePlan,
+        policy: OrganizePolicy,
+        *,
+        evidence: PipelineEvidence | None = None,
     ) -> None:
         from mediaflow.application.conflict_resolution import ConfirmationService
 
@@ -307,36 +312,76 @@ class PersistentTaskCoordinator:
             ),
             error=None,
         )
-        self.repository.upsert_item(waiting)
         ConfirmationService(self.repository).create(
-            task_id=item.task_id, item_id=item.item_id, plan=plan, policy=policy
+            task_id=item.task_id,
+            item_id=item.item_id,
+            plan=plan,
+            policy=policy,
+            item=waiting,
+            evidence=evidence,
         )
         self.locks.release(item.storage_id, item.source_path, item.task_id)
 
-    def wait_for_metadata(self, item, identification, metadata_policy_id: str) -> None:
+    def wait_for_metadata(
+        self,
+        item,
+        identification,
+        metadata_policy_id: str,
+        *,
+        evidence: PipelineEvidence | None = None,
+    ) -> None:
         from mediaflow.application.metadata_review import MetadataReviewService
 
-        MetadataReviewService(self.repository).create(item, identification, metadata_policy_id)
+        MetadataReviewService(self.repository).create(
+            item, identification, metadata_policy_id, evidence=evidence
+        )
         self.locks.release(item.storage_id, item.source_path, item.task_id)
 
-    def wait_for_recognition(self, item, recognition, recognition_types) -> None:
+    def wait_for_recognition(
+        self,
+        item,
+        recognition,
+        recognition_types,
+        *,
+        evidence: PipelineEvidence | None = None,
+    ) -> None:
         from mediaflow.application.recognition_review import RecognitionReviewService
 
-        RecognitionReviewService(self.repository, recognition_types).create(item, recognition)
+        RecognitionReviewService(self.repository, recognition_types).create(
+            item, recognition, evidence=evidence
+        )
         self.locks.release(item.storage_id, item.source_path, item.task_id)
 
-    def wait_for_metadata_correction(self, item, identification, policy, parsed) -> None:
+    def wait_for_metadata_correction(
+        self,
+        item,
+        identification,
+        policy,
+        parsed,
+        *,
+        evidence: PipelineEvidence | None = None,
+    ) -> None:
         from mediaflow.application.metadata_correction import MetadataCorrectionService
 
         MetadataCorrectionService(self.repository, (policy,)).create(
-            item, identification, policy, parsed
+            item, identification, policy, parsed, evidence=evidence
         )
         self.locks.release(item.storage_id, item.source_path, item.task_id)
 
-    def wait_for_classification(self, item, result, policy, identity) -> None:
+    def wait_for_classification(
+        self,
+        item,
+        result,
+        policy,
+        identity,
+        *,
+        evidence: PipelineEvidence | None = None,
+    ) -> None:
         from mediaflow.application.classification_review import ClassificationReviewService
 
-        ClassificationReviewService(self.repository).create(item, result, policy, identity)
+        ClassificationReviewService(self.repository).create(
+            item, result, policy, identity, evidence=evidence
+        )
         self.locks.release(item.storage_id, item.source_path, item.task_id)
 
     def finish(self, task_id: str, batch: MediaOrganizerBatchResult) -> PersistentTask:

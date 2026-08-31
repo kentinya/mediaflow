@@ -16,6 +16,7 @@ from mediaflow.domain.classification_review import (
     ClassificationReviewRepository,
     ClassificationReviewStatus,
 )
+from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.metadata import MediaIdentity
 from mediaflow.domain.task_persistence import PersistentTaskItem, TaskItemStatus
 
@@ -33,6 +34,8 @@ class ClassificationReviewService:
         result: ClassificationResult,
         policy: ClassificationPolicy,
         identity: MediaIdentity,
+        *,
+        evidence: PipelineEvidence | None = None,
     ) -> ClassificationReview:
         if result.status is not ClassificationStatus.UNCLASSIFIED:
             raise ValueError("classification review requires an unclassified outcome")
@@ -85,7 +88,17 @@ class ClassificationReviewService:
             updated_at=now,
             error=None,
         )
-        self._repository.create_classification_review(review, choices, waiting)
+        create_atomic = getattr(
+            self._repository, "create_classification_review_with_evidence", None
+        )
+        if evidence is not None and callable(create_atomic):
+            create_atomic(review, choices, waiting, evidence)
+        else:
+            if evidence is not None:
+                append = getattr(self._repository, "append_evidence", None)
+                if callable(append):
+                    append(evidence)
+            self._repository.create_classification_review(review, choices, waiting)
         return review
 
     def resolve(
