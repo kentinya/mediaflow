@@ -1346,7 +1346,8 @@ APP_JS = b"""(() => {
     headers.forEach(value => headerRow.append(text('th', value))); head.append(headerRow);
     const body = document.createElement('tbody');
     rows.forEach((values, index) => {
-      const row = document.createElement('tr'); values.forEach(value => row.append(text('td', value)));
+      const row = document.createElement('tr');
+      values.forEach(value => row.append(value && value.nodeType ? value : text('td', value)));
       if (onRow) { row.tabIndex = 0; row.addEventListener('click', () => onRow(index));
         row.addEventListener('keydown', event => { if (event.key === 'Enter') onRow(index); }); }
       body.append(row);
@@ -1726,11 +1727,17 @@ APP_JS = b"""(() => {
       pageNavigation(detailContent, 'items', data.previous_item_cursor, data.next_item_cursor,
         () => showTask(id, data.previous_item_cursor, resultCursor),
         () => showTask(id, data.next_item_cursor, resultCursor));
-      const results = (data.results || []).map(item => [item.result_id, item.status,
-        item.recognition_type || '-', item.title || '-', item.operation || '-',
-        item.destination_path || '-', item.created_at]);
+      const results = (data.results || []).map(item => {
+        const sourceItem = (data.items || []).find(value => value.item_id === item.item_id) || {};
+        return [item.result_id, item.status, item.recognition_type || '-', item.title || '-',
+          item.operation || '-', item.destination_path || '-', item.created_at,
+          actionButton('Open file', () => openFileFromSource(item.source_storage_id ||
+            sourceItem.storage_id, sourceItem.resource_library_id, item.source_path ||
+            sourceItem.source_path))];
+      });
       detailContent.append(text('h3', 'Results'), table(
-        ['ID', 'Status', 'Type', 'Title', 'Operation', 'Destination', 'Created'], results));
+        ['ID', 'Status', 'Type', 'Title', 'Operation', 'Destination', 'Created', 'File'],
+        results));
       if (data.results_truncated) detailContent.append(text('p',
         `Results truncated at ${data.result_limit}.`, 'warning'));
       pageNavigation(detailContent, 'results', data.previous_result_cursor,
@@ -1850,6 +1857,9 @@ APP_JS = b"""(() => {
         effects.uncertain_effects.length ? effects.uncertain_effects.join(', ') : 'none');
       field(list, 'Refusal reason', data.refusal_reason || 'none');
       detailContent.append(list);
+      detailContent.append(actionButton('Open File/Media detail',
+        () => openFileFromSource(data.source_storage_id, data.resource_library_id,
+          data.source_path)));
       const blocker = data.blocker && typeof data.blocker === 'object' ? data.blocker : null;
       if (blocker) {
         const blockerSection = text('div', '', 'choices');
@@ -1937,6 +1947,88 @@ APP_JS = b"""(() => {
       }
       detail.hidden = false;
     } catch (error) { message(errorText(error), true); }
+  }
+  function renderFileMediaSections(data) {
+    const evidence = Array.isArray(data.evidence) ? data.evidence : [];
+    detailContent.append(text('h3', `Captured pipeline evidence (${evidence.length})`));
+    if (!evidence.length) {
+      detailContent.append(text('p',
+        'No captured evidence is available for this legacy record. Unavailable fields are ' +
+        'shown explicitly and are never inferred from the current state.', 'warning'));
+    }
+    evidence.forEach(record => {
+      const sections = record.sections || {};
+      detailContent.append(text('h4',
+        `Attempt ${record.attempts || '-'} - ${record.outcome || '-'} (${record.evidenceId || '-'})`));
+      detailContent.append(table(['Field', 'Value'], [
+        ['Task', record.taskId], ['Item', record.itemId],
+        ['Configuration snapshot', record.configurationSnapshotId || '-'],
+        ['Configuration digest', record.configurationSnapshotDigest || '-'],
+        ['Captured', record.capturedAt], ['Error', record.error || 'none']
+      ]));
+      Object.keys(sections).forEach(name => {
+        const section = sections[name];
+        if (!section) return;
+        detailContent.append(text('h4',
+          `${name} - ${section.available ? 'available' : 'unavailable'}`));
+        if (section.unavailableReason) {
+          detailContent.append(text('p', section.unavailableReason, 'warning'));
+        }
+        if (section.value && Object.keys(section.value).length) {
+          const rows = Object.entries(section.value).map(([key, value]) => [key,
+            Array.isArray(value) ? value.join(', ') :
+              value === null || value === undefined ? '-' : String(value)]);
+          detailContent.append(table(['Field', 'Value'], rows));
+        }
+        if (Array.isArray(section.items) && section.items.length) {
+          detailContent.append(table(['Item'],
+            section.items.map(item => [JSON.stringify(item)])));
+        }
+        if (section.truncated) {
+          detailContent.append(text('p', 'This evidence section is truncated.', 'warning'));
+        }
+      });
+    });
+    const items = Array.isArray(data.items) ? data.items : [];
+    detailContent.append(text('h3', `Related TaskItems / checkpoints (${items.length})`));
+    if (items.length) {
+      detailContent.append(table(
+        ['Task', 'Item', 'Status', 'Stage', 'Updated', 'Checkpoint', 'File'],
+        items.map(item => [item.taskId, item.itemId, item.status, item.stage, item.updatedAt,
+          item.checkpoint && item.checkpoint.checkpoint_version || '-',
+          actionButton('Open', () => openFileFromSource(item.sourceStorageId,
+            item.resourceLibraryId, item.sourcePath))])));
+    }
+    const results = Array.isArray(data.results) ? data.results : [];
+    detailContent.append(text('h3', `Results / effects (${results.length})`));
+    if (results.length) {
+      detailContent.append(table(
+        ['Result', 'Status', 'Type', 'Operation', 'Destination', 'Effect certainty', 'Created'],
+        results.map(result => [result.resultId, result.status, result.recognitionType || '-',
+          result.operation || '-', result.destinationPath || '-',
+          result.effectCertainty || 'unknown', result.createdAt])));
+    }
+    const actions = Array.isArray(data.currentActions) ? data.currentActions : [];
+    detailContent.append(text('h3', `Current valid actions (${actions.length})`));
+    if (actions.length) {
+      detailContent.append(table(
+        ['Action', 'Item', 'Admissible', 'Confirmation', 'Authority', 'Resolution', 'Open'],
+        actions.map(action => [action.label || action.actionId, action.itemId,
+          action.admissible ? 'yes' : 'no',
+          action.confirmationRequired ? 'required' : 'not required',
+          action.requiredAuthority || '-', action.resolutionSurface || '-',
+          action.resolutionSurface ? actionButton('Open',
+            () => showCheckpointBlocker(action.resolutionSurface)) : '-'])));
+    } else {
+      detailContent.append(text('p', items.length ?
+        'No replay control is exposed for the current terminal or ineligible state.' :
+        'No durable TaskItem state is available for this file.', 'warning'));
+    }
+    if (data.truncated && typeof data.truncated === 'object') {
+      Object.entries(data.truncated).filter(([, value]) => value).forEach(([name]) => {
+        detailContent.append(text('p', `${name} truncated; showing a bounded set.`, 'warning'));
+      });
+    }
   }
   function confirmRecoveryContinuation(taskId, itemId, checkpointVersion, action) {
     const confirmation = text('div', '', 'choices');
@@ -2052,6 +2144,15 @@ APP_JS = b"""(() => {
           detailContent.append(text('h3', 'Related reviews'),
             table(['Kind', 'Review', 'Status', 'Task', 'Item', 'Continuation'], rows));
         }
+        renderFileMediaSections(data);
+      }
+      if (['confirmations', 'recognition-reviews', 'metadata-reviews',
+        'classification-reviews', 'metadata-corrections'].includes(kind) &&
+        (data.source_storage_id || data.sourceStorageId)) {
+        detailContent.append(actionButton('Open File/Media detail',
+          () => openFileFromSource(data.source_storage_id || data.sourceStorageId,
+            data.resource_library_id || data.resourceLibraryId,
+            data.source_path || data.sourcePath)));
       }
       if (kind === 'confirmations') renderConflictActions(id);
       if (kind === 'metadata-reviews') renderRankActions(kind, id, data.candidates || [],
@@ -2063,6 +2164,24 @@ APP_JS = b"""(() => {
   }
   function actionButton(label, action) {
     const button = text('button', label); button.addEventListener('click', action); return button;
+  }
+  async function openFileFromSource(storageId, resourceLibraryId, path) {
+    if (!storageId || !path) {
+      message('File source identity is unavailable; the current file cannot be resolved.', true);
+      return;
+    }
+    const parts = [`storageId=${encodeURIComponent(storageId)}`,
+      `path=${encodeURIComponent(path)}`];
+    if (resourceLibraryId) parts.push(`resourceLibrary=${encodeURIComponent(resourceLibraryId)}`);
+    try {
+      const data = await api(`/api/v1/files/by-source?${parts.join('&')}`);
+      if (!data.available || !data.fileId) {
+        message(`File link unavailable: ${data.unavailableReason || 'no current indexed file'}`,
+          true);
+        return;
+      }
+      await showDetail('files', data.fileId);
+    } catch (error) { message(errorText(error), true); }
   }
   function renderConflictActions(id) {
     const actions = text('div', '', 'choices');

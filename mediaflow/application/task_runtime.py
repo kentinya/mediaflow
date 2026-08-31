@@ -8,6 +8,7 @@ from mediaflow.application.media_organizer import (
     MediaOrganizerBatchResult,
     MediaOrganizerItemResult,
 )
+from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.organizer import (
     ExecutionEffectCertainty,
     ExecutionStatus,
@@ -270,10 +271,23 @@ class PersistentTaskCoordinator:
             or ("; ".join(execution.errors) if execution and execution.errors else None),
         )
         try:
-            self.repository.append_result(self._result(completed, result, now))
-            self.repository.upsert_item(completed)
+            atomic = getattr(self.repository, "complete_item_with_evidence", None)
+            if callable(atomic):
+                atomic(completed, self._result(completed, result, now), result.evidence)
+            else:
+                self.repository.append_result(self._result(completed, result, now))
+                self.repository.upsert_item(completed)
+                if result.evidence is not None:
+                    self.record_evidence(result.evidence)
         finally:
             self.locks.release(item.storage_id, item.source_path, item.task_id)
+
+    def record_evidence(self, evidence: PipelineEvidence) -> None:
+        """Persist one bounded evidence record at a TaskItem boundary."""
+
+        append = getattr(self.repository, "append_evidence", None)
+        if callable(append):
+            append(evidence)
 
     def wait_for_confirmation(
         self, item: PersistentTaskItem, plan: OrganizePlan, policy: OrganizePolicy

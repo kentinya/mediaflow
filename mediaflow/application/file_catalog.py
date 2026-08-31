@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from mediaflow.domain.file_catalog import FileReviewLink
 from mediaflow.domain.file_index import FileIndexRecord, FileIndexRepository
+from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.task_persistence import PersistentResultRecord, PersistentTaskRepository
 
@@ -32,6 +33,36 @@ class FileCatalogDetail:
     record: FileIndexRecord
     latest_result: PersistentResultRecord | None
     related_reviews: tuple[FileReviewLink, ...] = ()
+    evidence: tuple[PipelineEvidence, ...] = ()
+    items: tuple[FileDetailItem, ...] = ()
+    results: tuple[PersistentResultRecord, ...] = ()
+    actions: tuple[FileDetailAction, ...] = ()
+    truncated: dict[str, bool] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class FileDetailItem:
+    task_id: str
+    item_id: str
+    status: str
+    stage: str
+    updated_at: datetime
+    source_storage_id: str
+    resource_library_id: str
+    source_path: str
+    checkpoint: dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class FileDetailAction:
+    action_id: str
+    label: str
+    confirmation_required: bool
+    required_authority: str
+    resolution_surface: str | None
+    admissible: bool
+    task_id: str
+    item_id: str
 
 
 @dataclass(frozen=True)
@@ -49,11 +80,16 @@ class FileCatalogService:
         resource_library_ids: tuple[str, ...],
         storage_ids: tuple[str, ...],
         task_repository: PersistentTaskRepository | None = None,
+        checkpoint_service=None,
     ) -> None:
         self._repository = repository
         self._resource_library_ids = resource_library_ids
         self._storage_ids = storage_ids
         self._task_repository = task_repository
+        self._checkpoint_service = checkpoint_service
+
+    def attach_checkpoint_service(self, checkpoint_service) -> None:
+        self._checkpoint_service = checkpoint_service
 
     def list(self, value: FileCatalogFilter) -> tuple[FileIndexRecord, ...]:
         self._validate(value)
@@ -130,13 +166,147 @@ class FileCatalogService:
             if self._task_repository is not None
             else None
         )
-        related_reviews = (
-            self._task_repository.list_file_review_links(record.storage_id, record.path)
-            if self._task_repository is not None
-            and hasattr(self._task_repository, "list_file_review_links")
-            else ()
+        related_reviews: tuple[FileReviewLink, ...] = ()
+        evidence: tuple[PipelineEvidence, ...] = ()
+        items: tuple[FileDetailItem, ...] = ()
+        results: tuple[PersistentResultRecord, ...] = ()
+        truncated: dict[str, bool] = {}
+        if self._task_repository is not None:
+            list_reviews = getattr(self._task_repository, "list_file_review_links", None)
+            if callable(list_reviews):
+                review_values = list_reviews(record.storage_id, record.path, limit=101)
+                truncated["reviews"] = len(review_values) > 100
+                related_reviews = tuple(review_values[:100])
+            list_evidence = getattr(self._task_repository, "list_evidence_for_source", None)
+            if callable(list_evidence):
+                evidence_values = list_evidence(record.storage_id, record.path, limit=33)
+                truncated["evidence"] = len(evidence_values) > 32
+                evidence = tuple(evidence_values[:32])
+            list_items = getattr(self._task_repository, "list_task_items_for_source", None)
+            if callable(list_items):
+                item_values = list_items(record.storage_id, record.path, limit=33)
+                truncated["items"] = len(item_values) > 32
+                items = tuple(
+                    self._detail_item(value, record.storage_id, record.path)
+                    for value in item_values[:32]
+                )
+            list_results = getattr(self._task_repository, "list_results_for_source", None)
+            if callable(list_results):
+                result_values = list_results(record.storage_id, record.path, limit=33)
+                truncated["results"] = len(result_values) > 32
+                results = tuple(result_values[:32])
+        actions = self._current_actions(items)
+        return FileCatalogDetail(
+            record,
+            latest_result,
+            related_reviews,
+            evidence,
+            items,
+            results,
+            actions,
+            truncated,
         )
-        return FileCatalogDetail(record, latest_result, related_reviews)
+
+    def resolve_by_source(
+        self,
+        storage_id: str,
+        path: str,
+        *,
+        resource_library_id: str | None = None,
+    ) -> tuple[FileIndexRecord | None, str | None]:
+        if not isinstance(storage_id, str) or not storage_id:
+            raise ValueError("source Storage ID is required")
+        if not isinstance(path, str) or not path:
+            raise ValueError("source Storage-relative path is required")
+        library_ids = (
+            (resource_library_id,)
+            if resource_library_id is not None
+            else self._resource_library_ids
+        )
+        if (
+            resource_library_id is not None
+            and resource_library_id not in self._resource_library_ids
+        ):
+            raise ValueError(f"unknown ResourceLibrary {resource_library_id!r}")
+        matches: list[FileIndexRecord] = []
+        find = getattr(self._repository, "find_by_path", None)
+        for library_id in library_ids:
+            record = find(storage_id, library_id, path) if callable(find) else None
+            if record is not None:
+                matches.append(record)
+        if len(matches) == 1:
+            return matches[0], None
+        if len(matches) > 1:
+            return None, "ambiguous"
+        return None, "missing"
+
+    def _detail_item(self, item, storage_id: str, path: str) -> FileDetailItem:
+        checkpoint = None
+        checkpoint_service = self._checkpoint_service
+        if checkpoint_service is None and self._task_repository is not None:
+            from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+
+            checkpoint_service = ProcessingCheckpointService(self._task_repository)
+        if checkpoint_service is not None:
+            try:
+                checkpoint = checkpoint_service.get(item.item_id, task_id=item.task_id).summary()
+            except (LookupError, ValueError):
+                checkpoint = None
+        return FileDetailItem(
+            item.task_id,
+            item.item_id,
+            getattr(item.status, "value", str(item.status)),
+            getattr(item, "stage", "unknown"),
+            item.updated_at,
+            storage_id,
+            item.resource_library_id,
+            path,
+            checkpoint,
+        )
+
+    def _current_actions(self, items: tuple[FileDetailItem, ...]) -> tuple[FileDetailAction, ...]:
+        if not items:
+            return ()
+        actionable = [
+            item
+            for item in items
+            if isinstance(item.checkpoint, dict)
+            and isinstance(item.checkpoint.get("permitted_action_ids"), list)
+            and item.checkpoint["permitted_action_ids"]
+        ]
+        latest = max(
+            actionable or items,
+            key=lambda item: (item.updated_at, item.item_id),
+        )
+        checkpoint = latest.checkpoint if isinstance(latest.checkpoint, dict) else None
+        if checkpoint is None or not isinstance(checkpoint.get("permitted_action_ids"), list):
+            return ()
+        checkpoint_service = self._checkpoint_service
+        if checkpoint_service is None and self._task_repository is not None:
+            from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+
+            checkpoint_service = ProcessingCheckpointService(self._task_repository)
+        if checkpoint_service is None:
+            return ()
+        try:
+            full = checkpoint_service.get(latest.item_id, task_id=latest.task_id)
+        except (LookupError, ValueError):
+            return ()
+        actions: list[FileDetailAction] = []
+        for action in full.actions:
+            actions.append(
+                FileDetailAction(
+                    action.action_id,
+                    action.label,
+                    action.confirmation_required,
+                    action.required_authority,
+                    action.resolution_surface,
+                    action.admissible,
+                    latest.task_id,
+                    latest.item_id,
+                )
+            )
+        return tuple(actions)
 
     def stats(
         self,

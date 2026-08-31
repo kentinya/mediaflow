@@ -1732,6 +1732,26 @@ Phase 21.26 completes the Phase 21 bounded file-detail actions with `POST /api/v
 re-match` and a read-only Files UI form for pending MetadataCorrectionReview. The accepted Phase 21
 manual workflow scope is now closed; Phase 22 configuration management is the next boundary.
 
+## Bounded File/Media detail evidence and cross-links (Slice 24 Task 24.1)
+
+Task 24.1 adds Runtime schema marker `27` with a forward-migrated `pipeline_evidence` table.
+`MediaOrganizerService` captures a bounded, provider-neutral evidence document at each tracked
+TaskItem boundary for waiting, DryRun, skipped, failed, partial and successful items. The document
+contains normalized Parse, Recognition, Metadata, policy ownership, Naming, Classification, plan,
+operation/effect and declared Storage capability sections; it structurally excludes raw Provider
+DTOs, credentials, headers, cookies, private configuration and unbounded exception text. Records
+created before evidence capture remain readable with section-level `unavailable` rather than being
+reconstructed from status or filename.
+
+`FileCatalogService.detail` now projects the authoritative FileIndex record together with bounded
+captured evidence, related TaskItems and their Processing Checkpoints, related reviews/conflicts,
+prior Results/effects and current checkpoint-derived actions. `GET /api/v1/files/{file_id}` remains
+the shared detail surface, with additive sections, and `GET /api/v1/files/by-source` resolves an
+existing TaskItem/review/conflict/Result source link to one current indexed File when unique. The
+Operator Web renders evidence/history sections and offers inbound File/Media navigation from
+TaskItems, reviews, conflicts and Result rows; missing, stale or ambiguous links produce an explicit
+unavailable explanation instead of guessing a File ID.
+
 ## Configuration architecture: CURRENT
 
 Through Phase 22.2/22.2R, JSON remains the compatibility bootstrap until an operator explicitly activates
@@ -1797,6 +1817,7 @@ snapshot is selected.
 The snapshot identity columns were additive compatibility migrations on Runtime schema 22. Slice 23
 advances the Runtime marker additively through 23–26 for effect-certainty evidence, exact-version
 recovery requests, recovery continuations and the bounded recovery-batch parent/child read model.
+Slice 24 Task 24.1 advances it to `27` for the bounded pipeline-evidence File/Media detail read model.
 Fresh and older databases receive the structures through forward migration, and Job inserts use an
 explicit column list so historical ALTER-table column order cannot corrupt authority fields. Phase
 22.3 closed on configuration-management schema marker `4`; Phase 22.4 adds marker `5` for
@@ -1805,7 +1826,7 @@ Naming preview evidence, Phase 22.6-B adds marker `7` for exact-revision Classif
 evidence, Phase 22.6-C adds marker `8` for exact-revision organize authority evidence, Phase 22.6-D
 adds marker `9` for composed destination-preview evidence, and Phase 22.6-E adds marker `10` for
 read-only destination-precheck evidence. The configuration-management marker remains `10`; the
-current Runtime schema marker is `26`.
+current Runtime schema marker is `27`.
 
 ### Phase 22.3 Local Storage + Library guided slice (CURRENT implementation; PASS / CLOSED)
 
