@@ -21,6 +21,7 @@ from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogSer
 from mediaflow.application.file_metadata_correction import FileMetadataCorrectionService
 from mediaflow.application.file_recognition_request import FileRecognitionRequestService
 from mediaflow.application.file_replan_request import FileReplanRequestService
+from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_correction_continuation import (
     FileMetadataCorrectionContinuationService,
@@ -41,6 +42,9 @@ from mediaflow.domain.configuration_management import (
     RuntimeSnapshotUnavailable,
 )
 from mediaflow.domain.logging import LogLevel
+from mediaflow.domain.manual_organize import (
+    ManualIntentError,
+)
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionContinuation,
     MetadataCorrectionContinuationStatus,
@@ -110,6 +114,7 @@ class MediaFlowApi:
         bootstrap_document: object | None = None,
         metadata_provider_registry_factory=None,
         recovery_snapshot_validator: Callable[[str, str], None] | None = None,
+        manual_intent_service: ManualOrganizeIntentService | None = None,
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -130,6 +135,13 @@ class MediaFlowApi:
             raise ValueError("stale Job age must be between 60 and 604800 seconds")
         self._file_catalog = file_catalog
         self._configuration_service = configuration_service
+        self._manual_intents = manual_intent_service
+        if self._manual_intents is None and self._file_catalog is not None:
+            self._manual_intents = ManualOrganizeIntentService(
+                repository,
+                self._file_catalog,
+                configuration_service,
+            )
         self._configuration_objects = (
             ConfigurationObjectService(
                 configuration_service,
@@ -549,6 +561,23 @@ class MediaFlowApi:
                 str(error),
                 details=details,
             )
+        except ManualIntentError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "manual-intent",
+                "conflict" if error.status == 409 else "denied" if error.status < 500 else "error",
+                error.status,
+            )
+            details = {"sideEffects": "none", **error.details}
+            if error.next_action:
+                details.setdefault("nextAction", error.next_action)
+            return self._error(
+                start_response, error.status, error.code, str(error), details=details
+            )
         except LookupError as error:
             self._safe_audit(
                 environ,
@@ -603,6 +632,17 @@ class MediaFlowApi:
         principal: ResolvedApiPrincipal,
     ):
         parts = [part for part in path.split("/") if part]
+        if (
+            len(parts) >= 3
+            and parts[:2] == ["api", "v1"]
+            and parts[2]
+            in {
+                "manual-organize",
+                "manual-organize-intents",
+            }
+        ):
+            # Keep the public route aliases on the same application semantics.
+            parts[2] = "manual-intents"
         configuration_route = parts[:3] == ["api", "v1", "configuration"]
         task_read_route = parts[:3] == ["api", "v1", "tasks"] and method == "GET"
         binding = self._runtime_binding
@@ -1447,6 +1487,189 @@ class MediaFlowApi:
                 ).request(parts[3], actor=principal.principal_id, note=note)
                 value = self._value(decision)
             return self._response(start_response, 200, value)
+        if parts == ["api", "v1", "manual-intents"] and method == "POST":
+            # Manual intent admission is analysis/selection work, not execution.
+            # It uses the existing operator DryRun permission and never creates
+            # a Task, Plan, Provider request or execution authority.
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._manual_intents is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual intent service is unavailable",
+                )
+            self._require_empty_query(environ, "manual intent creation")
+            document = self._document(environ)
+            if set(document) != {"fileIds"}:
+                raise ValueError("manual intent creation requires only fileIds")
+            file_ids = document["fileIds"]
+            if not isinstance(file_ids, list):
+                raise ValueError("manual intent fileIds must be an array")
+            intent = self._manual_intents.create(file_ids, actor=principal.principal_id)
+            return self._response(
+                start_response,
+                201,
+                intent.document(),
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "files"]
+            and parts[4] in {"manual-organize", "manual-intent"}
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._manual_intents is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual intent service is unavailable",
+                )
+            self._require_empty_query(environ, "single-file manual intent creation")
+            if environ.get("CONTENT_LENGTH", "0") not in ("", "0", 0, None):
+                document = self._document(environ)
+                if document:
+                    raise ValueError("single-file manual intent accepts an empty request body")
+            intent = self._manual_intents.create([parts[3]], actor=principal.principal_id)
+            return self._response(start_response, 201, intent.document())
+        if parts == ["api", "v1", "manual-intents"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if self._manual_intents is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual intent service is unavailable",
+                )
+            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(values).difference({"limit"}) or any(
+                len(value) != 1 for value in values.values()
+            ):
+                raise ValueError("manual intent query accepts limit once")
+            limit = self._parse_bounded_limit(values.get("limit", ["100"])[0], "manual intent")
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [
+                        item.document(include_audit=False)
+                        for item in self._manual_intents.list(limit=limit)
+                    ],
+                    "limit": limit,
+                },
+            )
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "manual-intents"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if self._manual_intents is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual intent service is unavailable",
+                )
+            self._require_empty_query(environ, "manual intent detail")
+            return self._response(
+                start_response, 200, self._manual_intents.get(parts[3]).document()
+            )
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "manual-intents"]
+            and parts[4] == "items"
+            and parts[6] == "choice"
+            and method == "PUT"
+        ):
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._manual_intents is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual intent service is unavailable",
+                )
+            self._require_empty_query(environ, "manual intent choice")
+            document = self._document(environ)
+            allowed = {
+                "expectedVersion",
+                "expectedItemVersion",
+                "snapshotId",
+                "snapshotDigest",
+                "recognitionTypeId",
+                "metadata",
+                "metadataIdentity",
+                "namingPolicyId",
+                "classificationPolicyId",
+                "organizePolicyId",
+            }
+            if set(document).difference(allowed):
+                raise ValueError("manual intent choice fields are invalid")
+            if "expectedVersion" not in document:
+                raise ValueError("manual intent choice requires expectedVersion")
+            if "metadata" in document and "metadataIdentity" in document:
+                raise ValueError(
+                    "manual intent choice accepts metadata or metadataIdentity, not both"
+                )
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int) or expected < 1:
+                raise ValueError("manual intent expectedVersion must be a positive integer")
+            expected_item = document.get("expectedItemVersion")
+            if expected_item is not None and (
+                isinstance(expected_item, bool)
+                or not isinstance(expected_item, int)
+                or expected_item < 1
+            ):
+                raise ValueError("manual intent expectedItemVersion must be a positive integer")
+            patch = {
+                key: document[key]
+                for key in (
+                    "recognitionTypeId",
+                    "metadata",
+                    "namingPolicyId",
+                    "classificationPolicyId",
+                    "organizePolicyId",
+                )
+                if key in document
+            }
+            if "metadataIdentity" in document:
+                patch["metadata"] = document["metadataIdentity"]
+            if not patch:
+                raise ValueError("manual intent choice requires at least one normalized choice")
+            intent = self._manual_intents.update_choice(
+                parts[3],
+                parts[5],
+                patch,
+                expected_version=expected,
+                expected_item_version=expected_item,
+                snapshot_id=document.get("snapshotId"),
+                snapshot_digest=document.get("snapshotDigest"),
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 200, intent.document())
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-intents"]
+            and parts[4] == "cancel"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._manual_intents is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual intent service is unavailable",
+                )
+            self._require_empty_query(environ, "manual intent cancellation")
+            document = self._document(environ)
+            if set(document) != {"expectedVersion"}:
+                raise ValueError("manual intent cancellation requires only expectedVersion")
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int) or expected < 1:
+                raise ValueError("manual intent expectedVersion must be a positive integer")
+            intent = self._manual_intents.cancel(
+                parts[3], expected_version=expected, actor=principal.principal_id
+            )
+            return self._response(start_response, 200, intent.document())
         if parts == ["api", "v1", "security-audit"] and method == "GET":
             self._require(principal, ApiPermission.READ_SECURITY_AUDIT)
             return self._response(
@@ -2823,6 +3046,12 @@ class MediaFlowApi:
         if ApiPermission.READ not in getattr(principal, "permissions", ()):
             return False
         parts = [part for part in str(path).split("/") if part]
+        if parts[:3] == ["api", "v1", "manual-intents"] or (
+            len(parts) >= 3
+            and parts[:2] == ["api", "v1"]
+            and parts[2] in {"manual-organize", "manual-organize-intents"}
+        ):
+            return True
         return parts[:3] == ["api", "v1", "files"] and (
             len(parts) == 4 or parts == ["api", "v1", "files", "by-source"]
         )

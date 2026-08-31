@@ -43,6 +43,18 @@ from mediaflow.domain.manual_ignore import (
     ManualIgnoreDecision,
     ManualReviewKind,
 )
+from mediaflow.domain.manual_organize import (
+    ManualChoice,
+    ManualConfigurationSnapshot,
+    ManualIntentAudit,
+    ManualIntentConflict,
+    ManualIntentItem,
+    ManualIntentItemStatus,
+    ManualIntentStatus,
+    ManualIntentUnavailable,
+    ManualOrganizeIntent,
+    ManualSourceIdentity,
+)
 from mediaflow.domain.media_evidence import PipelineEvidence, evidence_from_document
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionBatchResolveRequest,
@@ -109,7 +121,10 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestDecision
 
-# Runtime schema 27 adds the bounded pipeline evidence read model for File/Media detail.
+# Manual intent tables are an additive migration on the current runtime schema.
+# Keep the public runtime marker at 27 for compatibility with existing backup
+# and migration consumers; the table creation below is idempotent and upgrades
+# older runtime databases without rewriting existing rows.
 SCHEMA_VERSION = 27
 
 
@@ -4551,6 +4566,356 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._delivery(row)
 
+    # Manual-organize intent persistence is intentionally kept on the existing
+    # runtime repository.  It shares the same SQLite transaction and audit
+    # boundary as Tasks, reviews and Results without creating a parallel
+    # database authority.
+    def create_manual_intent_with_audit(
+        self,
+        intent: ManualOrganizeIntent,
+        items: tuple[ManualIntentItem, ...] | list[ManualIntentItem],
+        audit: ManualIntentAudit,
+    ) -> ManualOrganizeIntent:
+        if intent.options is None:
+            raise ValueError("manual intent configuration option projection is required")
+        if intent.intent_id != audit.intent_id or audit.item_id is not None:
+            raise ValueError("manual intent creation audit identity is invalid")
+        values = tuple(items)
+        if values != intent.items:
+            raise ValueError("manual intent items do not match the intent projection")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._connection.execute(
+                    "INSERT INTO manual_intents "
+                    "(intent_id, actor, configuration_snapshot_id, configuration_snapshot_digest, "
+                    "status, version, created_at, updated_at, next_action, error, options_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        intent.intent_id,
+                        intent.actor,
+                        intent.snapshot_id,
+                        intent.snapshot_digest,
+                        intent.status.value,
+                        intent.version,
+                        intent.created_at.isoformat(),
+                        intent.updated_at.isoformat(),
+                        intent.next_action,
+                        intent.error,
+                        json.dumps(intent.options.document(), ensure_ascii=False, sort_keys=True),
+                    ),
+                )
+                for item in values:
+                    self._connection.execute(
+                        "INSERT INTO manual_intent_items "
+                        "(item_id, intent_id, position, file_id, storage_id, resource_library_id, "
+                        "source_path, filename, extension, source_size, source_modified_at, "
+                        "source_last_seen_at, source_updated_at, source_stable_since, "
+                        "source_scan_status, source_last_scan_id, choice_json, status, error, "
+                        "version, created_at, updated_at) VALUES "
+                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        self._manual_item_values(item),
+                    )
+                self._insert_manual_intent_audit(audit)
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return self.get_manual_intent(intent.intent_id)
+
+    def create_manual_intent(
+        self,
+        intent: ManualOrganizeIntent,
+        items: tuple[ManualIntentItem, ...] | list[ManualIntentItem],
+        audit: ManualIntentAudit,
+    ) -> ManualOrganizeIntent:
+        return self.create_manual_intent_with_audit(intent, items, audit)
+
+    def get_manual_intent(self, intent_id: str) -> ManualOrganizeIntent | None:
+        if not isinstance(intent_id, str) or not intent_id.strip():
+            raise ValueError("manual intent ID is required")
+        with self._lock:
+            return self._load_manual_intent_locked(intent_id)
+
+    def list_manual_intents(self, *, limit: int = 100) -> tuple[ManualOrganizeIntent, ...]:
+        if isinstance(limit, bool) or not 1 <= limit <= 500:
+            raise ValueError("manual intent limit must be between 1 and 500")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT intent_id FROM manual_intents "
+                "ORDER BY created_at DESC, intent_id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return tuple(self._load_manual_intent_locked(row["intent_id"]) for row in rows)
+
+    def list_manual_intent_audit(
+        self, intent_id: str, *, limit: int = 256
+    ) -> tuple[ManualIntentAudit, ...]:
+        if isinstance(limit, bool) or not 1 <= limit <= 1000:
+            raise ValueError("manual intent audit limit must be between 1 and 1000")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM manual_intent_audit WHERE intent_id=? "
+                "ORDER BY occurred_at ASC, audit_id ASC LIMIT ?",
+                (intent_id, limit),
+            ).fetchall()
+        return tuple(self._manual_audit(row) for row in rows)
+
+    def update_manual_intent_choice_with_audit(
+        self,
+        intent: ManualOrganizeIntent,
+        item: ManualIntentItem,
+        expected_intent_version: int,
+        expected_item_version: int,
+        audit: ManualIntentAudit,
+    ) -> ManualOrganizeIntent:
+        if (
+            intent.intent_id != item.intent_id
+            or audit.intent_id != intent.intent_id
+            or audit.item_id != item.item_id
+        ):
+            raise ValueError("manual intent choice audit identity is invalid")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                current = self._load_manual_intent_locked(intent.intent_id)
+                if current is None:
+                    raise LookupError(f"manual intent {intent.intent_id!r} was not found")
+                if current.version != expected_intent_version:
+                    raise ManualIntentConflict(
+                        "manual intent version is stale; no choice was changed", intent=current
+                    )
+                current_item = next(
+                    (value for value in current.items if value.item_id == item.item_id), None
+                )
+                if current_item is None:
+                    raise LookupError(f"manual intent item {item.item_id!r} was not found")
+                if current_item.version != expected_item_version:
+                    raise ManualIntentConflict(
+                        "manual intent item version is stale; no choice was changed", intent=current
+                    )
+                cursor = self._connection.execute(
+                    "UPDATE manual_intents SET version=?, updated_at=?, next_action=?, error=? "
+                    "WHERE intent_id=? AND version=?",
+                    (
+                        intent.version,
+                        intent.updated_at.isoformat(),
+                        intent.next_action,
+                        intent.error,
+                        intent.intent_id,
+                        expected_intent_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ManualIntentConflict(
+                        "manual intent version is stale; no choice was changed",
+                        intent=self._load_manual_intent_locked(intent.intent_id),
+                    )
+                cursor = self._connection.execute(
+                    "UPDATE manual_intent_items SET choice_json=?, status=?, error=?, "
+                    "version=?, updated_at=? "
+                    "WHERE item_id=? AND intent_id=? AND version=?",
+                    (
+                        json.dumps(item.choice.document(), ensure_ascii=False, sort_keys=True),
+                        item.status.value,
+                        item.error,
+                        item.version,
+                        item.updated_at.isoformat(),
+                        item.item_id,
+                        item.intent_id,
+                        expected_item_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ManualIntentConflict(
+                        "manual intent item version is stale; no choice was changed",
+                        intent=self._load_manual_intent_locked(intent.intent_id),
+                    )
+                self._insert_manual_intent_audit(audit)
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return self.get_manual_intent(intent.intent_id)
+
+    def update_manual_intent_status_with_audit(
+        self,
+        intent: ManualOrganizeIntent,
+        expected_version: int,
+        audit: ManualIntentAudit,
+    ) -> ManualOrganizeIntent:
+        if audit.intent_id != intent.intent_id or audit.item_id is not None:
+            raise ValueError("manual intent status audit identity is invalid")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                current = self._load_manual_intent_locked(intent.intent_id)
+                if current is None:
+                    raise LookupError(f"manual intent {intent.intent_id!r} was not found")
+                if current.version != expected_version:
+                    raise ManualIntentConflict(
+                        "manual intent version is stale; no cancellation was recorded",
+                        intent=current,
+                    )
+                cursor = self._connection.execute(
+                    "UPDATE manual_intents SET status=?, version=?, updated_at=?, "
+                    "next_action=?, error=? "
+                    "WHERE intent_id=? AND version=?",
+                    (
+                        intent.status.value,
+                        intent.version,
+                        intent.updated_at.isoformat(),
+                        intent.next_action,
+                        intent.error,
+                        intent.intent_id,
+                        expected_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ManualIntentConflict(
+                        "manual intent version is stale; no cancellation was recorded",
+                        intent=self._load_manual_intent_locked(intent.intent_id),
+                    )
+                self._connection.execute(
+                    "UPDATE manual_intent_items SET status=?, updated_at=? WHERE intent_id=?",
+                    (
+                        ManualIntentItemStatus.CANCELLED.value,
+                        intent.updated_at.isoformat(),
+                        intent.intent_id,
+                    ),
+                )
+                self._insert_manual_intent_audit(audit)
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return self.get_manual_intent(intent.intent_id)
+
+    def _load_manual_intent_locked(self, intent_id: str) -> ManualOrganizeIntent | None:
+        row = self._connection.execute(
+            "SELECT * FROM manual_intents WHERE intent_id=?", (intent_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        item_rows = self._connection.execute(
+            "SELECT * FROM manual_intent_items WHERE intent_id=? "
+            "ORDER BY position ASC, item_id ASC",
+            (intent_id,),
+        ).fetchall()
+        try:
+            options = ManualConfigurationSnapshot.from_document(json.loads(row["options_json"]))
+            items = tuple(self._manual_item(value) for value in item_rows)
+            return ManualOrganizeIntent(
+                row["intent_id"],
+                row["actor"],
+                row["configuration_snapshot_id"],
+                row["configuration_snapshot_digest"],
+                ManualIntentStatus(row["status"]),
+                int(row["version"]),
+                datetime.fromisoformat(row["created_at"]),
+                datetime.fromisoformat(row["updated_at"]),
+                items,
+                options,
+                row["next_action"],
+                row["error"],
+                (),
+            )
+        except Exception as error:
+            raise ManualIntentUnavailable(
+                "durable manual intent state is corrupt or unavailable",
+                details={"intentId": intent_id, "reason": type(error).__name__},
+            ) from error
+
+    def _insert_manual_intent_audit(self, audit: ManualIntentAudit) -> None:
+        self._connection.execute(
+            "INSERT INTO manual_intent_audit "
+            "(audit_id, intent_id, item_id, actor, action, before_json, after_json, occurred_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                audit.audit_id,
+                audit.intent_id,
+                audit.item_id,
+                audit.actor,
+                audit.action,
+                json.dumps(audit.before, ensure_ascii=False, sort_keys=True),
+                json.dumps(audit.after, ensure_ascii=False, sort_keys=True),
+                audit.occurred_at.isoformat(),
+            ),
+        )
+
+    @staticmethod
+    def _manual_item_values(item: ManualIntentItem) -> tuple[object, ...]:
+        source = item.source
+        return (
+            item.item_id,
+            item.intent_id,
+            item.position,
+            source.file_id,
+            source.storage_id,
+            source.resource_library_id,
+            source.path,
+            source.filename,
+            source.extension,
+            source.size,
+            source.modified_at.isoformat(),
+            source.last_seen_at.isoformat(),
+            source.updated_at.isoformat(),
+            source.stable_since.isoformat() if source.stable_since else None,
+            source.scan_status,
+            source.last_scan_id,
+            json.dumps(item.choice.document(), ensure_ascii=False, sort_keys=True),
+            item.status.value,
+            item.error,
+            item.version,
+            item.created_at.isoformat(),
+            item.updated_at.isoformat(),
+        )
+
+    @staticmethod
+    def _manual_item(row: sqlite3.Row) -> ManualIntentItem:
+        source = ManualSourceIdentity(
+            row["file_id"],
+            row["storage_id"],
+            row["resource_library_id"],
+            row["source_path"],
+            row["filename"],
+            row["extension"],
+            int(row["source_size"]),
+            datetime.fromisoformat(row["source_modified_at"]),
+            datetime.fromisoformat(row["source_last_seen_at"]),
+            datetime.fromisoformat(row["source_updated_at"]),
+            datetime.fromisoformat(row["source_stable_since"])
+            if row["source_stable_since"]
+            else None,
+            row["source_scan_status"],
+            row["source_last_scan_id"],
+        )
+        return ManualIntentItem(
+            row["item_id"],
+            row["intent_id"],
+            int(row["position"]),
+            source,
+            ManualChoice.from_document(json.loads(row["choice_json"])),
+            ManualIntentItemStatus(row["status"]),
+            row["error"],
+            int(row["version"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _manual_audit(row: sqlite3.Row) -> ManualIntentAudit:
+        return ManualIntentAudit(
+            row["audit_id"],
+            row["intent_id"],
+            row["item_id"],
+            row["actor"],
+            row["action"],
+            json.loads(row["before_json"]),
+            json.loads(row["after_json"]),
+            datetime.fromisoformat(row["occurred_at"]),
+        )
+
     def acquire(self, storage_id: str, path: str, task_id: str, acquired_at: datetime) -> bool:
         normalized = self._lock_path(path)
         try:
@@ -4725,6 +5090,42 @@ class SQLiteTaskRepository:
                     ON pipeline_evidence(item_id, captured_at, evidence_id);
                 CREATE INDEX IF NOT EXISTS pipeline_evidence_source_captured
                     ON pipeline_evidence(source_storage_id, source_path, captured_at, evidence_id);
+                CREATE TABLE IF NOT EXISTS manual_intents (
+                    intent_id TEXT PRIMARY KEY, actor TEXT NOT NULL,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    status TEXT NOT NULL, version INTEGER NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    next_action TEXT NOT NULL, error TEXT,
+                    options_json TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS manual_intent_items (
+                    item_id TEXT PRIMARY KEY, intent_id TEXT NOT NULL,
+                    position INTEGER NOT NULL, file_id TEXT NOT NULL,
+                    storage_id TEXT NOT NULL, resource_library_id TEXT NOT NULL,
+                    source_path TEXT NOT NULL, filename TEXT NOT NULL,
+                    extension TEXT NOT NULL, source_size INTEGER NOT NULL,
+                    source_modified_at TEXT NOT NULL, source_last_seen_at TEXT NOT NULL,
+                    source_updated_at TEXT NOT NULL, source_stable_since TEXT,
+                    source_scan_status TEXT NOT NULL, source_last_scan_id TEXT,
+                    choice_json TEXT NOT NULL, status TEXT NOT NULL,
+                    error TEXT, version INTEGER NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(intent_id, position), UNIQUE(intent_id, file_id),
+                    FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_intent_items_order
+                    ON manual_intent_items(intent_id, position, item_id);
+                CREATE TABLE IF NOT EXISTS manual_intent_audit (
+                    audit_id TEXT PRIMARY KEY, intent_id TEXT NOT NULL,
+                    item_id TEXT, actor TEXT NOT NULL, action TEXT NOT NULL,
+                    before_json TEXT NOT NULL, after_json TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id),
+                    FOREIGN KEY(item_id) REFERENCES manual_intent_items(item_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_intent_audit_order
+                    ON manual_intent_audit(intent_id, occurred_at, audit_id);
                 CREATE TABLE IF NOT EXISTS file_locks (
                     storage_id TEXT NOT NULL, path TEXT NOT NULL, task_id TEXT NOT NULL,
                     acquired_at TEXT NOT NULL, PRIMARY KEY(storage_id, path)

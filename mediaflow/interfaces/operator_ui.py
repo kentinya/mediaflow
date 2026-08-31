@@ -1490,6 +1490,7 @@ APP_JS = b"""(() => {
   }
   async function renderFiles() {
     clear(content); content.append(text('h2', 'File catalog'));
+    const selectedFileIds = new Set();
     const filters = [
       ['resourceLibrary', 'Resource library'], ['storage', 'Storage'],
       ['query', 'Path/filename'], ['recognitionType', 'Recognition type'],
@@ -1517,13 +1518,160 @@ APP_JS = b"""(() => {
       const data = await api(`/api/v1/files?${parts.join('&')}`);
       const items = data.items || [];
       clear(content); content.append(text('h2', 'File catalog'));
-      const rows = items.map(item => [item.fileId || item.file_id, item.path,
-        item.scanStatus || item.scan_status, item.updatedAt || item.updated_at]);
+      const rows = items.map(item => {
+        const fileId = item.fileId || item.file_id;
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox';
+        checkbox.checked = selectedFileIds.has(fileId); checkbox.value = fileId;
+        checkbox.setAttribute('aria-label', `Select file ${fileId}`);
+        checkbox.addEventListener('click', event => event.stopPropagation());
+        checkbox.addEventListener('change', () => {
+          if (checkbox.checked) selectedFileIds.add(fileId); else selectedFileIds.delete(fileId);
+          message(`${selectedFileIds.size} file(s) selected; selection is bounded to 100 items.`);
+        });
+        const cell = text('span', ''); cell.append(checkbox, text('span', ` ${fileId}`));
+        return [cell, item.path, item.scanStatus || item.scan_status, item.updatedAt || item.updated_at];
+      });
       content.append(table(['ID', 'Path', 'Scan status', 'Updated'], rows,
         index => showDetail('files', items[index].fileId || items[index].file_id)));
+      content.append(actionButton('Start manual organize for selected files', () =>
+        confirmManualIntent(Array.from(selectedFileIds))));
       content.append(actionButton('Refresh files', loadFiles));
     };
     content.append(form, actionButton('Search files', loadFiles));
+  }
+  function confirmManualIntent(fileIds) {
+    const values = Array.from(new Set(fileIds || []));
+    if (!values.length || values.length > 100) {
+      message('Select between 1 and 100 current indexed files before starting manual organize.', true);
+      return;
+    }
+    clear(detailContent);
+    detailContent.append(text('h2', 'Confirm manual-organize intent'),
+      text('p', `Create one durable intent for ${values.length} indexed file(s)? ` +
+        'The exact FileIndex identities and current Managed Active snapshot will be pinned. ' +
+        'No Preview, Provider request, Task, authorization or media mutation occurs now.', 'warning'),
+      actionButton('Confirm create intent', async () => {
+        try {
+          const intent = await api('/api/v1/manual-intents', {
+            method: 'POST', body: JSON.stringify({fileIds: values})
+          });
+          message('Manual intent created. Review the pinned snapshot and choices below.');
+          await showManualIntent(intent.intentId);
+        } catch (error) { message(errorText(error), true); }
+      }), actionButton('Keep files unchanged', () => { detail.hidden = true; }));
+    detail.hidden = false;
+  }
+  function manualOption(options, id) {
+    return (Array.isArray(options) ? options : []).find(item => item.id === id) || null;
+  }
+  function manualSelect(label, values, selected) {
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', label);
+    (Array.isArray(values) ? values : []).forEach(item => {
+      const option = document.createElement('option'); option.value = item.id;
+      option.textContent = `${item.id} - ${item.name || item.id}`;
+      option.selected = item.id === selected; select.append(option);
+    });
+    return select;
+  }
+  async function showManualIntent(intentId) {
+    try {
+      const data = await api(`/api/v1/manual-intents/${encodeURIComponent(intentId)}`);
+      clear(detailContent); detailContent.append(text('h2', 'Manual-organize intent'));
+      const snapshot = document.createElement('dl');
+      field(snapshot, 'Intent', data.intentId); field(snapshot, 'Status', data.status);
+      field(snapshot, 'Intent version', data.version);
+      field(snapshot, 'Actor', data.actor);
+      field(snapshot, 'Pinned Active snapshot', data.configurationSnapshotId);
+      field(snapshot, 'Pinned digest', data.configurationSnapshotDigest);
+      field(snapshot, 'Side effects', data.sideEffects || 'none');
+      field(snapshot, 'Next action', data.nextAction || '-');
+      detailContent.append(snapshot);
+      const options = data.options || {};
+      const items = Array.isArray(data.items) ? data.items : [];
+      detailContent.append(text('h3', `Selected items (${items.length})`));
+      items.forEach(item => {
+        const source = item.source || {}; const choice = item.choice || {};
+        const section = text('div', '', 'choices');
+        section.append(text('h4', `${item.itemId} - ${source.filename || source.fileId || '-'}`));
+        section.append(text('p', `${source.storageId || '-'} / ${source.resourceLibraryId || '-'} / ${source.path || '-'}`));
+        section.append(text('p', `Status: ${item.status}; version: ${item.version}; ` +
+          `${item.error || item.nextAction || ''}`, item.status === 'invalid' || item.status === 'stale' ? 'error' : ''));
+        const type = manualSelect('RecognitionType', options.recognitionTypes, choice.recognitionTypeId);
+        const naming = manualSelect('NamingPolicy', options.namingPolicies, choice.namingPolicyId);
+        const classification = manualSelect('ClassificationPolicy', options.classificationPolicies, choice.classificationPolicyId);
+        const organize = manualSelect('OrganizePolicy', options.organizePolicies, choice.organizePolicyId);
+        const controls = text('div', '', 'choices'); controls.append(type, naming, classification, organize);
+        const metadataPolicy = manualOption(options.metadataPolicies,
+          (manualOption(options.recognitionTypes, choice.recognitionTypeId) || {}).metadataPolicyId);
+        const metadataBox = text('div', '', 'choices');
+        metadataBox.append(text('span', `Metadata policy: ${metadataPolicy ? metadataPolicy.id : '-'}; ` +
+          `Provider: ${metadataPolicy ? metadataPolicy.providerId || '-' : '-'}`));
+        const providerId = document.createElement('input'); providerId.type = 'text';
+        providerId.value = choice.metadata && choice.metadata.providerId || '';
+        providerId.placeholder = 'Normalized provider ID (optional)';
+        providerId.setAttribute('aria-label', 'Metadata provider ID'); metadataBox.append(providerId);
+        const mediaType = document.createElement('select'); mediaType.setAttribute('aria-label', 'Metadata media type');
+        ['', 'movie', 'tv'].forEach(value => { const option = document.createElement('option');
+          option.value = value; option.textContent = value || 'Use configured media type';
+          option.selected = value === ((choice.metadata && choice.metadata.mediaType) || ''); mediaType.append(option); });
+        metadataBox.append(mediaType);
+        const title = document.createElement('input'); title.type = 'text';
+        title.value = choice.metadata && choice.metadata.title || '';
+        title.placeholder = 'Bounded title hint (optional)'; title.setAttribute('aria-label', 'Metadata title');
+        metadataBox.append(title);
+        const year = document.createElement('input'); year.type = 'number';
+        year.value = choice.metadata && choice.metadata.year || '';
+        year.placeholder = 'Year (optional)'; year.setAttribute('aria-label', 'Metadata year');
+        metadataBox.append(year);
+        metadataBox.append(text('small', 'Only a normalized provider identity is sent; raw Provider payloads are not accepted.'));
+        controls.append(metadataBox);
+        controls.append(actionButton('Review and save this item choice', () => confirmManualChoice(data, item,
+          {recognitionTypeId: type.value, namingPolicyId: naming.value,
+            classificationPolicyId: classification.value, organizePolicyId: organize.value,
+            metadata: providerId.value.trim() ? {provider: metadataPolicy && metadataPolicy.providerId,
+              providerId: providerId.value.trim(), mediaType: mediaType.value ||
+                metadataPolicy && metadataPolicy.mediaType, title: title.value.trim() || undefined,
+              year: year.value === '' ? undefined : Number(year.value)} : undefined})));
+        section.append(controls); detailContent.append(section);
+      });
+      if (data.status === 'open') detailContent.append(actionButton('Cancel intent', () =>
+        confirmCancelManualIntent(data)));
+      if (Array.isArray(data.audit) && data.audit.length) {
+        detailContent.append(text('h3', `Audit (${data.audit.length})`), table(
+          ['Audit', 'Action', 'Actor', 'Item', 'Occurred'],
+          data.audit.map(item => [item.auditId, item.action, item.actor, item.itemId || '-', item.occurredAt])));
+      }
+      detail.hidden = false;
+    } catch (error) { message(errorText(error), true); }
+  }
+  function confirmManualChoice(intent, item, patch) {
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p', `Save the normalized choice for ${item.itemId}? ` +
+      'The intent version is checked and the pinned snapshot cannot be changed.', 'warning'),
+      actionButton('Confirm save choice', async () => {
+        try {
+          await api(`/api/v1/manual-intents/${encodeURIComponent(intent.intentId)}/items/${encodeURIComponent(item.itemId)}/choice`, {
+            method: 'PUT', body: JSON.stringify({expectedVersion: intent.version,
+              expectedItemVersion: item.version, ...patch})
+          });
+          await showManualIntent(intent.intentId); message('Choice saved and audited.');
+        } catch (error) { message(errorText(error), true); }
+      }), actionButton('Keep prior choice', () => confirmation.remove()));
+    detailContent.append(confirmation);
+  }
+  function confirmCancelManualIntent(intent) {
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p', 'Cancel this manual intent? Its durable choices remain auditable and no media is changed.'),
+      actionButton('Confirm cancel intent', async () => {
+        try {
+          await api(`/api/v1/manual-intents/${encodeURIComponent(intent.intentId)}/cancel`, {
+            method: 'POST', body: JSON.stringify({expectedVersion: intent.version})
+          });
+          await showManualIntent(intent.intentId); message('Manual intent cancelled.');
+        } catch (error) { message(errorText(error), true); }
+      }), actionButton('Keep intent open', () => confirmation.remove()));
+    detailContent.append(confirmation);
   }
   async function renderObservability(kind, cursor = null) {
     const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
@@ -2184,6 +2332,8 @@ APP_JS = b"""(() => {
       Object.entries(data).filter(([, value]) => !Array.isArray(value) && typeof value !== 'object')
         .forEach(([key, value]) => field(list, key, value)); detailContent.append(list);
       if (kind === 'files') {
+        detailContent.append(actionButton('Start manual organize for this file', () =>
+          confirmManualIntent([id])));
         if (data.latestResult && data.latestResult.taskId) {
           detailContent.append(actionButton('Open linked task',
             () => showTask(data.latestResult.taskId)));

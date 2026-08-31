@@ -17,6 +17,11 @@ class ApiRole(StrEnum):
 class ApiPermission(StrEnum):
     READ = "read"
     SUBMIT_DRY_RUN = "submit_dry_run"
+    # Manual intent admission is bounded analysis work and intentionally
+    # shares the existing operator DryRun authority.  Keep the explicit name
+    # as an enum alias so role sets and backwards-compatible tokens remain
+    # unchanged while adapters can state the narrower capability.
+    MANAGE_MANUAL_ORGANIZE = "submit_dry_run"
     CANCEL_JOB = "cancel_job"
     RESOLVE_CONFIRMATION = "resolve_confirmation"
     RESOLVE_METADATA_REVIEW = "resolve_metadata_review"
