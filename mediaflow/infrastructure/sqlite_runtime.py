@@ -1523,16 +1523,19 @@ class SQLiteTaskRepository:
 
     def append_evidence(self, evidence: PipelineEvidence) -> None:
         with self._lock, self._connection:
-            self._connection.execute(
-                """
-                INSERT OR REPLACE INTO pipeline_evidence (
-                    evidence_id, task_id, item_id, attempts, source_storage_id, source_path,
-                    captured_at, configuration_snapshot_id, configuration_snapshot_digest,
-                    outcome, document
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                self._evidence_values(evidence),
-            )
+            self._append_evidence_locked(evidence)
+
+    def _append_evidence_locked(self, evidence: PipelineEvidence) -> None:
+        self._connection.execute(
+            """
+            INSERT OR REPLACE INTO pipeline_evidence (
+                evidence_id, task_id, item_id, attempts, source_storage_id, source_path,
+                captured_at, configuration_snapshot_id, configuration_snapshot_digest,
+                outcome, document
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            self._evidence_values(evidence),
+        )
 
     def complete_item_with_evidence(
         self,
@@ -2012,6 +2015,43 @@ class SQLiteTaskRepository:
                 self._confirmation_values(confirmation),
             )
 
+    def create_confirmation_with_evidence(
+        self,
+        confirmation: ConflictConfirmation,
+        item: PersistentTaskItem,
+        evidence: PipelineEvidence | None,
+    ) -> None:
+        """Publish a conflict blocker, waiting item, and evidence atomically."""
+
+        with self._lock, self._connection:
+            if evidence is not None:
+                self._append_evidence_locked(evidence)
+            self._connection.execute(
+                """INSERT INTO conflict_confirmations VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                self._confirmation_values(confirmation),
+            )
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, plan_id=?,
+                destination_storage_id=?, destination_path=?, execution_status=?, error=?
+                WHERE item_id=? AND task_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.plan_id,
+                    item.destination_storage_id,
+                    item.destination_path,
+                    item.execution_status,
+                    item.error,
+                    item.item_id,
+                    item.task_id,
+                    TaskItemStatus.PROCESSING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("conflict TaskItem is not processing")
+
     def create_metadata_correction(self, review, item) -> None:
         with self._lock, self._connection:
             self._connection.execute(
@@ -2049,6 +2089,56 @@ class SQLiteTaskRepository:
                     item.stage,
                     item.updated_at.isoformat(),
                     item.item_id,
+                    TaskItemStatus.PROCESSING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("metadata correction TaskItem is not processing")
+
+    def create_metadata_correction_with_evidence(
+        self, review, item: PersistentTaskItem, evidence: PipelineEvidence | None
+    ) -> None:
+        """Publish metadata-correction blocker, waiting item, and evidence atomically."""
+
+        with self._lock, self._connection:
+            if evidence is not None:
+                self._append_evidence_locked(evidence)
+            self._connection.execute(
+                """INSERT INTO metadata_corrections VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    review.review_id,
+                    review.task_id,
+                    review.item_id,
+                    review.source_storage_id,
+                    review.source_path,
+                    review.recognition_type,
+                    review.metadata_policy_id,
+                    review.provider_id,
+                    review.original_query,
+                    review.original_year,
+                    review.original_media_type,
+                    review.outcome,
+                    review.status.value,
+                    review.created_at.isoformat(),
+                    review.updated_at.isoformat(),
+                    review.corrected_query,
+                    review.corrected_year,
+                    review.corrected_media_type,
+                    review.direct_provider_id,
+                    review.decided_at.isoformat() if review.decided_at else None,
+                    review.actor,
+                ),
+            )
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND task_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    item.task_id,
                     TaskItemStatus.PROCESSING.value,
                 ),
             )
@@ -2560,6 +2650,52 @@ class SQLiteTaskRepository:
             if cursor.rowcount != 1:
                 raise ValueError("recognition review TaskItem is not processing")
 
+    def create_recognition_review_with_evidence(
+        self, review, choices, item: PersistentTaskItem, evidence: PipelineEvidence | None
+    ) -> None:
+        """Publish recognition blocker, waiting item, and evidence atomically."""
+
+        with self._lock, self._connection:
+            if evidence is not None:
+                self._append_evidence_locked(evidence)
+            self._connection.execute(
+                """INSERT INTO recognition_reviews VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    review.review_id,
+                    review.task_id,
+                    review.item_id,
+                    review.source_storage_id,
+                    review.source_path,
+                    review.status.value,
+                    review.created_at.isoformat(),
+                    review.updated_at.isoformat(),
+                    review.selected_recognition_type,
+                    review.decided_at.isoformat() if review.decided_at else None,
+                    review.actor,
+                ),
+            )
+            self._connection.executemany(
+                "INSERT INTO recognition_review_choices VALUES (?, ?, ?, ?)",
+                tuple(
+                    (value.review_id, value.recognition_type_id, value.name, value.description)
+                    for value in choices
+                ),
+            )
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND task_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    item.task_id,
+                    TaskItemStatus.PROCESSING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("recognition review TaskItem is not processing")
+
     def get_recognition_review(self, review_id):
         with self._lock:
             row = self._connection.execute(
@@ -2925,6 +3061,86 @@ class SQLiteTaskRepository:
             if cursor.rowcount != 1:
                 raise ValueError("metadata review TaskItem is not processing")
 
+    def create_metadata_review_with_evidence(
+        self,
+        review: MetadataReview,
+        candidates: tuple[MetadataReviewCandidate, ...],
+        item: PersistentTaskItem,
+        evidence: PipelineEvidence | None,
+    ) -> None:
+        """Publish metadata blocker, candidates, waiting item, and evidence atomically."""
+
+        with self._lock, self._connection:
+            if evidence is not None:
+                self._append_evidence_locked(evidence)
+            self._connection.execute(
+                """INSERT INTO metadata_reviews
+                (review_id, task_id, item_id, source_storage_id, source_path, recognition_type,
+                metadata_policy_id, query, outcome, status, created_at, updated_at) VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    review.review_id,
+                    review.task_id,
+                    review.item_id,
+                    review.source_storage_id,
+                    review.source_path,
+                    review.recognition_type,
+                    review.metadata_policy_id,
+                    review.query,
+                    review.outcome,
+                    review.status.value,
+                    review.created_at.isoformat(),
+                    review.updated_at.isoformat(),
+                ),
+            )
+            self._connection.executemany(
+                """INSERT INTO metadata_review_candidates VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    (
+                        value.review_id,
+                        value.rank,
+                        value.provider,
+                        value.provider_id,
+                        value.media_type,
+                        value.title,
+                        value.original_title,
+                        value.canonical_year,
+                        value.regional_year,
+                        value.total_score,
+                        value.matched_provider_title,
+                        value.matched_title_source,
+                        json.dumps(
+                            [
+                                {
+                                    "name": component.name,
+                                    "score": component.score,
+                                    "reason": component.reason,
+                                }
+                                for component in value.score_components
+                            ],
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                    )
+                    for value in candidates
+                ),
+            )
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND task_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    item.task_id,
+                    TaskItemStatus.PROCESSING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("metadata review TaskItem is not processing")
+
     def get_metadata_review(self, review_id: str) -> MetadataReview | None:
         with self._lock:
             row = self._connection.execute(
@@ -3173,6 +3389,73 @@ class SQLiteTaskRepository:
                     item.stage,
                     item.updated_at.isoformat(),
                     item.item_id,
+                    TaskItemStatus.PROCESSING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("classification review TaskItem is not processing")
+
+    def create_classification_review_with_evidence(
+        self,
+        review: ClassificationReview,
+        choices: tuple[ClassificationReviewChoice, ...],
+        item: PersistentTaskItem,
+        evidence: PipelineEvidence | None,
+    ) -> None:
+        """Publish classification blocker, choices, waiting item, and evidence atomically."""
+
+        with self._lock, self._connection:
+            if evidence is not None:
+                self._append_evidence_locked(evidence)
+            self._connection.execute(
+                """INSERT INTO classification_reviews
+                (review_id, task_id, item_id, source_storage_id, source_path, recognition_type,
+                classification_policy_id, provider, provider_id, media_type, title,
+                canonical_year, status, created_at, updated_at) VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    review.review_id,
+                    review.task_id,
+                    review.item_id,
+                    review.source_storage_id,
+                    review.source_path,
+                    review.recognition_type,
+                    review.classification_policy_id,
+                    review.provider,
+                    review.provider_id,
+                    review.media_type,
+                    review.title,
+                    review.canonical_year,
+                    review.status.value,
+                    review.created_at.isoformat(),
+                    review.updated_at.isoformat(),
+                ),
+            )
+            self._connection.executemany(
+                "INSERT INTO classification_review_choices VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    (
+                        value.review_id,
+                        value.rank,
+                        value.rule_id,
+                        value.rule_name,
+                        value.media_library_id,
+                        value.relative_path,
+                        value.priority,
+                        value.description,
+                    )
+                    for value in choices
+                ),
+            )
+            cursor = self._connection.execute(
+                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+                WHERE item_id=? AND task_id=? AND status=?""",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.updated_at.isoformat(),
+                    item.item_id,
+                    item.task_id,
                     TaskItemStatus.PROCESSING.value,
                 ),
             )

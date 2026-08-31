@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.metadata import (
     MediaQueryType,
     MediaType,
@@ -44,6 +45,8 @@ class MetadataCorrectionService:
         identification: MetadataIdentificationResult,
         policy: MetadataPolicy,
         parsed: ParseResult,
+        *,
+        evidence: PipelineEvidence | None = None,
     ) -> MetadataCorrectionReview:
         if identification.status is not MetadataIdentificationStatus.NOT_FOUND:
             raise ValueError("metadata correction requires NotFound outcome")
@@ -76,7 +79,15 @@ class MetadataCorrectionService:
             updated_at=now,
             error=None,
         )
-        self._repository.create_metadata_correction(review, waiting)
+        create_atomic = getattr(self._repository, "create_metadata_correction_with_evidence", None)
+        if evidence is not None and callable(create_atomic):
+            create_atomic(review, waiting, evidence)
+        else:
+            if evidence is not None:
+                append = getattr(self._repository, "append_evidence", None)
+                if callable(append):
+                    append(evidence)
+            self._repository.create_metadata_correction(review, waiting)
         return review
 
     def resolve(

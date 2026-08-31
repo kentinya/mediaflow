@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.recognition import RecognitionStatus, RecognitionType
 from mediaflow.domain.recognition_review import (
     RecognitionBatchResolveRequest,
@@ -29,7 +30,13 @@ class RecognitionReviewService:
         self._repository = repository
         self._types = {item.type_id: item for item in recognition_types if item.enabled}
 
-    def create(self, item: PersistentTaskItem, recognition) -> RecognitionReview:
+    def create(
+        self,
+        item: PersistentTaskItem,
+        recognition,
+        *,
+        evidence: PipelineEvidence | None = None,
+    ) -> RecognitionReview:
         if recognition.status is not RecognitionStatus.UNRECOGNIZED:
             raise ValueError("recognition review requires Unrecognized outcome")
         choices = tuple(self._types.values())
@@ -62,7 +69,15 @@ class RecognitionReviewService:
             updated_at=now,
             error=None,
         )
-        self._repository.create_recognition_review(review, snapshots, waiting)
+        create_atomic = getattr(self._repository, "create_recognition_review_with_evidence", None)
+        if evidence is not None and callable(create_atomic):
+            create_atomic(review, snapshots, waiting, evidence)
+        else:
+            if evidence is not None:
+                append = getattr(self._repository, "append_evidence", None)
+                if callable(append):
+                    append(evidence)
+            self._repository.create_recognition_review(review, snapshots, waiting)
         return review
 
     def resolve(
