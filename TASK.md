@@ -230,8 +230,9 @@ or tracked/staged `config/alist.json`.
   choice/configuration option and audit contracts with Type C policy ownership preserved.
 - `mediaflow/domain/manual_organize_intent.py`: compatibility import for the domain boundary.
 - `mediaflow/application/manual_organize.py`: shared authenticated-service-facing intent admission,
-  managed snapshot pinning, default/override validation, source/concurrency checks and recovery
-  projections without Storage/Provider/Task/execution side effects.
+  managed snapshot pinning, default/override validation, source/concurrency checks, source-linked
+  metadata authority validation and recovery projections without Storage/Provider/Task/execution
+  side effects.
 - `mediaflow/application/manual_organize_intent.py`: compatibility import for the application
   service.
 - `mediaflow/infrastructure/sqlite_runtime.py`: additive restart-safe manual intent/item/audit
@@ -254,6 +255,9 @@ or tracked/staged `config/alist.json`.
   corrupt snapshots without fallback.
 - Applied configured defaults and validated allowlisted per-item choices, including RecognitionType
   C remaining C while its downstream Naming/Classification/Organize policy ownership remains A.
+- Grounded metadata identity overrides in the selected source's exact durable Result/evidence or
+  source-linked bounded metadata review candidates/resolutions; unlinked or mismatched identities
+  now fail closed before persistence with a bounded recovery action.
 - Added atomic SQLite creation, choice update, cancellation and audit writes with intent/item
   optimistic concurrency and durable reload projections.
 - Added API and Operator Web entry, review, normalized metadata identity input, reload and
@@ -267,7 +271,7 @@ or tracked/staged `config/alist.json`.
   tests.test_file_catalog_api tests.test_operator_ui tests.test_configuration_snapshot
   tests.test_configuration_management tests.test_task_persistence tests.test_execution_authorization
   tests.test_file_recognition_request tests.test_file_metadata_re_match
-  tests.test_file_replan_request` — PASS (127 tests).
+  tests.test_file_replan_request` — PASS (134 tests).
 - `.venv/bin/python -m unittest discover -s tests` — PASS (967 tests, 7 skipped; existing
   ResourceWarning output only).
 - `.venv/bin/ruff format --check .` — PASS (331 files already formatted).
@@ -280,6 +284,8 @@ or tracked/staged `config/alist.json`.
 - `git diff --check` — PASS.
 - `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w <temporary directory>` and
   `scripts/wheel_smoke_test.py <wheel>` — PASS (schema 27 backup/rehearsal/restore/preflight).
+- B reproduction with an unlinked or mismatched metadata identity — PASS (returns
+  `metadata_unverified`, preserves intent version and does not persist a choice).
 
 ### Decisions
 
@@ -291,6 +297,10 @@ or tracked/staged `config/alist.json`.
 - Persisted options and choices are allowlisted normalized projections. Runtime policy mappings are
   authoritative, so a C RecognitionType cannot be rewritten as A merely because downstream A
   policies are reused.
+- Metadata overrides use only read-only repository authorities: source-keyed normalized Results,
+  bounded PipelineEvidence metadata identities/candidates, and source-linked metadata review
+  candidates/resolutions. Candidate references are deterministic `reviewId:rank` (with a slash
+  compatibility form); no Provider is constructed or queried.
 
 ### Remaining In-Slice Work
 
@@ -302,6 +312,9 @@ or tracked/staged `config/alist.json`.
 
 - No production Provider, Storage or user media was used; all focused checks use in-memory FileIndex
   and temporary SQLite roots. The full suite has 7 existing skipped external/acceptance tests.
+- Metadata identity input that is not represented by source-linked durable evidence is now rejected
+  even when its policy fields are otherwise valid; operators must use the linked Result/evidence or
+  review candidate authority and the returned refresh/retry action.
 - The full suite emits existing ResourceWarning messages for unrelated unclosed SQLite handles, but
   completed successfully and introduced no new skip or failure.
 - The runtime schema marker remains 27 because this is an additive table migration and changing the
@@ -312,14 +325,26 @@ or tracked/staged `config/alist.json`.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 2bda4b6e24bebbfb3ae2e30b53d1c825f767a681
+Head SHA: be395a3bd66a23a52e0dec475478a54d0625a087
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: b24e4c107d61c053d3a93e31dc95d9e2e2c4dec6..2bda4b6e24bebbfb3ae2e30b53d1c825f767a681
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- Metadata identity overrides are not validated against the selected source's durable evidence or
+  an existing source-linked candidate/review. `mediaflow/application/manual_organize.py:811-900`
+  explicitly discards the `record` argument, so a choice such as
+  `{"provider":"tmdb","providerId":"999999","mediaType":"movie","title":"Unverified"}` is accepted
+  and persisted for a file with no matching Result, candidate or review. Reproduction with the
+  temporary SQLite fixture printed
+  `UNEXPECTED_ACCEPT {'provider': 'tmdb', 'providerId': '999999', 'mediaType': 'movie', 'title': 'Unverified'}`.
+  Validate metadata choices against the exact source-linked normalized Result/evidence or a bounded
+  candidate/review reference authority, reject unlinked arbitrary identities with a bounded
+  recovery response, and add focused negative application/API tests without constructing a Provider
+  or accepting raw Provider payloads.
