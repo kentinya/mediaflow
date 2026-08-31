@@ -297,6 +297,7 @@ class FileMediaDetailTests(unittest.TestCase):
                     status, document = api_request(api, "/api/v1/files/one")
                 self.assertEqual(status, 200)
                 self.assertEqual(document["evidence"][0]["outcome"], "processing")
+                self.assertEqual(repository.list_security_audit(), ())
                 self.assertIn("Captured pipeline evidence", APP_JS.decode())
                 self.assertIn("/api/v1/files/by-source", APP_JS.decode())
                 self.assertIn("renderFileMediaSections", APP_JS.decode())

@@ -200,7 +200,8 @@ class MediaFlowApi:
             if principal is None:
                 self._audit(environ, request_id, None, method, path, "authenticate", "denied", 401)
                 return self._error(start_response, 401, "unauthorized", "bearer token required")
-            self._audit(environ, request_id, principal, method, path, "request", "started", 0)
+            if not self._suppress_file_detail_audit(path, method, principal):
+                self._audit(environ, request_id, principal, method, path, "request", "started", 0)
             statuses = []
 
             def capture(status, headers):
@@ -2755,9 +2756,24 @@ class MediaFlowApi:
 
     def _safe_audit(self, *args) -> None:
         try:
+            if len(args) >= 6 and self._suppress_file_detail_audit(args[4], args[3], args[2]):
+                return
             self._audit(*args)
         except Exception:
             pass
+
+    @staticmethod
+    def _suppress_file_detail_audit(path: str, method: str, principal) -> bool:
+        """File/Media detail reads must not create any durable audit mutation."""
+
+        if method != "GET" or principal is None:
+            return False
+        if ApiPermission.READ not in getattr(principal, "permissions", ()):
+            return False
+        parts = [part for part in str(path).split("/") if part]
+        return parts[:3] == ["api", "v1", "files"] and (
+            len(parts) == 4 or parts == ["api", "v1", "files", "by-source"]
+        )
 
     @staticmethod
     def _document(environ: dict) -> dict:
