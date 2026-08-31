@@ -159,6 +159,70 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                 unchanged = service.get(intent.intent_id)
                 self.assertEqual(unchanged.version, 1)
                 self.assertEqual(unchanged.items[1].version, second.version)
+                with self.assertRaises(ManualIntentError) as raised:
+                    service.update_choice(
+                        intent.intent_id,
+                        first.item_id,
+                        {
+                            "recognitionTypeId": "C",
+                            "metadata": {
+                                "provider": "tmdb",
+                                "providerId": "999999",
+                                "mediaType": "movie",
+                                "title": "Unverified",
+                            },
+                            "namingPolicyId": "A",
+                            "classificationPolicyId": "A",
+                            "organizePolicyId": "A",
+                        },
+                        expected_version=1,
+                        actor="operator",
+                    )
+                self.assertEqual(raised.exception.code, "metadata_unverified")
+                self.assertEqual(service.get(intent.intent_id).version, 1)
+                repository.append_result(
+                    PersistentResultRecord(
+                        "result-c",
+                        "task-c",
+                        "item-c",
+                        "source",
+                        "Movies/one.mkv",
+                        None,
+                        None,
+                        "C",
+                        "tmdb",
+                        "603",
+                        "C",
+                        "A",
+                        "A",
+                        "A",
+                        "move",
+                        "dry_run",
+                        NOW,
+                        title="The Matrix",
+                    )
+                )
+                with self.assertRaises(ManualIntentError) as raised:
+                    service.update_choice(
+                        intent.intent_id,
+                        first.item_id,
+                        {
+                            "recognitionTypeId": "C",
+                            "metadata": {
+                                "provider": "tmdb",
+                                "providerId": "999999",
+                                "mediaType": "movie",
+                                "title": "Unverified",
+                            },
+                            "namingPolicyId": "A",
+                            "classificationPolicyId": "A",
+                            "organizePolicyId": "A",
+                        },
+                        expected_version=1,
+                        actor="operator",
+                    )
+                self.assertEqual(raised.exception.code, "metadata_unverified")
+                self.assertEqual(service.get(intent.intent_id).version, 1)
                 updated = service.update_choice(
                     intent.intent_id,
                     first.item_id,
@@ -169,7 +233,6 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                             "providerId": "603",
                             "mediaType": "movie",
                             "title": "The Matrix",
-                            "year": 1999,
                         },
                         "namingPolicyId": "A",
                         "classificationPolicyId": "A",
@@ -323,6 +386,24 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(len(listed["items"]), 1)
+                status, unverified = request(
+                    api,
+                    f"/api/v1/manual-intents/{created['intentId']}/items/{created['items'][0]['itemId']}/choice",
+                    method="PUT",
+                    body={
+                        "expectedVersion": 1,
+                        "metadata": {
+                            "provider": "tmdb",
+                            "providerId": "999999",
+                            "mediaType": "movie",
+                            "title": "Unverified",
+                        },
+                    },
+                    token="operator-token",
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(unverified["error"]["code"], "metadata_unverified")
+                self.assertEqual(unverified["error"]["details"]["sideEffects"], "none")
                 status, conflict = request(
                     api,
                     f"/api/v1/manual-intents/{created['intentId']}/items/{created['items'][0]['itemId']}/choice",
