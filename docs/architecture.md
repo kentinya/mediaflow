@@ -1963,6 +1963,41 @@ cancelled, refused, waiting, recovered, ignored and unchanged counts after reloa
 Authenticated API and Operator Web use these same services, RBAC and confirmations and link the
 source checkpoint, blocker, Job and new Task/Result.
 
+## Manual organize Preview architecture: CURRENT (Task 24.3)
+
+The manual-organize Preview boundary is a separate immutable projection over an existing intent:
+
+```text
+ManualOrganizeIntent
+  -> version/source/choice/snapshot validation
+  -> Parser -> Recognition -> Metadata -> Naming -> Classification
+  -> OrganizePlanner + attachment/capability/conflict observation
+  -> ManualOrganizePreview / ManualPreviewItem
+```
+
+`ManualOrganizePreviewService` accepts only an open intent, bounded item IDs, optimistic intent and
+item versions, and the intent's pinned snapshot identity. It reloads the exact managed runtime
+snapshot, uses the existing Strategy/Metadata/Planner authorities, and converts their results to
+bounded provider-neutral JSON evidence. The input fingerprint includes the source identity,
+normalized choice, snapshot identity, source-linked pipeline evidence, review links, and conflict
+decisions. The plan fingerprint covers the persisted exact plan projection. RecognitionType remains
+the selected type even when its downstream NamingPolicy, ClassificationPolicy, and OrganizePolicy
+are A.
+
+SQLite publishes the parent and all child records in one `BEGIN IMMEDIATE` transaction. Re-preview
+supersedes only the selected item identities; historical parent/child rows remain reloadable and
+unselected siblings retain their independent state. Source or choice updates and cancellation
+mark current Preview rows stale in the same intent transaction. Preview reads compare the durable
+fingerprint with current indexed/source-linked facts and mark stale without rebuilding a plan.
+The two Preview tables are additive and idempotent on the existing Runtime schema marker `27`, so
+older databases receive them on open without rewriting prior Task, Result, review, or intent rows.
+
+The API and Operator Web call this same application service and projection. The Web requires an
+explicit confirmation and renders per-item plans, blockers, evidence, conflicts, capability gaps,
+and the fresh-Preview recovery action. Preview wraps every configured Storage adapter in a
+read-only guard, performs only analysis reads, never creates a Task/Job/authorization, and never
+calls `OrganizerExecutor`; execution admission remains a separate future boundary.
+
 ### Remaining recovery TARGET
 
 Slice 23 does not implement automatic replay of uncertain media mutation, cross-run compensation or
