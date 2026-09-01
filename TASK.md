@@ -1,13 +1,15 @@
-# Task 24.4 — Exact Reviewed Manual Execution, Durable Results, and Recovery
+# Task 24.5 — Reload-Discoverable Exact Execution and Complete Secret-Free Outcomes
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
-the current [`SLICE.md`](SLICE.md).
+the current [`SLICE.md`](SLICE.md). It is the one focused correction Task required by A's Slice
+Final Review; `SLICE.md` therefore remains in its workflow-defined `FIX REQUIRED` correction state
+while this Task is implemented and reviewed.
 
 ```text
-Task ID: 24.4
+Task ID: 24.5
 Parent Slice: 24 — Files / Media Detail and Manual Organize
 Status: READY FOR B REVIEW
-Task Base: bab61d419d17c0a5f05cae7c82ce779a34272453
+Task Base: 818aab87a3e4a102b10ceef9ff1ab036af3d0593
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,148 +17,154 @@ Planner / Reviewer: B
 
 ## Goal
 
-Complete the exact reviewed-plan execution and durable per-item outcome portion of Slice Required
-Outcomes RO-5 and RO-6, including the execution and recovery surfaces of RO-7: from a current
-manual Preview, an authenticated operator can explicitly authorize and execute only that exact
-single-item or bounded batch plan, observe verified per-item results and operation effects, and
-recover safely from pre-mutation, partial, or uncertain outcomes without silently replanning or
-replaying unsafe work.
+Correct the RO-6/RO-7 and secret-free safety blockers identified by A so an exact manual execution
+retains every selected and unselected item, an authenticated operator can rediscover its durable
+authorization/execution and permitted reconciliation after a restart through normal API/Web
+journey links, and no new manual Preview/execution persistence or response leaks secret-bearing
+operator text or Authorization credentials.
 
-The user journey for this Task is:
+The corrected journey is:
 
 ```text
-Open a current exact Preview
--> explicitly authorize the reviewed item set
--> revalidate scope, plan, conflict, capability and destructive-operation authority
--> execute through OrganizerExecutor
--> inspect durable per-item Result and operation effects after reload
--> follow checkpoint-aware recovery for failed/partial/uncertain items
+Open a durable intent / Preview or linked manual Task after reload
+→ see the complete selected and unselected exact scope
+→ follow bounded durable authorization / execution links
+→ inspect terminal or interrupted per-item state
+→ reconcile ADMITTED/RUNNING work explicitly when permitted
+→ observe only bounded, fully redacted evidence
 ```
 
-This Task consumes the analysis-only boundary delivered by Task 24.3. It does not add scheduled
-unattended execution, automatic replay of uncertain mutation, universal compensation, historical
-rollback, remote Storage setup, Provider switching, or any other capability explicitly deferred by
-`SLICE.md`.
+This Task does not reopen Tasks 24.1–24.4 or change their accepted behavior beyond the direct root
+causes listed in A Final Review.
 
 ## Why This Task Exists
 
-Tasks 24.1 through 24.3 provide the bounded File/Media explanation, durable manual intent, pinned
-configuration and exact reloadable Preview. The remaining user-visible gap is that the operator
-cannot safely continue from that reviewed evidence to real organization: the existing broad
-execution-authority and Worker paths are not bound to one exact manual Preview selection and must
-not be reused as an implicit free-form organize command.
+A's review of `4ff5479d9f4a81906ee52a9f784931b65cd9ab90..e1ed8c136966885fa2dff88ab5d49ff46f9bcf2c`
+found three in-Slice P1 defects:
 
-This is the largest reasonable next unit because it completes one coherent mutation journey across
-the existing execution authorities: exact-plan admission, one-shot authorization, per-item
-OrganizerExecutor execution, durable Result/operation evidence, and checkpoint-aware failure
-recovery. It keeps all mutation in OrganizerExecutor while ensuring the API and Web use one shared
-application service and one persisted state model.
+- when a multi-item Preview authorizes only a subset, the other Previewed item is omitted from both
+  the durable execution's `unselectedItemIds` and Operator Web instead of remaining independently
+  visible as unselected;
+- persisted manual authorizations/executions can be read or reconciled only by an opaque ID already
+  known to the caller, so a fresh browser/process cannot navigate from the Preview or linked
+  Task/File journey to interrupted work without repository knowledge;
+- authorization notes are persisted and returned without secret filtering, and the new redactors
+  leave the credential tail of `Authorization: Bearer ...` errors visible.
+
+These defects break one coherent post-Preview execution/result/recovery journey. Correcting only a
+field, route, button or test would leave RO-6/RO-7 incomplete, so this Task covers the required
+durable relationship, shared projection, API/Web navigation and redaction evidence together.
 
 ## Implementation Scope
 
-Implement one vertical exact-plan execution and recovery journey:
+Implement one vertical correction across:
 
 ```text
-Execution contracts and exact-plan admission
--> restart-safe SQLite authority/task/result/effect persistence
--> shared manual execution application service
--> OrganizerExecutor integration with source locks/fencing
--> authenticated versioned API
--> Operator Web authorization/execution/result/recovery views
--> automated mutation, concurrency, stale-state and recovery tests
+Domain / bounded projections
+→ restart-safe SQLite relationships and queries
+→ exact execution application service
+→ authenticated versioned API
+→ Operator Web reload/navigation/result/reconciliation
+→ T4 regression and falsification evidence
 ```
 
-- Define a bounded manual execution request/authority bound to the exact current Preview ID,
-  selected item IDs, item versions, intent version, pinned configuration snapshot identity/digest,
-  plan fingerprints, actor, permission and explicit confirmation. The authority is one-shot,
-  auditable, expires or is consumed atomically, and cannot be converted into a broader Task or
-  arbitrary path/operation authorization.
-- Admit only a current, non-stale, exact Preview whose selected items are still owned by the open
-  intent and whose source identity, normalized choices, snapshot, plan fingerprint, capability
-  verdict, conflict decision and destructive-operation permissions still match. Reject missing,
-  duplicate, changed, concurrent, over-limit, unselected, blocked, stale, unavailable or already
-  consumed work before any unsafe mutation.
-- Revalidate current Storage capabilities, target/conflict state, source locks and optimistic
-  versions inside the execution admission boundary. Preserve configured Skip/Rename/Manual/
-  authorized Overwrite semantics and fail explicitly for unsupported operations; never silently
-  downgrade, overwrite, delete, clean up or substitute an operation.
-- Create the existing Task/TaskItem execution records only as part of accepted exact-plan admission,
-  retaining the reviewed plan and per-item scope. Do not rebuild a plan from current configuration
-  or a raw request. A bounded batch must retain independent selected, unselected, blocked, ignored
-  and already-terminal state.
-- Execute every permitted mutation only through `OrganizerExecutor`, with the reviewed plan and
-  existing source lock/fencing boundary. Persist verified source/target effects, attachments,
-  operation history, Result identity and execution status for each item. RecognitionType C must
-  remain C while downstream policy A ownership remains visible in the Result.
-- Reuse the existing Processing Checkpoint and recovery authorities. Persist known completed effects
-  before/alongside failure state, expose correctable pre-mutation recovery or fresh-Preview actions,
-  and route partial/uncertain outcomes to investigation or the existing permitted recovery action.
-  Never claim uncertain mutation is retry-safe and never automatically replay it.
-- Expose identical admission, confirmation, result, error and recovery projections through the
-  authenticated API and Operator Web. Reload must preserve exact authority consumption, per-item
-  outcomes, operation evidence, checkpoint links and only currently valid next actions.
-- Keep the change inside the parent Slice. Do not change `SLICE.md` Required Outcomes, Required
-  Surfaces, Safety Invariants, Base SHA, Roadmap boundary or Explicitly Deferred scope.
+- Correct exact-execution selection accounting so the durable selected set is exactly the
+  authorization scope and the durable unselected set is the complete bounded complement from the
+  reviewed Preview/intent. This includes Preview items that were executable but deliberately not
+  authorized, as well as items already represented by the Preview as unselected. Selected and
+  unselected identities must be disjoint, deterministic, reload-stable and bounded.
+- Preserve the existing rule that only selected exact plans create TaskItems, Results, effects,
+  locks or OrganizerExecutor calls. Unselected siblings must be visible but must never acquire
+  execution authority, mutate Storage, become synthetic Results, or be replayed by execution or
+  recovery.
+- Add the minimum durable, bounded relationship/query needed to rediscover authorizations and
+  executions from normal current journey state after restart. At minimum, the current manual
+  Preview/intent journey and the admitted execution's existing Task/TaskItem journey must expose a
+  deterministic link to the relevant authorization/execution; terminal and interrupted state must
+  remain distinguishable. Do not require a caller to retain, guess or obtain an opaque ID from the
+  repository.
+- Project those relationships through the shared application behavior and authenticated versioned
+  API with bounded ordering/limits, READ permission for read-only discovery, the existing dedicated
+  manual-execution permission for execute/reconcile, and no audit, Task, Job, Provider, planning or
+  Storage side effect on reads.
+- Update Operator Web so a fresh page can navigate from the durable intent/Preview or linked
+  manual Task state to the exact authorization/execution, visibly report every selected and
+  unselected item, reload terminal outcomes, and offer reconciliation only for the existing
+  permitted `ADMITTED`/`RUNNING` states with explicit confirmation. Navigation and refresh must not
+  consume authority, replan, invoke OrganizerExecutor or replay mutation.
+- Make all new manual-intent/Preview/execution authorization, result, error, audit and relationship
+  projections secret-free. Secret-bearing authorization notes must be rejected, omitted, or fully
+  redacted before persistence and response; fake credential material must not remain recoverable
+  from SQLite. Redaction must consume complete Authorization credential forms, including
+  `Authorization: Bearer <credential>`, rather than replacing only the scheme.
+- Apply the redaction correction to the directly affected Slice 24 evidence/error helpers so API,
+  Web and durable evidence use one equivalent rule. Keep bounded legitimate operator explanations
+  and Storage-relative media evidence; do not perform a broad logging subsystem refactor.
+- Preserve all existing exact-plan, optimistic-version, one-shot authority, source/destination
+  fencing, capability/conflict/destructive-authority, uncertain-effect and OrganizerExecutor-only
+  mutation behavior.
+- Preserve A's existing uncommitted `SLICE.md` Final Review exactly. Do not change Slice User Goal,
+  Required Outcomes, Required Surfaces, Safety Invariants, Explicitly Deferred, Base SHA, current
+  `FIX REQUIRED` state, Roadmap or Closure Packet. The Developer checkpoint must not absorb that
+  pre-existing A-owned file change.
 
 ## Acceptance Criteria
 
-- [ ] An authenticated operator can authorize and execute one current exact Preview item and a
-      bounded selected set through API and Web with explicit confirmation and the required manual
-      organize permission.
-- [ ] Admission is atomically bound to the exact Preview, intent/item versions, source identities,
-      pinned configuration snapshot, selected item set and plan fingerprints; stale, changed,
-      duplicate, concurrent, blocked, unavailable, unselected and over-limit requests fail before
-      OrganizerExecutor or any Storage mutation.
-- [ ] Admission revalidates current Storage capabilities, destination/conflict state, source
-      locks/fencing and configured destructive-operation authority. Unsupported operations have no
-      implicit fallback, and Overwrite/Delete/source cleanup are never silently implied.
-- [ ] Accepted work consumes separate one-shot authority exactly once and creates only the bounded
-      exact Task/TaskItem scope. Repeated or broadened admission cannot create a second execution
-      for an already-consumed item or replay successful, skipped, ignored or unselected siblings.
-- [ ] Every permitted real mutation reaches Storage only through OrganizerExecutor and uses the
-      reviewed persisted plan. Source/target effects, attachments, operation history and durable
-      Result records are persisted and verified for each item.
-- [ ] Single and mixed bounded batches preserve independent Previewed, blocked, skipped, ignored,
-      success, failed, partial, unchanged and unselected outcomes; one item cannot erase, conceal,
-      rewrite or replay another item's plan, Result, effect evidence or recovery action.
-- [ ] Pre-mutation failures expose the affected stage and a correctable input or fresh-Preview
-      action. Partial or uncertain execution exposes known completed effects, links the current
-      Processing Checkpoint, and offers only its permitted investigation/recovery action without
-      automatic replay.
-- [ ] Restart/reload returns the same exact authority status, task/result/effect links, source/
-      target verification, errors and per-item next actions; reads do not rebuild plans or create
-      new authority, Task, Job or mutation.
-- [ ] API and Web use the same execution application service, RBAC, optimistic concurrency,
-      confirmation, stale-state and recovery semantics, with bounded deterministic secret-free
-      responses.
-- [ ] RecognitionType C remains C through admission, execution and Result persistence while
-      downstream Naming/Classification/Organize policy A ownership remains visible.
-- [ ] All T4 Required Tests pass, no existing safety assertion is weakened, no hidden skip or
-      silent fallback is introduced, `config/alist.json` remains ignored/untracked/unstaged, and
-      the checkpoint contains only this Task's coherent implementation and completion report.
+- [ ] Given one intent whose exact Preview contains at least two executable items, authorizing and
+      executing only one persists and reloads exactly that item as selected and every other intent/
+      Preview item as independently visible unselected. API and Web show the same complete scope.
+- [ ] An unselected executable sibling creates no TaskItem, Result, effect, fence or Storage call,
+      remains unchanged on disk, and is not replayed by repeated execute, reconciliation or another
+      selected item's recovery.
+- [ ] After closing and reopening SQLite and creating a fresh API/Web session, an authenticated
+      operator can start from the durable manual intent/Preview or linked manual Task/TaskItem,
+      discover the current authorization/execution without knowing its UUID, and open the same
+      exact reload-stable state.
+- [ ] The restart journey covers active authorization, consumed/terminal execution and an injected
+      `ADMITTED` or `RUNNING` interruption. Web exposes the existing explicit reconciliation only
+      for an admissible interrupted state, and reconciliation releases the fence and records safe
+      checkpoint/effect evidence without invoking OrganizerExecutor or replaying mutation.
+- [ ] Discovery and relationship collections are bounded, deterministic and permission-aware;
+      malformed, duplicate, ambiguous, missing, cross-intent/Preview/Task and over-limit requests
+      fail explicitly without widening scope or revealing unrelated work.
+- [ ] GET/navigation/reload paths create no audit row, authorization, Task, Job, Result, Provider
+      request, plan, lock or Storage mutation and do not expire/consume an otherwise active
+      authority merely because it was viewed.
+- [ ] A fake secret submitted through the authorization note path is either rejected before
+      persistence or irreversibly redacted/omitted. The fake secret is absent from SQLite text,
+      application documents, API responses, Web-visible data and audit/error evidence.
+- [ ] Preview/execution/evidence errors containing fake forms such as
+      `Authorization: Bearer closure-review-secret`, `token=closure-review-secret`, cookies and API
+      keys return and persist no credential value or credential tail while retaining a bounded,
+      actionable non-secret error.
+- [ ] Existing Type C → downstream policy A identity, exact plan fingerprints, one-shot admission,
+      RBAC, stale-state rejection, batch independence, conflict/capability/destructive gates,
+      Move/Copy/HardLink/SoftLink behavior, attachment/effect persistence and uncertain-mutation
+      investigation remain unchanged and pass regression.
+- [ ] Scanner, Parser, Recognition, Metadata, Naming, Classification, Planner, Files/detail,
+      selection, Preview and discovery perform zero Storage mutation; every permitted mutation still
+      reaches Storage only through OrganizerExecutor with no silent fallback/overwrite/delete.
+- [ ] All T4 Required Tests pass truthfully, `config/alist.json` remains ignored/untracked/unstaged,
+      and the checkpoint contains only this correction and its Developer Completion Report.
 
 ## Required Tests
 
-Run and report every command below with temporary SQLite databases, temporary Local roots and
-fake/in-memory Storage and Provider ports only. No production credentials or user media is
-permitted.
+Use only temporary SQLite databases, temporary Local roots and fake/in-memory Providers/Storage.
+Do not use production credentials, remote services or user media.
 
-1. Focused exact-plan execution, authority, mutation boundary, batch-independence and recovery
-   coverage:
+1. Focused exact execution, complete selection, restart discovery, reconciliation and redaction:
 
    ```bash
    .venv/bin/python -m unittest tests.test_manual_organize_execution
    ```
 
-   Cover exact Preview/intent/version binding, one-shot authority, RBAC, stale source/snapshot/
-   choice/plan/conflict rejection, duplicate/concurrent admission, capability and destructive
-   permission gates, OrganizerExecutor-only mutation, Move/Copy/HardLink/SoftLink, attachments,
-   collisions, authorized Overwrite, source cleanup, operation verification, Type C, mixed batch
-   outcomes, Result/effect persistence, checkpoints, pre-mutation failure and injected partial/
-   uncertain failure recovery.
+   Add direct regressions for executable multi-item Preview → authorized subset → reloaded complete
+   selected/unselected scope and Web projection; active/consumed/interrupted discovery after closing
+   and reopening SQLite through normal API/Web entry points; no-ID reconciliation navigation; GET
+   zero-side-effects/RBAC/bounds; and fake-secret absence from SQLite and every returned projection.
 
-2. Directly affected manual workflow, organizer, persistence, checkpoint, conflict, result, API and
-   Web regressions:
+2. Directly affected manual journey, File/Task linkage, persistence, checkpoint, API and Web
+   regression:
 
    ```bash
    .venv/bin/python -m unittest \
@@ -182,7 +190,7 @@ permitted.
    .venv/bin/python -m unittest discover -s tests
    ```
 
-4. Quality, safety, configuration and dependency gates:
+4. Quality, safety, configuration and private-file gates:
 
    ```bash
    .venv/bin/ruff format --check .
@@ -193,146 +201,114 @@ permitted.
    .venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate
    test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"
    git diff --check
+   git check-ignore -q config/alist.json
+   test -z "$(git ls-files --error-unmatch config/alist.json 2>/dev/null || true)"
    ```
 
-5. Build and isolated installed-wheel smoke test because this Task extends persisted execution
-   state:
+5. Build and isolated installed-wheel smoke because the Task changes durable execution discovery
+   and may extend SQLite persistence/query behavior:
 
    ```bash
-   mediaflow_release_dir=$(mktemp -d /tmp/mediaflow-task-24.4-release.XXXXXX)
+   mediaflow_release_dir=$(mktemp -d /tmp/mediaflow-task-24.5-release.XXXXXX)
    .venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w "$mediaflow_release_dir"
    .venv/bin/python scripts/wheel_smoke_test.py "$mediaflow_release_dir"/mediaflow-*.whl
    ```
 
 Before checkpointing, inspect `git status --short`, the complete Task Base..Head diff and exact
-manifest; confirm no deleted/weakened tests, hidden skips, unrelated files, secrets/private paths,
-or tracked/staged `config/alist.json`.
+manifest. Confirm no deleted/weakened tests, hidden skips, unrelated files, real credentials/private
+paths, tracked/staged `config/alist.json`, or A-owned `SLICE.md` change is included in the Developer
+checkpoint. Report every gate as `PASS`, `FAIL`, `SKIP`, or `UNAVAILABLE`.
 
 ## Non-goals
 
-- Automatic replay of uncertain mutation, universal cross-run compensation, historical/crash
-  rollback beyond existing bounded OrganizerExecutor rollback and Slice 23 investigation actions.
-- Scheduled unattended real execution, Automation Task Definitions, distributed leases, forced
-  interruption of external calls, or automatic crash replay.
-- Replacing or bypassing Parser, Recognition, Metadata, Naming, Classification, OrganizerPlanner,
-  OrganizerExecutor, Task/Result, Processing Checkpoint, RBAC or audit authorities.
-- A free-form plan/path/operation/provider-payload editor, arbitrary Storage calls, Provider
-  switching, remote Storage setup/probing, playback/media-server catalog work, artwork/NFO
-  generation, or any other explicitly deferred Slice capability.
-- Work outside the parent Slice Contract, the next Task or next Slice, optional proof/copy polish,
-  P2 cleanup, or unrelated refactoring.
+- Changes to the Slice Contract, Closure Packet, Roadmap, stable requirements or A's Final Review.
+- Scheduled unattended execution, automatic crash replay, universal compensation, historical
+  rollback, distributed leases, remote Storage setup/probing or Provider switching.
+- A free-form path/operation/plan editor, arbitrary Storage command, unbounded history browser or
+  new parallel Task/Result/recovery model.
+- Reopening unrelated accepted behavior in Tasks 24.1–24.4, general secret-store design, broad log
+  subsystem refactoring, wording polish, P2 cleanup or optional proof not required above.
+- Defining the next Task or next Slice, or declaring this Slice PASS/CLOSED.
 
 ## Developer Completion Report
 
 ### Changed Files
-
-- `TASK.md`
-- `docs/architecture.md`
-- `docs/product-experience.md`
 - `mediaflow/application/manual_organize_execution.py`
-- `mediaflow/application/processing_checkpoint.py`
+- `mediaflow/application/manual_organize_preview.py`
+- `mediaflow/domain/manual_execution.py`
+- `mediaflow/domain/manual_organize_preview.py`
+- `mediaflow/domain/manual_safety.py`
 - `mediaflow/domain/task_persistence.py`
 - `mediaflow/infrastructure/sqlite_runtime.py`
 - `mediaflow/interfaces/operator_ui.py`
 - `mediaflow/interfaces/service_api.py`
 - `tests/test_manual_organize_execution.py`
+- `tests/test_operator_ui.py`
 
 ### Implemented
-
-- Added a bounded, exact Preview-bound authorization and execution service. Admission rechecks the
-  current Preview, open intent, item/source/choice versions, pinned snapshot, plan fingerprint and
-  exact plan content, capability evidence, conflict state, destructive authority and Storage
-  locks before creating the existing Task/TaskItem scope.
-- Added an atomic SQLite interruption handoff for exact manual executions. Admission/startup
-  failures now publish bounded pre-mutation Results, terminal Task/TaskItem state and an audit
-  record before releasing the complete execution fence.
-- Added a post-OrganizerExecutor publication-failure handoff that preserves completed operations as
-  `PARTIAL`/`UNKNOWN`, records unverified effects and completes the batch without replaying Storage
-  mutation or silently downgrading its operation.
-- Added explicit authenticated `POST /api/v1/manual-executions/{id}/reconcile` recovery through
-  the shared application service, including read-only Storage observation for interrupted running
-  items, and exposed the same action and explanation in Operator Web.
-- Updated Processing Checkpoint projections so interrupted admission is investigation-only rather
-  than offered as a generic retry. Updated the current architecture and product-journey
-  documentation to describe the durable reconciliation boundary.
+- Exact execution now records the complete intent complement as unselected while creating
+  TaskItems, Results, effects, fences, and Storage calls only for authorized selected items.
+- Added bounded, deterministic restart discovery from manual intent/Preview, Task/TaskItem, and
+  indexed source journeys, with permission-controlled API projections and linked reconciliation
+  only for `ADMITTED`/`RUNNING` executions.
+- Added Operator Web projections for durable execution discovery and explicit selected/unselected
+  scope, including terminal state reload and interrupted-state reconciliation navigation.
+- Made Preview GET/latest/list projections read-only with respect to stale-state publication, and
+  made authorization detail reads avoid TTL expiry; read-only journey GETs avoid security-audit
+  mutation.
+- Centralized manual evidence redaction, rejected credential-shaped authorization notes before
+  persistence, and consumed complete `Authorization: Bearer|Basic <credential>` forms without
+  altering exact persisted plan fingerprints.
 
 ### Tests and Results
-
-- `.venv/bin/python -m unittest tests.test_manual_organize_execution` — PASS (18 tests).
-- The required 14-module direct regression command — PASS (134 tests).
-- `.venv/bin/python -m unittest discover -s tests` — PASS (995 tests, 7 explicit skips).
-- The required quality/safety command group (`ruff format --check`, `ruff check`, `compileall`,
-  `pip check`, both configuration validations, FFmpeg/FFprobe scan, `git diff --check`) — PASS.
-- The required wheel build and `scripts/wheel_smoke_test.py` — PASS.
+- `.venv/bin/python -m unittest tests.test_manual_organize_execution` — PASS (23 tests, 0
+  failures).
+- `.venv/bin/python -m unittest tests.test_manual_organize_execution tests.test_manual_organize_preview tests.test_manual_organize_intent tests.test_file_media_detail tests.test_file_catalog tests.test_file_catalog_api tests.test_operator_ui tests.test_processing_checkpoint tests.test_task_persistence tests.test_execution_authorization tests.test_final_integration tests.test_resource_library_pipeline tests.test_migration_rehearsal tests.test_upgrade_preflight` — PASS (140 tests, 0 failures).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1001 tests, 0 failures, 7 skipped).
+- `.venv/bin/ruff format --check .` — PASS (338 files already formatted).
+- `.venv/bin/ruff check .` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS (no broken requirements).
+- Both required `mediaflow config validate` commands — PASS.
+- FFprobe/FFmpeg dependency scan — PASS (no matches).
+- `git diff --check` — PASS.
+- `git check-ignore -q config/alist.json` and tracked-file check — PASS; the private config remains
+  ignored and untracked.
+- Wheel build plus `scripts/wheel_smoke_test.py` — PASS (wheel built; migration rehearsal, restore,
+  verify, and upgrade preflight all passed on schema 27).
 
 ### Decisions
-
-- Kept normal item completion separate from a reconciliation transaction so a persistence fault
-  cannot turn a possibly-mutated Storage invocation into a retryable failure.
-- Used an explicit recovery action for `ADMITTED`/`RUNNING` state, with SQLite `BEGIN IMMEDIATE`
-  publishing all unfinished per-item outcomes and deleting the Task fence in the same commit.
-- Classified interrupted running work as `UNKNOWN` even when read-only observation finds a likely
-  completed operation; the effect remains unverified and the only checkpoint action is
-  investigation.
+- Discovery is implemented as read-only repository relations with bounded `limit + 1` reads and
+  deterministic ordering; the API exposes links from existing authenticated journey surfaces.
+- Preview staleness is projected in memory for GET paths so reload does not publish stale state;
+  explicit analysis/execute paths retain their existing persistence behavior.
+- Plan JSON remains exact in SQLite so the existing plan fingerprint and execution integrity checks
+  remain unchanged; redaction is applied to operator-facing documents and non-plan evidence.
 
 ### Remaining In-Slice Work
-
-- Slice-level reconciliation of all Required Outcomes and any remaining File/Media detail or
-  history surfaces is outside this Task and remains for B/A review; this checkpoint does not
-  declare the Slice complete.
+- None known for this Task; the correction checkpoint is ready for B's review.
 
 ### Risks / Deviations
-
-- The full suite has 7 explicit skips and emits existing unclosed SQLite `ResourceWarning`
-  messages; no test failures occurred.
-- An injected ordinary persistence exception is re-raised after its durable handoff, so callers can
-  still observe the original failure while reload/API/Web expose the reconciled state. A simulated
-  process interruption remains in the explicit reconciliation path and is never automatically
-  replayed.
-- Tests and wheel smoke used temporary SQLite/Local/fake dependencies only. No production
-  credentials, remote services or user media were used, and `config/alist.json` remains ignored,
-  untracked and unstaged.
+- The full suite emitted existing `ResourceWarning` messages for unclosed SQLite connections but
+  exited successfully; no new failure or hidden skip was introduced.
+- The full suite reported 7 skipped tests; no test was deleted, weakened, or newly skipped by this
+  Task. No external service, production credential, or schema migration was required.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: e1ed8c136966885fa2dff88ab5d49ff46f9bcf2c
+Head SHA: 7a0e2e0b44cbe137205161f98d6497fbcd4c50a1
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: bab61d419d17c0a5f05cae7c82ce779a34272453..6dfddd127859221a5b031df571b5226a86402b75
-Decision: FIX REQUIRED
+Reviewed: PENDING
+Decision: PENDING
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: PENDING
 ```
-
-Blockers:
-
-- An exception after the atomic admission commit but before the execution starts leaves the
-  consumed one-shot authority linked to an `ADMITTED` execution and `ADMITTED` item, with the
-  Task still running and no API/Web action that can safely continue or reconcile that durable
-  state. Evidence: fault-injecting `repository.update_manual_execution` immediately after
-  `admit_manual_execution` produced `authority=consumed`, `execution=admitted`,
-  `item=admitted`, source unchanged, and the execution's only next action remained
-  `wait for exact execution to finish`; the corresponding lock was also not available for a
-  follow-up action. Make the admitted boundary restart-safe: after a process interruption it
-  must durably expose a correct investigation/continuation state, release or reconcile its
-  fence, and never strand a consumed authority without a permitted recovery path or safe
-  terminal explanation.
-- An exception after `OrganizerExecutor` has already mutated Storage but before
-  `complete_manual_execution_item` commits leaves the source moved/target created while the
-  durable execution and TaskItem remain `RUNNING`, with `effectCertainty=unknown`, no Result,
-  no effect record, and no checkpoint action that identifies the known mutation for
-  investigation. Evidence: fault-injecting `complete_manual_execution_item` after a successful
-  Move produced `source_exists=False`, `target_exists=True`, `execution=running`,
-  `item=running`, `resultId=None`, `repository.list_results(task_id)=0`, and no durable
-  effect evidence after reopening SQLite. Persist a crash/persistence-failure outcome as
-  partial/uncertain with known effects and a checkpoint-linked investigation-only action (or
-  an equivalent durable handoff that guarantees this evidence); do not automatically replay
-  the mutation.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
