@@ -278,12 +278,21 @@ class ManagedConfigurationService:
             None,
             revision.base_active_revision_id,
         )
+        after_evidence = {
+            **_document_evidence(candidate),
+            "automationTaskDefinitions": _automation_definition_evidence(candidate.document),
+            "errors": list(errors),
+        }
+        before_evidence = {
+            **_document_evidence(revision),
+            "automationTaskDefinitions": _automation_definition_evidence(revision.document),
+        }
         audit = self._audit(
             candidate,
             "validate" if not errors else "validation_failed",
             actor,
-            {**_document_evidence(candidate), "errors": list(errors)},
-            before=_document_evidence(revision),
+            after_evidence,
+            before=before_evidence,
         )
         update = getattr(self._repository, "update_revision_with_audit", None)
         if callable(update):
@@ -408,16 +417,24 @@ class ManagedConfigurationService:
             active = self._repository.get_active_revision()
         except Exception:
             active = None
+        activation_after = {
+            **_document_evidence(revision, status=ManagedConfigurationStatus.ACTIVE),
+            "automationTaskDefinitions": _automation_definition_evidence(revision.document),
+        }
+        activation_before = (
+            {
+                **_document_evidence(active),
+                "automationTaskDefinitions": _automation_definition_evidence(active.document),
+            }
+            if active is not None
+            else {"authority": "JSON_BOOTSTRAP", "revisionId": None}
+        )
         audit = self._audit(
             revision,
             "activate",
             actor,
-            _document_evidence(revision, status=ManagedConfigurationStatus.ACTIVE),
-            before=(
-                _document_evidence(active)
-                if active is not None
-                else {"authority": "JSON_BOOTSTRAP", "revisionId": None}
-            ),
+            activation_after,
+            before=activation_before,
         )
         return self._repository.activate_revision(revision_id, expected_version, audit)
 
@@ -663,6 +680,45 @@ def _document_evidence(
         "digest": revision.digest,
         "sections": sections,
     }
+
+
+def _automation_definition_evidence(document: dict[str, object]) -> dict[str, object]:
+    """Project bounded, secret-free definition fields into lifecycle audits."""
+
+    values = document.get("automationTaskDefinitions")
+    if values is None:
+        automation = document.get("automation")
+        values = automation.get("taskDefinitions") if isinstance(automation, dict) else None
+    if not isinstance(values, list):
+        return {"total": 0, "items": [], "truncated": False}
+    allowed = (
+        "id",
+        "name",
+        "enabled",
+        "resourceLibraryId",
+        "sourceScope",
+        "mode",
+        "runMode",
+        "intervalSeconds",
+        "cron",
+        "timezone",
+        "itemLimit",
+        "limit",
+    )
+    items = [
+        {key: _bounded_definition_value(value[key]) for key in allowed if key in value}
+        for value in values[:32]
+        if isinstance(value, dict)
+    ]
+    return {"total": len(values), "items": items, "truncated": len(values) > len(items)}
+
+
+def _bounded_definition_value(value: object) -> object:
+    if isinstance(value, str):
+        return value[:256]
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    return str(value)[:256]
 
 
 def _bounded_error(error: Exception) -> str:

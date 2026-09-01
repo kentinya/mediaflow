@@ -13,6 +13,7 @@ from mediaflow.application.strategy_test import (
 )
 from mediaflow.domain.automation import (
     AutomationCommand,
+    AutomationTaskDefinition,
     CronSchedule,
     IntervalSchedule,
     ScheduleDefinition,
@@ -76,6 +77,7 @@ class RuntimeConfiguration:
     configuration_authority: str = "JSON_BOOTSTRAP"
     configuration_snapshot_id: str | None = None
     configuration_snapshot_digest: str | None = None
+    automation_task_definitions: tuple[AutomationTaskDefinition, ...] = ()
 
     def create_storages(
         self,
@@ -455,6 +457,7 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         "maximumActiveJobs",
         "staleJobAgeSeconds",
         "schedules",
+        "taskDefinitions",
     }
     if unknown := set(automation).difference(allowed_automation):
         raise ValueError(f"unknown automation field {sorted(unknown)[0]!r}")
@@ -487,6 +490,26 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     schedule_ids = [item.schedule_id for item in schedules]
     if len(schedule_ids) != len(set(schedule_ids)):
         raise ValueError("automation schedule IDs must be unique")
+    root_definitions = document.get("automationTaskDefinitions")
+    root_definitions_present = "automationTaskDefinitions" in document
+    nested_definitions = automation.get("taskDefinitions", [])
+    if root_definitions_present and "taskDefinitions" in automation:
+        raise ValueError(
+            "runtime configuration cannot define both automationTaskDefinitions and "
+            "automation.taskDefinitions"
+        )
+    raw_definitions = root_definitions if root_definitions_present else nested_definitions
+    if not isinstance(raw_definitions, list) or not all(
+        isinstance(item, dict) for item in raw_definitions
+    ):
+        raise ValueError("automation taskDefinitions must be an array of objects")
+    automation_task_definitions = tuple(
+        AutomationTaskDefinition.from_document(item, resource_libraries=resources)
+        for item in raw_definitions
+    )
+    definition_ids = [item.definition_id for item in automation_task_definitions]
+    if len(definition_ids) != len(set(definition_ids)):
+        raise ValueError("automation task definition IDs must be unique")
     notifications = document.get("notifications", {})
     if not isinstance(notifications, dict):
         raise ValueError("runtime configuration 'notifications' must be an object")
@@ -553,6 +576,7 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         maximum_active_jobs,
         stale_job_age_seconds,
         retry,
+        automation_task_definitions=automation_task_definitions,
     )
 
 

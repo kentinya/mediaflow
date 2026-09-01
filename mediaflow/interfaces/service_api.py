@@ -671,10 +671,224 @@ class MediaFlowApi:
             # Keep the public route aliases on the same application semantics.
             parts[2] = "manual-intents"
         configuration_route = parts[:3] == ["api", "v1", "configuration"]
+        automation_definition_route = parts[:4] == [
+            "api",
+            "v1",
+            "automation",
+            "task-definitions",
+        ]
         task_read_route = parts[:3] == ["api", "v1", "tasks"] and method == "GET"
         binding = self._runtime_binding
-        if not configuration_route and not task_read_route:
+        if not configuration_route and not automation_definition_route and not task_read_route:
             binding = self._refresh_configuration_binding()
+        if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_service is None or self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            active = self._automation_revision(environ)
+            if active is None:
+                return self._response(
+                    start_response,
+                    200,
+                    {"configuration": None, "items": [], "total": 0, "truncated": False},
+                )
+            detail = self._configuration_objects.revision_detail(active.revision_id)
+            all_items = detail["objects"].get("automationTaskDefinitions", [])
+            items = all_items[:100]
+            return self._response(
+                start_response,
+                200,
+                {
+                    "configuration": active.summary(),
+                    "items": items,
+                    "total": len(all_items),
+                    "truncated": len(all_items) > len(items),
+                },
+            )
+        if (
+            len(parts) == 5
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_service is None or self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            active = self._automation_revision(environ)
+            if active is None:
+                raise LookupError(f"automationTaskDefinitions {parts[4]!r} was not found")
+            detail = self._configuration_objects.revision_detail(active.revision_id)
+            item = next(
+                (
+                    candidate
+                    for candidate in detail["objects"].get("automationTaskDefinitions", [])
+                    if candidate.get("id") == parts[4]
+                ),
+                None,
+            )
+            if item is None:
+                raise LookupError(f"automationTaskDefinitions {parts[4]!r} was not found")
+            return self._response(
+                start_response,
+                200,
+                {"configuration": active.summary(), "definition": item},
+            )
+        if parts == ["api", "v1", "automation", "task-definitions"] and method == "POST":
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            if set(document).difference({"revisionId", "expectedVersion", "object", "definition"}):
+                raise ValueError("Automation Task Definition create fields are invalid")
+            revision_id = document.get("revisionId")
+            expected = document.get("expectedVersion")
+            if not isinstance(revision_id, str) or not revision_id:
+                raise ValueError("Automation Task Definition revisionId is required")
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            if "object" in document and "definition" in document:
+                raise ValueError("Automation Task Definition may specify only object")
+            value = document.get("object", document.get("definition"))
+            if not isinstance(value, dict):
+                raise ValueError("Automation Task Definition must be an object")
+            revision = self._configuration_objects.mutate(
+                revision_id,
+                ConfigurationObjectKind.SCHEDULE,
+                object_id=None,
+                value=value,
+                expected_version=expected,
+                actor=principal.principal_id,
+            )
+            values = revision.document.get("automationTaskDefinitions", [])
+            response = revision.summary()
+            response["configurationRevisionId"] = revision.revision_id
+            response["automationTaskDefinition"] = values[-1] if values else None
+            return self._response(start_response, 200, response)
+        if (
+            len(parts) == 5
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and method == "PUT"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            if set(document).difference({"revisionId", "expectedVersion", "object", "definition"}):
+                raise ValueError("Automation Task Definition update fields are invalid")
+            revision_id = document.get("revisionId")
+            expected = document.get("expectedVersion")
+            if not isinstance(revision_id, str) or not revision_id:
+                raise ValueError("Automation Task Definition revisionId is required")
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            if "object" in document and "definition" in document:
+                raise ValueError("Automation Task Definition may specify only object")
+            value = document.get("object", document.get("definition"))
+            if not isinstance(value, dict):
+                raise ValueError("Automation Task Definition must be an object")
+            revision = self._configuration_objects.mutate(
+                revision_id,
+                ConfigurationObjectKind.SCHEDULE,
+                object_id=parts[4],
+                value=value,
+                expected_version=expected,
+                actor=principal.principal_id,
+            )
+            definition = next(
+                (
+                    item
+                    for item in revision.document.get("automationTaskDefinitions", [])
+                    if item.get("id") == parts[4]
+                ),
+                None,
+            )
+            response = revision.summary()
+            response["configurationRevisionId"] = revision.revision_id
+            response["automationTaskDefinition"] = definition
+            return self._response(start_response, 200, response)
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] in {"copy", "enable", "disable"}
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            revision_id = document.get("revisionId")
+            expected = document.get("expectedVersion")
+            if not isinstance(revision_id, str) or not revision_id:
+                raise ValueError("Automation Task Definition revisionId is required")
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            action = parts[5]
+            if action == "copy":
+                allowed = {"revisionId", "expectedVersion", "newId", "id", "newName", "name"}
+                if set(document).difference(allowed):
+                    raise ValueError("Automation Task Definition copy fields are invalid")
+                new_id = document.get("newId", document.get("id"))
+                new_name = document.get("newName", document.get("name"))
+                if new_id is not None and not isinstance(new_id, str):
+                    raise ValueError("Automation Task Definition copied id must be a string")
+                if new_name is not None and not isinstance(new_name, str):
+                    raise ValueError("Automation Task Definition copied name must be a string")
+                revision = self._configuration_objects.copy_definition(
+                    revision_id,
+                    object_id=parts[4],
+                    new_object_id=new_id,
+                    new_name=new_name,
+                    expected_version=expected,
+                    actor=principal.principal_id,
+                )
+            else:
+                if set(document) != {"revisionId", "expectedVersion"}:
+                    raise ValueError(
+                        "Automation Task Definition enable/disable requires revisionId "
+                        "and expectedVersion"
+                    )
+                revision = self._configuration_objects.set_definition_enabled(
+                    revision_id,
+                    object_id=parts[4],
+                    enabled=action == "enable",
+                    expected_version=expected,
+                    actor=principal.principal_id,
+                )
+            definitions = revision.document.get("automationTaskDefinitions", [])
+            target_id = parts[4] if action != "copy" else None
+            definition = (
+                next((item for item in definitions if item.get("id") == target_id), None)
+                if target_id is not None
+                else (definitions[-1] if definitions else None)
+            )
+            response = revision.summary()
+            response["configurationRevisionId"] = revision.revision_id
+            response["automationTaskDefinition"] = definition
+            return self._response(start_response, 200, response)
         if parts == ["api", "v1", "configuration"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -1070,7 +1284,76 @@ class MediaFlowApi:
                 expected_version=expected,
                 actor=principal.principal_id,
             )
-            return self._response(start_response, 200, revision.summary())
+            response = revision.summary()
+            if kind is ConfigurationObjectKind.SCHEDULE:
+                values = revision.document.get("automationTaskDefinitions", [])
+                if values:
+                    response["automationTaskDefinition"] = values[-1]
+            return self._response(start_response, 200, response)
+        if (
+            len(parts) == 9
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "objects"
+            and parts[6] == "automationTaskDefinitions"
+            and parts[8] in {"copy", "enable", "disable"}
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            expected = document.get("expectedVersion")
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            action = parts[8]
+            if action == "copy":
+                allowed = {"expectedVersion", "newId", "id", "newName", "name"}
+                if set(document).difference(allowed):
+                    raise ValueError("Automation Task Definition copy fields are invalid")
+                new_id = document.get("newId", document.get("id"))
+                new_name = document.get("newName", document.get("name"))
+                if new_id is not None and not isinstance(new_id, str):
+                    raise ValueError("Automation Task Definition copied id must be a string")
+                if new_name is not None and not isinstance(new_name, str):
+                    raise ValueError("Automation Task Definition copied name must be a string")
+                revision = self._configuration_objects.copy_definition(
+                    parts[4],
+                    object_id=parts[7],
+                    new_object_id=new_id,
+                    new_name=new_name,
+                    expected_version=expected,
+                    actor=principal.principal_id,
+                )
+            else:
+                if set(document) != {"expectedVersion"}:
+                    raise ValueError(
+                        "Automation Task Definition enable/disable requires expectedVersion"
+                    )
+                revision = self._configuration_objects.set_definition_enabled(
+                    parts[4],
+                    object_id=parts[7],
+                    enabled=action == "enable",
+                    expected_version=expected,
+                    actor=principal.principal_id,
+                )
+            definitions = revision.document.get("automationTaskDefinitions", [])
+            if action == "copy":
+                definition = definitions[-1] if definitions else None
+            else:
+                definition = next(
+                    (item for item in definitions if item.get("id") == parts[7]),
+                    None,
+                )
+            response = revision.summary()
+            if definition is not None:
+                response["automationTaskDefinition"] = definition
+            return self._response(start_response, 200, response)
         if (
             len(parts) == 8
             and parts[:3] == ["api", "v1", "configuration"]
@@ -1104,7 +1387,17 @@ class MediaFlowApi:
                 expected_version=expected,
                 actor=principal.principal_id,
             )
-            return self._response(start_response, 200, revision.summary())
+            response = revision.summary()
+            if kind is ConfigurationObjectKind.SCHEDULE:
+                response["automationTaskDefinition"] = next(
+                    (
+                        item
+                        for item in revision.document.get("automationTaskDefinitions", [])
+                        if item.get("id") == parts[7]
+                    ),
+                    None,
+                )
+            return self._response(start_response, 200, response)
         if (
             len(parts) == 8
             and parts[:3] == ["api", "v1", "configuration"]
@@ -3004,6 +3297,7 @@ class MediaFlowApi:
             ("api", "v1", "recognition-reviews"),
             ("api", "v1", "metadata-corrections"),
             ("api", "v1", "recovery-batches"),
+            ("api", "v1", "automation", "task-definitions"),
         }
         key = tuple(parts)
         if key in exact:
@@ -3013,6 +3307,14 @@ class MediaFlowApi:
             ["api", "v1", "jobs"],
         ):
             return f"/api/v1/{parts[2]}/{{id}}"
+        if len(parts) == 5 and parts[:4] == ["api", "v1", "automation", "task-definitions"]:
+            return "/api/v1/automation/task-definitions/{id}"
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] in {"copy", "enable", "disable"}
+        ):
+            return f"/api/v1/automation/task-definitions/{{id}}/{parts[5]}"
         if len(parts) == 6 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "items":
             return "/api/v1/tasks/{task_id}/items/{item_id}"
         if (
@@ -3493,11 +3795,31 @@ class MediaFlowApi:
             "namingPolicies": ConfigurationObjectKind.NAMING_POLICY,
             "classificationPolicies": ConfigurationObjectKind.CLASSIFICATION_POLICY,
             "organizePolicies": ConfigurationObjectKind.ORGANIZE_POLICY,
+            "automationTaskDefinitions": ConfigurationObjectKind.SCHEDULE,
         }
         try:
             return mapping[value]
         except KeyError as error:
             raise ValueError("unsupported guided configuration object kind") from error
+
+    def _automation_revision(self, environ: dict):
+        """Resolve one explicit managed revision for Automation inspection."""
+
+        if self._configuration_service is None:
+            return None
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"revisionId"}) or any(
+            len(value) != 1 for value in values.values()
+        ):
+            raise ValueError("Automation Task Definition query accepts one revisionId")
+        revision_id = values.get("revisionId", [None])[0]
+        if revision_id:
+            return self._configuration_service.require(revision_id)
+        # Without an explicit revision selector this surface is the runtime
+        # Automation view, so only the immutable Active snapshot may be
+        # presented. A latest Draft/Validated revision is not an Active
+        # authority and must not be labelled or consumed as one.
+        return self._configuration_service.active()
 
     @staticmethod
     def _file_stats_query(environ: dict) -> tuple[str | None, str | None]:

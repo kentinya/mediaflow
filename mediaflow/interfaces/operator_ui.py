@@ -21,6 +21,7 @@ INDEX_HTML = b"""<!doctype html>
     <button data-view="files">Files</button>
     <button data-view="jobs">Jobs</button>
     <button data-view="schedules">Schedules</button>
+    <button data-view="automation">Automation</button>
     <button data-view="notifications">Notifications</button>
     <button data-view="logs">Logs</button>
     <button data-view="confirmations">Conflicts</button>
@@ -304,7 +305,8 @@ APP_JS = b"""(() => {
       mediaLibraries: 'media_library', recognitionTypes: 'recognition_type',
       recognitionRules: 'recognition_rule', recognitionTypePolicies: 'recognition_type_policy',
       metadataPolicies: 'metadata_policy', namingPolicies: 'naming_policy',
-      classificationPolicies: 'classification_policy', organizePolicies: 'organize_policy'}[kind] || kind;
+      classificationPolicies: 'classification_policy', organizePolicies: 'organize_policy',
+      automationTaskDefinitions: 'schedule'}[kind] || kind;
     detailContent.append(text('h3', `${label} (${values.length})`));
     values.forEach(item => {
       const row = text('div', '', 'choice');
@@ -338,6 +340,13 @@ APP_JS = b"""(() => {
         if (item.conflictStrategy === 'overwrite' || (cleanup.mode && cleanup.mode !== 'none'))
           row.append(text('span', 'DESTRUCTIVE AUTHORITY: overwrite or source cleanup is enabled.', 'warning'));
       }
+      if (kind === 'automationTaskDefinitions') {
+        const timing = item.intervalSeconds !== undefined ?
+          `every ${item.intervalSeconds}s` : `${item.cron || '-'} (${item.timezone || '-'})`;
+        row.append(text('span', `${item.resourceLibraryId || '-'} / ${item.sourceScope || '<root>'}; ` +
+          `${item.mode || item.runMode || '-'}; ${timing}; limit ${item.itemLimit || item.limit || '-'}; ` +
+          `${item.enabled === true ? 'enabled' : 'disabled'}`));
+      }
       const referenceEvidence = guided.references && guided.references[`${referenceKind}:${item.id}`] ||
         {total: 0, items: [], truncated: false};
       const references = Array.isArray(referenceEvidence) ? referenceEvidence :
@@ -359,7 +368,34 @@ APP_JS = b"""(() => {
           const copied = {...item, id: `${item.id}-copy`, name: `${item.name || item.id} copy`};
           renderGuidedObjectForm(revision, kind, copied, true);
         }));
-        row.append(actionButton('Delete', () => {
+        if (kind === 'automationTaskDefinitions') {
+          row.append(actionButton('Copy', async () => {
+            const confirmation = text('span', '', 'choices');
+            confirmation.append(text('span', `Copy Automation Task Definition ${item.id}? The copy starts disabled.`),
+              actionButton('Confirm copy', async () => {
+                try {
+                  await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/objects/automationTaskDefinitions/${encodeURIComponent(item.id)}/copy`,
+                    {method: 'POST', body: JSON.stringify({expectedVersion: revision.version})});
+                  confirmation.remove(); detail.hidden = true; await renderConfiguration();
+                } catch (error) { message(errorText(error), true); }
+              }), actionButton('Cancel copy', () => confirmation.remove()));
+            row.append(confirmation);
+          }));
+          row.append(actionButton(item.enabled === true ? 'Disable' : 'Enable', async () => {
+            const action = item.enabled === true ? 'disable' : 'enable';
+            const confirmation = text('span', '', 'choices');
+            confirmation.append(text('span', `${action === 'enable' ? 'Enable' : 'Disable'} ${item.id}? This changes only the Draft.`),
+              actionButton(`Confirm ${action}`, async () => {
+                try {
+                  await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/objects/automationTaskDefinitions/${encodeURIComponent(item.id)}/${action}`,
+                    {method: 'POST', body: JSON.stringify({expectedVersion: revision.version})});
+                  confirmation.remove(); detail.hidden = true; await renderConfiguration();
+                } catch (error) { message(errorText(error), true); }
+              }), actionButton('Cancel', () => confirmation.remove()));
+            row.append(confirmation);
+          }));
+        }
+        if (kind !== 'automationTaskDefinitions') row.append(actionButton('Delete', () => {
           const confirmation = text('span', '', 'choices');
           confirmation.append(text('span', `Delete ${label} ${item.id}? References block deletion.`),
             actionButton('Confirm delete', async () => {
@@ -376,34 +412,37 @@ APP_JS = b"""(() => {
         mediaLibraries: 'MediaLibrary', recognitionTypes: 'RecognitionType',
         recognitionRules: 'RecognitionRule', recognitionTypePolicies: 'RecognitionTypePolicy',
         metadataPolicies: 'MetadataPolicy', namingPolicies: 'NamingPolicy',
-        organizePolicies: 'OrganizePolicy'}[kind] || kind;
+        organizePolicies: 'OrganizePolicy', automationTaskDefinitions: 'AutomationTaskDefinition'}[kind] || kind;
       const classificationPolicy = kind === 'classificationPolicies';
       const organizePolicy = kind === 'organizePolicies';
       const guidedJson = kind.startsWith('recognition') ||
-        kind === 'metadataPolicies' || kind === 'namingPolicies' || classificationPolicy || organizePolicy;
+        kind === 'metadataPolicies' || kind === 'namingPolicies' || classificationPolicy || organizePolicy ||
+        kind === 'automationTaskDefinitions';
       const objectLabel = classificationPolicy ? 'ClassificationPolicy' : organizePolicy ? 'OrganizePolicy' : singular;
       detailContent.append(actionButton(`${guidedJson ? 'Add' : 'Add Local'} ${objectLabel}`,
         () => renderGuidedObjectForm(revision, kind, null)));
     }
   }
   function renderGuidedObjectForm(revision, kind, item, copyMode = false) {
-    if (kind.startsWith('recognition') || kind === 'metadataPolicies' || kind === 'namingPolicies' || kind === 'classificationPolicies' || kind === 'organizePolicies') {
+    if (kind.startsWith('recognition') || kind === 'metadataPolicies' || kind === 'namingPolicies' || kind === 'classificationPolicies' || kind === 'organizePolicies' || kind === 'automationTaskDefinitions') {
       const metadataPolicy = kind === 'metadataPolicies';
       const namingPolicy = kind === 'namingPolicies';
       const classificationPolicy = kind === 'classificationPolicies';
       const organizePolicy = kind === 'organizePolicies';
+      const automationTaskDefinition = kind === 'automationTaskDefinitions';
       clear(detailContent);
-      detailContent.append(text('h2', `${item && !copyMode ? 'Edit' : 'Add'} ${metadataPolicy ? 'MetadataPolicy' : namingPolicy ? 'NamingPolicy' : classificationPolicy ? 'ClassificationPolicy' : organizePolicy ? 'OrganizePolicy' : 'recognition object'}`));
-      detailContent.append(text('p', organizePolicy ?
+      detailContent.append(text('h2', `${item && !copyMode ? 'Edit' : 'Add'} ${metadataPolicy ? 'MetadataPolicy' : namingPolicy ? 'NamingPolicy' : classificationPolicy ? 'ClassificationPolicy' : organizePolicy ? 'OrganizePolicy' : automationTaskDefinition ? 'Automation Task Definition' : 'recognition object'}`));
+      detailContent.append(text('p', automationTaskDefinition ?
+        'Edit one bounded Automation Task Definition. It references one enabled ResourceLibrary and owns only source scope, schedule, run mode and item limit; policy and destination choices stay in configuration.' : organizePolicy ?
         'Edit one bounded OrganizePolicy JSON object. Overwrite and source cleanup grant destructive authority and are never implicit.' : classificationPolicy ?
         'Edit one bounded ClassificationPolicy JSON object. Rules use the configured conditions and safe relative result paths.' : namingPolicy ?
         'Edit one bounded NamingPolicy JSON object. Templates use the restricted naming variables; separators, traversal, unknown variables and unsupported formats are rejected.' : metadataPolicy ?
         'Edit one bounded MetadataPolicy JSON object. Provider/query/locale/threshold/request settings are validated; credentials and unknown fields are rejected.' :
         'Edit one bounded JSON object. References and rule priority are checked when the Draft is validated; unsafe regex is rejected when saved.', 'warning'));
       const editor = document.createElement('textarea');
-      editor.setAttribute('aria-label', metadataPolicy ? 'MetadataPolicy JSON' : namingPolicy ? 'NamingPolicy JSON' : classificationPolicy ? 'ClassificationPolicy JSON' : organizePolicy ? 'OrganizePolicy JSON' : 'Recognition object JSON');
+      editor.setAttribute('aria-label', metadataPolicy ? 'MetadataPolicy JSON' : namingPolicy ? 'NamingPolicy JSON' : classificationPolicy ? 'ClassificationPolicy JSON' : organizePolicy ? 'OrganizePolicy JSON' : automationTaskDefinition ? 'Automation Task Definition JSON' : 'Recognition object JSON');
       editor.value = JSON.stringify(item || {}, null, 2); detailContent.append(editor);
-      detailContent.append(actionButton(metadataPolicy ? 'Save MetadataPolicy' : namingPolicy ? 'Save NamingPolicy' : classificationPolicy ? 'Save ClassificationPolicy' : organizePolicy ? 'Save OrganizePolicy' : 'Save recognition object', async () => {
+      detailContent.append(actionButton(metadataPolicy ? 'Save MetadataPolicy' : namingPolicy ? 'Save NamingPolicy' : classificationPolicy ? 'Save ClassificationPolicy' : organizePolicy ? 'Save OrganizePolicy' : automationTaskDefinition ? 'Save Automation Task Definition' : 'Save recognition object', async () => {
         try { await mutateGuidedObject(revision, kind, item && !copyMode && item.id, JSON.parse(editor.value), item && !copyMode ? 'PUT' : 'POST'); }
         catch (error) { message(errorText(error), true); }
       }), actionButton('Back to revision', () => showConfigurationRevision(revision)));
@@ -1291,6 +1330,7 @@ APP_JS = b"""(() => {
         renderGuidedObjectList(data, guided, 'namingPolicies', 'NamingPolicies');
         renderGuidedObjectList(data, guided, 'classificationPolicies', 'ClassificationPolicies');
         renderGuidedObjectList(data, guided, 'organizePolicies', 'OrganizePolicies');
+        renderGuidedObjectList(data, guided, 'automationTaskDefinitions', 'Automation Task Definitions');
         renderLocalSetupEvidence(data, guided);
         renderLocalSetupActions(data, guided);
         renderRecognitionStrategyTest(data, guided);
@@ -2161,6 +2201,40 @@ APP_JS = b"""(() => {
       detail.hidden = false;
         } catch (error) { message(errorText(error), true); }
   }
+  async function renderAutomation() {
+    const data = await api('/api/v1/automation/task-definitions');
+    const configuration = data.configuration || {};
+    const items = data.items || [];
+    clear(content); content.append(text('h2', 'Automation Task Definitions'));
+    content.append(text('p', 'Managed definitions are edited inside a Draft and become effective only after Validate and explicit Activate.', 'warning'));
+    content.append(cards([
+      ['Active configuration', configuration.revisionId || 'none'],
+      ['Configuration version', configuration.version || '-'],
+      ['Configuration digest', configuration.digest || '-'],
+      ['Definitions', data.total || 0]
+    ]));
+    content.append(actionButton('Open managed Configuration', renderConfiguration));
+    const rows = items.map(item => [item.id, item.name, item.enabled === true ? 'enabled' : 'disabled',
+      item.resourceLibraryId, item.sourceScope || '<root>', item.mode || item.runMode || '-',
+      item.intervalSeconds !== undefined ? `${item.intervalSeconds}s` : `${item.cron || '-'} (${item.timezone || '-'})`,
+      item.itemLimit || item.limit || '-']);
+    content.append(table(['ID', 'Name', 'State', 'ResourceLibrary', 'Scope', 'Mode', 'Schedule', 'Limit'], rows,
+      index => showAutomationDetail(items[index], configuration)));
+  }
+  function showAutomationDetail(item, configuration) {
+    clear(detailContent); detailContent.append(text('h2', 'Automation Task Definition detail'));
+    const list = document.createElement('dl');
+    [['ID', item.id], ['Name', item.name], ['State', item.enabled === true ? 'enabled' : 'disabled'],
+      ['ResourceLibrary', item.resourceLibraryId], ['Source scope', item.sourceScope || '<root>'],
+      ['Run mode', item.mode || item.runMode], ['Interval seconds', item.intervalSeconds],
+      ['Cron', item.cron], ['Timezone', item.timezone], ['Item limit', item.itemLimit || item.limit],
+      ['Active configuration', configuration.revisionId || '-'],
+      ['Active configuration digest', configuration.digest || '-']].forEach(([label, value]) => field(list, label, value));
+    detailContent.append(list);
+    detailContent.append(text('p', 'Actions are available from the editable managed Draft. The Active snapshot is immutable.', 'warning'));
+    detailContent.append(actionButton('Open managed Configuration', () => renderConfiguration()));
+    detail.hidden = false;
+  }
   async function renderNotifications(status = 'all', cursor = null) {
     const selector = document.createElement('select'); selector.setAttribute('aria-label',
       'Notification status');
@@ -2831,6 +2905,7 @@ APP_JS = b"""(() => {
       if (view === 'dashboard') renderDashboard(await api('/api/v1/dashboard?recentLimit=10'));
       else if (view === 'tasks' || view === 'jobs') await renderObservability(view);
       else if (view === 'schedules') await renderSchedules();
+      else if (view === 'automation') await renderAutomation();
       else if (view === 'notifications') await renderNotifications();
       else if (view === 'logs') await renderLogs();
       else if (view === 'system') await renderSystem();
