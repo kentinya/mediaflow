@@ -706,6 +706,18 @@ projection. Opening or reloading an authorization or execution record is read-on
 new authority, creates no Task, does not replan, and does not invoke Storage. Scheduled unattended
 execution and automatic crash replay remain deferred.
 
+### Slice 24 closure (CURRENT; PASS / CLOSED)
+
+Slice 24 completes the bounded Files/Media detail and manual-organize journey across the authenticated
+API and Operator Web. Result history, latest Result, checkpoint evidence and failure/effect text are
+bounded and secret-free at persistence and projection boundaries; historical unsafe rows are redacted
+on read without being rewritten. Exact source and destination identities remain durable for FileIndex,
+plan and recovery linkage, while display projections redact credential-shaped text where required.
+
+Provider switching, scheduled unattended real organization, automatic uncertain/crash replay,
+universal compensation or historical rollback, remote setup/probing and other explicitly deferred
+capabilities remain outside the closed Slice.
+
 ## H. File browsing, detail, history, and explanation
 
 ### Starting point
