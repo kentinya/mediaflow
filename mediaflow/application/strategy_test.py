@@ -393,6 +393,7 @@ class StrategyTestRunner:
         metadata_correction: MetadataCorrectionSelection | None = None,
         classification_selection: ClassificationSelection | None = None,
         recognition_selection: RecognitionSelection | None = None,
+        forced_recognition_type_id: str | None = None,
         storage_path: str | None = None,
         source_storage: Storage | None = None,
     ) -> StrategyTestResult:
@@ -423,6 +424,24 @@ class StrategyTestRunner:
             )
             parsed = self._nfo_enricher.enrich(storage, nfo_context, parsed)
         recognition = self._recognition.recognize(RecognitionContext(context, parsed))
+        if forced_recognition_type_id is not None and recognition_selection is not None:
+            raise StrategyConfigurationError(
+                "forced and review RecognitionType selections cannot be combined"
+            )
+        if forced_recognition_type_id is not None:
+            selected = self._recognition_types.get(forced_recognition_type_id)
+            if selected is None or not selected.enabled:
+                raise StrategyConfigurationError(
+                    "forced RecognitionType is no longer enabled or configured"
+                )
+            recognition = RecognitionResult(
+                selected,
+                "manual-preview",
+                1.0,
+                RecognitionStatus.MATCHED,
+                score=100,
+                reasons=(RecognitionReason("MANUAL_PREVIEW", "Pinned by manual Preview"),),
+            )
         if recognition_selection is not None:
             if recognition.status is not RecognitionStatus.UNRECOGNIZED:
                 raise StrategyConfigurationError(

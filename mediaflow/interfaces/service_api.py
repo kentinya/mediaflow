@@ -22,6 +22,7 @@ from mediaflow.application.file_metadata_correction import FileMetadataCorrectio
 from mediaflow.application.file_recognition_request import FileRecognitionRequestService
 from mediaflow.application.file_replan_request import FileReplanRequestService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
+from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_correction_continuation import (
     FileMetadataCorrectionContinuationService,
@@ -115,6 +116,7 @@ class MediaFlowApi:
         metadata_provider_registry_factory=None,
         recovery_snapshot_validator: Callable[[str, str], None] | None = None,
         manual_intent_service: ManualOrganizeIntentService | None = None,
+        manual_preview_service: ManualOrganizePreviewService | None = None,
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -141,6 +143,15 @@ class MediaFlowApi:
                 repository,
                 self._file_catalog,
                 configuration_service,
+            )
+        self._manual_previews = manual_preview_service
+        if self._manual_previews is None and self._manual_intents is not None:
+            self._manual_previews = ManualOrganizePreviewService(
+                repository,
+                self._manual_intents,
+                self._file_catalog,
+                configuration_service=configuration_service,
+                metadata_provider_registry_factory=metadata_provider_registry_factory,
             )
         self._configuration_objects = (
             ConfigurationObjectService(
@@ -1533,6 +1544,129 @@ class MediaFlowApi:
                     raise ValueError("single-file manual intent accepts an empty request body")
             intent = self._manual_intents.create([parts[3]], actor=principal.principal_id)
             return self._response(start_response, 201, intent.document())
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-intents"]
+            and parts[4] == "preview"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._manual_previews is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual Preview service is unavailable",
+                )
+            self._require_empty_query(environ, "manual Preview")
+            document = self._document(environ)
+            allowed = {
+                "expectedVersion",
+                "expectedItemVersions",
+                "itemIds",
+                "snapshotId",
+                "snapshotDigest",
+            }
+            if set(document).difference(allowed) or "expectedVersion" not in document:
+                raise ValueError(
+                    "manual Preview requires expectedVersion and only bounded selection fields"
+                )
+            expected_version = document["expectedVersion"]
+            if (
+                isinstance(expected_version, bool)
+                or not isinstance(expected_version, int)
+                or expected_version < 1
+            ):
+                raise ValueError("manual Preview expectedVersion must be a positive integer")
+            item_ids = document.get("itemIds")
+            if item_ids is not None and not isinstance(item_ids, list):
+                raise ValueError("manual Preview itemIds must be an array")
+            expected_item_versions = document.get("expectedItemVersions")
+            if expected_item_versions is not None and not isinstance(
+                expected_item_versions, (dict, list)
+            ):
+                raise ValueError("manual Preview expectedItemVersions must be an object or array")
+            for name in ("snapshotId", "snapshotDigest"):
+                if name in document and (
+                    not isinstance(document[name], str) or not document[name].strip()
+                ):
+                    raise ValueError(f"manual Preview {name} must be a non-empty string")
+            preview = self._manual_previews.create(
+                parts[3],
+                item_ids,
+                expected_version=expected_version,
+                expected_item_versions=expected_item_versions,
+                snapshot_id=document.get("snapshotId"),
+                snapshot_digest=document.get("snapshotDigest"),
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 201, preview.document())
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-intents"]
+            and parts[4] == "previews"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._manual_previews is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual Preview service is unavailable",
+                )
+            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(values).difference({"limit"}) or any(
+                len(value) != 1 for value in values.values()
+            ):
+                raise ValueError("manual Preview query accepts limit once")
+            limit = self._parse_bounded_limit(values.get("limit", ["100"])[0], "manual Preview")
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [
+                        value.document()
+                        for value in self._manual_previews.list(parts[3], limit=limit)
+                    ],
+                    "limit": limit,
+                },
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-intents"]
+            and parts[4] == "preview"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._manual_previews is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual Preview service is unavailable",
+                )
+            self._require_empty_query(environ, "current manual Preview")
+            return self._response(
+                start_response,
+                200,
+                self._manual_previews.latest(parts[3]).document(),
+            )
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "manual-previews"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if self._manual_previews is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual Preview service is unavailable",
+                )
+            self._require_empty_query(environ, "manual Preview detail")
+            return self._response(
+                start_response,
+                200,
+                self._manual_previews.get(parts[3]).document(),
+            )
         if parts == ["api", "v1", "manual-intents"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._manual_intents is None:
@@ -3051,6 +3185,8 @@ class MediaFlowApi:
             and parts[:2] == ["api", "v1"]
             and parts[2] in {"manual-organize", "manual-organize-intents"}
         ):
+            return True
+        if parts[:3] == ["api", "v1", "manual-previews"]:
             return True
         return parts[:3] == ["api", "v1", "files"] and (
             len(parts) == 4 or parts == ["api", "v1", "files", "by-source"]

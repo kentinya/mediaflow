@@ -5,6 +5,10 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
+from mediaflow.domain.manual_organize_preview import (
+    ManualOrganizePreview,
+    ManualPreviewItem,
+)
 from mediaflow.domain.recovery import RecoveryRequest
 
 
@@ -159,6 +163,23 @@ class ConflictDecisionAudit:
 
 
 class PersistentTaskRepository(Protocol):
+    def create_manual_preview(
+        self,
+        preview: ManualOrganizePreview,
+        items: tuple[ManualPreviewItem, ...] | list[ManualPreviewItem] | None = None,
+    ) -> ManualOrganizePreview: ...
+    def get_manual_preview(self, preview_id: str) -> ManualOrganizePreview | None: ...
+    def list_manual_previews(
+        self, intent_id: str, *, limit: int = 100
+    ) -> tuple[ManualOrganizePreview, ...]: ...
+    def get_latest_manual_preview(self, intent_id: str) -> ManualOrganizePreview | None: ...
+    def mark_manual_preview_items_stale(
+        self,
+        intent_id: str,
+        item_ids: tuple[str, ...] | list[str],
+        reason: str,
+        now: datetime,
+    ) -> int: ...
     def create_task(self, task: PersistentTask) -> None: ...
     def update_task(self, task: PersistentTask) -> None: ...
     def request_task_pause(self, task_id: str, updated_at: datetime) -> PersistentTask: ...

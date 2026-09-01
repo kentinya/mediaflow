@@ -55,6 +55,13 @@ from mediaflow.domain.manual_organize import (
     ManualOrganizeIntent,
     ManualSourceIdentity,
 )
+from mediaflow.domain.manual_organize_preview import (
+    ManualOrganizePreview,
+    ManualPreviewItem,
+    ManualPreviewItemStatus,
+    ManualPreviewStatus,
+    ManualPreviewUnavailable,
+)
 from mediaflow.domain.media_evidence import PipelineEvidence, evidence_from_document
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionBatchResolveRequest,
@@ -121,7 +128,7 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestDecision
 
-# Manual intent tables are an additive migration on the current runtime schema.
+# Manual intent and Preview tables are additive migrations on the current runtime schema.
 # Keep the public runtime marker at 27 for compatibility with existing backup
 # and migration consumers; the table creation below is idempotent and upgrades
 # older runtime databases without rewriting existing rows.
@@ -4631,6 +4638,288 @@ class SQLiteTaskRepository:
     ) -> ManualOrganizeIntent:
         return self.create_manual_intent_with_audit(intent, items, audit)
 
+    def create_manual_preview(
+        self,
+        preview: ManualOrganizePreview,
+        items: tuple[ManualPreviewItem, ...] | list[ManualPreviewItem] | None = None,
+    ) -> ManualOrganizePreview:
+        """Publish one complete Preview atomically.
+
+        A new Preview supersedes only the selected item identities.  The old
+        aggregate is retained as history and its unselected child rows remain
+        independently inspectable, so a bounded batch cannot erase a sibling
+        merely because another item was re-previewed.
+        """
+        if not isinstance(preview, ManualOrganizePreview):
+            raise ValueError("manual Preview projection is required")
+        values = tuple(preview.items if items is None else items)
+        if values != preview.items:
+            raise ValueError("manual Preview items do not match the projection")
+        if any(
+            not isinstance(value, ManualPreviewItem)
+            or value.preview_id != preview.preview_id
+            or value.intent_id != preview.intent_id
+            for value in values
+        ):
+            raise ValueError("manual Preview item ownership is invalid")
+        item_ids = tuple(value.item_id for value in values)
+        placeholders = ", ".join("?" for _ in item_ids)
+        superseded_error = "superseded by a newer Preview for this item"
+        superseded_action = "inspect the newer Preview or request a fresh Preview"
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                intent_row = self._connection.execute(
+                    "SELECT status, version, configuration_snapshot_id, "
+                    "configuration_snapshot_digest FROM manual_intents WHERE intent_id=?",
+                    (preview.intent_id,),
+                ).fetchone()
+                if intent_row is None:
+                    raise LookupError(f"manual intent {preview.intent_id!r} was not found")
+                if (
+                    intent_row["status"] != ManualIntentStatus.OPEN.value
+                    or int(intent_row["version"]) != preview.intent_version
+                    or intent_row["configuration_snapshot_id"] != preview.configuration_snapshot_id
+                    or intent_row["configuration_snapshot_digest"]
+                    != preview.configuration_snapshot_digest
+                ):
+                    raise ManualIntentConflict(
+                        "manual intent changed; no Preview was published",
+                        current_version=int(intent_row["version"]),
+                    )
+                for item in values:
+                    current_row = self._connection.execute(
+                        "SELECT * FROM manual_intent_items WHERE intent_id=? AND item_id=?",
+                        (preview.intent_id, item.item_id),
+                    ).fetchone()
+                    if current_row is None:
+                        raise LookupError(f"manual intent item {item.item_id!r} was not found")
+                    current_item = self._manual_item(current_row)
+                    if (
+                        current_item.version != item.item_version
+                        or current_item.status is not ManualIntentItemStatus.READY
+                        or current_item.source.document() != item.source.document()
+                        or current_item.choice.document() != item.choice.document()
+                    ):
+                        raise ManualIntentConflict(
+                            "manual intent item changed; no Preview was published",
+                            current_version=int(intent_row["version"]),
+                        )
+                old_rows = self._connection.execute(
+                    f"SELECT DISTINCT preview_id FROM manual_preview_items "
+                    f"WHERE intent_id=? AND current=1 AND item_id IN ({placeholders})",
+                    (preview.intent_id, *item_ids),
+                ).fetchall()
+                if old_rows:
+                    old_preview_ids = tuple(row["preview_id"] for row in old_rows)
+                    self._connection.execute(
+                        f"UPDATE manual_preview_items SET status=?, error=?, next_action=?, "
+                        f"current=0, updated_at=? WHERE intent_id=? AND current=1 "
+                        f"AND item_id IN ({placeholders})",
+                        (
+                            ManualPreviewItemStatus.STALE.value,
+                            superseded_error,
+                            superseded_action,
+                            preview.updated_at.isoformat(),
+                            preview.intent_id,
+                            *item_ids,
+                        ),
+                    )
+                    old_parent_placeholders = ", ".join("?" for _ in old_preview_ids)
+                    self._connection.execute(
+                        f"UPDATE manual_previews SET status=?, error=?, next_action=?, "
+                        f"current=0, updated_at=? WHERE current=1 AND preview_id IN "
+                        f"({old_parent_placeholders})",
+                        (
+                            ManualPreviewStatus.STALE.value,
+                            superseded_error,
+                            superseded_action,
+                            preview.updated_at.isoformat(),
+                            *old_preview_ids,
+                        ),
+                    )
+                self._connection.execute(
+                    "INSERT INTO manual_previews "
+                    "(preview_id, intent_id, actor, configuration_snapshot_id, "
+                    "configuration_snapshot_digest, status, intent_version, created_at, "
+                    "updated_at, next_action, error, zero_mutation, current, truncated, "
+                    "previous_preview_id, unselected_item_ids_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        preview.preview_id,
+                        preview.intent_id,
+                        preview.actor,
+                        preview.configuration_snapshot_id,
+                        preview.configuration_snapshot_digest,
+                        preview.status.value,
+                        preview.intent_version,
+                        preview.created_at.isoformat(),
+                        preview.updated_at.isoformat(),
+                        preview.next_action,
+                        preview.error,
+                        int(preview.zero_mutation),
+                        int(preview.current),
+                        int(preview.truncated),
+                        preview.previous_preview_id,
+                        json.dumps(
+                            list(preview.unselected_item_ids),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    ),
+                )
+                for item in values:
+                    self._connection.execute(
+                        "INSERT INTO manual_preview_items "
+                        "(preview_item_id, preview_id, intent_id, item_id, position, "
+                        "intent_version, item_version, source_json, choice_json, "
+                        "configuration_snapshot_id, configuration_snapshot_digest, "
+                        "source_fingerprint, source_evidence_versions_json, "
+                        "review_versions_json, conflict_versions_json, input_fingerprint, "
+                        "plan_fingerprint, status, plan_json, error, next_action, "
+                        "zero_mutation, execution_state, truncated, created_at, updated_at, "
+                        "current) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        "?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            item.preview_item_id,
+                            item.preview_id,
+                            item.intent_id,
+                            item.item_id,
+                            item.position,
+                            item.intent_version,
+                            item.item_version,
+                            json.dumps(item.source.document(), ensure_ascii=False, sort_keys=True),
+                            json.dumps(item.choice.document(), ensure_ascii=False, sort_keys=True),
+                            item.configuration_snapshot_id,
+                            item.configuration_snapshot_digest,
+                            item.source_fingerprint,
+                            json.dumps(
+                                list(item.source_evidence_versions),
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            ),
+                            json.dumps(
+                                list(item.review_versions),
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            ),
+                            json.dumps(
+                                list(item.conflict_versions),
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            ),
+                            item.input_fingerprint,
+                            item.plan_fingerprint,
+                            item.status.value,
+                            json.dumps(item.plan, ensure_ascii=False, sort_keys=True)
+                            if item.plan is not None
+                            else None,
+                            item.error,
+                            item.next_action,
+                            int(item.zero_mutation),
+                            item.execution_state,
+                            int(item.truncated),
+                            item.created_at.isoformat(),
+                            item.updated_at.isoformat(),
+                            int(item.current),
+                        ),
+                    )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        value = self.get_manual_preview(preview.preview_id)
+        if value is None:
+            raise ManualPreviewUnavailable(
+                "published manual Preview could not be reloaded",
+                details={"previewId": preview.preview_id},
+            )
+        return value
+
+    def get_manual_preview(self, preview_id: str) -> ManualOrganizePreview | None:
+        if not isinstance(preview_id, str) or not preview_id.strip():
+            raise ValueError("manual Preview ID is required")
+        with self._lock:
+            return self._load_manual_preview_locked(preview_id)
+
+    def list_manual_previews(
+        self, intent_id: str, *, limit: int = 100
+    ) -> tuple[ManualOrganizePreview, ...]:
+        if not isinstance(intent_id, str) or not intent_id.strip():
+            raise ValueError("manual intent ID is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("manual Preview limit must be between 1 and 500")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT preview_id FROM manual_previews WHERE intent_id=? "
+                "ORDER BY created_at DESC, preview_id DESC LIMIT ?",
+                (intent_id, limit),
+            ).fetchall()
+            return tuple(self._load_manual_preview_locked(row["preview_id"]) for row in rows)
+
+    def get_latest_manual_preview(self, intent_id: str) -> ManualOrganizePreview | None:
+        values = self.list_manual_previews(intent_id, limit=1)
+        return values[0] if values else None
+
+    def mark_manual_preview_items_stale(
+        self,
+        intent_id: str,
+        item_ids: tuple[str, ...] | list[str],
+        reason: str,
+        now: datetime,
+    ) -> int:
+        if not isinstance(intent_id, str) or not intent_id.strip():
+            raise ValueError("manual intent ID is required")
+        values = tuple(item_ids)
+        if not values:
+            return 0
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 512:
+            raise ValueError("manual Preview stale reason is invalid")
+        if now.tzinfo is None:
+            raise ValueError("manual Preview stale timestamp must include timezone")
+        placeholders = ", ".join("?" for _ in values)
+        action = "request a fresh Preview for the affected item(s)"
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = self._connection.execute(
+                    f"SELECT DISTINCT preview_id FROM manual_preview_items WHERE intent_id=? "
+                    f"AND current=1 AND item_id IN ({placeholders})",
+                    (intent_id, *values),
+                ).fetchall()
+                cursor = self._connection.execute(
+                    f"UPDATE manual_preview_items SET status=?, error=?, next_action=?, "
+                    f"current=0, updated_at=? WHERE intent_id=? AND current=1 "
+                    f"AND item_id IN ({placeholders})",
+                    (
+                        ManualPreviewItemStatus.STALE.value,
+                        reason,
+                        "request a fresh Preview for this item",
+                        now.isoformat(),
+                        intent_id,
+                        *values,
+                    ),
+                )
+                preview_ids = tuple(row["preview_id"] for row in rows)
+                for preview_id in preview_ids:
+                    self._connection.execute(
+                        "UPDATE manual_previews SET status=?, error=?, next_action=?, "
+                        "current=0, updated_at=? WHERE preview_id=? AND current=1",
+                        (
+                            ManualPreviewStatus.STALE.value,
+                            reason,
+                            action,
+                            now.isoformat(),
+                            preview_id,
+                        ),
+                    )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return cursor.rowcount
+
     def get_manual_intent(self, intent_id: str) -> ManualOrganizeIntent | None:
         if not isinstance(intent_id, str) or not intent_id.strip():
             raise ValueError("manual intent ID is required")
@@ -4731,6 +5020,34 @@ class SQLiteTaskRepository:
                         "manual intent item version is stale; no choice was changed",
                         intent=self._load_manual_intent_locked(intent.intent_id),
                     )
+                preview_stale_error = "manual choice changed after Preview"
+                preview_stale_action = "request a fresh Preview for this item"
+                self._connection.execute(
+                    "UPDATE manual_preview_items SET status=?, error=?, next_action=?, "
+                    "current=0, updated_at=? WHERE intent_id=? AND item_id=? AND current=1",
+                    (
+                        ManualPreviewItemStatus.STALE.value,
+                        preview_stale_error,
+                        preview_stale_action,
+                        item.updated_at.isoformat(),
+                        item.intent_id,
+                        item.item_id,
+                    ),
+                )
+                self._connection.execute(
+                    "UPDATE manual_previews SET status=?, error=?, next_action=?, "
+                    "current=0, updated_at=? WHERE current=1 AND preview_id IN "
+                    "(SELECT preview_id FROM manual_preview_items WHERE intent_id=? "
+                    "AND item_id=?)",
+                    (
+                        ManualPreviewStatus.STALE.value,
+                        preview_stale_error,
+                        preview_stale_action,
+                        item.updated_at.isoformat(),
+                        item.intent_id,
+                        item.item_id,
+                    ),
+                )
                 self._insert_manual_intent_audit(audit)
                 self._connection.commit()
             except BaseException:
@@ -4784,12 +5101,106 @@ class SQLiteTaskRepository:
                         intent.intent_id,
                     ),
                 )
+                preview_stale_error = "manual intent was cancelled after Preview"
+                preview_stale_action = "create a new intent before requesting Preview"
+                self._connection.execute(
+                    "UPDATE manual_preview_items SET status=?, error=?, next_action=?, "
+                    "current=0, updated_at=? WHERE intent_id=? AND current=1",
+                    (
+                        ManualPreviewItemStatus.STALE.value,
+                        preview_stale_error,
+                        preview_stale_action,
+                        intent.updated_at.isoformat(),
+                        intent.intent_id,
+                    ),
+                )
+                self._connection.execute(
+                    "UPDATE manual_previews SET status=?, error=?, next_action=?, "
+                    "current=0, updated_at=? WHERE intent_id=? AND current=1",
+                    (
+                        ManualPreviewStatus.STALE.value,
+                        preview_stale_error,
+                        preview_stale_action,
+                        intent.updated_at.isoformat(),
+                        intent.intent_id,
+                    ),
+                )
                 self._insert_manual_intent_audit(audit)
                 self._connection.commit()
             except BaseException:
                 self._connection.rollback()
                 raise
         return self.get_manual_intent(intent.intent_id)
+
+    def _load_manual_preview_locked(self, preview_id: str) -> ManualOrganizePreview | None:
+        row = self._connection.execute(
+            "SELECT * FROM manual_previews WHERE preview_id=?", (preview_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        item_rows = self._connection.execute(
+            "SELECT * FROM manual_preview_items WHERE preview_id=? "
+            "ORDER BY position ASC, item_id ASC",
+            (preview_id,),
+        ).fetchall()
+        try:
+            items = tuple(self._manual_preview_item(value) for value in item_rows)
+            return ManualOrganizePreview(
+                preview_id=row["preview_id"],
+                intent_id=row["intent_id"],
+                actor=row["actor"],
+                intent_version=int(row["intent_version"]),
+                configuration_snapshot_id=row["configuration_snapshot_id"],
+                configuration_snapshot_digest=row["configuration_snapshot_digest"],
+                status=ManualPreviewStatus(row["status"]),
+                items=items,
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+                next_action=row["next_action"],
+                error=row["error"],
+                zero_mutation=bool(row["zero_mutation"]),
+                current=bool(row["current"]),
+                truncated=bool(row["truncated"]),
+                previous_preview_id=row["previous_preview_id"],
+                unselected_item_ids=tuple(json.loads(row["unselected_item_ids_json"])),
+            )
+        except Exception as error:
+            raise ManualPreviewUnavailable(
+                "durable manual Preview state is corrupt or unavailable",
+                details={"previewId": preview_id, "reason": type(error).__name__},
+            ) from error
+
+    @staticmethod
+    def _manual_preview_item(row: sqlite3.Row) -> ManualPreviewItem:
+        return ManualPreviewItem(
+            preview_item_id=row["preview_item_id"],
+            preview_id=row["preview_id"],
+            intent_id=row["intent_id"],
+            item_id=row["item_id"],
+            position=int(row["position"]),
+            intent_version=int(row["intent_version"]),
+            item_version=int(row["item_version"]),
+            source=ManualSourceIdentity.from_document(json.loads(row["source_json"])),
+            choice=ManualChoice.from_document(json.loads(row["choice_json"])),
+            configuration_snapshot_id=row["configuration_snapshot_id"],
+            configuration_snapshot_digest=row["configuration_snapshot_digest"],
+            source_fingerprint=row["source_fingerprint"],
+            source_evidence_versions=tuple(json.loads(row["source_evidence_versions_json"])),
+            review_versions=tuple(json.loads(row["review_versions_json"])),
+            conflict_versions=tuple(json.loads(row["conflict_versions_json"])),
+            input_fingerprint=row["input_fingerprint"],
+            plan_fingerprint=row["plan_fingerprint"],
+            status=ManualPreviewItemStatus(row["status"]),
+            plan=json.loads(row["plan_json"]) if row["plan_json"] is not None else None,
+            error=row["error"],
+            next_action=row["next_action"],
+            zero_mutation=bool(row["zero_mutation"]),
+            execution_state=row["execution_state"],
+            truncated=bool(row["truncated"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+            current=bool(row["current"]),
+        )
 
     def _load_manual_intent_locked(self, intent_id: str) -> ManualOrganizeIntent | None:
         row = self._connection.execute(
@@ -5126,6 +5537,44 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS manual_intent_audit_order
                     ON manual_intent_audit(intent_id, occurred_at, audit_id);
+                CREATE TABLE IF NOT EXISTS manual_previews (
+                    preview_id TEXT PRIMARY KEY, intent_id TEXT NOT NULL,
+                    actor TEXT NOT NULL, configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL, status TEXT NOT NULL,
+                    intent_version INTEGER NOT NULL, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, next_action TEXT NOT NULL, error TEXT,
+                    zero_mutation INTEGER NOT NULL, current INTEGER NOT NULL DEFAULT 1,
+                    truncated INTEGER NOT NULL DEFAULT 0, previous_preview_id TEXT,
+                    unselected_item_ids_json TEXT NOT NULL,
+                    FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_previews_intent_created
+                    ON manual_previews(intent_id, created_at, preview_id);
+                CREATE TABLE IF NOT EXISTS manual_preview_items (
+                    preview_item_id TEXT PRIMARY KEY, preview_id TEXT NOT NULL,
+                    intent_id TEXT NOT NULL, item_id TEXT NOT NULL, position INTEGER NOT NULL,
+                    intent_version INTEGER NOT NULL, item_version INTEGER NOT NULL,
+                    source_json TEXT NOT NULL, choice_json TEXT NOT NULL,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    source_fingerprint TEXT NOT NULL,
+                    source_evidence_versions_json TEXT NOT NULL,
+                    review_versions_json TEXT NOT NULL,
+                    conflict_versions_json TEXT NOT NULL,
+                    input_fingerprint TEXT NOT NULL, plan_fingerprint TEXT,
+                    status TEXT NOT NULL, plan_json TEXT, error TEXT,
+                    next_action TEXT NOT NULL, zero_mutation INTEGER NOT NULL,
+                    execution_state TEXT NOT NULL, truncated INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    current INTEGER NOT NULL DEFAULT 1,
+                    UNIQUE(preview_id, item_id),
+                    FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
+                    FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_preview_items_intent_current
+                    ON manual_preview_items(intent_id, item_id, current);
+                CREATE INDEX IF NOT EXISTS manual_preview_items_preview_order
+                    ON manual_preview_items(preview_id, position, item_id);
                 CREATE TABLE IF NOT EXISTS file_locks (
                     storage_id TEXT NOT NULL, path TEXT NOT NULL, task_id TEXT NOT NULL,
                     acquired_at TEXT NOT NULL, PRIMARY KEY(storage_id, path)

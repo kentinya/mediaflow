@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 24.3
 Parent Slice: 24 — Files / Media Detail and Manual Organize
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: 15bec9b829ba65cedc62d2590dcc352b3849a442
 Difficulty: High
 Test Level: T4

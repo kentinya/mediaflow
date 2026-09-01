@@ -658,6 +658,25 @@ stops for investigation instead of automatic replay.
 The operator must not build an OrganizePlan payload, calculate Storage-relative paths, or invoke
 adapter methods directly.
 
+### Durable Preview boundary (CURRENT; Task 24.3)
+
+The current Files/detail journey first opens a durable manual intent, then offers an explicit
+single-item or bounded selected-set Preview. The confirmation shows the pinned Active snapshot and
+the exact selected FileIndex identities. After confirmation, each selected item retains its own
+reloadable status, source-linked evidence, normalized media identity, RecognitionType and policy
+ownership, destination, operation, attachments, capability verdict, conflicts, warnings,
+fingerprints, and recovery action. A sibling that is blocked or unavailable does not hide or
+replace another item's plan; items omitted from a bounded request remain visible as unselected.
+
+Preview is analysis-only. It runs the existing read-only pipeline and Planner against the intent's
+immutable snapshot, persists the exact bounded projection, creates no Task, Job, execution
+authorization, or media effect, and never calls the execution boundary. The Web renders the same
+projection as the authenticated API and labels Storage mutation as `NONE` and execution as
+unavailable in this journey. A changed source, choice, snapshot, linked review/evidence, or
+conflict marks the prior projection stale. Stale evidence remains inspectable, but the only safe
+continuation is to inspect the stated blocker or request a fresh Preview; a read never silently
+rebuilds a plan. Real execution admission remains a later journey.
+
 ## H. File browsing, detail, history, and explanation
 
 ### Starting point

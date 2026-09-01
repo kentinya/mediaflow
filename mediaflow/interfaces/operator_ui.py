@@ -1589,11 +1589,22 @@ APP_JS = b"""(() => {
       detailContent.append(snapshot);
       const options = data.options || {};
       const items = Array.isArray(data.items) ? data.items : [];
+      const previewSelections = new Set(items.map(item => item.itemId));
       detailContent.append(text('h3', `Selected items (${items.length})`));
       items.forEach(item => {
         const source = item.source || {}; const choice = item.choice || {};
         const section = text('div', '', 'choices');
         section.append(text('h4', `${item.itemId} - ${source.filename || source.fileId || '-'}`));
+        if (data.status === 'open') {
+          const include = document.createElement('input'); include.type = 'checkbox';
+          include.checked = true; include.setAttribute('aria-label', `Include ${item.itemId} in Preview`);
+          include.addEventListener('change', () => {
+            if (include.checked) previewSelections.add(item.itemId);
+            else previewSelections.delete(item.itemId);
+          });
+          const includeLabel = text('label', 'Include this item in Preview');
+          includeLabel.append(include); section.append(includeLabel);
+        }
         section.append(text('p', `${source.storageId || '-'} / ${source.resourceLibraryId || '-'} / ${source.path || '-'}`));
         section.append(text('p', `Status: ${item.status}; version: ${item.version}; ` +
           `${item.error || item.nextAction || ''}`, item.status === 'invalid' || item.status === 'stale' ? 'error' : ''));
@@ -1633,8 +1644,19 @@ APP_JS = b"""(() => {
               providerId: providerId.value.trim(), mediaType: mediaType.value ||
                 metadataPolicy && metadataPolicy.mediaType, title: title.value.trim() || undefined,
               year: year.value === '' ? undefined : Number(year.value)} : undefined})));
-        section.append(controls); detailContent.append(section);
+        section.append(controls);
+        if (data.status === 'open') section.append(actionButton('Preview this item',
+          () => confirmManualPreview(data, [item])));
+        detailContent.append(section);
       });
+      if (data.status === 'open' && items.length) {
+        detailContent.append(actionButton('Preview all intent items', () =>
+          confirmManualPreview(data, items.filter(item => previewSelections.has(item.itemId)))));
+        detailContent.append(text('p',
+          'Preview is an explicit analysis operation. It persists exact destinations and ' +
+          'per-item blockers, performs no Storage mutation, and creates no Task, Job or ' +
+          'execution authorization.', 'warning'));
+      }
       if (data.status === 'open') detailContent.append(actionButton('Cancel intent', () =>
         confirmCancelManualIntent(data)));
       if (Array.isArray(data.audit) && data.audit.length) {
@@ -1642,6 +1664,131 @@ APP_JS = b"""(() => {
           ['Audit', 'Action', 'Actor', 'Item', 'Occurred'],
           data.audit.map(item => [item.auditId, item.action, item.actor, item.itemId || '-', item.occurredAt])));
       }
+      detail.hidden = false;
+    } catch (error) { message(errorText(error), true); }
+  }
+  function confirmManualPreview(intent, selectedItems) {
+    const items = Array.isArray(selectedItems) ? selectedItems : [];
+    const values = items.map(item => typeof item === 'string' ? {itemId: item} : item)
+      .filter(item => item && item.itemId);
+    if (!values.length || values.length > 100) {
+      message('Select between 1 and 100 current intent items before requesting Preview.', true);
+      return;
+    }
+    const expectedItemVersions = {};
+    values.forEach(item => {
+      if (item.version !== undefined) expectedItemVersions[item.itemId] = item.version;
+    });
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p',
+      'Request a zero-mutation Preview for ' + values.length + ' item(s) at intent version ' +
+      intent.version + '? The pinned snapshot and exact FileIndex source identities will be ' +
+      'checked. No file is renamed, moved, copied, deleted or overwritten.', 'warning'));
+    confirmation.append(actionButton('Confirm Preview', async () => {
+      try {
+        const body = {expectedVersion: intent.version,
+          itemIds: values.map(item => item.itemId),
+          expectedItemVersions: expectedItemVersions,
+          snapshotId: intent.configurationSnapshotId,
+          snapshotDigest: intent.configurationSnapshotDigest};
+        const preview = await api('/api/v1/manual-intents/' + encodeURIComponent(intent.intentId) + '/preview', {
+          method: 'POST', body: JSON.stringify(body)
+        });
+        await showManualPreview(preview.previewId);
+        message('Preview persisted. No Storage mutation or execution authority was created.');
+      } catch (error) { message(errorText(error), true); }
+    }), actionButton('Keep intent unchanged', () => confirmation.remove()));
+    detailContent.append(confirmation);
+    detail.hidden = false;
+  }
+  function previewReviewPath(value) {
+    if (!value || typeof value !== 'object') return null;
+    const id = value.reviewId || value.confirmationId;
+    const kind = {
+      recognition: 'recognition-reviews', metadata: 'metadata-reviews',
+      metadata_correction: 'metadata-corrections', classification: 'classification-reviews',
+      conflict: 'confirmations'
+    }[value.kind];
+    return id && kind ? `/api/v1/${kind}/${encodeURIComponent(id)}` : null;
+  }
+  async function showManualPreview(previewId) {
+    try {
+      const data = await api('/api/v1/manual-previews/' + encodeURIComponent(previewId));
+      clear(detailContent); detailContent.append(text('h2', 'Manual-organize Preview'));
+      const summary = document.createElement('dl');
+      field(summary, 'Preview', data.previewId);
+      field(summary, 'Intent', data.intentId);
+      field(summary, 'Status', data.status);
+      field(summary, 'Current', data.current ? 'YES' : 'NO - historical/stale evidence');
+      field(summary, 'Intent version', data.intentVersion);
+      field(summary, 'Pinned snapshot', data.configurationSnapshotId);
+      field(summary, 'Pinned digest', data.configurationSnapshotDigest);
+      field(summary, 'Storage mutation', data.zeroMutation ? 'NONE' : 'INVALID');
+      field(summary, 'Execution state', data.executionState || 'not available in this Task');
+      field(summary, 'Next action', data.nextAction || '-');
+      detailContent.append(summary);
+      const items = Array.isArray(data.items) ? data.items : [];
+      items.forEach(item => {
+        const source = item.source || {}; const plan = item.plan || {};
+        const destination = plan.destination || {};
+        const capabilities = plan.capabilities || {};
+        const policies = plan.policies || {};
+        const identity = plan.mediaIdentity || {};
+        const analysis = plan.analysis || {};
+        const section = text('div', '', 'choices');
+        section.append(text('h3', item.itemId + ' - ' + item.status));
+        section.append(text('p', (source.storageId || '-') + ' / ' + (source.path || '-')));
+        section.append(text('p',
+          'Media identity: ' + (identity.title || '-') +
+          (identity.year ? ' (' + identity.year + ')' : '') +
+          '; Provider: ' + (identity.provider || '-') + '/' + (identity.providerId || '-') +
+          '; Plan fingerprint: ' + (item.planFingerprint || '-')));
+        section.append(text('p',
+          'RecognitionType: ' + (plan.recognitionType ||
+            item.choice && item.choice.recognitionTypeId || '-') +
+          '; NamingPolicy: ' + (policies.namingPolicyId || '-') +
+          '; ClassificationPolicy: ' + (policies.classificationPolicyId || '-') +
+          '; OrganizePolicy: ' + (policies.organizePolicyId || '-')));
+        section.append(text('p',
+          'Target: ' + (destination.storageId || '-') + ' / ' + (destination.path || '-') +
+          '; Operation: ' + (plan.operation || '-') +
+          '; Required capabilities: ' + ((capabilities.required || []).join(', ') || 'none') +
+          '; Missing: ' + ((capabilities.missing || []).join(', ') || 'none')));
+        const recognitionReasons = analysis.recognition && analysis.recognition.reasons || [];
+        section.append(text('p',
+          'Attachments: ' + (Array.isArray(plan.attachments) ? plan.attachments.length : 0) +
+          '; Recognition explanation: ' +
+          (recognitionReasons.map(value => value.message || value.code || value).join('; ') || '-')));
+        section.append(text('p',
+          'Zero mutation: ' + (item.zeroMutation ? 'YES' : 'INVALID') +
+          '; Execution: ' + (item.executionState || 'not available in this Task')));
+        if (item.error) section.append(text('p', 'Blocker/failure: ' + item.error, 'error'));
+        if (item.nextAction) section.append(text('p', 'Recovery: ' + item.nextAction, 'warning'));
+        if (Array.isArray(plan.conflicts) && plan.conflicts.length) {
+          section.append(text('p',
+            'Conflicts: ' + plan.conflicts.map(value => value.type || value).join(', '), 'error'));
+          section.append(actionButton('Open conflict resolution queue',
+            () => renderQueue('confirmations')));
+        }
+        if (Array.isArray(plan.warnings) && plan.warnings.length) {
+          section.append(text('p', 'Warnings: ' + plan.warnings.join('; '), 'warning'));
+        }
+        const linked = text('div', '', 'choices');
+        [...(item.reviewVersions || []), ...(item.conflictVersions || [])].forEach(value => {
+          const path = previewReviewPath(value);
+          if (path) linked.append(actionButton('Open linked ' + value.kind, () => showCheckpointBlocker(path)));
+        });
+        if (linked.childNodes.length) {
+          section.append(text('small', 'Linked review/conflict resolution:'), linked);
+        }
+        if (item.status === 'stale' || data.status === 'stale' || data.current === false) {
+          section.append(actionButton('Request fresh Preview',
+            () => showManualIntent(data.intentId)));
+        }
+        detailContent.append(section);
+      });
+      detailContent.append(actionButton('Reload Preview', () => showManualPreview(data.previewId)),
+        actionButton('Open manual intent', () => showManualIntent(data.intentId)));
       detail.hidden = false;
     } catch (error) { message(errorText(error), true); }
   }

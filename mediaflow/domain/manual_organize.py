@@ -322,6 +322,56 @@ class ManualSourceIdentity:
             record.last_scan_id,
         )
 
+    @classmethod
+    def from_document(cls, value: object) -> ManualSourceIdentity:
+        if not isinstance(value, dict):
+            raise ValueError("manual source identity must be an object")
+        allowed = {
+            "fileId",
+            "storageId",
+            "resourceLibraryId",
+            "path",
+            "filename",
+            "extension",
+            "size",
+            "modifiedAt",
+            "lastSeenAt",
+            "updatedAt",
+            "stableSince",
+            "scanStatus",
+            "lastScanId",
+        }
+        unknown = set(value).difference(allowed)
+        if unknown:
+            raise ValueError(f"manual source field {sorted(unknown)[0]!r} is not supported")
+
+        def timestamp(name: str, *, optional: bool = False):
+            raw = value.get(name)
+            if raw is None and optional:
+                return None
+            if not isinstance(raw, str):
+                raise ValueError(f"manual source {name} timestamp is invalid")
+            try:
+                return datetime.fromisoformat(raw)
+            except ValueError as error:
+                raise ValueError(f"manual source {name} timestamp is invalid") from error
+
+        return cls(
+            value.get("fileId", ""),
+            value.get("storageId", ""),
+            value.get("resourceLibraryId", ""),
+            value.get("path", ""),
+            value.get("filename", ""),
+            value.get("extension", ""),
+            value.get("size", -1),
+            timestamp("modifiedAt"),
+            timestamp("lastSeenAt"),
+            timestamp("updatedAt"),
+            timestamp("stableSince", optional=True),
+            value.get("scanStatus", ""),
+            value.get("lastScanId"),
+        )
+
     def document(self) -> dict[str, object]:
         return {
             "fileId": self.file_id,
