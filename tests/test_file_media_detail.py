@@ -262,6 +262,7 @@ class FileMediaDetailTests(unittest.TestCase):
                 unsafe = replace(
                     build_pipeline_evidence(task, item, outcome="failed"),
                     evidence_id="unsafe-append",
+                    source_path=f"Authorization: Bearer {secret}",
                     error=f"Authorization: Bearer {secret}",
                     warnings=(f"token={secret}",),
                     sections={
@@ -303,6 +304,13 @@ class FileMediaDetailTests(unittest.TestCase):
                     result,
                     replace(unsafe, evidence_id="unsafe-completion"),
                 )
+                persisted_paths = repository._connection.execute(
+                    "SELECT source_path FROM pipeline_evidence ORDER BY evidence_id"
+                ).fetchall()
+                self.assertEqual(
+                    [row["source_path"] for row in persisted_paths],
+                    ["Authorization: [redacted]", "Authorization: [redacted]"],
+                )
             self.assertNotIn(secret.encode(), database.read_bytes())
             with SQLiteTaskRepository(database) as reopened:
                 stored = reopened.list_evidence_for_item(item.item_id)
@@ -310,6 +318,9 @@ class FileMediaDetailTests(unittest.TestCase):
                 serialized = json.dumps([value.document() for value in stored], ensure_ascii=False)
                 self.assertNotIn(secret, serialized)
                 self.assertIn("[redacted]", serialized)
+                self.assertEqual(
+                    {value.source_path for value in stored}, {"Authorization: [redacted]"}
+                )
 
     def test_historical_unsafe_evidence_is_redacted_on_read_without_rewrite(self) -> None:
         secret = "closure-review-secret"
@@ -324,6 +335,7 @@ class FileMediaDetailTests(unittest.TestCase):
                     task.task_id, "source", "movies", "Movies/A.mkv", "Movies/A.mkv"
                 )
                 raw_document = build_pipeline_evidence(task, item, outcome="failed").document()
+                raw_document["sourcePath"] = f"Authorization: Bearer {secret}"
                 raw_document["error"] = f"Authorization: Bearer {secret}"
                 raw_document["warnings"] = [f"token={secret}"]
                 raw_document["sections"]["operation"] = {
@@ -392,6 +404,7 @@ class FileMediaDetailTests(unittest.TestCase):
             self.assertNotIn(secret, application_document)
             self.assertNotIn(secret, response_text)
             self.assertIn("[redacted]", response_text)
+            self.assertEqual(response["evidence"][0]["sourcePath"], "Authorization: [redacted]")
             self.assertEqual(before, raw_json)
             self.assertEqual(after, raw_json)
             self.assertIn("JSON.stringify(item)", APP_JS.decode())
