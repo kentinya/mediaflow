@@ -22,6 +22,9 @@ class ApiPermission(StrEnum):
     # as an enum alias so role sets and backwards-compatible tokens remain
     # unchanged while adapters can state the narrower capability.
     MANAGE_MANUAL_ORGANIZE = "submit_dry_run"
+    # Exact manual execution is still separately gated by a one-shot authority;
+    # this permission only admits the operator into that explicit workflow.
+    EXECUTE_MANUAL_ORGANIZE = "execute_manual_organize"
     CANCEL_JOB = "cancel_job"
     RESOLVE_CONFIRMATION = "resolve_confirmation"
     RESOLVE_METADATA_REVIEW = "resolve_metadata_review"
@@ -42,6 +45,7 @@ ROLE_PERMISSIONS = {
             ApiPermission.RESOLVE_CONFIRMATION,
             ApiPermission.RESOLVE_METADATA_REVIEW,
             ApiPermission.RESOLVE_CLASSIFICATION_REVIEW,
+            ApiPermission.EXECUTE_MANUAL_ORGANIZE,
         }
     ),
     ApiRole.EXECUTOR: frozenset(
@@ -53,6 +57,7 @@ ROLE_PERMISSIONS = {
             ApiPermission.RESOLVE_METADATA_REVIEW,
             ApiPermission.RESOLVE_CLASSIFICATION_REVIEW,
             ApiPermission.REMOTE_EXECUTE,
+            ApiPermission.EXECUTE_MANUAL_ORGANIZE,
         }
     ),
     ApiRole.AUDITOR: frozenset({ApiPermission.READ, ApiPermission.READ_SECURITY_AUDIT}),

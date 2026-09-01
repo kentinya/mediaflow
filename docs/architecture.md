@@ -1998,6 +1998,43 @@ and the fresh-Preview recovery action. Preview wraps every configured Storage ad
 read-only guard, performs only analysis reads, never creates a Task/Job/authorization, and never
 calls `OrganizerExecutor`; execution admission remains a separate future boundary.
 
+## Exact reviewed manual execution architecture: CURRENT (Task 24.4)
+
+Task 24.4 extends the Preview boundary with a distinct, explicit execution authority. The execution
+service accepts only a current Preview ID, bounded selected item IDs, exact optimistic versions,
+snapshot identity, the persisted plan fingerprints, actor/permission and a positive confirmation.
+It reconstructs executor input from the immutable Preview projection; request bodies cannot provide a
+source, destination, operation, Provider payload or adapter call. The authority is auditable, bounded
+by the selected set, expires, and is consumed once.
+
+Admission is a SQLite `BEGIN IMMEDIATE` transaction. It rechecks the open intent, current Preview and
+each selected Preview item, source identity, choice, plan fingerprint, snapshot, conflict decision,
+capability verdict and destructive-operation authority. It creates the exact existing `Task`/
+`TaskItem` scope and the companion manual-execution/effect records in that transaction, then acquires
+the normalized source, destination and attachment path locks. A failed or concurrent admission creates
+no execution Task and does not mutate media Storage. The existing `FileOperationLockRepository` is
+also used as the execution fence; locks are released only after the item Result and effect evidence
+are durable.
+
+For an admitted item, `ManualOrganizeExecutionService` reloads the pinned runtime and exact persisted
+plan, revalidates current Storage capability and destination/conflict state, and invokes
+`OrganizerExecutor` with `execute=True`. `OrganizerExecutor` remains the only mutation boundary for
+Move, Copy, HardLink, SoftLink, attachment transfer and configured source-directory cleanup. Link
+operations verify their link type rather than treating a symlink's lstat size as media size;
+unsupported capabilities fail explicitly and never fall back. RecognitionType C and its downstream
+A policy ownership are copied into Result evidence without changing the recognition identity.
+
+Each item gets its own durable Result, completed-operation/effect evidence, status, error, effect
+certainty and TaskItem checkpoint. Known successful effects are recorded as verified; pre-mutation
+failure remains eligible only for the existing safe checkpoint recovery when its pinned snapshot is
+resolvable, while partial/unknown mutation is investigation-only. A process restart reloads the
+authority, execution, Task/TaskItem, Result, effect and checkpoint projection; it never replays an
+admitted mutation or silently rebuilds the plan. API and Operator Web use this same service and
+projection, including the separate manual-execution permission and two explicit confirmation steps.
+
+Scheduled unattended execution, automatic crash replay, universal compensation, remote setup and
+provider switching remain outside this boundary.
+
 ### Remaining recovery TARGET
 
 Slice 23 does not implement automatic replay of uncertain media mutation, cross-run compensation or

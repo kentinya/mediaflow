@@ -675,7 +675,33 @@ projection as the authenticated API and labels Storage mutation as `NONE` and ex
 unavailable in this journey. A changed source, choice, snapshot, linked review/evidence, or
 conflict marks the prior projection stale. Stale evidence remains inspectable, but the only safe
 continuation is to inspect the stated blocker or request a fresh Preview; a read never silently
-rebuilds a plan. Real execution admission remains a later journey.
+rebuilds a plan. The separate exact-execution journey below begins only after this review state is
+current and executable.
+
+### Exact reviewed manual execution (CURRENT; Task 24.4)
+
+From a current Preview, the operator selects the exact Previewed item set, sees the pinned snapshot,
+destination, operation, conflicts, capability verdict and destructive-operation implications, and
+clicks an explicit authorization action. A second explicit confirmation consumes the one-shot
+authority and starts the existing Task/TaskItem execution scope. The operator never supplies a path,
+operation, transfer command or Provider payload; the service executes the persisted reviewed plan.
+
+After execution, reloadable state shows the parent execution and every selected/unselected item
+independently: Task/TaskItem status, Result, source/target, attachments, completed effects,
+verification/effect certainty, errors and the linked Processing Checkpoint. A successful item is
+terminal and is not replayed; an unselected sibling remains untouched and visible as unselected.
+
+Pre-mutation failure explains the affected item and offers repair plus a fresh Preview, or the safe
+checkpoint retry when the pinned snapshot is still resolvable. Partial or uncertain mutation shows
+the known effects and provides only the checkpoint's investigation/recovery action; it does not
+pretend that retry is safe and does not automatically replay. Concurrent, stale, blocked,
+unsupported-capability, unresolved-conflict or insufficient-authority requests fail before
+OrganizerExecutor/Storage mutation and identify the durable next action.
+
+API and Operator Web call the same admission and execution service, RBAC, confirmations and bounded
+projection. Opening or reloading an authorization or execution record is read-only: it consumes no
+new authority, creates no Task, does not replan, and does not invoke Storage. Scheduled unattended
+execution and automatic crash replay remain deferred.
 
 ## H. File browsing, detail, history, and explanation
 

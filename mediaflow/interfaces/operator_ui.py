@@ -1785,10 +1785,167 @@ APP_JS = b"""(() => {
           section.append(actionButton('Request fresh Preview',
             () => showManualIntent(data.intentId)));
         }
+        if (item.status === 'previewed' && item.current && plan.executionPlan) {
+          section.append(actionButton('Authorize this exact item',
+            () => confirmManualAuthorization(data, [item])));
+        }
         detailContent.append(section);
       });
+      const selectedIds = data.selection && Array.isArray(data.selection.selectedItemIds) ?
+        new Set(data.selection.selectedItemIds) : new Set();
+      const executable = items.filter(item => item.status === 'previewed' && item.current &&
+        item.plan && item.plan.executionPlan && (!selectedIds.size || selectedIds.has(item.itemId)));
+      if (executable.length) {
+        detailContent.append(actionButton(`Authorize ${executable.length} exact item(s)`,
+          () => confirmManualAuthorization(data, executable)));
+      }
       detailContent.append(actionButton('Reload Preview', () => showManualPreview(data.previewId)),
         actionButton('Open manual intent', () => showManualIntent(data.intentId)));
+      detail.hidden = false;
+    } catch (error) { message(errorText(error), true); }
+  }
+  function confirmManualAuthorization(preview, selectedItems) {
+    const values = (Array.isArray(selectedItems) ? selectedItems : [])
+      .filter(item => item && item.itemId && item.plan && item.plan.executionPlan &&
+        item.status === 'previewed' && item.current);
+    if (!values.length || values.length > 100) {
+      message('Select between 1 and 100 current Preview items with complete plans.', true);
+      return;
+    }
+    const needsOverwrite = values.some(item =>
+      item.plan.executionPlan.overwriteAuthorized === true);
+    const needsCleanup = values.some(item => {
+      const cleanup = item.plan.executionPlan.sourceDirectoryCleanup || {};
+      return cleanup.mode && cleanup.mode !== 'none';
+    });
+    const controls = text('div', '', 'choices');
+    const overwrite = document.createElement('input'); overwrite.type = 'checkbox';
+    overwrite.checked = false; overwrite.disabled = !needsOverwrite;
+    overwrite.setAttribute('aria-label', 'Authorize reviewed overwrite');
+    const overwriteLabel = text('label', 'Authorize the reviewed overwrite operation');
+    overwriteLabel.append(overwrite); controls.append(overwriteLabel);
+    const cleanup = document.createElement('input'); cleanup.type = 'checkbox';
+    cleanup.checked = false; cleanup.disabled = !needsCleanup;
+    cleanup.setAttribute('aria-label', 'Authorize reviewed source cleanup');
+    const cleanupLabel = text('label', 'Authorize the reviewed source-directory cleanup');
+    cleanupLabel.append(cleanup); controls.append(cleanupLabel);
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p',
+      `Create one one-shot authorization for ${values.length} exact Preview item(s)? ` +
+      'The pinned snapshot, source identities, choices, plan fingerprints and destinations will be checked again. ' +
+      'This action does not mutate Storage.', 'warning'), controls);
+    confirmation.append(actionButton('Create exact execution authorization', async () => {
+      if ((needsOverwrite && !overwrite.checked) || (needsCleanup && !cleanup.checked)) {
+        message('Explicitly authorize each destructive operation shown above.', true);
+        return;
+      }
+      try {
+        const expectedItemVersions = {};
+        values.forEach(item => { expectedItemVersions[item.itemId] = item.itemVersion; });
+        const authority = await api(`/api/v1/manual-previews/${encodeURIComponent(preview.previewId)}/authorize`, {
+          method: 'POST', body: JSON.stringify({
+            expectedVersion: preview.intentVersion,
+            expectedItemVersions,
+            itemIds: values.map(item => item.itemId),
+            snapshotId: preview.configurationSnapshotId,
+            snapshotDigest: preview.configurationSnapshotDigest,
+            confirmation: true,
+            allowOverwrite: overwrite.checked,
+            allowSourceCleanup: cleanup.checked
+          })
+        });
+        await showManualAuthorization(authority);
+        message('One-shot authorization persisted. Storage was not changed; execute it explicitly below.');
+      } catch (error) { message(errorText(error), true); }
+    }), actionButton('Keep Preview unchanged', () => confirmation.remove()));
+    detailContent.append(confirmation); detail.hidden = false;
+  }
+  async function showManualAuthorization(authority) {
+    const data = authority && authority.authorizationId ? authority :
+      await api(`/api/v1/manual-execution-authorizations/${encodeURIComponent(authority)}`);
+    clear(detailContent); detailContent.append(text('h2', 'Exact execution authorization'));
+    const summary = document.createElement('dl');
+    field(summary, 'Authorization', data.authorizationId);
+    field(summary, 'Preview', data.previewId);
+    field(summary, 'Actor', data.actor);
+    field(summary, 'Status', data.status);
+    field(summary, 'Pinned snapshot', data.configurationSnapshotId);
+    field(summary, 'Expires', data.expiresAt);
+    field(summary, 'Scope', data.scope && data.scope.length);
+    field(summary, 'Storage mutation', 'NONE until explicit Execute');
+    field(summary, 'Next action', data.nextAction || '-');
+    detailContent.append(summary);
+    if (data.destructiveAuthority) detailContent.append(text('p',
+      'Destructive authority: overwrite=' + (data.destructiveAuthority.allowOverwrite ? 'YES' : 'NO') +
+      ', source cleanup=' + (data.destructiveAuthority.allowSourceCleanup ? 'YES' : 'NO'), 'warning'));
+    if (data.audit && data.audit.length) detailContent.append(text('h3', 'Authorization audit'), table(
+      ['Action', 'Actor', 'Time', 'Execution'],
+      data.audit.map(item => [item.action, item.actor || '-', item.occurredAt, item.executionId || '-'])));
+    if (data.status === 'active') detailContent.append(actionButton('Execute this exact authorization',
+      () => confirmManualExecution(data)));
+    if (data.executionId) detailContent.append(actionButton('Open durable execution',
+      () => showManualExecution(data.executionId)));
+    detailContent.append(actionButton('Reload authorization',
+      () => showManualAuthorization(data.authorizationId)),
+      actionButton('Open Preview', () => showManualPreview(data.previewId)));
+    detail.hidden = false;
+  }
+  function confirmManualExecution(authority) {
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p',
+      `Execute authorization ${authority.authorizationId} exactly once? ` +
+      'The current source, destination, capability and conflict state will be revalidated. ' +
+      'Results and effects will be saved per item; uncertain mutation will not be replayed.', 'warning'));
+    confirmation.append(actionButton('Confirm exact execution', async () => {
+      try {
+        const execution = await api(`/api/v1/manual-execution-authorizations/${encodeURIComponent(authority.authorizationId)}/execute`, {
+          method: 'POST', body: JSON.stringify({confirmation: true})
+        });
+        await showManualExecution(execution.executionId);
+        message('Exact execution completed or recorded per item. Review each Result and checkpoint.');
+      } catch (error) { message(errorText(error), true); }
+    }), actionButton('Do not execute', () => confirmation.remove()));
+    detailContent.append(confirmation);
+  }
+  async function showManualExecution(executionId) {
+    try {
+      const data = await api(`/api/v1/manual-executions/${encodeURIComponent(executionId)}`);
+      clear(detailContent); detailContent.append(text('h2', 'Manual execution result'));
+      const summary = document.createElement('dl');
+      field(summary, 'Execution', data.executionId);
+      field(summary, 'Task', data.taskId);
+      field(summary, 'Status', data.status);
+      field(summary, 'Selection', data.selection && data.selection.selectedItemIds &&
+        data.selection.selectedItemIds.length);
+      field(summary, 'Next action', data.nextAction || '-');
+      detailContent.append(summary);
+      const items = Array.isArray(data.items) ? data.items : [];
+      items.forEach(item => {
+        const section = text('div', '', 'choices');
+        section.append(text('h3', `${item.itemId} - ${item.status}`));
+        section.append(text('p', `Stage: ${item.stage}; Result: ${item.resultId || '-'}; ` +
+          `Effect certainty: ${item.effectCertainty || 'unknown'}`));
+        section.append(text('p', `Completed operations: ${(item.completedOperations || []).join(', ') || 'none'}`));
+        if (item.error) section.append(text('p', `Failure: ${item.error}`, 'error'));
+        if (item.nextAction) section.append(text('p', `Recovery: ${item.nextAction}`, 'warning'));
+        const effects = Array.isArray(item.effects) ? item.effects : [];
+        if (effects.length) section.append(text('h4', 'Operation effects'), table(
+          ['Action', 'Source', 'Destination', 'Verified', 'Certainty'],
+          effects.map(effect => [effect.action,
+            `${effect.sourceStorageId || '-'} / ${effect.sourcePath || '-'}`,
+            `${effect.destinationStorageId || '-'} / ${effect.destinationPath || '-'}`,
+            effect.verified ? 'YES' : 'NO', effect.certainty || '-'])));
+        if (item.checkpoint) {
+          section.append(text('p', `Checkpoint: ${item.checkpoint.status}; ` +
+            `retry safety: ${item.checkpoint.retry_safety || '-'}; ` +
+            `permitted actions: ${(item.checkpoint.permitted_action_ids || []).join(', ') || 'none'}`));
+        }
+        section.append(actionButton('Open Processing Checkpoint',
+          () => showTaskItem(data.taskId, item.taskItemId)));
+        detailContent.append(section);
+      });
+      detailContent.append(actionButton('Reload execution', () => showManualExecution(data.executionId)),
+        actionButton('Open Task', () => showTask(data.taskId)));
       detail.hidden = false;
     } catch (error) { message(errorText(error), true); }
   }
