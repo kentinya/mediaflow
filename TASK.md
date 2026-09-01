@@ -392,7 +392,7 @@ Task 25.2 delivers the complete RO-2 Preview journey:
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: NOT SET
+Head SHA: 7c01aedc6f94a6f1f9c39e5202608ff9c12e3a63
 ```
 
 ## B Review Result
