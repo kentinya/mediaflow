@@ -47,6 +47,7 @@ from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_organize import (
     ManualIntentError,
 )
+from mediaflow.domain.manual_safety import redact_manual_text, redact_manual_value
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionContinuation,
     MetadataCorrectionContinuationStatus,
@@ -622,7 +623,12 @@ class MediaFlowApi:
                 "denied",
                 400,
             )
-            return self._error(start_response, 400, "invalid_request", str(error))
+            return self._error(
+                start_response,
+                400,
+                "invalid_request",
+                redact_manual_text(error),
+            )
         except Exception:
             self._safe_audit(
                 environ,
@@ -1531,7 +1537,7 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 201,
-                intent.document(),
+                self._manual_intent_document(intent),
             )
         if (
             len(parts) == 5
@@ -1553,7 +1559,7 @@ class MediaFlowApi:
                 if document:
                     raise ValueError("single-file manual intent accepts an empty request body")
             intent = self._manual_intents.create([parts[3]], actor=principal.principal_id)
-            return self._response(start_response, 201, intent.document())
+            return self._response(start_response, 201, self._manual_intent_document(intent))
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "manual-intents"]
@@ -1610,7 +1616,7 @@ class MediaFlowApi:
                 snapshot_digest=document.get("snapshotDigest"),
                 actor=principal.principal_id,
             )
-            return self._response(start_response, 201, preview.document())
+            return self._response(start_response, 201, self._manual_preview_document(preview))
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "manual-intents"]
@@ -1636,8 +1642,8 @@ class MediaFlowApi:
                 200,
                 {
                     "items": [
-                        value.document()
-                        for value in self._manual_previews.list(parts[3], limit=limit)
+                        self._manual_preview_document(value)
+                        for value in self._manual_previews.list_readonly(parts[3], limit=limit)
                     ],
                     "limit": limit,
                 },
@@ -1660,7 +1666,7 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 200,
-                self._manual_previews.latest(parts[3]).document(),
+                self._manual_preview_document(self._manual_previews.latest_readonly(parts[3])),
             )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "manual-previews"] and method == "GET":
             self._require(principal, ApiPermission.READ)
@@ -1675,7 +1681,7 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 200,
-                self._manual_previews.get(parts[3]).document(),
+                self._manual_preview_document(self._manual_previews.get_readonly(parts[3])),
             )
         if (
             len(parts) == 5
@@ -1905,7 +1911,7 @@ class MediaFlowApi:
                 200,
                 {
                     "items": [
-                        item.document(include_audit=False)
+                        self._manual_intent_document(item, include_audit=False)
                         for item in self._manual_intents.list(limit=limit)
                     ],
                     "limit": limit,
@@ -1922,7 +1928,9 @@ class MediaFlowApi:
                 )
             self._require_empty_query(environ, "manual intent detail")
             return self._response(
-                start_response, 200, self._manual_intents.get(parts[3]).document()
+                start_response,
+                200,
+                self._manual_intent_document(self._manual_intents.get(parts[3])),
             )
         if (
             len(parts) == 7
@@ -1996,7 +2004,7 @@ class MediaFlowApi:
                 snapshot_digest=document.get("snapshotDigest"),
                 actor=principal.principal_id,
             )
-            return self._response(start_response, 200, intent.document())
+            return self._response(start_response, 200, self._manual_intent_document(intent))
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "manual-intents"]
@@ -2021,7 +2029,7 @@ class MediaFlowApi:
             intent = self._manual_intents.cancel(
                 parts[3], expected_version=expected, actor=principal.principal_id
             )
-            return self._response(start_response, 200, intent.document())
+            return self._response(start_response, 200, self._manual_intent_document(intent))
         if parts == ["api", "v1", "security-audit"] and method == "GET":
             self._require(principal, ApiPermission.READ_SECURITY_AUDIT)
             return self._response(
@@ -2206,7 +2214,12 @@ class MediaFlowApi:
             self._require(principal, ApiPermission.READ)
             self._require_empty_query(environ, "task checkpoint")
             checkpoint = self._checkpoint_service.get(parts[5], task_id=parts[3])
-            return self._response(start_response, 200, checkpoint.document())
+            value = checkpoint.document()
+            if self._manual_execution is not None:
+                value["manualExecutionDiscovery"] = self._manual_execution.discovery_for_task_item(
+                    parts[3], parts[5]
+                )
+            return self._response(start_response, 200, value)
         if (
             len(parts) == 7
             and parts[:3] == ["api", "v1", "tasks"]
@@ -2387,6 +2400,11 @@ class MediaFlowApi:
                     item.item_id, task_id=task.task_id
                 )
                 checkpoint_items.append(value)
+            manual_discovery = (
+                self._manual_execution.discovery_for_task(task.task_id)
+                if self._manual_execution is not None
+                else None
+            )
             return self._response(
                 start_response,
                 200,
@@ -2394,6 +2412,7 @@ class MediaFlowApi:
                     **self._value(task),
                     "items": checkpoint_items,
                     "results": [self._value(item) for item in result_page],
+                    "manualExecutionDiscovery": manual_discovery,
                     "recovery_batches": [
                         batch.document()
                         for batch in (
@@ -3420,7 +3439,7 @@ class MediaFlowApi:
 
     @staticmethod
     def _suppress_file_detail_audit(path: str, method: str, principal) -> bool:
-        """File/Media detail reads must not create any durable audit mutation."""
+        """Read-only journey projections must not create durable audit mutations."""
 
         if method != "GET" or principal is None:
             return False
@@ -3439,6 +3458,8 @@ class MediaFlowApi:
             ("api", "v1", "manual-execution-authorizations"),
             ("api", "v1", "manual-executions"),
         }:
+            return True
+        if parts[:3] == ["api", "v1", "tasks"]:
             return True
         return parts[:3] == ["api", "v1", "files"] and (
             len(parts) == 4 or parts == ["api", "v1", "files", "by-source"]
@@ -3587,8 +3608,29 @@ class MediaFlowApi:
             "updatedAt": record.updated_at.isoformat(),
         }
 
+    def _manual_intent_document(self, intent, *, include_audit: bool = True) -> dict:
+        document = intent.document(include_audit=include_audit)
+        if self._manual_execution is not None:
+            document["manualExecutionDiscovery"] = self._manual_execution.discovery_for_intent(
+                intent.intent_id
+            )
+        return redact_manual_value(document)
+
+    def _manual_preview_document(self, preview) -> dict:
+        document = preview.document()
+        if self._manual_execution is not None:
+            document["manualExecutionDiscovery"] = self._manual_execution.discovery_for_preview(
+                preview.preview_id
+            )
+        return redact_manual_value(document)
+
     def _file_catalog_detail_value(self, detail) -> dict:
         document = self._file_catalog_value(detail.record)
+        if self._manual_execution is not None:
+            document["manualExecutionDiscovery"] = self._manual_execution.discovery_for_source(
+                detail.record.storage_id,
+                detail.record.path,
+            )
         related_reviews = [
             {
                 "kind": item.kind,
@@ -3870,7 +3912,7 @@ class MediaFlowApi:
         *,
         details: dict[str, object] | None = None,
     ):
-        error = {"code": code, "message": message}
+        error = {"code": code, "message": redact_manual_text(message)}
         if details:
-            error["details"] = details
+            error["details"] = redact_manual_value(details)
         return cls._response(start_response, status, {"error": error})

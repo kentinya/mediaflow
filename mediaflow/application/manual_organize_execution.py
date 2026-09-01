@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 from uuid import uuid4
 
 from mediaflow.application.organizer import OrganizerExecutor
@@ -32,6 +32,11 @@ from mediaflow.domain.manual_execution import (
     ManualExecutionItemStatus,
     ManualExecutionScopeItem,
     ManualExecutionStatus,
+)
+from mediaflow.domain.manual_safety import (
+    contains_manual_secret,
+    redact_manual_value,
+    safe_manual_error,
 )
 from mediaflow.domain.metadata import MediaIdentity, MediaType
 from mediaflow.domain.organizer import (
@@ -55,10 +60,6 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-_SAFE_ERROR = re.compile(
-    r"(?i)(api[_-]?key|password|passwd|secret|token|authorization|cookie)"
-    r"(\s*[=:]\s*)[^\s,;\"']+"
-)
 _MAX_TEXT = 512
 _MAX_TTL_SECONDS = 900
 _MAX_EFFECTS = 256
@@ -144,7 +145,11 @@ class ManualOrganizeExecutionService:
         self._require_bool(allow_source_cleanup, "allowSourceCleanup")
         ttl = self._ttl(ttl_seconds)
         if note is not None and (
-            not isinstance(note, str) or not note.strip() or len(note) > _MAX_TEXT or "\x00" in note
+            not isinstance(note, str)
+            or not note.strip()
+            or len(note) > _MAX_TEXT
+            or "\x00" in note
+            or contains_manual_secret(note)
         ):
             raise ManualExecutionError("execution note is invalid", code="invalid_note")
         preview = self._preview(preview_id)
@@ -239,10 +244,13 @@ class ManualOrganizeExecutionService:
     issue_authorization = authorize
     authorize_preview = authorize
 
-    def get_authorization(self, authorization_id: str) -> ManualExecutionAuthorization:
-        expirer = getattr(self._repository, "expire_manual_execution_authorizations", None)
-        if callable(expirer):
-            expirer(self._clock())
+    def get_authorization(
+        self, authorization_id: str, *, expire: bool = True
+    ) -> ManualExecutionAuthorization:
+        if expire:
+            expirer = getattr(self._repository, "expire_manual_execution_authorizations", None)
+            if callable(expirer):
+                expirer(self._clock())
         getter = getattr(self._repository, "get_manual_execution_authorization", None)
         value = getter(authorization_id) if callable(getter) else None
         if value is None:
@@ -254,7 +262,7 @@ class ManualOrganizeExecutionService:
         return value
 
     def authorization_document(self, authorization_id: str) -> dict[str, object]:
-        value = self.get_authorization(authorization_id)
+        value = self.get_authorization(authorization_id, expire=False)
         document = value.document()
         audit_reader = getattr(self._repository, "list_manual_execution_authorization_audit", None)
         document["audit"] = (
@@ -262,7 +270,8 @@ class ManualOrganizeExecutionService:
             if callable(audit_reader)
             else []
         )
-        return document
+        document["links"] = self._authorization_links(value)
+        return redact_manual_value(document)
 
     def execute(
         self,
@@ -371,6 +380,10 @@ class ManualOrganizeExecutionService:
             for value in (prepared[item.item_id] for item in selected)
         )
         locks = tuple(sorted({lock for item in selected for lock in prepared[item.item_id][2]}))
+        selected_ids = {scope.item_id for scope in authority.scope}
+        unselected_item_ids = tuple(
+            item.item_id for item in intent.items if item.item_id not in selected_ids
+        )
         execution = ManualExecution(
             execution_id,
             authority.preview_id,
@@ -382,11 +395,7 @@ class ManualOrganizeExecutionService:
             authority.configuration_snapshot_id,
             authority.configuration_snapshot_digest,
             tuple(item.item_id for item in selected),
-            tuple(
-                value
-                for value in preview.unselected_item_ids
-                if value not in {scope.item_id for scope in authority.scope}
-            ),
+            unselected_item_ids,
             execution_items,
             ManualExecutionStatus.ADMITTED,
             (
@@ -651,9 +660,183 @@ class ManualOrganizeExecutionService:
         if callable(audit_reader):
             item = document.get("authorizationId")
             document["authorizationAudit"] = [value.document() for value in audit_reader(item)]
-        return document
+        document["links"] = self._execution_links(value)
+        return redact_manual_value(document)
 
     execution_document = document
+
+    def discovery_for_intent(self, intent_id: str, *, limit: int = 100) -> dict[str, object]:
+        limit = self._discovery_limit(limit)
+        authorizations, auth_truncated = self._related_authorizations("intent", intent_id, limit)
+        executions, execution_truncated = self._related_executions("intent", intent_id, limit)
+        return self._discovery_document(
+            authorizations,
+            executions,
+            truncated=auth_truncated or execution_truncated,
+        )
+
+    def discovery_for_preview(self, preview_id: str, *, limit: int = 100) -> dict[str, object]:
+        limit = self._discovery_limit(limit)
+        authorizations, auth_truncated = self._related_authorizations("preview", preview_id, limit)
+        executions, execution_truncated = self._related_executions("preview", preview_id, limit)
+        return self._discovery_document(
+            authorizations,
+            executions,
+            truncated=auth_truncated or execution_truncated,
+        )
+
+    def discovery_for_task(self, task_id: str, *, limit: int = 100) -> dict[str, object]:
+        limit = self._discovery_limit(limit)
+        executions, truncated = self._related_executions("task", task_id, limit)
+        return self._discovery_document((), executions, truncated=truncated)
+
+    def discovery_for_task_item(
+        self, task_id: str, task_item_id: str, *, limit: int = 100
+    ) -> dict[str, object]:
+        limit = self._discovery_limit(limit)
+        reader = getattr(self._repository, "list_manual_executions_for_task_item", None)
+        executions, truncated = self._bounded_related(reader, (task_id, task_item_id), limit)
+        return self._discovery_document((), executions, truncated=truncated)
+
+    def discovery_for_source(
+        self, storage_id: str, path: str, *, limit: int = 100
+    ) -> dict[str, object]:
+        limit = self._discovery_limit(limit)
+        reader = getattr(self._repository, "list_manual_executions_for_source", None)
+        executions, truncated = self._bounded_related(reader, (storage_id, path), limit)
+        return self._discovery_document((), executions, truncated=truncated)
+
+    @staticmethod
+    def _discovery_limit(limit: int) -> int:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("manual execution discovery limit must be between 1 and 100")
+        return limit
+
+    def _related_authorizations(
+        self, relation: str, value: str, limit: int
+    ) -> tuple[tuple[ManualExecutionAuthorization, ...], bool]:
+        reader = getattr(
+            self._repository,
+            f"list_manual_execution_authorizations_for_{relation}",
+            None,
+        )
+        return self._bounded_related(reader, (value,), limit)
+
+    def _related_executions(
+        self, relation: str, value: str, limit: int
+    ) -> tuple[tuple[ManualExecution, ...], bool]:
+        reader = getattr(self._repository, f"list_manual_executions_for_{relation}", None)
+        return self._bounded_related(reader, (value,), limit)
+
+    @staticmethod
+    def _bounded_related(reader, arguments: tuple[object, ...], limit: int):
+        if not callable(reader):
+            return (), False
+        values = tuple(reader(*arguments, limit=limit + 1))
+        return values[:limit], len(values) > limit
+
+    @classmethod
+    def _discovery_document(
+        cls,
+        authorizations: Sequence[ManualExecutionAuthorization],
+        executions: Sequence[ManualExecution],
+        *,
+        truncated: bool,
+    ) -> dict[str, object]:
+        document = {
+            "authorizations": [cls._authorization_summary(value) for value in authorizations],
+            "executions": [cls._execution_summary(value) for value in executions],
+            "truncated": truncated,
+            "sideEffects": "none",
+            "nextAction": (
+                "inspect the linked authorization or execution; reconcile admitted or running "
+                "execution explicitly"
+                if any(
+                    value.status
+                    in {
+                        ManualExecutionStatus.ADMITTED,
+                        ManualExecutionStatus.RUNNING,
+                    }
+                    for value in executions
+                )
+                else "inspect the linked authorization or durable execution state"
+            ),
+        }
+        return redact_manual_value(document)
+
+    @classmethod
+    def _authorization_summary(cls, value: ManualExecutionAuthorization) -> dict[str, object]:
+        return {
+            "authorizationId": value.authorization_id,
+            "previewId": value.preview_id,
+            "intentId": value.intent_id,
+            "actor": value.actor,
+            "status": value.status.value,
+            "scopeItemIds": [item.item_id for item in value.scope],
+            "executionId": value.execution_id,
+            "createdAt": value.created_at.isoformat(),
+            "expiresAt": value.expires_at.isoformat(),
+            "links": cls._authorization_links(value),
+            "nextAction": value.document()["nextAction"],
+        }
+
+    @classmethod
+    def _execution_summary(cls, value: ManualExecution) -> dict[str, object]:
+        return {
+            "executionId": value.execution_id,
+            "authorizationId": value.authorization_id,
+            "previewId": value.preview_id,
+            "intentId": value.intent_id,
+            "taskId": value.task_id,
+            "actor": value.actor,
+            "status": value.status.value,
+            "selectedItemIds": list(value.selected_item_ids),
+            "unselectedItemIds": list(value.unselected_item_ids),
+            "items": [
+                {
+                    "itemId": item.item_id,
+                    "taskItemId": item.task_item_id,
+                    "status": item.status.value,
+                    "resultId": item.result_id,
+                    "checkpointPath": f"/api/v1/tasks/{item.task_id}/items/{item.task_item_id}",
+                }
+                for item in value.items
+            ],
+            "createdAt": value.created_at.isoformat(),
+            "updatedAt": value.updated_at.isoformat(),
+            "links": cls._execution_links(value),
+            "nextAction": value.next_action,
+        }
+
+    @staticmethod
+    def _authorization_links(value: ManualExecutionAuthorization) -> dict[str, str]:
+        links = {
+            "authorization": (
+                f"/api/v1/manual-execution-authorizations/{quote(value.authorization_id, safe='')}"
+            ),
+            "preview": f"/api/v1/manual-previews/{quote(value.preview_id, safe='')}",
+            "intent": f"/api/v1/manual-intents/{quote(value.intent_id, safe='')}",
+        }
+        if value.execution_id:
+            links["execution"] = f"/api/v1/manual-executions/{quote(value.execution_id, safe='')}"
+        return links
+
+    @staticmethod
+    def _execution_links(value: ManualExecution) -> dict[str, str]:
+        links = {
+            "execution": f"/api/v1/manual-executions/{quote(value.execution_id, safe='')}",
+            "authorization": (
+                f"/api/v1/manual-execution-authorizations/{quote(value.authorization_id, safe='')}"
+            ),
+            "preview": f"/api/v1/manual-previews/{quote(value.preview_id, safe='')}",
+            "intent": f"/api/v1/manual-intents/{quote(value.intent_id, safe='')}",
+            "task": f"/api/v1/tasks/{quote(value.task_id, safe='')}",
+        }
+        if value.status in {ManualExecutionStatus.ADMITTED, ManualExecutionStatus.RUNNING}:
+            links["reconcile"] = (
+                f"/api/v1/manual-executions/{quote(value.execution_id, safe='')}/reconcile"
+            )
+        return links
 
     def _preview(self, preview_id):
         try:
@@ -2138,8 +2321,7 @@ def _fingerprint(value: object) -> str:
 
 
 def _safe_error(value: object) -> str:
-    text = str(value)[:_MAX_TEXT]
-    return _SAFE_ERROR.sub(r"\1\2[redacted]", text) or "manual execution failed"
+    return safe_manual_error(value, "manual execution failed")
 
 
 # Compatibility aliases for callers that use the shorter Preview terminology.

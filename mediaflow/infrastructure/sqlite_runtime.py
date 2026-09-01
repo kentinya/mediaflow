@@ -76,6 +76,7 @@ from mediaflow.domain.manual_organize_preview import (
     ManualPreviewStatus,
     ManualPreviewUnavailable,
 )
+from mediaflow.domain.manual_safety import redact_manual_text, redact_manual_value
 from mediaflow.domain.media_evidence import PipelineEvidence, evidence_from_document
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionBatchResolveRequest,
@@ -4781,8 +4782,8 @@ class SQLiteTaskRepository:
                         preview.intent_version,
                         preview.created_at.isoformat(),
                         preview.updated_at.isoformat(),
-                        preview.next_action,
-                        preview.error,
+                        redact_manual_text(preview.next_action),
+                        redact_manual_text(preview.error) if preview.error is not None else None,
                         int(preview.zero_mutation),
                         int(preview.current),
                         int(preview.truncated),
@@ -4841,8 +4842,8 @@ class SQLiteTaskRepository:
                             json.dumps(item.plan, ensure_ascii=False, sort_keys=True)
                             if item.plan is not None
                             else None,
-                            item.error,
-                            item.next_action,
+                            redact_manual_text(item.error) if item.error is not None else None,
+                            redact_manual_text(item.next_action),
                             int(item.zero_mutation),
                             item.execution_state,
                             int(item.truncated),
@@ -5001,6 +5002,117 @@ class SQLiteTaskRepository:
                 (limit,),
             ).fetchall()
         return tuple(self._manual_execution_authorization(row) for row in rows)
+
+    def list_manual_execution_authorizations_for_preview(
+        self, preview_id: str, *, limit: int = 100
+    ) -> tuple[ManualExecutionAuthorization, ...]:
+        self._validate_manual_discovery_limit(limit, "manual execution authorization")
+        self._validate_manual_discovery_id(preview_id, "manual Preview ID")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM manual_execution_authorizations WHERE preview_id=? "
+                "ORDER BY created_at DESC, authorization_id DESC LIMIT ?",
+                (preview_id, limit),
+            ).fetchall()
+        return tuple(self._manual_execution_authorization(row) for row in rows)
+
+    def list_manual_execution_authorizations_for_intent(
+        self, intent_id: str, *, limit: int = 100
+    ) -> tuple[ManualExecutionAuthorization, ...]:
+        self._validate_manual_discovery_limit(limit, "manual execution authorization")
+        self._validate_manual_discovery_id(intent_id, "manual intent ID")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM manual_execution_authorizations WHERE intent_id=? "
+                "ORDER BY created_at DESC, authorization_id DESC LIMIT ?",
+                (intent_id, limit),
+            ).fetchall()
+        return tuple(self._manual_execution_authorization(row) for row in rows)
+
+    def list_manual_executions_for_preview(
+        self, preview_id: str, *, limit: int = 100
+    ) -> tuple[ManualExecution, ...]:
+        self._validate_manual_discovery_limit(limit, "manual execution")
+        self._validate_manual_discovery_id(preview_id, "manual Preview ID")
+        return self._list_manual_executions_by_column("preview_id", preview_id, limit)
+
+    def list_manual_executions_for_intent(
+        self, intent_id: str, *, limit: int = 100
+    ) -> tuple[ManualExecution, ...]:
+        self._validate_manual_discovery_limit(limit, "manual execution")
+        self._validate_manual_discovery_id(intent_id, "manual intent ID")
+        return self._list_manual_executions_by_column("intent_id", intent_id, limit)
+
+    def list_manual_executions_for_task(
+        self, task_id: str, *, limit: int = 100
+    ) -> tuple[ManualExecution, ...]:
+        self._validate_manual_discovery_limit(limit, "manual execution")
+        self._validate_manual_discovery_id(task_id, "Task ID")
+        return self._list_manual_executions_by_column("task_id", task_id, limit)
+
+    def list_manual_executions_for_task_item(
+        self, task_id: str, task_item_id: str, *, limit: int = 100
+    ) -> tuple[ManualExecution, ...]:
+        self._validate_manual_discovery_limit(limit, "manual execution")
+        self._validate_manual_discovery_id(task_id, "Task ID")
+        self._validate_manual_discovery_id(task_item_id, "TaskItem ID")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT DISTINCT execution_id FROM manual_execution_items "
+                "WHERE task_id=? AND task_item_id=? "
+                "ORDER BY updated_at DESC, execution_id DESC LIMIT ?",
+                (task_id, task_item_id, limit),
+            ).fetchall()
+        return self._load_manual_executions_by_id(rows)
+
+    def list_manual_executions_for_source(
+        self, storage_id: str, path: str, *, limit: int = 100
+    ) -> tuple[ManualExecution, ...]:
+        self._validate_manual_discovery_limit(limit, "manual execution")
+        self._validate_manual_discovery_id(storage_id, "storage ID")
+        if not isinstance(path, str) or not path.strip() or "\x00" in path:
+            raise ValueError("source path is required")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT DISTINCT e.execution_id FROM manual_executions e "
+                "JOIN manual_execution_items i ON i.execution_id=e.execution_id "
+                "JOIN task_items t ON t.item_id=i.task_item_id AND t.task_id=i.task_id "
+                "WHERE t.storage_id=? AND t.source_path=? "
+                "ORDER BY e.updated_at DESC, e.execution_id DESC LIMIT ?",
+                (storage_id, path, limit),
+            ).fetchall()
+        return self._load_manual_executions_by_id(rows)
+
+    def _list_manual_executions_by_column(
+        self, column: str, value: str, limit: int
+    ) -> tuple[ManualExecution, ...]:
+        if column not in {"preview_id", "intent_id", "task_id"}:
+            raise ValueError("unsupported manual execution discovery relation")
+        with self._lock:
+            rows = self._connection.execute(
+                f"SELECT execution_id FROM manual_executions WHERE {column}=? "
+                "ORDER BY updated_at DESC, execution_id DESC LIMIT ?",
+                (value, limit),
+            ).fetchall()
+        return self._load_manual_executions_by_id(rows)
+
+    def _load_manual_executions_by_id(self, rows) -> tuple[ManualExecution, ...]:
+        values = []
+        for row in rows:
+            value = self.get_manual_execution(row["execution_id"])
+            if value is not None:
+                values.append(value)
+        return tuple(values)
+
+    @staticmethod
+    def _validate_manual_discovery_limit(limit: int, resource: str) -> None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError(f"{resource} discovery limit must be between 1 and 500")
+
+    @staticmethod
+    def _validate_manual_discovery_id(value: str, label: str) -> None:
+        if not isinstance(value, str) or not value.strip() or "\x00" in value:
+            raise ValueError(f"{label} is required")
 
     def list_manual_execution_authorization_audit(
         self, authorization_id: str
@@ -6742,7 +6854,7 @@ class SQLiteTaskRepository:
             value.status.value,
             value.consumed_at.isoformat() if value.consumed_at else None,
             value.execution_id,
-            value.note,
+            redact_manual_text(value.note) if value.note is not None else None,
         )
 
     @staticmethod
@@ -6797,7 +6909,7 @@ class SQLiteTaskRepository:
                 value.occurred_at.isoformat(),
                 value.actor,
                 value.execution_id,
-                json.dumps(value.details, ensure_ascii=False, sort_keys=True),
+                json.dumps(redact_manual_value(value.details), ensure_ascii=False, sort_keys=True),
             ),
         )
 
@@ -6830,8 +6942,8 @@ class SQLiteTaskRepository:
             json.dumps(value.selected_item_ids, ensure_ascii=False),
             json.dumps(value.unselected_item_ids, ensure_ascii=False),
             value.status.value,
-            value.next_action,
-            value.error,
+            redact_manual_text(value.next_action),
+            redact_manual_text(value.error) if value.error is not None else None,
             int(value.allow_overwrite),
             int(value.allow_source_cleanup),
             value.created_at.isoformat(),
@@ -6889,8 +7001,8 @@ class SQLiteTaskRepository:
             value.effect_certainty,
             json.dumps(value.completed_operations, ensure_ascii=False),
             json.dumps(value.uncertain_effects, ensure_ascii=False),
-            value.error,
-            value.next_action,
+            redact_manual_text(value.error) if value.error is not None else None,
+            redact_manual_text(value.next_action),
             value.created_at.isoformat(),
             value.updated_at.isoformat(),
         )
@@ -6940,7 +7052,7 @@ class SQLiteTaskRepository:
             value.destination_path,
             int(value.verified),
             value.certainty,
-            json.dumps(value.details, ensure_ascii=False, sort_keys=True),
+            json.dumps(redact_manual_value(value.details), ensure_ascii=False, sort_keys=True),
             value.created_at.isoformat(),
         )
 

@@ -50,6 +50,7 @@ from mediaflow.domain.manual_organize_preview import (
     ManualPreviewStatus,
     ManualPreviewUnavailable,
 )
+from mediaflow.domain.manual_safety import safe_manual_error
 from mediaflow.domain.metadata import (
     MediaQueryType,
     MetadataIdentificationStatus,
@@ -68,10 +69,6 @@ from mediaflow.domain.storage import Storage, StorageError
 _MAX_COLLECTION = 64
 _MAX_TEXT = 512
 _MAX_ID = 128
-_SECRET_PATTERN = re.compile(
-    r"(?i)(api[_-]?key|password|passwd|secret|token|authorization|cookie)"
-    r"(\s*[=:]\s*)[^\s,;\"']+"
-)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -353,6 +350,32 @@ class ManualOrganizePreviewService:
             return self._stale_projection(value, stale_ids, reason)
         return value
 
+    def get_readonly(self, preview_id: str) -> ManualOrganizePreview:
+        """Read the current Preview without publishing read-time staleness."""
+
+        if not isinstance(preview_id, str) or not preview_id.strip():
+            raise ManualPreviewError("Preview ID is required", code="invalid_preview_id")
+        value = self._repository.get_manual_preview(preview_id)
+        if value is None:
+            raise ManualPreviewError(
+                f"manual Preview {preview_id!r} was not found",
+                code="preview_not_found",
+                status=404,
+                next_action="open the manual intent and explicitly request a fresh Preview",
+            )
+        if not value.current:
+            return value
+        stale_ids = self._stale_current_items(value)
+        if not stale_ids:
+            return value
+        return self._stale_projection(
+            value,
+            stale_ids,
+            "plan-affecting source, evidence, review, conflict, choice, or snapshot input changed",
+        )
+
+    get_preview_readonly = get_readonly
+
     get_preview = get
     get_manual_preview = get
 
@@ -366,6 +389,17 @@ class ManualOrganizePreviewService:
                 next_action="open the intent and explicitly request a Preview",
             )
         return self.get(value.preview_id)
+
+    def latest_readonly(self, intent_id: str) -> ManualOrganizePreview:
+        value = self._latest_preview(intent_id)
+        if value is None:
+            raise ManualPreviewError(
+                f"manual intent {intent_id!r} has no Preview",
+                code="preview_not_found",
+                status=404,
+                next_action="open the intent and explicitly request a Preview",
+            )
+        return self.get_readonly(value.preview_id)
 
     current = latest
     get_latest = latest
@@ -381,6 +415,20 @@ class ManualOrganizePreviewService:
             return ()
         values = method(intent_id, limit=limit)
         return tuple(self.get(value.preview_id) for value in values)
+
+    def list_readonly(
+        self, intent_id: str, *, limit: int = 100
+    ) -> tuple[ManualOrganizePreview, ...]:
+        if isinstance(limit, bool) or not 1 <= limit <= self._max_items:
+            raise ManualPreviewError(
+                f"manual Preview limit must be between 1 and {self._max_items}",
+                code="invalid_limit",
+            )
+        method = getattr(self._repository, "list_manual_previews", None)
+        if not callable(method):
+            return ()
+        values = method(intent_id, limit=limit)
+        return tuple(self.get_readonly(value.preview_id) for value in values)
 
     list_previews = list
     list_manual_previews = list
@@ -1556,8 +1604,7 @@ class ManualOrganizePreviewService:
 
     @staticmethod
     def _safe_error(value: object) -> str:
-        text = str(value)[:_MAX_TEXT]
-        return _SECRET_PATTERN.sub(r"\1\2[redacted]", text) or "Preview analysis failed"
+        return safe_manual_error(value, "Preview analysis failed")
 
 
 def _required_capabilities(plan: OrganizePlan) -> list[str]:

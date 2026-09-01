@@ -220,6 +220,20 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("Run Recognition Strategy Test", script)
         self.assertIn("Task was not resumed", script)
 
+    def test_manual_execution_discovery_and_unselected_state_are_reachable(self) -> None:
+        script = APP_JS.decode()
+        self.assertIn("renderManualExecutionDiscovery", script)
+        self.assertIn("manualExecutionDiscovery", script)
+        self.assertIn("Intent items not included in this Preview", script)
+        self.assertIn("Intent/Preview items not executed", script)
+        self.assertIn(
+            "Unselected items have no TaskItem, Result, execution effect or Storage mutation",
+            script,
+        )
+        self.assertIn("Reconcile interrupted execution", script)
+        self.assertIn("Open durable execution", script)
+        self.assertIn("showTaskItem(data.taskId, item.taskItemId)", script)
+
     def test_naming_policy_editor_and_exact_revision_preview_are_reachable(self) -> None:
         script = APP_JS.decode()
         show_revision = _js_function_body(script, "showConfigurationRevision")
