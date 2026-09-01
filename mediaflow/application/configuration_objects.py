@@ -38,6 +38,7 @@ from mediaflow.application.strategy_test import (
     StrategyTestResult,
     strategy_runner_from_configuration,
 )
+from mediaflow.domain.automation import AutomationTaskDefinition
 from mediaflow.domain.classification import (
     ClassificationContext,
     ClassificationError,
@@ -213,6 +214,7 @@ class ConfigurationObjectService:
         ConfigurationObjectKind.NAMING_POLICY: "namingPolicies",
         ConfigurationObjectKind.CLASSIFICATION_POLICY: "classificationPolicies",
         ConfigurationObjectKind.ORGANIZE_POLICY: "organizePolicies",
+        ConfigurationObjectKind.SCHEDULE: "automationTaskDefinitions",
     }
     _MAX_OBJECT_BYTES = 64 * 1024
     _SETUP_CHECK_TIMEOUT_SECONDS = 10.0
@@ -349,6 +351,21 @@ class ConfigurationObjectService:
         "sourceDirectoryCleanup",
         "attachments",
     }
+    _AUTOMATION_TASK_DEFINITION_FIELDS = {
+        "id",
+        "name",
+        "enabled",
+        "resourceLibraryId",
+        "sourceScope",
+        "mode",
+        "runMode",
+        "intervalSeconds",
+        "cron",
+        "timezone",
+        "itemLimit",
+        "limit",
+        "schedule",
+    }
 
     def __init__(
         self,
@@ -445,6 +462,7 @@ class ConfigurationObjectService:
                     if "organizePolicies" in document
                     else []
                 ),
+                "automationTaskDefinitions": self._automation_definition_objects(document),
             },
             # Keep every versioned projection on the same immutable revision read.
             # Calling the public helpers here would re-read the repository and could
@@ -471,9 +489,14 @@ class ConfigurationObjectService:
         for kind, section in cls._SECTIONS.items():
             # Historical lightweight repository doubles may omit newly editable
             # sections; canonical managed runtime documents still require them.
-            if section not in document:
+            if section not in document and kind is not ConfigurationObjectKind.SCHEDULE:
                 continue
-            for value in cls._canonical_objects(document, section):
+            values = (
+                cls._automation_definition_objects(document)
+                if kind is ConfigurationObjectKind.SCHEDULE
+                else cls._canonical_objects(document, section)
+            )
+            for value in values:
                 object_id = str(value.get("id", ""))
                 result[f"{kind.value}:{object_id}"] = cls._references_for(
                     kind, object_id, document
@@ -490,6 +513,8 @@ class ConfigurationObjectService:
         expected_version: int,
         actor: str,
         delete: bool = False,
+        audit_action: str | None = None,
+        audit_metadata: Mapping[str, object] | None = None,
     ) -> ManagedConfigurationRevision:
         section = self._section(kind)
         revision = self._managed.require(revision_id)
@@ -510,9 +535,15 @@ class ConfigurationObjectService:
                 current_version=revision.version,
                 current_digest=revision.digest,
             )
-        current_values = self._canonical_objects(revision.document, section)
+        current_values = (
+            self._automation_definition_objects(revision.document)
+            if kind is ConfigurationObjectKind.SCHEDULE
+            else self._canonical_objects(revision.document, section)
+        )
         current_by_id = {str(item.get("id", "")): item for item in current_values}
         if delete:
+            if kind is ConfigurationObjectKind.SCHEDULE:
+                raise ValueError("Automation Task Definition deletion is not part of this slice")
             if not object_id or object_id not in current_by_id:
                 raise LookupError(f"{kind.value} {object_id!r} was not found")
             reference_evidence = self._references_for(kind, object_id, revision.document)
@@ -526,7 +557,9 @@ class ConfigurationObjectService:
             next_values = [item for item in current_values if item.get("id") != object_id]
             before = current_by_id[object_id]
             after = None
-            action = "guided_delete"
+            action = audit_action or (
+                "delete" if kind is ConfigurationObjectKind.SCHEDULE else "guided_delete"
+            )
         else:
             if not isinstance(value, Mapping):
                 raise ValueError("configuration object must be an object")
@@ -541,15 +574,28 @@ class ConfigurationObjectService:
             next_values = [
                 normalized if item.get("id") == object_id else item for item in current_values
             ]
+            if kind is ConfigurationObjectKind.SCHEDULE:
+                self._validate_automation_definition_reference(
+                    normalized,
+                    revision.document,
+                )
             if object_id is None:
                 next_values.append(normalized)
                 before = None
-                action = "guided_create"
+                action = audit_action or (
+                    "create" if kind is ConfigurationObjectKind.SCHEDULE else "guided_create"
+                )
             else:
                 before = current_by_id[object_id]
-                action = "guided_update"
+                action = audit_action or (
+                    "edit" if kind is ConfigurationObjectKind.SCHEDULE else "guided_update"
+                )
             after = normalized
         next_document = copy.deepcopy(revision.document)
+        if kind is ConfigurationObjectKind.SCHEDULE and section not in next_document:
+            automation = next_document.get("automation")
+            if isinstance(automation, dict):
+                automation.pop("taskDefinitions", None)
         next_document[section] = next_values
         return self._managed.edit_draft(
             revision_id,
@@ -562,7 +608,156 @@ class ConfigurationObjectService:
                 "action": action,
                 "before": before,
                 "after": after,
+                **(audit_metadata or {}),
             },
+        )
+
+    def copy_automation_task_definition(
+        self,
+        revision_id: str,
+        *,
+        object_id: str,
+        new_object_id: str | None = None,
+        new_name: str | None = None,
+        expected_version: int,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        revision = self._managed.require(revision_id)
+        values = self._automation_definition_objects(revision.document)
+        source = next((item for item in values if item.get("id") == object_id), None)
+        if source is None:
+            raise LookupError(f"automationTaskDefinitions {object_id!r} was not found")
+        candidate = copy.deepcopy(source)
+        candidate_id = new_object_id
+        if candidate_id is None:
+            base = f"{object_id}-copy"
+            existing = {str(item.get("id")) for item in values}
+            candidate_id = base
+            for index in range(2, 101):
+                if candidate_id not in existing:
+                    break
+                candidate_id = f"{base}-{index}"
+            else:
+                raise ValueError("could not allocate a unique copied Automation Task Definition id")
+        candidate["id"] = candidate_id
+        if new_name is not None:
+            candidate["name"] = new_name
+        else:
+            source_name = str(source.get("name") or object_id)
+            candidate["name"] = f"{source_name[:115]} copy"
+        candidate["enabled"] = False
+        return self.mutate(
+            revision_id,
+            ConfigurationObjectKind.SCHEDULE,
+            object_id=None,
+            value=candidate,
+            expected_version=expected_version,
+            actor=actor,
+            audit_action="copy",
+            audit_metadata={"sourceId": object_id},
+        )
+
+    # Public spelling used by adapters and focused tests.
+    copy_definition = copy_automation_task_definition
+
+    def create_automation_task_definition(
+        self,
+        revision_id: str,
+        definition: Mapping[str, object],
+        *,
+        expected_version: int,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        return self.mutate(
+            revision_id,
+            ConfigurationObjectKind.SCHEDULE,
+            object_id=None,
+            value=definition,
+            expected_version=expected_version,
+            actor=actor,
+        )
+
+    def edit_automation_task_definition(
+        self,
+        revision_id: str,
+        definition_id: str,
+        definition: Mapping[str, object],
+        *,
+        expected_version: int,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        return self.mutate(
+            revision_id,
+            ConfigurationObjectKind.SCHEDULE,
+            object_id=definition_id,
+            value=definition,
+            expected_version=expected_version,
+            actor=actor,
+        )
+
+    def inspect_automation_task_definitions(self, revision_id: str) -> list[dict[str, object]]:
+        return self.revision_detail(revision_id)["objects"]["automationTaskDefinitions"]
+
+    def set_automation_task_definition_enabled(
+        self,
+        revision_id: str,
+        *,
+        object_id: str,
+        enabled: bool,
+        expected_version: int,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        if not isinstance(enabled, bool):
+            raise ValueError("Automation Task Definition enabled must be boolean")
+        revision = self._managed.require(revision_id)
+        values = self._automation_definition_objects(revision.document)
+        source = next((item for item in values if item.get("id") == object_id), None)
+        if source is None:
+            raise LookupError(f"automationTaskDefinitions {object_id!r} was not found")
+        candidate = copy.deepcopy(source)
+        candidate["enabled"] = enabled
+        return self.mutate(
+            revision_id,
+            ConfigurationObjectKind.SCHEDULE,
+            object_id=object_id,
+            value=candidate,
+            expected_version=expected_version,
+            actor=actor,
+            audit_action="enable" if enabled else "disable",
+        )
+
+    set_definition_enabled = set_automation_task_definition_enabled
+
+    def enable_automation_task_definition(
+        self,
+        revision_id: str,
+        definition_id: str,
+        *,
+        expected_version: int,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        return self.set_automation_task_definition_enabled(
+            revision_id,
+            object_id=definition_id,
+            enabled=True,
+            expected_version=expected_version,
+            actor=actor,
+        )
+
+    def disable_automation_task_definition(
+        self,
+        revision_id: str,
+        definition_id: str,
+        *,
+        expected_version: int,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        return self.set_automation_task_definition_enabled(
+            revision_id,
+            object_id=definition_id,
+            enabled=False,
+            expected_version=expected_version,
+            actor=actor,
         )
 
     def recognition_strategy_test(
@@ -4140,6 +4335,20 @@ class ConfigurationObjectService:
         return redacted
 
     @classmethod
+    def _automation_definition_objects(
+        cls, document: Mapping[str, object]
+    ) -> list[dict[str, object]]:
+        """Read the canonical definition section, accepting the early nested spelling."""
+
+        if "automationTaskDefinitions" in document:
+            return cls._objects(document, "automationTaskDefinitions")
+        automation = document.get("automation")
+        if isinstance(automation, Mapping) and "taskDefinitions" in automation:
+            nested = {"automationTaskDefinitions": automation["taskDefinitions"]}
+            return cls._objects(nested, "automationTaskDefinitions")
+        return []
+
+    @classmethod
     def _normalize(
         cls, kind: ConfigurationObjectKind, value: Mapping[str, object]
     ) -> dict[str, object]:
@@ -4155,6 +4364,7 @@ class ConfigurationObjectService:
             ConfigurationObjectKind.NAMING_POLICY: cls._NAMING_POLICY_FIELDS,
             ConfigurationObjectKind.CLASSIFICATION_POLICY: cls._CLASSIFICATION_POLICY_FIELDS,
             ConfigurationObjectKind.ORGANIZE_POLICY: cls._ORGANIZE_POLICY_FIELDS,
+            ConfigurationObjectKind.SCHEDULE: cls._AUTOMATION_TASK_DEFINITION_FIELDS,
         }[kind]
         unknown = set(value).difference(allowed)
         if unknown:
@@ -4164,6 +4374,9 @@ class ConfigurationObjectService:
             raise ValueError(f"{section} id must be a bounded non-empty string")
         if any(character in object_id for character in "/\\\x00"):
             raise ValueError(f"{section} id contains an invalid character")
+        if kind is ConfigurationObjectKind.SCHEDULE:
+            definition = AutomationTaskDefinition.from_document(value)
+            return cls._bounded_object(section, definition.document())
         if kind is ConfigurationObjectKind.ORGANIZE_POLICY:
             operation = value.get("operation")
             if (
@@ -4506,6 +4719,19 @@ class ConfigurationObjectService:
         if len(encoded) > cls._MAX_OBJECT_BYTES:
             raise ValueError(f"{section} object is too large")
         return result
+
+    @classmethod
+    def _validate_automation_definition_reference(
+        cls,
+        value: Mapping[str, object],
+        document: Mapping[str, object],
+    ) -> None:
+        resources = (
+            cls._canonical_objects(document, "resourceLibraries")
+            if "resourceLibraries" in document
+            else []
+        )
+        AutomationTaskDefinition.from_document(value, resource_libraries=resources)
 
     @classmethod
     def _classification_rule(
@@ -4997,6 +5223,21 @@ class ConfigurationObjectService:
                         ConfigurationReferenceItem(
                             section="recognitionRules",
                             object_id=str(rule["id"]),
+                            field="resourceLibraryId",
+                        )
+                    )
+            for index, item in enumerate(cls._automation_definition_objects(document)):
+                reference = cls._required_reference_value(
+                    item.get("resourceLibraryId"),
+                    section="automationTaskDefinitions",
+                    index=index,
+                    field="resourceLibraryId",
+                )
+                if reference == object_id:
+                    collector.add(
+                        ConfigurationReferenceItem(
+                            section="automationTaskDefinitions",
+                            object_id=str(item["id"]),
                             field="resourceLibraryId",
                         )
                     )

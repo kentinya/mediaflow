@@ -24,6 +24,11 @@ class ConfigurationObjectKind(StrEnum):
     CLASSIFICATION_POLICY = "classification_policy"
     ORGANIZE_POLICY = "organize_policy"
     SCHEDULE = "schedule"
+    # Managed Automation Task Definitions are persisted as a distinct
+    # configuration section, while retaining the historical ``schedule`` kind
+    # for audit/reference compatibility.  The alias is intentionally not a new
+    # enum value so older consumers iterating this enum remain compatible.
+    AUTOMATION_TASK_DEFINITION = "schedule"
     SYSTEM_SETTINGS = "system_settings"
 
 
