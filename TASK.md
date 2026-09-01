@@ -6,7 +6,7 @@ the current [`SLICE.md`](../SLICE.md).
 ```text
 Task ID: 25.1
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: d889db62fd6fe568b9a2277117a805459b8364df
 Difficulty: High
 Test Level: T4
@@ -144,36 +144,41 @@ Automation list/detail/create/copy/edit/enable/disable → focused and regressio
 
 ### Changed Files
 - `TASK.md`
-- `mediaflow/application/automation_task_definition.py`
-- `mediaflow/application/configuration_objects.py`
-- `mediaflow/application/configuration_snapshot.py`
-- `mediaflow/domain/automation.py`
-- `mediaflow/domain/automation_task_definition.py`
-- `mediaflow/domain/configuration_management.py`
-- `mediaflow/infrastructure/runtime_configuration.py`
-- `mediaflow/interfaces/operator_ui.py`
-- `mediaflow/interfaces/service_api.py`
 - `tests/test_automation_task_definition.py`
 
 ### Implemented
-- Added a bounded, secret-free Automation Task Definition domain contract with normalized
-  Storage-relative scope, three run modes, interval/Cron scheduling, timezone validation and
-  bounded item limits. Legacy scan/preview schedules remain separate.
-- Added managed configuration parsing and ResourceLibrary reference/enabled-state validation;
-  definitions are persisted in the existing immutable Draft → Validate → Activate revisions and
-  survive SQLite reload without a parallel table or runtime execution path.
-- Added shared Draft object-service create/copy/edit/enable/disable/inspect operations with
-  optimistic version checks, immutable Active protection, explicit lifecycle audit evidence and
-  copy-disabled semantics.
-- Added authenticated versioned configuration-object and Automation API routes, bounded Active/
-  revision projections and RBAC/concurrency/error handling using the shared service.
-- Added Operator Web Automation list/detail entry points and guided definition create/edit/copy/
-  enable/disable actions with explicit confirmations; view loads remain read-only.
-- Added focused domain, managed lifecycle, audit/reload, API/RBAC and Web reachability tests.
+This is the correction checkpoint for the three B review blockers. It adds the missing regression
+evidence only; no production behavior changed.
+
+- Managed/application coverage now exercises `edit_automation_task_definition` and
+  `disable_automation_task_definition`, refuses mutation of an ACTIVE and a SUPERSEDED revision,
+  proves a service-layer stale `expected_version` rejection preserves the concurrent Draft
+  (version, digest and document), and asserts an explicit before/after Active revision id, version,
+  digest and document unchanged after a post-activation Draft edit.
+- A pre-change configuration database (unchanged SQLite schema, pre-change document without
+  `automationTaskDefinitions`) loads after reopen, exposes an empty definition projection, accepts
+  a definition, and reloads that definition through Validate → Activate → close/reopen.
+- Authenticated API tests now cover `GET` list, `GET`/`PUT` detail, `POST` copy/enable/disable on
+  `/api/v1/automation/task-definitions`, plus create/edit/copy/enable/disable on the
+  `/api/v1/configuration/revisions/{revision}/objects/automationTaskDefinitions` routes used by
+  Operator Web, including RBAC denial through both route families.
+- API error coverage asserts bounded projections for malformed input (missing `mode`), traversal
+  and absolute `sourceScope`, unknown and disabled ResourceLibrary references, unknown definition
+  id (404), stale version and Active-revision edit (409 `configuration_version_conflict` with
+  `durableState: draft_preserved`, `sideEffects: none`, `retrySafe: true`), and proves the failed
+  stale request did not add a definition.
+- API list/detail read-only and reload coverage asserts repeated GETs create no new revision and
+  leave version/digest unchanged, and the projection stays truthful after configuration
+  repository close/reopen.
+- Web coverage now ties assertions to the Automation list/detail rendering, the guided
+  `automationTaskDefinitions` section with create/edit entry point, copy and enable/disable
+  confirmation text, suppressed Delete for this kind, and read-only view load (render and detail
+  functions contain no mutating request).
 
 ### Tests and Results
-- `./.venv/bin/python -m unittest tests.test_automation_task_definition tests.test_configuration_management tests.test_configuration_objects tests.test_operator_ui` — PASS (110 tests).
-- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — FAIL (1012 run, 7 skipped, 6 unrelated/pre-existing failures in `test_api_credentials`, `test_final_integration`, `test_resource_library_pipeline`, and `test_runtime_storage_configuration`; ignored local config/fixture state, no Task files involved).
+- `./.venv/bin/python -m unittest tests.test_automation_task_definition tests.test_configuration_management tests.test_configuration_objects tests.test_operator_ui` — PASS (116 tests).
+- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — FAIL (1018 run, 7 skipped, 6 FAIL / PRE-EXISTING / UNRELATED in `test_api_credentials`, `test_final_integration`, `test_resource_library_pipeline`, and `test_runtime_storage_configuration`; the same ambient private-config failures accepted in the prior B review).
+- Clean-tree full regression (`git archive HEAD` plus this patch in a temporary directory) — PASS (1018 run, OK, skipped=7).
 - `./.venv/bin/ruff check .` — PASS.
 - `./.venv/bin/ruff format --check .` — PASS.
 - `./.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
@@ -181,20 +186,24 @@ Automation list/detail/create/copy/edit/enable/disable → focused and regressio
 - `./.venv/bin/mediaflow --config config/strategy.example.json config validate` — PASS.
 - `./.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
 - Forbidden `ffprobe`/`ffmpeg` runtime scan — PASS (no matches).
-- Wheel build and isolated smoke test — PASS.
+- Wheel build and isolated installed-wheel smoke test — PASS.
+- Markdown relative-link existence check for changed documents — PASS (no repository-level Markdown/link gate is defined in the quality workflow).
+- Private-config/secret scan — PASS (`config/alist.json` and `config/strategy.json` remain ignored, untracked and unstaged; no credentials or private paths in the diff).
 - `git diff --check` — PASS.
 - Production Storage/Provider and destructive real-media gates — SKIP (no credentials or user media).
 
 ### Decisions
-- Reused `ConfigurationObjectService` and the existing managed SQLite revision/audit repository;
-  no parallel Automation definition store or scheduler/worker execution path was introduced.
-- Kept the historical `schedule` configuration kind as an enum-compatible alias while storing
-  definitions in a distinct `automationTaskDefinitions` section; an early nested
-  `automation.taskDefinitions` spelling is read compatibly and canonicalized on edit.
-- Canonicalized mode, schedule and scope values at the managed object boundary and rejected
-  policy/destination/operation/provider fields rather than accepting hidden execution authority.
-- Added direct Automation API aliases while retaining the existing versioned configuration-object
-  routes so API and Web actions share one application service and optimistic contract.
+- This correction round changes tests only; the delivered API/Web/service behavior was already
+  hand-verified by B and is now pinned by regression tests.
+- The pre-change database test uses the unchanged configuration SQLite schema (Task Base..HEAD has
+  no repository/schema diff) with a pre-change document shape, then proves
+  reopen → create → Validate → Activate → reopen; this is equivalent to loading a database created
+  before the definition feature.
+- Extended the local WSGI test helper with `QUERY_STRING` support so `?revisionId=` list/detail
+  projections are exercised exactly as WSGI delivers them.
+- Read-only view-load evidence is composed of Web static assertions (render/detail functions issue
+  no mutating request) plus an API-level assertion that repeated GETs leave revision version and
+  digest unchanged and create no revision.
 
 ### Remaining In-Slice Work
 - Exact Automation Definition Preview/DryRun evidence and stale semantics.
@@ -204,19 +213,18 @@ Automation list/detail/create/copy/edit/enable/disable → focused and regressio
   projections.
 
 ### Risks / Deviations
-- The required full regression command currently has six FAIL results that reproduce against the
-  repository's ignored local configuration/fixture state and are unrelated to this Task; they are
-  recorded as FAIL / PRE-EXISTING / UNRELATED for B to assess.
+- The workspace full regression still has the six ambient private-config failures accepted by B;
+  the identical suite passes on a clean tree (1018 OK), so they are recorded as
+  FAIL / PRE-EXISTING / UNRELATED for B to assess.
 - External Storage/Provider and destructive execution evidence is unavailable and was not attempted;
   no credentials, network services or user media were used.
-- Legacy Scheduler/Worker continue to consume only existing scan/preview schedules; managed
-  definitions are intentionally not runtime-consumed in this Task.
+- No repository-level Markdown/link gate exists; a simple relative-link existence check was run.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 1ed867d3d53e2bebbf6cebd0708979256dc1c21c
+Head SHA: c5b6f1095273a8126662cf23b9a8721f860f54d8
 ```
 
 ## B Review Result
