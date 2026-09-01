@@ -239,6 +239,9 @@ Developer checkpoint. Report every gate as `PASS`, `FAIL`, `SKIP` or `UNAVAILABL
 - Defended direct append and atomic TaskItem completion writes by serializing a redacted evidence
   copy, and redacted both SQLite reload and FileCatalog application projections without rewriting
   historical rows.
+- Correction: the SQLite evidence parameter boundary now explicitly redacts `source_path` before
+  binding the scalar column, independently of document reconstruction. Focused coverage verifies
+  the actual column, SQLite bytes, restart reconstruction and historical-source API projection.
 - Added fake-credential regressions across builder output, both persistence paths, SQLite bytes,
   restart reload, deliberately unsafe historical evidence, FileCatalog, authenticated API and the
   existing Operator Web evidence renderer data path.
@@ -268,6 +271,8 @@ Developer checkpoint. Report every gate as `PASS`, `FAIL`, `SKIP` or `UNAVAILABL
 - Applied redaction at builder/document, persistence serialization, repository reconstruction and
   FileCatalog projection boundaries. Historical unsafe rows remain unchanged on read, while their
   reconstructed and operator-facing documents are safe.
+- Kept the schema unchanged and retained non-secret source-path text; the correction uses the same
+  shared value-level rule at the SQL scalar boundary instead of adding another credential pattern.
 - Preserved the evidence schema, section ordering, collection/truncation shape and ordinary
   fingerprints/identities; no migration, execution admission or OrganizerExecutor behavior changed.
 
@@ -287,18 +292,29 @@ The factual Slice Closure Packet reconciliation remains for B after this Task pa
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 72d44f12c8d46f36eb42eab29f54a23e50d343c3
+Head SHA: 7f35e0634a68a1dc62d4d02f54f1aee6cb7e435b
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
+Reviewed: 72d44f12c8d46f36eb42eab29f54a23e50d343c3
+Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Next: SAME TASK FIX LOOP
 ```
 
 If `FIX REQUIRED`, B will list only this Task's remaining blockers below and the Developer will
 continue in the same Task/Task Base/Goal/Scope correction loop. This result does not close the
 Slice or update Roadmap.
+
+- [ ] The SQLite `pipeline_evidence.source_path` write boundary still persists an unsafe
+      credential-shaped source path unchanged. Evidence built with
+      `source_path="Authorization: Bearer closure-review-secret"` returns a redacted
+      `document()["sourcePath"]`, but the actual `pipeline_evidence.source_path` column still
+      contains `closure-review-secret` after `repository.append_evidence()`; a direct temporary
+      SQLite probe found the secret in the database bytes. Extend the same shape-preserving
+      redaction to every persisted evidence scalar that can contain operator/source text (at
+      minimum `source_path`, while retaining safe source facts), and add a regression that checks
+      SQLite bytes plus reload/API projections. Keep the existing schema and read-only historical
+      projection behavior intact.
