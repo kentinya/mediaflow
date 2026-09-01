@@ -756,6 +756,13 @@ def _actions(
             )
             return RetrySafety.UNSAFE, (action, ignore), None
         return RetrySafety.UNSAFE, (action,), None
+    if raw_stage == "admission_interrupted":
+        return (
+            RetrySafety.UNSAFE,
+            (CheckpointAction("investigate", "Investigate interrupted admission", False, "none"),),
+            "manual_execution_reconciliation_required: exact authority was consumed before "
+            "the execution state was published",
+        )
     if certainty in {EffectCertainty.ATTEMPTED_UNVERIFIED, EffectCertainty.UNKNOWN}:
         return (
             RetrySafety.UNKNOWN,

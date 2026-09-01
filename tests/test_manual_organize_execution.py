@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Thread
+from unittest.mock import patch
 from uuid import uuid4
 
 from mediaflow.application.file_catalog import FileCatalogService
@@ -749,6 +750,211 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 self.assertEqual(("investigate",), checkpoint.permitted_action_ids)
                 self.assertNotIn("retry", checkpoint.permitted_action_ids)
                 self.assertTrue(Path(fixture.source_root, "One.2001.mkv").exists())
+        finally:
+            fixture.cleanup()
+
+    def test_admission_interruption_is_reconciled_and_releases_fence(self):
+        fixture = self._fixture()
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                _, intents, previews, service, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews)
+                authority = self._authorize(service, preview)
+                with patch.object(
+                    repository,
+                    "update_manual_execution",
+                    side_effect=RuntimeError("injected admission persistence failure"),
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "injected admission persistence failure"
+                    ):
+                        service.execute(
+                            authority.authorization_id,
+                            actor="operator",
+                            confirmation=True,
+                        )
+                stored_authority = repository.get_manual_execution_authorization(
+                    authority.authorization_id
+                )
+                run = repository.get_manual_execution(stored_authority.execution_id)
+                self.assertEqual("failed", run.status.value)
+                self.assertEqual("failed", run.items[0].status.value)
+                self.assertEqual("admission_interrupted", run.items[0].stage)
+                self.assertIn("fresh Preview", run.items[0].next_action)
+                result = repository.list_results(run.task_id)[0]
+                self.assertEqual("FAILED", result.status)
+                self.assertEqual("none", result.effect_certainty)
+                self.assertFalse(repository.lock_owned("source", "One.2001.mkv", run.task_id))
+                checkpoint = ProcessingCheckpointService(repository).get(
+                    run.items[0].task_item_id, task_id=run.task_id
+                )
+                self.assertEqual(("investigate",), checkpoint.permitted_action_ids)
+                self.assertNotIn("retry", checkpoint.permitted_action_ids)
+        finally:
+            fixture.cleanup()
+
+    def test_interrupted_admission_has_explicit_api_reconciliation(self):
+        fixture = self._fixture()
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                catalog, intents, previews, service, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews)
+                authority = self._authorize(service, preview)
+
+                class ProcessInterrupted(BaseException):
+                    pass
+
+                with patch.object(
+                    repository,
+                    "update_manual_execution",
+                    side_effect=ProcessInterrupted(),
+                ):
+                    with self.assertRaises(ProcessInterrupted):
+                        service.execute(
+                            authority.authorization_id,
+                            actor="operator",
+                            confirmation=True,
+                        )
+                stored_authority = repository.get_manual_execution_authorization(
+                    authority.authorization_id
+                )
+                raw = repository.get_manual_execution(stored_authority.execution_id)
+                self.assertEqual("admitted", raw.status.value)
+                self.assertIn("reconcile", raw.items[0].next_action)
+                self.assertTrue(repository.lock_owned("source", "One.2001.mkv", raw.task_id))
+                operator = ResolvedApiPrincipal(
+                    "operator",
+                    "operator-token",
+                    frozenset({ApiPermission.READ, ApiPermission.EXECUTE_MANUAL_ORGANIZE}),
+                )
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(operator,),
+                    file_catalog=catalog,
+                    manual_intent_service=intents,
+                    manual_preview_service=previews,
+                    manual_execution_service=service,
+                )
+                status, document = request(
+                    api,
+                    f"/api/v1/manual-executions/{raw.execution_id}/reconcile",
+                    method="POST",
+                    body={"confirmation": True},
+                )
+                self.assertEqual(200, status)
+                self.assertEqual("failed", document["status"])
+                self.assertEqual("admission_interrupted", document["items"][0]["stage"])
+                self.assertFalse(repository.lock_owned("source", "One.2001.mkv", raw.task_id))
+                audit = repository.list_manual_execution_authorization_audit(
+                    authority.authorization_id
+                )
+                self.assertIn("manual_execution_reconciled", [value.action for value in audit])
+        finally:
+            fixture.cleanup()
+
+    def test_result_publication_failure_persists_uncertain_effects_without_replay(self):
+        fixture = self._fixture()
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                _, intents, previews, service, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews)
+                authority = self._authorize(service, preview)
+                with patch.object(
+                    repository,
+                    "complete_manual_execution_item",
+                    side_effect=RuntimeError("injected result publication failure"),
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "injected result publication failure"
+                    ):
+                        service.execute(
+                            authority.authorization_id,
+                            actor="operator",
+                            confirmation=True,
+                        )
+                stored_authority = repository.get_manual_execution_authorization(
+                    authority.authorization_id
+                )
+                run = repository.get_manual_execution(stored_authority.execution_id)
+                item = run.items[0]
+                result = repository.list_results(run.task_id)[0]
+                self.assertEqual("partial_success", run.status.value)
+                self.assertEqual("partial", item.status.value)
+                self.assertEqual("unknown", item.effect_certainty)
+                self.assertIn("MOVE", item.completed_operations)
+                self.assertIn("result_persistence", item.uncertain_effects)
+                self.assertTrue(item.effects)
+                self.assertFalse(item.effects[0].verified)
+                self.assertEqual("PARTIAL", result.status)
+                self.assertEqual("unknown", result.effect_certainty)
+                self.assertIn("result_persistence", result.uncertain_effects)
+                self.assertFalse(Path(fixture.source_root, "One.2001.mkv").exists())
+                self.assertTrue(
+                    Path(fixture.target_root, "Movies/Anime/One (2001)/One (2001).mkv").exists()
+                )
+                self.assertFalse(repository.lock_owned("source", "One.2001.mkv", run.task_id))
+                checkpoint = ProcessingCheckpointService(repository).get(
+                    item.task_item_id, task_id=run.task_id
+                )
+                self.assertEqual(("investigate",), checkpoint.permitted_action_ids)
+                self.assertNotIn("retry", checkpoint.permitted_action_ids)
+        finally:
+            fixture.cleanup()
+
+    def test_process_interruption_after_mutation_is_reconciled_from_observed_effect(self):
+        fixture = self._fixture()
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                _, intents, previews, service, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews)
+                authority = self._authorize(service, preview)
+
+                class ProcessInterrupted(BaseException):
+                    pass
+
+                with patch.object(
+                    repository,
+                    "complete_manual_execution_item",
+                    side_effect=ProcessInterrupted(),
+                ):
+                    with self.assertRaises(ProcessInterrupted):
+                        service.execute(
+                            authority.authorization_id,
+                            actor="operator",
+                            confirmation=True,
+                        )
+                stored_authority = repository.get_manual_execution_authorization(
+                    authority.authorization_id
+                )
+                raw = repository.get_manual_execution(stored_authority.execution_id)
+                self.assertEqual("running", raw.status.value)
+                self.assertEqual("running", raw.items[0].status.value)
+                self.assertEqual(0, len(repository.list_results(raw.task_id)))
+                self.assertFalse(Path(fixture.source_root, "One.2001.mkv").exists())
+                self.assertTrue(
+                    Path(fixture.target_root, "Movies/Anime/One (2001)/One (2001).mkv").exists()
+                )
+                recovered = service.reconcile(
+                    raw.execution_id,
+                    actor="operator",
+                    confirmation=True,
+                )
+                item = recovered.items[0]
+                self.assertEqual("partial_success", recovered.status.value)
+                self.assertEqual("partial", item.status.value)
+                self.assertEqual("unknown", item.effect_certainty)
+                self.assertIn("MOVE", item.completed_operations)
+                self.assertIn("process_interruption", item.uncertain_effects)
+                self.assertTrue(item.effects)
+                self.assertFalse(item.effects[0].verified)
+                self.assertEqual(1, len(repository.list_results(recovered.task_id)))
+                checkpoint = ProcessingCheckpointService(repository).get(
+                    item.task_item_id, task_id=recovered.task_id
+                )
+                self.assertEqual(("investigate",), checkpoint.permitted_action_ids)
+                self.assertNotIn("retry", checkpoint.permitted_action_ids)
+                self.assertFalse(repository.lock_owned("source", "One.2001.mkv", recovered.task_id))
         finally:
             fixture.cleanup()
 

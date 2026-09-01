@@ -221,6 +221,16 @@ class PersistentTaskRepository(Protocol):
         effects: tuple[ManualExecutionEffect, ...],
         locks: tuple[tuple[str, str], ...],
     ) -> None: ...
+    def reconcile_manual_execution(
+        self,
+        execution: ManualExecution,
+        items: tuple[ManualExecutionItem, ...],
+        task_items: tuple[PersistentTaskItem, ...],
+        task: PersistentTask,
+        results: tuple[PersistentResultRecord, ...],
+        effects: tuple[ManualExecutionEffect, ...],
+        audit: ManualExecutionAuthorizationAudit,
+    ) -> None: ...
     def create_task(self, task: PersistentTask) -> None: ...
     def update_task(self, task: PersistentTask) -> None: ...
     def request_task_pause(self, task_id: str, updated_at: datetime) -> PersistentTask: ...

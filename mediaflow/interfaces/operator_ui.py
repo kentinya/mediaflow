@@ -1920,6 +1920,15 @@ APP_JS = b"""(() => {
       field(summary, 'Next action', data.nextAction || '-');
       detailContent.append(summary);
       const items = Array.isArray(data.items) ? data.items : [];
+      const interrupted = ['admitted', 'running'].includes(data.status) || items.some(item =>
+        ['admitted', 'running'].includes(item.status));
+      if (interrupted) {
+        detailContent.append(text('p',
+          'This exact execution has no durable terminal outcome. Reconciliation records the ' +
+          'safe state, releases its execution fence, and never replays Storage mutation.', 'warning'),
+          actionButton('Reconcile interrupted execution',
+            () => confirmManualReconciliation(data)));
+      }
       items.forEach(item => {
         const section = text('div', '', 'choices');
         section.append(text('h3', `${item.itemId} - ${item.status}`));
@@ -1948,6 +1957,23 @@ APP_JS = b"""(() => {
         actionButton('Open Task', () => showTask(data.taskId)));
       detail.hidden = false;
     } catch (error) { message(errorText(error), true); }
+  }
+  function confirmManualReconciliation(execution) {
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p',
+      `Reconcile interrupted execution ${execution.executionId}? ` +
+      'This publishes investigation evidence and releases the durable fence. It does not invoke ' +
+      'OrganizerExecutor or replay any mutation.', 'warning'));
+    confirmation.append(actionButton('Confirm reconciliation', async () => {
+      try {
+        const result = await api(`/api/v1/manual-executions/${encodeURIComponent(execution.executionId)}/reconcile`, {
+          method: 'POST', body: JSON.stringify({confirmation: true})
+        });
+        await showManualExecution(result.executionId);
+        message('Interrupted execution reconciled. Review each Result and checkpoint; no mutation was replayed.');
+      } catch (error) { message(errorText(error), true); }
+    }), actionButton('Keep execution unchanged', () => confirmation.remove()));
+    detailContent.append(confirmation);
   }
   function confirmManualChoice(intent, item, patch) {
     const confirmation = text('div', '', 'choices');

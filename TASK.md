@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 24.4
 Parent Slice: 24 — Files / Media Detail and Manual Organize
-Status: READY FOR B REVIEW
+Status: IN PROGRESS
 Task Base: bab61d419d17c0a5f05cae7c82ce779a34272453
 Difficulty: High
 Test Level: T4
@@ -304,11 +304,36 @@ Head SHA: 6dfddd127859221a5b031df571b5226a86402b75
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: bab61d419d17c0a5f05cae7c82ce779a34272453..6dfddd127859221a5b031df571b5226a86402b75
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+Blockers:
+
+- An exception after the atomic admission commit but before the execution starts leaves the
+  consumed one-shot authority linked to an `ADMITTED` execution and `ADMITTED` item, with the
+  Task still running and no API/Web action that can safely continue or reconcile that durable
+  state. Evidence: fault-injecting `repository.update_manual_execution` immediately after
+  `admit_manual_execution` produced `authority=consumed`, `execution=admitted`,
+  `item=admitted`, source unchanged, and the execution's only next action remained
+  `wait for exact execution to finish`; the corresponding lock was also not available for a
+  follow-up action. Make the admitted boundary restart-safe: after a process interruption it
+  must durably expose a correct investigation/continuation state, release or reconcile its
+  fence, and never strand a consumed authority without a permitted recovery path or safe
+  terminal explanation.
+- An exception after `OrganizerExecutor` has already mutated Storage but before
+  `complete_manual_execution_item` commits leaves the source moved/target created while the
+  durable execution and TaskItem remain `RUNNING`, with `effectCertainty=unknown`, no Result,
+  no effect record, and no checkpoint action that identifies the known mutation for
+  investigation. Evidence: fault-injecting `complete_manual_execution_item` after a successful
+  Move produced `source_exists=False`, `target_exists=True`, `execution=running`,
+  `item=running`, `resultId=None`, `repository.list_results(task_id)=0`, and no durable
+  effect evidence after reopening SQLite. Persist a crash/persistence-failure outcome as
+  partial/uncertain with known effects and a checkpoint-linked investigation-only action (or
+  an equivalent durable handoff that guarantees this evidence); do not automatically replay
+  the mutation.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.

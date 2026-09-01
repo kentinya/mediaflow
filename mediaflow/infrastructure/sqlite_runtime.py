@@ -5481,6 +5481,136 @@ class SQLiteTaskRepository:
                 self._connection.rollback()
                 raise
 
+    def reconcile_manual_execution(
+        self,
+        execution: ManualExecution,
+        items: tuple[ManualExecutionItem, ...],
+        task_items: tuple[PersistentTaskItem, ...],
+        task: PersistentTask,
+        results: tuple[PersistentResultRecord, ...],
+        effects: tuple[ManualExecutionEffect, ...],
+        audit: ManualExecutionAuthorizationAudit,
+    ) -> None:
+        """Publish an interruption handoff without invoking or replaying Storage work.
+
+        This path is deliberately separate from normal item completion.  It is the durable
+        recovery boundary used when the process stopped between admission/execution phases or
+        when result publication failed after OrganizerExecutor may have mutated Storage.  The
+        supplied evidence is published atomically and the complete task fence is released only
+        after that publication succeeds.
+        """
+
+        if len(effects) > 256:
+            raise ValueError("manual execution effect count exceeds its bound")
+        if audit.execution_id != execution.execution_id:
+            raise ValueError("manual execution recovery audit identity does not match")
+        if audit.authorization_id != execution.authorization_id:
+            raise ValueError("manual execution recovery audit authority does not match")
+        if any(item.execution_id != execution.execution_id for item in items):
+            raise ValueError("manual execution recovery item identity does not match")
+        if any(item.task_id != execution.task_id for item in task_items):
+            raise ValueError("manual execution recovery TaskItem identity does not match")
+        if any(result.task_id != execution.task_id for result in results):
+            raise ValueError("manual execution recovery Result identity does not match")
+        item_ids = {item.execution_item_id for item in items}
+        if any(effect.execution_item_id not in item_ids for effect in effects):
+            raise ValueError("manual execution recovery effect identity does not match")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                current = self._connection.execute(
+                    "SELECT status FROM manual_executions WHERE execution_id=?",
+                    (execution.execution_id,),
+                ).fetchone()
+                if current is None:
+                    raise LookupError(f"manual execution {execution.execution_id!r} was not found")
+                if current["status"] not in {
+                    ManualExecutionStatus.ADMITTED.value,
+                    ManualExecutionStatus.RUNNING.value,
+                }:
+                    # A late recovery attempt must never downgrade a terminal result that was
+                    # committed before an exception became visible to the caller.
+                    self._connection.commit()
+                    return
+                for result in results:
+                    self._insert_result_locked(result)
+                for task_item in task_items:
+                    self._connection.execute(
+                        """INSERT INTO task_items VALUES (
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        )
+                        ON CONFLICT(item_id) DO UPDATE SET
+                            status=excluded.status, stage=excluded.stage,
+                            attempts=excluded.attempts,
+                            updated_at=excluded.updated_at, plan_id=excluded.plan_id,
+                            destination_storage_id=excluded.destination_storage_id,
+                            destination_path=excluded.destination_path,
+                            execution_status=excluded.execution_status, error=excluded.error""",
+                        self._item_values(task_item),
+                    )
+                for item in items:
+                    cursor = self._connection.execute(
+                        "UPDATE manual_execution_items SET status=?, stage=?, result_id=?, "
+                        "effect_certainty=?, completed_operations=?, uncertain_effects=?, error=?, "
+                        "next_action=?, updated_at=? WHERE execution_item_id=?",
+                        (
+                            item.status.value,
+                            item.stage,
+                            item.result_id,
+                            item.effect_certainty,
+                            json.dumps(item.completed_operations, ensure_ascii=False),
+                            json.dumps(item.uncertain_effects, ensure_ascii=False),
+                            item.error,
+                            item.next_action,
+                            item.updated_at.isoformat(),
+                            item.execution_item_id,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise LookupError(
+                            f"manual execution item {item.execution_item_id!r} was not found"
+                        )
+                for effect in effects:
+                    self._connection.execute(
+                        """INSERT OR REPLACE INTO manual_execution_effects (
+                            effect_id, execution_item_id, sequence, action,
+                            source_storage_id, source_path, destination_storage_id,
+                            destination_path, verified, certainty, details_json, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        self._manual_execution_effect_values(effect),
+                    )
+                cursor = self._connection.execute(
+                    "UPDATE manual_executions SET status=?, next_action=?, error=?, "
+                    "updated_at=?, completed_at=? WHERE execution_id=?",
+                    (
+                        execution.status.value,
+                        execution.next_action,
+                        execution.error,
+                        execution.updated_at.isoformat(),
+                        execution.completed_at.isoformat() if execution.completed_at else None,
+                        execution.execution_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError(f"manual execution {execution.execution_id!r} was not found")
+                cursor = self._connection.execute(
+                    "UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?, "
+                    "updated_at=?, started_at=?, completed_at=?, total_items=?, completed_items=?, "
+                    "failed_items=?, error=?, pause_requested=?, scope_path=?, item_limit=?, "
+                    "configuration_snapshot_id=?, configuration_snapshot_digest=? WHERE task_id=?",
+                    (*self._task_values(task)[1:], task.task_id),
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError(f"task {task.task_id!r} was not found")
+                self._connection.execute(
+                    "DELETE FROM file_locks WHERE task_id=?", (execution.task_id,)
+                )
+                self._insert_manual_execution_authorization_audit(audit)
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+
     def get_manual_intent(self, intent_id: str) -> ManualOrganizeIntent | None:
         if not isinstance(intent_id, str) or not intent_id.strip():
             raise ValueError("manual intent ID is required")
