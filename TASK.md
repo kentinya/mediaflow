@@ -6,7 +6,7 @@ the current [`SLICE.md`](../SLICE.md).
 ```text
 Task ID: 25.1
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: d889db62fd6fe568b9a2277117a805459b8364df
 Difficulty: High
 Test Level: T4
@@ -230,81 +230,76 @@ Head SHA: c5b6f1095273a8126662cf23b9a8721f860f54d8
 ## B Review Result
 
 ```text
-Reviewed: d889db6..161c533 (code checkpoint 1ed867d + report commit 161c533)
-Decision: FIX REQUIRED
+Reviewed: d889db6..1ea67e3 (code checkpoint 1ed867d, correction checkpoint c5b6f109527, reports 161c533/1ea67e3)
+Decision: PASS
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK
 ```
 
-### Blockers
+### Verification
 
-1. Required authenticated API integration coverage is missing for most definition actions
-   (Acceptance Criteria 9 / Required Tests bullet 3).
-   - Where: `tests/test_automation_task_definition.py` —
-     `test_api_alias_and_rbac_are_version_bound` is the only API test. It covers
-     `POST /api/v1/automation/task-definitions` (create success),
-     `POST /api/v1/automation/task-definitions/api-task/enable` (stale expected version -> 409)
-     and one viewer-token 403.
-   - Evidence: at `161c533` there is no test for `GET /api/v1/automation/task-definitions`,
-     `GET`/`PUT /api/v1/automation/task-definitions/{id}`, `POST .../{id}/copy`,
-     `POST .../{id}/disable`, or the
-     `/api/v1/configuration/revisions/{revision}/objects/automationTaskDefinitions/{id}/{copy,enable,disable}`
-     routes that the Operator Web actions call. I drove every one of those routes by hand against
-     the delivered code and they behave correctly (each action 200; missing `mode` -> 400;
-     `sourceScope: "../escape"` -> 400; absolute scope -> 400; unknown or disabled
-     `resourceLibraryId` -> 400; unknown definition id -> 404; edit of the Active revision -> 409
-     `configuration_version_conflict` with `durableState: draft_preserved`). The gap is the required
-     regression evidence, not the implementation.
-   - Direction: add authenticated API tests for every definition action plus malformed input,
-     missing/disabled reference, unknown id and stale version, asserting the bounded operator-safe
-     error projection, and assert the list/detail projection stays truthful after configuration
-     repository close/reopen.
+- Correction round is test-only: `git diff --name-status 161c533..HEAD` returns exactly `TASK.md`
+  and `tests/test_automation_task_definition.py`; `git diff --stat 161c533..HEAD -- mediaflow
+  scripts config pyproject.toml docs` is empty, so the API/managed/Web behavior accepted in the
+  previous round is unchanged. The 5 removed test lines are the `_request` helper signature
+  (`QUERY_STRING` support) and the replaced vacuous Web substring loop. No test, assertion or skip
+  was weakened.
+- Blocker 1 closed: `test_api_definition_actions_and_configuration_object_routes_share_contract`,
+  `test_api_rejects_malformed_references_and_stale_versions_with_bounded_errors` and
+  `test_api_list_and_detail_are_read_only_and_truthful_after_reload` now cover list/detail/PUT/copy/
+  enable/disable on both `/api/v1/automation/task-definitions` and the
+  `/api/v1/configuration/revisions/{revision}/objects/automationTaskDefinitions` family, RBAC denial
+  through both families, missing `mode` (400), traversal and absolute `sourceScope` (400), unknown
+  and disabled `resourceLibraryId` (400), unknown id (404), stale version and Active-revision edit
+  (409 `configuration_version_conflict` with `durableState: draft_preserved`, `sideEffects: none`,
+  `retrySafe: true`), no revision created by repeated GETs, and a truthful projection after
+  repository close/reopen.
+- Blocker 2 closed: `test_edit_disable_and_immutable_active_protection` exercises
+  `edit_automation_task_definition` and `disable_automation_task_definition`, refuses mutation of an
+  ACTIVE and a SUPERSEDED revision (`ConfigurationVersionConflict` from the explicit status guard in
+  `configuration_objects.py:520`), and asserts the prior Active revision id, version, digest and
+  document are unchanged after a post-activation Draft edit.
+  `test_service_layer_stale_version_rejects_without_overwriting_concurrent_draft` proves the
+  concurrent Draft survives a stale `expected_version`.
+  `test_pre_change_configuration_database_loads_and_accepts_definitions` loads a document without
+  `automationTaskDefinitions`, reopens, then create → Validate → Activate → reopen.
+- Blocker 3 closed and non-vacuous: every asserted Web string is absent from `operator_ui.py` at
+  Task Base (`git archive d889db6` grep: `renderAutomation`, `showAutomationDetail`,
+  `data-view="automation"`, `Automation Task Definitions`, `Confirm copy`,
+  `automationTaskDefinitions`, `Save Automation Task Definition`, `The copy starts disabled`,
+  `This changes only the Draft` all 0 hits). Assertions are scoped to brace-matched function bodies;
+  `renderAutomation` contains only the GET and no POST/PUT/DELETE or `/copy`, `/enable`, `/disable`,
+  and `showAutomationDetail` contains no `api(` at all.
+- Falsification (mutations applied to a `git archive HEAD` copy, workspace untouched): copy no
+  longer forcing `enabled: False` → `test_lifecycle_copy_enable_reload_and_active_identity` FAILS;
+  enable/disable always enabling → the managed and API action tests FAIL; removing the
+  `kind !== 'automationTaskDefinitions'` Delete guard → the Web test FAILS. The new evidence
+  therefore detects regressions of the copy-default-disabled, disable and Delete-suppression rules.
+- Focused: `./.venv/bin/python -m unittest tests.test_automation_task_definition
+  tests.test_configuration_management tests.test_configuration_objects tests.test_operator_ui` —
+  PASS (116 tests), reproducing the report.
+- Full offline regression on a clean `git archive HEAD` tree —
+  `Ran 1018 tests ... OK (skipped=7)`. The workspace run reproduces exactly the same six failures
+  (`test_api_credentials` ×2, `test_final_integration`, `test_resource_library_pipeline`,
+  `test_runtime_storage_configuration` ×2). Proven ambient, not caused by this Task: copying only
+  the gitignored local `.mediaflow/mediaflow.sqlite3` into the clean HEAD tree reproduces all six
+  failures with identical code and tests. FAIL / PRE-EXISTING / UNRELATED accepted; no test or
+  product change was made to chase them.
+- Gates re-run by B: `ruff check .` PASS; `ruff format --check .` PASS (341 files);
+  `compileall mediaflow tests scripts` PASS; `pip check` PASS; `config validate` PASS for both
+  example configurations; forbidden `ffprobe`/`ffmpeg` runtime scan PASS (no matches); wheel build
+  from a clean HEAD tree plus isolated venv smoke PASS (installed wheel serves the Automation view
+  asset and enforces the disabled default); `git diff --check` and `git diff --cached --check` PASS;
+  worktree clean; `config/alist.json` and `config/strategy.json` remain gitignored and untracked; no
+  credential-like value in `d889db6..HEAD`.
+- Slice check: RO-1 is satisfied. RO-2 … RO-7 remain NOT STARTED, so the Slice is not ready for A.
 
-2. Managed configuration/application coverage omits edit, disable, immutable-Active protection,
-   service-layer optimistic conflict and migration (Acceptance Criteria 9 / Required Tests
-   bullet 2).
-   - Where: `tests/test_automation_task_definition.py::AutomationTaskDefinitionManagedTests` — the
-     single lifecycle test runs create -> enable -> copy -> validate -> activate -> reload.
-   - Evidence: `edit_automation_task_definition` and `disable_automation_task_definition` in
-     `mediaflow/application/configuration_objects.py` are invoked by no test (grep over `tests/`
-     returns no hits). No test asserts that mutating an ACTIVE or superseded revision is refused,
-     that a Draft edit made after activation leaves the prior Active revision id, digest and
-     document unchanged, that a stale `expected_version` is rejected at the service layer without
-     overwriting the concurrent Draft (only the API path asserts 409), or that definitions load from
-     a configuration database created before this change.
-   - Direction: extend the managed tests to cover edit and disable, rejection of an ACTIVE-revision
-     mutation, a service-level stale-version rejection that proves the concurrent Draft survived, an
-     explicit before/after Active identity plus digest assertion, and load of a pre-change
-     configuration database.
+### Known Non-blocking Issues (P2, not fixed in this Task)
 
-3. Operator Web coverage is partly vacuous and misses the required action and read-only assertions
-   (Acceptance Criteria 9 / Required Tests bullet 4).
-   - Where: `tests/test_automation_task_definition.py::AutomationTaskDefinitionWebTests`.
-   - Evidence: of the four looped action strings, `"Copy"` and `"Enable"` are already present in
-     `ASSETS['/ui/app.js']` at Task Base `d889db6` (2 and 3 occurrences, measured on a
-     `git archive d889db6` tree), so those two assertions pass with or without this Task's Web work.
-     Nothing asserts the Automation list/detail rendering, the guided `automationTaskDefinitions`
-     list and its create/edit entry point in the Configuration view, the enable/disable confirmation
-     text, that Delete is suppressed for this kind, or the Required-Test item "absence of mutation
-     on view load".
-   - Direction: replace the bare substring loop with assertions tied to the new Automation surface
-     (list/detail rendering, guided section with create/edit entry point, copy and enable/disable
-     confirmation text, absent Delete), and add an assertion that loading or refreshing the view
-     issues no mutating request and leaves the revision version and digest unchanged.
-
-### Not in this fix scope
-
-- The six failures reported for
-  `python -m unittest discover -s tests -p 'test_*.py'` are accepted as environmental and are not
-  blockers. Confirmed by running the same suite at `161c533` on a clean `git archive HEAD` tree:
-  `Ran 1012 tests ... OK (skipped=7)`, exit 0. The failures come from the gitignored ambient
-  `.mediaflow/mediaflow.sqlite3` Active managed revision built from the local private
-  `config/strategy.json`, which the affected tests resolve through the cwd-relative default database
-  path. Do not change tests or product code to chase them.
-- No safety-line violation, credential leak or unrelated file was found in the checkpoint:
-  `config/alist.json` and `config/strategy.json` remain ignored and untracked, `ruff check`,
-  `ruff format --check`, `compileall`, wheel build with isolated smoke and `git diff --check` all
-  reproduce as PASS.
+- The Web Delete-suppression assertion surfaces a removed guard as a `ValueError: substring not
+  found` from `str.index` rather than a named assertion failure.
+- The API copy assertion runs against an already-disabled source definition, so only the managed
+  lifecycle test discriminates the copy-default-disabled rule.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
