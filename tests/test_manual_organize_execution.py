@@ -7,7 +7,7 @@ import unittest
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Barrier, Thread
+from threading import Barrier, Event, Lock, Thread
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -22,6 +22,7 @@ from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
+from mediaflow.domain.manual_execution import ManualExecutionError
 from mediaflow.domain.manual_organize_preview import (
     ManualPreviewItemStatus,
 )
@@ -1282,35 +1283,145 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 _, intents, previews, execution, _ = self._services(repository, fixture)
                 _, preview = self._intent_and_preview(intents, previews)
                 authority = self._authorize(execution, preview)
-            barrier = Barrier(2)
-            outcomes = []
+            active_reads = Barrier(2)
+            winner_done = Event()
+            outcome_lock = Lock()
+            outcomes = {}
+            executor = _SelectiveExecutor()
 
-            def worker() -> None:
+            def worker(role: str) -> None:
                 try:
                     with SQLiteTaskRepository(fixture.database) as repository:
                         _, _, previews, execution, _ = self._services(repository, fixture)
-                        barrier.wait()
-                        outcomes.append(
-                            execution.execute(
-                                authority.authorization_id,
-                                actor="operator",
-                                confirmation=True,
-                            )
-                        )
-                except Exception as error:  # one loser is the expected durable rejection
-                    outcomes.append(error)
+                        execution._executor = executor
+                        get_authorization = execution.get_authorization
 
-            threads = [Thread(target=worker), Thread(target=worker)]
+                        def read_active(authorization_id, *, expire=True):
+                            value = get_authorization(authorization_id, expire=expire)
+                            active_reads.wait(timeout=5)
+                            return value
+
+                        validate_storage = execution._validate_current_storage
+
+                        def validate_after_winner(*args, **kwargs):
+                            if not winner_done.wait(timeout=5):
+                                raise AssertionError(
+                                    "winner did not complete before loser preflight"
+                                )
+                            return validate_storage(*args, **kwargs)
+
+                        with patch.object(execution, "get_authorization", side_effect=read_active):
+                            if role == "loser":
+                                with patch.object(
+                                    execution,
+                                    "_validate_current_storage",
+                                    side_effect=validate_after_winner,
+                                ):
+                                    result = execution.execute(
+                                        authority.authorization_id,
+                                        actor="operator",
+                                        confirmation=True,
+                                    )
+                            else:
+                                result = execution.execute(
+                                    authority.authorization_id,
+                                    actor="operator",
+                                    confirmation=True,
+                                )
+                                winner_done.set()
+                except Exception as error:  # one loser is the expected durable rejection
+                    result = error
+                finally:
+                    with outcome_lock:
+                        outcomes[role] = result
+
+            threads = [
+                Thread(target=worker, args=("winner",)),
+                Thread(target=worker, args=("loser",)),
+            ]
             for thread in threads:
                 thread.start()
             for thread in threads:
-                thread.join()
+                thread.join(timeout=10)
+            self.assertFalse(any(thread.is_alive() for thread in threads))
             self.assertEqual(2, len(outcomes))
-            self.assertEqual(1, sum(hasattr(value, "execution_id") for value in outcomes))
+            self.assertEqual(
+                1,
+                sum(hasattr(value, "execution_id") for value in outcomes.values()),
+            )
+            self.assertTrue(hasattr(outcomes["winner"], "execution_id"))
+            self.assertIsInstance(outcomes["loser"], ManualExecutionError)
+            self.assertEqual("authorization_consumed", outcomes["loser"].code)
+            self.assertEqual(["One.2001.mkv"], executor.calls)
+            target = Path(
+                fixture.target_root,
+                "Movies/Anime/One (2001)/One (2001).mkv",
+            )
+            self.assertFalse(Path(fixture.source_root, "One.2001.mkv").exists())
+            self.assertTrue(target.exists())
             with SQLiteTaskRepository(fixture.database) as repository:
-                self.assertEqual(1, len(repository.list_tasks()))
-            error = next(value for value in outcomes if not hasattr(value, "execution_id"))
-            self.assertIn(error.code, {"authorization_changed", "authorization_consumed"})
+                stored = repository.get_manual_execution_authorization(authority.authorization_id)
+                self.assertEqual("consumed", stored.status.value)
+                self.assertEqual(
+                    1,
+                    sum(
+                        audit.action == "consumed"
+                        for audit in repository.list_manual_execution_authorization_audit(
+                            authority.authorization_id
+                        )
+                    ),
+                )
+                executions = repository.list_manual_executions_for_preview(preview.preview_id)
+                self.assertEqual(1, len(executions))
+                tasks = repository.list_tasks()
+                self.assertEqual(1, len(tasks))
+                self.assertEqual(1, len(repository.list_items(tasks[0].task_id)))
+                self.assertEqual(1, len(repository.list_results(tasks[0].task_id)))
+                self.assertEqual(
+                    0,
+                    repository._connection.execute("SELECT COUNT(*) FROM file_locks").fetchone()[0],
+                )
+        finally:
+            fixture.cleanup()
+
+    def test_active_authorization_preserves_external_source_missing(self):
+        fixture = self._fixture()
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                _, intents, previews, execution, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews)
+                authority = self._authorize(execution, preview)
+                Path(fixture.source_root, "One.2001.mkv").unlink()
+
+                with self.assertRaises(ManualExecutionError) as raised:
+                    execution.execute(
+                        authority.authorization_id,
+                        actor="operator",
+                        confirmation=True,
+                    )
+
+                self.assertEqual("source_missing", raised.exception.code)
+                self.assertEqual(
+                    "active",
+                    repository.get_manual_execution_authorization(
+                        authority.authorization_id
+                    ).status.value,
+                )
+                self.assertEqual(0, len(repository.list_tasks()))
+                self.assertEqual(
+                    0,
+                    len(repository.list_manual_executions_for_preview(preview.preview_id)),
+                )
+                self.assertEqual(
+                    0,
+                    repository._connection.execute("SELECT COUNT(*) FROM file_locks").fetchone()[0],
+                )
+                self.assertFalse(
+                    Path(
+                        fixture.target_root,
+                        "Movies/Anime/One (2001)/One (2001).mkv",
+                    ).exists()
+                )
         finally:
             fixture.cleanup()
 
