@@ -11,6 +11,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+from mediaflow.domain.automation_task_definition_preview import (
+    AutomationTaskDefinitionPreviewError,
+)
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
@@ -310,6 +313,65 @@ class ApiSecurityTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
                 self.assertEqual(repository.list_security_audit(), ())
+
+
+class AutomationPreviewSecurityTests(unittest.TestCase):
+    def test_viewer_can_inspect_preview_but_cannot_run_and_audit_is_secret_free(self) -> None:
+        class FakePreviewService:
+            def list_readonly(self, definition_id, *, limit=100):
+                return ()
+
+            def get_readonly(self, preview_id):
+                raise LookupError("preview not found")
+
+            def create(self, definition_id, *, revision_id=None, actor):
+                raise AutomationTaskDefinitionPreviewError(
+                    "automation Preview failed before analysis",
+                    code="automation_preview_rejected",
+                    status=400,
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "runtime.sqlite3"
+            with SQLiteTaskRepository(database) as repository:
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=principals(),
+                    automation_preview_service=FakePreviewService(),
+                )
+                status, body = request(
+                    api,
+                    "GET",
+                    "/api/v1/automation/task-definitions/task/previews",
+                    token="viewer-token",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(body["items"], [])
+                status, _ = request(
+                    api,
+                    "POST",
+                    "/api/v1/automation/task-definitions/task/preview",
+                    token="viewer-token",
+                    document={},
+                )
+                self.assertEqual(status, 403)
+                status, body = request(
+                    api,
+                    "POST",
+                    "/api/v1/automation/task-definitions/task/preview",
+                    token="operator-token",
+                    document={"token": "secret-value"},
+                )
+                self.assertEqual(status, 400)
+                self.assertNotIn("secret-value", json.dumps(body))
+                audit = repository.list_security_audit()
+                rendered = str([item.__dict__ for item in audit])
+                self.assertNotIn("secret-value", rendered)
+                self.assertIn(
+                    "/api/v1/automation/task-definitions/{id}/preview",
+                    rendered,
+                )
 
 
 if __name__ == "__main__":

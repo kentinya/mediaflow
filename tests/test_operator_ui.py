@@ -1107,5 +1107,44 @@ class OperatorUiTests(unittest.TestCase):
         self.assertNotIn("Review its explanation before activation", strategy)
 
 
+class AutomationPreviewWebTests(unittest.TestCase):
+    def test_automation_preview_entry_confirm_render_and_read_only_load(self) -> None:
+        script = APP_JS.decode("utf-8")
+        detail = _js_function_body(script, "showAutomationDetail")
+        self.assertIn("'Run Preview / DryRun'", detail)
+        self.assertIn("confirmAutomationPreview(item)", detail)
+        self.assertIn("previews?limit=10`", detail)
+        self.assertIn("'No Preview has been run for this definition yet.'", detail)
+        self.assertIn(
+            "'Opening or refreshing this view is read-only. Preview runs only when "
+            "you explicitly confirm it.'",
+            detail,
+        )
+        self.assertNotIn("method: 'POST'", detail)
+        self.assertNotIn("method: 'PUT'", detail)
+        self.assertNotIn("method: 'DELETE'", detail)
+
+        confirm = _js_function_body(script, "confirmAutomationPreview")
+        self.assertIn("'Confirm Preview'", confirm)
+        self.assertIn("It creates no Job, Task, grant, or configuration revision.", confirm)
+        self.assertIn(
+            "`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/preview`",
+            confirm,
+        )
+        self.assertIn("method: 'POST'", confirm)
+
+        preview_view = _js_function_body(script, "showAutomationPreview")
+        self.assertIn("'Automation Preview'", preview_view)
+        self.assertIn("Stale evidence:", preview_view)
+        self.assertIn("This is not execution authority.", preview_view)
+        self.assertIn("'Definition fingerprint'", preview_view)
+        self.assertIn("'Truncated by limit'", preview_view)
+        self.assertIn("'Per-item evidence'", preview_view)
+        self.assertIn("'Run a fresh Preview'", preview_view)
+        self.assertIn("previews/${encodeURIComponent(previewId)}", preview_view)
+        self.assertNotIn("method: 'POST'", preview_view)
+        self.assertIn("data.itemsTruncated", preview_view)
+
+
 if __name__ == "__main__":
     unittest.main()

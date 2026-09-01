@@ -677,7 +677,7 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                         "WHERE component='configuration_management'"
                     ).fetchone()[0]
                 self.assertEqual(marker, CONFIGURATION_SCHEMA_VERSION)
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 27)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 28)
 
 
 if __name__ == "__main__":
