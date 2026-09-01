@@ -395,6 +395,113 @@ Status: READY FOR B REVIEW
 Head SHA: 7c01aedc6f94a6f1f9c39e5202608ff9c12e3a63
 ```
 
+## Developer Completion Report — FIX REQUIRED correction pass
+
+### Changed Files
+
+- `mediaflow/application/automation_task_definition_preview.py` — derive source-fact staleness
+  from durable FileIndex records without constructing or probing Storage on Preview read paths;
+  reuse Scanner's stable-size history convention and bounded stability recovery actions.
+- `mediaflow/interfaces/service_api.py` — pass the durable FileIndex into the auto-constructed
+  Automation Preview service.
+- `mediaflow/final_cli.py` — wire the production API branch's SQLite FileIndex into
+  `MediaFlowApi`.
+- `tests/test_automation_task_definition_preview.py` — prove durable stable-size history and
+  zero Storage calls across service/API/Web-detail read paths.
+- `TASK.md` — this correction-pass report.
+
+### Implemented
+
+- `_stale_reason` now rechecks pinned definition/configuration/ResourceLibrary identity and
+  compares recorded source facts through FileIndex only. `get_readonly`, `list_readonly`,
+  `items` and their `get`/`list`/`latest` paths no longer create Storage adapters or call
+  `list`/`stat`/`read`/`exists`; explicit Preview creation retains the live zero-mutation
+  analysis boundary.
+- Preview stability now matches `StorageScanner._process_file`: unchanged size/mtime uses
+  `stable_since` or `last_seen_at`, applies the same age and stable-size thresholds, and only
+  reads FileIndex state. Missing history and unavailable history have distinct stability reasons
+  and bounded next actions; Preview does not write FileIndex rows.
+- Production API construction receives the same SQLite FileIndex used by the file catalog, so
+  authenticated Automation detail/list/items reads can evaluate durable source facts without
+  live Storage probes.
+
+### Tests and Results
+
+- `./.venv/bin/python -m unittest tests.test_automation_task_definition_preview` — PASS (19
+  tests).
+- `./.venv/bin/python -m unittest tests.test_automation_task_definition_preview
+  tests.test_automation_api tests.test_operator_ui tests.test_api_security` — PASS (83 tests).
+- Required integration/affected command from this Task — FAIL (278 tests, 1 failure):
+  `tests.test_resource_library_pipeline.ResourceLibraryPipelineTests.test_scan_cli_needs_no_path_or_metadata_token`.
+  The failure is PRE-EXISTING / UNRELATED: the ignored local `config/strategy.json` selects the
+  private `HDD_2`/`Test_Source` setup instead of the fixture's `movies` ResourceLibrary.
+- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — FAIL (1040 tests, 7
+  skipped, 6 failures), all PRE-EXISTING / UNRELATED in `test_api_credentials` (2),
+  `test_final_integration`, `test_resource_library_pipeline`, and
+  `test_runtime_storage_configuration` (2), caused by the same ignored local configuration and
+  cwd-relative private database. A clean `git archive HEAD` tree ran 1040 tests with 7 skipped
+  and finished `OK`.
+- `./.venv/bin/ruff check .` — PASS; `./.venv/bin/ruff format --check .` — PASS (344 files).
+- `./.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS; `./.venv/bin/pip check`
+  — PASS.
+- `./.venv/bin/mediaflow --config config/strategy.example.json config validate` and
+  `./.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS;
+  `if rg -n -i --glob '*.py' 'ffprobe|ffmpeg' .; then exit 1; else exit 0; fi` — PASS (no
+  matches).
+- `./.venv/bin/pip wheel . --no-deps --no-build-isolation --wheel-dir
+  /tmp/mediaflow-wheel-correction` plus
+  `./.venv/bin/python scripts/wheel_smoke_test.py
+  /tmp/mediaflow-wheel-correction/mediaflow-0.1.0-py3-none-any.whl` — PASS (isolated installed
+  wheel smoke, schema 28). The initially attempted `python -m build` invocation was UNAVAILABLE
+  because this environment has no `build.__main__`; the repository's available setuptools/pip
+  wheel path passed.
+- `git diff --check` and staged diff check — PASS; changed-file Markdown links — PASS; private
+  config/secret scan — PASS (`config/alist.json` and `config/strategy.json` remain ignored,
+  untracked and unstaged; no real credential or private path entered the correction commit).
+- Falsification regression `test_preview_read_paths_and_api_do_not_probe_storage` — PASS: direct
+  list/detail/items service paths and the Web Automation detail request return without any
+  source/target Storage call, including durable source-fact stale detection. The focused
+  stable-size test — PASS: the same fixed-time FileIndex history makes Scanner and Preview both
+  classify the source as ready/stable.
+- Production Storage/Provider and destructive real-media gates — SKIP (not required and not
+  attempted; only temporary Local roots plus fake/in-memory providers were used).
+
+### Decisions
+
+- Kept the correction limited to B's two blockers. Durable FileIndex is an injected read port;
+  read paths never fall back to live Storage probing, and only the explicit Preview run performs
+  Storage-backed analysis through the existing read-only guard.
+- Reused Scanner's existing stable-size semantics rather than introducing a Preview-specific
+  history or writing scan state from Preview. When history cannot support a stable-size decision,
+  the evidence names the missing prerequisite and the next operator action.
+- Preserved the existing evidence/persistence/routes/Web rendering contract and legacy behavior;
+  only production FileIndex wiring and the focused regression coverage were added around the
+  blockers.
+
+### Remaining In-Slice Work
+
+- RO-3 Scheduler due-occurrence resolution/admission and exact definition/snapshot pinning.
+- RO-4 Worker handoff into the existing Task/TaskItem/Result chain and RO-7 linked
+  occurrence/history projections beyond this Preview journey.
+- RO-5 persistent unattended grant/revoke/scope invalidation and pre-mutation authority
+  revalidation.
+
+### Risks / Deviations
+
+- The workspace full regression and the affected suite retain the six documented ambient
+  PRE-EXISTING / UNRELATED failures; the clean current-HEAD archive passes the full suite.
+- `python -m build` is unavailable in the local virtual environment, but the equivalent
+  setuptools/pip wheel build and isolated smoke test passed.
+- External Storage/Provider and destructive execution evidence is unavailable by design; no
+  credentials, network services or user media were used.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: 1dc5199e5e1b8dfb0cff753a74b519f725f44343
+```
+
 ## B Review Result
 
 ```text
