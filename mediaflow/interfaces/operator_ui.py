@@ -1659,6 +1659,7 @@ APP_JS = b"""(() => {
       }
       if (data.status === 'open') detailContent.append(actionButton('Cancel intent', () =>
         confirmCancelManualIntent(data)));
+      renderManualExecutionDiscovery(data.manualExecutionDiscovery);
       if (Array.isArray(data.audit) && data.audit.length) {
         detailContent.append(text('h3', `Audit (${data.audit.length})`), table(
           ['Audit', 'Action', 'Actor', 'Item', 'Occurred'],
@@ -1710,6 +1711,47 @@ APP_JS = b"""(() => {
       conflict: 'confirmations'
     }[value.kind];
     return id && kind ? `/api/v1/${kind}/${encodeURIComponent(id)}` : null;
+  }
+  function renderManualExecutionDiscovery(discovery) {
+    if (!discovery || typeof discovery !== 'object') return;
+    const authorizations = Array.isArray(discovery.authorizations) ? discovery.authorizations : [];
+    const executions = Array.isArray(discovery.executions) ? discovery.executions : [];
+    if (!authorizations.length && !executions.length && !discovery.truncated) return;
+    detailContent.append(text('h3', 'Durable manual execution state'));
+    if (authorizations.length) {
+      detailContent.append(text('h4', 'Authorizations'));
+      authorizations.forEach(authority => {
+        const section = text('div', '', 'choices');
+        section.append(text('p', `${authority.authorizationId} - ${authority.status} ` +
+          `(scope: ${(authority.scopeItemIds || []).join(', ') || 'none'})`));
+        if (authority.executionId) section.append(text('p', `Execution: ${authority.executionId}`));
+        const controls = text('div', '', 'choices');
+        controls.append(actionButton('Open authorization', () =>
+          showManualAuthorization(authority.authorizationId)));
+        if (authority.executionId) controls.append(actionButton('Open durable execution', () =>
+          showManualExecution(authority.executionId)));
+        section.append(controls); detailContent.append(section);
+      });
+    }
+    if (executions.length) {
+      detailContent.append(text('h4', 'Executions'));
+      executions.forEach(execution => {
+        const section = text('div', '', 'choices');
+        section.append(text('p', `${execution.executionId} - ${execution.status}; ` +
+          `selected: ${(execution.selectedItemIds || []).length}; ` +
+          `unselected: ${(execution.unselectedItemIds || []).length}`));
+        const controls = text('div', '', 'choices');
+        controls.append(actionButton('Open durable execution', () =>
+          showManualExecution(execution.executionId)));
+        if (execution.taskId) controls.append(actionButton('Open Task', () =>
+          showTask(execution.taskId)));
+        section.append(controls); detailContent.append(section);
+      });
+    }
+    if (discovery.truncated) detailContent.append(text('p',
+      'Manual execution history is bounded; reload from the linked Intent or Preview to inspect the current page.',
+      'warning'));
+    if (discovery.nextAction) detailContent.append(text('p', discovery.nextAction, 'warning'));
   }
   async function showManualPreview(previewId) {
     try {
@@ -1791,6 +1833,15 @@ APP_JS = b"""(() => {
         }
         detailContent.append(section);
       });
+      const unselected = data.selection && Array.isArray(data.selection.unselectedItemIds) ?
+        data.selection.unselectedItemIds : [];
+      if (unselected.length) {
+        detailContent.append(text('h3', 'Intent items not included in this Preview'), table(
+          ['Item', 'State'], unselected.map(itemId => [itemId, 'unselected - no Preview analysis'])));
+        detailContent.append(text('p',
+          'These intent items remain independently visible and were not analyzed or authorized by this Preview.',
+          'warning'));
+      }
       const selectedIds = data.selection && Array.isArray(data.selection.selectedItemIds) ?
         new Set(data.selection.selectedItemIds) : new Set();
       const executable = items.filter(item => item.status === 'previewed' && item.current &&
@@ -1799,6 +1850,7 @@ APP_JS = b"""(() => {
         detailContent.append(actionButton(`Authorize ${executable.length} exact item(s)`,
           () => confirmManualAuthorization(data, executable)));
       }
+      renderManualExecutionDiscovery(data.manualExecutionDiscovery);
       detailContent.append(actionButton('Reload Preview', () => showManualPreview(data.previewId)),
         actionButton('Open manual intent', () => showManualIntent(data.intentId)));
       detail.hidden = false;
@@ -1953,6 +2005,15 @@ APP_JS = b"""(() => {
           () => showTaskItem(data.taskId, item.taskItemId)));
         detailContent.append(section);
       });
+      const unselected = data.selection && Array.isArray(data.selection.unselectedItemIds) ?
+        data.selection.unselectedItemIds : [];
+      if (unselected.length) {
+        detailContent.append(text('h3', 'Intent/Preview items not executed'), table(
+          ['Item', 'State'], unselected.map(itemId => [itemId, 'unselected - untouched'])));
+        detailContent.append(text('p',
+          'Unselected items have no TaskItem, Result, execution effect or Storage mutation in this execution.',
+          'warning'));
+      }
       detailContent.append(actionButton('Reload execution', () => showManualExecution(data.executionId)),
         actionButton('Open Task', () => showTask(data.taskId)));
       detail.hidden = false;
@@ -2153,6 +2214,7 @@ APP_JS = b"""(() => {
         `?itemLimit=100&resultLimit=100${itemSuffix}${resultSuffix}`);
       clear(detailContent); detailContent.append(text('h2', 'Task detail'),
         scalarDetails(data, ['items_truncated', 'results_truncated']));
+      renderManualExecutionDiscovery(data.manualExecutionDiscovery);
       const items = (data.items || []).map(item => {
         const checkpoint = item.checkpoint && typeof item.checkpoint === 'object' ? item.checkpoint : {};
         return [item.item_id, item.status, checkpoint.stage || item.stage,
@@ -2339,6 +2401,7 @@ APP_JS = b"""(() => {
         effects.uncertain_effects.length ? effects.uncertain_effects.join(', ') : 'none');
       field(list, 'Refusal reason', data.refusal_reason || 'none');
       detailContent.append(list);
+      renderManualExecutionDiscovery(data.manualExecutionDiscovery);
       detailContent.append(actionButton('Open File/Media detail',
         () => openFileFromSource(data.source_storage_id, data.resource_library_id,
           data.source_path)));
@@ -2662,6 +2725,7 @@ APP_JS = b"""(() => {
       Object.entries(data).filter(([, value]) => !Array.isArray(value) && typeof value !== 'object')
         .forEach(([key, value]) => field(list, key, value)); detailContent.append(list);
       if (kind === 'files') {
+        renderManualExecutionDiscovery(data.manualExecutionDiscovery);
         detailContent.append(actionButton('Start manual organize for this file', () =>
           confirmManualIntent([id])));
         if (data.latestResult && data.latestResult.taskId) {

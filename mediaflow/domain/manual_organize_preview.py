@@ -23,6 +23,7 @@ from mediaflow.domain.manual_organize import (
     ManualIntentError,
     ManualSourceIdentity,
 )
+from mediaflow.domain.manual_safety import redact_manual_text, redact_manual_value
 
 MAX_MANUAL_PREVIEW_ITEMS = MAX_MANUAL_INTENT_ITEMS
 MAX_MANUAL_PREVIEW_VERSIONS = 100
@@ -274,16 +275,20 @@ class ManualPreviewItem:
             "configurationSnapshotDigest": self.configuration_snapshot_digest,
             "sourceFingerprint": self.source_fingerprint,
             "sourceEvidenceVersions": [
-                copy.deepcopy(item) for item in self.source_evidence_versions
+                redact_manual_value(copy.deepcopy(item)) for item in self.source_evidence_versions
             ],
-            "reviewVersions": [copy.deepcopy(item) for item in self.review_versions],
-            "conflictVersions": [copy.deepcopy(item) for item in self.conflict_versions],
+            "reviewVersions": [
+                redact_manual_value(copy.deepcopy(item)) for item in self.review_versions
+            ],
+            "conflictVersions": [
+                redact_manual_value(copy.deepcopy(item)) for item in self.conflict_versions
+            ],
             "inputFingerprint": self.input_fingerprint,
             "planFingerprint": self.plan_fingerprint,
             "status": self.status.value,
-            "plan": copy.deepcopy(self.plan),
-            "error": self.error,
-            "nextAction": self.next_action,
+            "plan": redact_manual_value(copy.deepcopy(self.plan)),
+            "error": redact_manual_text(self.error) if self.error is not None else None,
+            "nextAction": redact_manual_text(self.next_action),
             "sideEffects": "none",
             "zeroMutation": self.zero_mutation,
             "executionState": execution_state,
@@ -423,8 +428,8 @@ class ManualOrganizePreview:
             "items": [item.document() for item in self.items],
             "createdAt": self.created_at.isoformat(),
             "updatedAt": self.updated_at.isoformat(),
-            "nextAction": self.next_action,
-            "error": self.error,
+            "nextAction": redact_manual_text(self.next_action),
+            "error": redact_manual_text(self.error) if self.error is not None else None,
             "sideEffects": "none",
             "zeroMutation": self.zero_mutation,
             "executionState": execution_state,

@@ -20,6 +20,7 @@ from mediaflow.domain.manual_organize import (
     ManualIntentError,
     ManualSourceIdentity,
 )
+from mediaflow.domain.manual_safety import redact_manual_text, redact_manual_value
 
 MAX_MANUAL_EXECUTION_ITEMS = MAX_MANUAL_INTENT_ITEMS
 MAX_MANUAL_EXECUTION_PLAN_BYTES = 64 * 1024
@@ -103,7 +104,7 @@ class ManualExecutionAuthorizationAudit:
             "occurredAt": self.occurred_at.isoformat(),
             "actor": self.actor,
             "executionId": self.execution_id,
-            "details": copy.deepcopy(self.details),
+            "details": redact_manual_value(copy.deepcopy(self.details)),
         }
 
 
@@ -296,7 +297,7 @@ class ManualExecutionAuthorization:
             "expiresAt": self.expires_at.isoformat(),
             "consumedAt": self.consumed_at.isoformat() if self.consumed_at else None,
             "executionId": self.execution_id,
-            "note": self.note,
+            "note": redact_manual_text(self.note) if self.note is not None else None,
             "sideEffects": "none",
             "nextAction": next_action,
         }
@@ -348,7 +349,7 @@ class ManualExecutionEffect:
             "destinationPath": self.destination_path,
             "verified": self.verified,
             "certainty": self.certainty,
-            "details": copy.deepcopy(self.details),
+            "details": redact_manual_value(copy.deepcopy(self.details)),
             "createdAt": self.created_at.isoformat(),
         }
 
@@ -449,15 +450,15 @@ class ManualExecutionItem:
             "planFingerprint": self.plan_fingerprint,
             "source": self.source.document(),
             "choice": self.choice.document(),
-            "plan": copy.deepcopy(self.plan),
+            "plan": redact_manual_value(copy.deepcopy(self.plan)),
             "status": self.status.value,
             "stage": self.stage,
             "resultId": self.result_id,
             "effectCertainty": self.effect_certainty,
             "completedOperations": list(self.completed_operations),
             "uncertainEffects": list(self.uncertain_effects),
-            "error": self.error,
-            "nextAction": self.next_action,
+            "error": redact_manual_text(self.error) if self.error is not None else None,
+            "nextAction": redact_manual_text(self.next_action),
             "effects": [effect.document() for effect in self.effects],
             "createdAt": self.created_at.isoformat(),
             "updatedAt": self.updated_at.isoformat(),
@@ -561,8 +562,8 @@ class ManualExecution:
                 "unselectedItemIds": list(self.unselected_item_ids),
             },
             "status": self.status.value,
-            "nextAction": self.next_action,
-            "error": self.error,
+            "error": redact_manual_text(self.error) if self.error is not None else None,
+            "nextAction": redact_manual_text(self.next_action),
             "destructiveAuthority": {
                 "allowOverwrite": self.allow_overwrite,
                 "allowSourceCleanup": self.allow_source_cleanup,

@@ -25,6 +25,7 @@ from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.manual_organize_preview import (
     ManualPreviewItemStatus,
 )
+from mediaflow.domain.manual_safety import redact_manual_text
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.organizer import (
     AttachmentPolicy,
@@ -476,6 +477,322 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     run.execution_id, repository.get_manual_execution(run.execution_id).execution_id
+                )
+        finally:
+            fixture.cleanup()
+
+    def test_authorized_subset_keeps_all_other_intent_items_visible_unselected(self):
+        fixture = self._fixture(names=("One.2001.mkv", "Two.2001.mkv"))
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                catalog, intents, previews, service, _ = self._services(repository, fixture)
+                intent, preview = self._intent_and_preview(
+                    intents, previews, item_ids=["one", "two"]
+                )
+                selected = preview.items[0]
+                authority = service.authorize(
+                    preview.preview_id,
+                    [selected.item_id],
+                    expected_intent_version=preview.intent_version,
+                    expected_item_versions={selected.item_id: selected.item_version},
+                    snapshot_id=preview.configuration_snapshot_id,
+                    snapshot_digest=preview.configuration_snapshot_digest,
+                    actor="operator",
+                    confirmation=True,
+                )
+                run = service.execute(
+                    authority.authorization_id, actor="operator", confirmation=True
+                )
+                self.assertEqual((selected.item_id,), run.selected_item_ids)
+                self.assertEqual((intent.items[1].item_id,), run.unselected_item_ids)
+                self.assertEqual(1, len(run.items))
+                self.assertEqual(1, len(repository.list_items(run.task_id)))
+                self.assertEqual(1, len(repository.list_results(run.task_id)))
+
+                operator = ResolvedApiPrincipal(
+                    "operator",
+                    "operator-token",
+                    frozenset({ApiPermission.READ}),
+                )
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(operator,),
+                    file_catalog=catalog,
+                    manual_intent_service=intents,
+                    manual_preview_service=previews,
+                    manual_execution_service=service,
+                )
+                status, intent_document = request(api, f"/api/v1/manual-intents/{intent.intent_id}")
+                self.assertEqual(200, status)
+                discovered = intent_document["manualExecutionDiscovery"]
+                self.assertEqual(
+                    [run.execution_id], [item["executionId"] for item in discovered["executions"]]
+                )
+                self.assertEqual(
+                    [intent.items[1].item_id],
+                    discovered["executions"][0]["unselectedItemIds"],
+                )
+                self.assertIn("execution", discovered["executions"][0]["links"])
+
+                status, preview_document = request(
+                    api, f"/api/v1/manual-previews/{preview.preview_id}"
+                )
+                self.assertEqual(200, status)
+                self.assertEqual(
+                    [intent.items[1].item_id],
+                    preview_document["manualExecutionDiscovery"]["executions"][0][
+                        "unselectedItemIds"
+                    ],
+                )
+        finally:
+            fixture.cleanup()
+
+    def test_restart_discovers_terminal_execution_from_normal_parent_surfaces(self):
+        fixture = self._fixture()
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                catalog, intents, previews, service, _ = self._services(repository, fixture)
+                intent, preview = self._intent_and_preview(intents, previews)
+                run = service.execute(
+                    self._authorize(service, preview).authorization_id,
+                    actor="operator",
+                    confirmation=True,
+                )
+                task_item_id = run.items[0].task_item_id
+                intent_id = intent.intent_id
+                preview_id = preview.preview_id
+                task_id = run.task_id
+
+            with SQLiteTaskRepository(fixture.database) as repository:
+                catalog, intents, previews, service, _ = self._services(repository, fixture)
+                operator = ResolvedApiPrincipal(
+                    "operator",
+                    "operator-token",
+                    frozenset({ApiPermission.READ}),
+                )
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(operator,),
+                    file_catalog=catalog,
+                    manual_intent_service=intents,
+                    manual_preview_service=previews,
+                    manual_execution_service=service,
+                )
+                audit_count = len(repository.list_security_audit())
+                status, intent_document = request(api, f"/api/v1/manual-intents/{intent_id}")
+                self.assertEqual(200, status)
+                discovery = intent_document["manualExecutionDiscovery"]
+                self.assertEqual("completed", discovery["executions"][0]["status"])
+                self.assertEqual(task_id, discovery["executions"][0]["taskId"])
+                self.assertIn("execution", discovery["executions"][0]["links"])
+
+                status, preview_document = request(api, f"/api/v1/manual-previews/{preview_id}")
+                self.assertEqual(200, status)
+                self.assertEqual(
+                    "completed",
+                    preview_document["manualExecutionDiscovery"]["executions"][0]["status"],
+                )
+                status, task_document = request(api, f"/api/v1/tasks/{task_id}")
+                self.assertEqual(200, status)
+                self.assertEqual(
+                    task_id,
+                    task_document["manualExecutionDiscovery"]["executions"][0]["taskId"],
+                )
+                status, item_document = request(
+                    api, f"/api/v1/tasks/{task_id}/items/{task_item_id}"
+                )
+                self.assertEqual(200, status)
+                self.assertEqual(
+                    "completed",
+                    item_document["manualExecutionDiscovery"]["executions"][0]["status"],
+                )
+                self.assertEqual(audit_count, len(repository.list_security_audit()))
+        finally:
+            fixture.cleanup()
+
+    def test_restart_discovers_interrupted_execution_and_reconciliation_link(self):
+        fixture = self._fixture()
+        try:
+
+            class ProcessInterrupted(BaseException):
+                pass
+
+            with SQLiteTaskRepository(fixture.database) as repository:
+                catalog, intents, previews, service, _ = self._services(repository, fixture)
+                intent, preview = self._intent_and_preview(intents, previews)
+                authority = self._authorize(service, preview)
+                with patch.object(
+                    repository,
+                    "update_manual_execution",
+                    side_effect=ProcessInterrupted(),
+                ):
+                    with self.assertRaises(ProcessInterrupted):
+                        service.execute(
+                            authority.authorization_id,
+                            actor="operator",
+                            confirmation=True,
+                        )
+                intent_id = intent.intent_id
+
+            with SQLiteTaskRepository(fixture.database) as repository:
+                catalog, intents, previews, service, _ = self._services(repository, fixture)
+                operator = ResolvedApiPrincipal(
+                    "operator",
+                    "operator-token",
+                    frozenset({ApiPermission.READ, ApiPermission.EXECUTE_MANUAL_ORGANIZE}),
+                )
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(operator,),
+                    file_catalog=catalog,
+                    manual_intent_service=intents,
+                    manual_preview_service=previews,
+                    manual_execution_service=service,
+                )
+                status, intent_document = request(api, f"/api/v1/manual-intents/{intent_id}")
+                self.assertEqual(200, status)
+                execution = intent_document["manualExecutionDiscovery"]["executions"][0]
+                self.assertEqual("admitted", execution["status"])
+                self.assertIn("reconcile", execution["links"])
+                task_id = execution["taskId"]
+                execution_id = execution["executionId"]
+                status, task_document = request(api, f"/api/v1/tasks/{task_id}")
+                self.assertEqual(200, status)
+                self.assertEqual(
+                    "admitted", task_document["manualExecutionDiscovery"]["executions"][0]["status"]
+                )
+                status, reconciled = request(
+                    api,
+                    f"/api/v1/manual-executions/{execution_id}/reconcile",
+                    method="POST",
+                    body={"confirmation": True},
+                )
+                self.assertEqual(200, status)
+                self.assertEqual("failed", reconciled["status"])
+                self.assertNotIn("reconcile", reconciled["links"])
+                self.assertTrue(Path(fixture.source_root, "One.2001.mkv").exists())
+        finally:
+            fixture.cleanup()
+
+    def test_manual_credentials_are_rejected_and_fully_redacted(self):
+        fixture = self._fixture()
+        secret = "closure-review-secret"
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                catalog, intents, previews, service, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews)
+                item = preview.items[0]
+                with self.assertRaisesRegex(Exception, "note"):
+                    service.authorize(
+                        preview.preview_id,
+                        [item.item_id],
+                        expected_intent_version=preview.intent_version,
+                        expected_item_versions={item.item_id: item.item_version},
+                        snapshot_id=preview.configuration_snapshot_id,
+                        snapshot_digest=preview.configuration_snapshot_digest,
+                        actor="operator",
+                        confirmation=True,
+                        note=f"api_key={secret}",
+                    )
+                self.assertEqual((), repository.list_manual_execution_authorizations())
+                self.assertNotIn(secret.encode(), fixture.database.read_bytes())
+
+                redacted = redact_manual_text(
+                    f"Authorization: Bearer {secret} token={secret} Cookie: session={secret}"
+                )
+                self.assertNotIn(secret, redacted)
+                self.assertNotIn(f"Bearer {secret}", redacted)
+                self.assertIn("Authorization: [redacted]", redacted)
+
+                operator = ResolvedApiPrincipal(
+                    "operator",
+                    "operator-token",
+                    frozenset({ApiPermission.READ, ApiPermission.EXECUTE_MANUAL_ORGANIZE}),
+                )
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(operator,),
+                    file_catalog=catalog,
+                    manual_intent_service=intents,
+                    manual_preview_service=previews,
+                    manual_execution_service=service,
+                )
+                body = {
+                    "expectedVersion": preview.intent_version,
+                    "expectedItemVersions": {item.item_id: item.item_version},
+                    "itemIds": [item.item_id],
+                    "snapshotId": preview.configuration_snapshot_id,
+                    "snapshotDigest": preview.configuration_snapshot_digest,
+                    "confirmation": True,
+                    "note": f"api_key={secret}",
+                }
+                status, error = request(
+                    api,
+                    f"/api/v1/manual-previews/{preview.preview_id}/authorize",
+                    method="POST",
+                    body=body,
+                )
+                self.assertEqual(409, status)
+                self.assertNotIn(secret, json.dumps(error))
+                self.assertNotIn(secret.encode(), fixture.database.read_bytes())
+                self.assertNotIn(secret, json.dumps(repository.list_security_audit(), default=str))
+        finally:
+            fixture.cleanup()
+
+    def test_reading_authorization_does_not_expire_active_authority(self):
+        fixture = self._fixture()
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                catalog, intents, previews, _, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews)
+                now = [NOW]
+                service = ManualOrganizeExecutionService(repository, previews, clock=lambda: now[0])
+                item = preview.items[0]
+                authority = service.authorize(
+                    preview.preview_id,
+                    [item.item_id],
+                    expected_intent_version=preview.intent_version,
+                    expected_item_versions={item.item_id: item.item_version},
+                    snapshot_id=preview.configuration_snapshot_id,
+                    snapshot_digest=preview.configuration_snapshot_digest,
+                    actor="operator",
+                    confirmation=True,
+                    ttl_seconds=1,
+                )
+                now[0] = NOW + timedelta(seconds=2)
+                operator = ResolvedApiPrincipal(
+                    "operator", "operator-token", frozenset({ApiPermission.READ})
+                )
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(operator,),
+                    file_catalog=catalog,
+                    manual_intent_service=intents,
+                    manual_preview_service=previews,
+                    manual_execution_service=service,
+                )
+                status, document = request(
+                    api,
+                    f"/api/v1/manual-execution-authorizations/{authority.authorization_id}",
+                )
+                self.assertEqual(200, status)
+                self.assertEqual("active", document["status"])
+                self.assertEqual(
+                    "active",
+                    repository.get_manual_execution_authorization(
+                        authority.authorization_id
+                    ).status.value,
+                )
+                self.assertEqual(
+                    (),
+                    repository.list_manual_execution_authorization_audit(
+                        authority.authorization_id
+                    )[1:],
                 )
         finally:
             fixture.cleanup()
