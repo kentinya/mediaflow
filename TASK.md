@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 24.4
 Parent Slice: 24 — Files / Media Detail and Manual Organize
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: bab61d419d17c0a5f05cae7c82ce779a34272453
 Difficulty: High
 Test Level: T4
@@ -226,21 +226,79 @@ or tracked/staged `config/alist.json`.
 
 ### Changed Files
 
+- `TASK.md`
+- `docs/architecture.md`
+- `docs/product-experience.md`
+- `mediaflow/application/manual_organize_execution.py`
+- `mediaflow/application/manual_organize_preview.py`
+- `mediaflow/application/organizer.py`
+- `mediaflow/domain/manual_execution.py`
+- `mediaflow/domain/manual_organize_preview.py`
+- `mediaflow/domain/security.py`
+- `mediaflow/domain/task_persistence.py`
+- `mediaflow/infrastructure/sqlite_runtime.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `mediaflow/interfaces/service_api.py`
+- `tests/test_manual_organize_execution.py`
+
 ### Implemented
+
+- Added a bounded, exact Preview-bound authorization and execution service. Admission rechecks the
+  current Preview, open intent, item/source/choice versions, pinned snapshot, plan fingerprint and
+  exact plan content, capability evidence, conflict state, destructive authority and Storage
+  locks before creating the existing Task/TaskItem scope.
+- Added atomic SQLite persistence for one-shot authorization/audit, execution/item state, verified
+  or uncertain effects and durable links to existing Task, Result and Processing Checkpoint
+  records. Expiry is audited and consumed authority cannot be reused or broadened.
+- Routed permitted Move/Copy/HardLink/SoftLink, attachments, authorized overwrite and source
+  cleanup through `OrganizerExecutor` only. Exact execution input is retained separately from
+  bounded display fields; no request path/operation/replan or implicit link fallback is accepted.
+- Added independent per-item success, skipped, failed, partial and uncertain projections with
+  checkpoint-aware next actions; uncertain mutation remains investigation-only and is never
+  automatically replayed. RecognitionType C remains C while A downstream policy identities stay
+  visible in Results.
+- Added dedicated execution RBAC, shared API routes/projections and reload-safe Operator Web
+  authorization, two-step confirmation, execution, Result/effect and recovery views. Updated the
+  current architecture and product-journey documentation.
 
 ### Tests and Results
 
+- `.venv/bin/python -m unittest tests.test_manual_organize_execution` — PASS (14 tests).
+- The required 14-module direct regression command — PASS (130 tests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (991 tests, 7 explicit skips).
+- The required quality/safety command group (`ruff format --check`, `ruff check`, `compileall`,
+  `pip check`, both configuration validations, FFmpeg/FFprobe scan, `git diff --check`) — PASS.
+- The required wheel build and `scripts/wheel_smoke_test.py` — PASS.
+
 ### Decisions
+
+- Reused the existing Task/TaskItem/Result/Processing Checkpoint and OrganizerExecutor boundaries;
+  the new execution tables store only exact binding and operation evidence needed after reload.
+- Used SQLite `BEGIN IMMEDIATE` for atomic admission, one-shot consumption, scope creation and
+  source/destination/attachment fencing, with idempotent additive table creation on runtime schema
+  27.
+- Kept display evidence bounded while retaining complete executor input, and verified links by
+  their declared link type rather than treating a symlink `lstat` size as media content.
 
 ### Remaining In-Slice Work
 
+- Slice-level reconciliation of all Required Outcomes and any remaining File/Media detail or
+  history surfaces is outside this Task and remains for B/A review; this checkpoint does not
+  declare the Slice complete.
+
 ### Risks / Deviations
+
+- The full suite has 7 explicit skips and emits existing unclosed SQLite `ResourceWarning`
+  messages; no test failures occurred.
+- Tests and wheel smoke used temporary SQLite/Local/fake dependencies only. No production
+  credentials, remote services or user media were used, and `config/alist.json` remains ignored,
+  untracked and unstaged.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 6dfddd127859221a5b031df571b5226a86402b75
 ```
 
 ## B Review Result
