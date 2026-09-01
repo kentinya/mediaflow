@@ -1,10 +1,9 @@
-"""Small, shared safety helpers for manual-organize evidence.
+"""Small, shared safety helpers for durable operator-facing evidence.
 
-Manual intent, Preview, authorization and execution records can be rendered
-after a restart and can therefore contain text that did not originate in the
-current request.  Keep their redaction rules in the domain layer so the
-application, persistence and transport projections use the same bounded
-definition of a secret-free record.
+Manual-organize and pipeline-evidence records can be rendered after a restart
+and can therefore contain text that did not originate in the current request.
+Keep their redaction rules in the domain layer so application, persistence and
+transport projections use the same definition of a secret-free record.
 """
 
 from __future__ import annotations
@@ -23,8 +22,8 @@ _AUTHORIZATION_HEADER = re.compile(
 )
 
 
-def redact_manual_text(value: object, *, limit: int | None = None) -> str:
-    """Return bounded text with complete credential values replaced.
+def redact_evidence_text(value: object, *, limit: int | None = None) -> str:
+    """Return bounded evidence text with complete credential values replaced.
 
     The optional auth scheme is consumed together with the credential.  This
     is important for ``Authorization: Bearer <secret>``: replacing only the
@@ -45,18 +44,24 @@ def contains_manual_secret(value: object) -> bool:
     return bool(_AUTHORIZATION_HEADER.search(text) or _SECRET_ASSIGNMENT.search(text))
 
 
-def redact_manual_value(value: object) -> object:
-    """Recursively redact JSON-compatible manual evidence without changing shape."""
+def redact_evidence_value(value: object) -> object:
+    """Recursively redact JSON-compatible evidence without changing shape."""
 
     if isinstance(value, str):
-        return redact_manual_text(value)
+        return redact_evidence_text(value)
     if isinstance(value, Mapping):
-        return {key: redact_manual_value(item) for key, item in value.items()}
+        return {key: redact_evidence_value(item) for key, item in value.items()}
     if isinstance(value, list):
-        return [redact_manual_value(item) for item in value]
+        return [redact_evidence_value(item) for item in value]
     if isinstance(value, tuple):
-        return tuple(redact_manual_value(item) for item in value)
+        return tuple(redact_evidence_value(item) for item in value)
     return value
+
+
+# Compatibility names retained for the accepted manual-organize contract.  Both
+# journeys deliberately use the same implementation and credential patterns.
+redact_manual_text = redact_evidence_text
+redact_manual_value = redact_evidence_value
 
 
 def safe_manual_error(value: object, fallback: str) -> str:
