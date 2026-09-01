@@ -234,22 +234,58 @@ or tracked/staged `config/alist.json`.
 ## Developer Completion Report
 
 ### Changed Files
+- `mediaflow/domain/manual_organize_preview.py`: immutable, bounded Preview and per-item contracts.
+- `mediaflow/application/manual_organize_preview.py`: pinned analysis/planning service, fingerprints, redaction, recovery projection, and read-only Storage boundary.
+- `mediaflow/infrastructure/sqlite_runtime.py`: additive Preview schema, atomic parent/child persistence, reload, supersession, and stale invalidation.
+- `mediaflow/domain/task_persistence.py`, `mediaflow/domain/manual_organize.py`: persistence protocol and strict source-identity reconstruction.
+- `mediaflow/application/strategy_test.py`: explicit pinned RecognitionType path for manual Preview.
+- `mediaflow/interfaces/service_api.py`, `mediaflow/interfaces/operator_ui.py`: authenticated API and explicit-confirmation Web journey using the same projection.
+- `tests/test_manual_organize_preview.py`: zero-mutation, exact-plan, batch, reload, invalidation, redaction, atomicity, RBAC, and recovery coverage.
+- `docs/architecture.md`, `docs/product-experience.md`: current analysis-only Preview boundary.
+- `TASK.md`: Developer status and this completion report.
 
 ### Implemented
+- Added single-item and bounded selected-set Preview admission with intent/item version, source identity, normalized choice, and pinned managed snapshot validation.
+- Reused Parser, Recognition, Metadata, Naming, Classification, attachment, capability, conflict, and OrganizerPlanner authorities; persisted bounded provider-neutral exact plans and independent item outcomes.
+- Preserved RecognitionType C while exposing downstream NamingPolicy/ClassificationPolicy/OrganizePolicy A ownership.
+- Added atomic restart-safe SQLite persistence. Re-Preview supersedes only selected item identities; historical records and unselected siblings remain inspectable.
+- Added source/choice/evidence/review/conflict fingerprint invalidation with explicit stale and fresh-Preview recovery actions; reads never rebuild plans.
+- Added read-only Storage guards and explicit zero-mutation execution state. Preview does not create Tasks, Jobs, execution authorizations, or call `OrganizerExecutor`.
 
 ### Tests and Results
+- `.venv/bin/python -m unittest tests.test_manual_organize_preview` — PASS (10 tests).
+- `.venv/bin/python -m unittest tests.test_manual_organize_preview tests.test_operator_ui` — PASS (39 tests).
+- `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_file_media_detail tests.test_file_catalog tests.test_file_catalog_api tests.test_operator_ui tests.test_processing_checkpoint tests.test_task_persistence tests.test_execution_authorization tests.test_final_integration tests.test_resource_library_pipeline tests.test_migration_rehearsal tests.test_upgrade_preflight` — PASS (106 tests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (977 tests, 7 skipped).
+- `.venv/bin/ruff format --check .` — PASS.
+- `.venv/bin/ruff check .` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS.
+- Both required `config validate` commands — PASS.
+- `test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"` — PASS.
+- `git diff --check` — PASS.
+- Required wheel build and `scripts/wheel_smoke_test.py` — PASS (schema 27; backup, rehearsal, restore, verify, and preflight all passed).
 
 ### Decisions
+- Kept runtime schema marker `27`; Preview tables are additive and idempotent on open for compatibility with existing migration/backup consumers.
+- Used an immutable parent/child Preview projection and one SQLite transaction so persistence failures cannot publish a partial plan; selected-only supersession preserves sibling state.
+- Made the pinned RecognitionType explicit in the analysis runner so downstream policy A cannot change Type C; wrapped every configured Storage adapter in a read-only guard while retaining capability evidence.
+- Kept API and Web on one application service/projection, with explicit Web Preview confirmation and existing review/conflict recovery links.
 
 ### Remaining In-Slice Work
+- Execution admission, one-shot execution authority, OrganizerExecutor mutation, and post-mutation result/recovery remain outside this analysis-only Task in the parent Slice.
 
 ### Risks / Deviations
+- Tests used only temporary Local roots, temporary/in-memory SQLite, fake/in-memory indexes, and synthetic/failing Providers; no production credentials, remote services, or user media were used.
+- The complete suite passed with 7 existing skipped tests and emitted existing SQLite `ResourceWarning` messages for unclosed connections; no test failed.
+- The wheel smoke reported schema 27 with no migration required; the additive Preview tables therefore rely on the existing runtime marker rather than a marker bump.
+- `config/alist.json` remained ignored, untracked, unstaged, and untouched.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 36c79a27a389e46194cd2e609cbd5955ca1850f9
 ```
 
 ## B Review Result
