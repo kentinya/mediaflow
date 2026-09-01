@@ -2,13 +2,13 @@
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [`SLICE.md`](SLICE.md). It is the focused implementation correction required by A's
-2026-09-01 Slice Final Review. `SLICE.md` remains `FIX REQUIRED` while this Task is implemented and
-reviewed.
+2026-09-01 Slice Final Review. B reviewed and passed it on 2026-09-01 and returned `SLICE.md` to
+`READY FOR A REVIEW`; no implementation Task is active.
 
 ```text
 Task ID: 24.7
 Parent Slice: 24 — Files / Media Detail and Manual Organize
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 83ec59b07f38da4f58e9b5a97a9242fc2885433d
 Difficulty: High
 Test Level: T4
@@ -288,12 +288,46 @@ Head SHA: d2e399803078317f2092d895eae627327998de2f
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 83ec59b07f38da4f58e9b5a97a9242fc2885433d..d2e399803078317f2092d895eae627327998de2f
+Decision: PASS
+Slice Required Outcomes all satisfied: YES
+Next: SLICE READY FOR A REVIEW
 ```
 
-If `FIX REQUIRED`, B will list only this Task's blockers below and the Developer will continue in
-the same Task/Task Base/Goal/Scope correction loop. This result does not close the Slice or update
-Roadmap.
+### B Verification Evidence
+
+- A's blocker independently reproduced and closed. B seeded a historical `task_results` row with
+  raw SQL carrying A's exact `Authorization: Bearer slice24-final-review-secret` in `error`, plus
+  `password=`, `Authorization: Basic` and `cookie=` forms in `title`, `completed_operations`,
+  `uncertain_effects` and `destination_path`. An authenticated `GET /api/v1/files/one` returned
+  HTTP 200, `Authorization: [redacted]` in both `latestResult.error` and `results[0].error`, and no
+  `slice24-final-review-secret` substring anywhere in the document. The committed regression proves
+  the same behavior with an equivalent fake token value.
+- Both File/Media Result projections share one boundary: `FileCatalogService.detail` passes latest
+  and history records through `redact_persistent_result`, and `MediaFlowApi._file_result_value`
+  returns `redact_manual_value(document)`. Response key sets are unchanged (19 keys for
+  `latestResult`, 25 for `results[]`), so the projection is shape-preserving.
+- All three `INSERT OR REPLACE INTO task_results` routes (`append_result`,
+  `complete_item_with_evidence`, `_insert_result_locked` used by `complete_manual_execution_item`
+  and `reconcile_manual_execution`) now share `_result_values`, which redacts before binding. After
+  close, no file in the database directory contained the fake credential; reopened records returned
+  `Authorization: [redacted]`, `password=[redacted]` and `token=[redacted]` with status, source and
+  destination linkage and RecognitionType `C` unchanged.
+- The single row-reconstruction path `_result` redacts on read, so every Result reader is covered;
+  the one remaining unredacted construction (`SQLiteFileIndexRepository._enriched_record`) is used
+  only for derived list filtering and its Result never reaches a response.
+- A seeded historical row was byte-identical before and after detail reads; no rewrite, Task, Job,
+  audit, Provider, Storage, authorization or OrganizerExecutor call was added.
+- Test and gate results reproduced by B at this Head: focused 19 tests PASS; directly affected
+  regression 112 tests PASS; `unittest discover -s tests` 1005 tests PASS with 7 environment-gated
+  skips; `ruff format --check` 338 files PASS; `ruff check`, compileall, `pip check`, both
+  `config validate` commands, FFmpeg/FFprobe scan, `git diff --check` and the `config/alist.json`
+  ignored/untracked checks PASS; wheel build plus isolated `scripts/wheel_smoke_test.py` PASS at
+  runtime schema 27. Real SMB/OpenList/S3/R2 and endurance acceptance remain SKIP/UNAVAILABLE.
+- Diff hygiene: `83ec59b..HEAD` touches only `TASK.md`, five `mediaflow` modules and
+  `tests/test_file_media_detail.py`. No test was deleted, no assertion removed, no skip added, no
+  `SLICE.md` change and no real credential or private path is present.
+- Two P3 observations are recorded in the Slice Closure Packet for A and are not Task blockers.
+
+Task 24.7 requires no further Developer work. B returns Slice 24 to `READY FOR A REVIEW` with a
+reconciled Closure Packet. This result does not close the Slice or update Roadmap.

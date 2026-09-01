@@ -6,10 +6,10 @@ rules are defined only in [`docs/development-workflow.md`](docs/development-work
 ```text
 Slice ID: 24
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 4ff5479d9f4a81906ee52a9f784931b65cd9ab90
-Implementation Head: NOT SET
-A Final Review: NOT STARTED
+Implementation Head: d2e399803078317f2092d895eae627327998de2f
+A Final Review: FIX REQUIRED — 2026-09-01
 ```
 
 The Base is the repository HEAD immediately before this Contract was activated. `NOT SET` is the
@@ -190,13 +190,152 @@ B performs one `SLICE FINAL` validation before readiness:
 ## Closure Packet
 
 ```text
-PENDING — B writes the Slice Closure Packet only after every Required Outcome is complete and the
-Slice-level final validation has run.
+Slice: 24 — Files / Media detail and Manual Organize
+Base SHA: 4ff5479d9f4a81906ee52a9f784931b65cd9ab90
+Head SHA: d2e399803078317f2092d895eae627327998de2f
+
+Required Outcomes:
+- RO-1: COMPLETE
+- RO-2: COMPLETE
+- RO-3: COMPLETE
+- RO-4: COMPLETE
+- RO-5: COMPLETE
+- RO-6: COMPLETE
+- RO-7: COMPLETE
+
+Required Surfaces:
+- Bounded File/Media detail and history/explanation read model: COMPLETE
+- Durable manual-organize intent, selection, choice, Preview, invalidation,
+  authorization, execution and audit contracts with restart-safe SQLite persistence: COMPLETE
+- Shared exact-source/configuration admission, permitted-choice, Preview and exact-plan execution
+  application services: COMPLETE
+- Existing Parser, Recognition, Metadata, Naming, Classification, attachment, conflict,
+  capability, source-lock/fencing and OrganizerExecutor boundaries: COMPLETE
+- Authenticated versioned API and Operator Web Files/detail/manual-organize/result/recovery
+  journey with explicit confirmations and cross-links: COMPLETE
+- Automated domain, persistence, application, API, Web, RBAC, concurrency, batch-independence,
+  zero-mutation and safety evidence: COMPLETE
+
+Implemented:
+- Bounded reload-stable File/Media detail with captured pipeline explanations, unavailable legacy
+  evidence labels, related reviews/conflicts, TaskItem checkpoints, Results, effects and actions
+- Durable manual intent with immutable Managed Runtime snapshot, exact source identity, normalized
+  compatible choices, optimistic versions and audit
+- Single and bounded batch exact Preview with independent outcomes, complete persisted plans,
+  capability/conflict evidence, stale invalidation and zero Storage mutation
+- One-shot exact-plan authorization and atomic admission bound to Preview, source, choices,
+  snapshot, plan, capability, conflict, destructive authority and selected item scope
+- OrganizerExecutor-only real Move/Copy/HardLink/SoftLink execution with attachments, collision
+  handling, explicit overwrite/source-cleanup authority, source fencing and verified effects
+- Durable per-item Task/TaskItem/Result/effect/checkpoint outcomes for success, skipped, failed,
+  partial and uncertain work, including explicit investigation-only interrupted execution
+  reconciliation without automatic replay
+- Shared authenticated API and Operator Web confirmation, execution, reload and recovery views
+- One shared secret-free Result boundary: every task_results write route and the single row
+  reconstruction path apply the shared redaction rule, and File/Media `latestResult` and `results[]`
+  pass through one shape-preserving recursive projection
+- RecognitionType C preserved through Preview, admission, execution and Result while downstream A
+  policy ownership remains visible
+
+Tasks completed:
+- 24.1 — Bounded File/Media detail, evidence and cross-links
+- 24.2 — Durable manual organize intent and compatible choices
+- 24.3 — Exact manual Preview and stale-evidence invalidation
+- 24.4 — Exact reviewed manual execution, durable Results and recovery
+- 24.5 — Reload-discoverable exact execution and complete secret-free outcomes
+- 24.6 — End-to-end secret-free Pipeline Evidence correction
+- 24.7 — Secret-free File/Media Result history (A 2026-09-01 FIX REQUIRED correction)
+
+Final Tests (re-run by B at this Head):
+- `.venv/bin/python -m unittest tests.test_file_media_detail tests.test_file_catalog_api`:
+  PASS, 19 tests
+- Directly affected detail/catalog/API/Web/persistence/checkpoint/security/manual-execution
+  regression: PASS, 112 tests
+- `.venv/bin/python -m unittest discover -s tests`: PASS, 1005 tests, 7 explicit skips
+- `.venv/bin/ruff format --check .`: PASS, 338 files already formatted
+- `.venv/bin/ruff check .`, `compileall`, `pip check`, both configuration validation commands,
+  FFmpeg/FFprobe scan, `git diff --check` and `config/alist.json` ignored/untracked checks: PASS
+- Wheel build with `pip wheel --no-deps --no-build-isolation` and isolated
+  `scripts/wheel_smoke_test.py`: PASS; runtime schema 27, backup/rehearsal/restore/verify/preflight
+  all passed
+- Real SMB/OpenList/S3/R2 and endurance acceptance: SKIP/UNAVAILABLE. All 7 skips are the
+  environment-gated external gates (`BLOCKED: dedicated real OpenList/SMB/S3 environment ...` and
+  the four absent isolated endurance profiles). No production Storage, Provider credentials or user
+  media were used.
+- Markdown/local-link check: no dedicated repository checker is present; changed Markdown passed
+  `git diff --check` and link targets were reviewed in the Task/doc diffs.
+
+Safety Evidence:
+- Files browsing, detail, selection and Preview are side-effect free; Preview never calls
+  OrganizerExecutor and performs zero Storage mutation
+- Every real mutation is routed through OrganizerExecutor; unsupported operations never silently
+  fall back, and overwrite/delete/source cleanup require explicit reviewed authority
+- SQLite `BEGIN IMMEDIATE` admission atomically consumes one-shot authority, creates the exact
+  Task scope and acquires source/target/attachment fences; stale, duplicate and concurrent work
+  fails closed before mutation
+- Per-item batch state, Result, effects and checkpoint evidence remain independent; successful,
+  skipped, ignored and unselected siblings are not replayed or concealed
+- Partial/uncertain and interrupted publication states are durable, investigation-only and never
+  automatically replayed; reconciliation releases fences without invoking mutation
+- Configuration identity/digest, source identity, choice, plan, conflict and capability changes
+  invalidate or reject stale execution evidence
+- RecognitionType C remains C with downstream Naming/Classification/Organize policy A visible;
+  shared Pipeline Evidence and manual-organize records recursively redact complete credential
+  values at construction, persistence and read-projection boundaries; newly written SQLite bytes
+  contain no fake credential and historical unsafe rows are redacted without rewrite;
+  `config/alist.json` remains ignored/untracked/unstaged
+- The A 2026-09-01 P1 is closed and independently reproduced by B: a historical `task_results` row
+  seeded by raw SQL with A's exact `Authorization: Bearer slice24-final-review-secret` (plus
+  `password=`, `Authorization: Basic` and `cookie=` forms in title, completed operations, uncertain
+  effects and destination path) returns HTTP 200 from an authenticated `GET /api/v1/files/<id>` with
+  `Authorization: [redacted]` in both `latestResult.error` and `results[0].error` and no secret
+  substring anywhere in the document; the row is byte-identical before and after the read, all three
+  Result write routes redact before binding so no fake credential reaches new SQLite bytes, and
+  Result status, source/destination linkage, policy identities and RecognitionType C are unchanged
+
+Known Non-blocking Issues:
+- P3: the shared credential rule matches keyword-plus-separator text, so a legitimate title such as
+  `The Secret: Dare to Dream` renders as `The Secret: [redacted] to Dream` in Result title/history
+  display. This is inherent to the shared rule already accepted for Pipeline Evidence in 24.5/24.6,
+  and tuning it would be a broad secret-rule change rather than a Slice 24 outcome.
+- P3: Task-surface path identity stays exact by design, so `GET /api/v1/tasks/<id>` item/result
+  `source_path`/`destination_path` and File detail `items[].sourcePath` echo a credential-shaped
+  substring embedded in a media path verbatim (Result error/title/effect text is redacted
+  everywhere). Keeping stored source/destination identity exact is required by the Contract and was
+  an explicit Task 24.7 non-goal; the indexed file path is itself the identity of the detail
+  document. Flagged for A's judgement rather than changed by B.
+- Python 3.13 emits existing unclosed-SQLite `ResourceWarning` messages without test failures
+- External real-service and endurance acceptance is unavailable in this offline environment
+
+Explicitly Deferred:
+- Keep the Explicitly Deferred list in this Contract unchanged: Provider switching, scheduled
+  unattended real organization, automatic replay/crash replay, distributed leases, remote setup
+  and probing, universal compensation/historical rollback and other deferred capabilities
+
+Documentation Reconciliation Needed:
+- A should reconcile authoritative CURRENT product/architecture/roadmap documentation and the
+  final closure ledger after review; no Slice Contract or stable requirement change is requested
+
+Decision: SLICE READY FOR A REVIEW
 ```
 
 ## A Final Review
 
 ```text
-NOT STARTED — A reviews Base..Implementation Head only after B submits the Closure Packet and marks
-the Slice READY FOR A REVIEW.
+Reviewed Range: 4ff5479d9f4a81906ee52a9f784931b65cd9ab90..7f35e0634a68a1dc62d4d02f54f1aee6cb7e435b
+Decision: FIX REQUIRED
+P0/P1 Blockers:
+- [P1 — RO-1 / RO-7 / File/Media secret-free Safety Invariant] The complete File/Media Result
+  history added by Slice 24 and the adjacent `latestResult` projection still return
+  `PersistentResultRecord.error` verbatim instead of passing the complete detail document through
+  the shared recursive redaction rule. On the reviewed Head, a fake Result error equal to
+  `Authorization: Bearer slice24-final-review-secret` remained recoverable from SQLite and an
+  authenticated `GET /api/v1/files/one` returned the complete credential in both
+  `latestResult.error` and `results[0].error` with HTTP 200. Pipeline Evidence redaction therefore
+  does not make the promised File/Media detail/history/error surface secret-free. Apply the shared
+  shape-preserving redaction rule to the complete latest/history Result projection (including any
+  nested operation/effect text) before response, preserve bounded useful non-secret facts, and add
+  a fake-credential regression proving absence from the authenticated File/Media API/Web-visible
+  projection; any newly written Slice 24 Result/error boundary must likewise be protected rather
+  than assuming its input is already safe.
 ```
