@@ -19,6 +19,14 @@ from mediaflow.domain.automation import (
     ScheduleAuditRecord,
     ScheduleState,
 )
+from mediaflow.domain.automation_task_definition_preview import (
+    AutomationPreviewSource,
+    AutomationTaskDefinitionPreview,
+    AutomationTaskDefinitionPreviewItem,
+    AutomationTaskDefinitionPreviewItemStatus,
+    AutomationTaskDefinitionPreviewStatus,
+    AutomationTaskDefinitionPreviewUnavailable,
+)
 from mediaflow.domain.classification_review import (
     ClassificationReview,
     ClassificationReviewChoice,
@@ -152,12 +160,11 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestDecision
 
-# Manual intent, Preview, and exact execution tables are additive migrations on the current
-# runtime schema.
-# Keep the public runtime marker at 27 for compatibility with existing backup
-# and migration consumers; the table creation below is idempotent and upgrades
-# older runtime databases without rewriting existing rows.
-SCHEMA_VERSION = 27
+# Manual intent, Preview, exact execution, and Automation Task Definition
+# Preview tables are additive migrations on the runtime schema.  The table
+# creation below is idempotent and upgrades older runtime databases without
+# rewriting existing rows.
+SCHEMA_VERSION = 28
 
 
 def _canonical_json(value: object) -> str:
@@ -4900,6 +4907,260 @@ class SQLiteTaskRepository:
                 raise
         return cursor.rowcount
 
+    # Automation Task Definition Preview persistence is a bounded evidence
+    # projection only.  It creates no Job, Task, authority, or configuration
+    # revision and never mutates Storage.
+    def create_automation_task_definition_preview(
+        self,
+        preview: AutomationTaskDefinitionPreview,
+        items: tuple[AutomationTaskDefinitionPreviewItem, ...]
+        | list[AutomationTaskDefinitionPreviewItem]
+        | None = None,
+    ) -> AutomationTaskDefinitionPreview:
+        if not isinstance(preview, AutomationTaskDefinitionPreview):
+            raise ValueError("automation Preview projection is required")
+        values = tuple(preview.items if items is None else items)
+        if values != preview.items:
+            raise ValueError("automation Preview items do not match the projection")
+        if any(
+            not isinstance(value, AutomationTaskDefinitionPreviewItem)
+            or value.preview_id != preview.preview_id
+            or value.definition_id != preview.definition_id
+            for value in values
+        ):
+            raise ValueError("automation Preview item ownership is invalid")
+        superseded = "superseded by a newer Preview for this definition"
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                old_rows = self._connection.execute(
+                    "SELECT preview_id FROM automation_task_definition_previews "
+                    "WHERE definition_id=? AND current=1",
+                    (preview.definition_id,),
+                ).fetchall()
+                old_preview_ids = tuple(row["preview_id"] for row in old_rows)
+                if old_preview_ids:
+                    placeholders = ", ".join("?" for _ in old_preview_ids)
+                    self._connection.execute(
+                        f"UPDATE automation_task_definition_preview_items SET current=0, "
+                        f"updated_at=? WHERE preview_id IN ({placeholders})",
+                        (preview.updated_at.isoformat(), *old_preview_ids),
+                    )
+                    self._connection.execute(
+                        f"UPDATE automation_task_definition_previews SET status=?, current=0, "
+                        f"stale_reason=?, error=?, next_action=?, updated_at=? "
+                        f"WHERE current=1 AND preview_id IN ({placeholders})",
+                        (
+                            AutomationTaskDefinitionPreviewStatus.STALE.value,
+                            superseded,
+                            superseded,
+                            "inspect the newer Preview or rerun Preview",
+                            preview.updated_at.isoformat(),
+                            *old_preview_ids,
+                        ),
+                    )
+                self._connection.execute(
+                    "INSERT INTO automation_task_definition_previews "
+                    "(preview_id, definition_id, definition_fingerprint, "
+                    "configuration_revision_id, configuration_revision_version, "
+                    "configuration_revision_digest, configuration_status, "
+                    "resource_library_id, storage_id, source_scope, run_mode, "
+                    "effective_item_limit, counts_json, status, actor, created_at, "
+                    "updated_at, next_action, error, zero_mutation, current, stale_reason, "
+                    "truncated, boundary_errors_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    "?, ?, ?, ?)",
+                    (
+                        preview.preview_id,
+                        preview.definition_id,
+                        preview.definition_fingerprint,
+                        preview.configuration_revision_id,
+                        preview.configuration_revision_version,
+                        preview.configuration_revision_digest,
+                        preview.configuration_status,
+                        preview.resource_library_id,
+                        preview.storage_id,
+                        preview.source_scope,
+                        preview.run_mode,
+                        preview.effective_item_limit,
+                        json.dumps(preview.counts, ensure_ascii=False, sort_keys=True),
+                        preview.status.value,
+                        preview.actor,
+                        preview.created_at.isoformat(),
+                        preview.updated_at.isoformat(),
+                        redact_manual_text(preview.next_action),
+                        redact_manual_text(preview.error) if preview.error is not None else None,
+                        int(preview.zero_mutation),
+                        int(preview.current),
+                        redact_manual_text(preview.stale_reason)
+                        if preview.stale_reason is not None
+                        else None,
+                        int(preview.truncated),
+                        json.dumps(
+                            [redact_manual_text(value) for value in preview.boundary_errors[:16]],
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    ),
+                )
+                for item in values:
+                    self._connection.execute(
+                        "INSERT INTO automation_task_definition_preview_items "
+                        "(preview_item_id, preview_id, definition_id, position, source_json, "
+                        "source_fingerprint, status, next_action, recognition_status, "
+                        "recognition_rule_id, recognition_type_id, "
+                        "recognition_type_policy_id, metadata_policy_id, naming_policy_id, "
+                        "classification_policy_id, organize_policy_id, metadata_provider, "
+                        "metadata_provider_id, media_type, metadata_status, metadata_title, "
+                        "metadata_year, naming_directory, naming_filename, "
+                        "classification_media_library_id, classification_relative_path, "
+                        "destination_storage_id, destination_path, operation, "
+                        "attachments_json, required_capabilities_json, "
+                        "declared_capabilities_json, capability_verdict, conflict_strategy, "
+                        "conflicts_json, warnings_json, plan_fingerprint, plan_json, blocker, "
+                        "zero_mutation, current, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        "?, ?, ?)",
+                        (
+                            item.preview_item_id,
+                            item.preview_id,
+                            item.definition_id,
+                            item.position,
+                            json.dumps(item.source.document(), ensure_ascii=False, sort_keys=True),
+                            item.source_fingerprint,
+                            item.status.value,
+                            redact_manual_text(item.next_action),
+                            item.recognition_status,
+                            item.recognition_rule_id,
+                            item.recognition_type_id,
+                            item.recognition_type_policy_id,
+                            item.metadata_policy_id,
+                            item.naming_policy_id,
+                            item.classification_policy_id,
+                            item.organize_policy_id,
+                            item.metadata_provider,
+                            item.metadata_provider_id,
+                            item.media_type,
+                            item.metadata_status,
+                            item.metadata_title,
+                            item.metadata_year,
+                            item.naming_directory,
+                            item.naming_filename,
+                            item.classification_media_library_id,
+                            item.classification_relative_path,
+                            item.destination_storage_id,
+                            item.destination_path,
+                            item.operation,
+                            item.attachments_json,
+                            item.required_capabilities_json,
+                            item.declared_capabilities_json,
+                            item.capability_verdict,
+                            item.conflict_strategy,
+                            item.conflicts_json,
+                            item.warnings_json,
+                            item.plan_fingerprint,
+                            json.dumps(item.plan, ensure_ascii=False, sort_keys=True)
+                            if item.plan is not None
+                            else None,
+                            redact_manual_text(item.blocker) if item.blocker is not None else None,
+                            int(item.zero_mutation),
+                            int(item.current),
+                            item.created_at.isoformat(),
+                            item.updated_at.isoformat(),
+                        ),
+                    )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        value = self.get_automation_task_definition_preview(preview.preview_id)
+        if value is None:
+            raise AutomationTaskDefinitionPreviewUnavailable(
+                "published automation Preview could not be reloaded",
+                details={"previewId": preview.preview_id},
+            )
+        return value
+
+    def get_automation_task_definition_preview(
+        self, preview_id: str
+    ) -> AutomationTaskDefinitionPreview | None:
+        if not isinstance(preview_id, str) or not preview_id.strip():
+            raise ValueError("automation Preview ID is required")
+        with self._lock:
+            return self._load_automation_preview_locked(preview_id)
+
+    def list_automation_task_definition_previews(
+        self, definition_id: str, *, limit: int = 100
+    ) -> tuple[AutomationTaskDefinitionPreview, ...]:
+        if not isinstance(definition_id, str) or not definition_id.strip():
+            raise ValueError("automation definition ID is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("automation Preview limit must be between 1 and 500")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT preview_id FROM automation_task_definition_previews "
+                "WHERE definition_id=? ORDER BY created_at DESC, preview_id DESC LIMIT ?",
+                (definition_id, limit),
+            ).fetchall()
+            return tuple(self._load_automation_preview_locked(row["preview_id"]) for row in rows)
+
+    def get_latest_automation_task_definition_preview(
+        self, definition_id: str
+    ) -> AutomationTaskDefinitionPreview | None:
+        values = self.list_automation_task_definition_previews(definition_id, limit=1)
+        return values[0] if values else None
+
+    def mark_automation_task_definition_previews_stale(
+        self,
+        definition_id: str,
+        reason: str,
+        now: datetime,
+    ) -> int:
+        if not isinstance(definition_id, str) or not definition_id.strip():
+            raise ValueError("automation definition ID is required")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 512:
+            raise ValueError("automation Preview stale reason is invalid")
+        if now.tzinfo is None:
+            raise ValueError("automation Preview stale timestamp must include timezone")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = self._connection.execute(
+                    "SELECT preview_id FROM automation_task_definition_previews "
+                    "WHERE definition_id=? AND current=1",
+                    (definition_id,),
+                ).fetchall()
+                preview_ids = tuple(row["preview_id"] for row in rows)
+                if preview_ids:
+                    placeholders = ", ".join("?" for _ in preview_ids)
+                    self._connection.execute(
+                        f"UPDATE automation_task_definition_preview_items SET current=0, "
+                        f"updated_at=? WHERE preview_id IN ({placeholders})",
+                        (now.isoformat(), *preview_ids),
+                    )
+                    cursor = self._connection.execute(
+                        f"UPDATE automation_task_definition_previews SET status=?, current=0, "
+                        f"stale_reason=?, error=?, next_action=?, updated_at=? "
+                        f"WHERE current=1 AND preview_id IN ({placeholders})",
+                        (
+                            AutomationTaskDefinitionPreviewStatus.STALE.value,
+                            reason,
+                            reason,
+                            "request a fresh Preview after resolving the stated stale reason",
+                            now.isoformat(),
+                            *preview_ids,
+                        ),
+                    )
+                    affected = cursor.rowcount
+                else:
+                    affected = 0
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return affected
+
     # Exact manual execution persistence deliberately reuses the existing
     # tasks/task_items/task_results tables.  These small companion tables hold
     # only the immutable Preview binding and the operation evidence needed to
@@ -5964,6 +6225,105 @@ class SQLiteTaskRepository:
             current=bool(row["current"]),
         )
 
+    def _load_automation_preview_locked(
+        self, preview_id: str
+    ) -> AutomationTaskDefinitionPreview | None:
+        row = self._connection.execute(
+            "SELECT * FROM automation_task_definition_previews WHERE preview_id=?",
+            (preview_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        item_rows = self._connection.execute(
+            "SELECT * FROM automation_task_definition_preview_items WHERE preview_id=? "
+            "ORDER BY position ASC, preview_item_id ASC",
+            (preview_id,),
+        ).fetchall()
+        try:
+            items = tuple(self._automation_preview_item(value) for value in item_rows)
+            return AutomationTaskDefinitionPreview(
+                preview_id=row["preview_id"],
+                definition_id=row["definition_id"],
+                definition_fingerprint=row["definition_fingerprint"],
+                configuration_revision_id=row["configuration_revision_id"],
+                configuration_revision_version=int(row["configuration_revision_version"]),
+                configuration_revision_digest=row["configuration_revision_digest"],
+                configuration_status=row["configuration_status"],
+                resource_library_id=row["resource_library_id"],
+                storage_id=row["storage_id"],
+                source_scope=row["source_scope"],
+                run_mode=row["run_mode"],
+                effective_item_limit=int(row["effective_item_limit"]),
+                counts=dict(json.loads(row["counts_json"])),
+                status=AutomationTaskDefinitionPreviewStatus(row["status"]),
+                items=items,
+                actor=row["actor"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+                next_action=row["next_action"],
+                error=row["error"],
+                zero_mutation=bool(row["zero_mutation"]),
+                current=bool(row["current"]),
+                stale_reason=row["stale_reason"],
+                truncated=bool(row["truncated"]),
+                boundary_errors=tuple(json.loads(row["boundary_errors_json"])),
+            )
+        except Exception as error:
+            raise AutomationTaskDefinitionPreviewUnavailable(
+                "durable automation Preview state is corrupt or unavailable",
+                details={"previewId": preview_id, "reason": type(error).__name__},
+            ) from error
+
+    @staticmethod
+    def _automation_preview_item(
+        row: sqlite3.Row,
+    ) -> AutomationTaskDefinitionPreviewItem:
+        return AutomationTaskDefinitionPreviewItem(
+            preview_item_id=row["preview_item_id"],
+            preview_id=row["preview_id"],
+            definition_id=row["definition_id"],
+            position=int(row["position"]),
+            source=AutomationPreviewSource.from_document(json.loads(row["source_json"])),
+            source_fingerprint=row["source_fingerprint"],
+            status=AutomationTaskDefinitionPreviewItemStatus(row["status"]),
+            next_action=row["next_action"],
+            recognition_status=row["recognition_status"],
+            recognition_rule_id=row["recognition_rule_id"],
+            recognition_type_id=row["recognition_type_id"],
+            recognition_type_policy_id=row["recognition_type_policy_id"],
+            metadata_policy_id=row["metadata_policy_id"],
+            naming_policy_id=row["naming_policy_id"],
+            classification_policy_id=row["classification_policy_id"],
+            organize_policy_id=row["organize_policy_id"],
+            metadata_provider=row["metadata_provider"],
+            metadata_provider_id=row["metadata_provider_id"],
+            media_type=row["media_type"],
+            metadata_status=row["metadata_status"],
+            metadata_title=row["metadata_title"],
+            metadata_year=row["metadata_year"],
+            naming_directory=row["naming_directory"],
+            naming_filename=row["naming_filename"],
+            classification_media_library_id=row["classification_media_library_id"],
+            classification_relative_path=row["classification_relative_path"],
+            destination_storage_id=row["destination_storage_id"],
+            destination_path=row["destination_path"],
+            operation=row["operation"],
+            attachments_json=row["attachments_json"],
+            required_capabilities_json=row["required_capabilities_json"],
+            declared_capabilities_json=row["declared_capabilities_json"],
+            capability_verdict=row["capability_verdict"],
+            conflict_strategy=row["conflict_strategy"],
+            conflicts_json=row["conflicts_json"],
+            warnings_json=row["warnings_json"],
+            plan_fingerprint=row["plan_fingerprint"],
+            plan=json.loads(row["plan_json"]) if row["plan_json"] is not None else None,
+            blocker=row["blocker"],
+            zero_mutation=bool(row["zero_mutation"]),
+            current=bool(row["current"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
     def _load_manual_intent_locked(self, intent_id: str) -> ManualOrganizeIntent | None:
         row = self._connection.execute(
             "SELECT * FROM manual_intents WHERE intent_id=?", (intent_id,)
@@ -6346,6 +6706,51 @@ class SQLiteTaskRepository:
                     ON manual_preview_items(intent_id, item_id, current);
                 CREATE INDEX IF NOT EXISTS manual_preview_items_preview_order
                     ON manual_preview_items(preview_id, position, item_id);
+                CREATE TABLE IF NOT EXISTS automation_task_definition_previews (
+                    preview_id TEXT PRIMARY KEY, definition_id TEXT NOT NULL,
+                    definition_fingerprint TEXT NOT NULL,
+                    configuration_revision_id TEXT NOT NULL,
+                    configuration_revision_version INTEGER NOT NULL,
+                    configuration_revision_digest TEXT NOT NULL,
+                    configuration_status TEXT NOT NULL,
+                    resource_library_id TEXT NOT NULL, storage_id TEXT NOT NULL,
+                    source_scope TEXT, run_mode TEXT NOT NULL,
+                    effective_item_limit INTEGER NOT NULL, counts_json TEXT NOT NULL,
+                    status TEXT NOT NULL, actor TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    next_action TEXT NOT NULL, error TEXT,
+                    zero_mutation INTEGER NOT NULL, current INTEGER NOT NULL DEFAULT 1,
+                    stale_reason TEXT, truncated INTEGER NOT NULL DEFAULT 0,
+                    boundary_errors_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS automation_previews_definition_created
+                    ON automation_task_definition_previews(definition_id, created_at, preview_id);
+                CREATE TABLE IF NOT EXISTS automation_task_definition_preview_items (
+                    preview_item_id TEXT PRIMARY KEY, preview_id TEXT NOT NULL,
+                    definition_id TEXT NOT NULL, position INTEGER NOT NULL,
+                    source_json TEXT NOT NULL, source_fingerprint TEXT NOT NULL,
+                    status TEXT NOT NULL, next_action TEXT NOT NULL,
+                    recognition_status TEXT, recognition_rule_id TEXT,
+                    recognition_type_id TEXT, recognition_type_policy_id TEXT,
+                    metadata_policy_id TEXT, naming_policy_id TEXT,
+                    classification_policy_id TEXT, organize_policy_id TEXT,
+                    metadata_provider TEXT, metadata_provider_id TEXT, media_type TEXT,
+                    metadata_status TEXT, metadata_title TEXT, metadata_year INTEGER,
+                    naming_directory TEXT, naming_filename TEXT,
+                    classification_media_library_id TEXT, classification_relative_path TEXT,
+                    destination_storage_id TEXT, destination_path TEXT, operation TEXT,
+                    attachments_json TEXT, required_capabilities_json TEXT,
+                    declared_capabilities_json TEXT, capability_verdict TEXT,
+                    conflict_strategy TEXT, conflicts_json TEXT, warnings_json TEXT,
+                    plan_fingerprint TEXT, plan_json TEXT, blocker TEXT,
+                    zero_mutation INTEGER NOT NULL, current INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(preview_id, position),
+                    FOREIGN KEY(preview_id)
+                        REFERENCES automation_task_definition_previews(preview_id)
+                );
+                CREATE INDEX IF NOT EXISTS automation_preview_items_preview_order
+                    ON automation_task_definition_preview_items(preview_id, position);
                 CREATE TABLE IF NOT EXISTS manual_execution_authorizations (
                     authorization_id TEXT PRIMARY KEY, preview_id TEXT NOT NULL,
                     intent_id TEXT NOT NULL, intent_version INTEGER NOT NULL,

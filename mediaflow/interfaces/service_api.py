@@ -11,6 +11,9 @@ from urllib.parse import parse_qs
 from uuid import uuid4
 
 from mediaflow.application.automation import AutomationJobService
+from mediaflow.application.automation_task_definition_preview import (
+    AutomationTaskDefinitionPreviewService,
+)
 from mediaflow.application.classification_review import ClassificationReviewService
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
@@ -120,6 +123,7 @@ class MediaFlowApi:
         manual_intent_service: ManualOrganizeIntentService | None = None,
         manual_preview_service: ManualOrganizePreviewService | None = None,
         manual_execution_service: ManualOrganizeExecutionService | None = None,
+        automation_preview_service: AutomationTaskDefinitionPreviewService | None = None,
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -185,6 +189,13 @@ class MediaFlowApi:
                 self._manual_previews,
                 self._manual_intents,
                 checkpoint_service=self._checkpoint_service,
+            )
+        self._automation_previews = automation_preview_service
+        if self._automation_previews is None and configuration_service is not None:
+            self._automation_previews = AutomationTaskDefinitionPreviewService(
+                repository,
+                configuration_service,
+                metadata_provider_registry_factory=metadata_provider_registry_factory,
             )
         self._recovery_admission = RecoveryAdmissionService(
             repository,
@@ -777,6 +788,11 @@ class MediaFlowApi:
             response = revision.summary()
             response["configurationRevisionId"] = revision.revision_id
             response["automationTaskDefinition"] = values[-1] if values else None
+            if isinstance(value.get("id"), str):
+                self._invalidate_automation_previews(
+                    value["id"],
+                    "the pinned Automation Task Definition was created or replaced",
+                )
             return self._response(start_response, 200, response)
         if (
             len(parts) == 5
@@ -824,6 +840,10 @@ class MediaFlowApi:
             response = revision.summary()
             response["configurationRevisionId"] = revision.revision_id
             response["automationTaskDefinition"] = definition
+            self._invalidate_automation_previews(
+                parts[4],
+                "the pinned Automation Task Definition was edited",
+            )
             return self._response(start_response, 200, response)
         if (
             len(parts) == 6
@@ -888,7 +908,139 @@ class MediaFlowApi:
             response = revision.summary()
             response["configurationRevisionId"] = revision.revision_id
             response["automationTaskDefinition"] = definition
+            self._invalidate_automation_previews(
+                parts[4],
+                f"the pinned Automation Task Definition was {action}",
+            )
             return self._response(start_response, 200, response)
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "preview"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+            if self._automation_previews is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "automation Preview service is unavailable",
+                )
+            document = self._document(environ)
+            if set(document).difference({"revisionId"}):
+                raise ValueError("automation Preview accepts only an optional revisionId")
+            revision_id = document.get("revisionId")
+            if revision_id is not None and (
+                not isinstance(revision_id, str) or not revision_id.strip()
+            ):
+                raise ValueError("automation Preview revisionId must be a non-empty string")
+            preview = self._automation_previews.create(
+                parts[4],
+                revision_id=revision_id,
+                actor=principal.principal_id,
+            )
+            return self._response(
+                start_response,
+                201,
+                self._automation_preview_document(preview),
+            )
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "previews"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._automation_previews is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "automation Preview service is unavailable",
+                )
+            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(query).difference({"limit"}) or any(len(value) != 1 for value in query.values()):
+                raise ValueError("automation Preview list query accepts one limit field")
+            limit = self._parse_bounded_limit(query.get("limit", ["100"])[0], "automation Preview")
+            values = self._automation_previews.list_readonly(parts[4], limit=limit)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "definitionId": parts[4],
+                    "items": [self._automation_preview_document(value) for value in values],
+                    "total": len(values),
+                    "truncated": False,
+                },
+            )
+        if (
+            len(parts) == 7
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "previews"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._automation_previews is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "automation Preview service is unavailable",
+                )
+            preview = self._automation_previews.get_readonly(parts[6])
+            return self._response(
+                start_response,
+                200,
+                self._automation_preview_document(preview),
+            )
+        if (
+            len(parts) == 8
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "previews"
+            and parts[7] == "items"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._automation_previews is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "automation Preview service is unavailable",
+                )
+            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(query).difference({"limit", "after"}) or any(
+                len(value) != 1 for value in query.values()
+            ):
+                raise ValueError("automation Preview item query accepts limit and after once")
+            try:
+                limit = int(query.get("limit", ["100"])[0])
+            except ValueError as error:
+                raise ValueError("automation Preview item limit must be an integer") from error
+            if limit < 1 or limit > 500:
+                raise ValueError("automation Preview item limit must be between 1 and 500")
+            after_value = query.get("after", [None])[0]
+            if after_value is not None:
+                try:
+                    after = int(after_value)
+                except ValueError as error:
+                    raise ValueError("automation Preview item cursor must be an integer") from error
+            else:
+                after = None
+            items, total, next_after = self._automation_previews.items(
+                parts[6], limit=limit, after=after
+            )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "previewId": parts[6],
+                    "items": [item.document() for item in items],
+                    "total": total,
+                    "nextAfter": next_after,
+                },
+            )
         if parts == ["api", "v1", "configuration"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -1289,6 +1441,11 @@ class MediaFlowApi:
                 values = revision.document.get("automationTaskDefinitions", [])
                 if values:
                     response["automationTaskDefinition"] = values[-1]
+                if isinstance(value.get("id"), str):
+                    self._invalidate_automation_previews(
+                        value["id"],
+                        "the pinned Automation Task Definition was created or replaced",
+                    )
             return self._response(start_response, 200, response)
         if (
             len(parts) == 9
@@ -1353,6 +1510,10 @@ class MediaFlowApi:
             response = revision.summary()
             if definition is not None:
                 response["automationTaskDefinition"] = definition
+            self._invalidate_automation_previews(
+                parts[7],
+                f"the pinned Automation Task Definition was {action}",
+            )
             return self._response(start_response, 200, response)
         if (
             len(parts) == 8
@@ -1396,6 +1557,10 @@ class MediaFlowApi:
                         if item.get("id") == parts[7]
                     ),
                     None,
+                )
+                self._invalidate_automation_previews(
+                    parts[7],
+                    "the pinned Automation Task Definition was edited",
                 )
             return self._response(start_response, 200, response)
         if (
@@ -3312,6 +3477,24 @@ class MediaFlowApi:
         if (
             len(parts) == 6
             and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "preview"
+        ):
+            return "/api/v1/automation/task-definitions/{id}/preview"
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "previews"
+        ):
+            return "/api/v1/automation/task-definitions/{id}/previews"
+        if (
+            len(parts) >= 7
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "previews"
+        ):
+            return "/api/v1/automation/task-definitions/{id}/previews/{previewId}"
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
             and parts[5] in {"copy", "enable", "disable"}
         ):
             return f"/api/v1/automation/task-definitions/{{id}}/{parts[5]}"
@@ -3945,6 +4128,19 @@ class MediaFlowApi:
                 preview.preview_id
             )
         return redact_manual_value(document)
+
+    def _automation_preview_document(self, preview, *, item_limit: int = 100) -> dict:
+        document = redact_manual_value(preview.document())
+        items = document.pop("items", [])
+        document["items"] = items[:item_limit]
+        document["itemTotal"] = len(items)
+        document["itemsTruncated"] = len(items) > item_limit
+        return document
+
+    def _invalidate_automation_previews(self, definition_id: str, reason: str) -> None:
+        if self._automation_previews is None:
+            return
+        self._automation_previews.invalidate(definition_id, reason)
 
     def _file_catalog_detail_value(self, detail) -> dict:
         document = self._file_catalog_value(detail.record)

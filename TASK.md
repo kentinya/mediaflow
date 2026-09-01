@@ -1,13 +1,13 @@
-# Task 25.1 — Managed Automation Task Definition lifecycle
+# Task 25.2 — Exact Automation Task Definition validation and Preview evidence
 
-This Task follows [the development workflow](../docs/development-workflow.md) and is subordinate to
-the current [`SLICE.md`](../SLICE.md).
+This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
+the current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 25.1
+Task ID: 25.2
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: PASS
-Task Base: d889db62fd6fe568b9a2277117a805459b8364df
+Status: READY FOR B REVIEW
+Task Base: b244e128987daa9c844b654d9e70588983eea6d3
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,291 +15,394 @@ Planner / Reviewer: B
 
 ## Goal
 
-Complete the managed definition-management portion of RO-1: an authenticated authorized operator
-can create, copy, edit, inspect, enable and disable one versioned Automation Task Definition for
-one configured enabled ResourceLibrary with an optional normalized safe Storage-relative sub-scope,
-scan-only/scan-and-plan/automatic-organization mode, interval or Cron/timezone schedule and bounded
-per-run item limit. The definition must be represented inside the existing Managed Configuration
-Draft → Validate → Explicit Activate → immutable Active snapshot authority, with optimistic edits,
-reference validation and secret-free Before/After audit.
+Complete RO-2: an authenticated authorized operator can validate/test one managed Automation Task
+Definition and run an exact-definition, exact-snapshot Preview/DryRun of it from the Automation
+journey. The Preview exposes bounded source scope, the exact configuration identity, referenced
+RecognitionTypePolicy ownership, discovered/selected/permitted items, per-item decisions,
+destinations, operations, attachments, required capabilities, conflicts, warnings and blockers. The
+evidence is durable, reloadable, zero-mutation, secret-free, and becomes visibly stale after any
+definition-, scope-, snapshot- or plan-affecting change, so it can never be mistaken for fresh
+authority.
 
 ## Why This Task Exists
 
-The current repository has immutable managed runtime snapshots and read-only JSON-authored
-interval/Cron schedules, but those schedules are limited to `scan` and `preview`, have no
-ResourceLibrary/source-scope contract, and cannot be managed as durable operator-owned business
-definitions. Existing `/api/v1/schedules` and Operator Web schedule views only inspect scheduler
-state; they do not provide the RO-1 create/edit/copy/enable/disable journey.
+Task 25.1 delivered the managed definition contract, lifecycle and surfaces, but nothing in the
+repository can answer "what would this definition actually do". Two nearby mechanisms both fall
+short:
 
-This is the largest reasonable first unit because every later Slice 25 behavior depends on a
-stable definition identity, exact definition version, normalized source scope, mode/limits,
-configuration snapshot pin and managed lifecycle. Preview, unattended grants and due-occurrence
-execution must not invent a parallel definition store or bypass this authority.
+- `ManualOrganizePreviewService` (`mediaflow/application/manual_organize_preview.py`) already
+  produces exact per-item preview evidence with a read-only Storage guard, snapshot checks, bounded
+  redacted plan documents and stale-item marking, but it is bound to a `ManualOrganizeIntent` over
+  operator-selected files. It has no definition identity, no ResourceLibrary/sub-scope discovery and
+  no per-run limit.
+- The legacy `preview` schedule command (`AutomationJobService.submit`, `IntervalScheduler.tick`)
+  emits an `AutomationJob` that runs library-pipeline preview work with no definition identity, no
+  pinned definition/snapshot evidence, no bounded per-item Preview record and no staleness
+  semantics.
+
+RO-2 is also the safety gate in front of the rest of the Slice: RO-5 may not grant unattended
+mutation, and RO-3/RO-4 may not route a due occurrence into execution, until the operator can first
+inspect exact bounded evidence for that definition. This is the largest reasonable next unit because
+it is one complete vertical journey (Domain → Persistence/migration → Application → API → Web →
+tests) and it establishes the evidence and staleness identity that the grant and occurrence pinning
+Tasks will bind to. Splitting it further would ship a store with no operator surface, or a surface
+with no durable evidence.
 
 ## Implementation Scope
 
 ```text
-Domain → Managed Configuration parsing/validation → SQLite persistence/migration as required
-→ Application definition-management service → authenticated versioned API → Operator Web
-Automation list/detail/create/copy/edit/enable/disable → focused and regression tests
+Domain evidence contract → SQLite persistence/migration → Application preview service
+→ authenticated versioned API → Operator Web Automation validate/Preview surface
+→ focused, integration and full regression tests
 ```
 
-- Add the bounded Automation Task Definition contract and lifecycle fields required by RO-1:
-  stable identity, display name, enabled state, exactly one enabled ResourceLibrary reference,
-  optional safe relative sub-scope, run mode, exactly one interval or Cron/timezone schedule, and
-  bounded per-run item limit.
-- Reuse existing ResourceLibrary, schedule/Cron, managed configuration, RBAC, optimistic-version,
-  audit, redaction and error/recovery conventions. Definition input may reference configured
-  objects, but must not contain per-file Provider, Metadata, Naming, Classification, destination,
-  operation or free-form OrganizePlan choices.
-- Make create/copy/edit produce Draft changes only. Validate references, schedule, timezone,
-  normalized scope and bounds before a definition can be represented as Validated; explicit
-  activation remains the only way for a new Active snapshot to affect future runtime consumers.
-- Ensure editing a Draft never mutates or rewrites an existing Active snapshot. Preserve exact
-  managed configuration revision identity/digest and optimistic version conflict behavior.
-- Persist/reload definitions and their managed audit evidence across SQLite close/reopen and
-  migration from the current schema, using bounded deterministic projections.
-- Expose the same application semantics through authenticated API and Operator Web, including
-  validation failures, stale optimistic edits, disabled/default state, reference failures and
-  explicit enable/disable actions. Opening or refreshing the view must remain read-only.
-- Keep current legacy configuration-authored `scan`/`preview` schedules compatible for this Task;
-  do not repurpose them as the new definition model or make Scheduler/Worker consume definitions
-  yet.
-- Frozen for this Task: `SLICE.md`, Slice Base SHA, existing Task/TaskItem/Result lifecycle,
-  Scheduler occurrence emission behavior, Worker/pipeline execution, Preview evidence, unattended
-  grant/authority, OrganizerExecutor and all explicitly deferred capabilities.
+- Add a bounded Automation definition Preview evidence contract carrying: preview identity; the
+  exact definition id plus a definition fingerprint/version that changes with any definition edit;
+  the exact managed configuration revision id, version and digest that were consumed; resolved
+  ResourceLibrary id, Storage id and normalized sub-scope; run mode; effective item limit; discovery
+  counts (discovered, selected, permitted, excluded/ignored, truncated by limit); aggregate status;
+  one explicit safe next action; and bounded per-item evidence.
+- Per-item evidence must expose at least: source identity and stability decision; matched
+  RecognitionRule and resulting RecognitionType; the owning RecognitionTypePolicy and its
+  Metadata/Naming/Classification/Organize policy ids; Metadata provider/identity selection; naming
+  result; classification target MediaLibrary and relative path; final target path; planned
+  operation; attachments; required Storage capabilities; conflict strategy and detected conflict;
+  warnings; and any per-item blocker with its safe next action.
+- Reuse the existing analysis chain and conventions rather than building a parallel pipeline:
+  Scanner/file-stability, Parser, Recognition, RecognitionTypePolicy, Metadata, Naming,
+  Classification, Planner, `ReadOnlyStorageGuard`/`PreviewReadOnlyStorage`, the existing bounded
+  JSON/redaction/evidence helpers and the existing pagination/projection conventions. Policy
+  ownership stays in RecognitionTypePolicy; the definition must not gain per-file policy,
+  destination or operation fields.
+- Persist previews and per-item evidence in restart-safe SQLite storage with the required schema
+  migration from the current database, bounded deterministic queries (latest preview per definition,
+  bounded list per definition, detail with bounded per-item paging) and no unbounded scans.
+- Application service resolves one exact definition from one exact managed configuration revision
+  (current Active by default; an explicit revision id may be requested), enforces the definition's
+  bounded scope (ResourceLibrary root plus normalized sub-scope only) and per-run item limit, runs
+  the zero-mutation analysis, and persists the bounded evidence. Input may not inject a Storage
+  root, host path, destination, plan, operation or adapter call.
+- Validation/test failures and mid-analysis failures fail closed at the affected boundary and remain
+  independently visible per item: missing/disabled ResourceLibrary or MediaLibrary reference,
+  unresolvable Storage or unsupported capability, invalid/ambiguous scope, unstable source,
+  Provider/Storage failure or rate limit, unresolved recognition/metadata/classification, and
+  detected conflict including Manual/Overwrite. One failing item must not hide, block or replay
+  another item's evidence.
+- Staleness: a preview becomes visibly stale when the definition it pinned changes
+  (edit/copy/enable/disable), when the pinned configuration revision is no longer the current Active
+  revision, or when a plan-affecting fact it recorded changes. A stale preview stays readable, is
+  explicitly marked with the reason, and is never presented as fresh or as execution authority.
+- API and Web use one shared application service, the existing RBAC permission values, error codes,
+  optimistic/version semantics and bounded projections: run a Preview for a definition, list a
+  definition's previews, read a preview with per-item evidence, and reach it from Automation
+  list/detail with an explicit confirmation, visible state, evidence rendering, staleness banner and
+  failure/recovery text. Opening or refreshing any Automation view stays read-only.
+- Frozen for this Task: `SLICE.md` and the Slice Base SHA; the 25.1 definition contract except for
+  additive evidence-identity needs; Scheduler due-state/occurrence emission; `AutomationJob` and
+  Worker execution; the Task/TaskItem/Result and Processing Checkpoint lifecycles; manual/remote
+  one-shot execution authority; unattended grant/revoke; OrganizerExecutor; legacy
+  `/api/v1/schedules` behavior.
 
 ## Acceptance Criteria
 
-- [ ] A valid definition can be created with a stable bounded ID and name, one enabled
-      ResourceLibrary reference, optional normalized relative sub-scope, one supported run mode,
-      either a valid positive interval or valid five-field Cron plus timezone, and a positive
-      bounded per-run limit. Invalid, duplicate, disabled/missing-reference, absolute/traversal/
-      ambiguous-scope, malformed schedule/timezone and over-limit inputs are rejected with bounded
-      operator-safe errors.
-- [ ] The definition contract stores only reusable source/schedule/run intent and references. It
-      does not duplicate or allow arbitrary per-file Provider, Metadata/Naming/Classification,
-      MediaLibrary destination, Organize operation, transfer command or plan data.
-- [ ] Create, copy, edit, inspect, enable and disable are available through the authenticated
-      versioned API and Operator Web using one shared application service and the existing RBAC
-      permissions. Enable/disable are explicit audited actions and do not create Jobs, Tasks,
-      Provider requests, Storage probes or Storage mutations.
-- [ ] Draft edits are optimistic and version-bound. A stale expected version is rejected without
-      overwriting concurrent changes; an Active or superseded revision cannot be edited in place;
-      editing a Draft leaves the prior immutable Active snapshot and its identity/digest unchanged.
-- [ ] Copy creates a new stable definition identity without changing the source definition or its
-      historical audit, and the copied definition starts in the safe disabled state unless an
-      explicit contract-approved rule proves otherwise.
-- [ ] Managed Draft → Validate → Explicit Activate produces an exact immutable configuration
-      snapshot containing the definition. Runtime-facing Active status reports the exact revision
-      identity/digest that would be consumed for future work; no Draft or stale process state is
-      shown as Active.
-- [ ] Before/After audit records for create/copy/edit/enable/disable and validation contain bounded
-      secret-free identity, scope, mode, schedule, limits, reference and lifecycle evidence, and
-      reject or redact secret-like/private credential values. Audit history survives reload.
-- [ ] API and Web projections are bounded, deterministic and truthful after reload, including
-      definition identity/version, lifecycle state, referenced ResourceLibrary, normalized scope,
-      mode, schedule/timezone, limit, managed configuration identity and actionable validation or
-      concurrency failure state.
-- [ ] Existing legacy schedule listing/tick/audit tests and behavior remain compatible, and this
-      Task does not make Scheduler perform definition lookup, policy selection, Storage access or
-      pipeline construction.
+- [ ] An authorized operator can run a Preview for one existing definition through the authenticated
+      versioned API and from Operator Web Automation, and receives bounded evidence identifying the
+      exact definition, its fingerprint/version, and the exact configuration revision id, version
+      and digest consumed. A definition that is missing, references a missing/disabled
+      ResourceLibrary, or has an unresolvable scope fails closed with a bounded operator-safe error
+      and an explicit next action, and creates no partial evidence that claims success.
+- [ ] Preview analysis is limited to the definition's ResourceLibrary root plus its normalized
+      sub-scope and its per-run item limit. Items outside the scope are never analyzed, limit
+      truncation is visible rather than silent, and no API/Web input can widen scope or inject a
+      Storage root, host path, destination, plan, operation or adapter call.
+- [ ] Per-item evidence exposes the recognition, RecognitionTypePolicy ownership, metadata, naming,
+      classification, target path, operation, attachment, capability, conflict, warning and blocker
+      facts listed in Implementation Scope, and a RecognitionType C item still reports
+      RecognitionType C while showing its configured downstream A policy ownership.
+- [ ] Preview performs zero Storage mutation and creates no AutomationJob, Task, TaskItem, Result,
+      grant or configuration revision. Falsification evidence shows the read-only Storage guard
+      refuses write/move/copy/delete/link attempts during Preview, and that the target and source
+      trees are byte-identical before and after.
+- [ ] Preview evidence and its per-item records survive SQLite close/reopen and migration from the
+      current schema, reload with identical identity, status, counts and per-item facts, and are read
+      back through bounded deterministic queries.
+- [ ] A preview is marked stale with its reason after the pinned definition is edited, copied,
+      enabled or disabled, and after its pinned configuration revision stops being the current
+      Active revision. The stale preview remains readable, is not silently deleted or rewritten, and
+      neither API nor Web presents it as fresh evidence or as execution authority.
+- [ ] Mixed-outcome runs keep per-item independence: successful, blocked, failed, skipped/ignored,
+      excluded and limit-truncated items each keep their own durable state and next action, and one
+      item's failure neither hides nor replays another item's evidence.
+- [ ] API and Web expose the same entry, state, actions, confirmation, success, failure and recovery
+      semantics under the same RBAC and error contract, using existing `ApiPermission` values; a
+      read-only principal can inspect evidence but cannot run a Preview, and Automation view load
+      issues no mutating request.
+- [ ] Evidence, projections, audit and logs are bounded and secret-free: no credential, token,
+      authorization header, private endpoint or private configuration value reaches preview records,
+      per-item evidence, API/Web projections or logs; oversized values are truncated deterministically.
+- [ ] Existing legacy `/api/v1/schedules`, Scheduler tick/audit, AutomationJob, Worker, manual
+      Preview/execution and configuration lifecycle behavior remain compatible, and this Task makes
+      Scheduler perform no definition Preview, policy selection or Storage access.
 - [ ] Required T4 tests and quality/safety gates pass with actual evidence, and the checkpoint
       contains only this Task plus necessary focused documentation/test updates.
 
 ## Required Tests
 
-- Focused domain/serialization tests for definition identity, modes, interval/Cron/timezone,
-  normalized relative scope, ResourceLibrary/reference rules, bounds, default disabled state and
-  secret/private-value rejection.
-- Managed configuration/application tests for create/copy/edit/enable/disable, validation,
-  immutable Active snapshots, exact identity/digest, optimistic conflicts, audit redaction and
-  SQLite close/reopen/migration behavior.
-- Authenticated API integration tests for every definition action, RBAC denial, malformed input,
-  missing/disabled references, stale versions, reload and bounded error projections.
-- Operator Web integration/static reachability tests for list/detail/create/copy/edit/enable/disable,
-  explicit action confirmation, visible state/error/recovery and absence of mutation on view load.
-- Regression tests for current configuration lifecycle, legacy `/api/v1/schedules`, Scheduler,
-  AutomationJob and Worker behavior.
-- Full offline regression suite and T4 quality/safety gates:
-  `python -m unittest discover -s tests -p 'test_*.py'`,
-  `ruff check .`, `ruff format --check .`, `python -m compileall -q mediaflow tests`,
-  dependency/configuration/schema-marker checks, wheel build/isolated smoke, Markdown/link checks,
-  private-config/secret scan and `git diff --check`.
-- Report external production Storage/Provider and destructive real-media gates as
-  `SKIP`/`UNAVAILABLE` when not applicable; no production credentials or user media may be used.
+Test Level T4. Every command below must be run and reported with its actual result. A new or
+extended focused module is expected (for example `tests/test_automation_task_definition_preview.py`);
+its name is the Developer's choice, but the coverage below is not optional.
+
+Focused:
+
+- `./.venv/bin/python -m unittest tests.test_automation_task_definition_preview` — domain evidence
+  bounds/validation; application Preview over a temporary Local ResourceLibrary root with fake
+  Metadata Provider and in-memory/fake adapters; exact definition fingerprint plus configuration
+  revision id/version/digest identity; scope and per-run-limit enforcement including visible
+  truncation; per-item recognition/policy-ownership/metadata/naming/classification/target/operation/
+  attachment/capability/conflict/warning/blocker facts; mixed-outcome per-item independence;
+  fail-closed boundaries (missing or disabled ResourceLibrary/MediaLibrary, unresolvable Storage or
+  unsupported capability, invalid or ambiguous scope, unstable source, Provider/Storage failure and
+  rate limit, unresolved recognition/metadata/classification, detected conflict including
+  Manual/Overwrite); staleness marking with reason; bounded deterministic redaction of oversized
+  values.
+- Persistence/migration in the same or an adjacent module: SQLite close/reopen reload with identical
+  identity, status, counts and per-item facts; migration from the current pre-change schema
+  (`mediaflow/infrastructure/sqlite_runtime.py` `SCHEMA_VERSION = 27`) database; bounded queries for
+  latest-per-definition, bounded list and detail per-item paging with no unbounded scan.
+- `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui
+  tests.test_api_security` — authenticated versioned API run/list/read, Operator Web Automation
+  Preview entry, confirmation, evidence rendering, staleness banner, failure/recovery text, existing
+  `ApiPermission` RBAC including a read-only principal that can inspect but not run, and read-only
+  Automation view load.
+
+Integration and affected regression:
+
+- `./.venv/bin/python -m unittest tests.test_automation_task_definition
+  tests.test_automation_task_definition_preview tests.test_automation_api
+  tests.test_automation_admission tests.test_automation_job_fencing tests.test_cron_scheduler
+  tests.test_manual_organize_preview tests.test_manual_organize_intent
+  tests.test_configuration_management tests.test_configuration_objects tests.test_configuration_snapshot
+  tests.test_operator_ui tests.test_api_security tests.test_policy_mapping
+  tests.test_resource_library_pipeline tests.test_task_persistence tests.test_migration_rehearsal
+  tests.test_sqlite_backup tests.test_sqlite_restore`
+
+Full regression:
+
+- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` with actual run/skip totals. Any
+  failure claimed pre-existing must be reproduced at Task Base `b244e128987daa9c844b654d9e70588983eea6d3`
+  or on a clean `git archive HEAD` tree, with the reproduction command and cause recorded. No test,
+  assertion or skip may be weakened to obtain a green run.
+
+Falsification evidence (record the command and observed result, not a claim):
+
+- The read-only Storage guard refuses write/create-directory/move/copy/delete/hard-link/soft-link
+  during Preview, and source plus target trees are byte-identical before and after (path/size/hash
+  manifest comparison).
+- A Preview run creates no AutomationJob, Task, TaskItem, Result, grant or configuration revision
+  (row counts and revision id/version/digest before and after).
+- API/Web input cannot widen scope: absolute path, traversal, foreign Storage root, destination,
+  plan, operation or adapter-call injection is rejected, and out-of-scope items are never analyzed.
+- Editing, copying, enabling or disabling the pinned definition, and activating a newer
+  configuration revision, each mark the existing preview stale with its reason while the record stays
+  readable and is neither deleted nor rewritten; neither API nor Web presents it as fresh evidence or
+  execution authority.
+- A RecognitionType C item still reports RecognitionType C while showing its configured downstream A
+  Naming/Classification policy ownership.
+- Scheduler still performs no definition Preview, policy selection or Storage access, and legacy
+  `/api/v1/schedules`, `AutomationJobService.submit` and `IntervalScheduler.tick` behavior is
+  unchanged.
+- Deliberate regressions applied to a throwaway `git archive HEAD` copy (workspace untouched) — for
+  example removing the scope clamp, the per-run limit, or the staleness marking — make the new tests
+  fail, proving the evidence is non-vacuous.
+- No credential, token, authorization header, private endpoint or private configuration value
+  appears in preview records, per-item evidence, API/Web projections, audit or logs.
+
+Quality and safety gates:
+
+- `./.venv/bin/ruff check .`
+- `./.venv/bin/ruff format --check .`
+- `./.venv/bin/python -m compileall -q mediaflow tests scripts`
+- `./.venv/bin/pip check`
+- `./.venv/bin/mediaflow --config config/strategy.example.json config validate`
+- `./.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`
+- forbidden `ffprobe`/`ffmpeg` runtime scan (no matches)
+- wheel build plus isolated installed-wheel smoke (`scripts/wheel_smoke_test.py`)
+- Markdown relative-link existence check for changed documents
+- private-config/secret scan: `config/alist.json` and `config/strategy.json` remain ignored,
+  untracked and unstaged; no credential-like value in `Task Base..Head`
+- `git diff --check` and `git diff --cached --check`
+
+External gates: report PASS/FAIL/SKIP/UNAVAILABLE honestly. Real production Storage, Provider
+credentials and user media are not required and must not be used; use temporary Local roots plus
+fake/in-memory Provider and adapter doubles.
 
 ## Non-goals
 
-- Work outside the parent Slice Contract.
-- Preview/DryRun evidence or exact source discovery/planning.
-- Scheduler definition lookup, due-occurrence admission changes or Worker execution handoff.
-- Persistent unattended execution grant, grant/revoke, automatic organization or mutation authority.
-- New Task/TaskItem/Result lifecycle, policy ownership, Provider switching, remote setup or
-  arbitrary path/plan/operation editors.
-- Changes to `SLICE.md`, the Slice Base SHA, Roadmap status or the next Task.
-- Optional proof, copy polish, P2 cleanup or unrelated refactoring.
+- RO-3 Scheduler due-occurrence resolution, admission, emission, capacity and exact
+  definition/snapshot pinning.
+- RO-4 Worker handoff into the existing Task/TaskItem/Result chain, and RO-7 occurrence/run-history,
+  linked Job/Task/Result and recovery projections beyond what this Preview journey itself needs.
+- RO-5 persistent unattended execution grant, revoke, widening invalidation and pre-mutation
+  authority recheck.
+- Any real organize or Storage mutation, and any change to OrganizerExecutor, execution authority,
+  manual/remote one-shot authority, Processing Checkpoint or the Task/TaskItem/Result lifecycle.
+- Behavior changes to legacy `/api/v1/schedules`, the `scan`/`preview` AutomationJob command set,
+  `ManualOrganizeIntent`/manual Preview/manual execution, or the 25.1 definition contract beyond
+  additive evidence-identity needs.
+- Explicitly Deferred Slice work: managed Provider switching or credential lifecycle, scheduled
+  cache/log cleanup, System Settings, guided remote-Storage setup, mutation-based capability probes,
+  remote destination prechecks, automatic replay of uncertain mutation, rollback and unbounded
+  whole-library runs.
+- Any `SLICE.md`, Roadmap or Progress edit; unrelated refactors; P2 polish, copy improvement or
+  optional proof not required by these Acceptance Criteria.
 
 ## Developer Completion Report
 
 ### Changed Files
-- `TASK.md`
-- `tests/test_automation_task_definition.py`
+`TASK.md`
+- `mediaflow/domain/automation_task_definition_preview.py` — bounded RO-2 Preview evidence
+  contract (parent, per-item facts, statuses, errors, redaction).
+- `mediaflow/application/automation_task_definition_preview.py` — exact-definition,
+  exact-snapshot zero-mutation Preview service (scope/limit enforcement, read-only analysis,
+  staleness, persistence).
+- `mediaflow/infrastructure/sqlite_runtime.py` — SCHEMA_VERSION 27 → 28 with additive
+  `automation_task_definition_previews` / `..._items` tables, bounded queries, stale marking.
+- `mediaflow/interfaces/service_api.py` — run/list/read/items routes, RBAC, invalidation hooks
+  on definition create/edit/copy/enable/disable, audit route templates, projection helper.
+- `mediaflow/interfaces/operator_ui.py` — Automation detail Preview entry, confirmation,
+  evidence rendering, staleness banner, read-only view load.
+- `tests/test_automation_task_definition_preview.py` — new focused/persistence/API module.
+- `tests/test_automation_api.py`, `tests/test_operator_ui.py`, `tests/test_api_security.py`,
+  `tests/test_automation_task_definition.py` — new route/RBAC/Web evidence.
+- Schema-marker test updates to 28: `test_automation_api`, `test_cron_scheduler`,
+  `test_classification_review`, `test_configuration_classification`,
+  `test_configuration_destination`, `test_configuration_destination_activation`,
+  `test_configuration_destination_precheck`, `test_configuration_organize`,
+  `test_execution_authorization`, `test_metadata_resolution`, `test_metadata_review`,
+  `test_notifications`, `test_processing_checkpoint`.
 
 ### Implemented
-This is the correction checkpoint for the three B review blockers. It adds the missing regression
-evidence only; no production behavior changed.
+Task 25.2 delivers the complete RO-2 Preview journey:
 
-- Managed/application coverage now exercises `edit_automation_task_definition` and
-  `disable_automation_task_definition`, refuses mutation of an ACTIVE and a SUPERSEDED revision,
-  proves a service-layer stale `expected_version` rejection preserves the concurrent Draft
-  (version, digest and document), and asserts an explicit before/after Active revision id, version,
-  digest and document unchanged after a post-activation Draft edit.
-- A pre-change configuration database (unchanged SQLite schema, pre-change document without
-  `automationTaskDefinitions`) loads after reopen, exposes an empty definition projection, accepts
-  a definition, and reloads that definition through Validate → Activate → close/reopen.
-- Authenticated API tests now cover `GET` list, `GET`/`PUT` detail, `POST` copy/enable/disable on
-  `/api/v1/automation/task-definitions`, plus create/edit/copy/enable/disable on the
-  `/api/v1/configuration/revisions/{revision}/objects/automationTaskDefinitions` routes used by
-  Operator Web, including RBAC denial through both route families.
-- API error coverage asserts bounded projections for malformed input (missing `mode`), traversal
-  and absolute `sourceScope`, unknown and disabled ResourceLibrary references, unknown definition
-  id (404), stale version and Active-revision edit (409 `configuration_version_conflict` with
-  `durableState: draft_preserved`, `sideEffects: none`, `retrySafe: true`), and proves the failed
-  stale request did not add a definition.
-- API list/detail read-only and reload coverage asserts repeated GETs create no new revision and
-  leave version/digest unchanged, and the projection stays truthful after configuration
-  repository close/reopen.
-- Web coverage now ties assertions to the Automation list/detail rendering, the guided
-  `automationTaskDefinitions` section with create/edit entry point, copy and enable/disable
-  confirmation text, suppressed Delete for this kind, and read-only view load (render and detail
-  functions contain no mutating request).
+- Domain evidence contract: preview identity, definition fingerprint/version, exact managed
+  configuration revision id/version/digest/status, resolved ResourceLibrary/Storage, normalized
+  sub-scope, run mode, effective item limit, discovery counts, aggregate status, one explicit
+  next action, bounded per-item facts (source/stability, RecognitionRule/RecognitionType,
+  RecognitionTypePolicy ownership, metadata identity, naming, classification, destination,
+  operation, attachments, capabilities, conflicts, warnings, blocker/next action).
+- Application service resolves one exact definition from the current Active revision (or an
+  explicit revision id), enforces the definition's ResourceLibrary root plus normalized
+  sub-scope and per-run item limit, runs the existing read-only analysis chain (scanner
+  conventions, Parser, Recognition, RecognitionTypePolicy, Metadata, Naming, Classification,
+  Planner, `PreviewReadOnlyStorage`, attachment/conflict/capability checks) and persists bounded
+  evidence. No API/Web input can inject a Storage root, path, destination, plan, operation or
+  adapter call.
+- SQLite migration 27 → 28 is additive and idempotent; previews and per-item rows survive
+  close/reopen and old schema-27 databases upgrade without rewriting prior rows. Bounded
+  queries cover latest-per-definition, bounded list and per-item paging.
+- Staleness: definition edit/copy/enable/disable invalidate current previews durably with the
+  reason; reads re-check the pinned revision/definition/source facts; a stale preview stays
+  readable and is never presented as fresh authority. Activating a newer revision marks pinned
+  previews stale on read.
+- API (`POST .../preview`, `GET .../previews`, `GET .../previews/{id}`, items paging) and
+  Operator Web use one shared service, `SUBMIT_DRY_RUN` for running, `READ` for inspection.
+  Opening/refreshing Automation views issues only GET requests.
+- RecognitionType C stays C while its downstream A Naming/Classification/Organize policy
+  ownership is reported.
 
 ### Tests and Results
-- `./.venv/bin/python -m unittest tests.test_automation_task_definition tests.test_configuration_management tests.test_configuration_objects tests.test_operator_ui` — PASS (116 tests).
-- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — FAIL (1018 run, 7 skipped, 6 FAIL / PRE-EXISTING / UNRELATED in `test_api_credentials`, `test_final_integration`, `test_resource_library_pipeline`, and `test_runtime_storage_configuration`; the same ambient private-config failures accepted in the prior B review).
-- Clean-tree full regression (`git archive HEAD` plus this patch in a temporary directory) — PASS (1018 run, OK, skipped=7).
+- `./.venv/bin/python -m unittest tests.test_automation_task_definition_preview` — PASS
+  (17 tests): scope/limit/truncation, exact identity, C-with-A ownership, mixed-outcome
+  independence, fail-closed boundaries, capability gap, Manual/Overwrite conflicts, staleness,
+  bounded redaction, empty scope, read-only guard + byte-identical trees, SQLite
+  close/reopen, schema-27 migration, bounded queries, API run/list/read/RBAC/read-only load,
+  scope-injection rejection, definition-action staleness and activation staleness.
+- `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui
+  tests.test_api_security` — PASS (64 tests including the new route/RBAC/Web tests).
+- Integration/affected regression (all modules in the Task list except
+  `test_resource_library_pipeline`): PASS (272 tests). With `test_resource_library_pipeline`
+  included the same single known ambient failure appears.
+- Full regression `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` —
+  FAIL (1038 run, 7 skipped, 6 FAIL / PRE-EXISTING / UNRELATED in `test_api_credentials` ×2,
+  `test_final_integration`, `test_resource_library_pipeline`,
+  `test_runtime_storage_configuration` ×2; identical ambient set accepted in the 25.1 review).
+- Clean-tree full regression (`git archive HEAD` + this patch in a temporary directory) —
+  PASS (1038 run, OK, skipped=7), reproducing that the six workspace failures are caused by
+  the gitignored local `.mediaflow` database/config, not by this Task.
+- Falsification (mutations applied to a throwaway `git archive HEAD` copy, workspace
+  untouched): removing the scope clamp → 1 focused test FAIL; removing the per-run limit →
+  2 focused tests FAIL; removing staleness marking → 2 focused tests FAIL. Read-only guard
+  refuses Write/CreateDirectory/Move/Copy/Delete/HardLink/SoftLink and source+target trees are
+  byte-identical before/after; Preview creates no AutomationJob/Task/TaskItem/Result/grant and
+  no configuration revision.
 - `./.venv/bin/ruff check .` — PASS.
-- `./.venv/bin/ruff format --check .` — PASS.
+- `./.venv/bin/ruff format --check .` — PASS (344 files).
 - `./.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `./.venv/bin/pip check` — PASS.
 - `./.venv/bin/mediaflow --config config/strategy.example.json config validate` — PASS.
 - `./.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
 - Forbidden `ffprobe`/`ffmpeg` runtime scan — PASS (no matches).
-- Wheel build and isolated installed-wheel smoke test — PASS.
-- Markdown relative-link existence check for changed documents — PASS (no repository-level Markdown/link gate is defined in the quality workflow).
-- Private-config/secret scan — PASS (`config/alist.json` and `config/strategy.json` remain ignored, untracked and unstaged; no credentials or private paths in the diff).
+- Wheel build plus isolated installed-wheel smoke (`scripts/wheel_smoke_test.py`) — PASS
+  (installed wheel reports supported/runtime/backup schema 28).
+- Markdown relative-link existence check for changed documents — PASS (no missing links).
+- Private-config/secret scan — PASS (`config/alist.json` and `config/strategy.json` remain
+  ignored, untracked and unstaged; no real credential in the diff; the only credential-shaped
+  strings are fake redaction fixtures that tests assert never reach evidence).
 - `git diff --check` — PASS.
-- Production Storage/Provider and destructive real-media gates — SKIP (no credentials or user media).
+- Production Storage/Provider and destructive real-media gates — SKIP (no credentials or user
+  media; only temporary Local roots and fake/in-memory providers were used).
 
 ### Decisions
-- This correction round changes tests only; the delivered API/Web/service behavior was already
-  hand-verified by B and is now pinned by regression tests.
-- The pre-change database test uses the unchanged configuration SQLite schema (Task Base..HEAD has
-  no repository/schema diff) with a pre-change document shape, then proves
-  reopen → create → Validate → Activate → reopen; this is equivalent to loading a database created
-  before the definition feature.
-- Extended the local WSGI test helper with `QUERY_STRING` support so `?revisionId=` list/detail
-  projections are exercised exactly as WSGI delivers them.
-- Read-only view-load evidence is composed of Web static assertions (render/detail functions issue
-  no mutating request) plus an API-level assertion that repeated GETs leave revision version and
-  digest unchanged and create no revision.
+- The Preview evidence contract follows the accepted manual Preview conventions and reuses the
+  existing read-only pipeline, `PreviewReadOnlyStorage`, bounded JSON/redaction helpers and
+  planner; no parallel pipeline was built and the definition contract gains no per-file
+  policy/destination/operation fields.
+- Definition fingerprint is the SHA-256 of the canonical definition document, so any
+  edit/copy/enable/disable changes it; configuration identity is the exact revision
+  id/version/digest consumed.
+- The per-run item limit bounds analysis; per-item records are bounded by a hard cap
+  (full records for analyzed items first, then minimal identity records for
+  truncated/excluded/unstable items within capacity), while discovery counts remain complete
+  and an aggregate `truncated` flag reports evidence-row capping.
+- A new Preview supersedes previous current previews for the same definition (manual-Preview
+  convention) while keeping every historical record readable; definition actions invalidate
+  current previews durably, and reads never rewrite stale records.
+- `SCHEMA_VERSION` moved 27 → 28 with additive tables only; old rows are not rewritten and
+  schema-marker tests were updated to the new current marker.
+- Running a Preview uses `ApiPermission.SUBMIT_DRY_RUN` (analysis/DryRun authority); inspection
+  uses `READ`, so a viewer can read evidence but cannot run it.
 
 ### Remaining In-Slice Work
-- Exact Automation Definition Preview/DryRun evidence and stale semantics.
-- Persistent scoped unattended grant/revoke authority.
-- Scheduler definition lookup/due-occurrence admission and exact definition/snapshot pinning.
-- Worker handoff into the existing Task/TaskItem/Result pipeline plus run history and recovery
-  projections.
+- RO-3 Scheduler due-occurrence resolution/admission and exact definition/snapshot pinning.
+- RO-4 Worker handoff into the existing Task/TaskItem/Result chain and RO-7 linked
+  occurrence/history projections beyond this Preview journey.
+- RO-5 persistent unattended grant/revoke/scope invalidation and pre-mutation authority
+  revalidation.
 
 ### Risks / Deviations
-- The workspace full regression still has the six ambient private-config failures accepted by B;
-  the identical suite passes on a clean tree (1018 OK), so they are recorded as
-  FAIL / PRE-EXISTING / UNRELATED for B to assess.
-- External Storage/Provider and destructive execution evidence is unavailable and was not attempted;
-  no credentials, network services or user media were used.
-- No repository-level Markdown/link gate exists; a simple relative-link existence check was run.
+- The workspace full regression has the same six ambient private-config failures accepted in
+  the prior 25.1 review; the identical suite passes on a clean tree (1038 OK), so they are
+  recorded as FAIL / PRE-EXISTING / UNRELATED for B to assess.
+- External Storage/Provider and destructive execution evidence is unavailable and was not
+  attempted; no credentials, network services or user media were used.
+- Per-item records for excluded/unstable/truncated items are bounded by the evidence cap;
+  counts remain complete and truncation is explicit rather than silent.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: c5b6f1095273a8126662cf23b9a8721f860f54d8
+Head SHA: NOT SET
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: d889db6..1ea67e3 (code checkpoint 1ed867d, correction checkpoint c5b6f109527, reports 161c533/1ea67e3)
-Decision: PASS
-Slice Required Outcomes all satisfied: NO
-Next: NEXT TASK
+Reviewed: PENDING
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
-
-### Verification
-
-- Correction round is test-only: `git diff --name-status 161c533..HEAD` returns exactly `TASK.md`
-  and `tests/test_automation_task_definition.py`; `git diff --stat 161c533..HEAD -- mediaflow
-  scripts config pyproject.toml docs` is empty, so the API/managed/Web behavior accepted in the
-  previous round is unchanged. The 5 removed test lines are the `_request` helper signature
-  (`QUERY_STRING` support) and the replaced vacuous Web substring loop. No test, assertion or skip
-  was weakened.
-- Blocker 1 closed: `test_api_definition_actions_and_configuration_object_routes_share_contract`,
-  `test_api_rejects_malformed_references_and_stale_versions_with_bounded_errors` and
-  `test_api_list_and_detail_are_read_only_and_truthful_after_reload` now cover list/detail/PUT/copy/
-  enable/disable on both `/api/v1/automation/task-definitions` and the
-  `/api/v1/configuration/revisions/{revision}/objects/automationTaskDefinitions` family, RBAC denial
-  through both families, missing `mode` (400), traversal and absolute `sourceScope` (400), unknown
-  and disabled `resourceLibraryId` (400), unknown id (404), stale version and Active-revision edit
-  (409 `configuration_version_conflict` with `durableState: draft_preserved`, `sideEffects: none`,
-  `retrySafe: true`), no revision created by repeated GETs, and a truthful projection after
-  repository close/reopen.
-- Blocker 2 closed: `test_edit_disable_and_immutable_active_protection` exercises
-  `edit_automation_task_definition` and `disable_automation_task_definition`, refuses mutation of an
-  ACTIVE and a SUPERSEDED revision (`ConfigurationVersionConflict` from the explicit status guard in
-  `configuration_objects.py:520`), and asserts the prior Active revision id, version, digest and
-  document are unchanged after a post-activation Draft edit.
-  `test_service_layer_stale_version_rejects_without_overwriting_concurrent_draft` proves the
-  concurrent Draft survives a stale `expected_version`.
-  `test_pre_change_configuration_database_loads_and_accepts_definitions` loads a document without
-  `automationTaskDefinitions`, reopens, then create → Validate → Activate → reopen.
-- Blocker 3 closed and non-vacuous: every asserted Web string is absent from `operator_ui.py` at
-  Task Base (`git archive d889db6` grep: `renderAutomation`, `showAutomationDetail`,
-  `data-view="automation"`, `Automation Task Definitions`, `Confirm copy`,
-  `automationTaskDefinitions`, `Save Automation Task Definition`, `The copy starts disabled`,
-  `This changes only the Draft` all 0 hits). Assertions are scoped to brace-matched function bodies;
-  `renderAutomation` contains only the GET and no POST/PUT/DELETE or `/copy`, `/enable`, `/disable`,
-  and `showAutomationDetail` contains no `api(` at all.
-- Falsification (mutations applied to a `git archive HEAD` copy, workspace untouched): copy no
-  longer forcing `enabled: False` → `test_lifecycle_copy_enable_reload_and_active_identity` FAILS;
-  enable/disable always enabling → the managed and API action tests FAIL; removing the
-  `kind !== 'automationTaskDefinitions'` Delete guard → the Web test FAILS. The new evidence
-  therefore detects regressions of the copy-default-disabled, disable and Delete-suppression rules.
-- Focused: `./.venv/bin/python -m unittest tests.test_automation_task_definition
-  tests.test_configuration_management tests.test_configuration_objects tests.test_operator_ui` —
-  PASS (116 tests), reproducing the report.
-- Full offline regression on a clean `git archive HEAD` tree —
-  `Ran 1018 tests ... OK (skipped=7)`. The workspace run reproduces exactly the same six failures
-  (`test_api_credentials` ×2, `test_final_integration`, `test_resource_library_pipeline`,
-  `test_runtime_storage_configuration` ×2). Proven ambient, not caused by this Task: copying only
-  the gitignored local `.mediaflow/mediaflow.sqlite3` into the clean HEAD tree reproduces all six
-  failures with identical code and tests. FAIL / PRE-EXISTING / UNRELATED accepted; no test or
-  product change was made to chase them.
-- Gates re-run by B: `ruff check .` PASS; `ruff format --check .` PASS (341 files);
-  `compileall mediaflow tests scripts` PASS; `pip check` PASS; `config validate` PASS for both
-  example configurations; forbidden `ffprobe`/`ffmpeg` runtime scan PASS (no matches); wheel build
-  from a clean HEAD tree plus isolated venv smoke PASS (installed wheel serves the Automation view
-  asset and enforces the disabled default); `git diff --check` and `git diff --cached --check` PASS;
-  worktree clean; `config/alist.json` and `config/strategy.json` remain gitignored and untracked; no
-  credential-like value in `d889db6..HEAD`.
-- Slice check: RO-1 is satisfied. RO-2 … RO-7 remain NOT STARTED, so the Slice is not ready for A.
-
-### Known Non-blocking Issues (P2, not fixed in this Task)
-
-- The Web Delete-suppression assertion surfaces a removed guard as a `ValueError: substring not
-  found` from `str.index` rather than a named assertion failure.
-- The API copy assertion runs against an already-disabled source definition, so only the managed
-  lifecycle test discriminates the copy-default-disabled rule.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.

@@ -1057,10 +1057,39 @@ class AutomationTaskDefinitionWebTests(unittest.TestCase):
         self.assertIn("'Run mode'", detail)
         self.assertIn("'Active configuration'", detail)
         self.assertIn("'Active configuration digest'", detail)
-        self.assertNotIn("api(", detail)
-        for forbidden in ("method: 'POST'", "method: 'PUT'", "method: 'DELETE'"):
+        self.assertIn("'Run Preview / DryRun'", detail)
+        self.assertIn("confirmAutomationPreview(item)", detail)
+        self.assertIn("previews?limit=10`", detail)
+        self.assertIn("'No Preview has been run for this definition yet.'", detail)
+        self.assertIn(
+            "'Opening or refreshing this view is read-only. Preview runs only when "
+            "you explicitly confirm it.'",
+            detail,
+        )
+        self.assertNotIn("method: 'POST'", detail)
+        for forbidden in ("method: 'PUT'", "method: 'DELETE'"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, detail)
+
+        confirm = _js_function_body(script, "confirmAutomationPreview")
+        self.assertIn("'Confirm Preview'", confirm)
+        self.assertIn("It creates no Job, Task, grant, or configuration revision.", confirm)
+        self.assertIn(
+            "`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/preview`",
+            confirm,
+        )
+        self.assertIn("method: 'POST'", confirm)
+
+        preview_view = _js_function_body(script, "showAutomationPreview")
+        self.assertIn("'Automation Preview'", preview_view)
+        self.assertIn("Stale evidence:", preview_view)
+        self.assertIn("This is not execution authority.", preview_view)
+        self.assertIn("'Definition fingerprint'", preview_view)
+        self.assertIn("'Truncated by limit'", preview_view)
+        self.assertIn("'Per-item evidence'", preview_view)
+        self.assertIn("'Run a fresh Preview'", preview_view)
+        self.assertIn("/previews/${encodeURIComponent(previewId)}", preview_view)
+        self.assertNotIn("method: 'POST'", preview_view)
 
         show_revision = _js_function_body(script, "showConfigurationRevision")
         self.assertIn(

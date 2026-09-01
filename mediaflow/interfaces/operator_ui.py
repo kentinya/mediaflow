@@ -2221,19 +2221,81 @@ APP_JS = b"""(() => {
     content.append(table(['ID', 'Name', 'State', 'ResourceLibrary', 'Scope', 'Mode', 'Schedule', 'Limit'], rows,
       index => showAutomationDetail(items[index], configuration)));
   }
-  function showAutomationDetail(item, configuration) {
-    clear(detailContent); detailContent.append(text('h2', 'Automation Task Definition detail'));
-    const list = document.createElement('dl');
-    [['ID', item.id], ['Name', item.name], ['State', item.enabled === true ? 'enabled' : 'disabled'],
-      ['ResourceLibrary', item.resourceLibraryId], ['Source scope', item.sourceScope || '<root>'],
-      ['Run mode', item.mode || item.runMode], ['Interval seconds', item.intervalSeconds],
-      ['Cron', item.cron], ['Timezone', item.timezone], ['Item limit', item.itemLimit || item.limit],
-      ['Active configuration', configuration.revisionId || '-'],
-      ['Active configuration digest', configuration.digest || '-']].forEach(([label, value]) => field(list, label, value));
-    detailContent.append(list);
-    detailContent.append(text('p', 'Actions are available from the editable managed Draft. The Active snapshot is immutable.', 'warning'));
-    detailContent.append(actionButton('Open managed Configuration', () => renderConfiguration()));
-    detail.hidden = false;
+  async function showAutomationDetail(item, configuration) {
+    try {
+      clear(detailContent); detailContent.append(text('h2', 'Automation Task Definition detail'));
+      const list = document.createElement('dl');
+      [['ID', item.id], ['Name', item.name], ['State', item.enabled === true ? 'enabled' : 'disabled'],
+        ['ResourceLibrary', item.resourceLibraryId], ['Source scope', item.sourceScope || '<root>'],
+        ['Run mode', item.mode || item.runMode], ['Interval seconds', item.intervalSeconds],
+        ['Cron', item.cron], ['Timezone', item.timezone], ['Item limit', item.itemLimit || item.limit],
+        ['Active configuration', configuration.revisionId || '-'],
+        ['Active configuration digest', configuration.digest || '-']].forEach(([label, value]) => field(list, label, value));
+      detailContent.append(list);
+      detailContent.append(actionButton('Run Preview / DryRun', () => confirmAutomationPreview(item)));
+      detailContent.append(actionButton('Open managed Configuration', () => renderConfiguration()));
+      const data = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/previews?limit=10`);
+      detailContent.append(text('h3', 'Previews'));
+      const rows = (data.items || []).map(value => [value.previewId, value.status,
+        value.configurationRevisionId, value.createdAt,
+        value.current === true ? 'current' : 'stale', value.nextAction || '-']);
+      detailContent.append(table(['Preview', 'Status', 'Configuration', 'Created', 'State', 'Next action'],
+        rows, index => showAutomationPreview(item.id, (data.items || [])[index].previewId)));
+      if (!(data.items || []).length) {
+        detailContent.append(text('p', 'No Preview has been run for this definition yet.'));
+      }
+      detailContent.append(text('p', 'Opening or refreshing this view is read-only. Preview runs only when you explicitly confirm it.', 'warning'));
+      detail.hidden = false;
+    } catch (error) { message(errorText(error), true); }
+  }
+  function confirmAutomationPreview(item) {
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p', `Run an exact-definition, zero-mutation Preview for ${item.id}? It creates no Job, Task, grant, or configuration revision.`));
+    confirmation.append(actionButton('Confirm Preview', async () => {
+      try {
+        const result = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/preview`,
+          {method: 'POST', body: JSON.stringify({})});
+        message(`Preview ${result.previewId} completed with status ${result.status}. ${result.nextAction || ''}`);
+        await showAutomationPreview(item.id, result.previewId);
+      } catch (error) { message(errorText(error), true); }
+    }));
+    confirmation.append(actionButton('Cancel', () => { clear(confirmation); }));
+    detailContent.append(confirmation);
+  }
+  async function showAutomationPreview(definitionId, previewId) {
+    try {
+      const data = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(definitionId)}/previews/${encodeURIComponent(previewId)}`);
+      clear(detailContent); detailContent.append(text('h2', 'Automation Preview'));
+      if (data.current !== true || data.staleReason) {
+        detailContent.append(text('p', `Stale evidence: ${data.staleReason || 'this Preview is no longer current'}. This is not execution authority.`, 'warning'));
+      }
+      const list = document.createElement('dl');
+      [['Preview', data.previewId], ['Definition', data.definitionId], ['Status', data.status],
+        ['Definition fingerprint', data.definitionFingerprint],
+        ['Configuration revision', data.configurationRevisionId],
+        ['Configuration version', data.configurationRevisionVersion],
+        ['Configuration digest', data.configurationRevisionDigest],
+        ['ResourceLibrary', data.resourceLibraryId], ['Storage', data.storageId],
+        ['Source scope', data.sourceScope || '<root>'], ['Run mode', data.runMode],
+        ['Effective item limit', data.effectiveItemLimit],
+        ['Discovered', data.counts.discovered], ['Selected', data.counts.selected],
+        ['Permitted', data.counts.permitted], ['Excluded/ignored', data.counts.excludedIgnored],
+        ['Unstable', data.counts.unstable], ['Truncated by limit', data.counts.truncatedByLimit],
+        ['Next action', data.nextAction], ['Error', data.error || '-']].forEach(([label, value]) => field(list, label, value));
+      detailContent.append(list);
+      detailContent.append(actionButton('Run a fresh Preview', () => confirmAutomationPreview({id: data.definitionId})));
+      const rows = (data.items || []).map(item => [item.source.path, item.status,
+        item.recognition.recognitionTypeId || '-', item.recognitionTypePolicy.recognitionTypePolicyId || '-',
+        item.naming.directory || '-', item.destination.path || '-', item.operation || '-',
+        item.blocker || item.nextAction || '-']);
+      detailContent.append(text('h3', 'Per-item evidence'), table(
+        ['Source', 'Status', 'RecognitionType', 'TypePolicy', 'Naming directory', 'Target', 'Operation', 'Blocker / next action'],
+        rows));
+      if (data.itemsTruncated) {
+        detailContent.append(text('p', `${data.itemTotal} item records exist; the first 100 are shown here.`, 'warning'));
+      }
+      detail.hidden = false;
+    } catch (error) { message(errorText(error), true); }
   }
   async function renderNotifications(status = 'all', cursor = null) {
     const selector = document.createElement('select'); selector.setAttribute('aria-label',

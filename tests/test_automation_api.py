@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Thread
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from mediaflow.application.automation import (
@@ -18,6 +19,7 @@ from mediaflow.application.automation import (
     IntervalScheduler,
 )
 from mediaflow.domain.automation import AutomationJobStatus, IntervalSchedule
+from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
@@ -42,7 +44,7 @@ class AutomationPersistenceTests(unittest.TestCase):
             )
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 27)
+                self.assertEqual(repository.schema_version, 28)
                 job = AutomationJobService(repository).submit("scan")
                 self.assertFalse(job.cancellation_requested)
                 self.assertEqual(repository.list_schedule_states(), ())
@@ -464,6 +466,112 @@ class AutomationCliTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("MEDIAFLOW_API_TOKEN", error.getvalue())
             self.assertNotIn("Authorization", error.getvalue())
+
+
+class AutomationDefinitionPreviewApiTests(unittest.TestCase):
+    def test_preview_run_list_read_rbac_and_read_only_load(self) -> None:
+        class FakePreviewService:
+            def __init__(self) -> None:
+                self.create_calls = 0
+                self.preview = SimpleNamespace(
+                    previewId="p-1",
+                    document=lambda: {
+                        "previewId": "p-1",
+                        "status": "previewed",
+                        "items": [],
+                    },
+                )
+
+            def create(self, definition_id, *, revision_id=None, actor):
+                self.create_calls += 1
+                return self.preview
+
+            def list_readonly(self, definition_id, *, limit=100):
+                return ()
+
+            def get_readonly(self, preview_id):
+                return self.preview
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                previews = FakePreviewService()
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                        ResolvedApiPrincipal(
+                            "viewer", "viewer-token", frozenset({ApiPermission.READ})
+                        ),
+                    ),
+                    automation_preview_service=previews,
+                )
+                status, body = self._request(
+                    api,
+                    "POST",
+                    "/api/v1/automation/task-definitions/task/preview",
+                    token="admin-token",
+                    document={},
+                )
+                self.assertEqual(status, 201)
+                self.assertEqual(body["previewId"], "p-1")
+                self.assertEqual(previews.create_calls, 1)
+                status, body = self._request(
+                    api,
+                    "GET",
+                    "/api/v1/automation/task-definitions/task/previews",
+                    token="viewer-token",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(body["items"], [])
+                status, _ = self._request(
+                    api,
+                    "POST",
+                    "/api/v1/automation/task-definitions/task/preview",
+                    token="viewer-token",
+                    document={},
+                )
+                self.assertEqual(status, 403)
+                self.assertEqual(previews.create_calls, 1)
+                status, body = self._request(
+                    api,
+                    "GET",
+                    "/api/v1/automation/task-definitions/task/previews/p-1",
+                    token="viewer-token",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(body["previewId"], "p-1")
+                self.assertEqual(
+                    repository._connection.execute(
+                        "SELECT COUNT(*) FROM automation_task_definition_previews"
+                    ).fetchone()[0],
+                    0,
+                )
+                self.assertEqual(repository.list_jobs(), ())
+                self.assertEqual(repository.list_tasks(), ())
+
+    @staticmethod
+    def _request(
+        api,
+        method: str,
+        path: str,
+        *,
+        token: str,
+        document=None,
+    ):
+        body = b"" if document is None else json.dumps(document).encode()
+        statuses: list[str] = []
+        environ = {
+            "REQUEST_METHOD": method,
+            "PATH_INFO": path,
+            "CONTENT_LENGTH": str(len(body)),
+            "REMOTE_ADDR": "127.0.0.1",
+            "wsgi.input": io.BytesIO(body),
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
+        }
+        result = b"".join(api(environ, lambda value, _headers: statuses.append(value)))
+        return int(statuses[0].split()[0]), json.loads(result)
 
 
 if __name__ == "__main__":
