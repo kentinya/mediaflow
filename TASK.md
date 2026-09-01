@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.2
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: b244e128987daa9c844b654d9e70588983eea6d3
 Difficulty: High
 Test Level: T4
@@ -500,6 +500,101 @@ Head SHA: 7c01aedc6f94a6f1f9c39e5202608ff9c12e3a63
 ```text
 Status: READY FOR B REVIEW
 Head SHA: 1dc5199e5e1b8dfb0cff753a74b519f725f44343
+```
+
+## Developer Verification Pass — B blockers re-verified at the correction checkpoint
+
+No code change was required in this pass. Both blockers listed in `## B Review Result` already
+reproduce as fixed at correction checkpoint `1dc5199e5e1b8dfb0cff753a74b519f725f44343`; the only
+thing left inconsistent was the Task header, which still read `FIX REQUIRED` after that checkpoint
+was recorded. This pass re-ran B's own reproductions plus the Task's T4 gates against the current
+tree and updates the header Status to match the actual Developer state.
+
+### Changed Files
+
+- `TASK.md` — header `Status` set to `READY FOR B REVIEW`; this verification record.
+
+### Blocker Re-verification (observed output, not a claim)
+
+- Blocker 1 — counting Storage proxy over `LocalStorage` in the production
+  `ManagedConfigurationService` wiring (`MediaFlowApi` plus the auto-constructed preview service),
+  one 4-item preview: `GET .../previews?limit=10`, `GET .../previews/{id}` and
+  `GET .../previews/{id}/items?limit=1`, plus direct `get_readonly`, `latest_readonly`,
+  `list_readonly`, `get`, `latest`, `list` and `items`, produced `source calls == []` and
+  `target calls == []` (B measured 4 source `stat` calls per read path before). `_stale_reason`
+  (`mediaflow/application/automation_task_definition_preview.py:1580`) no longer calls
+  `_create_storages`; the only remaining call sites are the explicit `create` analysis path
+  (`:575`, `:927`, `:1050`). The managed branch stays storage-free because
+  `load_managed_runtime_configuration` constructs no Storage or Provider adapter.
+- Blocker 2 — B's exact scenario, one 3-hour-old file under `FileStabilityPolicy(0, 0, 60)`, one
+  clock and one FileIndex shared by Scanner and Preview:
+  `scanner run 1 -> [('One.2001.mkv', 'unstable', None)]` with Preview
+  `counts {discovered: 1, permitted: 0, selected: 0, unstable: 1}` and
+  `stability=unstable_size` — a reachable next action rather than the old unconditional
+  `unstable_no_history`; 120 s later `scanner run 2 -> [('One.2001.mkv', 'ready', 12:00:00Z)]` with
+  Preview at that same instant `counts {discovered: 1, permitted: 1, selected: 1, unstable: 0}`,
+  `status=previewed item.status=previewed stability=stable scan=ready`. Scanner and Preview now
+  agree at the same instant.
+
+### Tests and Results
+
+- `./.venv/bin/python -m unittest tests.test_automation_task_definition_preview` — PASS (19 tests).
+- Required integration/affected command from this Task — FAIL (278 tests, 1 failure):
+  `tests.test_resource_library_pipeline.ResourceLibraryPipelineTests.test_scan_cli_needs_no_path_or_metadata_token`,
+  the documented PRE-EXISTING / UNRELATED failure in which the gitignored local
+  `config/strategy.json` resolves a private local storage instead of the fixture `movies`
+  ResourceLibrary.
+- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — FAIL (1040 tests, 7 skipped,
+  6 failures): the same PRE-EXISTING / UNRELATED set B accepted (`test_api_credentials` x2,
+  `test_final_integration`, `test_resource_library_pipeline`, `test_runtime_storage_configuration`
+  x2). Reproduced as environment-caused: the identical suite on a clean `git archive HEAD` tree in a
+  temporary directory ran `1040 tests ... OK (skipped=7)`.
+- `./.venv/bin/ruff check .` — PASS; `./.venv/bin/ruff format --check .` — PASS (344 files).
+- `./.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS; `./.venv/bin/pip check` —
+  PASS.
+- `./.venv/bin/mediaflow --config config/strategy.example.json config validate` — PASS;
+  `./.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
+- Forbidden `ffprobe`/`ffmpeg` runtime scan — PASS (no matches under `mediaflow`, `tests`,
+  `scripts`).
+- `./.venv/bin/pip wheel . --no-deps --no-build-isolation` plus
+  `./.venv/bin/python scripts/wheel_smoke_test.py mediaflow-0.1.0-py3-none-any.whl` — PASS (exit 0,
+  schema 28).
+- Markdown relative-link check for the changed document — PASS; `git diff --check` and
+  `git diff --cached --check` — PASS; private-config/secret scan — PASS (`config/alist.json` and
+  `config/strategy.json` remain ignored, untracked and unstaged; `Task Base..Head` contains only
+  fake fixture tokens and negative secret assertions).
+- Real production Storage/Provider and destructive real-media gates — SKIP (not required and not
+  attempted; temporary Local roots plus fake in-memory providers and adapters only).
+
+### Decisions
+
+- Left product code untouched. B's two blockers reproduce as already fixed, so adding a further
+  change would have been work this Task does not need; the pass is limited to verification and the
+  stale header Status.
+
+### Remaining In-Slice Work
+
+- RO-3 Scheduler due-occurrence resolution/admission and exact definition/snapshot pinning.
+- RO-4 Worker handoff into the existing Task/TaskItem/Result chain, and RO-7 linked
+  occurrence/history projections beyond this Preview journey.
+- RO-5 persistent unattended grant/revoke/scope invalidation and pre-mutation authority
+  revalidation.
+
+### Risks / Deviations
+
+- The six workspace full-regression failures remain PRE-EXISTING / UNRELATED and environment-caused;
+  the clean archive tree at the same HEAD passes the whole suite.
+- `python -m build` remains unavailable in this virtual environment; the available setuptools/pip
+  wheel path plus the isolated installed-wheel smoke test was used instead.
+- No external Storage, Provider credential, network service or user media was used.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: 1dc5199e5e1b8dfb0cff753a74b519f725f44343
+Note: this verification pass adds no code change; the documentation commit recording it follows
+1dc5199 in Git history.
 ```
 
 ## B Review Result
