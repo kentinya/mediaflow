@@ -63,6 +63,16 @@ from mediaflow.domain.task_persistence import (
 _MAX_TEXT = 512
 _MAX_TTL_SECONDS = 900
 _MAX_EFFECTS = 256
+_CONCURRENT_PREFLIGHT_ERROR_CODES = frozenset(
+    {
+        "attachment_source_missing",
+        "conflict_changed",
+        "destination_changed",
+        "source_changed",
+        "source_missing",
+        "source_stale",
+    }
+)
 
 
 class ManualOrganizeExecutionService:
@@ -352,15 +362,19 @@ class ManualOrganizeExecutionService:
             str, tuple[ManualExecutionItem, OrganizePlan, tuple[tuple[str, str], ...]]
         ] = {}
         for item in selected:
-            record = self._current_source(intent, item)
-            self._validate_plan_authority(
-                item.plan,
-                authority.allow_overwrite,
-                authority.allow_source_cleanup,
-            )
-            plan = self._plan_from_document(item.plan, item, runtime)
-            self._validate_runtime_policy(plan, item, runtime)
-            self._validate_current_storage(plan, item, authority, storages)
+            try:
+                record = self._current_source(intent, item)
+                self._validate_plan_authority(
+                    item.plan,
+                    authority.allow_overwrite,
+                    authority.allow_source_cleanup,
+                )
+                plan = self._plan_from_document(item.plan, item, runtime)
+                self._validate_runtime_policy(plan, item, runtime)
+                self._validate_current_storage(plan, item, authority, storages)
+            except ManualExecutionError as error:
+                self._prefer_concurrent_authorization_state(authority, error)
+                raise
             locks = self._plan_locks(plan)
             execution_item = self._execution_item(authority, item)
             prepared[item.item_id] = (execution_item, plan, locks)
@@ -1097,6 +1111,42 @@ class ManualOrganizeExecutionService:
                     details={"itemId": item.item_id},
                 )
         return items
+
+    def _prefer_concurrent_authorization_state(
+        self,
+        authority: ManualExecutionAuthorization,
+        validation_error: ManualExecutionError,
+    ) -> None:
+        """Prefer a concurrently committed one-shot decision over stale preflight I/O.
+
+        Storage validation intentionally runs before atomic admission.  A concurrent winner can
+        therefore consume the authority and move the source while this request is still validating
+        the same reviewed plan.  Re-read only for validation outcomes that the winner's mutation can
+        change; an authorization that remains ACTIVE preserves the original validation error.
+        """
+
+        if validation_error.code not in _CONCURRENT_PREFLIGHT_ERROR_CODES:
+            return
+        getter = getattr(self._repository, "get_manual_execution_authorization", None)
+        if not callable(getter):
+            return
+        try:
+            current = getter(authority.authorization_id)
+        except Exception:
+            return
+        if current is None or current == authority:
+            return
+        if current.status is ManualExecutionAuthorizationStatus.CONSUMED:
+            raise ManualExecutionError(
+                "manual execution authorization is consumed",
+                code="authorization_consumed",
+                next_action="inspect the linked execution; this authority cannot be reused",
+            ) from validation_error
+        raise ManualExecutionError(
+            "manual execution authorization binding changed",
+            code="authorization_changed",
+            next_action="reload the authorization and inspect its durable state",
+        ) from validation_error
 
     def _current_source(self, intent, item):
         resolver = getattr(self._intent_service, "_resolve_file", None)

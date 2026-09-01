@@ -5152,17 +5152,17 @@ class SQLiteTaskRepository:
                         status=404,
                     )
                 stored = self._manual_execution_authorization(auth_row)
+                if stored.status is ManualExecutionAuthorizationStatus.CONSUMED:
+                    raise ManualExecutionError(
+                        f"manual execution authorization is {stored.status.value}",
+                        code="authorization_consumed",
+                        next_action="inspect the linked execution; this authority cannot be reused",
+                    )
                 if stored != authorization:
                     raise ManualExecutionError(
                         "manual execution authorization binding changed",
                         code="authorization_changed",
                         next_action="reload the authorization and inspect its durable state",
-                    )
-                if stored.status is not ManualExecutionAuthorizationStatus.ACTIVE:
-                    raise ManualExecutionError(
-                        f"manual execution authorization is {stored.status.value}",
-                        code="authorization_consumed",
-                        next_action="inspect the linked execution; this authority cannot be reused",
                     )
                 if stored.expires_at <= now:
                     self._connection.execute(
@@ -5352,7 +5352,7 @@ class SQLiteTaskRepository:
                                   ?, ?, ?, ?, ?, ?, ?)""",
                         self._manual_execution_item_values(item),
                     )
-                self._connection.execute(
+                consumed = self._connection.execute(
                     "UPDATE manual_execution_authorizations SET status=?, consumed_at=?, "
                     "execution_id=? WHERE authorization_id=? AND status=?",
                     (
@@ -5363,6 +5363,12 @@ class SQLiteTaskRepository:
                         ManualExecutionAuthorizationStatus.ACTIVE.value,
                     ),
                 )
+                if consumed.rowcount != 1:
+                    raise ManualExecutionError(
+                        "manual execution authorization changed during admission",
+                        code="authorization_changed",
+                        next_action="reload the authorization and inspect its durable state",
+                    )
                 self._insert_manual_execution_authorization_audit(
                     ManualExecutionAuthorizationAudit(
                         str(uuid4()),
