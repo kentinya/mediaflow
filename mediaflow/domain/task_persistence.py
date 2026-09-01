@@ -5,6 +5,13 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
+from mediaflow.domain.manual_execution import (
+    ManualExecution,
+    ManualExecutionAuthorization,
+    ManualExecutionAuthorizationAudit,
+    ManualExecutionEffect,
+    ManualExecutionItem,
+)
 from mediaflow.domain.manual_organize_preview import (
     ManualOrganizePreview,
     ManualPreviewItem,
@@ -180,6 +187,40 @@ class PersistentTaskRepository(Protocol):
         reason: str,
         now: datetime,
     ) -> int: ...
+    def create_manual_execution_authorization(
+        self, authorization: ManualExecutionAuthorization
+    ) -> None: ...
+    def get_manual_execution_authorization(
+        self, authorization_id: str
+    ) -> ManualExecutionAuthorization | None: ...
+    def list_manual_execution_authorizations(
+        self, *, limit: int = 100
+    ) -> tuple[ManualExecutionAuthorization, ...]: ...
+    def list_manual_execution_authorization_audit(
+        self, authorization_id: str
+    ) -> tuple[ManualExecutionAuthorizationAudit, ...]: ...
+    def expire_manual_execution_authorizations(self, now: datetime) -> int: ...
+    def admit_manual_execution(
+        self,
+        authorization: ManualExecutionAuthorization,
+        execution: ManualExecution,
+        items: tuple[ManualExecutionItem, ...],
+        locks: tuple[tuple[str, str], ...],
+        now: datetime,
+    ) -> ManualExecution: ...
+    def get_manual_execution(self, execution_id: str) -> ManualExecution | None: ...
+    def update_manual_execution(self, execution: ManualExecution) -> None: ...
+    def update_manual_execution_item(self, item: ManualExecutionItem) -> None: ...
+    def complete_manual_execution_item(
+        self,
+        execution: ManualExecution,
+        item: ManualExecutionItem,
+        task_item: PersistentTaskItem,
+        task: PersistentTask,
+        result: PersistentResultRecord,
+        effects: tuple[ManualExecutionEffect, ...],
+        locks: tuple[tuple[str, str], ...],
+    ) -> None: ...
     def create_task(self, task: PersistentTask) -> None: ...
     def update_task(self, task: PersistentTask) -> None: ...
     def request_task_pause(self, task_id: str, updated_at: datetime) -> PersistentTask: ...
@@ -242,5 +283,6 @@ class PersistentTaskRepository(Protocol):
 
 class FileOperationLockRepository(Protocol):
     def acquire(self, storage_id: str, path: str, task_id: str, acquired_at: datetime) -> bool: ...
+    def lock_owned(self, storage_id: str, path: str, task_id: str) -> bool: ...
     def release(self, storage_id: str, path: str, task_id: str) -> None: ...
     def reclaim_task_locks(self, task_id: str) -> int: ...

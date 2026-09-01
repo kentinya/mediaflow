@@ -13,11 +13,12 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from mediaflow.application.attachments import AttachmentDiscovery, AttachmentPlanner
+from mediaflow.application.conflict_resolution import ConflictResolver
 from mediaflow.application.duplicates import apply_hash_duplicate_detection
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.organizer import OrganizePlanner
@@ -54,6 +55,7 @@ from mediaflow.domain.metadata import (
     MetadataIdentificationStatus,
 )
 from mediaflow.domain.organizer import (
+    ConflictStrategy,
     MediaFileSet,
     OrganizePlan,
     PlanOperation,
@@ -865,6 +867,7 @@ class ManualOrganizePreviewService:
             )
             truncated = True
         plan = AttachmentPlanner().plan(plan, attachments, target_storage)
+        plan = self._resolve_conflicts(plan, type_policy, target_storage)
         plan_document = self._plan_document(
             strategy, plan, item, type_policy, source_storage, target_storage
         )
@@ -911,7 +914,7 @@ class ManualOrganizePreviewService:
             plan_document,
             plan_fingerprint,
             next_action=(
-                "inspect this exact zero-mutation plan; execution is not available in this Task"
+                "inspect this exact zero-mutation plan; authorize selected items for execution"
             ),
         )
 
@@ -1162,6 +1165,38 @@ class ManualOrganizePreviewService:
             "relativePath": _bounded(plan.relative_destination),
             "path": _bounded(plan.target),
         }
+        attachment_documents = [
+            {
+                "type": value.attachment_type.value,
+                "source": {
+                    "storageId": value.source.storage_id,
+                    "path": _bounded(value.source.path),
+                },
+                "destination": {
+                    "storageId": value.destination.storage_id,
+                    "path": _bounded(value.destination.path),
+                },
+                "operation": value.operation.value,
+                "suffix": _bounded(value.suffix, 128),
+            }
+            for value in plan.attachment_plans[:_MAX_COLLECTION]
+        ]
+        exact_attachment_documents = [
+            {
+                "type": value.attachment_type.value,
+                "source": {
+                    "storageId": value.source.storage_id,
+                    "path": value.source.path,
+                },
+                "destination": {
+                    "storageId": value.destination.storage_id,
+                    "path": value.destination.path,
+                },
+                "operation": value.operation.value,
+                "suffix": value.suffix,
+            }
+            for value in plan.attachment_plans[:_MAX_COLLECTION]
+        ]
         return {
             "source": item.source.document(),
             "mediaIdentity": _identity_document(strategy.metadata.identity),
@@ -1177,22 +1212,12 @@ class ManualOrganizePreviewService:
             "destination": destination,
             "operation": plan.operation.value,
             "operationPolicy": type_policy.organize_policy.operation.value,
-            "attachments": [
-                {
-                    "type": value.attachment_type.value,
-                    "source": {
-                        "storageId": value.source.storage_id,
-                        "path": _bounded(value.source.path),
-                    },
-                    "destination": {
-                        "storageId": value.destination.storage_id,
-                        "path": _bounded(value.destination.path),
-                    },
-                    "operation": value.operation.value,
-                    "suffix": _bounded(value.suffix, 128),
-                }
-                for value in plan.attachment_plans[:_MAX_COLLECTION]
-            ],
+            "attachments": attachment_documents,
+            # This is the exact executor input retained alongside the readable
+            # explanation.  It contains no current-config object or provider
+            # payload, so execution can reload the reviewed target without
+            # rebuilding it from a later Active snapshot.
+            "executionPlan": self._execution_plan_document(plan, exact_attachment_documents),
             "capabilities": self._capabilities(plan, type_policy, source_storage, target_storage),
             "conflicts": [
                 {
@@ -1207,9 +1232,87 @@ class ManualOrganizePreviewService:
             "planStatus": plan.status.value,
             "planId": plan.plan_id,
             "zeroMutation": True,
-            "executionState": "not_available_in_this_task",
+            "executionState": "ready_for_explicit_authorization",
             "bounded": True,
             "deterministic": True,
+        }
+
+    def _resolve_conflicts(self, plan, type_policy, target_storage):
+        """Apply only an existing configured/recorded decision; never mutate Storage."""
+
+        if not plan.conflicts:
+            return plan
+        resolver = ConflictResolver()
+        configured = resolver.apply_configured(plan, type_policy.organize_policy, target_storage)
+        if configured is not None:
+            return configured
+        method = getattr(self._repository, "list_confirmations", None)
+        if not callable(method):
+            return plan
+        try:
+            confirmations = tuple(method(status=None, limit=1000))
+        except TypeError:
+            confirmations = tuple(method(limit=1000))
+        for confirmation in confirmations:
+            if (
+                getattr(confirmation, "plan_id", None) != plan.plan_id
+                or getattr(confirmation, "source_storage_id", None) != plan.source_storage_id
+                or getattr(confirmation, "source_path", None)
+                != (plan.source_location.path if plan.source_location else plan.source)
+                or getattr(confirmation, "destination_storage_id", None) != plan.target_storage_id
+                or getattr(confirmation, "destination_path", None)
+                != (plan.destination_location.path if plan.destination_location else plan.target)
+                or getattr(getattr(confirmation, "status", None), "value", None) != "resolved"
+            ):
+                continue
+            selected = getattr(confirmation, "selected_strategy", None)
+            try:
+                strategy = ConflictStrategy(selected)
+            except (TypeError, ValueError):
+                continue
+            if strategy is ConflictStrategy.SKIP:
+                return replace(
+                    plan, operation=PlanOperation.SKIP, status=PlanStatus.NOOP, conflicts=()
+                )
+            if strategy is ConflictStrategy.OVERWRITE:
+                return resolver.overwrite(
+                    plan,
+                    type_policy.organize_policy,
+                    confirmed=bool(getattr(confirmation, "overwrite_authorized", False)),
+                )
+            if strategy is ConflictStrategy.RENAME:
+                return resolver.rename(plan, target_storage)
+        return plan
+
+    @staticmethod
+    def _execution_plan_document(plan, attachments):
+        return {
+            "planId": plan.plan_id,
+            "sourceStorageId": plan.source_storage_id,
+            "sourcePath": plan.source_location.path if plan.source_location else plan.source,
+            "targetStorageId": plan.target_storage_id,
+            "targetPath": plan.destination_location.path
+            if plan.destination_location
+            else plan.target,
+            "operation": plan.operation.value,
+            "linkOperation": plan.link_operation.value if plan.link_operation else None,
+            "mediaLibraryRoot": plan.media_library_root,
+            "relativeDestination": plan.relative_destination,
+            "sourceLibraryRoot": plan.source_library_root,
+            "overwriteAuthorized": plan.overwrite_authorized,
+            "rollback": {
+                "enabled": plan.rollback_policy.enabled,
+                "cleanupCreatedDirectories": plan.rollback_policy.cleanup_created_directories,
+            },
+            "sourceDirectoryCleanup": {
+                "mode": plan.source_directory_cleanup.mode.value,
+                "maxParentDirectories": plan.source_directory_cleanup.max_parent_directories,
+                "ignorePatterns": list(
+                    plan.source_directory_cleanup.ignore_patterns[:_MAX_COLLECTION]
+                ),
+                "maxEntries": plan.source_directory_cleanup.max_entries,
+            },
+            "attachments": attachments,
         }
 
     def _analysis_document(self, strategy) -> dict[str, object]:
@@ -1448,7 +1551,7 @@ class ManualOrganizePreviewService:
     @staticmethod
     def _aggregate_next_action(items: Sequence[ManualPreviewItem]) -> str:
         if all(item.status is ManualPreviewItemStatus.PREVIEWED for item in items):
-            return "inspect each exact plan; execution requires a later explicit execution Task"
+            return "inspect each exact plan; authorize selected items for execution"
         return "inspect each item; resolve its stated blocker or request a fresh Preview"
 
     @staticmethod
@@ -1550,6 +1653,7 @@ def _fit_json(value: dict[str, object]) -> dict[str, object]:
         "recognitionType": value.get("recognitionType"),
         "policies": value.get("policies"),
         "destination": value.get("destination"),
+        "executionPlan": value.get("executionPlan"),
         "operation": value.get("operation"),
         "capabilities": value.get("capabilities"),
         "conflicts": conflicts[:_MAX_COLLECTION],
@@ -1558,7 +1662,7 @@ def _fit_json(value: dict[str, object]) -> dict[str, object]:
         "deterministic": True,
         "truncated": True,
         "zeroMutation": True,
-        "executionState": "not_available_in_this_task",
+        "executionState": value.get("executionState") or "not_available_in_this_task",
         "unavailable": "plan evidence exceeded the bounded Preview size",
     }
     essential_encoded = json.dumps(essential, ensure_ascii=False, sort_keys=True, allow_nan=False)
@@ -1570,6 +1674,7 @@ def _fit_json(value: dict[str, object]) -> dict[str, object]:
         "recognitionType": value.get("recognitionType"),
         "policies": value.get("policies"),
         "destination": value.get("destination"),
+        "executionPlan": value.get("executionPlan"),
         "operation": value.get("operation"),
         "capabilities": value.get("capabilities"),
         "conflicts": [],
@@ -1578,7 +1683,7 @@ def _fit_json(value: dict[str, object]) -> dict[str, object]:
         "deterministic": True,
         "truncated": True,
         "zeroMutation": True,
-        "executionState": "not_available_in_this_task",
+        "executionState": value.get("executionState") or "not_available_in_this_task",
         "unavailable": "plan evidence was compacted to the bounded Preview identity",
     }
 

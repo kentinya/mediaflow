@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import sqlite3
@@ -7,6 +8,7 @@ import threading
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from mediaflow.domain.automation import (
     AutomationClaimLost,
@@ -37,6 +39,18 @@ from mediaflow.domain.execution_authorization import (
 )
 from mediaflow.domain.file_catalog import FileReviewLink
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
+from mediaflow.domain.manual_execution import (
+    ManualExecution,
+    ManualExecutionAuthorization,
+    ManualExecutionAuthorizationAudit,
+    ManualExecutionAuthorizationStatus,
+    ManualExecutionEffect,
+    ManualExecutionError,
+    ManualExecutionItem,
+    ManualExecutionItemStatus,
+    ManualExecutionScopeItem,
+    ManualExecutionStatus,
+)
 from mediaflow.domain.manual_ignore import (
     ManualIgnoreBatchRequest,
     ManualIgnoreCandidate,
@@ -128,11 +142,23 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestDecision
 
-# Manual intent and Preview tables are additive migrations on the current runtime schema.
+# Manual intent, Preview, and exact execution tables are additive migrations on the current
+# runtime schema.
 # Keep the public runtime marker at 27 for compatibility with existing backup
 # and migration consumers; the table creation below is idempotent and upgrades
 # older runtime databases without rewriting existing rows.
 SCHEMA_VERSION = 27
+
+
+def _canonical_json(value: object) -> str:
+    """Compare persisted JSON values without allowing formatting to affect identity."""
+
+    parsed = json.loads(value) if isinstance(value, str) else value
+    return json.dumps(parsed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _fingerprint_json(value: object) -> str:
+    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
 class SQLiteTaskRepository:
@@ -4920,6 +4946,541 @@ class SQLiteTaskRepository:
                 raise
         return cursor.rowcount
 
+    # Exact manual execution persistence deliberately reuses the existing
+    # tasks/task_items/task_results tables.  These small companion tables hold
+    # only the immutable Preview binding and the operation evidence needed to
+    # explain that Task after a restart.
+    def create_manual_execution_authorization(
+        self, authorization: ManualExecutionAuthorization
+    ) -> None:
+        if authorization.status is not ManualExecutionAuthorizationStatus.ACTIVE:
+            raise ValueError("manual execution authorization must start active")
+        audit = ManualExecutionAuthorizationAudit(
+            str(uuid4()),
+            authorization.authorization_id,
+            "issued",
+            authorization.created_at,
+            authorization.actor,
+            None,
+            {"itemCount": len(authorization.scope)},
+        )
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO manual_execution_authorizations (
+                    authorization_id, preview_id, intent_id, intent_version,
+                    configuration_snapshot_id, configuration_snapshot_digest, actor,
+                    permission, confirmation, allow_overwrite, allow_source_cleanup,
+                    scope_json, created_at, expires_at, status, consumed_at,
+                    execution_id, note
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                self._manual_execution_authorization_values(authorization),
+            )
+            self._insert_manual_execution_authorization_audit(audit)
+
+    def get_manual_execution_authorization(
+        self, authorization_id: str
+    ) -> ManualExecutionAuthorization | None:
+        if not isinstance(authorization_id, str) or not authorization_id.strip():
+            raise ValueError("manual execution authorization ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM manual_execution_authorizations WHERE authorization_id=?",
+                (authorization_id,),
+            ).fetchone()
+        return self._manual_execution_authorization(row) if row else None
+
+    def list_manual_execution_authorizations(
+        self, *, limit: int = 100
+    ) -> tuple[ManualExecutionAuthorization, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("manual execution authorization limit must be between 1 and 500")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM manual_execution_authorizations "
+                "ORDER BY created_at DESC, authorization_id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple(self._manual_execution_authorization(row) for row in rows)
+
+    def list_manual_execution_authorization_audit(
+        self, authorization_id: str
+    ) -> tuple[ManualExecutionAuthorizationAudit, ...]:
+        if not isinstance(authorization_id, str) or not authorization_id.strip():
+            raise ValueError("manual execution authorization ID is required")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM manual_execution_authorization_audit "
+                "WHERE authorization_id=? ORDER BY occurred_at, audit_id",
+                (authorization_id,),
+            ).fetchall()
+        return tuple(self._manual_execution_authorization_audit(row) for row in rows)
+
+    def expire_manual_execution_authorizations(self, now: datetime) -> int:
+        if now.tzinfo is None:
+            raise ValueError("manual execution authorization expiry timestamp needs timezone")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = self._connection.execute(
+                    "SELECT authorization_id, actor FROM manual_execution_authorizations "
+                    "WHERE status=? AND expires_at<=?",
+                    (ManualExecutionAuthorizationStatus.ACTIVE.value, now.isoformat()),
+                ).fetchall()
+                for row in rows:
+                    cursor = self._connection.execute(
+                        "UPDATE manual_execution_authorizations SET status=? "
+                        "WHERE authorization_id=? AND status=?",
+                        (
+                            ManualExecutionAuthorizationStatus.EXPIRED.value,
+                            row["authorization_id"],
+                            ManualExecutionAuthorizationStatus.ACTIVE.value,
+                        ),
+                    )
+                    if cursor.rowcount == 1:
+                        self._insert_manual_execution_authorization_audit(
+                            ManualExecutionAuthorizationAudit(
+                                str(uuid4()),
+                                row["authorization_id"],
+                                "expired",
+                                now,
+                                row["actor"],
+                                None,
+                                {"reason": "ttl_expired"},
+                            )
+                        )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return len(rows)
+
+    def admit_manual_execution(
+        self,
+        authorization: ManualExecutionAuthorization,
+        execution: ManualExecution,
+        items: tuple[ManualExecutionItem, ...],
+        locks: tuple[tuple[str, str], ...],
+        now: datetime,
+    ) -> ManualExecution:
+        """Atomically consume exact authority, create Task scope, and fence paths."""
+
+        if not items or tuple(item.item_id for item in items) != execution.selected_item_ids:
+            raise ValueError("manual execution items do not match selected scope")
+        if execution.authorization_id != authorization.authorization_id:
+            raise ValueError("manual execution authorization identity does not match")
+        if now.tzinfo is None:
+            raise ValueError("manual execution admission timestamp needs timezone")
+        lock_values = tuple(
+            sorted({(storage_id, self._lock_path(path)) for storage_id, path in locks})
+        )
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                auth_row = self._connection.execute(
+                    "SELECT * FROM manual_execution_authorizations WHERE authorization_id=?",
+                    (authorization.authorization_id,),
+                ).fetchone()
+                if auth_row is None:
+                    raise ManualExecutionError(
+                        "manual execution authorization was not found",
+                        code="authorization_not_found",
+                        status=404,
+                    )
+                stored = self._manual_execution_authorization(auth_row)
+                if stored != authorization:
+                    raise ManualExecutionError(
+                        "manual execution authorization binding changed",
+                        code="authorization_changed",
+                        next_action="reload the authorization and inspect its durable state",
+                    )
+                if stored.status is not ManualExecutionAuthorizationStatus.ACTIVE:
+                    raise ManualExecutionError(
+                        f"manual execution authorization is {stored.status.value}",
+                        code="authorization_consumed",
+                        next_action="inspect the linked execution; this authority cannot be reused",
+                    )
+                if stored.expires_at <= now:
+                    self._connection.execute(
+                        "UPDATE manual_execution_authorizations SET status=? "
+                        "WHERE authorization_id=? AND status=?",
+                        (
+                            ManualExecutionAuthorizationStatus.EXPIRED.value,
+                            stored.authorization_id,
+                            ManualExecutionAuthorizationStatus.ACTIVE.value,
+                        ),
+                    )
+                    self._insert_manual_execution_authorization_audit(
+                        ManualExecutionAuthorizationAudit(
+                            str(uuid4()),
+                            stored.authorization_id,
+                            "expired",
+                            now,
+                            stored.actor,
+                            None,
+                            {"reason": "ttl_expired"},
+                        )
+                    )
+                    raise ManualExecutionError(
+                        "manual execution authorization is expired",
+                        code="authorization_expired",
+                        next_action="request a fresh exact Preview and authorization",
+                    )
+
+                preview = self._connection.execute(
+                    "SELECT * FROM manual_previews WHERE preview_id=?",
+                    (execution.preview_id,),
+                ).fetchone()
+                if (
+                    preview is None
+                    or not bool(preview["current"])
+                    or preview["intent_id"] != execution.intent_id
+                    or int(preview["intent_version"]) != execution.intent_version
+                    or preview["configuration_snapshot_id"] != execution.configuration_snapshot_id
+                    or preview["configuration_snapshot_digest"]
+                    != execution.configuration_snapshot_digest
+                ):
+                    raise ManualExecutionError(
+                        "the reviewed Preview is no longer current",
+                        code="preview_stale",
+                        next_action="reload the manual intent and request a fresh Preview",
+                    )
+                intent = self._connection.execute(
+                    "SELECT status, version, configuration_snapshot_id, "
+                    "configuration_snapshot_digest FROM manual_intents WHERE intent_id=?",
+                    (execution.intent_id,),
+                ).fetchone()
+                if (
+                    intent is None
+                    or intent["status"] != ManualIntentStatus.OPEN.value
+                    or int(intent["version"]) != execution.intent_version
+                    or intent["configuration_snapshot_id"] != execution.configuration_snapshot_id
+                    or intent["configuration_snapshot_digest"]
+                    != execution.configuration_snapshot_digest
+                ):
+                    raise ManualExecutionError(
+                        "the manual intent is no longer the reviewed open intent",
+                        code="intent_stale",
+                        next_action="reload the intent and request a fresh Preview",
+                    )
+                scope_by_id = {value.item_id: value for value in authorization.scope}
+                for item in items:
+                    scope = scope_by_id.get(item.item_id)
+                    if scope is None:
+                        raise ManualExecutionError(
+                            "execution contains an item outside its authorization scope",
+                            code="scope_changed",
+                        )
+                    preview_item = self._connection.execute(
+                        "SELECT * FROM manual_preview_items WHERE preview_id=? AND item_id=?",
+                        (execution.preview_id, item.item_id),
+                    ).fetchone()
+                    current_item = self._connection.execute(
+                        "SELECT * FROM manual_intent_items WHERE intent_id=? AND item_id=?",
+                        (execution.intent_id, item.item_id),
+                    ).fetchone()
+                    if (
+                        preview_item is None
+                        or current_item is None
+                        or not bool(preview_item["current"])
+                        or preview_item["status"] != "previewed"
+                        or int(preview_item["item_version"]) != scope.item_version
+                        or preview_item["source_fingerprint"] != scope.source_fingerprint
+                        or preview_item["plan_fingerprint"] != scope.plan_fingerprint
+                        or _canonical_json(preview_item["source_json"])
+                        != _canonical_json(scope.source.document())
+                        or _canonical_json(preview_item["choice_json"])
+                        != _canonical_json(scope.choice.document())
+                        or preview_item["plan_json"] is None
+                        or preview_item["plan_fingerprint"]
+                        != _fingerprint_json(preview_item["plan_json"])
+                        or _canonical_json(preview_item["plan_json"]) != _canonical_json(item.plan)
+                        or int(current_item["version"]) != scope.item_version
+                        or current_item["status"] != ManualIntentItemStatus.READY.value
+                        or current_item["source_path"] != scope.source.path
+                        or current_item["storage_id"] != scope.source.storage_id
+                        or _canonical_json(current_item["choice_json"])
+                        != _canonical_json(scope.choice.document())
+                    ):
+                        raise ManualExecutionError(
+                            "a reviewed Preview item changed before admission",
+                            code="item_stale",
+                            next_action="request a fresh Preview for the affected item",
+                            details={"itemId": item.item_id},
+                        )
+                    existing = self._connection.execute(
+                        "SELECT 1 FROM manual_execution_items WHERE preview_id=? AND item_id=?",
+                        (execution.preview_id, item.item_id),
+                    ).fetchone()
+                    if existing is not None:
+                        raise ManualExecutionError(
+                            "this Preview item was already admitted",
+                            code="duplicate_execution",
+                            next_action="inspect the existing durable execution",
+                            details={"itemId": item.item_id},
+                        )
+
+                for storage_id, path in lock_values:
+                    try:
+                        self._connection.execute(
+                            "INSERT INTO file_locks VALUES (?, ?, ?, ?)",
+                            (storage_id, path, execution.task_id, now.isoformat()),
+                        )
+                    except sqlite3.IntegrityError as error:
+                        raise ManualExecutionError(
+                            "one or more reviewed paths are already being processed",
+                            code="concurrent_execution",
+                            next_action=(
+                                "wait for the other Task to finish, then request a fresh Preview"
+                            ),
+                        ) from error
+
+                task = PersistentTask(
+                    execution.task_id,
+                    "manual_organize",
+                    PersistentTaskStatus.RUNNING,
+                    True,
+                    execution.created_at,
+                    now,
+                    execution.created_at,
+                    None,
+                    len(items),
+                    0,
+                    0,
+                    None,
+                    False,
+                    None,
+                    len(items),
+                    execution.configuration_snapshot_id,
+                    execution.configuration_snapshot_digest,
+                )
+                self._connection.execute(
+                    "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    self._task_values(task),
+                )
+                self._connection.execute(
+                    """INSERT INTO manual_executions (
+                        execution_id, preview_id, intent_id, authorization_id, task_id,
+                        actor, intent_version, configuration_snapshot_id,
+                        configuration_snapshot_digest, selected_item_ids_json,
+                        unselected_item_ids_json, status, next_action, error,
+                        allow_overwrite, allow_source_cleanup, created_at, updated_at,
+                        completed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    self._manual_execution_values(execution),
+                )
+                for item in items:
+                    task_item = self._manual_task_item(item, execution, now)
+                    self._connection.execute(
+                        "INSERT INTO task_items VALUES "
+                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        self._item_values(task_item),
+                    )
+                    self._connection.execute(
+                        """INSERT INTO manual_execution_items (
+                            execution_item_id, execution_id, preview_id, preview_item_id,
+                            intent_id, item_id, task_id, task_item_id, item_version,
+                            source_fingerprint, plan_fingerprint, source_json, choice_json,
+                            plan_json, status, stage, result_id, effect_certainty,
+                            completed_operations, uncertain_effects, error, next_action,
+                            created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                  ?, ?, ?, ?, ?, ?, ?)""",
+                        self._manual_execution_item_values(item),
+                    )
+                self._connection.execute(
+                    "UPDATE manual_execution_authorizations SET status=?, consumed_at=?, "
+                    "execution_id=? WHERE authorization_id=? AND status=?",
+                    (
+                        ManualExecutionAuthorizationStatus.CONSUMED.value,
+                        now.isoformat(),
+                        execution.execution_id,
+                        authorization.authorization_id,
+                        ManualExecutionAuthorizationStatus.ACTIVE.value,
+                    ),
+                )
+                self._insert_manual_execution_authorization_audit(
+                    ManualExecutionAuthorizationAudit(
+                        str(uuid4()),
+                        authorization.authorization_id,
+                        "consumed",
+                        now,
+                        authorization.actor,
+                        execution.execution_id,
+                        {"taskId": execution.task_id},
+                    )
+                )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        admitted = self.get_manual_execution(execution.execution_id)
+        if admitted is None:
+            raise ManualExecutionError(
+                "admitted execution could not be reloaded",
+                code="execution_unavailable",
+                status=503,
+            )
+        return admitted
+
+    def get_manual_execution(self, execution_id: str) -> ManualExecution | None:
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("manual execution ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM manual_executions WHERE execution_id=?", (execution_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            item_rows = self._connection.execute(
+                "SELECT * FROM manual_execution_items WHERE execution_id=? "
+                "ORDER BY item_id, execution_item_id",
+                (execution_id,),
+            ).fetchall()
+            items = []
+            for item_row in item_rows:
+                effect_rows = self._connection.execute(
+                    "SELECT * FROM manual_execution_effects WHERE execution_item_id=? "
+                    "ORDER BY sequence, effect_id",
+                    (item_row["execution_item_id"],),
+                ).fetchall()
+                items.append(
+                    self._manual_execution_item(
+                        item_row,
+                        tuple(self._manual_execution_effect(value) for value in effect_rows),
+                    )
+                )
+            selected_ids = tuple(json.loads(row["selected_item_ids_json"]))
+            selected_order = {item_id: index for index, item_id in enumerate(selected_ids)}
+            items.sort(key=lambda value: selected_order.get(value.item_id, len(selected_order)))
+        return self._manual_execution(row, tuple(items))
+
+    def update_manual_execution(self, execution: ManualExecution) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE manual_executions SET status=?, next_action=?, error=?, "
+                "updated_at=?, completed_at=? WHERE execution_id=?",
+                (
+                    execution.status.value,
+                    execution.next_action,
+                    execution.error,
+                    execution.updated_at.isoformat(),
+                    execution.completed_at.isoformat() if execution.completed_at else None,
+                    execution.execution_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"manual execution {execution.execution_id!r} was not found")
+
+    def update_manual_execution_item(self, item: ManualExecutionItem) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE manual_execution_items SET status=?, stage=?, result_id=?, "
+                "effect_certainty=?, completed_operations=?, uncertain_effects=?, error=?, "
+                "next_action=?, updated_at=? WHERE execution_item_id=?",
+                (
+                    item.status.value,
+                    item.stage,
+                    item.result_id,
+                    item.effect_certainty,
+                    json.dumps(item.completed_operations, ensure_ascii=False),
+                    json.dumps(item.uncertain_effects, ensure_ascii=False),
+                    item.error,
+                    item.next_action,
+                    item.updated_at.isoformat(),
+                    item.execution_item_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"manual execution item {item.execution_item_id!r} was not found")
+
+    def complete_manual_execution_item(
+        self,
+        execution: ManualExecution,
+        item: ManualExecutionItem,
+        task_item: PersistentTaskItem,
+        task: PersistentTask,
+        result: PersistentResultRecord,
+        effects: tuple[ManualExecutionEffect, ...],
+        locks: tuple[tuple[str, str], ...],
+    ) -> None:
+        """Publish TaskItem, Result, effect evidence and release its fence together."""
+
+        if len(effects) > 256:
+            raise ValueError("manual execution effect count exceeds its bound")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._insert_result_locked(result)
+                self._connection.execute(
+                    """INSERT INTO task_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?)
+                    ON CONFLICT(item_id) DO UPDATE SET
+                        status=excluded.status, stage=excluded.stage, attempts=excluded.attempts,
+                        updated_at=excluded.updated_at, plan_id=excluded.plan_id,
+                        destination_storage_id=excluded.destination_storage_id,
+                        destination_path=excluded.destination_path,
+                        execution_status=excluded.execution_status, error=excluded.error""",
+                    self._item_values(task_item),
+                )
+                self._connection.execute(
+                    "UPDATE manual_execution_items SET status=?, stage=?, result_id=?, "
+                    "effect_certainty=?, completed_operations=?, uncertain_effects=?, error=?, "
+                    "next_action=?, updated_at=? WHERE execution_item_id=?",
+                    (
+                        item.status.value,
+                        item.stage,
+                        item.result_id,
+                        item.effect_certainty,
+                        json.dumps(item.completed_operations, ensure_ascii=False),
+                        json.dumps(item.uncertain_effects, ensure_ascii=False),
+                        item.error,
+                        item.next_action,
+                        item.updated_at.isoformat(),
+                        item.execution_item_id,
+                    ),
+                )
+                for effect in effects:
+                    self._connection.execute(
+                        """INSERT OR REPLACE INTO manual_execution_effects (
+                            effect_id, execution_item_id, sequence, action,
+                            source_storage_id, source_path, destination_storage_id,
+                            destination_path, verified, certainty, details_json, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        self._manual_execution_effect_values(effect),
+                    )
+                self._connection.execute(
+                    "UPDATE manual_executions SET status=?, next_action=?, error=?, "
+                    "updated_at=?, completed_at=? WHERE execution_id=?",
+                    (
+                        execution.status.value,
+                        execution.next_action,
+                        execution.error,
+                        execution.updated_at.isoformat(),
+                        execution.completed_at.isoformat() if execution.completed_at else None,
+                        execution.execution_id,
+                    ),
+                )
+                cursor = self._connection.execute(
+                    "UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?, "
+                    "updated_at=?, started_at=?, completed_at=?, total_items=?, completed_items=?, "
+                    "failed_items=?, error=?, pause_requested=?, scope_path=?, item_limit=?, "
+                    "configuration_snapshot_id=?, configuration_snapshot_digest=? WHERE task_id=?",
+                    (*self._task_values(task)[1:], task.task_id),
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError(f"task {task.task_id!r} was not found")
+                for storage_id, path in tuple(
+                    sorted({(storage_id, self._lock_path(path)) for storage_id, path in locks})
+                ):
+                    self._connection.execute(
+                        "DELETE FROM file_locks WHERE storage_id=? AND path=? AND task_id=?",
+                        (storage_id, path, task.task_id),
+                    )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+
     def get_manual_intent(self, intent_id: str) -> ManualOrganizeIntent | None:
         if not isinstance(intent_id, str) or not intent_id.strip():
             raise ValueError("manual intent ID is required")
@@ -5339,6 +5900,15 @@ class SQLiteTaskRepository:
         except sqlite3.IntegrityError:
             return False
 
+    def lock_owned(self, storage_id: str, path: str, task_id: str) -> bool:
+        normalized = self._lock_path(path)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT 1 FROM file_locks WHERE storage_id=? AND path=? AND task_id=?",
+                (storage_id, normalized, task_id),
+            ).fetchone()
+        return row is not None
+
     def release(self, storage_id: str, path: str, task_id: str) -> None:
         with self._lock, self._connection:
             self._connection.execute(
@@ -5575,6 +6145,87 @@ class SQLiteTaskRepository:
                     ON manual_preview_items(intent_id, item_id, current);
                 CREATE INDEX IF NOT EXISTS manual_preview_items_preview_order
                     ON manual_preview_items(preview_id, position, item_id);
+                CREATE TABLE IF NOT EXISTS manual_execution_authorizations (
+                    authorization_id TEXT PRIMARY KEY, preview_id TEXT NOT NULL,
+                    intent_id TEXT NOT NULL, intent_version INTEGER NOT NULL,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL, actor TEXT NOT NULL,
+                    permission TEXT NOT NULL, confirmation INTEGER NOT NULL,
+                    allow_overwrite INTEGER NOT NULL DEFAULT 0,
+                    allow_source_cleanup INTEGER NOT NULL DEFAULT 0,
+                    scope_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL, status TEXT NOT NULL,
+                    consumed_at TEXT, execution_id TEXT, note TEXT,
+                    FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
+                    FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_execution_authorizations_status
+                    ON manual_execution_authorizations(status, expires_at, created_at);
+                CREATE TABLE IF NOT EXISTS manual_execution_authorization_audit (
+                    audit_id TEXT PRIMARY KEY, authorization_id TEXT NOT NULL,
+                    action TEXT NOT NULL, occurred_at TEXT NOT NULL, actor TEXT,
+                    execution_id TEXT, details_json TEXT NOT NULL,
+                    FOREIGN KEY(authorization_id)
+                        REFERENCES manual_execution_authorizations(authorization_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_execution_authorization_audit_time
+                    ON manual_execution_authorization_audit(
+                        authorization_id, occurred_at, audit_id
+                    );
+                CREATE TABLE IF NOT EXISTS manual_executions (
+                    execution_id TEXT PRIMARY KEY, preview_id TEXT NOT NULL,
+                    intent_id TEXT NOT NULL, authorization_id TEXT NOT NULL UNIQUE,
+                    task_id TEXT NOT NULL UNIQUE, actor TEXT NOT NULL,
+                    intent_version INTEGER NOT NULL, configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    selected_item_ids_json TEXT NOT NULL, unselected_item_ids_json TEXT NOT NULL,
+                    status TEXT NOT NULL, next_action TEXT NOT NULL, error TEXT,
+                    allow_overwrite INTEGER NOT NULL DEFAULT 0,
+                    allow_source_cleanup INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT,
+                    FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
+                    FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id),
+                    FOREIGN KEY(authorization_id)
+                        REFERENCES manual_execution_authorizations(authorization_id),
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_executions_preview_created
+                    ON manual_executions(preview_id, created_at, execution_id);
+                CREATE TABLE IF NOT EXISTS manual_execution_items (
+                    execution_item_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL,
+                    preview_id TEXT NOT NULL, preview_item_id TEXT NOT NULL,
+                    intent_id TEXT NOT NULL, item_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL, task_item_id TEXT NOT NULL UNIQUE,
+                    item_version INTEGER NOT NULL, source_fingerprint TEXT NOT NULL,
+                    plan_fingerprint TEXT NOT NULL, source_json TEXT NOT NULL,
+                    choice_json TEXT NOT NULL, plan_json TEXT NOT NULL,
+                    status TEXT NOT NULL, stage TEXT NOT NULL, result_id TEXT,
+                    effect_certainty TEXT NOT NULL, completed_operations TEXT NOT NULL,
+                    uncertain_effects TEXT NOT NULL, error TEXT, next_action TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(preview_id, item_id), UNIQUE(execution_id, item_id),
+                    FOREIGN KEY(execution_id) REFERENCES manual_executions(execution_id),
+                    FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
+                    FOREIGN KEY(preview_item_id) REFERENCES manual_preview_items(preview_item_id),
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(task_item_id) REFERENCES task_items(item_id),
+                    FOREIGN KEY(result_id) REFERENCES task_results(result_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_execution_items_execution_order
+                    ON manual_execution_items(execution_id, item_id, execution_item_id);
+                CREATE TABLE IF NOT EXISTS manual_execution_effects (
+                    effect_id TEXT PRIMARY KEY, execution_item_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL, action TEXT NOT NULL,
+                    source_storage_id TEXT, source_path TEXT,
+                    destination_storage_id TEXT, destination_path TEXT,
+                    verified INTEGER NOT NULL, certainty TEXT NOT NULL,
+                    details_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                    UNIQUE(execution_item_id, sequence),
+                    FOREIGN KEY(execution_item_id)
+                        REFERENCES manual_execution_items(execution_item_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_execution_effects_item_order
+                    ON manual_execution_effects(execution_item_id, sequence, effect_id);
                 CREATE TABLE IF NOT EXISTS file_locks (
                     storage_id TEXT NOT NULL, path TEXT NOT NULL, task_id TEXT NOT NULL,
                     acquired_at TEXT NOT NULL, PRIMARY KEY(storage_id, path)
@@ -5934,6 +6585,322 @@ class SQLiteTaskRepository:
         if not parts:
             raise ValueError("lock path must be non-empty")
         return "/".join(parts)
+
+    @staticmethod
+    def _manual_execution_authorization_values(
+        value: ManualExecutionAuthorization,
+    ) -> tuple[object, ...]:
+        return (
+            value.authorization_id,
+            value.preview_id,
+            value.intent_id,
+            value.intent_version,
+            value.configuration_snapshot_id,
+            value.configuration_snapshot_digest,
+            value.actor,
+            value.permission,
+            int(value.confirmation),
+            int(value.allow_overwrite),
+            int(value.allow_source_cleanup),
+            json.dumps(
+                [item.document() for item in value.scope],
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            value.created_at.isoformat(),
+            value.expires_at.isoformat(),
+            value.status.value,
+            value.consumed_at.isoformat() if value.consumed_at else None,
+            value.execution_id,
+            value.note,
+        )
+
+    @staticmethod
+    def _manual_execution_authorization(
+        row: sqlite3.Row,
+    ) -> ManualExecutionAuthorization:
+        scope = tuple(
+            ManualExecutionScopeItem(
+                item["itemId"],
+                item["previewItemId"],
+                int(item["itemVersion"]),
+                item["sourceFingerprint"],
+                item["planFingerprint"],
+                ManualSourceIdentity.from_document(item["source"]),
+                ManualChoice.from_document(item["choice"]),
+            )
+            for item in json.loads(row["scope_json"])
+        )
+        return ManualExecutionAuthorization(
+            row["authorization_id"],
+            row["preview_id"],
+            row["intent_id"],
+            int(row["intent_version"]),
+            row["configuration_snapshot_id"],
+            row["configuration_snapshot_digest"],
+            row["actor"],
+            row["permission"],
+            bool(row["confirmation"]),
+            bool(row["allow_overwrite"]),
+            bool(row["allow_source_cleanup"]),
+            scope,
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["expires_at"]),
+            ManualExecutionAuthorizationStatus(row["status"]),
+            datetime.fromisoformat(row["consumed_at"]) if row["consumed_at"] else None,
+            row["execution_id"],
+            row["note"],
+        )
+
+    def _insert_manual_execution_authorization_audit(
+        self, value: ManualExecutionAuthorizationAudit
+    ) -> None:
+        self._connection.execute(
+            """INSERT INTO manual_execution_authorization_audit (
+                audit_id, authorization_id, action, occurred_at, actor,
+                execution_id, details_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                value.audit_id,
+                value.authorization_id,
+                value.action,
+                value.occurred_at.isoformat(),
+                value.actor,
+                value.execution_id,
+                json.dumps(value.details, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+
+    @staticmethod
+    def _manual_execution_authorization_audit(
+        row: sqlite3.Row,
+    ) -> ManualExecutionAuthorizationAudit:
+        return ManualExecutionAuthorizationAudit(
+            row["audit_id"],
+            row["authorization_id"],
+            row["action"],
+            datetime.fromisoformat(row["occurred_at"]),
+            row["actor"],
+            row["execution_id"],
+            json.loads(row["details_json"] or "{}"),
+        )
+
+    @staticmethod
+    def _manual_execution_values(value: ManualExecution) -> tuple[object, ...]:
+        return (
+            value.execution_id,
+            value.preview_id,
+            value.intent_id,
+            value.authorization_id,
+            value.task_id,
+            value.actor,
+            value.intent_version,
+            value.configuration_snapshot_id,
+            value.configuration_snapshot_digest,
+            json.dumps(value.selected_item_ids, ensure_ascii=False),
+            json.dumps(value.unselected_item_ids, ensure_ascii=False),
+            value.status.value,
+            value.next_action,
+            value.error,
+            int(value.allow_overwrite),
+            int(value.allow_source_cleanup),
+            value.created_at.isoformat(),
+            value.updated_at.isoformat(),
+            value.completed_at.isoformat() if value.completed_at else None,
+        )
+
+    @staticmethod
+    def _manual_execution(
+        row: sqlite3.Row, items: tuple[ManualExecutionItem, ...]
+    ) -> ManualExecution:
+        return ManualExecution(
+            row["execution_id"],
+            row["preview_id"],
+            row["intent_id"],
+            row["authorization_id"],
+            row["task_id"],
+            row["actor"],
+            int(row["intent_version"]),
+            row["configuration_snapshot_id"],
+            row["configuration_snapshot_digest"],
+            tuple(json.loads(row["selected_item_ids_json"])),
+            tuple(json.loads(row["unselected_item_ids_json"])),
+            items,
+            ManualExecutionStatus(row["status"]),
+            row["next_action"],
+            row["error"],
+            bool(row["allow_overwrite"]),
+            bool(row["allow_source_cleanup"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+        )
+
+    @staticmethod
+    def _manual_execution_item_values(value: ManualExecutionItem) -> tuple[object, ...]:
+        return (
+            value.execution_item_id,
+            value.execution_id,
+            value.preview_id,
+            value.preview_item_id,
+            value.intent_id,
+            value.item_id,
+            value.task_id,
+            value.task_item_id,
+            value.item_version,
+            value.source_fingerprint,
+            value.plan_fingerprint,
+            json.dumps(value.source.document(), ensure_ascii=False, sort_keys=True),
+            json.dumps(value.choice.document(), ensure_ascii=False, sort_keys=True),
+            json.dumps(value.plan, ensure_ascii=False, sort_keys=True),
+            value.status.value,
+            value.stage,
+            value.result_id,
+            value.effect_certainty,
+            json.dumps(value.completed_operations, ensure_ascii=False),
+            json.dumps(value.uncertain_effects, ensure_ascii=False),
+            value.error,
+            value.next_action,
+            value.created_at.isoformat(),
+            value.updated_at.isoformat(),
+        )
+
+    @staticmethod
+    def _manual_execution_item(
+        row: sqlite3.Row, effects: tuple[ManualExecutionEffect, ...]
+    ) -> ManualExecutionItem:
+        return ManualExecutionItem(
+            row["execution_item_id"],
+            row["execution_id"],
+            row["preview_id"],
+            row["preview_item_id"],
+            row["intent_id"],
+            row["item_id"],
+            row["task_id"],
+            row["task_item_id"],
+            int(row["item_version"]),
+            row["source_fingerprint"],
+            row["plan_fingerprint"],
+            ManualSourceIdentity.from_document(json.loads(row["source_json"])),
+            ManualChoice.from_document(json.loads(row["choice_json"])),
+            json.loads(row["plan_json"]),
+            ManualExecutionItemStatus(row["status"]),
+            row["stage"],
+            row["result_id"],
+            row["effect_certainty"],
+            tuple(json.loads(row["completed_operations"] or "[]")),
+            tuple(json.loads(row["uncertain_effects"] or "[]")),
+            row["error"],
+            row["next_action"],
+            effects,
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _manual_execution_effect_values(value: ManualExecutionEffect) -> tuple[object, ...]:
+        return (
+            value.effect_id,
+            value.execution_item_id,
+            value.sequence,
+            value.action,
+            value.source_storage_id,
+            value.source_path,
+            value.destination_storage_id,
+            value.destination_path,
+            int(value.verified),
+            value.certainty,
+            json.dumps(value.details, ensure_ascii=False, sort_keys=True),
+            value.created_at.isoformat(),
+        )
+
+    @staticmethod
+    def _manual_execution_effect(row: sqlite3.Row) -> ManualExecutionEffect:
+        return ManualExecutionEffect(
+            row["effect_id"],
+            row["execution_item_id"],
+            int(row["sequence"]),
+            row["action"],
+            row["source_storage_id"],
+            row["source_path"],
+            row["destination_storage_id"],
+            row["destination_path"],
+            bool(row["verified"]),
+            row["certainty"],
+            json.loads(row["details_json"] or "{}"),
+            datetime.fromisoformat(row["created_at"]),
+        )
+
+    @staticmethod
+    def _manual_task_item(
+        value: ManualExecutionItem, execution: ManualExecution, now: datetime
+    ) -> PersistentTaskItem:
+        destination = value.plan.get("executionPlan")
+        destination_storage_id = (
+            destination.get("targetStorageId") if isinstance(destination, dict) else None
+        )
+        destination_path = destination.get("targetPath") if isinstance(destination, dict) else None
+        plan_id = value.plan.get("planId")
+        return PersistentTaskItem(
+            value.task_item_id,
+            execution.task_id,
+            value.source.storage_id,
+            value.source.resource_library_id,
+            value.source.path,
+            f"{value.source.storage_id}:{value.source.path}",
+            TaskItemStatus.PENDING,
+            "admitted",
+            0,
+            value.created_at,
+            now,
+            plan_id if isinstance(plan_id, str) else None,
+            destination_storage_id if isinstance(destination_storage_id, str) else None,
+            destination_path if isinstance(destination_path, str) else None,
+            None,
+            None,
+        )
+
+    def _insert_result_locked(self, result: PersistentResultRecord) -> None:
+        self._connection.execute(
+            """INSERT OR REPLACE INTO task_results (
+                result_id, task_id, item_id, source_storage_id, source_path,
+                destination_storage_id, destination_path, recognition_type, provider,
+                provider_id, metadata_policy_id, naming_policy_id, classification_policy_id,
+                organize_policy_id, operation, status, created_at, title, error,
+                completed_operations, attachment_count, retry_attempts, retry_category,
+                cleanup_status, cleanup_step_count, effect_certainty, uncertain_effects
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?)""",
+            (
+                result.result_id,
+                result.task_id,
+                result.item_id,
+                result.source_storage_id,
+                result.source_path,
+                result.destination_storage_id,
+                result.destination_path,
+                result.recognition_type,
+                result.provider,
+                result.provider_id,
+                result.metadata_policy_id,
+                result.naming_policy_id,
+                result.classification_policy_id,
+                result.organize_policy_id,
+                result.operation,
+                result.status,
+                result.created_at.isoformat(),
+                result.title,
+                result.error,
+                json.dumps(result.completed_operations, ensure_ascii=False),
+                result.attachment_count,
+                result.retry_attempts,
+                result.retry_category,
+                result.cleanup_status,
+                result.cleanup_step_count,
+                result.effect_certainty,
+                json.dumps(result.uncertain_effects, ensure_ascii=False),
+            ),
+        )
 
     @staticmethod
     def _task_values(task: PersistentTask) -> tuple[object, ...]:

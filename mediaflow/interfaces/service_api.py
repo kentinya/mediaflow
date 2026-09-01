@@ -22,6 +22,7 @@ from mediaflow.application.file_metadata_correction import FileMetadataCorrectio
 from mediaflow.application.file_recognition_request import FileRecognitionRequestService
 from mediaflow.application.file_replan_request import FileReplanRequestService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
+from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_correction_continuation import (
@@ -117,6 +118,7 @@ class MediaFlowApi:
         recovery_snapshot_validator: Callable[[str, str], None] | None = None,
         manual_intent_service: ManualOrganizeIntentService | None = None,
         manual_preview_service: ManualOrganizePreviewService | None = None,
+        manual_execution_service: ManualOrganizeExecutionService | None = None,
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -175,6 +177,14 @@ class MediaFlowApi:
         )
         if self._file_catalog is not None:
             self._file_catalog.attach_checkpoint_service(self._checkpoint_service)
+        self._manual_execution = manual_execution_service
+        if self._manual_execution is None and self._manual_previews is not None:
+            self._manual_execution = ManualOrganizeExecutionService(
+                repository,
+                self._manual_previews,
+                self._manual_intents,
+                checkpoint_service=self._checkpoint_service,
+            )
         self._recovery_admission = RecoveryAdmissionService(
             repository,
             snapshot_validator=snapshot_validator,
@@ -1667,6 +1677,185 @@ class MediaFlowApi:
                 200,
                 self._manual_previews.get(parts[3]).document(),
             )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-previews"]
+            and parts[4] == "authorize"
+            and method == "POST"
+        ):
+            self._require_manual_execution(principal)
+            if self._manual_execution is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual execution service is unavailable",
+                )
+            self._require_empty_query(environ, "manual execution authorization")
+            document = self._document(environ)
+            allowed = {
+                "expectedVersion",
+                "expectedItemVersions",
+                "itemIds",
+                "snapshotId",
+                "snapshotDigest",
+                "confirmation",
+                "allowOverwrite",
+                "allowSourceCleanup",
+                "ttlSeconds",
+                "note",
+            }
+            if set(document).difference(allowed):
+                raise ValueError("manual execution authorization fields are invalid")
+            required = {"expectedVersion", "expectedItemVersions", "itemIds", "confirmation"}
+            if not required.issubset(document):
+                raise ValueError(
+                    "manual execution authorization requires expected versions, itemIds, "
+                    "and confirmation"
+                )
+            expected_version = document["expectedVersion"]
+            if (
+                isinstance(expected_version, bool)
+                or not isinstance(expected_version, int)
+                or expected_version < 1
+            ):
+                raise ValueError("manual execution expectedVersion must be a positive integer")
+            item_ids = document["itemIds"]
+            if not isinstance(item_ids, list):
+                raise ValueError("manual execution itemIds must be an array")
+            expected_item_versions = document["expectedItemVersions"]
+            if not isinstance(expected_item_versions, (dict, list)):
+                raise ValueError("manual execution expectedItemVersions must be an object or array")
+            for name in ("snapshotId", "snapshotDigest"):
+                if name in document and (
+                    not isinstance(document[name], str) or not document[name].strip()
+                ):
+                    raise ValueError(f"manual execution {name} must be a non-empty string")
+            if "confirmation" not in document or document["confirmation"] is not True:
+                raise ValueError("manual execution authorization requires confirmation=true")
+            authorization = self._manual_execution.authorize(
+                parts[3],
+                item_ids,
+                expected_intent_version=expected_version,
+                expected_item_versions=expected_item_versions,
+                snapshot_id=document.get("snapshotId"),
+                snapshot_digest=document.get("snapshotDigest"),
+                actor=principal.principal_id,
+                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                confirmation=document["confirmation"],
+                allow_overwrite=document.get("allowOverwrite", False),
+                allow_source_cleanup=document.get("allowSourceCleanup", False),
+                ttl_seconds=document.get("ttlSeconds"),
+                note=document.get("note"),
+            )
+            return self._response(
+                start_response,
+                201,
+                self._manual_execution.authorization_document(authorization.authorization_id),
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-execution-authorizations"]
+            and parts[4] in {"execute", "consume"}
+            and method == "POST"
+        ):
+            self._require_manual_execution(principal)
+            if self._manual_execution is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual execution service is unavailable",
+                )
+            self._require_empty_query(environ, "manual execution")
+            document = self._document(environ)
+            if set(document) != {"confirmation"} or document["confirmation"] is not True:
+                raise ValueError("manual execution requires only confirmation=true")
+            execution = self._manual_execution.execute(
+                parts[3],
+                actor=principal.principal_id,
+                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                confirmation=document["confirmation"],
+            )
+            return self._response(
+                start_response,
+                200,
+                self._manual_execution.document(execution.execution_id),
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-previews"]
+            and parts[4] == "execute"
+            and method == "POST"
+        ):
+            self._require_manual_execution(principal)
+            if self._manual_execution is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual execution service is unavailable",
+                )
+            self._require_empty_query(environ, "manual execution")
+            document = self._document(environ)
+            if set(document) != {"authorizationId", "confirmation"}:
+                raise ValueError(
+                    "manual Preview execution requires authorizationId and confirmation"
+                )
+            if (
+                not isinstance(document["authorizationId"], str)
+                or not document["authorizationId"].strip()
+                or document["confirmation"] is not True
+            ):
+                raise ValueError("manual Preview execution requires confirmation=true")
+            authorization = self._manual_execution.get_authorization(document["authorizationId"])
+            if authorization.preview_id != parts[3]:
+                raise ValueError("manual execution authorization does not belong to this Preview")
+            execution = self._manual_execution.execute(
+                authorization.authorization_id,
+                actor=principal.principal_id,
+                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                confirmation=document["confirmation"],
+            )
+            return self._response(
+                start_response,
+                200,
+                self._manual_execution.document(execution.execution_id),
+            )
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "v1", "manual-execution-authorizations"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._manual_execution is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual execution service is unavailable",
+                )
+            self._require_empty_query(environ, "manual execution authorization detail")
+            return self._response(
+                start_response,
+                200,
+                self._manual_execution.authorization_document(parts[3]),
+            )
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "manual-executions"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if self._manual_execution is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual execution service is unavailable",
+                )
+            self._require_empty_query(environ, "manual execution detail")
+            return self._response(
+                start_response,
+                200,
+                self._manual_execution.document(parts[3]),
+            )
         if parts == ["api", "v1", "manual-intents"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._manual_intents is None:
@@ -2587,6 +2776,11 @@ class MediaFlowApi:
         if permission not in principal.permissions:
             raise ApiPermissionDenied(f"principal lacks {permission.value} permission")
 
+    @staticmethod
+    def _require_manual_execution(principal: ResolvedApiPrincipal) -> None:
+        if ApiPermission.EXECUTE_MANUAL_ORGANIZE not in principal.permissions:
+            raise ApiPermissionDenied("principal lacks execute_manual_organize permission")
+
     def _refresh_configuration_binding(self) -> _ApiRuntimeBinding:
         with self._runtime_binding_lock:
             return self._refresh_configuration_binding_locked()
@@ -2808,6 +3002,24 @@ class MediaFlowApi:
             return "/api/v1/recognition-reviews/{id}"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "metadata-corrections"]:
             return "/api/v1/metadata-corrections/{id}"
+        if len(parts) == 4 and parts[:3] in (
+            ["api", "v1", "manual-previews"],
+            ["api", "v1", "manual-execution-authorizations"],
+            ["api", "v1", "manual-executions"],
+        ):
+            return f"/api/v1/{parts[2]}/{{id}}"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-previews"]
+            and parts[4] in {"authorize", "execute"}
+        ):
+            return f"/api/v1/manual-previews/{{id}}/{parts[4]}"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-execution-authorizations"]
+            and parts[4] in {"execute", "consume"}
+        ):
+            return f"/api/v1/manual-execution-authorizations/{{id}}/{parts[4]}"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "metadata-reviews"]
@@ -3187,6 +3399,11 @@ class MediaFlowApi:
         ):
             return True
         if parts[:3] == ["api", "v1", "manual-previews"]:
+            return True
+        if tuple(parts[:3]) in {
+            ("api", "v1", "manual-execution-authorizations"),
+            ("api", "v1", "manual-executions"),
+        }:
             return True
         return parts[:3] == ["api", "v1", "files"] and (
             len(parts) == 4 or parts == ["api", "v1", "files", "by-source"]

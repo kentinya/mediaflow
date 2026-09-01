@@ -524,8 +524,17 @@ class OrganizerExecutor:
             completed.append(plan.operation.value)
             if not target_storage.exists(storage_target):
                 raise RuntimeError("destination verification failed")
-            if target_storage.stat(storage_target).size != source_size:
+            target_entry = target_storage.stat(storage_target)
+            if plan.operation is not PlanOperation.LINK and target_entry.size != source_size:
                 raise RuntimeError("destination verification failed: size mismatch")
+            if plan.operation is PlanOperation.LINK:
+                expected_type = (
+                    StorageEntryType.SYMLINK
+                    if plan.link_operation is OrganizeOperationType.SOFT_LINK
+                    else StorageEntryType.FILE
+                )
+                if target_entry.entry_type is not expected_type:
+                    raise RuntimeError("destination verification failed: link type mismatch")
             if plan.operation is PlanOperation.MOVE and source_storage.exists(storage_source):
                 raise RuntimeError("move verification failed: source still exists")
         except PartialExecutionError as error:

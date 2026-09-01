@@ -255,6 +255,11 @@ class ManualPreviewItem:
             _json_copy(self.plan, label="plan")
 
     def document(self) -> dict[str, object]:
+        execution_state = self.execution_state
+        if isinstance(self.plan, dict) and isinstance(self.plan.get("executionPlan"), dict):
+            value = self.plan.get("executionState")
+            if isinstance(value, str) and value.strip():
+                execution_state = value
         return {
             "previewItemId": self.preview_item_id,
             "previewId": self.preview_id,
@@ -281,7 +286,7 @@ class ManualPreviewItem:
             "nextAction": self.next_action,
             "sideEffects": "none",
             "zeroMutation": self.zero_mutation,
-            "executionState": self.execution_state,
+            "executionState": execution_state,
             "truncated": self.truncated,
             "current": self.current,
             "createdAt": self.created_at.isoformat(),
@@ -393,6 +398,14 @@ class ManualOrganizePreview:
             raise ValueError("manual Preview timestamps must include timezone")
 
     def document(self, *, include_history: bool = True) -> dict[str, object]:
+        execution_state = "not_available_in_this_task"
+        if self.current and any(
+            item.status is ManualPreviewItemStatus.PREVIEWED
+            and isinstance(item.plan, dict)
+            and isinstance(item.plan.get("executionPlan"), dict)
+            for item in self.items
+        ):
+            execution_state = "ready_for_explicit_authorization"
         value = {
             "previewId": self.preview_id,
             "intentId": self.intent_id,
@@ -414,7 +427,7 @@ class ManualOrganizePreview:
             "error": self.error,
             "sideEffects": "none",
             "zeroMutation": self.zero_mutation,
-            "executionState": "not_available_in_this_task",
+            "executionState": execution_state,
             "truncated": self.truncated,
         }
         if not include_history:
