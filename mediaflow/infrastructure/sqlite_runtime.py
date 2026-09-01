@@ -76,7 +76,11 @@ from mediaflow.domain.manual_organize_preview import (
     ManualPreviewStatus,
     ManualPreviewUnavailable,
 )
-from mediaflow.domain.manual_safety import redact_manual_text, redact_manual_value
+from mediaflow.domain.manual_safety import (
+    redact_evidence_text,
+    redact_manual_text,
+    redact_manual_value,
+)
 from mediaflow.domain.media_evidence import (
     PipelineEvidence,
     evidence_from_document,
@@ -7268,6 +7272,7 @@ class SQLiteTaskRepository:
 
     @staticmethod
     def _evidence_values(evidence: PipelineEvidence) -> tuple[object, ...]:
+        source_path = redact_evidence_text(evidence.source_path)
         evidence = redact_pipeline_evidence(evidence)
         return (
             evidence.evidence_id,
@@ -7275,7 +7280,7 @@ class SQLiteTaskRepository:
             evidence.item_id,
             evidence.attempts,
             evidence.source_storage_id,
-            evidence.source_path,
+            source_path,
             evidence.captured_at.isoformat(),
             evidence.configuration_snapshot_id,
             evidence.configuration_snapshot_digest,
