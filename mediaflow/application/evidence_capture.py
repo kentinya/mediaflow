@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from mediaflow.domain.manual_safety import redact_evidence_text
 from mediaflow.domain.media_evidence import (
     EVIDENCE_SECTION_NAMES,
     EvidenceSection,
@@ -19,10 +19,6 @@ from mediaflow.domain.organizer import (
 )
 from mediaflow.domain.recognition import RecognitionStatus
 
-_SECRET_PATTERN = re.compile(
-    r"(?i)(api[_-]?key|password|passwd|secret|token|authorization|cookie)"
-    r"(\s*[=:]\s*)[^\s,;\"']+"
-)
 _MAX_TEXT = 4096
 _MAX_ITEM_TEXT = 256
 _MAX_ERROR = 1000
@@ -595,8 +591,7 @@ def _collect_warnings(sections: Mapping[str, EvidenceSection]) -> tuple[str, ...
 def _bounded(value: Any, limit: int = _MAX_TEXT) -> str | None:
     if value is None:
         return None
-    text = str(value)
-    return text[:limit]
+    return redact_evidence_text(value, limit=limit)
 
 
 def _bounded_items(values: Any, limit: int = _MAX_ITEMS) -> list[str]:
@@ -616,6 +611,4 @@ def _was_truncated(values: Any) -> bool:
 def _safe_error(error: str | Exception | None) -> str | None:
     if error is None:
         return None
-    text = str(error)[:_MAX_ERROR]
-    text = _SECRET_PATTERN.sub(r"\1\2[redacted]", text)
-    return text
+    return redact_evidence_text(error, limit=_MAX_ERROR)

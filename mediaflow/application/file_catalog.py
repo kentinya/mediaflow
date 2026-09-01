@@ -6,7 +6,7 @@ from datetime import datetime
 
 from mediaflow.domain.file_catalog import FileReviewLink
 from mediaflow.domain.file_index import FileIndexRecord, FileIndexRepository
-from mediaflow.domain.media_evidence import PipelineEvidence
+from mediaflow.domain.media_evidence import PipelineEvidence, redact_pipeline_evidence
 from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.task_persistence import PersistentResultRecord, PersistentTaskRepository
 
@@ -181,7 +181,7 @@ class FileCatalogService:
             if callable(list_evidence):
                 evidence_values = list_evidence(record.storage_id, record.path, limit=33)
                 truncated["evidence"] = len(evidence_values) > 32
-                evidence = tuple(evidence_values[:32])
+                evidence = tuple(redact_pipeline_evidence(value) for value in evidence_values[:32])
             list_items = getattr(self._task_repository, "list_task_items_for_source", None)
             if callable(list_items):
                 item_values = list_items(record.storage_id, record.path, limit=33)

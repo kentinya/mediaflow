@@ -29,6 +29,7 @@ from mediaflow.domain.classification import (
     ClassificationStatus,
 )
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
+from mediaflow.domain.media_evidence import EvidenceSection
 from mediaflow.domain.metadata import (
     CandidateMatchResult,
     CandidateMatchStatus,
@@ -45,6 +46,8 @@ from mediaflow.domain.organizer import (
     Conflict,
     ConflictStrategy,
     ConflictType,
+    ExecutionResult,
+    ExecutionStatus,
     OrganizeOperationType,
     OrganizePlan,
     OrganizePolicy,
@@ -202,6 +205,196 @@ class _StaticStrategy:
 class FileMediaDetailTests(unittest.TestCase):
     def _database(self, directory: str) -> Path:
         return Path(directory, "runtime.sqlite3")
+
+    def test_pipeline_evidence_recursively_redacts_complete_credentials(self) -> None:
+        secret = "closure-review-secret"
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(self._database(directory)) as repository:
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                task = coordinator.create("preview", execute_authorized=False)
+                item = coordinator.begin_item(
+                    task.task_id, "source", "movies", "Movies/A.mkv", "Movies/A.mkv"
+                )
+                execution = ExecutionResult(
+                    ExecutionStatus.FAILED,
+                    PlanOperation.MOVE,
+                    "Movies/A.mkv",
+                    "Library/A.mkv",
+                    warnings=(
+                        f"Authorization: Basic {secret}",
+                        f"api_key={secret}",
+                        f"password: {secret}",
+                    ),
+                    errors=(
+                        f"Authorization: Bearer {secret}",
+                        f"token={secret}",
+                        f"Cookie: session={secret}",
+                    ),
+                )
+                evidence = build_pipeline_evidence(
+                    task,
+                    item,
+                    execution=execution,
+                    error=f"Authorization: Bearer {secret}",
+                )
+
+        document = evidence.document()
+        serialized = json.dumps(document, ensure_ascii=False)
+        self.assertNotIn(secret, serialized)
+        self.assertIn("[redacted]", serialized)
+        self.assertEqual(document["sections"]["operation"]["value"]["status"], "FAILED")
+        self.assertEqual(
+            document["sections"]["operation"]["value"]["errors"][0],
+            "Authorization: [redacted]",
+        )
+        self.assertTrue(document["sections"]["operation"]["available"])
+
+    def test_pipeline_evidence_write_boundaries_redact_before_sqlite(self) -> None:
+        secret = "closure-review-secret"
+        with tempfile.TemporaryDirectory() as directory:
+            database = self._database(directory)
+            with SQLiteTaskRepository(database) as repository:
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                task = coordinator.create("preview", execute_authorized=False)
+                item = coordinator.begin_item(
+                    task.task_id, "source", "movies", "Movies/A.mkv", "Movies/A.mkv"
+                )
+                unsafe = replace(
+                    build_pipeline_evidence(task, item, outcome="failed"),
+                    evidence_id="unsafe-append",
+                    error=f"Authorization: Bearer {secret}",
+                    warnings=(f"token={secret}",),
+                    sections={
+                        "operation": EvidenceSection(
+                            True,
+                            {"errors": [f"Authorization: Basic {secret}"], "status": "FAILED"},
+                            ({"reason": f"password={secret}"},),
+                            (f"Cookie: session={secret}",),
+                            unavailable_reason=f"secret={secret}",
+                        )
+                    },
+                )
+                repository.append_evidence(unsafe)
+                completed = replace(
+                    item, status=TaskItemStatus.FAILED, stage="failed", error="safe"
+                )
+                result = PersistentResultRecord(
+                    "result-secret-test",
+                    task.task_id,
+                    item.item_id,
+                    "source",
+                    "Movies/A.mkv",
+                    None,
+                    None,
+                    "C",
+                    None,
+                    None,
+                    "C",
+                    "A",
+                    "A",
+                    "A",
+                    "move",
+                    "failed",
+                    NOW,
+                    error="safe",
+                )
+                repository.complete_item_with_evidence(
+                    completed,
+                    result,
+                    replace(unsafe, evidence_id="unsafe-completion"),
+                )
+            self.assertNotIn(secret.encode(), database.read_bytes())
+            with SQLiteTaskRepository(database) as reopened:
+                stored = reopened.list_evidence_for_item(item.item_id)
+                self.assertEqual(len(stored), 2)
+                serialized = json.dumps([value.document() for value in stored], ensure_ascii=False)
+                self.assertNotIn(secret, serialized)
+                self.assertIn("[redacted]", serialized)
+
+    def test_historical_unsafe_evidence_is_redacted_on_read_without_rewrite(self) -> None:
+        secret = "closure-review-secret"
+        with tempfile.TemporaryDirectory() as directory:
+            database = self._database(directory)
+            with SQLiteFileIndexRepository(database) as index:
+                index.batch_upsert((file_record("one", "source", "movies", "Movies/A.mkv"),))
+            with SQLiteTaskRepository(database) as repository:
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                task = coordinator.create("preview", execute_authorized=False)
+                item = coordinator.begin_item(
+                    task.task_id, "source", "movies", "Movies/A.mkv", "Movies/A.mkv"
+                )
+                raw_document = build_pipeline_evidence(task, item, outcome="failed").document()
+                raw_document["error"] = f"Authorization: Bearer {secret}"
+                raw_document["warnings"] = [f"token={secret}"]
+                raw_document["sections"]["operation"] = {
+                    "available": True,
+                    "value": {
+                        "status": "FAILED",
+                        "errors": [f"Authorization: Basic {secret}"],
+                    },
+                    "items": [{"reason": f"password={secret}"}],
+                    "warnings": [f"Cookie: session={secret}"],
+                    "truncated": False,
+                    "unavailableReason": f"secret={secret}",
+                }
+                raw_json = json.dumps(raw_document, ensure_ascii=False, sort_keys=True)
+                repository._connection.execute(
+                    """INSERT INTO pipeline_evidence (
+                        evidence_id, task_id, item_id, attempts, source_storage_id, source_path,
+                        captured_at, configuration_snapshot_id, configuration_snapshot_digest,
+                        outcome, document
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        "historical-unsafe",
+                        task.task_id,
+                        item.item_id,
+                        item.attempts,
+                        "source",
+                        "Movies/A.mkv",
+                        NOW.isoformat(),
+                        None,
+                        None,
+                        "failed",
+                        raw_json,
+                    ),
+                )
+                repository._connection.commit()
+            with (
+                SQLiteFileIndexRepository(database) as index,
+                SQLiteTaskRepository(database) as repository,
+            ):
+                before = repository._connection.execute(
+                    "SELECT document FROM pipeline_evidence WHERE evidence_id=?",
+                    ("historical-unsafe",),
+                ).fetchone()["document"]
+                service = FileCatalogService(
+                    index, ("movies",), ("source",), task_repository=repository
+                )
+                detail = service.detail("one")
+                application_document = json.dumps(detail.evidence[0].document(), ensure_ascii=False)
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal(
+                            "viewer", "viewer-token", frozenset({ApiPermission.READ})
+                        ),
+                    ),
+                    file_catalog=service,
+                )
+                status, response = api_request(api, "/api/v1/files/one")
+                after = repository._connection.execute(
+                    "SELECT document FROM pipeline_evidence WHERE evidence_id=?",
+                    ("historical-unsafe",),
+                ).fetchone()["document"]
+            response_text = json.dumps(response, ensure_ascii=False)
+            self.assertEqual(status, 200)
+            self.assertNotIn(secret, application_document)
+            self.assertNotIn(secret, response_text)
+            self.assertIn("[redacted]", response_text)
+            self.assertEqual(before, raw_json)
+            self.assertEqual(after, raw_json)
+            self.assertIn("JSON.stringify(item)", APP_JS.decode())
 
     def test_waiting_boundaries_publish_evidence_and_state_atomically(self) -> None:
         """Each production waiting boundary must roll back all rows on evidence failure."""

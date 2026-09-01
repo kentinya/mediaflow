@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from mediaflow.domain.manual_safety import redact_evidence_value
+
 EVIDENCE_SECTION_NAMES = (
     "parse",
     "recognition",
@@ -39,7 +41,7 @@ class EvidenceSection:
     unavailable_reason: str | None = None
 
     def document(self) -> dict[str, Any]:
-        return {
+        document = {
             "available": self.available,
             "value": self.value,
             "items": [dict(item) for item in self.items],
@@ -47,6 +49,7 @@ class EvidenceSection:
             "truncated": self.truncated,
             "unavailableReason": self.unavailable_reason,
         }
+        return redact_evidence_value(document)  # type: ignore[return-value]
 
 
 def unavailable_section(reason: str = "legacy evidence was not captured") -> EvidenceSection:
@@ -76,7 +79,7 @@ class PipelineEvidence:
         return self.sections.get(name, unavailable_section())
 
     def document(self) -> dict[str, Any]:
-        return {
+        document = {
             "evidenceId": self.evidence_id,
             "taskId": self.task_id,
             "itemId": self.item_id,
@@ -92,6 +95,7 @@ class PipelineEvidence:
             "error": self.error,
             "truncated": self.truncated,
         }
+        return redact_evidence_value(document)  # type: ignore[return-value]
 
 
 def evidence_from_document(
@@ -100,6 +104,8 @@ def evidence_from_document(
     """Rebuild an immutable evidence record from its bounded JSON document."""
 
     from datetime import datetime
+
+    document = redact_evidence_value(document)  # type: ignore[assignment]
 
     sections = {
         name: EvidenceSection(
@@ -129,3 +135,9 @@ def evidence_from_document(
         error=document.get("error"),
         truncated=bool(document.get("truncated")),
     )
+
+
+def redact_pipeline_evidence(evidence: PipelineEvidence) -> PipelineEvidence:
+    """Return a shape-preserving, secret-free copy of pipeline evidence."""
+
+    return evidence_from_document(evidence.document())

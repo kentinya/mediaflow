@@ -77,7 +77,11 @@ from mediaflow.domain.manual_organize_preview import (
     ManualPreviewUnavailable,
 )
 from mediaflow.domain.manual_safety import redact_manual_text, redact_manual_value
-from mediaflow.domain.media_evidence import PipelineEvidence, evidence_from_document
+from mediaflow.domain.media_evidence import (
+    PipelineEvidence,
+    evidence_from_document,
+    redact_pipeline_evidence,
+)
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionBatchResolveRequest,
     MetadataCorrectionContinuation,
@@ -7264,6 +7268,7 @@ class SQLiteTaskRepository:
 
     @staticmethod
     def _evidence_values(evidence: PipelineEvidence) -> tuple[object, ...]:
+        evidence = redact_pipeline_evidence(evidence)
         return (
             evidence.evidence_id,
             evidence.task_id,
