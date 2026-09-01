@@ -2,10 +2,10 @@
 
 ```text
 Status: NO ACTIVE IMPLEMENTATION TASK
-Parent Slice: 24 — Files / Media Detail and Manual Organize
-Last Task: 24.7 — Secret-Free File/Media Result History
-Last Task Decision: PASS — B review completed 2026-09-01
-Implementation Head: d2e399803078317f2092d895eae627327998de2f
+Parent Slice: 25 — Scheduled Automation and Unattended Organization
+Slice Status: ACTIVE
+Slice Base: 2cee7cc756b90618f14d5d7b112f974fb445a580
+Implementation Head: NOT SET
 ```
 
-Next Action: A SELECTS THE NEXT LARGE SLICE
+Next Action: B PLANS FIRST TASK
