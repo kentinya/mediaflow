@@ -782,6 +782,130 @@ class FileMediaDetailTests(unittest.TestCase):
                 rendered = json.dumps(detail.evidence[0].document())
                 self.assertNotIn("do-not-persist", rendered)
 
+    def test_result_writes_and_file_detail_projection_are_secret_free(self) -> None:
+        secret = "result-history-secret"
+
+        def unsafe_result(result_id: str, task_id: str, item_id: str) -> PersistentResultRecord:
+            return PersistentResultRecord(
+                result_id,
+                task_id,
+                item_id,
+                "source",
+                "Movies/A.mkv",
+                "target",
+                "Movies/A.mkv",
+                "C",
+                "tmdb",
+                "129",
+                "C",
+                "A",
+                "A",
+                "A",
+                "move",
+                "failed",
+                NOW,
+                title=f"password={secret}",
+                error=f"Authorization: Bearer {secret}",
+                completed_operations=(f"Authorization: Basic {secret}",),
+                uncertain_effects=(f"token={secret}",),
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = self._database(directory)
+            with SQLiteTaskRepository(database) as repository:
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                task = coordinator.create("preview", execute_authorized=False)
+                item = coordinator.begin_item(
+                    task.task_id, "source", "movies", "Movies/A.mkv", "Movies/A.mkv"
+                )
+                repository.append_result(unsafe_result("direct", task.task_id, item.item_id))
+
+                atomic_item = coordinator.begin_item(
+                    task.task_id, "source", "movies", "Movies/A-atomic.mkv", "Movies/A-atomic.mkv"
+                )
+                atomic_result = unsafe_result("atomic", task.task_id, atomic_item.item_id)
+                repository.complete_item_with_evidence(
+                    replace(atomic_item, status=TaskItemStatus.FAILED, stage="failed"),
+                    atomic_result,
+                    None,
+                )
+                raw = repository._connection.execute(
+                    "SELECT title, error, completed_operations, uncertain_effects "
+                    "FROM task_results ORDER BY result_id"
+                ).fetchall()
+                self.assertNotIn(secret.encode(), database.read_bytes())
+                self.assertEqual(raw[0]["error"], "Authorization: [redacted]")
+                self.assertEqual(
+                    json.loads(raw[0]["completed_operations"]), ["Authorization: [redacted]"]
+                )
+                self.assertEqual(json.loads(raw[0]["uncertain_effects"]), ["token=[redacted]"])
+
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE task_results SET title=?, error=?, completed_operations=?, "
+                    "uncertain_effects=?, destination_path=? WHERE result_id=?",
+                    (
+                        f"password={secret}",
+                        f"Authorization: Bearer {secret}",
+                        json.dumps([f"Authorization: Basic {secret}"]),
+                        json.dumps([f"cookie={secret}"]),
+                        f"Movies/password={secret}/A.mkv",
+                        "direct",
+                    ),
+                )
+                connection.commit()
+                historical_before = connection.execute(
+                    "SELECT title, error, completed_operations, uncertain_effects, "
+                    "destination_path "
+                    "FROM task_results WHERE result_id=?",
+                    ("direct",),
+                ).fetchone()
+
+            with SQLiteTaskRepository(database) as reopened:
+                persisted = reopened.list_results(task.task_id)
+                self.assertEqual(persisted[0].error, "Authorization: [redacted]")
+                self.assertEqual(persisted[0].completed_operations, ("Authorization: [redacted]",))
+                self.assertEqual(persisted[0].uncertain_effects, ("token=[redacted]",))
+
+                with SQLiteFileIndexRepository(database) as index:
+                    index.batch_upsert((file_record("one", "source", "movies", "Movies/A.mkv"),))
+                    catalog = FileCatalogService(
+                        index, ("movies",), ("source",), task_repository=reopened
+                    )
+                    detail = catalog.detail("one")
+                    self.assertEqual(detail.latest_result.error, "Authorization: [redacted]")
+                    detail_text = json.dumps(
+                        [detail.latest_result, *detail.results], default=str, ensure_ascii=False
+                    )
+                    self.assertNotIn(secret, detail_text)
+
+                    api = MediaFlowApi(
+                        reopened,
+                        None,
+                        principals=(
+                            ResolvedApiPrincipal(
+                                "viewer", "viewer-token", frozenset({ApiPermission.READ})
+                            ),
+                        ),
+                        file_catalog=catalog,
+                    )
+                    status, response = api_request(api, "/api/v1/files/one")
+                    response_text = json.dumps(response, ensure_ascii=False)
+                    self.assertEqual(status, 200)
+                    self.assertNotIn(secret, response_text)
+                    self.assertEqual(response["latestResult"]["error"], "Authorization: [redacted]")
+                    self.assertEqual(
+                        response["results"][0]["completedOperations"], ["Authorization: [redacted]"]
+                    )
+                    self.assertIn("completedOperations", APP_JS.decode())
+                historical_after = reopened._connection.execute(
+                    "SELECT title, error, completed_operations, uncertain_effects, "
+                    "destination_path "
+                    "FROM task_results WHERE result_id=?",
+                    ("direct",),
+                ).fetchone()
+                self.assertEqual(tuple(historical_after), tuple(historical_before))
+
     def test_legacy_detail_marks_unavailable_and_never_reconstructs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = self._database(directory)

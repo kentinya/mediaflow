@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
@@ -16,6 +16,7 @@ from mediaflow.domain.manual_organize_preview import (
     ManualOrganizePreview,
     ManualPreviewItem,
 )
+from mediaflow.domain.manual_safety import redact_evidence_text, redact_evidence_value
 from mediaflow.domain.recovery import RecoveryRequest
 
 
@@ -129,6 +130,40 @@ class PersistentResultRecord:
     # deriving effect certainty from status or the historical operation list.
     effect_certainty: str = "unknown"
     uncertain_effects: tuple[str, ...] = ()
+
+
+def redact_persistent_result(
+    result: PersistentResultRecord, *, redact_identity: bool = False
+) -> PersistentResultRecord:
+    """Return a secret-free Result while preserving its identity fields.
+
+    Source and destination paths are also used as FileIndex and plan lookup
+    keys, so they remain exact by default. Display projections can opt into
+    redacting those identity strings without changing the persisted lookup
+    values or execution behavior.
+    """
+
+    return replace(
+        result,
+        source_path=redact_evidence_text(result.source_path)
+        if redact_identity
+        else result.source_path,
+        destination_path=(
+            redact_evidence_text(result.destination_path)
+            if redact_identity and result.destination_path is not None
+            else result.destination_path
+        ),
+        title=redact_evidence_text(result.title) if result.title is not None else None,
+        error=redact_evidence_text(result.error) if result.error is not None else None,
+        completed_operations=tuple(
+            redact_evidence_text(value) if isinstance(value, str) else redact_evidence_value(value)
+            for value in result.completed_operations
+        ),
+        uncertain_effects=tuple(
+            redact_evidence_text(value) if isinstance(value, str) else redact_evidence_value(value)
+            for value in result.uncertain_effects
+        ),
+    )
 
 
 class ConfirmationStatus(StrEnum):

@@ -7,6 +7,7 @@ import json
 from collections.abc import Callable
 
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
+from mediaflow.domain.manual_safety import redact_evidence_text
 from mediaflow.domain.processing_checkpoint import (
     CheckpointAction,
     CheckpointAudit,
@@ -498,6 +499,7 @@ def _safe_path(value) -> str | None:
     text = _bounded(value)
     if text is None:
         return None
+    text = redact_evidence_text(text)
     if text.startswith(("/", "\\")) or "\\" in text or "\x00" in text:
         return "[absolute path redacted]"
     return text
@@ -507,6 +509,7 @@ def _safe_effect(value) -> str:
     text = _bounded(value, 128)
     if text is None:
         return "[unavailable]"
+    text = redact_evidence_text(text)
     if "/" in text or "\\" in text or "\x00" in text:
         return "[path redacted]"
     return text
