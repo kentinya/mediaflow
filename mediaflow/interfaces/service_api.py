@@ -113,6 +113,7 @@ class MediaFlowApi:
         stale_job_age_seconds: int = 3600,
         system_status=None,
         file_catalog: FileCatalogService | None = None,
+        file_index=None,
         metadata_policies=(),
         configuration_service: ManagedConfigurationService | None = None,
         configuration_snapshot_id: str | None = None,
@@ -196,6 +197,7 @@ class MediaFlowApi:
                 repository,
                 configuration_service,
                 metadata_provider_registry_factory=metadata_provider_registry_factory,
+                file_index=file_index,
             )
         self._recovery_admission = RecoveryAdmissionService(
             repository,

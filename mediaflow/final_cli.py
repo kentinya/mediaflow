@@ -1416,6 +1416,7 @@ def final_main(
                         else build_configuration_snapshot(configuration)
                     ),
                     file_catalog=file_catalog,
+                    file_index=file_index,
                     metadata_policies=getattr(
                         getattr(configuration, "strategy", None), "metadata_policies", ()
                     ),
