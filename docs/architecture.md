@@ -2014,7 +2014,10 @@ capability verdict and destructive-operation authority. It creates the exact exi
 the normalized source, destination and attachment path locks. A failed or concurrent admission creates
 no execution Task and does not mutate media Storage. The existing `FileOperationLockRepository` is
 also used as the execution fence; locks are released only after the item Result and effect evidence
-are durable.
+are durable. If the process stops after admission but before the running state is published, the
+persisted `ADMITTED` execution exposes an explicit reconciliation action. Reconciliation records a
+pre-mutation interruption or an investigation-only uncertain outcome in one transaction and releases
+the complete Task fence; it never reuses the consumed authority.
 
 For an admitted item, `ManualOrganizeExecutionService` reloads the pinned runtime and exact persisted
 plan, revalidates current Storage capability and destination/conflict state, and invokes
@@ -2027,10 +2030,13 @@ A policy ownership are copied into Result evidence without changing the recognit
 Each item gets its own durable Result, completed-operation/effect evidence, status, error, effect
 certainty and TaskItem checkpoint. Known successful effects are recorded as verified; pre-mutation
 failure remains eligible only for the existing safe checkpoint recovery when its pinned snapshot is
-resolvable, while partial/unknown mutation is investigation-only. A process restart reloads the
-authority, execution, Task/TaskItem, Result, effect and checkpoint projection; it never replays an
-admitted mutation or silently rebuilds the plan. API and Operator Web use this same service and
-projection, including the separate manual-execution permission and two explicit confirmation steps.
+resolvable, while partial/unknown mutation is investigation-only. If OrganizerExecutor has already
+returned but Result publication is interrupted, the recovery handoff persists the known completed
+operations with `UNKNOWN` certainty before releasing the fence. A process restart reloads the
+authority, execution, Task/TaskItem, Result, effect and checkpoint projection; it can explicitly
+reconcile an `ADMITTED`/`RUNNING` execution, but it never replays an admitted mutation or silently
+rebuilds the plan. API and Operator Web use this same service and projection, including the separate
+manual-execution permission and two explicit confirmation steps.
 
 Scheduled unattended execution, automatic crash replay, universal compensation, remote setup and
 provider switching remain outside this boundary.

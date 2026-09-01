@@ -696,7 +696,10 @@ checkpoint retry when the pinned snapshot is still resolvable. Partial or uncert
 the known effects and provides only the checkpoint's investigation/recovery action; it does not
 pretend that retry is safe and does not automatically replay. Concurrent, stale, blocked,
 unsupported-capability, unresolved-conflict or insufficient-authority requests fail before
-OrganizerExecutor/Storage mutation and identify the durable next action.
+OrganizerExecutor/Storage mutation and identify the durable next action. If a process interruption
+leaves an admitted or running exact execution, the execution detail exposes an explicit
+reconciliation action: it publishes the pre-mutation or uncertain checkpoint, releases the execution
+fence, and never replays the consumed authority or any uncertain mutation.
 
 API and Operator Web call the same admission and execution service, RBAC, confirmations and bounded
 projection. Opening or reloading an authorization or execution record is read-only: it consumes no

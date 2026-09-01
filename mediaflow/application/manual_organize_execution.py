@@ -24,6 +24,7 @@ from mediaflow.domain.manual_execution import (
     MAX_MANUAL_EXECUTION_ITEMS,
     ManualExecution,
     ManualExecutionAuthorization,
+    ManualExecutionAuthorizationAudit,
     ManualExecutionAuthorizationStatus,
     ManualExecutionEffect,
     ManualExecutionError,
@@ -355,6 +356,7 @@ class ManualOrganizeExecutionService:
             execution_item = self._execution_item(authority, item)
             prepared[item.item_id] = (execution_item, plan, locks)
             del record
+        plan_by_item = {item_id: value[1] for item_id, value in prepared.items()}
         execution_id = str(uuid4())
         task_id = str(uuid4())
         now = self._clock()
@@ -387,7 +389,10 @@ class ManualOrganizeExecutionService:
             ),
             execution_items,
             ManualExecutionStatus.ADMITTED,
-            "exact admission accepted; execution is starting",
+            (
+                "admission committed; reconcile this execution before any mutation if startup "
+                "is interrupted"
+            ),
             allow_overwrite=authority.allow_overwrite,
             allow_source_cleanup=authority.allow_source_cleanup,
             created_at=now,
@@ -401,19 +406,28 @@ class ManualOrganizeExecutionService:
                 status=503,
             )
         admitted = admit(authority, execution, execution_items, locks, now)
-        if not self._locks_owned(admitted.task_id, locks):
-            raise ManualExecutionError(
-                "the exact Storage fence was lost before execution",
-                code="concurrent_execution",
-                next_action="inspect the admitted Task and request a fresh Preview",
+        try:
+            if not self._locks_owned(admitted.task_id, locks):
+                raise ManualExecutionError(
+                    "the exact Storage fence was lost before execution",
+                    code="concurrent_execution",
+                    next_action="inspect the admitted Task and request a fresh Preview",
+                )
+            execution = replace(
+                admitted,
+                status=ManualExecutionStatus.RUNNING,
+                next_action="inspect each independent execution item after it completes",
+                updated_at=self._clock(),
             )
-        execution = replace(
-            admitted,
-            status=ManualExecutionStatus.RUNNING,
-            next_action="inspect each independent execution item after it completes",
-            updated_at=self._clock(),
-        )
-        self._repository.update_manual_execution(execution)
+            self._repository.update_manual_execution(execution)
+        except Exception:
+            self._reconcile_unfinished(
+                admitted,
+                plan_by_item,
+                audit_action="admission_interrupted",
+                audit_details={"boundary": "before_organizer_executor"},
+            )
+            raise
         for item in admitted.items:
             execution_item, plan, item_locks = prepared[item.item_id]
             execution_item = replace(
@@ -425,23 +439,33 @@ class ManualOrganizeExecutionService:
                 stage="organizing",
                 updated_at=self._clock(),
             )
-            task_item = self._repository.get_item(item.task_item_id)
-            task = self._repository.get_task(admitted.task_id)
-            if task_item is None or task is None:
-                raise ManualExecutionError(
-                    "admitted Task scope could not be reloaded",
-                    code="execution_unavailable",
-                    status=503,
+            try:
+                task_item = self._repository.get_item(item.task_item_id)
+                task = self._repository.get_task(admitted.task_id)
+                if task_item is None or task is None:
+                    raise ManualExecutionError(
+                        "admitted Task scope could not be reloaded",
+                        code="execution_unavailable",
+                        status=503,
+                    )
+                task_item = replace(
+                    task_item,
+                    status=TaskItemStatus.PROCESSING,
+                    stage="organizing",
+                    attempts=task_item.attempts + 1,
+                    updated_at=execution_item.updated_at,
                 )
-            task_item = replace(
-                task_item,
-                status=TaskItemStatus.PROCESSING,
-                stage="organizing",
-                attempts=task_item.attempts + 1,
-                updated_at=execution_item.updated_at,
-            )
-            self._repository.upsert_item(task_item)
-            self._repository.update_manual_execution_item(execution_item)
+                self._repository.upsert_item(task_item)
+                self._repository.update_manual_execution_item(execution_item)
+            except Exception:
+                self._reconcile_unfinished(
+                    execution,
+                    plan_by_item,
+                    storages=storages,
+                    audit_action="execution_start_interrupted",
+                    audit_details={"boundary": "before_organizer_executor"},
+                )
+                raise
             result = (
                 self._execute_plan(plan, storages)
                 if self._locks_owned(admitted.task_id, item_locks)
@@ -493,15 +517,34 @@ class ManualOrganizeExecutionService:
                 updated_at=terminal_item.updated_at,
             )
             task = self._task_after_item(task, terminal_task_item, current_items, execution)
-            self._repository.complete_manual_execution_item(
-                execution,
-                terminal_item,
-                terminal_task_item,
-                task,
-                result_record,
-                effects,
-                item_locks,
-            )
+            try:
+                self._repository.complete_manual_execution_item(
+                    execution,
+                    terminal_item,
+                    terminal_task_item,
+                    task,
+                    result_record,
+                    effects,
+                    item_locks,
+                )
+            except Exception:
+                recovery_execution = replace(
+                    execution,
+                    items=tuple(
+                        execution_item if value.item_id == terminal_item.item_id else value
+                        for value in execution.items
+                    ),
+                )
+                uncertain_result = self._uncertain_publication_result(result)
+                self._reconcile_unfinished(
+                    recovery_execution,
+                    plan_by_item,
+                    uncertain_results={terminal_item.item_id: uncertain_result},
+                    storages=storages,
+                    audit_action="result_publication_interrupted",
+                    audit_details={"boundary": "after_organizer_executor"},
+                )
+                raise
             loaded = self._repository.get_manual_execution(admitted.execution_id)
             if loaded is None:
                 raise ManualExecutionError(
@@ -532,6 +575,66 @@ class ManualOrganizeExecutionService:
         return value
 
     get_execution = get
+
+    def reconcile(
+        self,
+        execution_id: str,
+        *,
+        actor: str,
+        permission: str = "execute_manual_organize",
+        confirmation: bool,
+    ) -> ManualExecution:
+        """Close an interrupted exact execution without invoking OrganizerExecutor.
+
+        ``ADMITTED`` means no item has published a running boundary.  ``RUNNING`` means the
+        executor may have crossed the Storage mutation boundary.  Both states therefore require
+        an explicit, authenticated reconciliation action; this method never retries or rebuilds
+        the reviewed plan.
+        """
+
+        actor = self._actor(actor)
+        permission = self._permission(permission)
+        self._require_confirmation(confirmation)
+        execution = self.get(execution_id)
+        authority = self.get_authorization(execution.authorization_id)
+        if authority.actor != actor or execution.actor != actor:
+            raise ManualExecutionError(
+                "execution actor does not match the durable execution subject",
+                code="authorization_actor_mismatch",
+                status=403,
+            )
+        if permission != authority.permission:
+            raise ManualExecutionError(
+                "current permission does not match the durable execution subject",
+                code="authorization_permission_mismatch",
+                status=403,
+            )
+        if execution.status in {
+            ManualExecutionStatus.COMPLETED,
+            ManualExecutionStatus.PARTIAL_SUCCESS,
+            ManualExecutionStatus.FAILED,
+            ManualExecutionStatus.CANCELLED,
+        }:
+            return execution
+        if execution.status not in {
+            ManualExecutionStatus.ADMITTED,
+            ManualExecutionStatus.RUNNING,
+        }:
+            raise ManualExecutionError(
+                "manual execution is not in an interruptible state",
+                code="execution_state_invalid",
+                next_action="inspect the durable execution and Task checkpoint",
+            )
+        plan_by_item = {item.item_id: self._recovery_plan(item) for item in execution.items}
+        return self._reconcile_unfinished(
+            execution,
+            plan_by_item,
+            storages=self._recovery_storages(execution, plan_by_item),
+            audit_action="manual_execution_reconciled",
+            audit_details={"boundary": "explicit_restart_reconciliation"},
+        )
+
+    reconcile_execution = reconcile
 
     def document(self, execution_id: str) -> dict[str, object]:
         value = self.get(execution_id)
@@ -1341,7 +1444,360 @@ class ManualOrganizeExecutionService:
             preview_item.plan or {},
             created_at=authority.created_at,
             updated_at=authority.created_at,
+            next_action=(
+                "admission committed; reconcile this execution before any mutation if startup "
+                "is interrupted"
+            ),
         )
+
+    def _recovery_plan(self, item: ManualExecutionItem) -> OrganizePlan:
+        """Reconstruct only the persisted exact plan needed to record an interruption."""
+
+        document = item.plan
+        execution = document.get("executionPlan")
+        policies = document.get("policies")
+        if not isinstance(execution, dict) or not isinstance(policies, dict):
+            raise ManualExecutionError(
+                "the persisted exact plan cannot be reconciled safely",
+                code="plan_unavailable",
+                status=503,
+                next_action="inspect the durable execution and request a fresh Preview",
+            )
+        values = {
+            "sourceStorageId": execution.get("sourceStorageId"),
+            "targetStorageId": execution.get("targetStorageId"),
+            "sourcePath": execution.get("sourcePath"),
+            "targetPath": execution.get("targetPath"),
+            "planId": execution.get("planId") or document.get("planId"),
+        }
+        if any(not isinstance(value, str) or not value.strip() for value in values.values()):
+            raise ManualExecutionError(
+                "the persisted exact plan is incomplete",
+                code="plan_unavailable",
+                status=503,
+                next_action="inspect the durable execution and request a fresh Preview",
+            )
+        try:
+            operation = PlanOperation(execution["operation"])
+            source_location = StorageLocation(values["sourceStorageId"], values["sourcePath"])
+            destination_location = StorageLocation(values["targetStorageId"], values["targetPath"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ManualExecutionError(
+                "the persisted exact plan operation or location is invalid",
+                code="plan_unavailable",
+                status=503,
+                next_action="inspect the durable execution and request a fresh Preview",
+            ) from error
+        link_operation = None
+        if execution.get("linkOperation") is not None:
+            try:
+                link_operation = OrganizeOperationType(execution["linkOperation"])
+            except ValueError as error:
+                raise ManualExecutionError(
+                    "the persisted exact link operation is invalid",
+                    code="plan_unavailable",
+                    status=503,
+                ) from error
+        attachments: list[AttachmentPlan] = []
+        for value in execution.get("attachments", ()):
+            if not isinstance(value, dict):
+                continue
+            try:
+                attachments.append(
+                    AttachmentPlan(
+                        StorageLocation(value["source"]["storageId"], value["source"]["path"]),
+                        StorageLocation(
+                            value["destination"]["storageId"], value["destination"]["path"]
+                        ),
+                        AttachmentType(value["type"]),
+                        operation,
+                        str(value.get("suffix", "")),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                # Admission already validated this document.  If a legacy row is malformed,
+                # retain the primary plan and the investigation-only handoff rather than guess.
+                continue
+        identity = None
+        try:
+            identity = self._media_identity(
+                document.get("mediaIdentity"), item.choice.recognition_type_id
+            )
+        except ManualExecutionError:
+            pass
+        return OrganizePlan(
+            source_storage_id=values["sourceStorageId"],
+            target_storage_id=values["targetStorageId"],
+            source=values["sourcePath"],
+            target=values["targetPath"],
+            recognition_type_id=str(
+                document.get("recognitionType") or item.choice.recognition_type_id
+            ),
+            naming_policy_id=str(policies.get("namingPolicyId") or item.choice.naming_policy_id),
+            classification_policy_id=str(
+                policies.get("classificationPolicyId") or item.choice.classification_policy_id
+            ),
+            organize_policy_id=str(
+                policies.get("organizePolicyId") or item.choice.organize_policy_id
+            ),
+            operation=operation,
+            media_identity=identity,
+            status=PlanStatus.NOOP if operation is PlanOperation.SKIP else PlanStatus.READY,
+            plan_id=values["planId"],
+            link_operation=link_operation,
+            source_location=source_location,
+            destination_location=destination_location,
+            overwrite_authorized=bool(execution.get("overwriteAuthorized", False)),
+            attachment_plans=tuple(attachments),
+        )
+
+    def _recovery_storages(
+        self, execution: ManualExecution, plans: Mapping[str, OrganizePlan]
+    ) -> dict[str, object]:
+        values = dict(self._storages)
+        # The persisted plan is the only input here; Storage is read only and unavailable Storage
+        # must not prevent the durable investigation handoff.
+        ids = {
+            storage_id
+            for plan in plans.values()
+            for storage_id in {
+                plan.source_storage_id,
+                plan.target_storage_id,
+                *(value.source.storage_id for value in plan.attachment_plans),
+                *(value.destination.storage_id for value in plan.attachment_plans),
+            }
+        }
+        try:
+            runtime = self._load_runtime(
+                execution.configuration_snapshot_id,
+                execution.configuration_snapshot_digest,
+            )
+            values.update(self._create_storages(runtime, ids))
+        except Exception:
+            pass
+        return values
+
+    @staticmethod
+    def _observed_completed_operations(plan: OrganizePlan, storages) -> tuple[str, ...]:
+        if plan.operation in {PlanOperation.NOOP, PlanOperation.SKIP}:
+            return ()
+        try:
+            source = storages[plan.source_storage_id]
+            target = storages[plan.target_storage_id]
+            source_path = plan.source_location.path if plan.source_location else plan.source
+            target_path = (
+                plan.destination_location.path if plan.destination_location else plan.target
+            )
+            if not target.exists(target_path):
+                return ()
+            if plan.operation is PlanOperation.MOVE and source.exists(source_path):
+                return ()
+            return (plan.operation.value,)
+        except Exception:
+            return ()
+
+    @staticmethod
+    def _interrupted_result(
+        plan: OrganizePlan, *, before_executor: bool, storages
+    ) -> ExecutionResult:
+        if before_executor:
+            return ExecutionResult(
+                ExecutionStatus.FAILED,
+                plan.operation,
+                plan.source,
+                plan.target,
+                plan_id=plan.plan_id,
+                resolved_destination=plan.target,
+                errors=(
+                    "manual execution was interrupted before OrganizerExecutor started; "
+                    "Storage was not mutated",
+                ),
+                effect_certainty=ExecutionEffectCertainty.NONE,
+            )
+        return ExecutionResult(
+            ExecutionStatus.PARTIAL,
+            plan.operation,
+            plan.source,
+            plan.target,
+            completed_operations=ManualOrganizeExecutionService._observed_completed_operations(
+                plan, storages
+            ),
+            plan_id=plan.plan_id,
+            resolved_destination=plan.target,
+            errors=(
+                "manual execution was interrupted before its durable outcome was published; "
+                "Storage state requires investigation",
+            ),
+            effect_certainty=ExecutionEffectCertainty.UNKNOWN,
+            uncertain_effects=("process_interruption",),
+        )
+
+    @staticmethod
+    def _uncertain_publication_result(result: ExecutionResult) -> ExecutionResult:
+        uncertain_effects = tuple(dict.fromkeys((*result.uncertain_effects, "result_persistence")))
+        errors = tuple(
+            dict.fromkeys(
+                (
+                    *result.errors,
+                    "durable result publication failed after OrganizerExecutor; Storage state "
+                    "requires investigation",
+                )
+            )
+        )
+        return replace(
+            result,
+            status=ExecutionStatus.PARTIAL,
+            errors=errors,
+            effect_certainty=ExecutionEffectCertainty.UNKNOWN,
+            uncertain_effects=uncertain_effects,
+        )
+
+    def _reconcile_unfinished(
+        self,
+        execution: ManualExecution,
+        plan_by_item: Mapping[str, OrganizePlan],
+        *,
+        uncertain_results: Mapping[str, ExecutionResult] | None = None,
+        storages: Mapping[str, object] | None = None,
+        audit_action: str,
+        audit_details: dict[str, object],
+    ) -> ManualExecution:
+        reconciler = getattr(self._repository, "reconcile_manual_execution", None)
+        if not callable(reconciler):
+            raise ManualExecutionError(
+                "manual execution reconciliation persistence is unavailable",
+                code="execution_unavailable",
+                status=503,
+                next_action=(
+                    "inspect the durable Task and release the execution through an administrator"
+                ),
+            )
+        task = self._repository.get_task(execution.task_id)
+        if task is None:
+            raise ManualExecutionError(
+                "interrupted manual execution Task could not be reloaded",
+                code="execution_unavailable",
+                status=503,
+            )
+        storage_values = storages or {}
+        overrides = uncertain_results or {}
+        final_items: list[ManualExecutionItem] = []
+        changed_task_items = []
+        results = []
+        effects = []
+        for item in execution.items:
+            if item.status in {
+                ManualExecutionItemStatus.SUCCESS,
+                ManualExecutionItemStatus.SKIPPED,
+                ManualExecutionItemStatus.FAILED,
+                ManualExecutionItemStatus.PARTIAL,
+                ManualExecutionItemStatus.CANCELLED,
+            }:
+                final_items.append(item)
+                continue
+            plan = plan_by_item.get(item.item_id)
+            if plan is None:
+                raise ManualExecutionError(
+                    "interrupted manual execution plan could not be reloaded",
+                    code="plan_unavailable",
+                    status=503,
+                )
+            result = overrides.get(item.item_id)
+            if result is None:
+                result = self._interrupted_result(
+                    plan,
+                    before_executor=item.status is ManualExecutionItemStatus.ADMITTED,
+                    storages=storage_values,
+                )
+            result_record = self._result_record(execution, item, plan, result)
+            item_effects = self._effects(item, plan, result)
+            terminal_item = replace(
+                item,
+                status=self._item_status(result.status),
+                stage=(
+                    "admission_interrupted"
+                    if item.status is ManualExecutionItemStatus.ADMITTED
+                    and result.effect_certainty is ExecutionEffectCertainty.NONE
+                    else self._item_stage(result)
+                ),
+                result_id=result_record.result_id,
+                effect_certainty=result.effect_certainty.value,
+                completed_operations=result.completed_operations,
+                uncertain_effects=result.uncertain_effects,
+                error=self._result_error(result),
+                next_action=self._next_action(result),
+                effects=item_effects,
+                updated_at=self._clock(),
+            )
+            task_item = self._repository.get_item(item.task_item_id)
+            if task_item is None:
+                raise ManualExecutionError(
+                    "interrupted manual execution TaskItem could not be reloaded",
+                    code="execution_unavailable",
+                    status=503,
+                )
+            terminal_task_item = replace(
+                task_item,
+                status=self._task_item_status(terminal_item.status),
+                stage=terminal_item.stage,
+                updated_at=terminal_item.updated_at,
+                plan_id=plan.plan_id,
+                destination_storage_id=plan.target_storage_id,
+                destination_path=plan.target,
+                execution_status=result.status.value,
+                error=terminal_item.error,
+            )
+            final_items.append(terminal_item)
+            changed_task_items.append(terminal_task_item)
+            results.append(result_record)
+            effects.extend(item_effects)
+        # The durable repository method also protects a late recovery call against a terminal
+        # execution.  Do not manufacture a second result when no item is unfinished.
+        if not changed_task_items:
+            return self.get(execution.execution_id)
+        current_items = tuple(final_items)
+        aggregate = self._aggregate_execution(current_items)
+        has_uncertain = any(
+            item.effect_certainty in {"unknown", "attempted_unverified"} for item in current_items
+        )
+        recovery_error = (
+            "manual execution was interrupted before durable outcomes were published; "
+            "inspect uncertain effects and do not replay automatically"
+            if has_uncertain
+            else "manual execution was interrupted before OrganizerExecutor started; "
+            "Storage was not mutated"
+        )
+        updated_at = self._clock()
+        final_execution = replace(
+            execution,
+            items=current_items,
+            **aggregate,
+            error=recovery_error,
+            updated_at=updated_at,
+        )
+        latest_task_item = changed_task_items[-1]
+        final_task = self._task_after_item(
+            task, replace(latest_task_item, updated_at=updated_at), current_items, final_execution
+        )
+        audit = ManualExecutionAuthorizationAudit(
+            str(uuid4()),
+            execution.authorization_id,
+            audit_action,
+            updated_at,
+            execution.actor,
+            execution.execution_id,
+            audit_details,
+        )
+        reconciler(
+            final_execution,
+            current_items,
+            tuple(changed_task_items),
+            final_task,
+            tuple(results),
+            tuple(effects),
+            audit,
+        )
+        return self.get(execution.execution_id)
 
     def _execute_plan(self, plan, storages):
         try:

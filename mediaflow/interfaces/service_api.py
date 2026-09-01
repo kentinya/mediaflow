@@ -1823,6 +1823,35 @@ class MediaFlowApi:
                 self._manual_execution.document(execution.execution_id),
             )
         if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-executions"]
+            and parts[4] == "reconcile"
+            and method == "POST"
+        ):
+            self._require_manual_execution(principal)
+            if self._manual_execution is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual execution service is unavailable",
+                )
+            self._require_empty_query(environ, "manual execution reconciliation")
+            document = self._document(environ)
+            if set(document) != {"confirmation"} or document["confirmation"] is not True:
+                raise ValueError("manual execution reconciliation requires confirmation=true")
+            execution = self._manual_execution.reconcile(
+                parts[3],
+                actor=principal.principal_id,
+                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                confirmation=document["confirmation"],
+            )
+            return self._response(
+                start_response,
+                200,
+                self._manual_execution.document(execution.execution_id),
+            )
+        if (
             len(parts) == 4
             and parts[:3] == ["api", "v1", "manual-execution-authorizations"]
             and method == "GET"
@@ -3020,6 +3049,12 @@ class MediaFlowApi:
             and parts[4] in {"execute", "consume"}
         ):
             return f"/api/v1/manual-execution-authorizations/{{id}}/{parts[4]}"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-executions"]
+            and parts[4] == "reconcile"
+        ):
+            return "/api/v1/manual-executions/{id}/reconcile"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "metadata-reviews"]
