@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 24.4
 Parent Slice: 24 — Files / Media Detail and Manual Organize
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: bab61d419d17c0a5f05cae7c82ce779a34272453
 Difficulty: High
 Test Level: T4
@@ -230,11 +230,7 @@ or tracked/staged `config/alist.json`.
 - `docs/architecture.md`
 - `docs/product-experience.md`
 - `mediaflow/application/manual_organize_execution.py`
-- `mediaflow/application/manual_organize_preview.py`
-- `mediaflow/application/organizer.py`
-- `mediaflow/domain/manual_execution.py`
-- `mediaflow/domain/manual_organize_preview.py`
-- `mediaflow/domain/security.py`
+- `mediaflow/application/processing_checkpoint.py`
 - `mediaflow/domain/task_persistence.py`
 - `mediaflow/infrastructure/sqlite_runtime.py`
 - `mediaflow/interfaces/operator_ui.py`
@@ -247,38 +243,37 @@ or tracked/staged `config/alist.json`.
   current Preview, open intent, item/source/choice versions, pinned snapshot, plan fingerprint and
   exact plan content, capability evidence, conflict state, destructive authority and Storage
   locks before creating the existing Task/TaskItem scope.
-- Added atomic SQLite persistence for one-shot authorization/audit, execution/item state, verified
-  or uncertain effects and durable links to existing Task, Result and Processing Checkpoint
-  records. Expiry is audited and consumed authority cannot be reused or broadened.
-- Routed permitted Move/Copy/HardLink/SoftLink, attachments, authorized overwrite and source
-  cleanup through `OrganizerExecutor` only. Exact execution input is retained separately from
-  bounded display fields; no request path/operation/replan or implicit link fallback is accepted.
-- Added independent per-item success, skipped, failed, partial and uncertain projections with
-  checkpoint-aware next actions; uncertain mutation remains investigation-only and is never
-  automatically replayed. RecognitionType C remains C while A downstream policy identities stay
-  visible in Results.
-- Added dedicated execution RBAC, shared API routes/projections and reload-safe Operator Web
-  authorization, two-step confirmation, execution, Result/effect and recovery views. Updated the
-  current architecture and product-journey documentation.
+- Added an atomic SQLite interruption handoff for exact manual executions. Admission/startup
+  failures now publish bounded pre-mutation Results, terminal Task/TaskItem state and an audit
+  record before releasing the complete execution fence.
+- Added a post-OrganizerExecutor publication-failure handoff that preserves completed operations as
+  `PARTIAL`/`UNKNOWN`, records unverified effects and completes the batch without replaying Storage
+  mutation or silently downgrading its operation.
+- Added explicit authenticated `POST /api/v1/manual-executions/{id}/reconcile` recovery through
+  the shared application service, including read-only Storage observation for interrupted running
+  items, and exposed the same action and explanation in Operator Web.
+- Updated Processing Checkpoint projections so interrupted admission is investigation-only rather
+  than offered as a generic retry. Updated the current architecture and product-journey
+  documentation to describe the durable reconciliation boundary.
 
 ### Tests and Results
 
-- `.venv/bin/python -m unittest tests.test_manual_organize_execution` — PASS (14 tests).
-- The required 14-module direct regression command — PASS (130 tests).
-- `.venv/bin/python -m unittest discover -s tests` — PASS (991 tests, 7 explicit skips).
+- `.venv/bin/python -m unittest tests.test_manual_organize_execution` — PASS (18 tests).
+- The required 14-module direct regression command — PASS (134 tests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (995 tests, 7 explicit skips).
 - The required quality/safety command group (`ruff format --check`, `ruff check`, `compileall`,
   `pip check`, both configuration validations, FFmpeg/FFprobe scan, `git diff --check`) — PASS.
 - The required wheel build and `scripts/wheel_smoke_test.py` — PASS.
 
 ### Decisions
 
-- Reused the existing Task/TaskItem/Result/Processing Checkpoint and OrganizerExecutor boundaries;
-  the new execution tables store only exact binding and operation evidence needed after reload.
-- Used SQLite `BEGIN IMMEDIATE` for atomic admission, one-shot consumption, scope creation and
-  source/destination/attachment fencing, with idempotent additive table creation on runtime schema
-  27.
-- Kept display evidence bounded while retaining complete executor input, and verified links by
-  their declared link type rather than treating a symlink `lstat` size as media content.
+- Kept normal item completion separate from a reconciliation transaction so a persistence fault
+  cannot turn a possibly-mutated Storage invocation into a retryable failure.
+- Used an explicit recovery action for `ADMITTED`/`RUNNING` state, with SQLite `BEGIN IMMEDIATE`
+  publishing all unfinished per-item outcomes and deleting the Task fence in the same commit.
+- Classified interrupted running work as `UNKNOWN` even when read-only observation finds a likely
+  completed operation; the effect remains unverified and the only checkpoint action is
+  investigation.
 
 ### Remaining In-Slice Work
 
@@ -290,6 +285,10 @@ or tracked/staged `config/alist.json`.
 
 - The full suite has 7 explicit skips and emits existing unclosed SQLite `ResourceWarning`
   messages; no test failures occurred.
+- An injected ordinary persistence exception is re-raised after its durable handoff, so callers can
+  still observe the original failure while reload/API/Web expose the reconciled state. A simulated
+  process interruption remains in the explicit reconciliation path and is never automatically
+  replayed.
 - Tests and wheel smoke used temporary SQLite/Local/fake dependencies only. No production
   credentials, remote services or user media were used, and `config/alist.json` remains ignored,
   untracked and unstaged.
@@ -298,7 +297,7 @@ or tracked/staged `config/alist.json`.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 6dfddd127859221a5b031df571b5226a86402b75
+Head SHA: e1ed8c136966885fa2dff88ab5d49ff46f9bcf2c
 ```
 
 ## B Review Result
