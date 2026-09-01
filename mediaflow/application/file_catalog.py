@@ -8,7 +8,11 @@ from mediaflow.domain.file_catalog import FileReviewLink
 from mediaflow.domain.file_index import FileIndexRecord, FileIndexRepository
 from mediaflow.domain.media_evidence import PipelineEvidence, redact_pipeline_evidence
 from mediaflow.domain.scanner import FileScanStatus
-from mediaflow.domain.task_persistence import PersistentResultRecord, PersistentTaskRepository
+from mediaflow.domain.task_persistence import (
+    PersistentResultRecord,
+    PersistentTaskRepository,
+    redact_persistent_result,
+)
 
 
 @dataclass(frozen=True)
@@ -161,11 +165,13 @@ class FileCatalogService:
 
     def detail(self, file_id: str, *, resource_library_id: str | None = None) -> FileCatalogDetail:
         record = self.show(file_id, resource_library_id=resource_library_id)
-        latest_result = (
-            self._task_repository.get_latest_result_for_source(record.storage_id, record.path)
-            if self._task_repository is not None
-            else None
-        )
+        latest_result = None
+        if self._task_repository is not None:
+            latest_value = self._task_repository.get_latest_result_for_source(
+                record.storage_id, record.path
+            )
+            if latest_value is not None:
+                latest_result = redact_persistent_result(latest_value, redact_identity=True)
         related_reviews: tuple[FileReviewLink, ...] = ()
         evidence: tuple[PipelineEvidence, ...] = ()
         items: tuple[FileDetailItem, ...] = ()
@@ -194,7 +200,10 @@ class FileCatalogService:
             if callable(list_results):
                 result_values = list_results(record.storage_id, record.path, limit=33)
                 truncated["results"] = len(result_values) > 32
-                results = tuple(result_values[:32])
+                results = tuple(
+                    redact_persistent_result(value, redact_identity=True)
+                    for value in result_values[:32]
+                )
         actions = self._current_actions(items)
         return FileCatalogDetail(
             record,

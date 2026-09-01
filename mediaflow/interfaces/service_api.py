@@ -3726,28 +3726,9 @@ class MediaFlowApi:
         if detail.latest_result is None:
             document["latestResult"] = None
             return document
-        result = detail.latest_result
-        document["latestResult"] = {
-            "resultId": result.result_id,
-            "taskId": result.task_id,
-            "itemId": result.item_id,
-            "status": result.status,
-            "recognitionType": result.recognition_type,
-            "provider": result.provider,
-            "providerId": result.provider_id,
-            "title": result.title,
-            "metadataPolicyId": result.metadata_policy_id,
-            "namingPolicyId": result.naming_policy_id,
-            "classificationPolicyId": result.classification_policy_id,
-            "organizePolicyId": result.organize_policy_id,
-            "operation": result.operation,
-            "destinationStorageId": result.destination_storage_id,
-            "destinationPath": result.destination_path,
-            "createdAt": result.created_at.isoformat(),
-            "retryAttempts": result.retry_attempts,
-            "cleanupStatus": result.cleanup_status,
-            "error": result.error,
-        }
+        document["latestResult"] = self._file_result_value(
+            detail.latest_result, include_source=False, latest=True
+        )
         return document
 
     @staticmethod
@@ -3769,13 +3750,11 @@ class MediaFlowApi:
         }
 
     @staticmethod
-    def _file_result_value(result) -> dict:
-        return {
+    def _file_result_value(result, *, include_source: bool = True, latest: bool = False) -> dict:
+        document = {
             "resultId": result.result_id,
             "taskId": result.task_id,
             "itemId": result.item_id,
-            "sourceStorageId": result.source_storage_id,
-            "sourcePath": result.source_path,
             "status": result.status,
             "recognitionType": result.recognition_type,
             "provider": result.provider,
@@ -3791,12 +3770,17 @@ class MediaFlowApi:
             "createdAt": result.created_at.isoformat(),
             "retryAttempts": result.retry_attempts,
             "cleanupStatus": result.cleanup_status,
-            "effectCertainty": result.effect_certainty,
-            "uncertainEffects": list(result.uncertain_effects),
-            "completedOperations": list(result.completed_operations),
-            "attachmentCount": result.attachment_count,
             "error": result.error,
         }
+        if include_source:
+            document["sourceStorageId"] = result.source_storage_id
+            document["sourcePath"] = result.source_path
+        if not latest:
+            document["effectCertainty"] = result.effect_certainty
+            document["uncertainEffects"] = list(result.uncertain_effects)
+            document["completedOperations"] = list(result.completed_operations)
+            document["attachmentCount"] = result.attachment_count
+        return redact_manual_value(document)
 
     @classmethod
     def _metadata_correction_continuation_value(
