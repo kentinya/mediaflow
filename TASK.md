@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.2
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: b244e128987daa9c844b654d9e70588983eea6d3
 Difficulty: High
 Test Level: T4
@@ -398,11 +398,95 @@ Head SHA: 7c01aedc6f94a6f1f9c39e5202608ff9c12e3a63
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: b244e12..e194cca (implementation checkpoint 7c01aed + report commit e194cca)
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+### Blockers
+
+1. Every Preview read path probes Storage, so opening or refreshing the Automation detail view
+   issues per-item Storage calls (`SLICE.md` Safety Invariants: "Opening or refreshing
+   Automation/detail/history creates no Job, Task, Provider request, Storage probe, grant or
+   mutation"; Implementation Scope "Opening or refreshing any Automation view stays read-only";
+   Acceptance Criterion 8).
+   - Where: `mediaflow/application/automation_task_definition_preview.py:1532` `_stale_reason`
+     constructs Storage adapters at `:1599-1600` (`_create_storages` -> `runtime.create_storages`)
+     and then runs `for item in preview.items: entry = storage.stat(item.source.path)` (`:1604-1608`)
+     on every call. It is called by `get_readonly` (`:296`), `list_readonly` (`:341`, once per listed
+     preview) and `items` (`:351`) — the three authenticated read routes
+     `mediaflow/interfaces/service_api.py:966`, `:991`, `:1031` — and the Operator Web detail load
+     fetches `previews?limit=10` when the view opens (`mediaflow/interfaces/operator_ui.py`
+     `showAutomationDetail`, pinned by `tests/test_operator_ui.py:1114`).
+   - Evidence: counting Storage proxy over `LocalStorage` with one 4-item preview:
+     `get_readonly` -> 4 source `stat` calls; `list_readonly` (1 preview) -> 4;
+     `items(limit=1)` -> 4 `stat` calls to return 1 of 4 items. Since `list_readonly` repeats this
+     per preview, one detail-view open at `limit=10` performs up to 10 x item-count `stat` calls, and
+     with the domain cap `MAX_AUTOMATION_PREVIEW_ITEMS = 20_000` up to 200,000 per open, against the
+     real configured adapters (local/SMB/OpenList/S3) rather than a test double. The new focused test
+     asserts only that view load issues no *mutating* request, so nothing catches the probe.
+   - Direction: derive recorded-fact staleness from durable state the repository already holds
+     (pinned definition fingerprint, revision id/version/digest, preview rows, file-index records),
+     exactly as the accepted `ManualOrganizePreviewService._stale_current_items` convention does.
+     Construct no Storage adapter and perform no `list`/`stat`/`read`/`exists` in `get_readonly`,
+     `list_readonly`, `items` or their `get`/`list`/`latest` siblings; live source facts may be
+     re-read only inside the explicit permission-checked `create` run or a later explicit
+     run/authority boundary. While fixing it, do not replace the Storage N+1 with a per-preview full
+     item-row load (`sqlite_runtime.list_automation_task_definition_previews` already loads every
+     item row of every listed preview). Add a regression test that asserts zero Storage calls across
+     the list, detail and items routes and the Web detail load.
+
+2. The Preview file-stability decision does not reuse the Scanner convention and reports every source
+   as unstable for any ResourceLibrary configured with a stable-size duration (Implementation Scope
+   "Reuse the existing analysis chain and conventions rather than building a parallel pipeline:
+   Scanner/file-stability"; Acceptance Criterion 3 per-item stability decision; the Task Goal's
+   equivalent-evidence and explicit-next-action promise).
+   - Where: `mediaflow/application/automation_task_definition_preview.py:788-794` `_stable()` returns
+     `(False, "unstable_no_history")` unconditionally when
+     `policy.stable_size_duration_seconds > 0`, never consulting the durable file index that
+     `StorageScanner._process_file` uses; consumed at `:732-745`.
+   - Evidence: one 3-hour-old file under a library with `FileStabilityPolicy(0, 0, 60)`. The real
+     `StorageScanner` reports `unstable` on first sight and `ready` 120 s later once `stable_since`
+     is durable (`scanner run 1 -> [('One.2001.mkv', 'unstable', None)]`,
+     `scanner run 2 -> [('One.2001.mkv', 'ready', 2026-09-01T16:33:36Z)]`).
+     `AutomationTaskDefinitionPreviewService.create` at that same instant, same library, same
+     database, reports `counts {discovered: 1, permitted: 0, selected: 0, unstable: 1}`, item
+     `status=unstable stability=unstable_no_history scan=unstable`, aggregate status `blocked` — so
+     the operator sees "nothing would be organized" for sources the pipeline considers ready, and the
+     rendered next action ("wait until the file meets the configured stability policy, then rerun
+     Preview") can never succeed because the branch never consults history. Coverage gap: the only
+     unstable case (`tests/test_automation_task_definition_preview.py:329`) uses
+     `minimum_age_seconds=3600`, so this branch is never exercised.
+   - Direction: compute the stability decision from the same inputs
+     `StorageScanner._process_file` uses (`mediaflow/application/scanner.py:355-390`: file-index
+     `stable_since`/`last_seen_at` plus the policy) so Preview and the pipeline agree at the same
+     instant, without Preview writing file-index rows or otherwise mutating scan state. If durable
+     history is genuinely unavailable for a source, report a distinct reason and a next action that
+     truthfully states what makes it analyzable. Add a focused test with
+     `stable_size_duration_seconds > 0` plus durable history in which Preview reports the item
+     analyzable, matching the scanner decision at the same instant.
+
+### Not in this fix scope
+
+- The six workspace full-regression failures are accepted as pre-existing and unrelated. Verified
+  independently: `tests/test_api_credentials.py`, `tests/test_final_integration.py`,
+  `tests/test_resource_library_pipeline.py` and `tests/test_runtime_storage_configuration.py` (and
+  `mediaflow/interfaces/cli.py`, `mediaflow/application/runtime_configuration.py`) are untouched by
+  `b244e12..HEAD`, their failure output resolves the gitignored local `config/strategy.json`
+  (`HDD_2` storage, private media paths) through the cwd-relative default database, and the same
+  suite at HEAD on a clean `git archive HEAD` tree in a temporary directory reports
+  `Ran 1038 tests ... OK (skipped=7)`. Do not change tests or product code to chase them.
+- Verified and not to be redone: `tests.test_automation_task_definition_preview` 17 tests OK;
+  `ruff check` PASS; `ruff format --check` PASS (344 files); `compileall` PASS; no `ffprobe`/`ffmpeg`
+  reference; `git diff --check` clean; `config/alist.json` and `config/strategy.json` ignored and
+  untracked with only fake `admin-token`/`viewer-token`/redaction fixtures in the diff; the 27 -> 28
+  schema-marker updates are the current-marker bump with no assertion weakened, no test deleted and
+  no skip added; schema-27 migration, read-only guard with byte-identical source/target trees,
+  zero AutomationJob/Task/TaskItem/Result/grant/revision rows, the `SUBMIT_DRY_RUN`/`READ` split
+  (viewer GET 200, viewer POST 403) and scope-injection rejection all reproduce.
+- The rest of the checkpoint is accepted. Do not restructure the evidence contract, persistence
+  layout, routes or Web rendering while fixing the two blockers above, and do not move the Task Base.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
