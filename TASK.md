@@ -6,7 +6,7 @@ the current [`SLICE.md`](../SLICE.md).
 ```text
 Task ID: 25.1
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: d889db62fd6fe568b9a2277117a805459b8364df
 Difficulty: High
 Test Level: T4
@@ -222,11 +222,81 @@ Head SHA: 1ed867d3d53e2bebbf6cebd0708979256dc1c21c
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: d889db6..161c533 (code checkpoint 1ed867d + report commit 161c533)
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+### Blockers
+
+1. Required authenticated API integration coverage is missing for most definition actions
+   (Acceptance Criteria 9 / Required Tests bullet 3).
+   - Where: `tests/test_automation_task_definition.py` —
+     `test_api_alias_and_rbac_are_version_bound` is the only API test. It covers
+     `POST /api/v1/automation/task-definitions` (create success),
+     `POST /api/v1/automation/task-definitions/api-task/enable` (stale expected version -> 409)
+     and one viewer-token 403.
+   - Evidence: at `161c533` there is no test for `GET /api/v1/automation/task-definitions`,
+     `GET`/`PUT /api/v1/automation/task-definitions/{id}`, `POST .../{id}/copy`,
+     `POST .../{id}/disable`, or the
+     `/api/v1/configuration/revisions/{revision}/objects/automationTaskDefinitions/{id}/{copy,enable,disable}`
+     routes that the Operator Web actions call. I drove every one of those routes by hand against
+     the delivered code and they behave correctly (each action 200; missing `mode` -> 400;
+     `sourceScope: "../escape"` -> 400; absolute scope -> 400; unknown or disabled
+     `resourceLibraryId` -> 400; unknown definition id -> 404; edit of the Active revision -> 409
+     `configuration_version_conflict` with `durableState: draft_preserved`). The gap is the required
+     regression evidence, not the implementation.
+   - Direction: add authenticated API tests for every definition action plus malformed input,
+     missing/disabled reference, unknown id and stale version, asserting the bounded operator-safe
+     error projection, and assert the list/detail projection stays truthful after configuration
+     repository close/reopen.
+
+2. Managed configuration/application coverage omits edit, disable, immutable-Active protection,
+   service-layer optimistic conflict and migration (Acceptance Criteria 9 / Required Tests
+   bullet 2).
+   - Where: `tests/test_automation_task_definition.py::AutomationTaskDefinitionManagedTests` — the
+     single lifecycle test runs create -> enable -> copy -> validate -> activate -> reload.
+   - Evidence: `edit_automation_task_definition` and `disable_automation_task_definition` in
+     `mediaflow/application/configuration_objects.py` are invoked by no test (grep over `tests/`
+     returns no hits). No test asserts that mutating an ACTIVE or superseded revision is refused,
+     that a Draft edit made after activation leaves the prior Active revision id, digest and
+     document unchanged, that a stale `expected_version` is rejected at the service layer without
+     overwriting the concurrent Draft (only the API path asserts 409), or that definitions load from
+     a configuration database created before this change.
+   - Direction: extend the managed tests to cover edit and disable, rejection of an ACTIVE-revision
+     mutation, a service-level stale-version rejection that proves the concurrent Draft survived, an
+     explicit before/after Active identity plus digest assertion, and load of a pre-change
+     configuration database.
+
+3. Operator Web coverage is partly vacuous and misses the required action and read-only assertions
+   (Acceptance Criteria 9 / Required Tests bullet 4).
+   - Where: `tests/test_automation_task_definition.py::AutomationTaskDefinitionWebTests`.
+   - Evidence: of the four looped action strings, `"Copy"` and `"Enable"` are already present in
+     `ASSETS['/ui/app.js']` at Task Base `d889db6` (2 and 3 occurrences, measured on a
+     `git archive d889db6` tree), so those two assertions pass with or without this Task's Web work.
+     Nothing asserts the Automation list/detail rendering, the guided `automationTaskDefinitions`
+     list and its create/edit entry point in the Configuration view, the enable/disable confirmation
+     text, that Delete is suppressed for this kind, or the Required-Test item "absence of mutation
+     on view load".
+   - Direction: replace the bare substring loop with assertions tied to the new Automation surface
+     (list/detail rendering, guided section with create/edit entry point, copy and enable/disable
+     confirmation text, absent Delete), and add an assertion that loading or refreshing the view
+     issues no mutating request and leaves the revision version and digest unchanged.
+
+### Not in this fix scope
+
+- The six failures reported for
+  `python -m unittest discover -s tests -p 'test_*.py'` are accepted as environmental and are not
+  blockers. Confirmed by running the same suite at `161c533` on a clean `git archive HEAD` tree:
+  `Ran 1012 tests ... OK (skipped=7)`, exit 0. The failures come from the gitignored ambient
+  `.mediaflow/mediaflow.sqlite3` Active managed revision built from the local private
+  `config/strategy.json`, which the affected tests resolve through the cwd-relative default database
+  path. Do not change tests or product code to chase them.
+- No safety-line violation, credential leak or unrelated file was found in the checkpoint:
+  `config/alist.json` and `config/strategy.json` remain ignored and untracked, `ruff check`,
+  `ruff format --check`, `compileall`, wheel build with isolated smoke and `git diff --check` all
+  reproduce as PASS.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
