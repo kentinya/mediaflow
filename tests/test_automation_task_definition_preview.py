@@ -7,7 +7,7 @@ import os
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,6 +18,7 @@ from mediaflow.application.configuration_snapshot import ManagedConfigurationSer
 from mediaflow.application.manual_organize_preview import PreviewReadOnlyStorage
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.read_only_storage import ReadOnlyStorageMutationError
+from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.automation import AutomationTaskDefinition
 from mediaflow.domain.automation_task_definition_preview import (
@@ -37,6 +38,7 @@ from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import StorageCapabilities
 from mediaflow.domain.task_persistence import PersistentTask, PersistentTaskStatus
 from mediaflow.infrastructure.local_storage import LocalStorage
+from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     StorageDefinition,
@@ -45,10 +47,26 @@ from mediaflow.infrastructure.runtime_configuration import (
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import smoke_strategy_configuration
+from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 SNAPSHOT_ID = "active-1"
 SNAPSHOT_DIGEST = "a" * 64
+
+
+def _api_request(api, path: str, *, query: str = ""):
+    statuses: list[str] = []
+    environ = {
+        "REQUEST_METHOD": "GET",
+        "PATH_INFO": path,
+        "QUERY_STRING": query,
+        "CONTENT_LENGTH": "0",
+        "wsgi.input": io.BytesIO(),
+        "REMOTE_ADDR": "127.0.0.1",
+        "HTTP_AUTHORIZATION": "Bearer viewer-token",
+    }
+    result = b"".join(api(environ, lambda status, _headers: statuses.append(status)))
+    return int(statuses[0].split()[0]), json.loads(result)
 
 
 def _runtime(
@@ -172,6 +190,35 @@ class _NoCapabilityStorage:
     write = create_directory = move = copy = delete = hard_link = soft_link = _reject
 
 
+class _StorageCallCounter:
+    def __init__(self, storage) -> None:
+        self._storage = storage
+        self.calls: list[str] = []
+
+    def __getattr__(self, name):
+        value = getattr(self._storage, name)
+        if name not in {
+            "list",
+            "stat",
+            "exists",
+            "read",
+            "write",
+            "create_directory",
+            "move",
+            "copy",
+            "delete",
+            "hard_link",
+            "soft_link",
+        } or not callable(value):
+            return value
+
+        def counted(*args, **kwargs):
+            self.calls.append(name)
+            return value(*args, **kwargs)
+
+        return counted
+
+
 class FailingMetadataProvider(SyntheticMetadataProvider):
     def __init__(self, code: MetadataErrorCode) -> None:
         super().__init__(())
@@ -199,7 +246,21 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
         return directory, target_directory, source_root, target_root, database
 
     @staticmethod
-    def _services(repository, configuration, provider, source_root, target_root):
+    def _services(
+        repository,
+        configuration,
+        provider,
+        source_root,
+        target_root,
+        *,
+        file_index=None,
+        clock=None,
+    ):
+        options = {
+            "file_index": file_index,
+        }
+        if clock is not None:
+            options["clock"] = clock
         return AutomationTaskDefinitionPreviewService(
             repository,
             configuration=configuration,
@@ -208,6 +269,7 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
                 "source": LocalStorage("source", source_root),
                 "target": LocalStorage("target", target_root),
             },
+            **options,
         )
 
     def test_scope_limit_reload_and_exact_identity(self):
@@ -632,6 +694,140 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
                 stale = previews.get_readonly(current.preview_id)
                 self.assertEqual(stale.status, AutomationTaskDefinitionPreviewStatus.STALE)
                 self.assertIn("revision", stale.stale_reason or "")
+        finally:
+            directory.cleanup()
+            target_directory.cleanup()
+
+    def test_stable_size_preview_reuses_durable_scanner_history(self):
+        fixture = self._fixture({"C/One.2001.mkv": b"x" * 10})
+        directory, target_directory, source_root, target_root, database = fixture
+        current = [datetime(2026, 9, 1, 12, tzinfo=UTC)]
+        modified_at = current[0] - timedelta(hours=1)
+        source_path = source_root / "Media" / "C" / "One.2001.mkv"
+        timestamp = int(modified_at.timestamp() * 1_000_000_000)
+        os.utime(source_path, ns=(timestamp, timestamp))
+        resource_library = ResourceLibrary(
+            "special",
+            "Special",
+            "source",
+            "Media",
+            stability_policy=FileStabilityPolicy(stable_size_duration_seconds=60),
+        )
+        configuration = _runtime(
+            source_root,
+            target_root,
+            database,
+            definitions=(_definition(scope="", limit=5),),
+            resource_library=resource_library,
+        )
+        index = InMemoryFileIndexRepository()
+        source = _StorageCallCounter(LocalStorage("source", source_root))
+        target = _StorageCallCounter(LocalStorage("target", target_root))
+
+        def clock():
+            return current[0]
+
+        scanner = StorageScanner({"source": source}, index, clock=clock)
+        try:
+            first = scanner.scan(resource_library)
+            self.assertEqual(first.statistics.unstable, 1)
+            current[0] += timedelta(seconds=61)
+            second = scanner.scan(resource_library)
+            self.assertEqual(second.statistics.media_candidates, 1)
+            record = index.find_by_path("source", "special", "Media/C/One.2001.mkv")
+            self.assertIsNotNone(record)
+            self.assertIsNotNone(record.stable_since)
+            source.calls.clear()
+            target.calls.clear()
+            with SQLiteTaskRepository(database) as repository:
+                previews = AutomationTaskDefinitionPreviewService(
+                    repository,
+                    configuration=configuration,
+                    providers=MetadataProviderRegistry((_provider(),)),
+                    storages={"source": source, "target": target},
+                    file_index=index,
+                    clock=clock,
+                )
+                preview = previews.create("def-1", actor="tester")
+                self.assertEqual(preview.status, AutomationTaskDefinitionPreviewStatus.PREVIEWED)
+                self.assertEqual(preview.items[0].source.stability, "stable")
+                self.assertEqual(preview.items[0].source.scan_status, "ready")
+        finally:
+            directory.cleanup()
+            target_directory.cleanup()
+
+    def test_preview_read_paths_and_api_do_not_probe_storage(self):
+        fixture = self._fixture({"C/One.2001.mkv": b"x" * 10})
+        directory, target_directory, source_root, target_root, database = fixture
+        configuration = _runtime(
+            source_root,
+            target_root,
+            database,
+            definitions=(_definition(),),
+        )
+        index = InMemoryFileIndexRepository()
+        source = _StorageCallCounter(LocalStorage("source", source_root))
+        target = _StorageCallCounter(LocalStorage("target", target_root))
+        try:
+            scanner = StorageScanner(
+                {"source": source},
+                index,
+            )
+            scanner.scan(configuration.resource_libraries[0])
+            with SQLiteTaskRepository(database) as repository:
+                previews = AutomationTaskDefinitionPreviewService(
+                    repository,
+                    configuration=configuration,
+                    providers=MetadataProviderRegistry((_provider(),)),
+                    storages={"source": source, "target": target},
+                    file_index=index,
+                )
+                preview = previews.create("def-1", actor="tester")
+                source.calls.clear()
+                target.calls.clear()
+                previews.get_readonly(preview.preview_id)
+                previews.latest_readonly("def-1")
+                previews.list_readonly("def-1")
+                previews.get(preview.preview_id)
+                previews.latest("def-1")
+                previews.list("def-1")
+                previews.items(preview.preview_id, limit=1)
+                self.assertEqual(source.calls, [])
+                self.assertEqual(target.calls, [])
+
+                record = index.find_by_path("source", "special", "Media/C/One.2001.mkv")
+                self.assertIsNotNone(record)
+                index.batch_upsert((replace(record, size=record.size + 1),))
+                stale = previews.get_readonly(preview.preview_id)
+                self.assertEqual(stale.status, AutomationTaskDefinitionPreviewStatus.STALE)
+                self.assertIn("source fact", stale.stale_reason or "")
+
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal(
+                            "viewer", "viewer-token", frozenset({ApiPermission.READ})
+                        ),
+                    ),
+                    automation_preview_service=previews,
+                )
+                paths = (
+                    "/api/v1/automation/task-definitions/def-1/previews",
+                    f"/api/v1/automation/task-definitions/def-1/previews/{preview.preview_id}",
+                    f"/api/v1/automation/task-definitions/def-1/previews/{preview.preview_id}/items",
+                )
+                self.assertIn(
+                    "const data = await api(`/api/v1/automation/task-definitions/"
+                    "${encodeURIComponent(item.id)}/previews?limit=10`);",
+                    APP_JS.decode("utf-8"),
+                )
+                for path in paths:
+                    query = "limit=1" if path.endswith("previews") else ""
+                    status, _ = _api_request(api, path, query=query)
+                    self.assertEqual(status, 200)
+                self.assertEqual(source.calls, [])
+                self.assertEqual(target.calls, [])
         finally:
             directory.cleanup()
             target_directory.cleanup()

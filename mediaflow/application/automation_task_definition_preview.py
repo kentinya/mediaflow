@@ -64,6 +64,7 @@ from mediaflow.domain.storage import Storage, StorageEntry, StorageEntryType, St
 
 _MAX_COLLECTION = 64
 _MAX_TEXT = 512
+_NO_FILE_INDEX_RECORD = object()
 
 
 def _safe_error(value: object) -> str:
@@ -98,6 +99,7 @@ class AutomationTaskDefinitionPreviewService:
         metadata_provider_registry_factory: Callable[..., MetadataProviderRegistry] | None = None,
         providers: MetadataProviderRegistry | None = None,
         storages: Mapping[str, Storage] | None = None,
+        file_index=None,
         storage_factory: Callable[..., Mapping[str, Storage]] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         max_items: int = MAX_AUTOMATION_PREVIEW_ITEMS,
@@ -114,6 +116,7 @@ class AutomationTaskDefinitionPreviewService:
         self._provider_factory = metadata_provider_registry_factory
         self._providers = providers
         self._storages = dict(storages or {})
+        self._file_index = file_index
         self._storage_factory = storage_factory
         self._clock = clock
         self._max_items = max_items
@@ -735,10 +738,7 @@ class AutomationTaskDefinitionPreviewService:
                     add_record(
                         entry,
                         AutomationTaskDefinitionPreviewItemStatus.UNSTABLE,
-                        (
-                            "wait until the file meets the configured stability policy, "
-                            "then rerun Preview"
-                        ),
+                        self._stability_next_action(stability),
                         stability,
                         "unstable",
                     )
@@ -785,13 +785,61 @@ class AutomationTaskDefinitionPreviewService:
             "records_truncated": records_truncated,
         }
 
-    def _stable(self, resource_library, entry: StorageEntry, now: datetime) -> tuple[bool, str]:
+    def _stable(
+        self,
+        resource_library,
+        entry: StorageEntry,
+        now: datetime,
+        *,
+        previous=_NO_FILE_INDEX_RECORD,
+    ) -> tuple[bool, str]:
         policy = resource_library.stability_policy
         age = max(0.0, (now - entry.modified_at).total_seconds())
         required_age = max(policy.minimum_age_seconds, policy.modified_threshold_seconds)
         if policy.stable_size_duration_seconds > 0:
-            return False, "unstable_no_history"
+            if previous is _NO_FILE_INDEX_RECORD:
+                if self._file_index is None:
+                    return False, "unstable_no_history"
+                find_by_path = getattr(self._file_index, "find_by_path", None)
+                if not callable(find_by_path):
+                    return False, "unstable_history_unavailable"
+                try:
+                    previous = find_by_path(
+                        resource_library.storage_id,
+                        resource_library.library_id,
+                        entry.path,
+                    )
+                except Exception:
+                    return False, "unstable_history_unavailable"
+            if previous is None:
+                return False, "unstable_no_history"
+            if previous.size != entry.size or previous.modified_at != entry.modified_at:
+                return False, "unstable_changed"
+            stable_since = previous.stable_since or previous.last_seen_at
+            stable_duration = (now - stable_since).total_seconds()
+            if stable_duration < policy.stable_size_duration_seconds:
+                return False, "unstable_size"
         return age >= required_age, "stable" if age >= required_age else "unstable_age"
+
+    @staticmethod
+    def _stability_next_action(stability: str) -> str:
+        if stability == "unstable_no_history":
+            return (
+                "run a ResourceLibrary scan to record this file, wait for the configured "
+                "stable-size duration, then rerun Preview"
+            )
+        if stability == "unstable_history_unavailable":
+            return (
+                "restore durable FileIndex history, run a ResourceLibrary scan, then rerun Preview"
+            )
+        if stability == "unstable_changed":
+            return (
+                "run a ResourceLibrary scan after the file stops changing, wait for the "
+                "configured stable-size duration, then rerun Preview"
+            )
+        if stability == "unstable_size":
+            return "wait for the configured stable-size duration, then rerun Preview"
+        return "wait until the file meets the configured stability policy, then rerun Preview"
 
     def _run_item(
         self,
@@ -1590,23 +1638,63 @@ class AutomationTaskDefinitionPreviewService:
             or _fingerprint(current_definition.document()) != preview.definition_fingerprint
         ):
             return "the pinned Automation Task Definition changed or no longer exists"
-        try:
-            resource_library = next(
+        resource_library = next(
+            (
                 item
                 for item in getattr(runtime, "resource_libraries", ())
                 if item.library_id == preview.resource_library_id
-            )
-            storages = self._create_storages(runtime, {resource_library.storage_id})
-            storage = self._guarded_storage(storages, resource_library.storage_id)
-        except Exception:
+            ),
+            None,
+        )
+        if resource_library is None or resource_library.storage_id != preview.storage_id:
             return "the pinned ResourceLibrary or Storage is unavailable"
-        try:
-            for item in preview.items:
-                entry = storage.stat(item.source.path)
-                if entry.size != item.source.size or entry.modified_at != item.source.modified_at:
-                    return "a plan-affecting source fact changed"
-        except StorageError:
-            return "a plan-affecting source is no longer readable"
+        return self._indexed_source_stale_reason(preview, resource_library)
+
+    def _indexed_source_stale_reason(self, preview, resource_library) -> str | None:
+        """Compare recorded source facts without contacting the configured Storage."""
+
+        if self._file_index is None:
+            return None
+        find_by_path = getattr(self._file_index, "find_by_path", None)
+        if not callable(find_by_path):
+            return "the durable FileIndex required to verify source facts is unavailable"
+        now = self._clock()
+        for item in preview.items:
+            if item.source.scan_status == "excluded":
+                continue
+            try:
+                record = find_by_path(
+                    item.source.storage_id,
+                    item.source.resource_library_id,
+                    item.source.path,
+                )
+            except Exception:
+                return "the durable FileIndex required to verify source facts is unavailable"
+            if record is None:
+                continue
+            if (
+                record.filename != item.source.filename
+                or record.extension != item.source.extension
+                or record.size != item.source.size
+                or record.modified_at != item.source.modified_at
+            ):
+                return "a plan-affecting source fact changed"
+            if getattr(record.scan_status, "value", record.scan_status) == "missing":
+                return "a plan-affecting source fact changed"
+            _, current_stability = self._stable(
+                resource_library,
+                StorageEntry(
+                    item.source.filename,
+                    item.source.path,
+                    StorageEntryType.FILE,
+                    item.source.size,
+                    item.source.modified_at,
+                ),
+                now,
+                previous=record,
+            )
+            if current_stability != item.source.stability:
+                return "a plan-affecting source fact changed"
         return None
 
     @staticmethod
