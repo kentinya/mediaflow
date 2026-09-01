@@ -6,10 +6,10 @@ rules are defined only in [`docs/development-workflow.md`](docs/development-work
 ```text
 Slice ID: 24
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: 4ff5479d9f4a81906ee52a9f784931b65cd9ab90
 Implementation Head: d2e399803078317f2092d895eae627327998de2f
-A Final Review: FIX REQUIRED — 2026-09-01
+A Final Review: PASS / CLOSED — 2026-09-01
 ```
 
 The Base is the repository HEAD immediately before this Contract was activated. `NOT SET` is the
@@ -127,38 +127,38 @@ The following remain V1 or later work outside this Slice and are not closure blo
 
 ## Slice Acceptance Criteria
 
-- [ ] From Files or a link on a TaskItem, review, conflict or Result, an authenticated operator can
+- [x] From Files or a link on a TaskItem, review, conflict or Result, an authenticated operator can
       open the current File/Media detail and answer what the file is, why each material decision was
       made, what happened, what evidence is unavailable and which safe action is valid next without
       joining database records or reading raw logs.
-- [ ] File browsing and detail remain side-effect free, bounded and permission-aware; missing/stale
+- [x] File browsing and detail remain side-effect free, bounded and permission-aware; missing/stale
       links return to current durable state or an explicit unavailable explanation.
-- [ ] The operator can start manual work for one indexed file or a bounded selected set, sees the
+- [x] The operator can start manual work for one indexed file or a bounded selected set, sees the
       pinned immutable configuration identity, and may select only compatible configured
       RecognitionType, Metadata identity and policy options without editing Active configuration or
       supplying an arbitrary Storage path/operation.
-- [ ] A manual Preview persists and reloads the complete per-item zero-mutation plan and explanations,
+- [x] A manual Preview persists and reloads the complete per-item zero-mutation plan and explanations,
       including destination, operation, attachments, capability verdicts, conflicts and warnings;
       one item's failure or blocker does not erase another item's Preview or recovery.
-- [ ] Outstanding reviews/conflicts are navigable and block only affected execution; a decision or
+- [x] Outstanding reviews/conflicts are navigable and block only affected execution; a decision or
       any other plan-affecting change makes prior Preview/authorization visibly stale and cannot be
       bypassed.
-- [ ] Explicit execution consumes separate one-shot authority for only the exact current reviewed
+- [x] Explicit execution consumes separate one-shot authority for only the exact current reviewed
       plan set; stale versions, altered source/destination, duplicate admission, missing capability,
       unresolved conflict or insufficient destructive authority fail before unsafe mutation.
-- [ ] Every permitted real mutation passes through OrganizerExecutor, executes the reviewed plan at
+- [x] Every permitted real mutation passes through OrganizerExecutor, executes the reviewed plan at
       most once, verifies source/target effects and records operation history and a durable Result.
-- [ ] A bounded mixed batch reports Previewed/blocked/skipped/ignored/success/failed/partial/
+- [x] A bounded mixed batch reports Previewed/blocked/skipped/ignored/success/failed/partial/
       unchanged/unselected outcomes independently; successful or unselected siblings are not
       replayed, and summaries do not merge ignored into unchanged or conceal item recovery.
-- [ ] Pre-mutation failure provides a correctable input or fresh-Preview action. Partial/uncertain
+- [x] Pre-mutation failure provides a correctable input or fresh-Preview action. Partial/uncertain
       execution shows known effects and links to the current Processing Checkpoint and only its
       permitted investigation/recovery actions.
-- [ ] API and Web expose the same state, choices, confirmations, results, errors and recovery under
+- [x] API and Web expose the same state, choices, confirmations, results, errors and recovery under
       the same permissions/concurrency rules, and reload preserves every durable decision and link.
-- [ ] RecognitionType C remains C throughout manual selection, Preview, conflict resolution,
+- [x] RecognitionType C remains C throughout manual selection, Preview, conflict resolution,
       execution and Result persistence while reusing A downstream policies.
-- [ ] Explicitly Deferred capabilities remain non-claims and no unresolved in-Slice P0/P1 defect
+- [x] Explicitly Deferred capabilities remain non-claims and no unresolved in-Slice P0/P1 defect
       remains.
 
 ## Final Validation Expectations
@@ -322,20 +322,27 @@ Decision: SLICE READY FOR A REVIEW
 ## A Final Review
 
 ```text
-Reviewed Range: 4ff5479d9f4a81906ee52a9f784931b65cd9ab90..7f35e0634a68a1dc62d4d02f54f1aee6cb7e435b
-Decision: FIX REQUIRED
+Reviewed Range: 4ff5479d9f4a81906ee52a9f784931b65cd9ab90..d2e399803078317f2092d895eae627327998de2f
+Decision: PASS / CLOSED
 P0/P1 Blockers:
-- [P1 — RO-1 / RO-7 / File/Media secret-free Safety Invariant] The complete File/Media Result
-  history added by Slice 24 and the adjacent `latestResult` projection still return
-  `PersistentResultRecord.error` verbatim instead of passing the complete detail document through
-  the shared recursive redaction rule. On the reviewed Head, a fake Result error equal to
-  `Authorization: Bearer slice24-final-review-secret` remained recoverable from SQLite and an
-  authenticated `GET /api/v1/files/one` returned the complete credential in both
-  `latestResult.error` and `results[0].error` with HTTP 200. Pipeline Evidence redaction therefore
-  does not make the promised File/Media detail/history/error surface secret-free. Apply the shared
-  shape-preserving redaction rule to the complete latest/history Result projection (including any
-  nested operation/effect text) before response, preserve bounded useful non-secret facts, and add
-  a fake-credential regression proving absence from the authenticated File/Media API/Web-visible
-  projection; any newly written Slice 24 Result/error boundary must likewise be protected rather
-  than assuming its input is already safe.
+- None. All Slice 24 Required Outcomes and Required Surfaces are complete; the P1 identified in
+  the 2026-09-01 review was closed by Task 24.7 and independently reproduced at the reviewed Head.
+
+Closure Reconciliation:
+- Slice 24 is closed at Implementation Head
+  `d2e399803078317f2092d895eae627327998de2f`; Task 24.7 is B-PASS and no implementation Task is
+  active.
+- `docs/roadmap.md`, `docs/progress.md`, `docs/product-experience.md`, `docs/architecture.md` and
+  the canonical requirements document now describe the bounded Files/Media detail and exact manual
+  Preview-to-execution journey as CURRENT, while retaining Provider switching, scheduled unattended
+  real organization, automatic uncertain/crash replay, universal rollback and other deferred work.
+- Result errors, titles, path-like display values and effect text are secret-free at the persisted
+  Result write/reload and authenticated File/Media projection boundaries; exact stored source and
+  destination identities remain unchanged for FileIndex, plan and recovery linkage.
+- Bounded browsing/detail/Preview remain read-only, real mutation remains OrganizerExecutor-only,
+  destructive operations and fallback require explicit authority, RecognitionType C remains C, and
+  `config/alist.json` remains ignored and untracked.
+- The two Closure Packet P3 observations remain non-blocking: shared keyword redaction can
+  over-redact natural titles, and exact Task/path identities can contain credential-shaped filename
+  text by contract. Neither is a P0/P1 defect in the closed Slice journey.
 ```

@@ -8,6 +8,24 @@ workflow authority. Closure rules live only in
 
 ## Most Recently Closed Slice
 
+### Slice 24 — Files / Media Detail and Manual Organize
+
+```text
+Status: PASS / CLOSED
+Base: 4ff5479d9f4a81906ee52a9f784931b65cd9ab90
+Implementation Head: d2e399803078317f2092d895eae627327998de2f
+A Final Review: PASS / CLOSED — 2026-09-01
+```
+
+Delivered the bounded authenticated Files/Media detail and history journey, durable manual intent
+and choices, exact zero-mutation Preview, explicit one-shot reviewed execution, per-item results and
+checkpoint-aware recovery across API and Operator Web. Result and evidence projections are bounded
+and secret-free, and all real mutation remains behind OrganizerExecutor with explicit authority.
+
+Provider switching, scheduled unattended real organization, automatic uncertain/crash replay,
+universal compensation or historical rollback, remote setup/probing and other deferred capabilities
+remain outside this Slice.
+
 ### Slice 23 — Stage-Aware Per-Item Recovery
 
 ```text
@@ -42,6 +60,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 | 22.5 — Metadata configuration and correction | PASS / CLOSED | LEGACY — not recorded as a Slice Base | `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` | Legacy final audit PASS — 2026-08-27 | Managed MetadataPolicy through bounded one-item DryRun continuation | Provider switching, generic Task resume, wider per-item recovery |
 | 22.6 — Naming / Classification / Organize configuration | PASS / CLOSED | `7339a8b21b244e57bdb8067f688df91c7dc03280` | `89f064b22be5c1f04ae75bfc0d6fbe72c9147e7d` | A Final Review PASS — 2026-08-29 | Managed policy editing, exact-revision preview, Local read-only destination precheck and checked activation | See `SLICE.md` Explicitly Deferred |
 | 23 — Stage-aware per-item recovery | PASS / CLOSED | `b3083c417849e744b1b9c4629ce9ef312dd194ff` | `26c0450054e4b3d65d6fbf3641d61e022e9561fd` | A Final Review PASS — 2026-08-30 | Durable checkpoints, exact-version admission and independent DryRun single/batch continuation | Manual organization, Provider switching, uncertain/crash replay and unattended execution |
+| 24 — Files / Media detail and manual organize | PASS / CLOSED | `4ff5479d9f4a81906ee52a9f784931b65cd9ab90` | `d2e399803078317f2092d895eae627327998de2f` | A Final Review PASS — 2026-09-01 | Bounded detail/history, exact manual Preview and execution, per-item results and recovery across API/Web | Provider switching, unattended real organization, automatic uncertain/crash replay, universal rollback and remote setup/probing |
 
 Earlier completed delivery and every historical Task/Fix/test/review record remain available in Git
 and the legacy archive. They are intentionally not duplicated here or translated into new Slices.

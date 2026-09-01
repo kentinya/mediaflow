@@ -1882,8 +1882,8 @@ without mutation or execution authority. Remote
 SMB/OpenList/S3 destination precheck, mutation-based capability probing, multiple RecognitionTypes
 or destination Storages per request, known-media duplicate detection, attachment precheck and
 absolute mounted-path display remain TARGET; Provider switching, generic Task resume and unattended
-execute also remain later work. The broader Files/Media manual-organize journey remains planned,
-while per-item Task recovery was subsequently delivered by Slice 23.
+execute also remain later work. The bounded Files/Media manual-organize journey was subsequently
+delivered and closed by Slice 24, while per-item Task recovery was delivered by Slice 23.
 
 ## Configuration architecture: TARGET (partially implemented; remaining work explicit)
 
@@ -1996,7 +1996,7 @@ The API and Operator Web call this same application service and projection. The 
 explicit confirmation and renders per-item plans, blockers, evidence, conflicts, capability gaps,
 and the fresh-Preview recovery action. Preview wraps every configured Storage adapter in a
 read-only guard, performs only analysis reads, never creates a Task/Job/authorization, and never
-calls `OrganizerExecutor`; execution admission remains a separate future boundary.
+calls `OrganizerExecutor`; exact execution admission is the separate boundary described below.
 
 ## Exact reviewed manual execution architecture: CURRENT (Task 24.4)
 
@@ -2038,6 +2038,17 @@ reconcile an `ADMITTED`/`RUNNING` execution, but it never replays an admitted mu
 rebuilds the plan. API and Operator Web use this same service and projection, including the separate
 manual-execution permission and two explicit confirmation steps.
 
+### Result and history safety: CURRENT (Task 24.7)
+
+All `task_results` write routes use one redacting SQLite value builder before parameter binding,
+including direct append, atomic TaskItem/evidence completion and manual-execution publication. The
+single row reconstruction path also redacts human/explanatory Result text, while preserving exact
+source/destination identity fields used for FileIndex and plan linkage. FileCatalog and the
+authenticated API apply the shared recursive redaction to both `latestResult` and `results[]`, and
+the Processing Checkpoint projection protects embedded Result paths and effects. Historical unsafe
+rows are redacted during read without rewrite or side effects. This boundary does not alter
+execution admission, planning, mutation or recovery semantics.
+
 Scheduled unattended execution, automatic crash replay, universal compensation, remote setup and
 provider switching remain outside this boundary.
 
@@ -2045,8 +2056,9 @@ provider switching remain outside this boundary.
 
 Slice 23 does not implement automatic replay of uncertain media mutation, cross-run compensation or
 historical rollback beyond the existing per-invocation Organizer rollback, distributed Task leases,
-forced interruption of external calls, automatic crash replay, Metadata Provider switching, the
-broader Files/Media manual-organize journey or scheduled unattended real execution. These are not
+forced interruption of external calls, automatic crash replay, Metadata Provider switching or
+scheduled unattended real execution. Slice 24 now provides the bounded Files/Media manual-organize
+journey, but these remaining capabilities are not part of the closed Slice 24 boundary. These are not
 dependencies of the current checkpoint and DryRun continuation path. OrganizerExecutor remains the
 only Storage mutation boundary, and any future real continuation must independently satisfy current
 authority, Storage capability and conflict/destructive-operation gates.
