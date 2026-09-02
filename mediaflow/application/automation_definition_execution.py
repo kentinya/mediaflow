@@ -472,8 +472,8 @@ class DefinitionScopedExecutionService:
             retry_cancellation_check=workflow_stop,
             secret_free_errors=True,
             persist_failure_explanations=True,
-            before_execute=(
-                (lambda: self._unattended_grants.assert_live(job, definition))
+            mutation_authority=(
+                (lambda _plan, _boundary: self._unattended_grants.assert_live(job, definition))
                 if execute and self._unattended_grants is not None
                 else None
             ),

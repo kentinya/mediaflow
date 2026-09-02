@@ -20,6 +20,9 @@ from mediaflow.application.automation import (
 from mediaflow.application.automation_definition_execution import (
     DefinitionScopedExecutionService,
 )
+from mediaflow.application.automation_definition_occurrence import (
+    AutomationDefinitionOccurrenceService,
+)
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.read_only_storage import ReadOnlyStorageGuard
@@ -45,7 +48,7 @@ from mediaflow.domain.metadata import (
     MetadataErrorCode,
 )
 from mediaflow.domain.notification import NotificationEventType
-from mediaflow.domain.organizer import ConflictStrategy
+from mediaflow.domain.organizer import AttachmentPolicy, ConflictStrategy
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
@@ -1651,7 +1654,11 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
                     def assert_live(self, claimed_job, claimed_definition):
                         self.boundary_calls += 1
-                        if self.boundary_calls == 2:
+                        # The first item performs three cross-storage boundaries
+                        # (directory, target write, source delete).  Revoke before the
+                        # second item's first boundary so the first sibling completes
+                        # and the second fails before any mutation.
+                        if self.boundary_calls == 4:
                             self.revoke(grant.grant_id, actor="admin", reason="boundary")
                         return super().assert_live(claimed_job, claimed_definition)
 
@@ -1678,7 +1685,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     TaskItemStatus.FAILED,
                 )
                 self.assertIn(
-                    "unattended_execution_grant_revoked",
+                    "unattended_authority",
                     items["Media/incoming/A/Delta.Movie.2025.mkv"].error,
                 )
                 results = repository.list_results(task.task_id)
@@ -1693,6 +1700,173 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(results[1].status, TaskItemStatus.FAILED.value)
             self.assertFalse(first.exists())
             self.assertTrue(second.exists())
+
+    def test_intra_item_permission_loss_after_attachment_stops_primary_without_replay(
+        self,
+    ) -> None:
+        definition = _definition(
+            "intra-item",
+            mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+            limit=1,
+        )
+        base_strategy = smoke_strategy_configuration()
+        type_policies = tuple(
+            replace(
+                policy,
+                organize_policy=replace(
+                    policy.organize_policy,
+                    attachments=AttachmentPolicy(enabled=True),
+                ),
+            )
+            if policy.recognition_type.type_id == "A"
+            else policy
+            for policy in base_strategy.recognition_type_policies
+        )
+        strategy = replace(base_strategy, recognition_type_policies=type_policies)
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "movie-a",
+                    MediaType.MOVIE,
+                    "Alpha Movie",
+                    year=2024,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+
+        class TogglePermissionAuthority:
+            def __init__(self) -> None:
+                self.allowed = True
+
+            def has_permission(self, principal_id, permission) -> bool:
+                return bool(self.allowed) and (
+                    permission == ApiPermission.GRANT_UNATTENDED_EXECUTION
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            incoming = root / "source" / "Media" / "incoming" / "A"
+            incoming.mkdir(parents=True)
+            media = incoming / "Alpha.Movie.2024.mkv"
+            subtitle = incoming / "Alpha.Movie.2024.en.srt"
+            media.write_bytes(b"media")
+            subtitle.write_bytes(b"english")
+            configuration = self._configuration(root, definition, strategy=strategy)
+            storages = {
+                "source": LocalStorage("source", str(root / "source")),
+                "target": LocalStorage("target", str(root / "target")),
+            }
+
+            def storage_factory(external=None, storage_ids=None):
+                selected = storages
+                if storage_ids is not None:
+                    selected = {key: value for key, value in storages.items() if key in storage_ids}
+                if external:
+                    selected = {**selected, **external}
+                return selected
+
+            with (
+                SQLiteTaskRepository(configuration.database_path) as repository,
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+            ):
+                job = self._emit(repository, definition)
+                preview_id, preview_reader = _preview_for(definition, job)
+                permission = TogglePermissionAuthority()
+
+                class IntraItemPermissionService(UnattendedExecutionGrantService):
+                    def __init__(self, *args, **kwargs):
+                        super().__init__(*args, **kwargs)
+                        self.boundary_calls = 0
+
+                    def assert_live(self, claimed_job, claimed_definition):
+                        self.boundary_calls += 1
+                        # CREATE_DIRECTORY and both attachment cross-storage boundaries
+                        # pass, then the primary mutation re-reads current permission
+                        # and fails.
+                        if self.boundary_calls == 4:
+                            permission.allowed = False
+                        return super().assert_live(claimed_job, claimed_definition)
+
+                grant_service = IntraItemPermissionService(
+                    repository,
+                    preview_service=preview_reader,
+                    permission_authority=permission,
+                )
+                grant_service.grant(
+                    definition,
+                    configuration_snapshot_id=job.configuration_snapshot_id,
+                    configuration_snapshot_digest=job.configuration_snapshot_digest,
+                    configuration_snapshot_version=job.configuration_snapshot_version,
+                    actor="admin",
+                    confirmation=True,
+                    preview_id=preview_id,
+                )
+                service = self._service(
+                    repository,
+                    file_index,
+                    configuration,
+                    storage_factory,
+                    provider,
+                    grant_service,
+                )
+                finished = self._run(repository, service)
+                self.assertEqual(finished.status, AutomationJobStatus.COMPLETED)
+                task = repository.get_task(finished.task_id)
+                self.assertIsNotNone(task)
+                items = list(repository.list_items(task.task_id))
+                self.assertEqual(len(items), 1)
+                item = items[0]
+                self.assertEqual(item.status, TaskItemStatus.PARTIAL)
+                self.assertIn("unattended_authority", item.error)
+                result = repository.list_results_for_item(item.item_id)[0]
+                self.assertEqual(result.status, TaskItemStatus.PARTIAL.value)
+                self.assertEqual(result.retry_category, "unattended_authority")
+                self.assertIn("ATTACHMENT", ";".join(result.completed_operations))
+                self.assertNotIn("PRIMARY", result.completed_operations[-1])
+                checkpoint = ProcessingCheckpointService(repository).get(item.item_id)
+                self.assertEqual(checkpoint.error_category.value, "unattended_authority")
+                self.assertEqual(checkpoint.effect_certainty.value, "verified_complete")
+                self.assertEqual(checkpoint.permitted_action_ids, ("investigate",))
+                occurrence = AutomationDefinitionOccurrenceService(repository).latest(
+                    definition.definition_id
+                )
+                self.assertIsNotNone(occurrence)
+                self.assertEqual(occurrence.task_id, task.task_id)
+                self.assertEqual(
+                    repository.list_task_item_status_counts((task.task_id,))[task.task_id][
+                        "partial"
+                    ],
+                    1,
+                )
+                permission.allowed = True
+                worker = AutomationWorker(
+                    repository,
+                    lambda job, cancelled: service.run(job, cancelled),
+                )
+                self.assertIsNone(worker.run_next())
+
+            self.assertTrue(media.exists())
+            self.assertEqual(b"media", media.read_bytes())
+            self.assertFalse(subtitle.exists())
+            target_subtitle = (
+                root
+                / "target"
+                / "Movies"
+                / "Anime"
+                / "Alpha Movie (2024)"
+                / "Alpha Movie (2024).en.srt"
+            )
+            self.assertTrue(target_subtitle.exists())
+            self.assertEqual(b"english", target_subtitle.read_bytes())
+            self.assertFalse(
+                any(
+                    "Alpha Movie (2024).mkv" in path.name
+                    for path in (root / "target").rglob("*.mkv")
+                )
+            )
 
     def test_claim_boundary_failures_are_durable_and_do_not_create_tasks(self) -> None:
         scenarios = (

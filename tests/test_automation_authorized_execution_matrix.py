@@ -122,6 +122,56 @@ class AuthorizedFailureExplanationTests(unittest.TestCase):
             self.assertTrue(explanation.next_action)
         self.assertEqual(len({value.category for value in explanations}), len(cases))
 
+    def test_unattended_authority_execution_evidence_is_stable_and_bounded(self) -> None:
+        cases = (
+            (
+                ExecutionResult(
+                    ExecutionStatus.FAILED,
+                    PlanOperation.MOVE,
+                    "source",
+                    "target",
+                    errors=("unattended authority refused before CREATE_DIRECTORY",),
+                    effect_certainty=ExecutionEffectCertainty.NONE,
+                ),
+                True,
+            ),
+            (
+                ExecutionResult(
+                    ExecutionStatus.PARTIAL,
+                    PlanOperation.MOVE,
+                    "source",
+                    "target",
+                    completed_operations=("MOVE",),
+                    errors=("unattended authority refused before CLEANUP_DELETE_DIRECTORY",),
+                    effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+                ),
+                False,
+            ),
+            (
+                ExecutionResult(
+                    ExecutionStatus.PARTIAL,
+                    PlanOperation.MOVE,
+                    "source",
+                    "target",
+                    completed_operations=("COPY",),
+                    errors=("unattended authority refused before ROLLBACK:DELETE_TARGET",),
+                    effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                    uncertain_effects=("mutation_outcome",),
+                ),
+                False,
+            ),
+        )
+        for execution, retry_safe in cases:
+            with self.subTest(status=execution.status.value):
+                explanation = classify_failure(execution=execution)
+                self.assertEqual(explanation.category, "unattended_authority")
+                self.assertEqual(explanation.retry_safe, retry_safe)
+                self.assertNotIn("CREATE_DIRECTORY", explanation.message)
+                self.assertNotIn("private", explanation.encode())
+                sanitized = sanitize_execution_errors(execution, explanation)
+                self.assertEqual(sanitized.errors, (explanation.message,))
+                self.assertLessEqual(len(explanation.encode()), MAX_FAILURE_ERROR_LENGTH)
+
     def test_partial_and_uncertain_execution_preserve_effect_boundary(self) -> None:
         partial = ExecutionResult(
             ExecutionStatus.PARTIAL,

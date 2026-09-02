@@ -211,6 +211,7 @@ class DirectoryCleanupStatus(StrEnum):
     NOT_APPLICABLE = "not_applicable"
     SUCCESS = "success"
     STOPPED = "stopped"
+    REFUSED = "refused"
     FAILED = "failed"
 
 
@@ -227,6 +228,7 @@ class RollbackStatus(StrEnum):
     NOT_NEEDED = "not_needed"
     SUCCESS = "success"
     PARTIAL = "partial"
+    REFUSED = "refused"
 
 
 @dataclass(frozen=True)
