@@ -14,6 +14,7 @@ from mediaflow.application.processing_checkpoint import ProcessingCheckpointServ
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
+from mediaflow.domain.processing_checkpoint import CheckpointAction, EffectCertainty
 from mediaflow.domain.recognition_review import RecognitionReviewStatus
 from mediaflow.domain.recovery import RecoveryAdmissionError, RecoveryAdmissionReason
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
@@ -333,6 +334,56 @@ class RecoveryAdmissionTests(unittest.TestCase):
                     RecoveryAdmissionReason.SNAPSHOT_UNAVAILABLE,
                 )
                 self.assertEqual(repository.list_recovery_requests(item.item_id), ())
+
+    def test_admission_rechecks_retry_safety_facts_before_accepting_a_forged_action(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                _, task = self._task(repository)
+                item, _ = self._failed_item(repository, task, item_id="forged-retry")
+                base_gate = self._gate(repository)
+                checkpoint = base_gate.checkpoint_service.get(item.item_id)
+                forged_action = CheckpointAction(
+                    "retry",
+                    "Retry safe analysis",
+                    True,
+                    "task_recovery",
+                    None,
+                    True,
+                )
+
+                class ForgedCheckpointService:
+                    def __init__(self, value):
+                        self.value = value
+
+                    def get(self, _item_id):
+                        return self.value
+
+                    def _project(self, _context):
+                        return self.value
+
+                forged = replace(
+                    checkpoint,
+                    effect_certainty=EffectCertainty.ATTEMPTED_UNVERIFIED,
+                    actions=(forged_action,),
+                )
+                gate = RecoveryAdmissionService(
+                    repository,
+                    snapshot_validator=self._validator,
+                    checkpoint_service=ForgedCheckpointService(forged),
+                )
+                with self.assertRaises(RecoveryAdmissionError) as raised:
+                    gate.admit(
+                        task.task_id,
+                        item.item_id,
+                        action_id="retry",
+                        expected_checkpoint_version=checkpoint.checkpoint_version,
+                        actor="operator",
+                    )
+                self.assertEqual(
+                    raised.exception.reason, RecoveryAdmissionReason.ACTION_NOT_PERMITTED
+                )
+                self.assertEqual(repository.list_recovery_requests(item.item_id), ())
+                self.assertEqual(repository.get_item(item.item_id).status, TaskItemStatus.FAILED)
 
     def test_ignore_requires_pending_review_and_is_atomic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

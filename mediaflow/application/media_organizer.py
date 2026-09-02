@@ -472,7 +472,7 @@ class MediaOrganizerService:
             and strategy.metadata.error
         ):
             category = classify_retryable_error(strategy.metadata.error)
-            if category:
+            if category and self._retry_policy.enabled:
                 raise RetrySignal(category)
         return strategy
 

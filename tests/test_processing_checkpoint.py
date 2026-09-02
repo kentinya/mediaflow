@@ -9,9 +9,10 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from mediaflow.application.failure_explanation import failure_explanation
 from mediaflow.application.media_organizer import MediaOrganizerItemResult
 from mediaflow.application.organizer import OrganizerExecutor
-from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+from mediaflow.application.processing_checkpoint import ProcessingCheckpointService, _actions
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.domain.organizer import (
@@ -20,6 +21,11 @@ from mediaflow.domain.organizer import (
     ExecutionStatus,
     OrganizePlan,
     PlanOperation,
+)
+from mediaflow.domain.processing_checkpoint import (
+    CheckpointBlocker,
+    CheckpointStage,
+    EffectCertainty,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
@@ -197,6 +203,94 @@ class ProcessingCheckpointTests(unittest.TestCase):
                 legacy_checkpoint = ProcessingCheckpointService(repository).get(legacy.item_id)
                 self.assertEqual(legacy_checkpoint.effect_certainty.value, "unknown")
                 self.assertNotIn("retry", legacy_checkpoint.permitted_action_ids)
+
+    def test_retry_safe_failure_explanation_cannot_override_safety_guards(self) -> None:
+        failure = failure_explanation("storage_failure", retry_safe=True)
+        cases = (
+            {
+                "name": "attempted effect",
+                "status": TaskItemStatus.FAILED,
+                "stage": CheckpointStage.FAILED,
+                "certainty": EffectCertainty.ATTEMPTED_UNVERIFIED,
+                "blocker": None,
+                "snapshot_resolvable": True,
+                "raw_stage": "failed",
+                "safety": "unknown",
+                "actions": ("investigate",),
+                "reason": "automatic_replay_refused: effect certainty is not verified",
+            },
+            {
+                "name": "unknown effect",
+                "status": TaskItemStatus.FAILED,
+                "stage": CheckpointStage.FAILED,
+                "certainty": EffectCertainty.UNKNOWN,
+                "blocker": None,
+                "snapshot_resolvable": True,
+                "raw_stage": "failed",
+                "safety": "unknown",
+                "actions": ("investigate",),
+                "reason": "automatic_replay_refused: effect certainty is not verified",
+            },
+            {
+                "name": "interrupted admission",
+                "status": TaskItemStatus.FAILED,
+                "stage": CheckpointStage.FAILED,
+                "certainty": EffectCertainty.NONE,
+                "blocker": None,
+                "snapshot_resolvable": True,
+                "raw_stage": "admission_interrupted",
+                "safety": "unsafe",
+                "actions": ("investigate",),
+                "reason": "manual_execution_reconciliation_required: exact authority was "
+                "consumed before the execution state was published",
+            },
+            {
+                "name": "pending conflict",
+                "status": TaskItemStatus.WAITING_CONFIRM,
+                "stage": CheckpointStage.WAITING_CONFIRM,
+                "certainty": EffectCertainty.NONE,
+                "blocker": CheckpointBlocker(
+                    "conflict",
+                    "confirmation-1",
+                    "pending",
+                    "task-1",
+                    "item-1",
+                    "/api/v1/confirmations/confirmation-1",
+                ),
+                "snapshot_resolvable": True,
+                "raw_stage": "waiting_confirm",
+                "safety": "unsafe",
+                "actions": ("resolve_conflict",),
+                "reason": None,
+            },
+            {
+                "name": "unavailable snapshot",
+                "status": TaskItemStatus.FAILED,
+                "stage": CheckpointStage.FAILED,
+                "certainty": EffectCertainty.NONE,
+                "blocker": None,
+                "snapshot_resolvable": False,
+                "raw_stage": "failed",
+                "safety": "unsafe",
+                "actions": ("investigate",),
+                "reason": "automatic_replay_refused: pinned configuration is unavailable",
+            },
+        )
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                safety, actions, refusal = _actions(
+                    case["status"],
+                    case["stage"],
+                    case["certainty"],
+                    case["blocker"],
+                    case["snapshot_resolvable"],
+                    raw_stage=case["raw_stage"],
+                    failure=failure,
+                )
+                self.assertEqual(safety.value, case["safety"])
+                self.assertEqual(tuple(action.action_id for action in actions), case["actions"])
+                self.assertEqual(refusal, case["reason"])
+                self.assertNotIn("retry", tuple(action.action_id for action in actions))
 
     def test_completion_path_persists_explicit_effect_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

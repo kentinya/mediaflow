@@ -821,36 +821,6 @@ def _actions(
         if status is TaskItemStatus.DRY_RUN:
             reason = "replay_not_offered: DryRun produced no mutation and is already recorded"
         return RetrySafety.UNSAFE, (), reason
-    if failure is not None:
-        if failure.retry_safe:
-            return (
-                RetrySafety.SAFE,
-                (
-                    CheckpointAction(
-                        "retry",
-                        failure.next_action,
-                        True,
-                        "task_recovery",
-                        None,
-                        True,
-                    ),
-                ),
-                None,
-            )
-        return (
-            RetrySafety.UNSAFE,
-            (
-                CheckpointAction(
-                    "investigate",
-                    failure.next_action,
-                    False,
-                    "none",
-                    None,
-                    False,
-                ),
-            ),
-            failure.next_action,
-        )
     if blocker is not None:
         action = CheckpointAction(
             f"resolve_{blocker.kind}",
@@ -904,6 +874,36 @@ def _actions(
                     ),
                 ),
                 reason,
+            )
+        if failure is not None:
+            if failure.retry_safe:
+                return (
+                    RetrySafety.SAFE,
+                    (
+                        CheckpointAction(
+                            "retry",
+                            failure.next_action,
+                            True,
+                            "task_recovery",
+                            None,
+                            True,
+                        ),
+                    ),
+                    None,
+                )
+            return (
+                RetrySafety.UNSAFE,
+                (
+                    CheckpointAction(
+                        "investigate",
+                        failure.next_action,
+                        False,
+                        "none",
+                        None,
+                        False,
+                    ),
+                ),
+                failure.next_action,
             )
         return (
             RetrySafety.SAFE,

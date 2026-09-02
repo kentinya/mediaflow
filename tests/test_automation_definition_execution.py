@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tempfile
+import time
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -19,6 +21,7 @@ from mediaflow.application.automation_definition_execution import (
     DefinitionScopedExecutionService,
 )
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.read_only_storage import ReadOnlyStorageGuard
 from mediaflow.application.strategy_test import (
     SyntheticMetadataProvider,
@@ -31,11 +34,17 @@ from mediaflow.domain.automation import (
     AutomationTaskRunMode,
     SchedulerConfigurationSnapshot,
 )
-from mediaflow.domain.library import MediaLibrary, ResourceLibrary
-from mediaflow.domain.metadata import MediaCandidate, MediaType
+from mediaflow.domain.library import FileStabilityPolicy, MediaLibrary, ResourceLibrary
+from mediaflow.domain.metadata import (
+    MediaCandidate,
+    MediaType,
+    MetadataError,
+    MetadataErrorCode,
+)
 from mediaflow.domain.notification import NotificationEventType
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from mediaflow.final_cli import _run_queued_workflow
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
@@ -817,6 +826,637 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertFalse(confirmation.overwrite_authorized)
                 self.assertEqual(existing.read_bytes(), b"old")
             self.assertEqual(source_file.read_bytes(), b"new")
+
+    def test_authorized_conflict_strategies_preserve_independent_sibling_outcomes(self) -> None:
+        candidates = (
+            MediaCandidate(
+                "tmdb",
+                "movie-alpha",
+                MediaType.MOVIE,
+                "Alpha Movie",
+                year=2024,
+                genres=("Animation",),
+                countries=("JP",),
+            ),
+            MediaCandidate(
+                "tmdb",
+                "movie-bravo",
+                MediaType.MOVIE,
+                "Bravo Movie",
+                year=2024,
+                genres=("Animation",),
+                countries=("JP",),
+            ),
+        )
+        for conflict_strategy in (
+            ConflictStrategy.SKIP,
+            ConflictStrategy.RENAME,
+            ConflictStrategy.MANUAL,
+        ):
+            with (
+                self.subTest(conflict_strategy=conflict_strategy),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                definition = _definition(
+                    f"conflict-{conflict_strategy.value}",
+                    mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+                    limit=2,
+                )
+                base_strategy = smoke_strategy_configuration()
+                strategy = replace(
+                    base_strategy,
+                    recognition_type_policies=tuple(
+                        replace(
+                            type_policy,
+                            organize_policy=replace(
+                                type_policy.organize_policy,
+                                conflict_strategy=conflict_strategy,
+                            ),
+                        )
+                        for type_policy in base_strategy.recognition_type_policies
+                    ),
+                )
+                incoming = root / "source/Media/incoming/A"
+                incoming.mkdir(parents=True)
+                alpha_source = incoming / "Alpha.Movie.2024.mkv"
+                bravo_source = incoming / "Bravo.Movie.2024.mkv"
+                alpha_source.write_bytes(b"alpha-new")
+                bravo_source.write_bytes(b"bravo-new")
+                alpha_target = root / (
+                    "target/Movies/Anime/Alpha Movie (2024)/Alpha Movie (2024).mkv"
+                )
+                bravo_target = root / (
+                    "target/Movies/Anime/Bravo Movie (2024)/Bravo Movie (2024).mkv"
+                )
+                alpha_target.parent.mkdir(parents=True)
+                alpha_target.write_bytes(b"alpha-old")
+                configuration = self._configuration(root, definition, strategy=strategy)
+                storages = {
+                    "source": LocalStorage("source", str(root / "source")),
+                    "target": LocalStorage("target", str(root / "target")),
+                }
+
+                def storage_factory(external=None, storage_ids=None):
+                    selected = storages
+                    if storage_ids is not None:
+                        selected = {
+                            key: value for key, value in storages.items() if key in storage_ids
+                        }
+                    if external:
+                        selected = {**selected, **external}
+                    return selected
+
+                with (
+                    SQLiteTaskRepository(configuration.database_path) as repository,
+                    SQLiteFileIndexRepository(configuration.database_path) as file_index,
+                ):
+                    job = self._emit(repository, definition)
+                    grant_service = UnattendedExecutionGrantService(repository)
+                    grant_service.grant(
+                        definition,
+                        configuration_snapshot_id=job.configuration_snapshot_id,
+                        configuration_snapshot_digest=job.configuration_snapshot_digest,
+                        configuration_snapshot_version=job.configuration_snapshot_version,
+                        actor="admin",
+                        confirmation=True,
+                    )
+                    finished = self._run(
+                        repository,
+                        self._service(
+                            repository,
+                            file_index,
+                            configuration,
+                            storage_factory,
+                            SyntheticMetadataProvider(candidates),
+                            grant_service,
+                        ),
+                    )
+                    task = repository.get_task(finished.task_id)
+                    items = {
+                        Path(item.source_path).name: item
+                        for item in repository.list_items(task.task_id)
+                    }
+                    results = {
+                        Path(result.source_path).name: result
+                        for result in repository.list_results(task.task_id)
+                    }
+                    self.assertEqual(
+                        items[alpha_source.name].status,
+                        {
+                            ConflictStrategy.SKIP: TaskItemStatus.SKIPPED,
+                            ConflictStrategy.RENAME: TaskItemStatus.SUCCESS,
+                            ConflictStrategy.MANUAL: TaskItemStatus.WAITING_CONFIRM,
+                        }[conflict_strategy],
+                    )
+                    self.assertEqual(items[bravo_source.name].status, TaskItemStatus.SUCCESS)
+                    self.assertEqual(
+                        task.status,
+                        PersistentTaskStatus.PARTIAL_SUCCESS
+                        if conflict_strategy is ConflictStrategy.MANUAL
+                        else PersistentTaskStatus.COMPLETED,
+                    )
+                    self.assertEqual(
+                        len(results), 1 if conflict_strategy is ConflictStrategy.MANUAL else 2
+                    )
+                    self.assertEqual(
+                        results[bravo_source.name].status, TaskItemStatus.SUCCESS.value
+                    )
+                    self.assertEqual(bravo_target.read_bytes(), b"bravo-new")
+                    self.assertEqual(alpha_target.read_bytes(), b"alpha-old")
+                    if conflict_strategy is ConflictStrategy.SKIP:
+                        self.assertEqual(results[alpha_source.name].operation, "SKIP")
+                        self.assertTrue(alpha_source.exists())
+                    elif conflict_strategy is ConflictStrategy.RENAME:
+                        self.assertEqual(
+                            results[alpha_source.name].status, TaskItemStatus.SUCCESS.value
+                        )
+                        renamed = root / "target" / results[alpha_source.name].destination_path
+                        self.assertTrue(renamed.name.endswith("(1).mkv"))
+                        self.assertEqual(renamed.read_bytes(), b"alpha-new")
+                        self.assertFalse(alpha_source.exists())
+                    else:
+                        confirmations = repository.list_confirmations()
+                        self.assertEqual(len(confirmations), 1)
+                        self.assertEqual(confirmations[0].item_id, items[alpha_source.name].item_id)
+                        checkpoint = ProcessingCheckpointService(
+                            repository,
+                            snapshot_validator=lambda _snapshot_id, _digest: None,
+                        ).get(items[alpha_source.name].item_id)
+                        self.assertEqual(checkpoint.blocker.kind, "conflict")
+                        self.assertEqual(
+                            checkpoint.blocker.resolution_path,
+                            f"/api/v1/confirmations/{confirmations[0].confirmation_id}",
+                        )
+                        self.assertEqual(checkpoint.permitted_action_ids, ("resolve_conflict",))
+                        self.assertTrue(alpha_source.exists())
+
+    def test_authorized_invalid_destination_fails_closed_without_blocking_sibling(self) -> None:
+        definition = _definition(
+            "invalid-destination",
+            mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+            limit=2,
+        )
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "movie-alpha",
+                    MediaType.MOVIE,
+                    "Alpha Movie",
+                    year=2024,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+                MediaCandidate(
+                    "tmdb",
+                    "show-bravo",
+                    MediaType.TV,
+                    "Bravo Show",
+                    year=2024,
+                ),
+            ),
+            episodes=(1,),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            alpha_source = root / "source/Media/incoming/A/Alpha.Movie.2024.mkv"
+            bravo_source = root / "source/Media/incoming/B/Bravo.Show.2024.S01E01.mkv"
+            alpha_source.parent.mkdir(parents=True)
+            bravo_source.parent.mkdir(parents=True)
+            alpha_source.write_bytes(b"alpha")
+            bravo_source.write_bytes(b"bravo")
+            configuration = self._configuration(root, definition)
+            configuration = replace(
+                configuration,
+                media_libraries=(
+                    MediaLibrary("movies", "Movies", "target", "target/.."),
+                    configuration.media_libraries[1],
+                ),
+            )
+            storages = {
+                "source": LocalStorage("source", str(root / "source")),
+                "target": LocalStorage("target", str(root / "target")),
+            }
+
+            def storage_factory(external=None, storage_ids=None):
+                selected = storages
+                if storage_ids is not None:
+                    selected = {key: value for key, value in storages.items() if key in storage_ids}
+                if external:
+                    selected = {**selected, **external}
+                return selected
+
+            with (
+                SQLiteTaskRepository(configuration.database_path) as repository,
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+            ):
+                job = self._emit(repository, definition)
+                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service.grant(
+                    definition,
+                    configuration_snapshot_id=job.configuration_snapshot_id,
+                    configuration_snapshot_digest=job.configuration_snapshot_digest,
+                    configuration_snapshot_version=job.configuration_snapshot_version,
+                    actor="admin",
+                    confirmation=True,
+                )
+                finished = self._run(
+                    repository,
+                    self._service(
+                        repository,
+                        file_index,
+                        configuration,
+                        storage_factory,
+                        provider,
+                        grant_service,
+                    ),
+                )
+                task = repository.get_task(finished.task_id)
+                self.assertEqual(task.status, PersistentTaskStatus.PARTIAL_SUCCESS)
+                items = {
+                    Path(item.source_path).name: item
+                    for item in repository.list_items(task.task_id)
+                }
+                results = {
+                    Path(result.source_path).name: result
+                    for result in repository.list_results(task.task_id)
+                }
+                self.assertEqual(items[alpha_source.name].status, TaskItemStatus.FAILED)
+                self.assertEqual(items[bravo_source.name].status, TaskItemStatus.SUCCESS)
+                self.assertEqual(len(results), 2)
+                checkpoint = ProcessingCheckpointService(
+                    repository,
+                    snapshot_validator=lambda _snapshot_id, _digest: None,
+                ).get(items[alpha_source.name].item_id)
+                self.assertEqual(checkpoint.error_category.value, "invalid_destination")
+                self.assertEqual(checkpoint.failure.category, "invalid_destination")
+                self.assertEqual(checkpoint.effect_certainty.value, "none")
+                self.assertEqual(checkpoint.permitted_action_ids, ("investigate",))
+                self.assertNotIn("retry", checkpoint.permitted_action_ids)
+                self.assertEqual(results[alpha_source.name].effect_certainty, "none")
+                self.assertEqual(results[bravo_source.name].status, TaskItemStatus.SUCCESS.value)
+            self.assertTrue(alpha_source.exists())
+            self.assertFalse(bravo_source.exists())
+            self.assertFalse(
+                any("Alpha Movie" in path.name for path in (root / "target").rglob("*"))
+            )
+            self.assertTrue(any("Bravo Show" in path.name for path in (root / "target").rglob("*")))
+
+    def test_authorized_unstable_source_is_durable_and_not_counted_as_selected(self) -> None:
+        definition = _definition(
+            "unstable-source",
+            mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+            limit=2,
+        )
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "movie-alpha",
+                    MediaType.MOVIE,
+                    "Alpha Movie",
+                    year=2024,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stable_source = root / "source/Media/incoming/A/Alpha.Movie.2024.mkv"
+            unstable_source = root / "source/Media/incoming/A/Unstable.Movie.2024.mkv"
+            stable_source.parent.mkdir(parents=True)
+            stable_source.write_bytes(b"stable")
+            unstable_source.write_bytes(b"unstable")
+            old = time.time() - 7200
+            os.utime(stable_source, (old, old))
+            resource = ResourceLibrary(
+                "resource",
+                "Resource",
+                "source",
+                "Media",
+                stability_policy=FileStabilityPolicy(minimum_age_seconds=3600),
+            )
+            configuration = self._configuration(root, definition, resource=resource)
+            source_storage = LocalStorage("source", str(root / "source"))
+            target_storage = LocalStorage("target", str(root / "target"))
+            storages = {"source": source_storage, "target": target_storage}
+
+            def storage_factory(external=None, storage_ids=None):
+                selected = storages
+                if storage_ids is not None:
+                    selected = {key: value for key, value in storages.items() if key in storage_ids}
+                if external:
+                    selected = {**selected, **external}
+                return selected
+
+            with (
+                SQLiteTaskRepository(configuration.database_path) as repository,
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+            ):
+                job = self._emit(repository, definition)
+                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service.grant(
+                    definition,
+                    configuration_snapshot_id=job.configuration_snapshot_id,
+                    configuration_snapshot_digest=job.configuration_snapshot_digest,
+                    configuration_snapshot_version=job.configuration_snapshot_version,
+                    actor="admin",
+                    confirmation=True,
+                )
+                finished = self._run(
+                    repository,
+                    self._service(
+                        repository,
+                        file_index,
+                        configuration,
+                        storage_factory,
+                        provider,
+                        grant_service,
+                    ),
+                )
+                task = repository.get_task(finished.task_id)
+                self.assertEqual(task.status, PersistentTaskStatus.PARTIAL_SUCCESS)
+                items = {
+                    Path(item.source_path).name: item
+                    for item in repository.list_items(task.task_id)
+                }
+                results = {
+                    Path(result.source_path).name: result
+                    for result in repository.list_results(task.task_id)
+                }
+                self.assertEqual(items[stable_source.name].status, TaskItemStatus.SUCCESS)
+                self.assertEqual(items[unstable_source.name].status, TaskItemStatus.FAILED)
+                self.assertEqual(len(results), 2)
+                unstable_checkpoint = ProcessingCheckpointService(
+                    repository,
+                    snapshot_validator=lambda _snapshot_id, _digest: None,
+                ).get(items[unstable_source.name].item_id)
+                self.assertEqual(unstable_checkpoint.failure.category, "unstable_source")
+                self.assertEqual(unstable_checkpoint.effect_certainty.value, "none")
+                self.assertEqual(unstable_checkpoint.retry_safety.value, "safe")
+                self.assertEqual(unstable_checkpoint.permitted_action_ids, ("retry",))
+                self.assertEqual(results[unstable_source.name].retry_category, "unstable_source")
+                self.assertEqual(results[unstable_source.name].effect_certainty, "none")
+                occurrence = repository.get_latest_automation_definition_occurrence(
+                    definition.definition_id
+                )
+                self.assertEqual(occurrence.task_id, task.task_id)
+                api = self._api(repository, (definition,))
+                status, body = self._request(
+                    api,
+                    f"/api/v1/automation/task-definitions/{definition.definition_id}/occurrences",
+                )
+                self.assertEqual(status, 200, body)
+                summary = body["items"][0]["outcomeSummary"]
+                self.assertEqual(summary["totalItems"], 2)
+                self.assertEqual(summary["counts"]["success"], 1)
+                self.assertEqual(summary["counts"]["failed"], 1)
+                self.assertFalse(summary["boundReached"])
+                self.assertIn(
+                    "Unstable source items remain recorded and were not selected.",
+                    summary["bound"]["statement"],
+                )
+            self.assertFalse(stable_source.exists())
+            self.assertTrue(unstable_source.exists())
+
+    def test_authorized_provider_failure_preserves_first_sibling_and_never_auto_replays(
+        self,
+    ) -> None:
+        definition = _definition(
+            "provider-failure",
+            mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+            limit=2,
+        )
+        candidates = (
+            MediaCandidate(
+                "tmdb",
+                "movie-alpha",
+                MediaType.MOVIE,
+                "Alpha Movie",
+                year=2024,
+                genres=("Animation",),
+                countries=("JP",),
+            ),
+            MediaCandidate(
+                "tmdb",
+                "movie-beta",
+                MediaType.MOVIE,
+                "Beta Movie",
+                year=2024,
+                genres=("Animation",),
+                countries=("JP",),
+            ),
+        )
+
+        class FailingMetadataProvider(SyntheticMetadataProvider):
+            def search_movie(self, query, policy=None, **kwargs):
+                if query.title_candidate == "Beta Movie":
+                    raise MetadataError(
+                        MetadataErrorCode.CONNECTION_FAILED,
+                        "private-provider-token-should-not-persist",
+                    )
+                return super().search_movie(query, policy=policy, **kwargs)
+
+        provider = FailingMetadataProvider(candidates)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            incoming = root / "source/Media/incoming/A"
+            incoming.mkdir(parents=True)
+            alpha_source = incoming / "Alpha.Movie.2024.mkv"
+            beta_source = incoming / "Beta.Movie.2024.mkv"
+            alpha_source.write_bytes(b"alpha")
+            beta_source.write_bytes(b"beta")
+            configuration = self._configuration(root, definition)
+            storages = {
+                "source": LocalStorage("source", str(root / "source")),
+                "target": LocalStorage("target", str(root / "target")),
+            }
+
+            def storage_factory(external=None, storage_ids=None):
+                selected = storages
+                if storage_ids is not None:
+                    selected = {key: value for key, value in storages.items() if key in storage_ids}
+                if external:
+                    selected = {**selected, **external}
+                return selected
+
+            with (
+                SQLiteTaskRepository(configuration.database_path) as repository,
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+            ):
+                job = self._emit(repository, definition)
+                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service.grant(
+                    definition,
+                    configuration_snapshot_id=job.configuration_snapshot_id,
+                    configuration_snapshot_digest=job.configuration_snapshot_digest,
+                    configuration_snapshot_version=job.configuration_snapshot_version,
+                    actor="admin",
+                    confirmation=True,
+                )
+                finished = self._run(
+                    repository,
+                    self._service(
+                        repository,
+                        file_index,
+                        configuration,
+                        storage_factory,
+                        provider,
+                        grant_service,
+                    ),
+                )
+                task = repository.get_task(finished.task_id)
+                self.assertEqual(task.status, PersistentTaskStatus.PARTIAL_SUCCESS)
+                items = {
+                    Path(item.source_path).name: item
+                    for item in repository.list_items(task.task_id)
+                }
+                results = {
+                    Path(result.source_path).name: result
+                    for result in repository.list_results(task.task_id)
+                }
+                self.assertEqual(items[alpha_source.name].status, TaskItemStatus.SUCCESS)
+                self.assertEqual(items[beta_source.name].status, TaskItemStatus.FAILED)
+                self.assertEqual(results[alpha_source.name].status, TaskItemStatus.SUCCESS.value)
+                self.assertEqual(results[beta_source.name].retry_category, "provider_failure")
+                self.assertEqual(
+                    len(repository.list_results_for_item(items[beta_source.name].item_id)), 1
+                )
+                self.assertEqual(items[beta_source.name].attempts, 1)
+                checkpoint = ProcessingCheckpointService(
+                    repository,
+                    snapshot_validator=lambda _snapshot_id, _digest: None,
+                ).get(items[beta_source.name].item_id)
+                self.assertEqual(checkpoint.failure.category, "provider_failure")
+                self.assertEqual(checkpoint.effect_certainty.value, "none")
+                self.assertEqual(checkpoint.retry_safety.value, "safe")
+                self.assertEqual(checkpoint.permitted_action_ids, ("retry",))
+                self.assertNotIn("private-provider-token", json.dumps(checkpoint.document()))
+                self.assertEqual(
+                    repository.list_recovery_requests(items[beta_source.name].item_id), ()
+                )
+            self.assertFalse(alpha_source.exists())
+            self.assertTrue(beta_source.exists())
+
+    def test_authorized_mid_batch_storage_failure_preserves_first_sibling(self) -> None:
+        definition = _definition(
+            "storage-failure",
+            mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+            limit=2,
+        )
+        candidates = (
+            MediaCandidate(
+                "tmdb",
+                "movie-alpha",
+                MediaType.MOVIE,
+                "Alpha Movie",
+                year=2024,
+                genres=("Animation",),
+                countries=("JP",),
+            ),
+            MediaCandidate(
+                "tmdb",
+                "movie-beta",
+                MediaType.MOVIE,
+                "Beta Movie",
+                year=2024,
+                genres=("Animation",),
+                countries=("JP",),
+            ),
+        )
+
+        class FailingTargetStorage(LocalStorage):
+            def exists(self, path: str) -> bool:
+                if path.endswith("Beta Movie (2024).mkv"):
+                    raise StorageError(
+                        StorageErrorCode.CONNECTION_LOST,
+                        "exists",
+                        path,
+                        "private-storage-endpoint-should-not-persist",
+                    )
+                return super().exists(path)
+
+        provider = SyntheticMetadataProvider(candidates)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            incoming = root / "source/Media/incoming/A"
+            incoming.mkdir(parents=True)
+            alpha_source = incoming / "Alpha.Movie.2024.mkv"
+            beta_source = incoming / "Beta.Movie.2024.mkv"
+            alpha_source.write_bytes(b"alpha")
+            beta_source.write_bytes(b"beta")
+            configuration = self._configuration(root, definition)
+            storages = {
+                "source": LocalStorage("source", str(root / "source")),
+                "target": FailingTargetStorage("target", str(root / "target")),
+            }
+
+            def storage_factory(external=None, storage_ids=None):
+                selected = storages
+                if storage_ids is not None:
+                    selected = {key: value for key, value in storages.items() if key in storage_ids}
+                if external:
+                    selected = {**selected, **external}
+                return selected
+
+            with (
+                SQLiteTaskRepository(configuration.database_path) as repository,
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+            ):
+                job = self._emit(repository, definition)
+                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service.grant(
+                    definition,
+                    configuration_snapshot_id=job.configuration_snapshot_id,
+                    configuration_snapshot_digest=job.configuration_snapshot_digest,
+                    configuration_snapshot_version=job.configuration_snapshot_version,
+                    actor="admin",
+                    confirmation=True,
+                )
+                finished = self._run(
+                    repository,
+                    self._service(
+                        repository,
+                        file_index,
+                        configuration,
+                        storage_factory,
+                        provider,
+                        grant_service,
+                    ),
+                )
+                task = repository.get_task(finished.task_id)
+                self.assertEqual(task.status, PersistentTaskStatus.PARTIAL_SUCCESS)
+                items = {
+                    Path(item.source_path).name: item
+                    for item in repository.list_items(task.task_id)
+                }
+                results = {
+                    Path(result.source_path).name: result
+                    for result in repository.list_results(task.task_id)
+                }
+                self.assertEqual(items[alpha_source.name].status, TaskItemStatus.SUCCESS)
+                self.assertEqual(items[beta_source.name].status, TaskItemStatus.FAILED)
+                self.assertEqual(results[alpha_source.name].status, TaskItemStatus.SUCCESS.value)
+                self.assertEqual(results[beta_source.name].retry_category, "storage_failure")
+                self.assertEqual(
+                    len(repository.list_results_for_item(items[beta_source.name].item_id)), 1
+                )
+                checkpoint = ProcessingCheckpointService(
+                    repository,
+                    snapshot_validator=lambda _snapshot_id, _digest: None,
+                ).get(items[beta_source.name].item_id)
+                self.assertEqual(checkpoint.failure.category, "storage_failure")
+                self.assertEqual(checkpoint.effect_certainty.value, "none")
+                self.assertEqual(checkpoint.retry_safety.value, "safe")
+                self.assertEqual(checkpoint.permitted_action_ids, ("retry",))
+                self.assertNotIn("private-storage-endpoint", json.dumps(checkpoint.document()))
+                self.assertEqual(
+                    repository.list_recovery_requests(items[beta_source.name].item_id), ()
+                )
+            self.assertFalse(alpha_source.exists())
+            self.assertTrue(beta_source.exists())
 
     def test_revoked_automatic_mode_fails_before_task_and_mutation(self) -> None:
         definition = _definition(

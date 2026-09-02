@@ -1108,6 +1108,48 @@ class OperatorUiTests(unittest.TestCase):
 
 
 class AutomationPreviewWebTests(unittest.TestCase):
+    def test_automation_outcome_summary_is_bounded_linked_and_read_only(self) -> None:
+        script = APP_JS.decode("utf-8")
+        detail = _js_function_body(script, "showAutomationDetail")
+        render = _js_function_body(script, "renderAutomation")
+        summary_start = detail.index(
+            "detailContent.append(text('h3', 'Per-item outcome summary'));"
+        )
+        summary_end = detail.index("const occurrenceRows", summary_start)
+        summary = detail[summary_start:summary_end]
+
+        self.assertIn("'Per-item outcome summary'", summary)
+        self.assertIn("cards(Object.entries(counts).map(([key, value]) => [key, value]))", summary)
+        self.assertIn("bound.statement", summary)
+        self.assertIn("Items needing attention", summary)
+        self.assertIn("showTaskItem(attention[index].taskId, attention[index].itemId)", summary)
+        self.assertIn("outcomeSummary.attentionLimit || 32", summary)
+        self.assertIn("outcomeSummary.moreAttention === true", summary)
+        self.assertIn("outcomeSummary.attentionTruncated === true", summary)
+        self.assertIn("more items need review in the linked Task", summary)
+        self.assertNotIn("confirmAutomationGrant", summary)
+        self.assertNotIn("confirmAutomationGrantRevoke", summary)
+        self.assertNotIn("method: 'POST'", summary)
+        self.assertNotIn("method: 'PUT'", summary)
+        self.assertNotIn("method: 'DELETE'", summary)
+
+        task_item = _js_function_body(script, "showTaskItem")
+        for field_name in (
+            "Failure explanation",
+            "Durable state",
+            "Failure side effects",
+            "Failure retry safe",
+            "Failure next action",
+        ):
+            with self.subTest(field_name=field_name):
+                self.assertIn(f"field(list, '{field_name}'", task_item)
+        self.assertIn(
+            "/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/occurrences?limit=10",
+            detail,
+        )
+        self.assertIn("Opening or refreshing this view is read-only", detail)
+        self.assertIn("index => showAutomationDetail(items[index], configuration)", render)
+
     def test_automation_preview_entry_confirm_render_and_read_only_load(self) -> None:
         script = APP_JS.decode("utf-8")
         detail = _js_function_body(script, "showAutomationDetail")
