@@ -4791,9 +4791,7 @@ class SQLiteTaskRepository:
     # Compatibility spelling used by lightweight application adapters.
     create_unattended_grant = create_unattended_execution_grant
 
-    def get_unattended_execution_grant(
-        self, grant_id: str
-    ) -> UnattendedExecutionGrant | None:
+    def get_unattended_execution_grant(self, grant_id: str) -> UnattendedExecutionGrant | None:
         with self._lock:
             row = self._connection.execute(
                 "SELECT * FROM unattended_execution_grants WHERE grant_id=?",

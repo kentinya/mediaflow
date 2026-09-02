@@ -698,9 +698,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(task.status, PersistentTaskStatus.COMPLETED)
                 results = repository.list_results(task.task_id)
                 self.assertEqual(len(results), 2)
-                self.assertEqual(
-                    {result.recognition_type for result in results}, {"A", "C"}
-                )
+                self.assertEqual({result.recognition_type for result in results}, {"A", "C"})
                 c_result = next(
                     result
                     for result in results

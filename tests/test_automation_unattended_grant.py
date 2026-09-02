@@ -142,9 +142,7 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
                 )
 
     def test_permission_sets_and_confirmation_are_fail_closed(self) -> None:
-        self.assertEqual(
-            ROLE_PERMISSIONS[ApiRole.VIEWER], frozenset({ApiPermission.READ})
-        )
+        self.assertEqual(ROLE_PERMISSIONS[ApiRole.VIEWER], frozenset({ApiPermission.READ}))
         self.assertNotIn(
             ApiPermission.GRANT_UNATTENDED_EXECUTION, ROLE_PERMISSIONS[ApiRole.OPERATOR]
         )
@@ -156,9 +154,10 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
         )
         self.assertIn(ApiPermission.GRANT_UNATTENDED_EXECUTION, ROLE_PERMISSIONS[ApiRole.ADMIN])
         definition = _definition()
-        with tempfile.TemporaryDirectory() as directory, SQLiteTaskRepository(
-            Path(directory) / "runtime.sqlite3"
-        ) as repository:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository,
+        ):
             service = UnattendedExecutionGrantService(repository)
             with self.assertRaises(UnattendedExecutionGrantError) as denied:
                 service.grant(
@@ -171,8 +170,9 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
                 )
             self.assertEqual((denied.exception.code, denied.exception.status), ("forbidden", 403))
             for confirmation in (False, None):
-                with self.subTest(confirmation=confirmation), self.assertRaises(
-                    UnattendedExecutionGrantError
+                with (
+                    self.subTest(confirmation=confirmation),
+                    self.assertRaises(UnattendedExecutionGrantError),
                 ):
                     service.grant(
                         definition,
@@ -195,9 +195,10 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
 
     def test_exact_authority_tuple_and_definition_changed_evidence(self) -> None:
         definition = _definition(limit=4)
-        with tempfile.TemporaryDirectory() as directory, SQLiteTaskRepository(
-            Path(directory) / "runtime.sqlite3"
-        ) as repository:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository,
+        ):
             service = UnattendedExecutionGrantService(repository, clock=lambda: NOW)
             grant = service.grant(
                 definition,
@@ -216,8 +217,9 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
                 replace(_job(definition), limit=5),
             )
             for candidate in mismatches:
-                with self.subTest(candidate=candidate), self.assertRaises(
-                    UnattendedExecutionGrantError
+                with (
+                    self.subTest(candidate=candidate),
+                    self.assertRaises(UnattendedExecutionGrantError),
                 ):
                     service.authorize(candidate, definition)
             changed = replace(definition, name="changed")
@@ -239,9 +241,10 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
 
     def test_enable_disable_does_not_invalidate_grant(self) -> None:
         definition = _definition(enabled=True)
-        with tempfile.TemporaryDirectory() as directory, SQLiteTaskRepository(
-            Path(directory) / "runtime.sqlite3"
-        ) as repository:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository,
+        ):
             service = UnattendedExecutionGrantService(repository, clock=lambda: NOW)
             grant = service.grant(
                 definition,
@@ -253,12 +256,8 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
             )
             disabled = replace(definition, enabled=False)
             self.assertEqual(service.get_for_definition(definition.definition_id), grant)
-            self.assertFalse(
-                service.project(disabled)["definitionChangedSinceGrant"]
-            )
-            self.assertEqual(
-                service.project(replace(disabled, enabled=True))["status"], "active"
-            )
+            self.assertFalse(service.project(disabled)["definitionChangedSinceGrant"])
+            self.assertEqual(service.project(replace(disabled, enabled=True))["status"], "active")
 
     def test_schema_29_forward_migration_adds_grants_without_losing_rows(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -278,9 +277,7 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
                     )
                 )
             with sqlite3.connect(database) as connection:
-                connection.execute(
-                    "UPDATE schema_version SET version=29 WHERE component='runtime'"
-                )
+                connection.execute("UPDATE schema_version SET version=29 WHERE component='runtime'")
                 connection.commit()
             with SQLiteTaskRepository(database) as reopened:
                 self.assertEqual(reopened.schema_version, SCHEMA_VERSION)

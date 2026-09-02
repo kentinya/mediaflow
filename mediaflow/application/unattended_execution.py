@@ -150,9 +150,7 @@ class UnattendedExecutionGrantService:
             )
         try:
             snapshot_id = _bounded(configuration_snapshot_id, 128, "configuration snapshot ID")
-            snapshot_digest = _sha(
-                configuration_snapshot_digest, "configuration snapshot digest"
-            )
+            snapshot_digest = _sha(configuration_snapshot_digest, "configuration snapshot digest")
             snapshot_version = _version(
                 configuration_snapshot_version, "configuration snapshot version"
             )
@@ -388,16 +386,12 @@ class UnattendedExecutionGrantService:
                     "review the exact definition bounds and explicitly grant unattended execution"
                 ),
             }
-        changed = (
-            _definition_changed_since_grant(grant, definition)
-            or (
-                configuration is not None
-                and (
-                    configuration.get("revisionId") != grant.configuration_snapshot_id
-                    or configuration.get("digest") != grant.configuration_snapshot_digest
-                    or configuration.get("version")
-                    not in {None, grant.configuration_snapshot_version}
-                )
+        changed = _definition_changed_since_grant(grant, definition) or (
+            configuration is not None
+            and (
+                configuration.get("revisionId") != grant.configuration_snapshot_id
+                or configuration.get("digest") != grant.configuration_snapshot_digest
+                or configuration.get("version") not in {None, grant.configuration_snapshot_version}
             )
         )
         if grant.status is UnattendedExecutionGrantStatus.REVOKED:
@@ -518,9 +512,10 @@ class UnattendedExecutionGrantService:
         if principal is None:
             return
         permissions = getattr(principal, "permissions", principal)
-        if ApiPermission.GRANT_UNATTENDED_EXECUTION not in permissions and str(
-            ApiPermission.GRANT_UNATTENDED_EXECUTION.value
-        ) not in permissions:
+        if (
+            ApiPermission.GRANT_UNATTENDED_EXECUTION not in permissions
+            and str(ApiPermission.GRANT_UNATTENDED_EXECUTION.value) not in permissions
+        ):
             raise UnattendedExecutionGrantError(
                 "principal lacks grant_unattended_execution permission",
                 code="forbidden",
