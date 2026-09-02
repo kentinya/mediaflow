@@ -41,7 +41,15 @@ from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_batch import RecoveryBatchContinuationService
 from mediaflow.application.recovery_continuation import RecoveryContinuationService
-from mediaflow.domain.automation import AutomationCommand, AutomationQueueFull
+from mediaflow.application.unattended_execution import (
+    UnattendedExecutionGrantError,
+    UnattendedExecutionGrantService,
+)
+from mediaflow.domain.automation import (
+    AutomationCommand,
+    AutomationQueueFull,
+    AutomationTaskDefinition,
+)
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
     ConfigurationObjectKind,
@@ -139,6 +147,7 @@ class MediaFlowApi:
             raise ValueError("at least one API principal must be configured")
         self._repository = repository
         self._principals = principals
+        self._unattended_grants = UnattendedExecutionGrantService(repository)
         if (
             isinstance(stale_job_age_seconds, bool)
             or not isinstance(stale_job_age_seconds, int)
@@ -203,6 +212,7 @@ class MediaFlowApi:
                 file_index=file_index,
             )
         self._automation_occurrences = AutomationDefinitionOccurrenceService(repository)
+        self._automation_occurrences.attach_unattended_grant_service(self._unattended_grants)
         self._recovery_admission = RecoveryAdmissionService(
             repository,
             snapshot_validator=snapshot_validator,
@@ -284,6 +294,31 @@ class MediaFlowApi:
                 403,
             )
             return self._error(start_response, 403, "forbidden", str(error))
+        except UnattendedExecutionGrantError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "unattended-execution-grant",
+                "denied" if error.status < 500 else "error",
+                error.status,
+            )
+            details = {
+                "durableState": error.durable_state,
+                "sideEffects": "none",
+                "retrySafe": error.retry_safe,
+                "nextAction": error.next_action,
+                **error.details,
+            }
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details=details,
+            )
         except RecoveryAdmissionError as error:
             reason = error.reason
             status = (
@@ -728,6 +763,178 @@ class MediaFlowApi:
                     "items": items,
                     "total": len(all_items),
                     "truncated": len(all_items) > len(items),
+                },
+            )
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] in {"grant", "grant-state"}
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "unattended execution grant state")
+            active, _raw, definition = self._automation_definition_context(environ, parts[4])
+            grant = self._unattended_grants.project(
+                definition,
+                configuration=active.summary(),
+            )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "definitionId": parts[4],
+                    "configuration": active.summary(),
+                    "grant": grant,
+                    "unattendedExecutionGrant": grant,
+                },
+            )
+        if (
+            len(parts) == 7
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "grant"
+            and parts[6] == "audit"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            _active, _raw, _definition = self._automation_definition_context(environ, parts[4])
+            grant = self._unattended_grants.get_for_definition(parts[4])
+            if grant is None:
+                raise LookupError(
+                    f"unattended execution grant for definition {parts[4]!r} was not found"
+                )
+            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(query).difference({"limit"}) or any(len(value) != 1 for value in query.values()):
+                raise ValueError("unattended execution grant audit query accepts one limit field")
+            limit = self._parse_bounded_limit(
+                query.get("limit", ["100"])[0], "unattended execution grant audit"
+            )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "definitionId": parts[4],
+                    "grantId": grant.grant_id,
+                    "items": [
+                        item.document()
+                        for item in self._unattended_grants.list_audit(
+                            grant.grant_id, limit=limit
+                        )
+                    ],
+                    "limit": limit,
+                },
+            )
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "grant"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.GRANT_UNATTENDED_EXECUTION)
+            self._require_empty_query(environ, "unattended execution grant")
+            document = self._document(environ)
+            allowed = {
+                "revisionId",
+                "expectedVersion",
+                "confirmation",
+                "confirmed",
+                "maxItemsPerRun",
+                "maxItems",
+                "reason",
+            }
+            if set(document).difference(allowed):
+                raise ValueError("unattended execution grant fields are invalid")
+            active, raw, definition = self._automation_definition_context(environ, parts[4])
+            self._validate_grant_revision_binding(document, active)
+            grant = self._unattended_grants.grant(
+                definition,
+                configuration_snapshot_id=active.revision_id,
+                configuration_snapshot_digest=active.digest,
+                configuration_snapshot_version=active.version,
+                actor=principal.principal_id,
+                principal=principal,
+                max_items_per_run=document.get("maxItemsPerRun"),
+                max_items=document.get("maxItems"),
+                confirmation=document.get("confirmation", False),
+                confirmed=document.get("confirmed"),
+                reason=document.get("reason"),
+            )
+            return self._response(
+                start_response,
+                201,
+                {
+                    "configuration": active.summary(),
+                    "definition": raw,
+                    "grant": self._unattended_grants.project(
+                        definition,
+                        configuration=active.summary(),
+                        grant=grant,
+                    ),
+                    "unattendedExecutionGrant": self._unattended_grants.project(
+                        definition,
+                        configuration=active.summary(),
+                        grant=grant,
+                    ),
+                },
+            )
+        if (
+            (
+                len(parts) == 6
+                and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+                and parts[5] == "revoke"
+            )
+            or (
+                len(parts) == 7
+                and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+                and parts[5:7] == ["grant", "revoke"]
+            )
+            or (
+                len(parts) == 6
+                and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+                and parts[5] == "grant"
+                and method == "DELETE"
+            )
+        ) and method in {"POST", "DELETE"}:
+            self._require(principal, ApiPermission.GRANT_UNATTENDED_EXECUTION)
+            self._require_empty_query(environ, "unattended execution revoke")
+            if method == "DELETE":
+                self._require_empty_body(environ, "unattended execution revoke")
+            document = {} if method == "DELETE" else self._document(environ)
+            if set(document).difference({"grantId", "reason"}):
+                raise ValueError("unattended execution revoke fields are invalid")
+            _active, _raw, _definition = self._automation_definition_context(environ, parts[4])
+            grant_id = document.get("grantId")
+            if grant_id is not None:
+                if not isinstance(grant_id, str) or not grant_id.strip():
+                    raise ValueError("unattended execution grantId must be a non-empty string")
+                current = self._unattended_grants.get(grant_id)
+                if current is None or current.definition_id != parts[4]:
+                    raise LookupError(
+                        f"unattended execution grant for definition {parts[4]!r} was not found"
+                    )
+                grant = self._unattended_grants.revoke(
+                    grant_id,
+                    actor=principal.principal_id,
+                    principal=principal,
+                    reason=document.get("reason"),
+                )
+            else:
+                grant = self._unattended_grants.revoke(
+                    definition_id=parts[4],
+                    actor=principal.principal_id,
+                    principal=principal,
+                    reason=document.get("reason"),
+                )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "definitionId": parts[4],
+                    "grant": grant.document(),
+                    "unattendedExecutionGrant": self._unattended_grants.project(
+                        _definition,
+                        configuration=_active.summary(),
+                        grant=grant,
+                    ),
                 },
             )
         if (
@@ -3562,6 +3769,19 @@ class MediaFlowApi:
         if (
             len(parts) == 6
             and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] in {"grant", "grant-state", "revoke"}
+        ):
+            return f"/api/v1/automation/task-definitions/{{id}}/{parts[5]}"
+        if (
+            len(parts) == 7
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "grant"
+            and parts[6] in {"audit", "revoke"}
+        ):
+            return "/api/v1/automation/task-definitions/{id}/grant/" + parts[6]
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
             and parts[5] == "preview"
         ):
             return "/api/v1/automation/task-definitions/{id}/preview"
@@ -4033,7 +4253,9 @@ class MediaFlowApi:
         if parts[:3] == ["api", "v1", "tasks"]:
             return True
         if parts[:4] == ["api", "v1", "automation", "task-definitions"] and (
-            len(parts) in {4, 5} or (len(parts) == 6 and parts[5] == "occurrences")
+            len(parts) in {4, 5}
+            or (len(parts) == 6 and parts[5] in {"occurrences", "grant", "grant-state"})
+            or (len(parts) == 7 and parts[5:7] == ["grant", "audit"])
         ):
             return True
         return parts[:3] == ["api", "v1", "files"] and (
@@ -4093,6 +4315,64 @@ class MediaFlowApi:
         # presented. A latest Draft/Validated revision is not an Active
         # authority and must not be labelled or consumed as one.
         return self._configuration_service.active()
+
+    def _automation_definition_context(self, environ: dict, definition_id: str):
+        """Return the immutable Active revision, raw definition, and validated domain value."""
+
+        if self._configuration_service is None or self._configuration_objects is None:
+            raise UnattendedExecutionGrantError(
+                "managed configuration service is unavailable",
+                code="service_unavailable",
+                status=503,
+                durable_state="no grant or media effect was created",
+                next_action="restore the managed configuration service, then retry",
+            )
+        active = self._automation_revision({**environ, "QUERY_STRING": ""})
+        if active is None:
+            raise LookupError(f"automationTaskDefinitions {definition_id!r} was not found")
+        detail = self._configuration_objects.revision_detail(active.revision_id)
+        raw = next(
+            (
+                candidate
+                for candidate in detail["objects"].get("automationTaskDefinitions", [])
+                if candidate.get("id") == definition_id
+            ),
+            None,
+        )
+        if raw is None:
+            raise LookupError(f"automationTaskDefinitions {definition_id!r} was not found")
+        objects = detail["objects"]
+        resources = objects.get("resourceLibraries")
+        definition = AutomationTaskDefinition.from_document(
+            raw,
+            **({"resource_libraries": resources} if resources is not None else {}),
+        )
+        return active, raw, definition
+
+    @staticmethod
+    def _validate_grant_revision_binding(document: dict, active) -> None:
+        revision_id = document.get("revisionId")
+        if revision_id is not None and revision_id != active.revision_id:
+            raise UnattendedExecutionGrantError(
+                "grant request revision does not match the current Active configuration",
+                code="unattended_execution_grant_snapshot_mismatch",
+                next_action=(
+                    "refresh the current Active configuration and review the exact bounds again"
+                ),
+            )
+        expected = document.get("expectedVersion")
+        if expected is not None and (
+            isinstance(expected, bool)
+            or not isinstance(expected, int)
+            or expected != active.version
+        ):
+            raise UnattendedExecutionGrantError(
+                "grant request configuration version is stale",
+                code="unattended_execution_grant_snapshot_mismatch",
+                next_action=(
+                    "refresh the current Active configuration and review the exact bounds again"
+                ),
+            )
 
     @staticmethod
     def _file_stats_query(environ: dict) -> tuple[str | None, str | None]:

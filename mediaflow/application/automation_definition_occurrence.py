@@ -21,6 +21,12 @@ class AutomationDefinitionOccurrenceService:
 
     def __init__(self, repository) -> None:
         self._repository = repository
+        self._unattended_grants = None
+
+    def attach_unattended_grant_service(self, service) -> None:
+        """Attach the shared read-only grant projection without changing callers."""
+
+        self._unattended_grants = service
 
     def due_state(self, definition_id: str):
         getter = getattr(self._repository, "get_automation_definition_due_state", None)
@@ -77,12 +83,22 @@ class AutomationDefinitionOccurrenceService:
                 latest_values = {item.definition_id: item for item in list_latest(tuple(ids))}
             except TypeError:
                 latest_values = {}
+        grants = {}
+        if self._unattended_grants is not None:
+            try:
+                grants = self._unattended_grants.project_many(
+                    values,
+                    configuration=configuration,
+                )
+            except (TypeError, ValueError):
+                grants = {}
         return [
             self.project_definition(
                 item,
                 configuration=configuration,
                 _state=states.get(definition_id),
                 _latest=latest_values.get(definition_id),
+                _grant=grants.get(definition_id),
             )
             for item, definition_id in zip(values, ids, strict=True)
         ]
@@ -94,6 +110,7 @@ class AutomationDefinitionOccurrenceService:
         configuration: Mapping[str, object] | None = None,
         _state=_UNSET,
         _latest=_UNSET,
+        _grant=_UNSET,
     ) -> dict[str, object]:
         """Add current due/last-occurrence state to a safe definition document."""
 
@@ -159,6 +176,16 @@ class AutomationDefinitionOccurrenceService:
         document["nextAction"] = occurrence["nextAction"]
         document["lastTaskId"] = occurrence["lastTaskId"]
         document["lastFailureCategory"] = occurrence["lastFailureCategory"]
+        if self._unattended_grants is not None:
+            if _grant is _UNSET:
+                grant = self._unattended_grants.project(
+                    definition,
+                    configuration=configuration,
+                )
+            else:
+                grant = _grant
+            document["unattendedExecutionGrant"] = grant
+            document["grant"] = grant
         if configuration is not None:
             document["activeConfiguration"] = {
                 key: configuration.get(key)

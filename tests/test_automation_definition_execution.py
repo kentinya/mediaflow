@@ -24,6 +24,7 @@ from mediaflow.application.strategy_test import (
     SyntheticMetadataProvider,
     strategy_runner_from_configuration,
 )
+from mediaflow.application.unattended_execution import UnattendedExecutionGrantService
 from mediaflow.domain.automation import (
     AutomationJobStatus,
     AutomationTaskDefinition,
@@ -177,7 +178,15 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
         return source, target, factory
 
-    def _service(self, repository, file_index, configuration, storage_factory, provider=None):
+    def _service(
+        self,
+        repository,
+        file_index,
+        configuration,
+        storage_factory,
+        provider=None,
+        unattended_grant_service=None,
+    ):
         def provider_factory(provider_ids):
             if provider is None:
                 raise AssertionError("the scan-only handoff must not construct a Provider")
@@ -192,6 +201,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             provider_factory=provider_factory,
             strategy_factory=strategy_runner_from_configuration,
             history_factory=JsonLinesOperationHistoryRepository,
+            unattended_grant_service=unattended_grant_service,
         )
 
     @staticmethod
@@ -608,6 +618,278 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     occurrence.failure_category,
                     "unattended_execution_authority_missing",
                 )
+
+    def test_authorized_automatic_mode_executes_normal_chain_and_c_stays_c(self) -> None:
+        definition = _definition(
+            "authorized",
+            mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+            limit=2,
+        )
+        candidates = (
+            MediaCandidate(
+                "tmdb",
+                "movie-a",
+                MediaType.MOVIE,
+                "Alpha Movie",
+                year=2024,
+                genres=("Animation",),
+                countries=("JP",),
+            ),
+            MediaCandidate(
+                "tmdb",
+                "movie-c",
+                MediaType.MOVIE,
+                "Charlie Movie",
+                year=2024,
+                genres=("Animation",),
+                countries=("JP",),
+            ),
+        )
+        provider = SyntheticMetadataProvider(candidates)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for recognition_type, filename in (
+                ("A", "Alpha.Movie.2024.mkv"),
+                ("C", "Charlie.Movie.2024.mkv"),
+            ):
+                path = root / "source" / "Media" / "incoming" / recognition_type
+                path.mkdir(parents=True)
+                (path / filename).write_bytes(filename.encode())
+            configuration = self._configuration(root, definition)
+            storages = {
+                "source": LocalStorage("source", str(root / "source")),
+                "target": LocalStorage("target", str(root / "target")),
+            }
+
+            def storage_factory(external=None, storage_ids=None):
+                selected = storages
+                if storage_ids is not None:
+                    selected = {key: value for key, value in storages.items() if key in storage_ids}
+                if external:
+                    selected = {**selected, **external}
+                return selected
+
+            with (
+                SQLiteTaskRepository(configuration.database_path) as repository,
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+            ):
+                job = self._emit(repository, definition)
+                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service.grant(
+                    definition,
+                    configuration_snapshot_id=job.configuration_snapshot_id,
+                    configuration_snapshot_digest=job.configuration_snapshot_digest,
+                    configuration_snapshot_version=job.configuration_snapshot_version,
+                    actor="admin",
+                    confirmation=True,
+                )
+                service = self._service(
+                    repository,
+                    file_index,
+                    configuration,
+                    storage_factory,
+                    provider,
+                    grant_service,
+                )
+                finished = self._run(repository, service)
+                self.assertEqual(finished.status, AutomationJobStatus.COMPLETED)
+                task = repository.get_task(finished.task_id)
+                self.assertTrue(task.execute_authorized)
+                self.assertEqual(task.status, PersistentTaskStatus.COMPLETED)
+                results = repository.list_results(task.task_id)
+                self.assertEqual(len(results), 2)
+                self.assertEqual(
+                    {result.recognition_type for result in results}, {"A", "C"}
+                )
+                c_result = next(
+                    result
+                    for result in results
+                    if result.source_path.endswith("Charlie.Movie.2024.mkv")
+                )
+                self.assertEqual(
+                    (
+                        c_result.recognition_type,
+                        c_result.naming_policy_id,
+                        c_result.classification_policy_id,
+                    ),
+                    ("C", "A", "A"),
+                )
+                self.assertEqual(
+                    {result.status for result in results}, {TaskItemStatus.SUCCESS.value}
+                )
+                self.assertEqual(
+                    repository.get_job(job.job_id).task_id,
+                    task.task_id,
+                )
+            self.assertFalse(
+                (root / "source" / "Media" / "incoming" / "A" / "Alpha.Movie.2024.mkv").exists()
+            )
+            self.assertFalse(
+                (root / "source" / "Media" / "incoming" / "C" / "Charlie.Movie.2024.mkv").exists()
+            )
+            self.assertEqual(len(list((root / "target").rglob("*.mkv"))), 2)
+
+    def test_revoked_automatic_mode_fails_before_task_and_mutation(self) -> None:
+        definition = _definition(
+            "revoked",
+            mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            incoming = root / "source" / "Media" / "incoming"
+            incoming.mkdir(parents=True)
+            media = incoming / "Alpha.Movie.2024.mkv"
+            media.write_bytes(b"unchanged")
+            before = _tree(root / "source")
+            configuration = self._configuration(root, definition)
+            source_guard, _target_guard, storage_factory = self._guarded_storage_factory(
+                configuration
+            )
+            with (
+                SQLiteTaskRepository(configuration.database_path) as repository,
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+            ):
+                job = self._emit(repository, definition)
+                grant_service = UnattendedExecutionGrantService(repository)
+                grant = grant_service.grant(
+                    definition,
+                    configuration_snapshot_id=job.configuration_snapshot_id,
+                    configuration_snapshot_digest=job.configuration_snapshot_digest,
+                    configuration_snapshot_version=job.configuration_snapshot_version,
+                    actor="admin",
+                    confirmation=True,
+                )
+                grant_service.revoke(grant.grant_id, actor="admin")
+                service = self._service(
+                    repository,
+                    file_index,
+                    configuration,
+                    storage_factory,
+                    unattended_grant_service=grant_service,
+                )
+                finished = self._run(repository, service)
+                self.assertEqual(finished.failure_category, "unattended_execution_grant_revoked")
+                self.assertEqual(finished.failure_side_effects, "none")
+                self.assertTrue(finished.failure_retry_safe)
+                self.assertTrue(finished.failure_next_action)
+                self.assertEqual(repository.list_tasks(), ())
+                self.assertEqual(source_guard.mutation_calls["Move"], 0)
+            self.assertEqual(_tree(root / "source"), before)
+
+    def test_revocation_is_reread_between_items_and_preserves_first_result(self) -> None:
+        definition = _definition(
+            "boundary",
+            mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+            limit=2,
+        )
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "movie-a",
+                    MediaType.MOVIE,
+                    "Alpha Movie",
+                    year=2024,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+                MediaCandidate(
+                    "tmdb",
+                    "movie-d",
+                    MediaType.MOVIE,
+                    "Delta Movie",
+                    year=2025,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            incoming = root / "source" / "Media" / "incoming" / "A"
+            incoming.mkdir(parents=True)
+            first = incoming / "Alpha.Movie.2024.mkv"
+            second = incoming / "Delta.Movie.2025.mkv"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            configuration = self._configuration(root, definition)
+            storages = {
+                "source": LocalStorage("source", str(root / "source")),
+                "target": LocalStorage("target", str(root / "target")),
+            }
+
+            def storage_factory(external=None, storage_ids=None):
+                selected = storages
+                if storage_ids is not None:
+                    selected = {key: value for key, value in storages.items() if key in storage_ids}
+                if external:
+                    selected = {**selected, **external}
+                return selected
+
+            with (
+                SQLiteTaskRepository(configuration.database_path) as repository,
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+            ):
+                job = self._emit(repository, definition)
+                grant_service = UnattendedExecutionGrantService(repository)
+                grant = grant_service.grant(
+                    definition,
+                    configuration_snapshot_id=job.configuration_snapshot_id,
+                    configuration_snapshot_digest=job.configuration_snapshot_digest,
+                    configuration_snapshot_version=job.configuration_snapshot_version,
+                    actor="admin",
+                    confirmation=True,
+                )
+
+                class RevokingGrantService(UnattendedExecutionGrantService):
+                    def __init__(self, *args, **kwargs):
+                        super().__init__(*args, **kwargs)
+                        self.boundary_calls = 0
+
+                    def assert_live(self, claimed_job, claimed_definition):
+                        self.boundary_calls += 1
+                        if self.boundary_calls == 2:
+                            self.revoke(grant.grant_id, actor="admin", reason="boundary")
+                        return super().assert_live(claimed_job, claimed_definition)
+
+                revoking = RevokingGrantService(repository)
+                service = self._service(
+                    repository,
+                    file_index,
+                    configuration,
+                    storage_factory,
+                    provider,
+                    revoking,
+                )
+                finished = self._run(repository, service)
+                self.assertEqual(finished.status, AutomationJobStatus.COMPLETED)
+                task = repository.get_task(finished.task_id)
+                self.assertEqual(task.status, PersistentTaskStatus.PARTIAL_SUCCESS)
+                items = {item.source_path: item for item in repository.list_items(task.task_id)}
+                self.assertEqual(
+                    items["Media/incoming/A/Alpha.Movie.2024.mkv"].status,
+                    TaskItemStatus.SUCCESS,
+                )
+                self.assertEqual(
+                    items["Media/incoming/A/Delta.Movie.2025.mkv"].status,
+                    TaskItemStatus.FAILED,
+                )
+                self.assertIn(
+                    "unattended_execution_grant_revoked",
+                    items["Media/incoming/A/Delta.Movie.2025.mkv"].error,
+                )
+                results = repository.list_results(task.task_id)
+                self.assertEqual(
+                    [result.source_path for result in results],
+                    [
+                        "Media/incoming/A/Alpha.Movie.2024.mkv",
+                        "Media/incoming/A/Delta.Movie.2025.mkv",
+                    ],
+                )
+                self.assertEqual(results[0].status, TaskItemStatus.SUCCESS.value)
+                self.assertEqual(results[1].status, TaskItemStatus.FAILED.value)
+            self.assertFalse(first.exists())
+            self.assertTrue(second.exists())
 
     def test_claim_boundary_failures_are_durable_and_do_not_create_tasks(self) -> None:
         scenarios = (

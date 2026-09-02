@@ -2243,11 +2243,30 @@ APP_JS = b"""(() => {
         ['Failure category', occurrenceState.lastFailureCategory || '-'],
         ['Failure reason', occurrenceState.lastReason || '-'],
         ['Next action', occurrenceState.nextAction || '-']].forEach(([label, value]) => field(list, label, value));
+      const grant = item.unattendedExecutionGrant || item.grant || {status: 'none', active: false};
+      [['Unattended grant', grant.status || 'none'],
+        ['Grant exact scope', grant.sourceScope || '<root>'],
+        ['Grant allowed run mode', grant.allowedRunMode || grant.runMode || '-'],
+        ['Grant workload bound', grant.maxItemsPerRun || '-'],
+        ['Granting principal', grant.grantingPrincipal || '-'],
+        ['Granted at', grant.grantedAt || '-'],
+        ['Revoked at', grant.revokedAt || '-'],
+        ['Definition changed since grant', grant.definitionChangedSinceGrant === true ? 'YES' : 'NO'],
+        ['Grant next action', grant.nextAction || '-']].forEach(([label, value]) => field(list, label, value));
       detailContent.append(list);
       if (occurrenceState.lastTaskId) {
         detailContent.append(actionButton('Open last Task', () => showTask(occurrenceState.lastTaskId)));
       }
       detailContent.append(actionButton('Run Preview / DryRun', () => confirmAutomationPreview(item)));
+      if ((item.mode || item.runMode) === 'automatic-organization') {
+        if (grant.active === true || grant.status === 'active') {
+          detailContent.append(actionButton('Revoke unattended execution', () =>
+            confirmAutomationGrantRevoke(item, grant, configuration)));
+        } else {
+          detailContent.append(actionButton('Grant unattended execution', () =>
+            confirmAutomationGrant(item, configuration)));
+        }
+      }
       detailContent.append(actionButton('Open managed Configuration', () => renderConfiguration()));
       const occurrenceData = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/occurrences?limit=10`);
       detailContent.append(text('h3', 'Scheduled occurrences'));
@@ -2276,6 +2295,46 @@ APP_JS = b"""(() => {
       detailContent.append(text('p', 'Opening or refreshing this view is read-only. Preview runs only when you explicitly confirm it.', 'warning'));
       detail.hidden = false;
     } catch (error) { message(errorText(error), true); }
+  }
+  function confirmAutomationGrant(item, configuration) {
+    const scope = item.sourceScope || '<root>';
+    const mode = item.mode || item.runMode || '-';
+    const limit = item.itemLimit || item.limit || '-';
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p', `Grant persistent unattended execution for ${item.id}? ` +
+      `This explicitly authorizes only ${mode} over ResourceLibrary ${item.resourceLibraryId}, ` +
+      `scope ${scope}, with at most ${limit} item(s) per run. It does not authorize overwrite, ` +
+      'delete, fallback operations, or any path outside that scope.'));
+    confirmation.append(actionButton('Confirm unattended grant', async () => {
+      try {
+        const result = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/grant`,
+          {method: 'POST', body: JSON.stringify({
+            revisionId: configuration.revisionId,
+            expectedVersion: configuration.version,
+            maxItemsPerRun: limit,
+            confirmation: true
+          })});
+        message(`Unattended execution grant ${result.grant.grantId || '-'} is active.`);
+        await showAutomationDetail({...item, unattendedExecutionGrant: result.grant}, configuration);
+      } catch (error) { message(errorText(error), true); }
+    }));
+    confirmation.append(actionButton('Cancel', () => { clear(confirmation); }));
+    detailContent.append(confirmation);
+  }
+  function confirmAutomationGrantRevoke(item, grant, configuration) {
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p', `Revoke unattended execution for ${item.id}? ` +
+      'Future eligible mutations will stop at a safe item boundary; completed history is preserved.'));
+    confirmation.append(actionButton('Confirm revoke', async () => {
+      try {
+        const result = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/grant/revoke`,
+          {method: 'POST', body: JSON.stringify({grantId: grant.grantId, reason: 'operator revoked unattended execution'})});
+        message(`Unattended execution grant ${result.grant.grantId || '-'} is revoked.`);
+        await showAutomationDetail({...item, unattendedExecutionGrant: result.unattendedExecutionGrant}, configuration);
+      } catch (error) { message(errorText(error), true); }
+    }));
+    confirmation.append(actionButton('Cancel', () => { clear(confirmation); }));
+    detailContent.append(confirmation);
   }
   function confirmAutomationPreview(item) {
     const confirmation = text('div', '', 'choices');

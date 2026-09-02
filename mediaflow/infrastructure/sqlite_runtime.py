@@ -163,12 +163,17 @@ from mediaflow.domain.task_persistence import (
     redact_persistent_result,
 )
 from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestDecision
+from mediaflow.domain.unattended_execution import (
+    UnattendedExecutionGrant,
+    UnattendedExecutionGrantAudit,
+    UnattendedExecutionGrantStatus,
+)
 
 # Manual intent, Preview, exact execution, and Automation Task Definition
 # Preview tables are additive migrations on the runtime schema.  The table
 # creation below is idempotent and upgrades older runtime databases without
 # rewriting existing rows.
-SCHEMA_VERSION = 29
+SCHEMA_VERSION = 30
 
 
 def _canonical_json(value: object) -> str:
@@ -4016,6 +4021,14 @@ class SQLiteTaskRepository:
                 "snapshot_not_published",
                 "snapshot_unreadable",
                 "unattended_execution_authority_missing",
+                "unattended_execution_grant_revoked",
+                "unattended_execution_grant_definition_mismatch",
+                "unattended_execution_grant_resource_mismatch",
+                "unattended_execution_grant_scope_mismatch",
+                "unattended_execution_grant_mode_mismatch",
+                "unattended_execution_grant_limit_exceeded",
+                "unattended_execution_grant_definition_changed",
+                "unattended_execution_grant_snapshot_mismatch",
             }
             outcome = "blocked" if job.failure_category in blocked_categories else "failed"
             reason = (
@@ -4756,6 +4769,169 @@ class SQLiteTaskRepository:
             )
             for row in rows
         )
+
+    def create_unattended_execution_grant(
+        self, value: UnattendedExecutionGrant, audit: UnattendedExecutionGrantAudit
+    ) -> None:
+        if value.status is not UnattendedExecutionGrantStatus.ACTIVE:
+            raise ValueError("unattended execution grant must start active")
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO unattended_execution_grants (
+                    grant_id, definition_id, resource_library_id, source_scope, run_mode,
+                    max_items_per_run, status, granting_principal, granted_at,
+                    revoking_principal, revoked_at, reason, definition_fingerprint,
+                    configuration_snapshot_id, configuration_snapshot_digest,
+                    configuration_snapshot_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                self._unattended_execution_grant_values(value),
+            )
+            self._insert_unattended_execution_grant_audit(audit)
+
+    # Compatibility spelling used by lightweight application adapters.
+    create_unattended_grant = create_unattended_execution_grant
+
+    def get_unattended_execution_grant(
+        self, grant_id: str
+    ) -> UnattendedExecutionGrant | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM unattended_execution_grants WHERE grant_id=?",
+                (grant_id,),
+            ).fetchone()
+        return self._unattended_execution_grant(row) if row else None
+
+    get_unattended_grant = get_unattended_execution_grant
+
+    def get_active_unattended_execution_grant(
+        self, definition_id: str
+    ) -> UnattendedExecutionGrant | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM unattended_execution_grants
+                WHERE definition_id=? AND status=?
+                ORDER BY granted_at DESC, grant_id DESC LIMIT 1""",
+                (definition_id, UnattendedExecutionGrantStatus.ACTIVE.value),
+            ).fetchone()
+        return self._unattended_execution_grant(row) if row else None
+
+    get_active_unattended_grant = get_active_unattended_execution_grant
+
+    def get_latest_unattended_execution_grant(
+        self, definition_id: str
+    ) -> UnattendedExecutionGrant | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM unattended_execution_grants
+                WHERE definition_id=?
+                ORDER BY granted_at DESC, grant_id DESC LIMIT 1""",
+                (definition_id,),
+            ).fetchone()
+        return self._unattended_execution_grant(row) if row else None
+
+    get_latest_unattended_grant = get_latest_unattended_execution_grant
+
+    def list_unattended_execution_grants(
+        self,
+        *,
+        definition_ids: tuple[str, ...] | None = None,
+        limit: int = 100,
+    ) -> tuple[UnattendedExecutionGrant, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("unattended execution grant limit must be between 1 and 100")
+        parameters: tuple[object, ...] = ()
+        query = "SELECT * FROM unattended_execution_grants"
+        if definition_ids is not None:
+            values = tuple(definition_ids)
+            if not values:
+                return ()
+            if len(values) > 100:
+                raise ValueError("unattended execution definition page is too large")
+            if any(not isinstance(value, str) or not value.strip() for value in values):
+                raise ValueError("unattended execution definition ID is required")
+            placeholders = ", ".join("?" for _ in values)
+            query += f" WHERE definition_id IN ({placeholders})"
+            parameters = values
+        query += " ORDER BY granted_at DESC, grant_id DESC LIMIT ?"
+        parameters += (limit,)
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return tuple(self._unattended_execution_grant(row) for row in rows)
+
+    list_unattended_grants = list_unattended_execution_grants
+
+    def revoke_unattended_execution_grant(
+        self,
+        grant_id: str,
+        now: datetime,
+        audit: UnattendedExecutionGrantAudit,
+        *,
+        revoking_principal: str,
+        reason: str | None = None,
+    ) -> UnattendedExecutionGrant:
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    "SELECT * FROM unattended_execution_grants WHERE grant_id=?",
+                    (grant_id,),
+                ).fetchone()
+                if row is None:
+                    raise LookupError(f"unattended execution grant {grant_id!r} was not found")
+                current = self._unattended_execution_grant(row)
+                if current.status is UnattendedExecutionGrantStatus.REVOKED:
+                    self._connection.commit()
+                    return current
+                self._connection.execute(
+                    """UPDATE unattended_execution_grants
+                    SET status=?, revoking_principal=?, revoked_at=?, reason=?
+                    WHERE grant_id=? AND status=?""",
+                    (
+                        UnattendedExecutionGrantStatus.REVOKED.value,
+                        revoking_principal,
+                        now.isoformat(),
+                        reason,
+                        grant_id,
+                        UnattendedExecutionGrantStatus.ACTIVE.value,
+                    ),
+                )
+                self._insert_unattended_execution_grant_audit(audit)
+                updated_row = self._connection.execute(
+                    "SELECT * FROM unattended_execution_grants WHERE grant_id=?",
+                    (grant_id,),
+                ).fetchone()
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return self._unattended_execution_grant(updated_row)
+
+    revoke_unattended_grant = revoke_unattended_execution_grant
+
+    def list_unattended_execution_grant_audit(
+        self, grant_id: str, *, limit: int = 100
+    ) -> tuple[UnattendedExecutionGrantAudit, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("unattended execution grant audit limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM unattended_execution_grant_audit
+                WHERE grant_id=? ORDER BY occurred_at, audit_id LIMIT ?""",
+                (grant_id, limit),
+            ).fetchall()
+        return tuple(
+            UnattendedExecutionGrantAudit(
+                row["audit_id"],
+                row["grant_id"],
+                row["action"],
+                datetime.fromisoformat(row["occurred_at"]),
+                row["actor"],
+                json.loads(row["details_json"]),
+            )
+            for row in rows
+        )
+
+    list_unattended_grant_audit = list_unattended_execution_grant_audit
 
     def append_security_audit(self, value: SecurityAuditRecord) -> None:
         with self._lock, self._connection:
@@ -7550,6 +7726,29 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS execution_authorizations_status_expiry
                     ON execution_authorizations(status, expires_at);
+                CREATE TABLE IF NOT EXISTS unattended_execution_grants (
+                    grant_id TEXT PRIMARY KEY, definition_id TEXT NOT NULL,
+                    resource_library_id TEXT NOT NULL, source_scope TEXT,
+                    run_mode TEXT NOT NULL, max_items_per_run INTEGER NOT NULL,
+                    status TEXT NOT NULL, granting_principal TEXT NOT NULL,
+                    granted_at TEXT NOT NULL, revoking_principal TEXT,
+                    revoked_at TEXT, reason TEXT, definition_fingerprint TEXT NOT NULL,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    configuration_snapshot_version INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS unattended_execution_grants_definition_status
+                    ON unattended_execution_grants(definition_id, status, granted_at, grant_id);
+                CREATE UNIQUE INDEX IF NOT EXISTS unattended_execution_grants_one_active
+                    ON unattended_execution_grants(definition_id) WHERE status='active';
+                CREATE TABLE IF NOT EXISTS unattended_execution_grant_audit (
+                    audit_id TEXT PRIMARY KEY, grant_id TEXT NOT NULL,
+                    action TEXT NOT NULL, occurred_at TEXT NOT NULL,
+                    actor TEXT, details_json TEXT NOT NULL,
+                    FOREIGN KEY(grant_id) REFERENCES unattended_execution_grants(grant_id)
+                );
+                CREATE INDEX IF NOT EXISTS unattended_execution_grant_audit_time
+                    ON unattended_execution_grant_audit(grant_id, occurred_at, audit_id);
                 CREATE TABLE IF NOT EXISTS security_audit (
                     audit_id TEXT PRIMARY KEY, occurred_at TEXT NOT NULL, principal_id TEXT,
                     method TEXT NOT NULL, route TEXT NOT NULL, action TEXT NOT NULL,
@@ -8767,6 +8966,69 @@ class SQLiteTaskRepository:
                 value.occurred_at.isoformat(),
                 value.job_id,
                 value.actor,
+            ),
+        )
+
+    @staticmethod
+    def _unattended_execution_grant_values(
+        value: UnattendedExecutionGrant,
+    ) -> tuple[object, ...]:
+        return (
+            value.grant_id,
+            value.definition_id,
+            value.resource_library_id,
+            value.source_scope,
+            value.run_mode.value,
+            value.max_items_per_run,
+            value.status.value,
+            value.granting_principal,
+            value.granted_at.isoformat(),
+            value.revoking_principal,
+            value.revoked_at.isoformat() if value.revoked_at else None,
+            value.reason,
+            value.definition_fingerprint,
+            value.configuration_snapshot_id,
+            value.configuration_snapshot_digest,
+            value.configuration_snapshot_version,
+        )
+
+    @staticmethod
+    def _unattended_execution_grant(
+        row: sqlite3.Row,
+    ) -> UnattendedExecutionGrant:
+        return UnattendedExecutionGrant(
+            row["grant_id"],
+            row["definition_id"],
+            row["resource_library_id"],
+            row["source_scope"],
+            row["run_mode"],
+            int(row["max_items_per_run"]),
+            UnattendedExecutionGrantStatus(row["status"]),
+            row["granting_principal"],
+            datetime.fromisoformat(row["granted_at"]),
+            row["definition_fingerprint"],
+            row["configuration_snapshot_id"],
+            row["configuration_snapshot_digest"],
+            int(row["configuration_snapshot_version"]),
+            row["revoking_principal"],
+            datetime.fromisoformat(row["revoked_at"]) if row["revoked_at"] else None,
+            row["reason"],
+        )
+
+    def _insert_unattended_execution_grant_audit(
+        self, value: UnattendedExecutionGrantAudit
+    ) -> None:
+        self._connection.execute(
+            """INSERT INTO unattended_execution_grant_audit (
+                audit_id, grant_id, action, occurred_at, actor, details_json
+            ) VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                value.audit_id,
+                value.grant_id,
+                value.action,
+                value.occurred_at.isoformat(),
+                value.actor,
+                json.dumps(value.details, ensure_ascii=False, sort_keys=True),
             ),
         )
 
