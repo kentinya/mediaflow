@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.4
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 2b60cd34599603a6f4a3672c09e142f9b3c38d4c
 Difficulty: High
 Test Level: T4
@@ -410,11 +410,26 @@ Head SHA: 614d95e49768408188fb3d84f14af2612334eb23
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 2b60cd34599603a6f4a3672c09e142f9b3c38d4c..614d95e49768408188fb3d84f14af2612334eb23
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- A definition-scoped failure after Task creation is reported as a successful Job. An injected
+  `strategy_factory` failure produced `job_status=completed`, `job_error=None` and no Job failure
+  category while the linked Task was `failed` and the occurrence outcome was `failed`; this also
+  selects the Job-completed notification/CLI success path. Preserve the failed Task and its Task ID,
+  but propagate a bounded secret-free failure through the Worker so Job, occurrence, API/Web state
+  and notification agree on failure and expose durable state, retry safety and one valid next action.
+  Add focused regression coverage for this post-Task-creation failure boundary.
+- Cancellation recovery is invalid when no Task was created. The passing focused case
+  `test_pending_cancellation_finalizes_definition_occurrence_without_task` proves `task_id is None`,
+  yet the persisted durable state says completed Task items were preserved and the next action says
+  to inspect the linked Task. Distinguish pre-Task/early cancellation from cancellation with a linked
+  Task: the former must state that no Task/media effect exists and offer an action that can actually
+  be taken, while the latter may direct the operator to inspect preserved per-item state. Cover both
+  persisted API/Web projections without weakening the existing cancellation/fencing assertions.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
