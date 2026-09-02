@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.2
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: b244e128987daa9c844b654d9e70588983eea6d3
 Difficulty: High
 Test Level: T4
@@ -600,13 +600,87 @@ Note: this verification pass adds no code change; the documentation commit recor
 ## B Review Result
 
 ```text
+Reviewed: b244e12..2d9448a (implementation 7c01aed, correction 1dc5199, records e194cca/61201bf/2d9448a)
+Decision: PASS
+Slice Required Outcomes all satisfied: NO
+Next: NEXT TASK
+```
+
+### Round 2 — B re-verification at 2d9448a (observed by B, not taken from the report)
+
+Both Round 1 blockers reproduce as fixed, and the fixes are proven non-vacuous.
+
+Blocker 1 — read paths are storage-free under the production managed wiring. `MediaFlowApi`
+auto-constructed the preview service from `configuration_service` + `file_index` (so
+`load_managed_runtime_configuration` is the runtime source, not a test `configuration=` shortcut),
+with all eleven `LocalStorage` methods counted by a patch. On a 4-item preview:
+`get_readonly` / `latest_readonly` / `list_readonly` / `get` / `latest` / `list` / `items` -> `[]`;
+authenticated `GET .../previews?limit=10`, `GET .../previews/{id}`,
+`GET .../previews/{id}/items?limit=500` -> all `200`, total storage calls `[]`. Staleness now comes
+from durable state only and still fires: a FileIndex source-fact change ->
+`stale | a plan-affecting source fact changed`; a newer Active revision ->
+`stale | the pinned configuration revision is no longer the current Active revision`; storage calls
+during both `[]`. `_create_storages` has exactly three callers, all inside the explicit `create`
+analysis path (`_source_storage:575`, `_analyze:927`, `:1050`).
+
+Blocker 2 — Preview now agrees with the Scanner at the same instant. Same clock, same
+`FileStabilityPolicy(0, 0, 60)` library, same database: scanner run 1 `unstable` and preview
+`status=blocked stability=unstable_size` with next action "wait for the configured stable-size
+duration, then rerun Preview"; after `+61s`, scanner run 2 `ready stable_since=12:00:00Z` and preview
+`status=previewed stability=stable scan=ready selected=1`. Distinct honest reasons remain for no
+durable history (`unstable_no_history`, next action names the required ResourceLibrary scan) and for
+unavailable history.
+
+Non-vacuous evidence: on a throwaway `git archive HEAD` copy (workspace untouched), reintroducing a
+Storage `stat` on the read staleness path and restoring the unconditional `unstable_no_history`
+branch makes exactly the two new tests fail — `['stat' x 7] != []` and `blocked != previewed`
+(19 tests, 2 failures). No other test is sensitive to the sabotage, so the assertions are targeted.
+
+Tests re-run by B at `2d9448a`: `tests.test_automation_task_definition_preview` 19 tests OK; the
+19-module affected suite 278 tests with 1 failure (`test_resource_library_pipeline`, local ignored
+`config/strategy.json` / `HDD_2`); full regression `Ran 1040 tests ... FAILED (failures=6,
+skipped=7)` — the same accepted environment set — while the four affected modules on a clean
+`git archive HEAD` tree report `Ran 23 tests ... OK`, so the failures remain environment-caused and
+unrelated.
+
+Gates re-run by B: `ruff check` PASS; `ruff format --check` PASS (344 files); `compileall` PASS;
+`pip check` PASS; both `config validate` PASS; no `ffprobe`/`ffmpeg` reference; `git diff --check`
+and `git diff --cached --check` clean; TASK.md relative links resolve; `pip wheel` plus
+`scripts/wheel_smoke_test.py` exit 0 at schema 28. The reported wheel deviation is honest:
+`python -m build` is genuinely absent from this venv (`No module named build.__main__`).
+`config/alist.json` and `config/strategy.json` remain ignored, untracked, unstaged and absent from
+`git ls-files`; the only credential-shaped additions in range are the fake `admin-token`,
+`viewer-token` and `secret-value` redaction fixtures.
+
+Safety-floor audit of `b244e12..2d9448a`: no `def test_` removed, no skip added, no assertion
+weakened; the twelve 2-line test diffs are only `schema_version 27 -> 28` and
+`SCHEMA_VERSION = 28` is the single marker; no silent HardLink/Copy/Move fallback introduced; the
+RecognitionType C regression is present and passing; only Task-relevant files are in range.
+
+All 11 Acceptance Criteria are satisfied. Criteria 3 (per-item stability decision) and 8 (read-only
+Automation view load) were the blocked ones and now reproduce.
+
+### Non-blocking observations (for A's final review; not new Tasks, not fixes in this Task)
+
+- `_indexed_source_stale_reason` issues one FileIndex `find_by_path` per preview item per read, so
+  `list_readonly` at `limit=10` over large previews performs many durable point queries. This is a
+  durable-state read, not a Storage probe, so the Safety Invariant holds; if projection cost becomes
+  real it belongs to the later history/projection work, not to this Task.
+- When no FileIndex is wired — only the `ManagementBootstrapConfiguration` path, where
+  `mediaflow/final_cli.py:1364` passes `None` — source-fact staleness is not evaluated. The two
+  staleness sources Acceptance Criterion 6 requires (definition fingerprint, configuration revision
+  no longer Active) still are.
+
+### Round 1 — FIX REQUIRED at e194cca (resolved; kept for audit)
+
+```text
 Reviewed: b244e12..e194cca (implementation checkpoint 7c01aed + report commit e194cca)
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-### Blockers
+#### Blockers (both fixed by 1dc5199)
 
 1. Every Preview read path probes Storage, so opening or refreshing the Automation detail view
    issues per-item Storage calls (`SLICE.md` Safety Invariants: "Opening or refreshing
@@ -669,7 +743,7 @@ Next: SAME TASK FIX LOOP
      `stable_size_duration_seconds > 0` plus durable history in which Preview reports the item
      analyzable, matching the scanner decision at the same instant.
 
-### Not in this fix scope
+#### Not in this fix scope
 
 - The six workspace full-regression failures are accepted as pre-existing and unrelated. Verified
   independently: `tests/test_api_credentials.py`, `tests/test_final_integration.py`,
@@ -689,6 +763,14 @@ Next: SAME TASK FIX LOOP
   (viewer GET 200, viewer POST 403) and scope-injection rejection all reproduce.
 - The rest of the checkpoint is accepted. Do not restructure the evidence contract, persistence
   layout, routes or Web rendering while fixing the two blockers above, and do not move the Task Base.
+
+### Slice Required Outcome re-check after this PASS
+
+- RO-1 satisfied by Task 25.1 (managed definition CRUD/lifecycle surfaces).
+- RO-2 satisfied by this Task.
+- RO-3, RO-4, RO-5, RO-6, RO-7 remain NOT STARTED, so the Slice is not ready for A. The next Task is
+  25.3 for RO-3 (due-occurrence resolution and atomic single-Job emission with exact definition and
+  configuration pinning).
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
