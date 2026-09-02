@@ -173,7 +173,7 @@ from mediaflow.domain.unattended_execution import (
 # Preview tables are additive migrations on the runtime schema.  The table
 # creation below is idempotent and upgrades older runtime databases without
 # rewriting existing rows.
-SCHEMA_VERSION = 30
+SCHEMA_VERSION = 31
 
 _ATTENTION_TASK_ITEM_STATUSES = (
     TaskItemStatus.WAITING_CONFIRM.value,
@@ -5095,8 +5095,8 @@ class SQLiteTaskRepository:
                     max_items_per_run, status, granting_principal, granted_at,
                     revoking_principal, revoked_at, reason, definition_fingerprint,
                     configuration_snapshot_id, configuration_snapshot_digest,
-                    configuration_snapshot_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    configuration_snapshot_version, preview_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 self._unattended_execution_grant_values(value),
             )
             self._insert_unattended_execution_grant_audit(audit)
@@ -8046,7 +8046,8 @@ class SQLiteTaskRepository:
                     revoked_at TEXT, reason TEXT, definition_fingerprint TEXT NOT NULL,
                     configuration_snapshot_id TEXT NOT NULL,
                     configuration_snapshot_digest TEXT NOT NULL,
-                    configuration_snapshot_version INTEGER NOT NULL
+                    configuration_snapshot_version INTEGER NOT NULL,
+                    preview_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS unattended_execution_grants_definition_status
                     ON unattended_execution_grants(definition_id, status, granted_at, grant_id);
@@ -8160,6 +8161,16 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     "ALTER TABLE task_results ADD COLUMN uncertain_effects "
                     "TEXT NOT NULL DEFAULT '[]'"
+                )
+            grant_columns = {
+                row["name"]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(unattended_execution_grants)"
+                ).fetchall()
+            }
+            if "preview_id" not in grant_columns:
+                self._connection.execute(
+                    "ALTER TABLE unattended_execution_grants ADD COLUMN preview_id TEXT"
                 )
             job_columns = {
                 row["name"]
@@ -9301,6 +9312,7 @@ class SQLiteTaskRepository:
             value.configuration_snapshot_id,
             value.configuration_snapshot_digest,
             value.configuration_snapshot_version,
+            value.preview_id,
         )
 
     @staticmethod
@@ -9324,6 +9336,7 @@ class SQLiteTaskRepository:
             row["revoking_principal"],
             datetime.fromisoformat(row["revoked_at"]) if row["revoked_at"] else None,
             row["reason"],
+            row["preview_id"] if "preview_id" in row.keys() else None,
         )
 
     def _insert_unattended_execution_grant_audit(

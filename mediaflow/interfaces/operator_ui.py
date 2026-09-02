@@ -2244,6 +2244,8 @@ APP_JS = b"""(() => {
         ['Failure reason', occurrenceState.lastReason || '-'],
         ['Next action', occurrenceState.nextAction || '-']].forEach(([label, value]) => field(list, label, value));
       const grant = item.unattendedExecutionGrant || item.grant || {status: 'none', active: false};
+      const previewData = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/previews?limit=1`);
+      const latestPreview = (previewData.items || [])[0] || null;
       [['Unattended grant', grant.status || 'none'],
         ['Grant exact scope', grant.sourceScope || '<root>'],
         ['Grant allowed run mode', grant.allowedRunMode || grant.runMode || '-'],
@@ -2252,7 +2254,9 @@ APP_JS = b"""(() => {
         ['Granted at', grant.grantedAt || '-'],
         ['Revoked at', grant.revokedAt || '-'],
         ['Definition changed since grant', grant.definitionChangedSinceGrant === true ? 'YES' : 'NO'],
-        ['Grant next action', grant.nextAction || '-']].forEach(([label, value]) => field(list, label, value));
+        ['Grant next action', grant.nextAction || '-'],
+        ['Reviewed Preview', grant.previewId || (latestPreview && latestPreview.previewId) || '-'],
+        ['Current permission', grant.currentPermission && grant.currentPermission.status || 'not granted']].forEach(([label, value]) => field(list, label, value));
       detailContent.append(list);
       if (occurrenceState.lastTaskId) {
         detailContent.append(actionButton('Open last Task', () => showTask(occurrenceState.lastTaskId)));
@@ -2262,9 +2266,11 @@ APP_JS = b"""(() => {
         if (grant.active === true || grant.status === 'active') {
           detailContent.append(actionButton('Revoke unattended execution', () =>
             confirmAutomationGrantRevoke(item, grant, configuration)));
-        } else {
+        } else if (latestPreview && latestPreview.current === true && latestPreview.status === 'previewed') {
           detailContent.append(actionButton('Grant unattended execution', () =>
-            confirmAutomationGrant(item, configuration)));
+            confirmAutomationGrant(item, configuration, latestPreview.previewId)));
+        } else {
+          detailContent.append(text('p', 'Unattended grant is unavailable until a current, completed exact Preview is available. Run a fresh Preview and inspect its recovery action.', 'warning'));
         }
       }
       detailContent.append(actionButton('Open managed Configuration', () => renderConfiguration()));
@@ -2315,8 +2321,8 @@ APP_JS = b"""(() => {
       if (!(occurrenceData.items || []).length) {
         detailContent.append(text('p', 'No scheduled occurrence has been emitted for this definition yet.'));
       }
-      const data = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/previews?limit=10`);
       detailContent.append(text('h3', 'Previews'));
+      const data = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/previews?limit=10`);
       const rows = (data.items || []).map(value => [value.previewId, value.status,
         value.configurationRevisionId, value.createdAt,
         value.current === true ? 'current' : 'stale', value.nextAction || '-']);
@@ -2329,14 +2335,14 @@ APP_JS = b"""(() => {
       detail.hidden = false;
     } catch (error) { message(errorText(error), true); }
   }
-  function confirmAutomationGrant(item, configuration) {
+  function confirmAutomationGrant(item, configuration, previewId) {
     const scope = item.sourceScope || '<root>';
     const mode = item.mode || item.runMode || '-';
     const limit = item.itemLimit || item.limit || '-';
     const confirmation = text('div', '', 'choices');
     confirmation.append(text('p', `Grant persistent unattended execution for ${item.id}? ` +
       `This explicitly authorizes only ${mode} over ResourceLibrary ${item.resourceLibraryId}, ` +
-      `scope ${scope}, with at most ${limit} item(s) per run. It does not authorize overwrite, ` +
+      `scope ${scope}, with at most ${limit} item(s) per run. Reviewed Preview ${previewId || '-'}. It does not authorize overwrite, ` +
       'delete, fallback operations, or any path outside that scope.'));
     confirmation.append(actionButton('Confirm unattended grant', async () => {
       try {
@@ -2345,7 +2351,8 @@ APP_JS = b"""(() => {
             revisionId: configuration.revisionId,
             expectedVersion: configuration.version,
             maxItemsPerRun: limit,
-            confirmation: true
+            confirmation: true,
+            previewId: previewId
           })});
         message(`Unattended execution grant ${result.grant.grantId || '-'} is active.`);
         await showAutomationDetail({...item, unattendedExecutionGrant: result.grant}, configuration);

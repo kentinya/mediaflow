@@ -8,11 +8,16 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from mediaflow.domain.automation import AutomationTaskDefinition, AutomationTaskRunMode
+from mediaflow.domain.automation_task_definition_preview import (
+    AutomationTaskDefinitionPreviewItemStatus,
+    AutomationTaskDefinitionPreviewStatus,
+)
 from mediaflow.domain.manual_safety import redact_evidence_text
 from mediaflow.domain.security import ApiPermission
 from mediaflow.domain.unattended_execution import (
     MAX_UNATTENDED_GRANT_PRINCIPAL_LENGTH,
     MAX_UNATTENDED_GRANT_REASON_LENGTH,
+    CurrentPermissionAuthority,
     UnattendedExecutionGrant,
     UnattendedExecutionGrantAudit,
     UnattendedExecutionGrantRepository,
@@ -88,10 +93,14 @@ class UnattendedExecutionGrantService:
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         id_factory: Callable[[], str] = lambda: str(uuid4()),
+        preview_service=None,
+        permission_authority: CurrentPermissionAuthority | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock
         self._id_factory = id_factory
+        self._preview_service = preview_service
+        self._permission_authority = permission_authority
 
     @property
     def repository(self):
@@ -111,6 +120,8 @@ class UnattendedExecutionGrantService:
         confirmation: bool = False,
         confirmed: bool | None = None,
         reason: str | None = None,
+        preview_id: str | None = None,
+        storage_id: str | None = None,
     ) -> UnattendedExecutionGrant:
         self._require_permission(principal)
         try:
@@ -150,6 +161,15 @@ class UnattendedExecutionGrantService:
                 f"grant maxItemsPerRun must be between 1 and {definition.item_limit}",
                 next_action="choose a workload bound no greater than the definition item limit",
             )
+        preview = self._require_preview(
+            preview_id,
+            definition,
+            configuration_snapshot_id=configuration_snapshot_id,
+            configuration_snapshot_digest=configuration_snapshot_digest,
+            configuration_snapshot_version=configuration_snapshot_version,
+            max_items_per_run=max_items_per_run,
+            storage_id=storage_id,
+        )
         try:
             snapshot_id = _bounded(configuration_snapshot_id, 128, "configuration snapshot ID")
             snapshot_digest = _sha(configuration_snapshot_digest, "configuration snapshot digest")
@@ -175,6 +195,7 @@ class UnattendedExecutionGrantService:
             snapshot_digest,
             snapshot_version,
             reason=reason,
+            preview_id=preview.preview_id if preview is not None else None,
         )
         existing = self._latest_for_definition(definition.definition_id)
         if existing is not None and existing.status is UnattendedExecutionGrantStatus.ACTIVE:
@@ -201,6 +222,7 @@ class UnattendedExecutionGrantService:
                 "configurationSnapshotId": value.configuration_snapshot_id,
                 "configurationSnapshotDigest": value.configuration_snapshot_digest,
                 "configurationSnapshotVersion": value.configuration_snapshot_version,
+                "previewId": value.preview_id,
             },
         )
         creator = getattr(self._repository, "create_unattended_execution_grant", None)
@@ -339,6 +361,8 @@ class UnattendedExecutionGrantService:
                 details={"definitionId": definition.definition_id},
             )
         self._assert_match(grant, job, definition)
+        self._assert_persisted_preview(grant)
+        self._assert_current_permission(grant.granting_principal, boundary=False)
         return UnattendedExecutionAuthority(
             grant,
             _definition_changed_since_grant(grant, definition),
@@ -359,6 +383,8 @@ class UnattendedExecutionGrantService:
                     ),
                 )
             self._assert_match(grant, job, definition)
+            self._assert_persisted_preview(grant)
+            self._assert_current_permission(grant.granting_principal, boundary=True)
         except UnattendedExecutionGrantError as error:
             raise UnattendedExecutionBoundaryError(
                 category=error.code,
@@ -367,6 +393,230 @@ class UnattendedExecutionGrantService:
                 retry_safe=error.retry_safe,
             ) from error
         return grant
+
+    def _require_preview(
+        self,
+        preview_id,
+        definition,
+        *,
+        configuration_snapshot_id,
+        configuration_snapshot_digest,
+        configuration_snapshot_version,
+        max_items_per_run,
+        storage_id,
+    ):
+        if self._preview_service is None and preview_id is None:
+            return None
+        if not isinstance(preview_id, str) or not preview_id.strip():
+            raise UnattendedExecutionGrantError(
+                "a persisted exact Automation Preview is required before granting "
+                "unattended execution",
+                code="unattended_execution_preview_required",
+                durable_state="no grant or audit row was created; no media mutation occurred",
+                next_action=(
+                    "run a fresh exact Preview, inspect its eligibility, then submit its Preview ID"
+                ),
+            )
+        if self._preview_service is None:
+            raise UnattendedExecutionGrantError(
+                "the Automation Preview authority is unavailable",
+                code="unattended_execution_preview_unavailable",
+                status=503,
+                durable_state="no grant or audit row was created; no media mutation occurred",
+                next_action="restore the Preview service, then rerun Preview and retry the grant",
+            )
+        try:
+            preview = self._preview_service.get_readonly(preview_id)
+        except Exception as error:
+            if isinstance(error, UnattendedExecutionGrantError):
+                raise
+            raise UnattendedExecutionGrantError(
+                "the requested Automation Preview is missing or unavailable",
+                code=(
+                    "unattended_execution_preview_"
+                    + str(getattr(error, "code", "unavailable")).removeprefix("automation_preview_")
+                ),
+                status=int(getattr(error, "status", 503)),
+                durable_state="no grant or audit row was created; no media mutation occurred",
+                next_action=str(
+                    getattr(
+                        error,
+                        "next_action",
+                        "run a fresh exact Preview, then retry with its Preview ID",
+                    )
+                ),
+                details={"previewId": preview_id},
+            ) from error
+        mismatches = []
+        expected = (
+            ("definition identity", preview.definition_id, definition.definition_id),
+            (
+                "definition fingerprint",
+                preview.definition_fingerprint,
+                definition.definition_fingerprint,
+            ),
+            (
+                "configuration revision",
+                preview.configuration_revision_id,
+                configuration_snapshot_id,
+            ),
+            (
+                "configuration digest",
+                preview.configuration_revision_digest,
+                configuration_snapshot_digest,
+            ),
+            (
+                "configuration version",
+                preview.configuration_revision_version,
+                configuration_snapshot_version,
+            ),
+            ("ResourceLibrary", preview.resource_library_id, definition.resource_library_id),
+            ("source scope", preview.source_scope, definition.source_scope),
+            ("run mode", preview.run_mode, definition.mode.value),
+            ("Storage", preview.storage_id, storage_id),
+        )
+        mismatches.extend(label for label, actual, wanted in expected if actual != wanted)
+        if preview.effective_item_limit < max_items_per_run:
+            mismatches.append("workload bound")
+        if mismatches:
+            raise UnattendedExecutionGrantError(
+                "Automation Preview does not match the exact grant bounds: "
+                + ", ".join(mismatches),
+                code="unattended_execution_preview_mismatch",
+                next_action="run a fresh Preview for the current exact definition and grant bound",
+                details={"previewId": preview.preview_id, "mismatches": mismatches[:8]},
+            )
+        if preview.current is not True or preview.zero_mutation is not True:
+            raise UnattendedExecutionGrantError(
+                "Automation Preview is stale or does not prove zero mutation",
+                code="unattended_execution_preview_stale",
+                next_action="run a fresh exact zero-mutation Preview, then retry the grant",
+                details={"previewId": preview.preview_id},
+            )
+        if preview.status is not AutomationTaskDefinitionPreviewStatus.PREVIEWED:
+            raise UnattendedExecutionGrantError(
+                "Automation Preview is not an acceptable completed analysis",
+                code="unattended_execution_preview_ineligible",
+                next_action="resolve the Preview analysis blockers and run a fresh Preview",
+                details={"previewId": preview.preview_id, "status": preview.status.value},
+            )
+        if preview.boundary_errors:
+            raise UnattendedExecutionGrantError(
+                "Automation Preview contains a boundary error",
+                code="unattended_execution_preview_boundary_error",
+                next_action=(
+                    "repair the reported Preview boundary dependency and run a fresh Preview"
+                ),
+                details={"previewId": preview.preview_id},
+            )
+        invalid = [
+            item.status.value
+            for item in preview.items
+            if item.status
+            not in {
+                AutomationTaskDefinitionPreviewItemStatus.PREVIEWED,
+                AutomationTaskDefinitionPreviewItemStatus.EXCLUDED,
+                AutomationTaskDefinitionPreviewItemStatus.UNSTABLE,
+                AutomationTaskDefinitionPreviewItemStatus.TRUNCATED,
+            }
+        ]
+        if invalid:
+            raise UnattendedExecutionGrantError(
+                "Automation Preview contains blocked or failed executable items",
+                code="unattended_execution_preview_item_blocked",
+                next_action="resolve each blocked or failed Preview item and run a fresh Preview",
+                details={"previewId": preview.preview_id, "itemStatuses": invalid[:16]},
+            )
+        return preview
+
+    def _assert_current_permission(self, principal_id: str, *, boundary: bool) -> None:
+        if self._permission_authority is None:
+            # Lightweight direct callers from the pre-managed runtime do not
+            # have a configured authority to consult. Production API/Worker
+            # composition always injects one and therefore fails closed.
+            return
+        try:
+            allowed = self._permission_authority.has_permission(
+                principal_id, ApiPermission.GRANT_UNATTENDED_EXECUTION
+            )
+        except Exception:
+            error = UnattendedExecutionGrantError(
+                "current configured principal permission authority could not be read",
+                code="unattended_permission_authority_unavailable",
+                status=503,
+                durable_state=(
+                    "no Task, adapter, Provider request, Storage probe, or media effect was created"
+                ),
+                next_action=(
+                    "restore the current permission authority, then explicitly resume the "
+                    "occurrence"
+                ),
+            )
+            if not boundary:
+                raise error from error
+            raise UnattendedExecutionBoundaryError(
+                category="unattended_permission_authority_unavailable",
+                reason="current configured principal permission authority could not be read",
+                next_action=(
+                    "restore the current permission authority, then explicitly resume the "
+                    "occurrence"
+                ),
+            ) from error
+        if allowed is not True:
+            error = UnattendedExecutionGrantError(
+                "the granting principal no longer has grant_unattended_execution permission",
+                code="unattended_permission_invalid",
+                durable_state=(
+                    "no Task, adapter, Provider request, Storage probe, or media effect was created"
+                ),
+                next_action="restore that principal permission or explicitly create a new grant",
+            )
+            if not boundary:
+                raise error
+            raise UnattendedExecutionBoundaryError(
+                category="unattended_permission_invalid",
+                reason="the granting principal no longer has grant_unattended_execution permission",
+                next_action="restore that principal permission or explicitly create a new grant",
+            ) from error
+
+    def _assert_persisted_preview(self, grant) -> None:
+        if self._preview_service is None:
+            return
+        if not grant.preview_id:
+            raise UnattendedExecutionGrantError(
+                "unattended execution grant has no exact Preview linkage",
+                code="unattended_execution_preview_missing",
+                durable_state=(
+                    "no Task, adapter, Provider request, Storage probe, or media effect was created"
+                ),
+                next_action="run a fresh exact Preview and explicitly create a new grant",
+            )
+        try:
+            preview = self._preview_service.get_readonly(grant.preview_id)
+        except Exception as error:
+            raise UnattendedExecutionGrantError(
+                "the exact Automation Preview linked to this grant is unavailable",
+                code="unattended_execution_preview_unavailable",
+                status=503,
+                durable_state=(
+                    "no Task, adapter, Provider request, Storage probe, or media effect was created"
+                ),
+                next_action="restore the linked Preview evidence and explicitly create a new grant",
+            ) from error
+        if (
+            preview.current is not True
+            or preview.zero_mutation is not True
+            or preview.status is not AutomationTaskDefinitionPreviewStatus.PREVIEWED
+            or preview.boundary_errors
+        ):
+            raise UnattendedExecutionGrantError(
+                "the exact Automation Preview linked to this grant is stale or ineligible",
+                code="unattended_execution_preview_stale",
+                durable_state=(
+                    "no Task, adapter, Provider request, Storage probe, or media effect was created"
+                ),
+                next_action="run a fresh exact Preview and explicitly create a new grant",
+            )
 
     def project(
         self,
@@ -415,9 +665,33 @@ class UnattendedExecutionGrantService:
                 "definitionChangedSinceGrant": changed,
                 "nextAction": next_action,
                 "definitionCurrentFingerprint": definition.definition_fingerprint,
+                "currentPermission": self._permission_projection(grant),
             }
         )
         return value
+
+    def _permission_projection(self, grant) -> dict[str, object]:
+        if self._permission_authority is None:
+            return {
+                "principalId": grant.granting_principal,
+                "status": "unavailable",
+                "allowed": False,
+            }
+        try:
+            allowed = self._permission_authority.has_permission(
+                grant.granting_principal, ApiPermission.GRANT_UNATTENDED_EXECUTION
+            )
+        except Exception:
+            return {
+                "principalId": grant.granting_principal,
+                "status": "unavailable",
+                "allowed": False,
+            }
+        return {
+            "principalId": grant.granting_principal,
+            "status": "valid" if allowed is True else "invalid",
+            "allowed": allowed is True,
+        }
 
     def project_many(
         self,
@@ -677,6 +951,7 @@ def _grant_binding(value: UnattendedExecutionGrant) -> tuple[object, ...]:
         value.configuration_snapshot_id,
         value.configuration_snapshot_digest,
         value.configuration_snapshot_version,
+        value.preview_id,
     )
 
 

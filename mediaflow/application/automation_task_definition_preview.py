@@ -1716,20 +1716,27 @@ class AutomationTaskDefinitionPreviewService:
         items: Sequence[AutomationTaskDefinitionPreviewItem],
     ) -> AutomationTaskDefinitionPreviewStatus:
         if not items:
-            return AutomationTaskDefinitionPreviewStatus.BLOCKED
+            # An empty current scope is a valid zero-mutation observation. It
+            # grants no item authority, but it must not block the exact
+            # definition grant itself.
+            return AutomationTaskDefinitionPreviewStatus.PREVIEWED
         statuses = {item.status for item in items}
-        if statuses == {AutomationTaskDefinitionPreviewItemStatus.PREVIEWED}:
+        benign = {
+            AutomationTaskDefinitionPreviewItemStatus.PREVIEWED,
+            AutomationTaskDefinitionPreviewItemStatus.EXCLUDED,
+            AutomationTaskDefinitionPreviewItemStatus.UNSTABLE,
+            AutomationTaskDefinitionPreviewItemStatus.TRUNCATED,
+        }
+        if statuses.issubset(benign) and (
+            AutomationTaskDefinitionPreviewItemStatus.PREVIEWED in statuses
+        ):
+            return AutomationTaskDefinitionPreviewStatus.PREVIEWED
+        if statuses.issubset(benign):
             return AutomationTaskDefinitionPreviewStatus.PREVIEWED
         if statuses == {AutomationTaskDefinitionPreviewItemStatus.UNAVAILABLE}:
             return AutomationTaskDefinitionPreviewStatus.UNAVAILABLE
         if statuses == {AutomationTaskDefinitionPreviewItemStatus.FAILED}:
             return AutomationTaskDefinitionPreviewStatus.FAILED
-        if statuses == {AutomationTaskDefinitionPreviewItemStatus.EXCLUDED}:
-            return AutomationTaskDefinitionPreviewStatus.BLOCKED
-        if statuses == {AutomationTaskDefinitionPreviewItemStatus.UNSTABLE}:
-            return AutomationTaskDefinitionPreviewStatus.BLOCKED
-        if statuses == {AutomationTaskDefinitionPreviewItemStatus.TRUNCATED}:
-            return AutomationTaskDefinitionPreviewStatus.BLOCKED
         if statuses.intersection(
             {
                 AutomationTaskDefinitionPreviewItemStatus.UNAVAILABLE,

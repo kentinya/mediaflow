@@ -17,6 +17,7 @@ from typing import Protocol
 
 from mediaflow.domain.automation import AutomationTaskDefinition, AutomationTaskRunMode
 from mediaflow.domain.manual_safety import redact_evidence_text, redact_evidence_value
+from mediaflow.domain.security import ApiPermission
 
 MAX_UNATTENDED_GRANT_REASON_LENGTH = 512
 MAX_UNATTENDED_GRANT_PRINCIPAL_LENGTH = 200
@@ -52,6 +53,7 @@ class UnattendedExecutionGrant:
     revoking_principal: str | None = None
     revoked_at: datetime | None = None
     reason: str | None = None
+    preview_id: str | None = None
 
     MAX_ID_LENGTH = 128
     MAX_RESOURCE_ID_LENGTH = 128
@@ -83,6 +85,13 @@ class UnattendedExecutionGrant:
                 or "\x00" in value
             ):
                 raise ValueError(f"unattended execution {label} is invalid")
+        if self.preview_id is not None and (
+            not isinstance(self.preview_id, str)
+            or not self.preview_id.strip()
+            or len(self.preview_id) > self.MAX_ID_LENGTH
+            or "\x00" in self.preview_id
+        ):
+            raise ValueError("unattended execution Preview ID is invalid")
         if len(self.configuration_snapshot_digest) != 64 or not _is_sha256(
             self.configuration_snapshot_digest
         ):
@@ -202,6 +211,7 @@ class UnattendedExecutionGrant:
                 "revokingPrincipal": self.revoking_principal,
                 "revokedAt": self.revoked_at.isoformat() if self.revoked_at else None,
                 "reason": self.reason,
+                "previewId": self.preview_id,
                 "definitionFingerprint": self.definition_fingerprint,
                 "configurationSnapshotId": self.configuration_snapshot_id,
                 "configurationSnapshotDigest": self.configuration_snapshot_digest,
@@ -319,6 +329,12 @@ class UnattendedExecutionGrantRepository(Protocol):
     ) -> None: ...
 
 
+class CurrentPermissionAuthority(Protocol):
+    """Read-only authority for the current configured principal permissions."""
+
+    def has_permission(self, principal_id: str, permission: str | ApiPermission) -> bool: ...
+
+
 def _is_sha256(value: object) -> bool:
     return (
         isinstance(value, str)
@@ -334,4 +350,5 @@ __all__ = [
     "UnattendedExecutionGrantAudit",
     "UnattendedExecutionGrantRepository",
     "UnattendedExecutionGrantStatus",
+    "CurrentPermissionAuthority",
 ]

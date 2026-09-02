@@ -297,7 +297,7 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
                 )
                 preview = previews.create("def-1", actor="tester")
                 document = preview.document()
-                self.assertEqual(document["status"], "partial")
+                self.assertEqual(document["status"], "previewed")
                 self.assertEqual(document["definitionFingerprint"], document["definitionVersion"])
                 self.assertEqual(document["configurationRevisionId"], SNAPSHOT_ID)
                 self.assertEqual(document["configurationRevisionDigest"], SNAPSHOT_DIGEST)
@@ -893,7 +893,7 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
                     repository, configuration, _provider(), source_root, target_root
                 )
                 preview = previews.create("def-1", actor="tester")
-                self.assertEqual(preview.status, AutomationTaskDefinitionPreviewStatus.BLOCKED)
+                self.assertEqual(preview.status, AutomationTaskDefinitionPreviewStatus.PREVIEWED)
                 self.assertEqual(preview.items, ())
                 self.assertIn("no media items", preview.next_action)
         finally:
