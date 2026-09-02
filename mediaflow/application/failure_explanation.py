@@ -20,6 +20,10 @@ _MESSAGES = {
     "provider_failure": "Provider failure: metadata lookup did not complete",
     "uncertain_effect": "uncertain effect: inspect persisted effects before repeating",
     "partial_effect": "partial effect: some configured operations completed",
+    "unattended_authority": (
+        "unattended authority refused before a pending Storage mutation; no further mutation "
+        "or automatic replay occurred"
+    ),
     "unstable_source": "unstable source: the file was still being written",
     "recognition_failure": "recognition failure: no durable RecognitionType was selected",
     "metadata_failure": "metadata failure: no durable media identity was selected",
@@ -63,6 +67,10 @@ _NEXT = {
     "uncertain_effect": "inspect the linked TaskItem effects before choosing any repeat action",
     "partial_effect": (
         "inspect the linked TaskItem completed effects before choosing any repeat action"
+    ),
+    "unattended_authority": (
+        "inspect the unattended grant and granting-principal permission, then explicitly "
+        "resume or retry this item"
     ),
     "unstable_source": "wait for the source to become stable, then explicitly retry this item",
     "recognition_failure": "resolve Recognition review for this item, then continue it explicitly",
@@ -163,6 +171,28 @@ def _classify_execution(execution) -> FailureExplanation:
         certainty = ExecutionEffectCertainty(execution.effect_certainty)
     except (AttributeError, ValueError):
         certainty = ExecutionEffectCertainty.UNKNOWN
+    authority = any(_category_from_text(value) == "unattended_authority" for value in messages)
+    if authority:
+        if certainty is ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED:
+            return failure_explanation(
+                "unattended_authority",
+                durable="uncertain",
+                side_effects=(
+                    "an earlier mutation was attempted and its final effect is not verified"
+                ),
+            )
+        if execution.status is ExecutionStatus.PARTIAL or execution.completed_operations:
+            return failure_explanation(
+                "unattended_authority",
+                durable="partial",
+                side_effects=("some configured operations completed before the authority boundary"),
+            )
+        return failure_explanation(
+            "unattended_authority",
+            durable="failed",
+            side_effects="none",
+            retry_safe=True,
+        )
     if certainty is ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED:
         return failure_explanation(
             "uncertain_effect",
@@ -212,6 +242,8 @@ def _classify_storage_code(code: str) -> FailureExplanation:
 
 
 def _category_from_text(text: str) -> str | None:
+    if "unattended authority" in text:
+        return "unattended_authority"
     if "attachment destination already exists" in text:
         return "attachment_collision"
     if "destination already exists" in text or "target collision" in text:

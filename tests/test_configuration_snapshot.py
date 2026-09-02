@@ -2157,7 +2157,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 }
                 self.assertEqual(items[alpha.name].status, TaskItemStatus.SUCCESS)
                 self.assertEqual(items[beta.name].status, TaskItemStatus.FAILED)
-                self.assertIn("unattended_permission_invalid", items[beta.name].error)
+                self.assertIn("unattended_authority", items[beta.name].error)
                 results = repository.list_results(task.task_id)
                 self.assertEqual([result.status for result in results], ["success", "failed"])
                 checkpoints = ProcessingCheckpointService(

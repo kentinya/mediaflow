@@ -141,7 +141,7 @@ class MediaOrganizerService:
         metadata_corrections: dict[tuple[str, str], MetadataCorrectionSelection] | None = None,
         secret_free_errors: bool = False,
         persist_failure_explanations: bool = False,
-        before_execute: Callable[[], object] | None = None,
+        mutation_authority: Callable[[OrganizePlan, str], object] | None = None,
     ) -> None:
         self._strategy = strategy
         self._scanner = scanner
@@ -167,7 +167,7 @@ class MediaOrganizerService:
         self._metadata_corrections = metadata_corrections or {}
         self._secret_free_errors = secret_free_errors
         self._persist_failure_explanations = persist_failure_explanations
-        self._before_execute = before_execute
+        self._mutation_authority = mutation_authority
 
     def process_file(
         self,
@@ -397,12 +397,11 @@ class MediaOrganizerService:
                     )
                 return item
             plan = replacement
-            if execute and self._before_execute is not None:
-                self._before_execute()
             execution = self._executor.execute(
                 plan,
                 self._storages,
                 execute=execute,
+                mutation_authority=self._mutation_authority,
                 resolved_destination=(
                     f"{plan.destination_location.storage_id}:{plan.destination_location.path}"
                     if plan.destination_location

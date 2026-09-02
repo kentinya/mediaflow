@@ -2,7 +2,7 @@ import fnmatch
 import hashlib
 import posixpath
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from mediaflow.domain.classification import ClassificationResult
@@ -39,10 +39,27 @@ class PlanningError(ValueError):
     pass
 
 
+class MutationAuthorityRefused(Exception):
+    """Internal executor signal that one pending Storage mutation was refused.
+
+    The hook is supplied only by scheduled automatic organization.  This
+    exception is never persisted or surfaced as a raw adapter message.
+    """
+
+    def __init__(self, boundary: str, error: Exception | None = None) -> None:
+        self.boundary = boundary
+        self.retry_safe = bool(getattr(error, "retry_safe", False))
+        self.verified_effects: tuple[str, ...] = ()
+        super().__init__(f"unattended authority refused before {boundary}")
+
+
 class PartialExecutionError(RuntimeError):
     def __init__(self, message: str, completed: tuple[str, ...]) -> None:
         super().__init__(message)
         self.completed = completed
+
+
+MutationAuthority = Callable[[OrganizePlan, str], None]
 
 
 @dataclass(frozen=True)
@@ -318,6 +335,7 @@ class OrganizerExecutor:
         source_storage_path: str | None = None,
         destination_storage_path: str | None = None,
         resolved_destination: str | None = None,
+        mutation_authority: MutationAuthority | None = None,
     ) -> ExecutionResult:
         started = time.monotonic()
         display_destination = resolved_destination or plan.target
@@ -476,6 +494,7 @@ class OrganizerExecutor:
                     if plan.rollback_policy.enabled
                     else (parent,)
                 )
+                self._check_mutation_authority(plan, "CREATE_DIRECTORY", mutation_authority)
                 mutation_attempted = True
                 target_storage.create_directory(parent)
                 created.extend(missing_directories)
@@ -509,11 +528,18 @@ class OrganizerExecutor:
                         attachment.destination.path,
                         marker,
                         effects,
+                        mutation_authority=mutation_authority,
                     )
                 except PartialExecutionError as error:
                     raise PartialExecutionError(
                         str(error), tuple(f"{marker}:{step}" for step in error.completed)
                     ) from error
+                except MutationAuthorityRefused as error:
+                    if error.verified_effects:
+                        error.verified_effects = tuple(
+                            f"{marker}:{step}" for step in error.verified_effects
+                        )
+                    raise
                 completed.append(marker)
                 if not attachment_target.exists(attachment.destination.path):
                     raise RuntimeError(f"attachment verification failed: {attachment.source.path}")
@@ -548,6 +574,7 @@ class OrganizerExecutor:
                 storage_target,
                 plan.operation.value,
                 effects,
+                mutation_authority=mutation_authority,
             )
             completed.append(plan.operation.value)
             if not target_storage.exists(storage_target):
@@ -565,6 +592,18 @@ class OrganizerExecutor:
                     raise RuntimeError("destination verification failed: link type mismatch")
             if plan.operation is PlanOperation.MOVE and source_storage.exists(storage_source):
                 raise RuntimeError("move verification failed: source still exists")
+        except MutationAuthorityRefused as error:
+            return self._authority_failure_result(
+                plan,
+                started,
+                plan_id,
+                created,
+                completed,
+                effects,
+                mutation_attempted,
+                error,
+                display_destination,
+            )
         except PartialExecutionError as error:
             completed.extend(error.completed)
             return self._failure_result(
@@ -577,6 +616,7 @@ class OrganizerExecutor:
                 mutation_attempted,
                 str(error),
                 display_destination,
+                mutation_authority,
             )
         except (StorageError, RuntimeError, OSError) as error:
             return self._failure_result(
@@ -589,9 +629,26 @@ class OrganizerExecutor:
                 mutation_attempted,
                 str(error),
                 display_destination,
+                mutation_authority,
             )
-        cleanup = self._cleanup_source_directories(plan, source_storage, storage_source)
+        cleanup = self._cleanup_source_directories(
+            plan, source_storage, storage_source, mutation_authority
+        )
         completed.extend(step.action for step in cleanup.steps if step.success)
+        if cleanup.status is DirectoryCleanupStatus.REFUSED:
+            return self._result(
+                plan,
+                ExecutionStatus.PARTIAL,
+                started,
+                plan_id,
+                tuple(created),
+                tuple(completed),
+                errors=(cleanup.error or "unattended authority refused before source cleanup",),
+                resolved_destination=display_destination,
+                cleanup_status=cleanup.status,
+                cleanup_steps=cleanup.steps,
+                effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+            )
         if cleanup.status is DirectoryCleanupStatus.FAILED:
             return self._result(
                 plan,
@@ -623,9 +680,12 @@ class OrganizerExecutor:
             effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
         )
 
-    @staticmethod
     def _cleanup_source_directories(
-        plan: OrganizePlan, storage: Storage, storage_source: str
+        self,
+        plan: OrganizePlan,
+        storage: Storage,
+        storage_source: str,
+        mutation_authority: MutationAuthority | None,
     ) -> _CleanupOutcome:
         policy = plan.source_directory_cleanup
         if policy.mode is DirectoryCleanupMode.NONE:
@@ -700,13 +760,23 @@ class OrganizerExecutor:
                     ):
                         raise RuntimeError("ignored entry changed before cleanup")
                 for entry in ignored:
+                    self._check_mutation_authority(
+                        plan, "CLEANUP_DELETE_IGNORED_FILE", mutation_authority
+                    )
                     storage.delete(entry.path)
                     steps.append(DirectoryCleanupStep("DELETE_IGNORED_FILE", entry.path, True))
                 if storage.list(candidate):
                     raise RuntimeError("source directory changed before cleanup")
+                self._check_mutation_authority(plan, "CLEANUP_DELETE_DIRECTORY", mutation_authority)
                 storage.delete(candidate)
                 steps.append(DirectoryCleanupStep("DELETE_EMPTY_DIRECTORY", candidate, True))
                 candidate = posixpath.dirname(candidate)
+        except MutationAuthorityRefused as error:
+            return _CleanupOutcome(
+                DirectoryCleanupStatus.REFUSED,
+                tuple(steps),
+                _authority_error(error),
+            )
         except (StorageError, RuntimeError, OSError) as error:
             return _CleanupOutcome(
                 DirectoryCleanupStatus.FAILED, tuple(steps), _bounded_error(error)
@@ -716,19 +786,26 @@ class OrganizerExecutor:
             tuple(steps),
         )
 
-    @staticmethod
     def _mutate(
+        self,
         plan: OrganizePlan,
         source: Storage,
         target: Storage,
         storage_source: str,
         storage_target: str,
+        marker: str,
+        mutation_authority: MutationAuthority | None = None,
     ) -> None:
+        prefix = "ATTACHMENT" if marker.startswith("ATTACHMENT:") else "PRIMARY"
         same_storage = source is target
         if plan.operation is PlanOperation.MOVE:
             if same_storage:
+                self._check_mutation_authority(plan, f"{prefix}:MOVE", mutation_authority)
                 source.move(storage_source, storage_target, overwrite=plan.overwrite_authorized)
             else:
+                self._check_mutation_authority(
+                    plan, f"{prefix}:CROSS_STORAGE_WRITE", mutation_authority
+                )
                 with source.read(storage_source) as stream:
                     target.write(storage_target, stream, overwrite=plan.overwrite_authorized)
                 try:
@@ -738,18 +815,32 @@ class OrganizerExecutor:
                         raise RuntimeError(
                             "cross-storage move copy verification failed: size mismatch"
                         )
+                    self._check_mutation_authority(
+                        plan, f"{prefix}:CROSS_STORAGE_DELETE_SOURCE", mutation_authority
+                    )
                     source.delete(storage_source)
+                except MutationAuthorityRefused as error:
+                    error.verified_effects = ("COPY",)
+                    raise
                 except (StorageError, RuntimeError, OSError) as error:
                     raise PartialExecutionError(str(error), ("COPY",)) from error
         elif plan.operation is PlanOperation.COPY:
             if same_storage:
+                self._check_mutation_authority(plan, f"{prefix}:COPY", mutation_authority)
                 source.copy(storage_source, storage_target, overwrite=plan.overwrite_authorized)
             else:
+                self._check_mutation_authority(
+                    plan, f"{prefix}:CROSS_STORAGE_WRITE", mutation_authority
+                )
                 with source.read(storage_source) as stream:
                     target.write(storage_target, stream, overwrite=plan.overwrite_authorized)
         elif plan.operation is PlanOperation.LINK:
             if not same_storage:
                 raise RuntimeError("cross-storage LINK is not supported")
+            operation = (
+                plan.link_operation.value.upper() if plan.link_operation is not None else "LINK"
+            )
+            self._check_mutation_authority(plan, f"{prefix}:{operation}", mutation_authority)
             if plan.link_operation is OrganizeOperationType.SOFT_LINK:
                 source.soft_link(storage_source, storage_target)
             else:
@@ -766,12 +857,30 @@ class OrganizerExecutor:
         storage_target: str,
         marker: str,
         effects: list[_OwnedEffect],
+        *,
+        mutation_authority: MutationAuthority | None = None,
     ) -> None:
         if not plan.rollback_policy.enabled:
-            self._mutate(plan, source, target, storage_source, storage_target)
+            self._mutate(
+                plan,
+                source,
+                target,
+                storage_source,
+                storage_target,
+                marker,
+                mutation_authority,
+            )
             return
         try:
-            self._mutate(plan, source, target, storage_source, storage_target)
+            self._mutate(
+                plan,
+                source,
+                target,
+                storage_source,
+                storage_target,
+                marker,
+                mutation_authority,
+            )
         except (PartialExecutionError, StorageError, RuntimeError, OSError):
             effect = self._capture_effect(
                 plan, source, target, storage_source, storage_target, marker
@@ -783,6 +892,65 @@ class OrganizerExecutor:
         if effect is None:
             raise RuntimeError(f"cannot record owned execution target: {storage_target}")
         effects.append(effect)
+
+    def _check_mutation_authority(
+        self,
+        plan: OrganizePlan,
+        boundary: str,
+        mutation_authority: MutationAuthority | None,
+    ) -> None:
+        if mutation_authority is None:
+            return
+        try:
+            mutation_authority(plan, boundary)
+        except Exception as error:
+            raise MutationAuthorityRefused(boundary, error) from error
+
+    def _authority_failure_result(
+        self,
+        plan: OrganizePlan,
+        started: float,
+        plan_id: str,
+        created: list[str],
+        completed: list[str],
+        effects: list[_OwnedEffect],
+        mutation_attempted: bool,
+        error: MutationAuthorityRefused,
+        display_destination: str,
+    ) -> ExecutionResult:
+        completed = list(completed)
+        completed.extend(error.verified_effects)
+        if not completed and not effects:
+            return self._result(
+                plan,
+                ExecutionStatus.FAILED,
+                started,
+                plan_id,
+                tuple(created),
+                tuple(completed),
+                errors=(_authority_error(error),),
+                resolved_destination=display_destination,
+                rollback_status=(
+                    RollbackStatus.NOT_NEEDED
+                    if plan.rollback_policy.enabled
+                    else RollbackStatus.DISABLED
+                ),
+                effect_certainty=ExecutionEffectCertainty.NONE,
+            )
+        return self._result(
+            plan,
+            ExecutionStatus.PARTIAL,
+            started,
+            plan_id,
+            tuple(created),
+            tuple(completed),
+            errors=(_authority_error(error),),
+            resolved_destination=display_destination,
+            rollback_status=(
+                RollbackStatus.REFUSED if plan.rollback_policy.enabled else RollbackStatus.DISABLED
+            ),
+            effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+        )
 
     @staticmethod
     def _capture_effect(
@@ -824,6 +992,7 @@ class OrganizerExecutor:
         mutation_attempted: bool,
         error: str,
         display_destination: str,
+        mutation_authority: MutationAuthority | None,
     ) -> ExecutionResult:
         if not plan.rollback_policy.enabled:
             certainty = (
@@ -863,7 +1032,12 @@ class OrganizerExecutor:
                 effect_certainty=certainty,
                 uncertain_effects=("mutation_outcome",) if mutation_attempted else (),
             )
-        steps = self._rollback(effects, plan.rollback_policy.cleanup_created_directories)
+        steps = self._rollback(
+            effects,
+            plan.rollback_policy.cleanup_created_directories,
+            plan,
+            mutation_authority,
+        )
         rollback_ok = all(step.success for step in steps)
         completed.extend(step.action for step in steps)
         rollback_errors = tuple(
@@ -890,7 +1064,11 @@ class OrganizerExecutor:
         )
 
     def _rollback(
-        self, effects: list[_OwnedEffect], cleanup_created_directories: bool
+        self,
+        effects: list[_OwnedEffect],
+        cleanup_created_directories: bool,
+        plan: OrganizePlan,
+        mutation_authority: MutationAuthority | None,
     ) -> list[RollbackStep]:
         steps: list[RollbackStep] = []
         for effect in reversed(effects):
@@ -904,12 +1082,18 @@ class OrganizerExecutor:
                             raise RuntimeError("owned rollback directory type changed")
                         if effect.target_storage.list(effect.target_path):
                             raise RuntimeError("owned rollback directory is not empty")
+                        self._check_mutation_authority(
+                            plan, "ROLLBACK:DELETE_DIRECTORY", mutation_authority
+                        )
                         effect.target_storage.delete(effect.target_path)
                 else:
                     self._verify_owned_target(effect)
                     if effect.restore_source:
-                        self._restore_move(effect)
+                        self._restore_move(effect, plan, mutation_authority)
                     else:
+                        self._check_mutation_authority(
+                            plan, "ROLLBACK:DELETE_TARGET", mutation_authority
+                        )
                         effect.target_storage.delete(effect.target_path)
                 steps.append(
                     RollbackStep(
@@ -920,6 +1104,28 @@ class OrganizerExecutor:
                         True,
                     )
                 )
+            except MutationAuthorityRefused as error:
+                for verified in error.verified_effects:
+                    steps.append(
+                        RollbackStep(
+                            f"{effect.action}:{verified}",
+                            effect.target_storage.storage_id,
+                            effect.source_path,
+                            effect.target_path,
+                            True,
+                        )
+                    )
+                steps.append(
+                    RollbackStep(
+                        effect.action,
+                        effect.target_storage.storage_id,
+                        effect.source_path,
+                        effect.target_path,
+                        False,
+                        _authority_error(error),
+                    )
+                )
+                return steps
             except (StorageError, RuntimeError, OSError) as error:
                 steps.append(
                     RollbackStep(
@@ -945,21 +1151,34 @@ class OrganizerExecutor:
         ):
             raise RuntimeError("owned rollback target changed after execution")
 
-    @staticmethod
-    def _restore_move(effect: _OwnedEffect) -> None:
+    def _restore_move(
+        self,
+        effect: _OwnedEffect,
+        plan: OrganizePlan,
+        mutation_authority: MutationAuthority | None,
+    ) -> None:
         assert effect.source_path is not None
         if effect.source_storage.exists(effect.source_path):
             raise RuntimeError("move source reappeared; rollback refused")
         if effect.source_storage is effect.target_storage:
+            self._check_mutation_authority(plan, "ROLLBACK:MOVE", mutation_authority)
             effect.target_storage.move(effect.target_path, effect.source_path, overwrite=False)
         else:
+            self._check_mutation_authority(plan, "ROLLBACK:CROSS_STORAGE_WRITE", mutation_authority)
             with effect.target_storage.read(effect.target_path) as stream:
                 effect.source_storage.write(effect.source_path, stream, overwrite=False)
             if not effect.source_storage.exists(effect.source_path):
                 raise RuntimeError("cross-storage rollback source restore failed")
             if effect.source_storage.stat(effect.source_path).size != effect.target_size:
                 raise RuntimeError("cross-storage rollback source size mismatch")
-            effect.target_storage.delete(effect.target_path)
+            try:
+                self._check_mutation_authority(
+                    plan, "ROLLBACK:CROSS_STORAGE_DELETE_TARGET", mutation_authority
+                )
+                effect.target_storage.delete(effect.target_path)
+            except MutationAuthorityRefused as error:
+                error.verified_effects = ("RESTORE_WRITE",)
+                raise
         if not effect.source_storage.exists(effect.source_path):
             raise RuntimeError("move rollback source verification failed")
         if effect.target_storage.exists(effect.target_path):
@@ -1034,6 +1253,11 @@ def _bounded_error(error: Exception) -> str:
     return "rollback_safety_error"
 
 
+def _authority_error(error: MutationAuthorityRefused) -> str:
+    """Executor-owned bounded authority refusal text; never raw exception text."""
+    return f"unattended authority refused before {error.boundary}"
+
+
 def _execution_log_category(result: ExecutionResult) -> str | None:
     """Keep executor logs categorical; raw adapter errors stay transient only."""
 
@@ -1044,6 +1268,8 @@ def _execution_log_category(result: ExecutionResult) -> str | None:
     if result.status is ExecutionStatus.PARTIAL:
         return "partial_effect"
     text = " ".join(result.errors).casefold().replace("_", " ").replace("-", " ")
+    if "unattended authority" in text:
+        return "unattended_authority"
     if "attachment destination already exists" in text:
         return "attachment_collision"
     if "destination already exists" in text or "target collision" in text:
