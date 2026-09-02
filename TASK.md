@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.4
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 2b60cd34599603a6f4a3672c09e142f9b3c38d4c
 Difficulty: High
 Test Level: T4
@@ -421,26 +421,54 @@ Head SHA: 2e0a33817065995f0533cc9af45a26e53b54adbe
 ## B Review Result
 
 ```text
-Reviewed: 2b60cd34599603a6f4a3672c09e142f9b3c38d4c..614d95e49768408188fb3d84f14af2612334eb23
-Decision: FIX REQUIRED
+Reviewed: 2b60cd34599603a6f4a3672c09e142f9b3c38d4c..f567607098907c3c798d0ca70668861dcde23be4
+Decision: PASS
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK
 ```
 
-- A definition-scoped failure after Task creation is reported as a successful Job. An injected
-  `strategy_factory` failure produced `job_status=completed`, `job_error=None` and no Job failure
-  category while the linked Task was `failed` and the occurrence outcome was `failed`; this also
-  selects the Job-completed notification/CLI success path. Preserve the failed Task and its Task ID,
-  but propagate a bounded secret-free failure through the Worker so Job, occurrence, API/Web state
-  and notification agree on failure and expose durable state, retry safety and one valid next action.
-  Add focused regression coverage for this post-Task-creation failure boundary.
-- Cancellation recovery is invalid when no Task was created. The passing focused case
-  `test_pending_cancellation_finalizes_definition_occurrence_without_task` proves `task_id is None`,
-  yet the persisted durable state says completed Task items were preserved and the next action says
-  to inspect the linked Task. Distinguish pre-Task/early cancellation from cancellation with a linked
-  Task: the former must state that no Task/media effect exists and offer an action that can actually
-  be taken, while the latter may direct the operator to inspect preserved per-item state. Cover both
-  persisted API/Web projections without weakening the existing cancellation/fencing assertions.
+Both correction-loop blockers are fixed in code and pinned by non-vacuous tests, verified by B
+on the range diff rather than the report:
+
+- Post-Task-creation failure now fails the Job. `AutomationWorkflowFailed` carries only the Task ID
+  and typed evidence; the Worker maps it to `AutomationJobStatus.FAILED` with category
+  `definition_scoped_workflow_failed`, preserves `task_id`, and drives one `JOB_FAILED` notification
+  plus the `failed` occurrence outcome. Falsification: reverting the Worker branch makes
+  `test_post_task_failure_marks_job_occurrence_and_notification_failed` fail, and the injected
+  private detail is absent from every persisted Job/occurrence/Task field.
+- Cancellation evidence is now case-correct. Pre-Task cancellation persists "no Task was created and
+  no media effect occurred" with a performable next action; cancellation with a linked Task keeps
+  the preserved-items wording and does not claim an in-flight external call was interrupted.
+  Falsification: forcing the pending-cancel path to reuse the linked-Task text makes
+  `test_pending_cancellation_finalizes_definition_occurrence_without_task` fail.
+
+All 13 Acceptance Criteria verified independently. Zero mutation confirmed by refusing
+`ReadOnlyStorageGuard` call counts plus byte-level source/target tree comparison; automatic
+organization fails closed with `unattended_execution_not_authorized` before any adapter is
+constructed; RecognitionType C stays C through NamingPolicy A / ClassificationPolicy A; scope escape
+is rejected as `definition_pin_mismatch` before Task creation; `AutomationJobService.submit` still
+refuses definition-pinned Jobs; `SCHEMA_VERSION` is 29 at both Base and Head with no migration.
+
+Test Level T4 re-run by B: focused module 12/12 OK; api+ui+security 64 OK; required integration set
+297 run / 2 failures; full regression 1067 run / 6 failures / 7 skipped; ruff check and
+`ruff format --check` (348 files) clean; `compileall`, `pip check`, both config validates, wheel
+build and isolated wheel smoke (`Status: READY`, schema 29, migration NO), markdown link check, and
+ffprobe/ffmpeg scan (no matches) all pass. The 6 full-regression and 2 integration failures are
+pre-existing environment artifacts, not regressions: they reproduce identically on a clean
+`git archive 2b60cd3` copy under the same ignored local `.mediaflow/mediaflow.sqlite3` Active
+snapshot (1055 run / same 6 failures / 7 skipped), and the workspace delta is exactly the +12 new
+tests.
+
+Checkpoint contents match the reported 10 files; `config/alist.json` and `config/strategy.json`
+remain ignored, untracked and unstaged; the only credential-shaped string added is the synthetic
+`"Bearer viewer-token"` test fixture.
+
+Known non-blocking observation carried to the Slice Closure Packet (not a blocker, not a Task): the
+Worker-level pre-Task cancellation evidence branch at
+`mediaflow/application/automation_definition_execution.py:86` is correct but unpinned — forcing
+`_definition_cancellation_evidence` to always return the linked-Task variant still passes all 12
+focused tests, because the persisted no-Task case is proven through the SQLite pending-cancel path
+instead. Coverage gap only; both persisted projections are correct.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
