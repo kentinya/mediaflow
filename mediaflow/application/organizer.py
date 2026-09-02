@@ -341,6 +341,15 @@ class OrganizerExecutor:
                 if plan.operation in {PlanOperation.NOOP, PlanOperation.SKIP}
                 else ExecutionStatus.FAILED
             )
+            if status is ExecutionStatus.SKIPPED:
+                return self._result(
+                    plan,
+                    status,
+                    started,
+                    plan_id,
+                    warnings=(plan_error,),
+                    resolved_destination=display_destination,
+                )
             return self._result(
                 plan,
                 status,

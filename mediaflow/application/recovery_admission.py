@@ -112,6 +112,8 @@ class RecoveryAdmissionService:
             "cancelled",
         }:
             self._validate_snapshot(checkpoint)
+        if action_id == "retry":
+            self._validate_retry_checkpoint(checkpoint)
         action = next(
             (value for value in checkpoint.actions if value.action_id == action_id),
             None,
@@ -217,6 +219,42 @@ class RecoveryAdmissionService:
                 "the pinned configuration snapshot cannot be validated",
                 current_checkpoint_version=checkpoint.checkpoint_version,
             ) from error
+
+    @staticmethod
+    def _validate_retry_checkpoint(checkpoint) -> None:
+        """Re-check every safety fact that makes an automatic retry admissible.
+
+        The checkpoint is the public recovery contract, but a caller must not be able to
+        smuggle a retry through by supplying a stale or forged action list.  These guards
+        intentionally remain bounded and secret-free; the repository performs its own
+        atomic re-projection before the transition is persisted.
+        """
+
+        if checkpoint.blocker is not None:
+            raise RecoveryAdmissionError(
+                RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
+                "automatic retry is blocked by a pending operator resolution",
+                current_checkpoint_version=checkpoint.checkpoint_version,
+            )
+        if checkpoint.raw_stage == "admission_interrupted":
+            raise RecoveryAdmissionError(
+                RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
+                "automatic retry is refused until the interrupted admission is reconciled",
+                current_checkpoint_version=checkpoint.checkpoint_version,
+            )
+        certainty = getattr(checkpoint.effect_certainty, "value", checkpoint.effect_certainty)
+        if certainty in {"attempted_unverified", "unknown"}:
+            raise RecoveryAdmissionError(
+                RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
+                "automatic retry is refused because the effect state is not verified",
+                current_checkpoint_version=checkpoint.checkpoint_version,
+            )
+        if checkpoint.configuration.resolvable is not True:
+            raise RecoveryAdmissionError(
+                RecoveryAdmissionReason.SNAPSHOT_UNAVAILABLE,
+                "the pinned configuration snapshot is not resolvable",
+                current_checkpoint_version=checkpoint.checkpoint_version,
+            )
 
     @staticmethod
     def _next_action(action_id: str) -> str:

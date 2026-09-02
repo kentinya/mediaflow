@@ -490,6 +490,21 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                     sum(statement.lstrip().upper().startswith("SELECT") for statement in trace),
                     20,
                 )
+                write_prefixes = (
+                    "INSERT",
+                    "UPDATE",
+                    "DELETE",
+                    "REPLACE",
+                    "CREATE",
+                    "DROP",
+                    "ALTER",
+                )
+                self.assertFalse(
+                    any(
+                        statement.lstrip().upper().startswith(write_prefixes) for statement in trace
+                    ),
+                    trace,
+                )
                 self.assertLessEqual(len(json.dumps(value, ensure_ascii=False)), 200_000)
                 self.assertNotIn("private", json.dumps(value))
 
@@ -582,8 +597,21 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                         "objects": {"automationTaskDefinitions": [definition.document()]}
                     }
                 )
+                before_read_only_state = (
+                    tuple(task.task_id for task in repository.list_tasks()),
+                    tuple(job.job_id for job in repository.list_jobs()),
+                    tuple(
+                        grant.grant_id for grant in repository.list_unattended_execution_grants()
+                    ),
+                )
 
-                def request(path: str, query: str = ""):
+                def request(
+                    path: str,
+                    query: str = "",
+                    *,
+                    api_client=api,
+                    token: str = "viewer-token",
+                ):
                     statuses: list[str] = []
                     environ = {
                         "REQUEST_METHOD": "GET",
@@ -591,11 +619,15 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                         "QUERY_STRING": query,
                         "CONTENT_LENGTH": "0",
                         "wsgi.input": io.BytesIO(),
-                        "HTTP_AUTHORIZATION": "Bearer viewer-token",
+                        "HTTP_AUTHORIZATION": f"Bearer {token}",
                     }
-                    body = b"".join(api(environ, lambda status, _headers: statuses.append(status)))
+                    body = b"".join(
+                        api_client(environ, lambda status, _headers: statuses.append(status))
+                    )
                     return int(statuses[0].split()[0]), json.loads(body)
 
+                api_trace: list[str] = []
+                repository._connection.set_trace_callback(api_trace.append)
                 status, listing = request("/api/v1/automation/task-definitions")
                 self.assertEqual(status, 200, listing)
                 status, detail = request("/api/v1/automation/task-definitions/definition-summary")
@@ -605,14 +637,101 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                     "limit=10",
                 )
                 self.assertEqual(status, 200, occurrences)
+                status, task_history = request(
+                    "/api/v1/tasks/task-api-summary",
+                    "itemLimit=10&resultLimit=10",
+                )
+                self.assertEqual(status, 200, task_history)
+                status, checkpoint_history = request(
+                    "/api/v1/tasks/task-api-summary/items/api-failed"
+                )
+                self.assertEqual(status, 200, checkpoint_history)
+                status, refreshed_detail = request(
+                    "/api/v1/automation/task-definitions/definition-summary"
+                )
+                self.assertEqual(status, 200, refreshed_detail)
+                status, refreshed_occurrences = request(
+                    "/api/v1/automation/task-definitions/definition-summary/occurrences",
+                    "limit=10",
+                )
+                self.assertEqual(status, 200, refreshed_occurrences)
+                status, refreshed_task_history = request(
+                    "/api/v1/tasks/task-api-summary",
+                    "itemLimit=10&resultLimit=10",
+                )
+                self.assertEqual(status, 200, refreshed_task_history)
+                status, refreshed_checkpoint_history = request(
+                    "/api/v1/tasks/task-api-summary/items/api-failed"
+                )
+                self.assertEqual(status, 200, refreshed_checkpoint_history)
+                repository._connection.set_trace_callback(None)
+                write_prefixes = (
+                    "INSERT",
+                    "UPDATE",
+                    "DELETE",
+                    "REPLACE",
+                    "CREATE",
+                    "DROP",
+                    "ALTER",
+                )
+                self.assertFalse(
+                    any(
+                        statement.lstrip().upper().startswith(write_prefixes)
+                        for statement in api_trace
+                    ),
+                    api_trace,
+                )
+                after_read_only_state = (
+                    tuple(task.task_id for task in repository.list_tasks()),
+                    tuple(job.job_id for job in repository.list_jobs()),
+                    tuple(
+                        grant.grant_id for grant in repository.list_unattended_execution_grants()
+                    ),
+                )
+                self.assertEqual(after_read_only_state, before_read_only_state)
                 list_summary = listing["items"][0]["outcomeSummary"]
                 self.assertEqual(detail["definition"]["outcomeSummary"], list_summary)
                 self.assertEqual(occurrences["items"][0]["outcomeSummary"], list_summary)
+                self.assertEqual(refreshed_detail["definition"]["outcomeSummary"], list_summary)
+                self.assertEqual(refreshed_occurrences["items"][0]["outcomeSummary"], list_summary)
                 self.assertEqual(list_summary["counts"]["failed"], 1)
                 self.assertEqual(
                     list_summary["attention"][0]["failureExplanation"]["category"],
                     "storage_failure",
                 )
+
+                denied_api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal(
+                            "cancel-only",
+                            "cancel-only-token",
+                            frozenset({ApiPermission.CANCEL_JOB}),
+                        ),
+                    ),
+                )
+                denied_api._configuration_service = api._configuration_service
+                denied_api._configuration_objects = api._configuration_objects
+                for path, query in (
+                    ("/api/v1/automation/task-definitions/definition-summary", ""),
+                    (
+                        "/api/v1/automation/task-definitions/definition-summary/occurrences",
+                        "limit=10",
+                    ),
+                ):
+                    with self.subTest(path=path):
+                        status, denied = request(
+                            path,
+                            query,
+                            api_client=denied_api,
+                            token="cancel-only-token",
+                        )
+                        self.assertEqual(status, 403, denied)
+                        self.assertEqual(denied["error"]["code"], "forbidden")
+                        denied_text = json.dumps(denied, ensure_ascii=False)
+                        self.assertNotIn("outcomeSummary", denied_text)
+                        self.assertNotIn("failureExplanation", denied_text)
 
 
 if __name__ == "__main__":
