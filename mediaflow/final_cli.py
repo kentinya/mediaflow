@@ -26,6 +26,9 @@ from mediaflow.application.automation import (
     AutomationWorker,
     IntervalScheduler,
 )
+from mediaflow.application.automation_definition_execution import (
+    DefinitionScopedExecutionService,
+)
 from mediaflow.application.classification_review import ClassificationReviewService
 from mediaflow.application.configuration_snapshot import (
     MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
@@ -1267,7 +1270,9 @@ def final_main(
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 worker_service = AutomationWorker(
                     repository,
-                    lambda job, cancelled: _run_queued_workflow(job, arguments.config, cancelled),
+                    lambda job, cancelled: _run_queued_workflow(
+                        job, arguments.config, cancelled, repository=repository
+                    ),
                     NotificationPublisher(
                         repository,
                         configuration.resolve_webhook_targets()
@@ -2822,27 +2827,36 @@ def render_classification_review(review, choices, audit=()) -> str:
 
 
 def _run_queued_workflow(
-    job, configured_path: str | None, cancellation_check: Callable[[], bool]
+    job,
+    configured_path: str | None,
+    cancellation_check: Callable[[], bool],
+    *,
+    repository=None,
 ) -> str | None:
+    definition_pinned = bool(
+        getattr(job, "definition_id", None) or getattr(job, "automation_definition_id", None)
+    )
     try:
-        if getattr(job, "definition_id", None) or getattr(job, "automation_definition_id", None):
+        if definition_pinned and (
+            not getattr(job, "configuration_snapshot_id", None)
+            or not getattr(job, "configuration_snapshot_digest", None)
+        ):
             raise AutomationConfigurationUnavailable(
                 AutomationFailureEvidence(
-                    category="definition_scoped_worker_unavailable",
+                    category="job_snapshot_incomplete",
                     durable_state=(
-                        "definition-pinned Job remains queued; no legacy workflow was started"
+                        "definition-pinned Job has no complete saved configuration identity"
                     ),
                     side_effects="none",
                     retry_safe=False,
                     next_action=(
-                        "use the definition-scoped Worker handoff before retrying this Job; "
-                        "do not execute it as an unscoped legacy workflow"
+                        "restore the saved snapshot identity and emit a new definition occurrence"
                     ),
                 )
             )
         _require_queued_job_snapshot(job, configured_path)
         resolved_configuration = None
-        if job.configuration_snapshot_id:
+        if job.configuration_snapshot_id or definition_pinned:
             resolved_configuration = _configuration(
                 configured_path,
                 snapshot_id=job.configuration_snapshot_id,
@@ -2854,6 +2868,41 @@ def _run_queued_workflow(
         if job.command is AutomationCommand.RECOVERY_CONTINUATION:
             _fail_recovery_continuation_snapshot(job, configured_path)
         raise _automation_configuration_unavailable(error) from error
+    except (OSError, ValueError, LookupError) as error:
+        if definition_pinned:
+            raise AutomationConfigurationUnavailable(
+                AutomationFailureEvidence(
+                    category="snapshot_unreadable",
+                    durable_state=(
+                        "saved configuration snapshot could not be loaded; no Task was created"
+                    ),
+                    side_effects="none",
+                    retry_safe=False,
+                    next_action=(
+                        "restore the saved published revision and emit a new definition occurrence"
+                    ),
+                )
+            ) from error
+        raise
+    if definition_pinned:
+        if resolved_configuration is None:
+            raise AutomationConfigurationUnavailable(
+                AutomationFailureEvidence(
+                    category="snapshot_missing",
+                    durable_state="definition-pinned Job has no resolved configuration snapshot",
+                    side_effects="none",
+                    retry_safe=False,
+                    next_action=(
+                        "restore the saved published revision and emit a new definition occurrence"
+                    ),
+                )
+            )
+        return _run_definition_scoped_workflow(
+            job,
+            resolved_configuration,
+            cancellation_check,
+            repository=repository,
+        )
     if job.command is AutomationCommand.FILE_METADATA_CORRECTION:
         if resolved_configuration is None:
             raise RuntimeError("metadata correction continuation has no resolved configuration")
@@ -2899,6 +2948,42 @@ def _run_queued_workflow(
     if code:
         raise RuntimeError("queued workflow returned a failure status")
     return task_id
+
+
+def _run_definition_scoped_workflow(
+    job,
+    configuration: RuntimeConfiguration,
+    cancellation_check: Callable[[], bool],
+    *,
+    repository=None,
+) -> str:
+    """Bridge one claimed managed occurrence to the existing Task pipeline."""
+
+    with ExitStack() as stack:
+        task_repository = repository
+        if task_repository is None:
+            task_repository = stack.enter_context(SQLiteTaskRepository(configuration.database_path))
+        file_index = stack.enter_context(SQLiteFileIndexRepository(configuration.database_path))
+        operational_logger = (
+            SQLiteOperationalLogger(
+                task_repository,
+                "workflow",
+                configuration.operational_logging_minimum_level,
+            )
+            if configuration.operational_logging_enabled
+            else None
+        )
+        service = DefinitionScopedExecutionService(
+            task_repository,
+            file_index,
+            configuration,
+            storage_factory=configuration.create_storages,
+            provider_factory=metadata_provider_registry_from_environment,
+            strategy_factory=strategy_runner_from_configuration,
+            history_factory=JsonLinesOperationHistoryRepository,
+            logger=operational_logger,
+        )
+        return service.run(job, cancellation_check)
 
 
 def _fail_metadata_correction_continuation_snapshot(job, configured_path: str | None) -> None:

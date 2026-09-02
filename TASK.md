@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.4
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: 2b60cd34599603a6f4a3672c09e142f9b3c38d4c
 Difficulty: High
 Test Level: T4

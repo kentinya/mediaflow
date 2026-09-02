@@ -458,6 +458,12 @@ class AutomationDefinitionOccurrence:
     outcome: str = "emitted"
     reason: str | None = None
     next_action: str | None = None
+    # The occurrence keeps its stable Job identity as the durable link.  The
+    # Worker fills these read-back fields from the linked Job after Task
+    # creation/terminal completion; keeping them optional preserves older
+    # occurrence rows and scheduler emission semantics.
+    task_id: str | None = None
+    failure_category: str | None = None
 
     def __post_init__(self) -> None:
         for label, value, maximum in (
@@ -506,6 +512,17 @@ class AutomationDefinitionOccurrence:
                 not isinstance(value, str) or not value.strip() or len(value) > maximum
             ):
                 raise ValueError(f"automation occurrence {label} is invalid")
+        for label, value, maximum in (
+            ("Task ID", self.task_id, 128),
+            ("failure category", self.failure_category, 64),
+        ):
+            if value is not None and (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > maximum
+                or "\x00" in value
+            ):
+                raise ValueError(f"automation occurrence {label} is invalid")
 
     def document(self) -> dict[str, object]:
         return {
@@ -526,6 +543,8 @@ class AutomationDefinitionOccurrence:
             "outcome": self.outcome,
             "reason": self.reason,
             "nextAction": self.next_action,
+            "taskId": self.task_id,
+            "failureCategory": self.failure_category,
         }
 
     to_document = document

@@ -606,7 +606,7 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
                 ):
                     self.assertEqual(count_rows(repository, table), 0, table)
 
-    def test_definition_pinned_job_is_refused_before_legacy_pipeline_and_submit_rejects_it(
+    def test_definition_pinned_job_requires_saved_snapshot_before_legacy_pipeline(
         self,
     ) -> None:
         value = definition("guarded")
@@ -627,7 +627,7 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
                         ),
                     ).run_next()
                 self.assertEqual(result.status, AutomationJobStatus.FAILED)
-                self.assertEqual(result.failure_category, "definition_scoped_worker_unavailable")
+                self.assertEqual(result.failure_category, "snapshot_unreadable")
                 self.assertEqual(result.failure_side_effects, "none")
                 self.assertFalse(result.failure_retry_safe)
                 self.assertTrue(result.failure_next_action)
