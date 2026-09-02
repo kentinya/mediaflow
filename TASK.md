@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.4
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: 2b60cd34599603a6f4a3672c09e142f9b3c38d4c
 Difficulty: High
 Test Level: T4
@@ -313,21 +313,98 @@ fake/in-memory Provider and adapter doubles.
 
 ### Changed Files
 
+- `TASK.md`
+- `mediaflow/application/automation.py`
+- `mediaflow/application/automation_definition_execution.py`
+- `mediaflow/application/automation_definition_occurrence.py`
+- `mediaflow/domain/automation.py`
+- `mediaflow/final_cli.py`
+- `mediaflow/infrastructure/sqlite_runtime.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `tests/test_automation_definition_execution.py`
+- `tests/test_automation_definition_occurrence.py`
+
 ### Implemented
+
+- Replaced the definition-pinned Worker placeholder with a handoff that consumes the Job's exact
+  configuration snapshot, definition fingerprint/version and run pins.
+- Reused `PersistentTaskCoordinator`, `StorageScanner`, `ResourceLibraryScanner` and
+  `MediaOrganizerService` for bounded scoped scan-only and scan-and-plan runs with `execute=False`.
+- Added fail-closed evidence before Task/pipeline construction for pin, definition, resource,
+  scope and missing unattended-authority failures; automatic organization never constructs an
+  adapter or reaches `OrganizerExecutor`.
+- Persisted terminal occurrence read-back through the existing Job link, with bounded joined
+  occurrence projections and API/Web Definition → Job → Task navigation. Pending and running
+  cancellation both retain explicit per-run cancellation evidence.
+- Added temporary-Local, synthetic-provider, read-only-storage and API/Web regression coverage,
+  including RecognitionType C preservation and SQLite close/reopen linkage.
 
 ### Tests and Results
 
+- `./.venv/bin/python -m unittest tests.test_automation_definition_execution` — PASS (11 tests).
+- `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui tests.test_api_security` — PASS (64 tests).
+- Required integration command from this Task — FAIL / PRE-EXISTING / UNRELATED (296 run, 294 passed,
+  2 failed): `test_resource_library_pipeline.test_scan_cli_needs_no_path_or_metadata_token` and
+  `test_final_integration.test_runtime_configuration_and_final_analyze_cli`; failures reproduce
+  the known ignored local runtime/configuration state.
+- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — FAIL / PRE-EXISTING /
+  UNRELATED (1066 run, 1053 passed, 6 failed, 7 skipped). The six failures are the two
+  `test_api_credentials` cases, `test_final_integration`, `test_resource_library_pipeline`, and
+  two `test_runtime_storage_configuration` cases; they reproduce with the ignored local
+  `.mediaflow` runtime state and `config/strategy.json` at Task Base.
+- Task Base reproduction: a throwaway `git archive 2b60cd34599603a6f4a3672c09e142f9b3c38d4c`
+  without ignored runtime state passed the affected 23-test set; the same archive with the ignored
+  `.mediaflow` state reproduced 6 failures and 17 passes.
+- Throwaway falsification command `./.venv/bin/python -m unittest tests.test_automation_definition_execution`:
+  removing scope restriction produced 4 failures; removing the limit produced 1 failure; resolving
+  the current revision instead of the pinned snapshot produced 1 failure; removing automatic-mode
+  refusal produced 1 failure.
+- `./.venv/bin/ruff check .` — PASS.
+- `./.venv/bin/ruff format --check .` — PASS (348 files already formatted).
+- `./.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `./.venv/bin/pip check` — PASS.
+- `./.venv/bin/mediaflow --config config/strategy.example.json config validate` — PASS.
+- `./.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
+- Forbidden runtime scan for `ffprobe|ffmpeg` — PASS; no matches.
+- `pip wheel . --no-deps --no-build-isolation` plus `scripts/wheel_smoke_test.py` — PASS; accepted
+  substitute because `python -m build` is unavailable in this virtualenv.
+- Schema-marker check — SKIP; no schema version or migration changed because existing
+  `automation_jobs.task_id` and bounded joins were reused.
+- Markdown relative-link existence check for `TASK.md` — PASS.
+- Private-config/secret scan — PASS; `config/alist.json` and `config/strategy.json` remain ignored,
+  untracked and unstaged, and no private credential value was added to the checkpoint.
+- Real production Storage/Provider services and credentials — SKIP by design; tests use temporary
+  Local roots, synthetic Providers and refusing storage doubles.
+- `git diff --check` and staged diff check — PASS.
+
 ### Decisions
+
+- Kept `automation_jobs.task_id` as the durable occurrence-to-Task link and used one bounded
+  `LEFT JOIN` for occurrence read-back, so no schema bump or migration was necessary.
+- Validated all pure Job/definition/resource/scope pins before constructing adapters or the Task;
+  source-root existence is checked through the selected Storage port before Task creation.
+- Passed the scoped ResourceLibrary to the existing read-only scanner/organizer authorities and
+  left all organization mutation authority frozen behind `execute=False`.
+- Used bounded, secret-free failure/cancellation evidence with an explicit recovery action while
+  preserving completed Task items and not claiming to interrupt in-flight external calls.
 
 ### Remaining In-Slice Work
 
+- The unattended execution grant and its lifecycle/surfaces (RO-5) remain outside this Task.
+
 ### Risks / Deviations
+
+- The required integration and full regression commands retain the documented six baseline failures
+  when the workspace's ignored runtime database/configuration is present; clean Task Base archive
+  evidence is recorded above. No production service or credential was used.
+- No schema marker or migration checkpoint was added because this implementation consumes the
+  already-persisted `automation_jobs.task_id` field and does not add columns.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 614d95e49768408188fb3d84f14af2612334eb23
 ```
 
 ## B Review Result
