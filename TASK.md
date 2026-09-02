@@ -1,13 +1,13 @@
-# Task 25.6 — Fail-closed authorized scheduled organization and Automation per-item outcome/recovery
+# Task 25.7 — Preview-gated unattended authority and live permission revalidation
 
-This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to the
-current [`SLICE.md`](SLICE.md).
+This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
+the current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 25.6
+Task ID: 25.7
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: IN PROGRESS
-Task Base: 1bd8a08eeafa67470e4e39c68e2520e339a0aa2a
+Status: READY FOR B REVIEW
+Task Base: e9f9baf24a6616a47ec651f17ef7eed57428cf7d
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,230 +15,235 @@ Planner / Reviewer: B
 
 ## Goal
 
-Make an authorized scheduled occurrence fail closed at every affected boundary with durable,
-bounded, secret-free per-item state, and let the operator see and resolve those per-item outcomes
-from the Automation journey itself. This Task advances Slice 25 `RO-6` and completes the remaining
-part of `RO-7`; `RO-1`…`RO-5` are already accepted by Tasks 25.1–25.5 and are not reopened here.
+Close both P1 blockers from A Final Review as one coherent unattended-authority lifecycle: an
+operator can create a persistent grant only from current, exact, acceptable Automation Preview
+evidence, and every automatic-organization admission and not-yet-performed effect revalidates the
+granting subject's current unattended permission. This completes the remaining Slice 25 `RO-2`,
+`RO-5`, `RO-6` and `RO-7` behavior without changing the normal media pipeline or granting any
+destructive authority.
 
 ## Why This Task Exists
 
-Task 25.5 made authorized unattended mutation reachable. What an authorized run actually does at
-each failure boundary, and what the operator can see and do about it from Automation, is still
-partly unimplemented and entirely unproven. Three gaps exist in code today:
+The current API checks request RBAC and the Active configuration revision but calls
+`UnattendedExecutionGrantService.grant()` without consulting persisted Preview evidence
+(`mediaflow/interfaces/service_api.py:826-860`). The Operator Web renders the grant action before it
+loads Preview history (`mediaflow/interfaces/operator_ui.py:2246-2268,2322-2354`). An authorized API
+caller can therefore skip the Contract's Validate/Test → exact Preview/DryRun → explicit unattended
+grant sequence.
 
-1. Execution-boundary explanations are flattened. With `secret_free_errors=True` — the mode every
-   definition-scoped run uses (`mediaflow/application/automation_definition_execution.py:473`) —
-   `mediaflow/application/media_organizer.py:379` replaces every `ExecutionResult.errors` entry with
-   the single string `"workflow execution failed"`. `OrganizerExecutor` produces distinguishable,
-   already secret-free reasons at that boundary (`"destination already exists"`,
-   `"attachment destination already exists: …"`, `"cross-storage LINK is not supported"`,
-   `"plan destination does not match MediaLibrary root and relative path"`,
-   `"operation … is not executable"` — `mediaflow/application/organizer.py:326-470,700-730`), and all
-   of them are lost. The generic fallback in `_failure_message`
-   (`mediaflow/application/media_organizer.py:568`) additionally labels a scheduled *organize*
-   failure `"single-item DryRun analysis failed"`. An operator therefore cannot tell an unsupported
-   capability from a collision, a permission denial or a transient Storage error, and gets no next
-   action — which is exactly what `RO-6` and product rule 1 (retry is not recovery) forbid.
+The runtime does re-read the persistent grant immediately before an effect, but
+`UnattendedExecutionGrantService.assert_live()` checks only grant state and its pinned
+definition/scope/mode/limit/configuration tuple
+(`mediaflow/application/unattended_execution.py:347-369,450-511`). The stored
+`granting_principal` is never resolved against the current configured permission authority. Removing,
+disabling or downgrading that subject after the grant therefore cannot stop the next mutation.
 
-2. The Automation journey has no per-item outcome view. The shared occurrence projection
-   (`mediaflow/application/automation_definition_occurrence.py:104-193`) exposes only last-occurrence
-   scalars plus a linked `lastTaskId`; it carries no outcome breakdown and no list of items awaiting
-   an operator decision. `RO-7` requires per-item outcomes and recovery to be visible from the
-   Automation view after reload. The per-item surface itself already exists and must be reused, not
-   rebuilt: `ProcessingCheckpointService.summary()`
-   (`mediaflow/application/processing_checkpoint.py:94`), the Task detail route that already returns
-   items with checkpoints and recovery batches (`mediaflow/interfaces/service_api.py:3137-3165`), and
-   the Web renderer that already shows `stage`, `blocker_kind`, `effect_certainty`, `retry_safety`
-   and `recovery_request` (`mediaflow/interfaces/operator_ui.py:2440-2471`).
-
-3. A bounded run can be mistaken for an exhausted scope. `process_library` cancels the scan once the
-   configured limit is reached (`mediaflow/application/media_organizer.py:487`), so items beyond the
-   bound are never discovered or recorded, and nothing in the occurrence projection says the run
-   stopped at its bound. `RO-6` requires unselected siblings not to be concealed.
-
-Beyond those gaps, the Slice requires "real-execution safety evidence" for the authorized matrix and
-none exists: operation capability across `MOVE`/`COPY`/`HARD_LINK`/`SOFT_LINK` plus attachments with
-no silent substitution, collision handling across `Skip`/`Rename`/`Manual`/`Overwrite`, the boundary
-that a grant implies no Overwrite/Delete/MOVE source removal/source-directory cleanup/rollback,
-unstable source, Provider and Storage failure, injected partial or uncertain effect, and sibling
-independence. `mediaflow/application/conflict_resolution.py:37-47` shows the intended fail-closed
-shape today — `apply_configured` auto-resolves only `SKIP` and `RENAME` and returns `None` for
-`OVERWRITE`, `MANUAL` and `INVALID_DESTINATION` so the item blocks — but no test proves that holds on
-the unattended path, where no conflict decision and no overwrite confirmation is passed
-(`mediaflow/application/automation_definition_execution.py:458-484`).
-
-This is the largest coherent unit left inside the Slice: one vertical from the execution boundary to
-the operator's Automation view, plus the evidence the Slice demands. It creates no new pipeline, no
-new authority and no second recovery lifecycle.
+These are not independent feature requests: together they define whether one persistent unattended
+authority is valid when created and remains valid when consumed. The correction must be shared by
+Application, API, Web and Worker rather than implemented as transport-only checks. It remains inside
+the existing grant, Preview, Task/TaskItem/Result and OrganizerExecutor boundaries and does not
+require a new identity-management product.
 
 ## Implementation Scope
 
 ```text
-Application → API → Web → Tests
+Domain → Persistence → Application → Runtime composition → API → Web → Tests
 ```
 
-- Application — bounded, classified, secret-free execution-boundary failure explanations for
-  definition-scoped runs (category, durable state, retry safety, exactly one next action), preserved
-  per item in `TaskItem`/`Result`/checkpoint state; the honest label for a scheduled organize failure
-  instead of the DryRun fallback.
-- Application — extend the shared occurrence projection with a bounded per-occurrence item outcome
-  summary, the "stopped at the configured bound" statement, and a hard-capped attention list built
-  from `ProcessingCheckpointService`. Read-only, deterministic, no Provider/Storage access.
-- API — return that summary from the existing Automation definition detail and occurrences routes
-  under unchanged RBAC, validation, cursor and page-bound rules. The existing per-item recovery
-  routes stay the only recovery entry point.
-- Web — render the summary, the bound statement and the attention list in the Automation detail
-  panel with cross-links into the existing Task/per-item recovery surface; reproducible after reload.
-- Tests — the T4 authorized-run matrix and falsification evidence below.
+- Domain/Application — define one bounded, deterministic unattended-grant eligibility result over
+  an explicitly selected persisted Preview. It must bind the Preview identity, definition
+  fingerprint, Active configuration revision/version/digest, ResourceLibrary/Storage, normalized
+  source scope, automatic-organization mode and effective workload bound to the requested grant.
+- Application — require `previewId` at shared grant admission and re-read that Preview at the
+  creation boundary. Evidence is eligible only when it is current, zero-mutation, exact for the
+  requested Active definition/configuration and free of analysis failures, unavailable state,
+  boundary errors, stale items or item blockers. Benign non-executable discovery facts such as
+  excluded, currently unstable, truncated-by-limit or an empty current scope may remain visible and
+  do not themselves grant those items mutation authority; every item that the Preview presents as
+  executable must have a successful plan with no blocker.
+- Application/Persistence — durably link the admitted grant and its secret-free audit/projection to
+  the exact Preview evidence so the relationship survives reload. Use existing persistence where it
+  can represent the fact without ambiguity; if a new column or constraint is necessary, use one
+  additive schema migration with rollback-safe migration rehearsal and updated schema markers.
+- Application — define a read-only current-permission authority for a principal ID and
+  `grant_unattended_execution`. `authorize()` must consult it before automatic work constructs a
+  Task, adapter, Provider or Storage pipeline, and `assert_live()` must consult it again immediately
+  before every not-yet-performed effect. Removed, disabled, downgraded, malformed or unavailable
+  current authority fails closed. A Job-pinned snapshot, the grant-time principal object or a
+  once-per-run cached answer is not current permission evidence.
+- Runtime composition — wire API and definition-scoped Worker execution to the same permission
+  semantics backed by the existing configured API-principal definitions/roles. Direct service tests
+  may inject a deterministic fake, but production composition must not default automatic mutation to
+  allowed when the authority is missing. Permission lookup needs only principal identity and roles;
+  it must not persist, return or log bearer tokens or resolved environment secret values.
+- Application/Task evidence — a permission-invalid or permission-authority-unavailable occurrence
+  before Task creation leaves bounded Job/occurrence failure evidence and no pipeline side effects.
+  Permission loss between items preserves completed sibling effects and Results, refuses the next
+  item before OrganizerExecutor, and leaves that TaskItem/Result/checkpoint with durable state,
+  retry safety and exactly one explicit recovery action. It never automatically replays a completed
+  or uncertain effect.
+- API — make the existing grant route require the explicit reviewed `previewId` and return the same
+  application eligibility, Preview linkage, current-permission state, error and recovery projection
+  used elsewhere. Missing, unknown, cross-definition, stale, failed, unavailable, blocker-bearing or
+  concurrently invalidated evidence fails before a grant/audit row is created. Existing RBAC,
+  optimistic Active revision binding, explicit confirmation and bounded secret-free errors remain.
+- Web — load and render the latest exact Preview and grant eligibility before presenting an enabled
+  grant action. Show the selected Preview identity/status/binding, why grant is unavailable, and the
+  single recovery action to run or inspect a fresh Preview. Confirmation submits that exact
+  `previewId`; a stale/change race is rejected by the shared Application service. After reload, show
+  the durable Preview linkage and current-permission validity, while revoke remains independently
+  available for an existing grant.
+- Tests — add non-vacuous admission, concurrency, reload, permission-loss, per-item independence,
+  API-bypass, Web journey, zero-mutation, redaction and production-wiring evidence described below.
 
-Frozen unless a listed Acceptance Criterion cannot be met without touching it, in which case the
-change and its reason must be reported:
+Frozen unless an Acceptance Criterion cannot be met without a narrow change, which must be reported:
 
-- grant authority resolution and the grant/revoke lifecycle accepted in Task 25.5
-  (`mediaflow/application/unattended_execution.py`) — `authorize()`/`assert_live()` semantics must not
-  be weakened;
-- `RecognitionTypePolicy` ownership, Naming, Classification, Planner and `OrganizerExecutor` mutation
-  authority;
-- conflict-strategy semantics in `mediaflow/application/conflict_resolution.py` — no new automatic
-  resolution may be added for `OVERWRITE` or `MANUAL`;
-- Scheduler admission, Job fencing and due-state advancement (Tasks 25.3–25.4);
-- the runtime schema: prefer no `SCHEMA_VERSION` bump. If a bounded read genuinely requires one, it
-  must be additive, migrated, rehearsed and reflected in every schema-marker test.
+- Slice User Goal, Required Outcomes, Required Surfaces, Safety Invariants, Explicitly Deferred and
+  Base SHA;
+- Scheduler due evaluation/emission, AutomationJob capacity/idempotency, definition schedule
+  enable/disable and immutable Job configuration pinning;
+- Scanner, Parser, Recognition, Metadata, Naming, Classification, conflict semantics, OrganizePlan
+  and OrganizerExecutor operation/mutation ownership;
+- manual/remote one-shot authorization, destructive Overwrite/Delete/cleanup authority, operation
+  fallback and existing recovery admission semantics;
+- configured API role meanings. `GRANT_UNATTENDED_EXECUTION` remains admin-only; do not add a new
+  identity administration surface, credential store or permission-management API.
 
 ## Acceptance Criteria
 
-- [ ] 1. Every execution-boundary failure in an authorized scheduled run leaves a distinguishable
-      bounded category — at minimum unsupported/denied capability, destination or attachment
-      collision, invalid destination, Storage failure, Provider failure and uncertain/partial effect
-      — together with what is durable, whether repeating is safe, and exactly one safe next action.
-      The blanket `"workflow execution failed"` replacement and the `"single-item DryRun analysis
-      failed"` label for scheduled organize runs are gone.
-- [ ] 2. No explanation, log, audit, API or Web payload contains a credential, token, authorization
-      header, cookie, private endpoint or private configuration value; bounded lengths are enforced.
-- [ ] 3. No silent operation substitution. `MOVE`, `COPY`, `HARD_LINK` and `SOFT_LINK` each execute
-      only the configured operation; an unsupported capability or a cross-storage `LINK` fails
-      explicitly with the capability category and never falls back to another operation. A failing
-      attachment never silently upgrades the item to success.
-- [ ] 4. A live unattended grant alone never produces Overwrite, Delete, MOVE source removal beyond
-      the configured operation, source-directory cleanup, rollback or operation fallback. With a
-      configured `OVERWRITE` strategy an unattended occurrence blocks only the affected item for
-      explicit confirmation and mutates nothing; no automation path sets `overwrite_authorized` or
-      supplies a conflict decision on the operator's behalf.
-- [ ] 5. Conflict matrix per item: `SKIP` produces a NOOP, `RENAME` a safe alternative destination,
-      `MANUAL` and `OVERWRITE` leave that item alone waiting with a resolution path, and an invalid
-      destination fails closed. Siblings in the same occurrence keep independent status, effects and
-      Results and are never replayed or concealed.
-- [ ] 6. Unstable source, Provider failure, Storage failure part-way through a batch and unresolved
-      recognition/metadata/classification each leave the affected item durable with known or
-      uncertain effect, retry safety and one next action, while completed siblings keep their
-      effects. An uncertain mutation is never automatically replayed by the scheduled path or by any
-      recovery entry point.
-- [ ] 7. The occurrence projection exposes, from the same application service used by API and Web, a
-      bounded per-item outcome summary (counts per durable item status including waiting kinds,
-      skipped, ignored, partial, failed, cancelled and unchanged), an explicit statement of whether
-      the run stopped at its configured item bound, and a hard-capped attention list of items needing
-      an operator decision with stage, blocker kind, effect certainty, retry safety and one next
-      action. It reuses `ProcessingCheckpointService`, adds no second checkpoint/recovery projection,
-      and performs no Job, Task, grant, Provider or Storage work.
-- [ ] 8. The Automation definition detail and occurrences API routes return that summary under the
-      existing permissions, validation, cursor and page bounds, with no unbounded scan and no N+1
-      read for a rendered page; existing payload fields and pagination shape stay compatible.
-- [ ] 9. The Operator Web Automation detail panel renders the outcome summary, the bound statement
-      and the attention list, cross-links each attention item into the existing Task/per-item
-      recovery surface, survives reload, and introduces no new mutation action on the Automation
-      surface.
-- [ ] 10. API and Web report the same state, outcome, failure explanation and next action for the
-      same occurrence and the same item.
-- [ ] 11. Zero-mutation invariants hold: `scan-only` and `scan-and-plan` occurrences mutate nothing,
-      and opening or refreshing the Automation list, detail, occurrence or history creates no Job,
-      Task, grant, Provider request or Storage probe.
-- [ ] 12. `RecognitionType C` remains `C` through scheduled plan, execution and Result while its
-      configured downstream `A` Naming/Classification ownership stays visible.
-- [ ] 13. Test Level T4 passes with actual reported results, including the falsification evidence
-      below; no test is deleted, no assertion relaxed and no skip hidden.
-- [ ] 14. The checkpoint contains only this Task and no private configuration, credential or
-      unrelated file.
+- [ ] 1. Grant admission requires an explicit persisted `previewId`; request RBAC, explicit
+      confirmation and Active revision/version checks remain necessary but are not substitutes for
+      Preview eligibility.
+- [ ] 2. The shared Application service re-reads the selected Preview and verifies current/zero-
+      mutation state plus the exact definition fingerprint, Active configuration
+      revision/version/digest, ResourceLibrary/Storage, normalized source scope, automatic run mode
+      and effective workload bound before creating a grant.
+- [ ] 3. No Preview, an unknown or cross-definition Preview, stale evidence, failed/unavailable
+      analysis, a boundary error, a stale/blocked/failed/unavailable item, or any mismatched binding
+      refuses admission with no grant/audit row and no Job, Task, Provider, Storage probe or media
+      mutation. The response states what remains durable, whether retry is safe and exactly one
+      bounded recovery action.
+- [ ] 4. Excluded, currently unstable, truncated-by-limit and empty-scope evidence is represented as
+      non-executable rather than mutation authority. It may coexist with an otherwise exact Preview,
+      but a grant never overrides those facts or any later normal source-stability, recognition,
+      metadata, classification, conflict, capability or destructive-operation gate.
+- [ ] 5. A successful admission durably and secret-freely links the grant/audit/projection to the
+      exact Preview identity and binding after repository/API/Web reload. Repeating the same request
+      remains idempotent; a different Preview or bound cannot silently replace an active grant.
+- [ ] 6. Preview invalidation or an Active definition/configuration change racing grant creation
+      cannot produce an effective grant for the new or mismatched state. The operation either refuses
+      atomically or leaves authority that is provably unusable before any mutation.
+- [ ] 7. API callers cannot bypass Preview through omitted, forged, stale, cross-definition or
+      transport-only data. API and Web obtain grant eligibility and recovery from the same
+      Application behavior under unchanged RBAC and optimistic concurrency rules.
+- [ ] 8. The Web journey is visibly ordered as exact Preview/DryRun → eligibility review → explicit
+      unattended grant. The enabled grant action and confirmation identify the reviewed Preview and
+      exact scope; ineligible state points to the fresh-Preview recovery action. Read/refresh remains
+      zero-mutation, and revoke stays independently available.
+- [ ] 9. Before automatic occurrence admission, the service resolves the stored granting principal
+      against the current configured permission authority and requires
+      `grant_unattended_execution`. A removed, disabled or downgraded principal, or an unavailable/
+      malformed authority, creates no Task, adapter, Provider request, Storage probe or mutation and
+      leaves bounded occurrence failure/recovery evidence.
+- [ ] 10. The same current-permission check is repeated immediately before every not-yet-performed
+      effect. It is not satisfied by the Job-pinned configuration, the grant-time principal object,
+      API-server startup state or a once-per-run cached answer.
+- [ ] 11. If current permission is lost after one item completes, that item's effect and Result
+      remain intact; the next item is refused before OrganizerExecutor with zero partial effect,
+      durable TaskItem/Result/checkpoint evidence, correct retry safety and one next action. No
+      completed, blocked or uncertain sibling is automatically replayed.
+- [ ] 12. Grant revocation, definition/snapshot/scope/mode/limit matching, per-item plan validation,
+      cancellation and existing conflict/capability/destructive gates remain live and independent.
+      Preview or current permission never implies Overwrite, Delete, source cleanup, rollback or
+      operation fallback.
+- [ ] 13. Grant/permission/Preview projections, audit, failures, logs, TaskItem, Result, checkpoint,
+      API and Web remain bounded and secret-free; no bearer token, token environment value,
+      credential, authorization header, cookie or private endpoint is persisted or exposed.
+- [ ] 14. No new media mutation path is introduced. Preview, eligibility projection, current-
+      permission resolution, API/Web reads and rejected admissions perform zero Storage mutation;
+      only OrganizerExecutor performs an accepted effect.
+- [ ] 15. Existing scan-only and scan-and-plan zero-mutation behavior, mixed-item independence,
+      RecognitionTypePolicy ownership and RecognitionType C → downstream A policies while remaining
+      C regressions continue to pass.
+- [ ] 16. Test Level T4 passes with actual totals/skips/unavailable gates reported. No test is
+      deleted, assertion relaxed, skip hidden or pre-existing failure claimed without reproduction at
+      Task Base.
+- [ ] 17. The checkpoint is one coherent Task Base..Head correction containing no private
+      configuration, credential or unrelated change.
 
 ## Required Tests
 
-Test Level T4. Every command below must be run and its actual result reported. New focused modules
-are expected (for example `tests/test_automation_authorized_execution_matrix.py` and coverage added to
-`tests/test_automation_definition_occurrence.py`); module names are the Developer's choice, the
-coverage is not.
+Test Level T4. Every command/gate below must be run and its actual result reported. New focused test
+modules are allowed; the named behavior is mandatory even if the Developer chooses different module
+names.
 
 Focused:
 
-- `./.venv/bin/python -m unittest tests.test_automation_definition_execution` — extended for the
-  authorized matrix over temporary Local roots: `MOVE`, `COPY`, `HARD_LINK` and `SOFT_LINK` each
-  executing only their configured operation with attachments; an unsupported capability and a
-  cross-storage `LINK` failing explicitly with no substitution; `SKIP`, `RENAME`, `MANUAL` and
-  configured `OVERWRITE` producing the per-item outcomes in Acceptance Criteria 4 and 5; an unstable
-  source, a Provider failure, a Storage failure after the first successful item, and an injected
-  partial/uncertain effect each leaving durable per-item state with one next action and no automatic
-  replay; sibling independence; mixed RecognitionTypes with `C` remaining `C`; sub-scope and item
-  bound still enforced under execution.
-- A focused module for the bounded execution-boundary failure classification — every category in
-  Acceptance Criterion 1 maps to its own bounded secret-free explanation, durable state, retry safety
-  and single next action; length bounds enforced; no raw adapter message, credential, token, header,
-  cookie or private endpoint reaches `TaskItem`, `Result`, checkpoint, occurrence, log or API payload.
-- `./.venv/bin/python -m unittest tests.test_automation_definition_occurrence
-  tests.test_processing_checkpoint` — the per-item outcome summary, the bound-reached statement and
-  the capped attention list: correct counts across success, partial, failed, skipped, ignored,
-  cancelled, unchanged and every waiting status; the cap honored with an honest "more items" signal;
-  a bounded run reported as bound-reached and never as an exhausted scope; identical results from the
-  bulk and single-definition projection paths; no Provider, Storage, Job, Task or grant side effect.
+- `./.venv/bin/python -m unittest tests.test_automation_unattended_grant
+  tests.test_automation_task_definition_preview` — missing/unknown/cross-definition/stale/failed/
+  unavailable/boundary-error/blocker evidence refusal; exact binding and requested limit checks;
+  acceptable no-op discovery facts; successful durable Preview linkage; close/reopen; idempotency;
+  concurrent invalidation/activation; no rejected grant or audit write; bounded errors and redaction.
+- `./.venv/bin/python -m unittest tests.test_automation_definition_execution
+  tests.test_automation_authorized_execution_matrix` — current permission valid at admission and
+  every effect; principal removed/disabled/downgraded before admission; permission-authority failure;
+  loss after the first completed item; no second mutation; preserved sibling Result/checkpoint;
+  recovery and no replay; grant/Preview never overriding conflicts, stability, capabilities or
+  destructive gates; all accepted effects still passing only through OrganizerExecutor.
 - `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui
-  tests.test_api_security` — the summary on the definition detail and occurrences routes under
-  `READ`; RBAC refusal for an unauthorized principal; bounded pages and cursors unchanged; the Web
-  panel rendering summary, bound statement and attention list with working cross-links into the
-  existing per-item recovery surface; state reproduced after reload; no new Automation mutation
-  action; the bounded secret-free error contract preserved.
+  tests.test_api_security` — required `previewId`, API bypass attempts, stale/change race, shared
+  eligibility/error projection, current-permission visibility, RBAC, explicit Web ordering and
+  confirmation, reload/revoke journey, read-only view load and secret-free bounds.
+- Add production-composition coverage in an existing CLI/runtime test module: change a temporary
+  configured principal from enabled admin to disabled/removed/non-admin between two effect
+  boundaries and prove the definition-scoped Worker reads current authority rather than the pinned
+  Job snapshot or the initial answer. Legacy configured admin behavior must remain compatible when
+  still valid; no real credential value may enter assertions or output.
+- If persistence/schema changes, extend `tests.test_migration_rehearsal` and the applicable
+  persistence tests for a real Task-Base database upgrade, grant/Preview linkage survival, atomic
+  failure rollback, supported/runtime schema agreement and legacy-row fail-closed behavior.
 
 Integration and affected regression:
 
-- `./.venv/bin/python -m unittest tests.test_automation_definition_execution
-  tests.test_automation_unattended_grant tests.test_automation_definition_occurrence
-  tests.test_automation_task_definition tests.test_automation_task_definition_preview
-  tests.test_automation_api tests.test_automation_admission tests.test_automation_job_fencing
-  tests.test_cron_scheduler tests.test_execution_authorization tests.test_manual_organize_execution
-  tests.test_conflict_resolution tests.test_task_persistence tests.test_task_pause_resume
-  tests.test_task_retry tests.test_processing_checkpoint tests.test_processing_recovery_admission
-  tests.test_recovery_continuation tests.test_recovery_batch tests.test_organizer
-  tests.test_organizer_rollback tests.test_attachments tests.test_resource_library_pipeline
-  tests.test_scanner tests.test_recognition tests.test_configuration_snapshot
+- `./.venv/bin/python -m unittest tests.test_automation_unattended_grant
+  tests.test_automation_task_definition_preview tests.test_automation_definition_execution
+  tests.test_automation_authorized_execution_matrix tests.test_automation_definition_occurrence
+  tests.test_automation_task_definition tests.test_automation_api tests.test_automation_admission
+  tests.test_automation_job_fencing tests.test_cron_scheduler tests.test_execution_authorization
+  tests.test_processing_checkpoint tests.test_processing_recovery_admission
+  tests.test_recovery_continuation tests.test_recovery_batch tests.test_task_persistence
+  tests.test_task_pause_resume tests.test_task_retry tests.test_organizer tests.test_organizer_rollback
+  tests.test_conflict_resolution tests.test_resource_library_pipeline tests.test_scanner
+  tests.test_recognition tests.test_configuration_snapshot tests.test_configuration_management
   tests.test_api_credentials tests.test_api_security tests.test_operator_ui
-  tests.test_migration_rehearsal tests.test_final_integration` — adjust only if a module name does not
-  exist, and report the substitution.
+  tests.test_migration_rehearsal tests.test_final_integration` — adjust only for a genuinely renamed or
+  new focused module and report the exact substitution.
 
 Full regression:
 
-- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` with actual run/skip totals. Any
-  failure claimed pre-existing must be reproduced at Task Base
-  `1bd8a08eeafa67470e4e39c68e2520e339a0aa2a` or on a clean `git archive` tree, with the reproduction
-  command and cause recorded. The six known environment failures caused by the ignored local runtime
-  database and `config/strategy.json` (`test_api_credentials` x2, `test_final_integration`,
-  `test_resource_library_pipeline`, `test_runtime_storage_configuration` x2) count as pre-existing
-  only with that evidence.
+- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` with actual run and skip totals.
+  Any failure claimed pre-existing/unrelated must be reproduced at Task Base
+  `e9f9baf24a6616a47ec651f17ef7eed57428cf7d` or in a clean `git archive` of that SHA, with command and
+  cause recorded. Known ignored-local-state failures are not automatically accepted without that
+  reproduction. No test, assertion or skip may be weakened to obtain a green result.
 
-Falsification evidence (record the command and the observed result, not a claim):
+Falsification evidence (record the command and observed failure, not only a claim):
 
-- Byte-level before/after comparison of source and destination trees for each matrix case: exactly
-  the configured operation happened, nothing else was created, moved, overwritten or deleted, and the
-  source is still present for `COPY`/`HARD_LINK`/`SOFT_LINK`.
-- A counting or refusing Storage double observes zero mutation calls for `scan-only`,
-  `scan-and-plan`, an unauthorized or revoked occurrence, an `OVERWRITE`-configured collision and an
-  unsupported-capability item.
-- A configured `OVERWRITE` collision in an unattended run leaves the existing destination file
-  byte-identical and the item waiting for confirmation.
-- Deliberate regressions on a throwaway `git archive HEAD` copy (workspace untouched) make the new
-  tests fail — for example letting an unsupported `LINK` fall back to `COPY`, auto-resolving
-  `OVERWRITE` or `MANUAL` in `apply_configured`, restoring the blanket `"workflow execution failed"`
-  string, automatically retrying an uncertain partial effect, dropping the bound-reached statement, or
-  counting a waiting item as success in the outcome summary.
-- Opening and refreshing the Automation list, detail, occurrence and history views creates no Job,
-  Task, grant, Provider request or Storage probe.
-- No credential, token, authorization header, cookie, private endpoint or private configuration value
-  appears in any new explanation, summary, attention list, log, audit or API/Web payload.
+- On a throwaway `git archive HEAD` copy, bypassing the Preview read/binding check or accepting a
+  stale/blocked Preview makes the new grant/API tests fail.
+- On a throwaway copy, caching current permission at grant time or run admission, or replacing the
+  per-effect lookup with unconditional allow, makes the mid-run permission-loss test fail.
+- A counting/refusing Storage double observes zero mutation calls for missing/mismatched/ineligible
+  Preview, invalid/unavailable current permission, revoked grant, unsupported capability and
+  unattended Overwrite conflict cases.
+- A deliberate principal change after the first successful sibling leaves its bytes/Result intact
+  and the next source/destination bytes unchanged; restoring permission does not automatically
+  replay either item.
+- Opening/refreshing Automation list/detail/Preview/grant/history performs no grant, audit, Job,
+  Task, Provider request, Storage probe or mutation. A rejected grant leaves no grant/audit row.
+- Credential-shaped canaries in configured token environment values, headers and adapter errors do
+  not appear in grant/Preview linkage, permission failure, audit, logs, TaskItem/Result/checkpoint or
+  API/Web payloads.
 
 Quality and safety gates:
 
@@ -248,253 +253,144 @@ Quality and safety gates:
 - `./.venv/bin/pip check`
 - `./.venv/bin/mediaflow --config config/strategy.example.json config validate`
 - `./.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`
-- forbidden `ffprobe`/`ffmpeg` runtime scan (no matches)
-- wheel build plus isolated installed-wheel smoke (`scripts/wheel_smoke_test.py`); `python -m build`
-  is unavailable in this virtualenv, so `pip wheel . --no-deps --no-build-isolation` plus the smoke
-  script is the accepted substitute and must be reported as such, including the reported supported and
-  runtime schema versions and whether migration is required
-- if and only if the schema changes: a real upgrade of a database built by Task Base code, migration
-  rehearsal tests, and every schema-marker test updated with nothing else changed in those files
+- forbidden `ffprobe`/`ffmpeg` runtime scan with no production matches
+- wheel build via `./.venv/bin/pip wheel . --no-deps --no-build-isolation` plus isolated installed-
+  wheel smoke through `scripts/wheel_smoke_test.py`, reporting supported/runtime schema and whether
+  migration is required; report `python -m build` as UNAVAILABLE if this environment still lacks its
+  executable module rather than hiding the substitution
+- if and only if schema changes: Task-Base upgrade rehearsal and every schema-marker test updated;
+  otherwise report the unchanged schema explicitly
 - Markdown relative-link existence check for changed documents
-- private-config/secret scan: `config/alist.json` and `config/strategy.json` remain ignored, untracked
-  and unstaged; no credential-like value in `Task Base..Head`
+- private-config/secret scan: `config/alist.json` and `config/strategy.json` remain ignored,
+  untracked and unstaged; no credential-like value appears in Task Base..Head
 - `git diff --check` and `git diff --cached --check`
 
-External gates: report PASS/FAIL/SKIP/UNAVAILABLE honestly. Real production Storage, Provider
-credentials and user media are not required and must not be used; use temporary Local roots plus
-fake/in-memory Provider and adapter doubles.
+External gates must be reported as PASS/FAIL/SKIP/UNAVAILABLE. Do not use production Storage,
+Provider credentials or user media; temporary Local roots and fake/in-memory services are sufficient.
 
 ## Non-goals
 
-- Automatic replay of uncertain mutation, cross-run compensation, historical or crash rollback, and
-  forced interruption of in-flight external calls — Slice-deferred.
-- New recovery actions, a second recovery or checkpoint lifecycle, or a redesign of batch recovery,
-  `ExecutionAuthorization`, `ManualExecutionAuthorization`, Task/TaskItem/Result or
-  `OrganizerExecutor`.
-- Any new unattended Overwrite or Delete authority, automatic conflict resolution, source-directory
-  cleanup or operation fallback.
-- Reopening `RO-1`…`RO-5`: definition management, Preview, Scheduler admission and the grant
-  lifecycle stay as accepted, except where an Acceptance Criterion above cannot be met otherwise.
-- Provider switching or credential lifecycle, notification Provider management and media-server
-  refresh.
-- The recorded P2 residual from the Task 25.5 review (the global `LIMIT` in
-  `list_unattended_execution_grants`, production-unreachable): optional, not required by any
-  Acceptance Criterion here, and not a blocker for this Task.
-- Slice closure documents, Roadmap updates and the Closure Packet — B's work after this Task.
+- Any change to the Slice Contract, Base SHA, Roadmap, Closure Packet or A Final Review decision.
+- A new identity-administration product, principal/role management Web/API, credential store, token
+  rotation workflow or changes to the configured role-permission matrix.
+- Requiring an interactive Preview or Execute click for every scheduled occurrence; one valid
+  persistent grant remains reusable while its exact bounds and all live gates stay valid.
+- Replacing the normal scheduled analysis/planning pipeline with persisted Preview plans, or making
+  Scheduler select items, Providers, policies, destinations, plans or operations.
+- Redesigning Scheduler, Worker claims, manual/remote one-shot authorization, Task/TaskItem/Result,
+  Processing Checkpoint, recovery, OrganizerExecutor, conflict handling or Storage adapters.
+- New Overwrite/Delete/cleanup/rollback/fallback authority, automatic replay of uncertain effects,
+  distributed leases, forced interruption of an in-flight Storage call or universal compensation.
+- P2/P3 cleanup from the prior Closure Packet, copy polish, optional proof or unrelated refactoring.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-- `mediaflow/application/processing_checkpoint.py`
-- `mediaflow/application/recovery_admission.py`
-- `mediaflow/application/organizer.py` and `mediaflow/application/media_organizer.py`
-- `tests/test_processing_checkpoint.py` and `tests/test_processing_recovery_admission.py`
-- `tests/test_automation_definition_execution.py`
-- `tests/test_automation_authorized_execution_matrix.py`
-- `tests/test_operator_ui.py`
-- `TASK.md` (this Developer Completion Report, in the report-only follow-up commit)
+- `mediaflow/application/automation_task_definition_preview.py`
+- `mediaflow/application/unattended_execution.py`
+- `mediaflow/domain/unattended_execution.py`
+- `mediaflow/infrastructure/sqlite_runtime.py`
+- `mediaflow/interfaces/service_api.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `mediaflow/final_cli.py`
+- `tests/test_automation_preview_grant_gate.py`
+- `tests/test_automation_unattended_grant.py`
+- `tests/test_automation_task_definition_preview.py`
+- `tests/test_configuration_classification.py`
+- `tests/test_configuration_destination.py`
+- `tests/test_configuration_destination_activation.py`
+- `tests/test_configuration_destination_precheck.py`
+- `tests/test_configuration_organize.py`
 
 ### Implemented
 
-- Ordered checkpoint guards so a retry-safe failure explanation cannot grant retry over a pending
-  blocker, interrupted admission, unverified/unknown effect, or unavailable configuration snapshot.
-  Recovery admission now re-checks those retry safety facts before accepting a retry request,
-  including against a forged/stale action projection.
-- Completed authorized scheduled E2E coverage for `SKIP`, `RENAME`, and `MANUAL` conflicts and an
-  invalid destination, preserving independent sibling `TaskItem`/`Result` state and byte-level
-  destination/source expectations. Configured `SKIP` now persists as `SKIPPED` with a warning rather
-  than being misclassified as a failed execution-boundary error.
-- Added authorized occurrence coverage for an unstable source, a Provider failure, and a Storage
-  failure after a successful sibling. Each affected item remains durable with its category, effect
-  certainty, retry safety and one next action; no automatic recovery request/replay is created and
-  completed siblings retain their effects.
-- Added Automation API read-only coverage for list/detail/occurrence plus Task and TaskItem
-  checkpoint-history first-open and refresh paths, including SQL write detection, durable Job/Task/
-  grant identity checks, and RBAC refusal without summary leakage. Added Operator Web assertions for
-  bounded cards, bound statement, capped attention links, failure fields, reload path and no new
-  Automation mutation action.
+- Added shared persisted Preview eligibility checks for unattended grant admission, including exact
+  definition/configuration/ResourceLibrary/Storage/scope/mode/workload binding, zero-mutation and
+  current-state checks, benign non-executable empty/excluded/unstable/truncated evidence, and
+  fail-closed blocker handling.
+- Persisted and projected the exact `previewId` linkage, included it in grant idempotency binding
+  and grant audit evidence, and added the additive runtime schema 31 migration.
+- Added current configured principal permission resolution before automatic Task creation and again
+  immediately before each pending OrganizerExecutor effect; production CLI Worker composition reloads
+  roles/enabled state without resolving or exposing credentials.
+- Updated API and Operator Web grant flows to require and display the exact Preview linkage and
+  current permission state, while keeping revoke independently available and reads mutation-free.
+- Preserved Recognition/Planner/OrganizerExecutor boundaries and updated empty/benign Preview status
+  semantics so exact no-op discovery evidence can be reviewed without becoming item authority.
 
 ### Tests and Results
 
-- `./.venv/bin/python -m unittest tests.test_automation_definition_execution` — PASS (21 tests).
-- `./.venv/bin/python -m unittest tests.test_automation_authorized_execution_matrix` — PASS (8 tests).
-- `./.venv/bin/python -m unittest tests.test_automation_definition_occurrence tests.test_processing_checkpoint`
-  — PASS (26 tests).
-- `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui tests.test_api_security`
-  — PASS (65 tests).
-- The exact required integration command from this Task:
-  `./.venv/bin/python -m unittest tests.test_automation_definition_execution tests.test_automation_unattended_grant tests.test_automation_definition_occurrence tests.test_automation_task_definition tests.test_automation_task_definition_preview tests.test_automation_api tests.test_automation_admission tests.test_automation_job_fencing tests.test_cron_scheduler tests.test_execution_authorization tests.test_manual_organize_execution tests.test_conflict_resolution tests.test_task_persistence tests.test_task_pause_resume tests.test_task_retry tests.test_processing_checkpoint tests.test_processing_recovery_admission tests.test_recovery_continuation tests.test_recovery_batch tests.test_organizer tests.test_organizer_rollback tests.test_attachments tests.test_resource_library_pipeline tests.test_scanner tests.test_recognition tests.test_configuration_snapshot tests.test_api_credentials tests.test_api_security tests.test_operator_ui tests.test_migration_rehearsal tests.test_final_integration` — FAIL / PRE-EXISTING / UNRELATED: 452 tests ran; four failures were the documented ignored local runtime/configuration cases: `test_api_credentials` x2, `test_final_integration`, and `test_resource_library_pipeline`.
-- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — FAIL / PRE-EXISTING /
-  UNRELATED: 1096 tests ran, 6 failures, 7 skips. The six failures were exactly
-  `test_api_credentials` x2, `test_final_integration`, `test_resource_library_pipeline`, and
-  `test_runtime_storage_configuration` x2.
-- The full regression failures were reproduced from a clean Task Base archive using
-  `git archive 1bd8a08eeafa67470e4e39c68e2520e339a0aa2a`, with only ignored `config/strategy.json`
-  and the temporary-tree runtime SQLite/history files copied in. That archive ran 1079 tests,
-  skipped 7, and reproduced the same six failures.
-- `./.venv/bin/ruff check .` — PASS; `./.venv/bin/ruff format --check .` — PASS (354 files);
-  `./.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS; `./.venv/bin/pip check`
-  — PASS.
-- `./.venv/bin/mediaflow --config config/strategy.example.json config validate` — PASS;
-  `./.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
-  Runtime `ffprobe|ffmpeg` scan — PASS, with no forbidden runtime matches.
+- `./.venv/bin/python -m unittest tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_automation_task_definition_preview tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix tests.test_automation_api tests.test_operator_ui tests.test_api_security tests.test_migration_rehearsal`: PASS, 131 tests.
+- Required affected integration command from this Task: FAIL, 434 tests, 4 failures. The failures are
+  `test_scan_cli_needs_no_path_or_metadata_token`, the two API credential tests, and
+  `test_runtime_configuration_and_final_analyze_cli`;
+  the affected failures were reproduced at Task Base as pre-existing/unrelated. The exact current
+  affected run reported 434 tests and 4 failures.
+- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'`: FAIL, 1101 tests, 6 failures,
+  7 skips. All six failures were reproduced from clean Task Base `e9f9baf24a6616a47ec651f17ef7eed57428cf7d`
+  and are PRE-EXISTING / UNRELATED ignored-local-state failures.
+- Task Base reproduction command in a clean archive: `tests.test_api_credentials
+  tests.test_final_integration tests.test_resource_library_pipeline tests.test_runtime_storage_configuration`:
+  FAIL, 23 tests, 6 failures, same six local-state failures; no Task code was used.
+- `./.venv/bin/ruff check .`: PASS.
+- `./.venv/bin/ruff format --check .`: PASS, 355 files formatted.
+- `./.venv/bin/python -m compileall -q mediaflow tests scripts`: PASS.
+- `./.venv/bin/pip check`: PASS.
+- Both required example configuration validation commands: PASS.
+- Forbidden runtime `ffprobe`/`ffmpeg` scan: PASS, no production Python matches.
+- `./.venv/bin/python -m unittest tests.test_migration_rehearsal`: PASS; schema 31 migration/rehearsal
+  coverage passes and legacy rows remain readable.
 - `./.venv/bin/pip wheel . --no-deps --no-build-isolation` and
-  `./.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-0.1.0-py3-none-any.whl` — PASS.
-  `./.venv/bin/python -m build` — UNAVAILABLE: this virtualenv cannot execute `build.__main__`.
-  The installed-wheel smoke reported supported schema 27, runtime schema 27, and migration
-  required `NO`.
-- Markdown relative-link existence check, private-config tracking/staging scan,
-  `git diff --check` and staged diff check — PASS. `config/alist.json` and `config/strategy.json`
-  remain ignored, untracked and unstaged.
-- Falsification on throwaway `git archive HEAD` copies — expected FAIL: restoring an early
-  retry-safe failure branch made the five-case checkpoint guard test fail, and restoring the old
-  SKIP-as-error path made the authorized conflict test fail for the SKIP case. The workspace was
-  untouched by both experiments.
-- Production Storage/Provider services and credentials — SKIP by design; all new evidence uses
-  temporary Local roots and fake/in-memory Provider and Storage doubles.
+  `scripts/wheel_smoke_test.py`: PASS; supported/runtime schema 31, migration required NO.
+- `./.venv/bin/python -m build`: UNAVAILABLE because this environment has no `build.__main__`;
+  the required pip-wheel substitute passed.
+- `git diff --check`, `git diff --cached --check`, private-config/secret review: PASS;
+  `config/alist.json` and `config/strategy.json` remained ignored, untracked and unstaged.
 
 ### Decisions
 
-- Kept the existing immutable failure envelope and schema unchanged; the correction only restores
-  the precedence of safety facts and strengthens retry admission validation.
-- Kept conflict resolution and execution authority unchanged: only configured SKIP/RENAME resolve
-  automatically; OVERWRITE/MANUAL remain waiting, and OrganizerExecutor remains the sole mutation
-  boundary.
-- Preserved Provider failure context when the configured retry policy is disabled so the scheduled
-  path records `provider_failure` instead of converting it into an unrelated Storage failure.
-- Represented intentional configured `SKIP` as a warning-backed `SKIPPED` execution result, keeping
-  the existing `NOOP`/skip semantics and avoiding a false failure category.
+- The exact Preview identity is part of the grant binding, so a different Preview cannot silently
+  replace an active grant even when the other bounds are equal.
+- Direct legacy application test doubles without injected Preview/permission authorities retain their
+  pre-managed compatibility behavior; API and production Worker composition always inject both
+  authorities and fail closed when either is missing or invalid.
+- Empty, excluded-only, unstable-only and truncated-only Preview discovery is accepted as exact,
+  zero-mutation, non-executable evidence; no such item receives mutation authority.
+- The new Preview linkage uses one nullable additive column and runtime schema 31. Existing legacy
+  grants without linkage are refused by production definition-scoped execution before any Task or
+  Storage effect.
 
 ### Remaining In-Slice Work
 
-- No additional implementation work is known inside this Task. Task and Slice review status remain
-  with B/A.
+None identified within this implementation Task; B determines Task review and any remaining Slice
+review work.
 
 ### Risks / Deviations
 
-- The required integration/full regression commands retain the six documented pre-existing,
-  environment-state failures; the clean Task Base archive evidence above is the cause evidence.
-  Pre-existing unclosed SQLite test connections emitted `ResourceWarning` messages but did not alter
-  test outcomes.
-- `python -m build` is unavailable in this virtualenv; the Task-approved pip-wheel plus isolated
-  smoke substitute passed. No schema marker or migration changed.
-- No production credentials, external account authorization or user media were used.
+- The six full-regression failures are pre-existing/unrelated local configuration-state failures,
+  with clean Task Base reproduction recorded above. They are not claimed as passing.
+- Python `ResourceWarning` messages for pre-existing unclosed SQLite connections remain visible but
+  did not change test outcomes.
+- Real Scheduler endurance/process-stop, production SMB/OpenList/S3/R2, Provider credentials and
+  destructive acceptance gates were not run in this environment; no production data, credentials or
+  user media were used.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 9980357c6ae270a5d9b09fb6abaf9225ebe86df7
+Head SHA: 44ac7f8f8e5b03411a026b138e82c22935ef0562
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 1bd8a08eeafa67470e4e39c68e2520e339a0aa2a..20a54263b0e0f4ac374573e710fc02ab122fd093
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: PENDING
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
 
-Reviewed diff range covers reported code Head `450ffc9` plus the report-only commit `20a5426`.
-Only the unmet points are listed. Everything not listed here is accepted and must not be changed.
-
-1. Acceptance Criterion 6 and the Slice safety invariant on uncertain effects are broken by
-   `_actions()` in `mediaflow/application/processing_checkpoint.py:824`. The new
-   `if failure is not None:` branch is placed before the blocker, `admission_interrupted`, effect
-   certainty and snapshot guards, so a `retry_safe` explanation now overrides all four refusals, and
-   `RecoveryAdmissionService.request()` (`mediaflow/application/recovery_admission.py:107-129`)
-   re-validates only the snapshot — it never re-checks effect certainty or interrupted admission.
-   Evidence — direct calls to `_actions()` with `failure_explanation("storage_failure",
-   retry_safe=True)` versus `failure=None`, identical in every other argument:
-   - `certainty=ATTEMPTED_UNVERIFIED`: `unknown / investigate(admissible=False) /
-     "automatic_replay_refused: effect certainty is not verified"` becomes
-     `safe / retry(admissible=True) / reason=None`.
-   - `certainty=UNKNOWN`: same refusal becomes `safe / retry(admissible=True)`.
-   - `raw_stage="admission_interrupted"`: `unsafe / investigate(admissible=False) /
-     "manual_execution_reconciliation_required: exact authority was consumed before the execution
-     state was published"` becomes `safe / retry(admissible=True) / reason=None`.
-   - `status=WAITING_CONFIRM` with a confirmation blocker: `resolve_confirmation` with its
-     `resolution_path` becomes `retry(admissible=True)`, so a waiting item loses the explicit
-     resolution action Acceptance Criterion 5 requires.
-   - `snapshot_resolvable=False`: `unsafe / investigate / "automatic_replay_refused: pinned
-     configuration is unavailable"` becomes an advertised `safe / retry(admissible=True)`; admission
-     still refuses, but the checkpoint, API and Web now offer a retry that cannot run.
-   Correction direction: the failure explanation must not be able to grant an action. Subordinate it
-   to the existing guards (evaluate it only after blocker, `admission_interrupted`, effect certainty
-   and snapshot resolution have declined to refuse), or gate the `retry_safe` path on
-   `certainty is EffectCertainty.NONE`, no blocker, `raw_stage != "admission_interrupted"` and
-   `snapshot_resolvable is True`, and keep the explanation as the action description only. Add tests
-   pinning each of the five combinations above.
-
-2. Acceptance Criterion 5 is unproven for three of its four configured strategies and for the
-   invalid-destination case. Evidence — `grep -n "ConflictStrategy\."
-   tests/test_automation_definition_execution.py tests/test_automation_authorized_execution_matrix.py`
-   returns only two hits, both `ConflictStrategy.OVERWRITE` in the single new test
-   `test_unattended_overwrite_collision_waits_without_mutation`; `grep -n
-   "invalid_destination\|INVALID_DESTINATION" tests/test_automation_authorized_execution_matrix.py`
-   returns only line 102, a hand-written string passed to `classify_failure()` in
-   `test_execution_boundary_categories_are_distinguishable_and_bounded`. The new
-   `PlanStatus.INVALID` / `INVALID_DESTINATION` and UNKNOWN-conflict `_failed(..., stage="storage")`
-   branches added in `mediaflow/application/media_organizer.py` therefore have no test at all.
-   Correction direction: on the authorized definition-scoped path over temporary Local roots, prove
-   per item that `SKIP` produces a NOOP with the destination byte-identical, `RENAME` writes only the
-   safe alternative destination and leaves the existing file untouched, `MANUAL` leaves that item
-   waiting with its resolution path, and an invalid destination fails closed with zero mutation and
-   the `invalid_destination` category, with siblings keeping independent status and Results.
-
-3. Acceptance Criterion 6 unstable source has new code and zero tests. Evidence —
-   `grep -rn "UNSTABLE\|unstable" tests/test_automation_definition_execution.py
-   tests/test_automation_authorized_execution_matrix.py` returns no matches, and
-   `grep -rln "unstable_source" tests/` returns no files. Untested code: the new `FileScanStatus`
-   UNSTABLE branch inside `discovered()` in `mediaflow/application/media_organizer.py`, and the
-   `retry_category='unstable_source'` / `__unstable_source` path in
-   `list_task_item_status_counts()` in `mediaflow/infrastructure/sqlite_runtime.py`, which excludes
-   unstable items from `selected` and therefore changes the Acceptance Criterion 7 bound statement.
-   Correction direction: run an authorized occurrence containing one unstable source and assert the
-   durable TaskItem plus Result, the `unstable_source` explanation with its retry safety and single
-   next action, zero mutation, that completed siblings keep their effects, and that the unstable item
-   is excluded from the selected count so the bound statement stays honest.
-
-4. Acceptance Criterion 6 Provider failure and mid-batch Storage failure are unproven on the
-   scheduled path. Evidence — `provider_failure` appears in the new tests only at
-   `tests/test_automation_authorized_execution_matrix.py:106`, inside the same unit-level
-   `classify_failure()` case list; no test drives a Provider failure or a Storage failure occurring
-   after the first successful item through a definition-scoped authorized run. Correction direction:
-   add both cases end to end and assert the failed item's durable state, effect certainty, retry
-   safety and one next action, that the already-successful sibling keeps its effects and Result, and
-   that no automatic replay of the failed item occurs.
-
-5. Acceptance Criterion 9 has no test. Evidence — `git diff --stat
-   1bd8a08..20a5426 -- tests/` shows `tests/test_operator_ui.py` untouched, and
-   `grep -n "outcomeSummary\|itemOutcomeSummary\|attentionItems\|boundReached\|stoppedAtBound"
-   tests/test_operator_ui.py tests/test_automation_api.py tests/test_api_security.py` returns no
-   match, while the module already pins Web behavior with exact `assertIn` checks on `APP_JS`
-   (for example `tests/test_operator_ui.py:772-783`). The new Automation panel block in
-   `mediaflow/interfaces/operator_ui.py` — count cards, bound statement, attention table, the
-   `showTaskItem(taskId, itemId)` cross-links, the cap warning and the five failure fields in the
-   task-item detail — is unverified. Correction direction: extend `tests/test_operator_ui.py` in the
-   existing style to pin the rendered summary, the bound statement, the attention list with its
-   cross-link into the existing per-item recovery surface, the truncation signal, the failure fields,
-   and that the panel adds no Automation mutation action; include the reload path required by the
-   criterion.
-
-6. The Required Test "RBAC refusal for an unauthorized principal" on the summary routes was not
-   added. Evidence — `test_api_definition_detail_and_occurrence_routes_share_summary` in
-   `tests/test_automation_authorized_execution_matrix.py` builds `MediaFlowApi` with a single
-   `ApiPermission.READ` principal and asserts `status == 200` for the list, detail and occurrences
-   routes only; `tests/test_api_security.py` is untouched by this checkpoint. Correction direction:
-   assert that a principal without `READ` is refused on the definition detail and occurrences routes
-   carrying the new summary, and that the refusal body exposes no summary content.
-
-7. Acceptance Criteria 7 and 11 read-only claims are not actually asserted. Evidence — the trace
-   assertion in `tests/test_automation_authorized_execution_matrix.py:489-491` counts only
-   statements matching `statement.lstrip().upper().startswith("SELECT")`, so any INSERT, UPDATE or
-   DELETE executed inside `project_occurrences()` cannot fail that test; and the falsification item
-   "Opening and refreshing the Automation list, detail, occurrence and history views creates no Job,
-   Task, grant, Provider request or Storage probe" is absent from the Developer Completion Report and
-   from the new tests. Correction direction: assert on the already-captured trace that the projection
-   issues no write statement, and add the read-only proof across the Automation list, detail,
-   occurrence and history views — no Job, Task, grant, Provider request or Storage probe created on
-   first open and on refresh — then record that command and its observed result in the report.
+If `FIX REQUIRED`, only unmet Task blockers are listed below this block. Corrections remain in Task
+25.7. A PASS returns Slice 25 to `READY FOR A REVIEW`; B does not close the Slice.
