@@ -130,6 +130,7 @@ class AutomationDefinitionOccurrenceService:
         occurrence["definitionFingerprint"] = definition_fingerprint
         occurrence["lastOccurrence"] = latest_document
         if latest is not None:
+            latest_task_id = getattr(latest, "task_id", None)
             occurrence.update(
                 {
                     "lastConfigurationRevisionId": latest.configuration_revision_id,
@@ -139,8 +140,13 @@ class AutomationDefinitionOccurrenceService:
                     "lastResourceLibraryId": latest.resource_library_id,
                     "lastSourceScope": latest.source_scope,
                     "lastItemLimit": latest.item_limit,
+                    "lastTaskId": latest_task_id,
+                    "lastFailureCategory": getattr(latest, "failure_category", None),
                 }
             )
+        else:
+            occurrence["lastTaskId"] = None
+            occurrence["lastFailureCategory"] = None
         document["occurrence"] = occurrence
         document["occurrenceState"] = occurrence
         document["definitionFingerprint"] = definition_fingerprint
@@ -151,6 +157,8 @@ class AutomationDefinitionOccurrenceService:
         document["lastOutcome"] = occurrence["lastOutcome"]
         document["lastReason"] = occurrence["lastReason"]
         document["nextAction"] = occurrence["nextAction"]
+        document["lastTaskId"] = occurrence["lastTaskId"]
+        document["lastFailureCategory"] = occurrence["lastFailureCategory"]
         if configuration is not None:
             document["activeConfiguration"] = {
                 key: configuration.get(key)
@@ -170,6 +178,8 @@ class AutomationDefinitionOccurrenceService:
                 "lastOutcome": None,
                 "lastReason": None,
                 "nextAction": None,
+                "lastTaskId": None,
+                "lastFailureCategory": None,
             }
         return {
             "enabled": None,
@@ -181,6 +191,8 @@ class AutomationDefinitionOccurrenceService:
             "lastOutcome": state.last_outcome,
             "lastReason": state.last_reason,
             "nextAction": state.last_next_action,
+            "lastTaskId": None,
+            "lastFailureCategory": None,
         }
 
 

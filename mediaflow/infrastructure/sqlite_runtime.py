@@ -3876,7 +3876,33 @@ class SQLiteTaskRepository:
             row = self._connection.execute(
                 "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
             ).fetchone()
-        return self._job(row)
+            cancelled = self._job(row)
+            if cancelled.status is AutomationJobStatus.CANCELLED and cancelled.definition_id:
+                # A pending managed occurrence has no Worker completion path.  Persist the
+                # same bounded cancellation evidence here so its occurrence is not left
+                # permanently in the emitted state when no Task was created.
+                self._connection.execute(
+                    "UPDATE automation_jobs SET error=?, failure_category=?, "
+                    "failure_durable_state=?, failure_side_effects=?, failure_retry_safe=?, "
+                    "failure_next_action=? WHERE job_id=?",
+                    (
+                        "workflow cancelled",
+                        "workflow_cancelled",
+                        "completed Task items are preserved; an in-flight external call was not "
+                        "interrupted",
+                        "none",
+                        0,
+                        "inspect the linked Task and explicitly rerun only after confirming its "
+                        "item state",
+                        job_id,
+                    ),
+                )
+                row = self._connection.execute(
+                    "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
+                ).fetchone()
+                cancelled = self._job(row)
+                self._finalize_automation_definition_occurrence_locked(cancelled)
+        return cancelled
 
     def job_cancellation_requested(self, job_id: str) -> bool:
         with self._lock:
@@ -3929,7 +3955,108 @@ class SQLiteTaskRepository:
                     job.claim_token,
                 ),
             )
+            if cursor.rowcount == 1:
+                self._finalize_automation_definition_occurrence_locked(job)
         return cursor.rowcount == 1
+
+    def _finalize_automation_definition_occurrence_locked(self, job: AutomationJob) -> None:
+        """Publish one claimed Job's terminal outcome with its occurrence.
+
+        The Job update and this projection run inside the same SQLite
+        transaction.  The occurrence keeps ``job_id`` as its durable identity;
+        the linked Task id and failure category are read through a bounded join
+        so older occurrence rows need no destructive migration.
+        """
+
+        if not job.definition_id:
+            return
+        task_status = None
+        task_error = None
+        if job.task_id:
+            task = self._connection.execute(
+                "SELECT status, error FROM tasks WHERE task_id=?", (job.task_id,)
+            ).fetchone()
+            if task is not None:
+                task_status = task["status"]
+                task_error = task["error"]
+        if job.status is AutomationJobStatus.CANCELLED:
+            outcome = "cancelled"
+            reason = (
+                "workflow cancellation was requested; completed Task items are preserved and any "
+                "in-flight external call was not interrupted"
+            )
+            next_action = (
+                "inspect the linked Task and explicitly rerun only after confirming its item state"
+            )
+        elif job.status is AutomationJobStatus.FAILED:
+            blocked_categories = {
+                "active_missing",
+                "active_unreadable",
+                "configuration_unavailable",
+                "definition_disabled",
+                "definition_fingerprint_mismatch",
+                "definition_invalid",
+                "definition_missing",
+                "definition_pin_mismatch",
+                "definition_version_mismatch",
+                "digest_corrupt",
+                "job_snapshot_incomplete",
+                "job_snapshot_missing",
+                "resource_library_disabled",
+                "resource_library_missing",
+                "runtime_invalid",
+                "scope_outside_resource_library",
+                "scope_root_invalid",
+                "scope_root_missing",
+                "scope_root_not_directory",
+                "scope_root_unavailable",
+                "schema_unsupported",
+                "snapshot_digest_mismatch",
+                "snapshot_missing",
+                "snapshot_not_published",
+                "snapshot_unreadable",
+                "unattended_execution_authority_missing",
+            }
+            outcome = "blocked" if job.failure_category in blocked_categories else "failed"
+            reason = (
+                job.failure_durable_state
+                or task_error
+                or job.error
+                or "definition-scoped workflow failed before completion"
+            )[:256]
+            next_action = (
+                job.failure_next_action
+                or "inspect the linked Job and Task evidence, repair the stated condition, "
+                "then retry"
+            )[:512]
+        else:
+            outcome = {
+                "completed": "completed",
+                "partial_success": "partial_success",
+                "failed": "failed",
+                "cancelled": "cancelled",
+            }.get(task_status, "completed")
+            reason = task_error[:256] if isinstance(task_error, str) and task_error else None
+            next_action = (
+                "inspect the linked Task and per-item Results" if outcome != "completed" else None
+            )
+        self._connection.execute(
+            "UPDATE automation_definition_occurrences SET outcome=?, reason=?, next_action=? "
+            "WHERE job_id=?",
+            (outcome, reason, next_action, job.job_id),
+        )
+        self._connection.execute(
+            "UPDATE automation_definition_due_state SET last_outcome=?, last_reason=?, "
+            "last_next_action=?, updated_at=? WHERE definition_id=? AND last_job_id=?",
+            (
+                outcome,
+                reason,
+                next_action,
+                (job.completed_at or job.updated_at).isoformat(),
+                job.definition_id,
+                job.job_id,
+            ),
+        )
 
     def list_stale_running_jobs(
         self, before: datetime, *, limit: int = 100
@@ -4384,7 +4511,13 @@ class SQLiteTaskRepository:
             raise ValueError("automation occurrence limit must be between 1 and 100")
         if after is not None and before is not None:
             raise ValueError("after and before are mutually exclusive")
-        query = "SELECT * FROM automation_definition_occurrences WHERE definition_id=?"
+        query = (
+            "SELECT occurrence.*, jobs.task_id AS linked_task_id, "
+            "jobs.failure_category AS linked_failure_category "
+            "FROM automation_definition_occurrences occurrence "
+            "LEFT JOIN automation_jobs jobs ON jobs.job_id=occurrence.job_id "
+            "WHERE occurrence.definition_id=?"
+        )
         parameters: list[object] = [definition_id]
         reverse = before is not None
         if after is not None:
@@ -4422,7 +4555,10 @@ class SQLiteTaskRepository:
             return ()
         placeholders = ", ".join("?" for _ in values)
         query = (
-            "SELECT occurrence.* FROM automation_definition_occurrences occurrence "
+            "SELECT occurrence.*, jobs.task_id AS linked_task_id, "
+            "jobs.failure_category AS linked_failure_category "
+            "FROM automation_definition_occurrences occurrence "
+            "LEFT JOIN automation_jobs jobs ON jobs.job_id=occurrence.job_id "
             f"WHERE occurrence.definition_id IN ({placeholders}) AND NOT EXISTS ("
             "SELECT 1 FROM automation_definition_occurrences newer "
             "WHERE newer.definition_id=occurrence.definition_id AND ("
@@ -8566,6 +8702,7 @@ class SQLiteTaskRepository:
     def _automation_definition_occurrence(
         row: sqlite3.Row,
     ) -> AutomationDefinitionOccurrence:
+        columns = row.keys()
         return AutomationDefinitionOccurrence(
             row["occurrence_id"],
             row["definition_id"],
@@ -8584,6 +8721,8 @@ class SQLiteTaskRepository:
             row["outcome"],
             row["reason"],
             row["next_action"],
+            row["linked_task_id"] if "linked_task_id" in columns else None,
+            row["linked_failure_category"] if "linked_failure_category" in columns else None,
         )
 
     @staticmethod

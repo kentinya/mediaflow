@@ -173,6 +173,19 @@ class AutomationWorker:
             if cancelled():
                 raise AutomationCancelled(task_id)
         except AutomationCancelled as error:
+            cancellation_evidence = (
+                AutomationFailureEvidence(
+                    "workflow_cancelled",
+                    "completed Task items are preserved; an in-flight external call was not "
+                    "interrupted",
+                    "none",
+                    False,
+                    "inspect the linked Task and explicitly rerun only after confirming its "
+                    "item state",
+                )
+                if job.definition_pinned
+                else None
+            )
             finished = replace(
                 job,
                 status=AutomationJobStatus.CANCELLED,
@@ -181,11 +194,21 @@ class AutomationWorker:
                 completed_at=datetime.now(UTC),
                 task_id=error.task_id,
                 error="workflow cancelled",
-                failure_category=None,
-                failure_durable_state=None,
-                failure_side_effects=None,
-                failure_retry_safe=None,
-                failure_next_action=None,
+                failure_category=(
+                    cancellation_evidence.category if cancellation_evidence else None
+                ),
+                failure_durable_state=(
+                    cancellation_evidence.durable_state if cancellation_evidence else None
+                ),
+                failure_side_effects=(
+                    cancellation_evidence.side_effects if cancellation_evidence else None
+                ),
+                failure_retry_safe=(
+                    cancellation_evidence.retry_safe if cancellation_evidence else None
+                ),
+                failure_next_action=(
+                    cancellation_evidence.next_action if cancellation_evidence else None
+                ),
             )
         except AutomationConfigurationUnavailable as error:
             evidence = error.evidence

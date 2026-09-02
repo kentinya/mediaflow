@@ -2238,19 +2238,28 @@ APP_JS = b"""(() => {
         ['Next run', occurrenceState.nextRunAt || '-'],
         ['Last occurrence', occurrenceState.lastOccurrenceAt || '-'],
         ['Last Job', occurrenceState.lastJobId || '-'],
+        ['Last Task', occurrenceState.lastTaskId || '-'],
         ['Last outcome', occurrenceState.lastOutcome || '-'],
+        ['Failure category', occurrenceState.lastFailureCategory || '-'],
         ['Failure reason', occurrenceState.lastReason || '-'],
         ['Next action', occurrenceState.nextAction || '-']].forEach(([label, value]) => field(list, label, value));
       detailContent.append(list);
+      if (occurrenceState.lastTaskId) {
+        detailContent.append(actionButton('Open last Task', () => showTask(occurrenceState.lastTaskId)));
+      }
       detailContent.append(actionButton('Run Preview / DryRun', () => confirmAutomationPreview(item)));
       detailContent.append(actionButton('Open managed Configuration', () => renderConfiguration()));
       const occurrenceData = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/occurrences?limit=10`);
       detailContent.append(text('h3', 'Scheduled occurrences'));
       const occurrenceRows = (occurrenceData.items || []).map(value => [value.occurrenceId,
-        value.occurrenceAt, value.emittedAt, value.jobId, value.configurationRevisionId,
+        value.occurrenceAt, value.emittedAt, value.jobId, value.taskId || '-', value.configurationRevisionId,
         value.configurationRevisionVersion, value.configurationRevisionDigest,
-        value.runMode, value.outcome, value.reason || '-', value.nextAction || '-']);
-      detailContent.append(table(['Occurrence', 'Due', 'Emitted', 'Job', 'Configuration', 'Version', 'Digest', 'Run mode', 'Outcome', 'Reason', 'Next action'], occurrenceRows));
+        value.runMode, value.outcome, value.failureCategory || '-', value.reason || '-', value.nextAction || '-']);
+      detailContent.append(table(['Occurrence', 'Due', 'Emitted', 'Job', 'Task', 'Configuration', 'Version', 'Digest', 'Run mode', 'Outcome', 'Failure category', 'Reason', 'Next action'], occurrenceRows,
+        index => {
+          const taskId = (occurrenceData.items || [])[index].taskId;
+          if (taskId) showTask(taskId);
+        }));
       if (!(occurrenceData.items || []).length) {
         detailContent.append(text('p', 'No scheduled occurrence has been emitted for this definition yet.'));
       }
