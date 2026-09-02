@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.5
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 94044e4d2e7678fc866e4c3400d74e1b41672f8c
 Difficulty: High
 Test Level: T4
@@ -304,21 +304,106 @@ fake/in-memory Provider and adapter doubles.
 
 ### Changed Files
 
+- `mediaflow/domain/unattended_execution.py`
+- `mediaflow/application/unattended_execution.py`
+- `mediaflow/domain/security.py`
+- `mediaflow/infrastructure/sqlite_runtime.py`
+- `mediaflow/application/automation_definition_execution.py`
+- `mediaflow/application/automation_definition_occurrence.py`
+- `mediaflow/application/media_organizer.py`
+- `mediaflow/final_cli.py`
+- `mediaflow/interfaces/service_api.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `tests/test_automation_unattended_grant.py`
+- `tests/test_automation_definition_execution.py`
+- runtime schema-marker assertions in
+  `tests/test_configuration_classification.py`,
+  `tests/test_configuration_destination.py`,
+  `tests/test_configuration_destination_activation.py`,
+  `tests/test_configuration_destination_precheck.py`, and
+  `tests/test_configuration_organize.py`
+
 ### Implemented
+
+- Added a bounded, secret-free persistent unattended grant domain object, grant/revoke audit
+  record, repository seam, exact definition/ResourceLibrary/scope/mode/workload/snapshot binding,
+  permission checks, and idempotent revoke behavior.
+- Added SQLite schema 30 additive grant and audit tables/indexes with atomic grant and revoke
+  transactions and restart-safe reads.
+- Added live authority resolution before adapter/Task creation and a live grant re-read immediately
+  before each eligible item mutation; authorized runs reuse the existing Task/TaskItem/Result and
+  OrganizerExecutor pipeline, while scan-only and scan-and-plan remain zero-mutation.
+- Added bounded API grant/state/audit/revoke routes, definition/detail grant projections and
+  explicit Operator Web grant/revoke confirmations.  Added the new grant permission without
+  changing non-admin role sets.
+- Added migration, RBAC, exact-bound, no-mutation, real Local execution, RecognitionType C, and
+  revocation-boundary regression coverage.
 
 ### Tests and Results
 
+- `./.venv/bin/ruff check .` — PASS.
+- `./.venv/bin/ruff format --check .` — PASS (351 files formatted).
+- `./.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `./.venv/bin/pip check` — PASS.
+- `./.venv/bin/mediaflow --config config/strategy.example.json config validate` — PASS.
+- `./.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
+- Forbidden `ffprobe`/`ffmpeg` scan — PASS (no runtime matches); schema marker check — PASS
+  (`SCHEMA_VERSION=30`); private-config check — PASS (`config/alist.json` and
+  `config/strategy.json` remain ignored/untracked).
+- `./.venv/bin/python -m unittest tests.test_automation_unattended_grant` — PASS, 7 tests.
+- `./.venv/bin/python -m unittest tests.test_automation_definition_execution` — PASS, 15 tests
+  (run in clean detached checkpoint worktree with the shared virtualenv).
+- `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui tests.test_api_security`
+  — PASS, 64 tests (clean detached checkpoint worktree).
+- `./.venv/bin/python -m unittest tests.test_migration_rehearsal` — PASS, 4 tests (clean detached
+  checkpoint worktree).
+- Required cross-module integration command — PASS, 360 tests (clean detached checkpoint
+  worktree at `da1355a`).
+- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — PASS, 1077 tests, 7 skips
+  (clean detached checkpoint worktree at `da1355a`).
+- The same full-regression command in the primary worktree — FAIL / PRE-EXISTING / UNRELATED:
+  1077 tests, 6 failures, 7 skips.  Failures were the two credential checks, final integration,
+  resource-library scan, and two runtime-storage checks; the worktree's ignored
+  `.mediaflow/mediaflow.sqlite3` and `config/strategy.json` supplied stale local configuration.
+  Running the full command at Task Base `94044e4d2e7678fc866e4c3400d74e1b41672f8c` in a clean
+  detached worktree produced 1067 tests, 0 failures, 7 skips; the clean `da1355a` worktree also
+  produced 1077 tests, 0 failures, 7 skips.
+- `./.venv/bin/pip wheel . --no-deps --no-build-isolation --wheel-dir /tmp/mediaflow-wheel-final`
+  plus `scripts/wheel_smoke_test.py` — PASS; `python -m build` was not used because it is
+  unavailable in this virtualenv.  Installed-wheel smoke reported supported/runtime schema 30
+  and migration required `NO`.
+- `git diff --check` and staged diff check — PASS.
+
 ### Decisions
+
+- Kept unattended authority separate from one-shot manual/remote execution and kept Scheduler
+  emission unchanged; the Worker resolves the grant from durable state at claim/run time.
+- Preserved the existing complete media pipeline and placed the live authority callback directly
+  before `OrganizerExecutor.execute`, so no alternate mutation path or silent operation fallback
+  is introduced.
+- Definition fingerprints still pin the full Scheduler document, while grant projection treats a
+  pure enable/disable toggle as scheduling state and reports other definition changes as stale.
 
 ### Remaining In-Slice Work
 
+- Other Slice Required Outcomes outside this Task remain for the subsequent Slice Tasks, including
+  the broader definition/Preview journey, scheduler/worker completeness, and full recovery/history
+  surfaces.
+
 ### Risks / Deviations
+
+- The six primary-worktree full-regression failures above are environment-state failures only; no
+  changed Task file or assertion was weakened, and clean Task Base/current-head runs are green.
+- Existing test suites emit unrelated `ResourceWarning` messages for unclosed SQLite connections;
+  they did not change exit status or test outcomes.
+- Real production Storage, Provider credentials and user media were not used; execution evidence
+  uses temporary Local roots and synthetic/fake providers and Storage doubles.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: da1355ac45e8457c7ec7b7ca1df5d005c466cdcf
 ```
 
 ## B Review Result
