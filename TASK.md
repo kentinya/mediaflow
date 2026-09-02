@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.5
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 94044e4d2e7678fc866e4c3400d74e1b41672f8c
 Difficulty: High
 Test Level: T4
@@ -338,6 +338,10 @@ fake/in-memory Provider and adapter doubles.
   changing non-admin role sets.
 - Added migration, RBAC, exact-bound, no-mutation, real Local execution, RecognitionType C, and
   revocation-boundary regression coverage.
+- Corrected the batched grant projection to read definition IDs in bounded chunks and select the
+  active grant before falling back to the newest historical grant, independent of query order.
+  Grant-state read failures now surface as a bounded unavailable-state error instead of appearing
+  as no grant; the API/Web occurrence projection propagates that failure.
 
 ### Tests and Results
 
@@ -350,30 +354,29 @@ fake/in-memory Provider and adapter doubles.
 - Forbidden `ffprobe`/`ffmpeg` scan — PASS (no runtime matches); schema marker check — PASS
   (`SCHEMA_VERSION=30`); private-config check — PASS (`config/alist.json` and
   `config/strategy.json` remain ignored/untracked).
-- `./.venv/bin/python -m unittest tests.test_automation_unattended_grant` — PASS, 7 tests.
+- `./.venv/bin/python -m unittest tests.test_automation_unattended_grant` — PASS, 9 tests.
 - `./.venv/bin/python -m unittest tests.test_automation_definition_execution` — PASS, 15 tests
-  (run in clean detached checkpoint worktree with the shared virtualenv).
+  (run against the correction implementation).
 - `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui tests.test_api_security`
-  — PASS, 64 tests (clean detached checkpoint worktree).
-- `./.venv/bin/python -m unittest tests.test_migration_rehearsal` — PASS, 4 tests (clean detached
-  checkpoint worktree).
-- Required cross-module integration command — PASS, 360 tests (clean detached checkpoint
-  worktree at `da1355a`).
-- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — PASS, 1077 tests, 7 skips
-  (clean detached checkpoint worktree at `da1355a`).
-- The same full-regression command in the primary worktree — FAIL / PRE-EXISTING / UNRELATED:
-  1077 tests, 6 failures, 7 skips.  Failures were the two credential checks, final integration,
-  resource-library scan, and two runtime-storage checks; the worktree's ignored
-  `.mediaflow/mediaflow.sqlite3` and `config/strategy.json` supplied stale local configuration.
-  The exact 23-test affected set at Task Base, run in a throwaway copy with those ignored files
-  copied in, reproduced the same 6 failures; the clean Task Base run passed the affected set.
-  Running the full command at Task Base `94044e4d2e7678fc866e4c3400d74e1b41672f8c` in a clean
-  detached worktree produced 1067 tests, 0 failures, 7 skips; the clean `da1355a` worktree also
-  produced 1077 tests, 0 failures, 7 skips.
-- `./.venv/bin/pip wheel . --no-deps --no-build-isolation --wheel-dir /tmp/mediaflow-wheel-final`
-  plus `scripts/wheel_smoke_test.py` — PASS; `python -m build` was not used because it is
-  unavailable in this virtualenv.  Installed-wheel smoke reported supported/runtime schema 30
-  and migration required `NO`.
+  — PASS, 64 tests.
+- `./.venv/bin/python -m unittest tests.test_migration_rehearsal` — PASS, 4 tests.
+- Required cross-module integration command — FAIL / PRE-EXISTING / UNRELATED in the primary
+  worktree: 362 tests, 4 failures.  The failures are the existing resource-library scan, two
+  credential checks, and final integration checks caused by ignored local runtime/configuration
+  state; the grant/occurrence tests in this command passed.
+- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — FAIL / PRE-EXISTING /
+  UNRELATED in the primary worktree: 1079 tests, 6 failures, 7 skips.  The failures are the two
+  credential checks, final integration, resource-library scan, and two runtime-storage checks;
+  ignored `.mediaflow/mediaflow.sqlite3` and `config/strategy.json` supply stale local state.
+  The same command in an isolated clean-source worktree (using the shared interpreter with its
+  editable install disabled) passed: 1079 tests, 7 skips.  The prior Task Base reproduction of
+  these six failures with the ignored files reproduced the same six failures, while its clean
+  affected set passed.  The full clean Task Base run was 1067 tests, 0 failures, 7 skips; the
+  clean pre-correction `da1355a` run was 1077 tests, 0 failures, 7 skips.
+- `./.venv/bin/pip wheel . --no-deps --no-build-isolation --wheel-dir /tmp/mediaflow-wheel-correction-final`
+  and `./.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-wheel-correction-final/mediaflow-*.whl`
+  — PASS; `python -m build` was not used because it is unavailable in this virtualenv.
+  Installed-wheel smoke reported supported/runtime schema 30 and migration required `NO`.
 - `git diff --check` and staged diff check — PASS.
 
 ### Decisions
@@ -385,6 +388,12 @@ fake/in-memory Provider and adapter doubles.
   is introduced.
 - Definition fingerprints still pin the full Scheduler document, while grant projection treats a
   pure enable/disable toggle as scheduling state and reports other definition changes as stale.
+- Batched projection reads are capped at 100 definition IDs per repository call, and merge candidates
+  by active status followed by `(granted_at, grant_id)` recency so re-grants cannot regress to an
+  older revoked row.
+- Repository read failures are converted to `unattended_execution_grant_state_unavailable` (503)
+  with durable-state and next-action evidence; the read-only projection does not manufacture a
+  `none` grant state.
 
 ### Remaining In-Slice Work
 
@@ -395,17 +404,21 @@ fake/in-memory Provider and adapter doubles.
 ### Risks / Deviations
 
 - The six primary-worktree full-regression failures above are environment-state failures only; no
-  changed Task file or assertion was weakened, and clean Task Base/current-head runs are green.
+  changed Task file or assertion was weakened.  The isolated clean-source correction checkpoint
+  passed all 1079 tests with 7 skips, while the shared editable environment reads the primary
+  ignored runtime/configuration state unless explicitly isolated.
 - Existing test suites emit unrelated `ResourceWarning` messages for unclosed SQLite connections;
   they did not change exit status or test outcomes.
 - Real production Storage, Provider credentials and user media were not used; execution evidence
   uses temporary Local roots and synthetic/fake providers and Storage doubles.
+- The first combined wheel build/smoke shell invocation had a local path typo after the wheel built;
+  the required smoke command was rerun independently and passed.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: da1355ac45e8457c7ec7b7ca1df5d005c466cdcf
+Head SHA: 2a8b0f9a2f62ea7da9c258eea6f6c7e5b0574cfb
 ```
 
 ## B Review Result
