@@ -1,13 +1,13 @@
-# Task 25.7 — Preview-gated unattended authority and live permission revalidation
+# Task 25.8 — Per-mutation unattended authority enforcement
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 25.7
+Task ID: 25.8
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
 Status: READY FOR B REVIEW
-Task Base: e9f9baf24a6616a47ec651f17ef7eed57428cf7d
+Task Base: f1fd94252ca012210715c8f76afe1f52aa535de0
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,452 +15,388 @@ Planner / Reviewer: B
 
 ## Goal
 
-Close both P1 blockers from A Final Review as one coherent unattended-authority lifecycle: an
-operator can create a persistent grant only from current, exact, acceptable Automation Preview
-evidence, and every automatic-organization admission and not-yet-performed effect revalidates the
-granting subject's current unattended permission. This completes the remaining Slice 25 `RO-2`,
-`RO-5`, `RO-6` and `RO-7` behavior without changing the normal media pipeline or granting any
-destructive authority.
+Close the remaining Slice 25 `RO-5` and `RO-6` P1 safety gap by enforcing the current persistent
+unattended grant and granting-principal permission immediately before every actual Storage mutation
+inside one scheduled automatic-organization item. If authority becomes invalid after an earlier
+effect, the next mutation is refused and the existing TaskItem/Result/checkpoint journey records the
+completed, unperformed and uncertain effects truthfully without automatic replay.
 
 ## Why This Task Exists
 
-The current API checks request RBAC and the Active configuration revision but calls
-`UnattendedExecutionGrantService.grant()` without consulting persisted Preview evidence
-(`mediaflow/interfaces/service_api.py:826-860`). The Operator Web renders the grant action before it
-loads Preview history (`mediaflow/interfaces/operator_ui.py:2246-2268,2322-2354`). An authorized API
-caller can therefore skip the Contract's Validate/Test → exact Preview/DryRun → explicit unattended
-grant sequence.
+A's Final Review found that production composition performs a live authority check only once per
+media item. `MediaOrganizerService.process_file()` calls `before_execute` immediately before
+`OrganizerExecutor.execute()` (`mediaflow/application/media_organizer.py:400-402`), but one Executor
+invocation may then create destination directories, execute multiple attachment operations, execute
+the primary operation and delete source-directory entries
+(`mediaflow/application/organizer.py:473-551,593-708`). Cross-Storage Move and rollback can also
+contain more than one mutating Storage call.
 
-The runtime does re-read the persistent grant immediately before an effect, but
-`UnattendedExecutionGrantService.assert_live()` checks only grant state and its pinned
-definition/scope/mode/limit/configuration tuple
-(`mediaflow/application/unattended_execution.py:347-369,450-511`). The stored
-`granting_principal` is never resolved against the current configured permission authority. Removing,
-disabling or downgrading that subject after the grant therefore cannot stop the next mutation.
+The existing correction evidence proves current-permission and grant revalidation between sibling
+items, not between mutations inside one item. Revocation or permission loss after an attachment,
+target write or primary effect can therefore leave later not-yet-performed mutations unchecked.
+This violates the Slice's explicit live-authority boundary and makes the prior Closure Packet's
+per-effect statement untrue.
 
-These are not independent feature requests: together they define whether one persistent unattended
-authority is valid when created and remains valid when consumed. The correction must be shared by
-Application, API, Web and Worker rather than implemented as transport-only checks. It remains inside
-the existing grant, Preview, Task/TaskItem/Result and OrganizerExecutor boundaries and does not
-require a new identity-management product.
+This is one coherent high-risk correction because the authority hook, OrganizerExecutor mutation
+sequence, Worker composition and durable per-item outcome must agree. A test-only assertion or a
+second check around the outer Executor call would not close the gap.
 
 ## Implementation Scope
 
 ```text
-Domain → Persistence → Application → Runtime composition → API → Web → Tests
+Application orchestration
+→ OrganizerExecutor mutation boundary
+→ unattended live-authority callback
+→ ExecutionResult / TaskItem / Result / Processing Checkpoint
+→ production Worker composition
+→ tests
 ```
 
-- Domain/Application — define one bounded, deterministic unattended-grant eligibility result over
-  an explicitly selected persisted Preview. It must bind the Preview identity, definition
-  fingerprint, Active configuration revision/version/digest, ResourceLibrary/Storage, normalized
-  source scope, automatic-organization mode and effective workload bound to the requested grant.
-- Application — require `previewId` at shared grant admission and re-read that Preview at the
-  creation boundary. Evidence is eligible only when it is current, zero-mutation, exact for the
-  requested Active definition/configuration and free of analysis failures, unavailable state,
-  boundary errors, stale items or item blockers. Benign non-executable discovery facts such as
-  excluded, currently unstable, truncated-by-limit or an empty current scope may remain visible and
-  do not themselves grant those items mutation authority; every item that the Preview presents as
-  executable must have a successful plan with no blocker.
-- Application/Persistence — durably link the admitted grant and its secret-free audit/projection to
-  the exact Preview evidence so the relationship survives reload. Use existing persistence where it
-  can represent the fact without ambiguity; if a new column or constraint is necessary, use one
-  additive schema migration with rollback-safe migration rehearsal and updated schema markers.
-- Application — define a read-only current-permission authority for a principal ID and
-  `grant_unattended_execution`. `authorize()` must consult it before automatic work constructs a
-  Task, adapter, Provider or Storage pipeline, and `assert_live()` must consult it again immediately
-  before every not-yet-performed effect. Removed, disabled, downgraded, malformed or unavailable
-  current authority fails closed. A Job-pinned snapshot, the grant-time principal object or a
-  once-per-run cached answer is not current permission evidence.
-- Runtime composition — wire API and definition-scoped Worker execution to the same permission
-  semantics backed by the existing configured API-principal definitions/roles. Direct service tests
-  may inject a deterministic fake, but production composition must not default automatic mutation to
-  allowed when the authority is missing. Permission lookup needs only principal identity and roles;
-  it must not persist, return or log bearer tokens or resolved environment secret values.
-- Application/Task evidence — a permission-invalid or permission-authority-unavailable occurrence
-  before Task creation leaves bounded Job/occurrence failure evidence and no pipeline side effects.
-  Permission loss between items preserves completed sibling effects and Results, refuses the next
-  item before OrganizerExecutor, and leaves that TaskItem/Result/checkpoint with durable state,
-  retry safety and exactly one explicit recovery action. It never automatically replays a completed
-  or uncertain effect.
-- API — make the existing grant route require the explicit reviewed `previewId` and return the same
-  application eligibility, Preview linkage, current-permission state, error and recovery projection
-  used elsewhere. Missing, unknown, cross-definition, stale, failed, unavailable, blocker-bearing or
-  concurrently invalidated evidence fails before a grant/audit row is created. Existing RBAC,
-  optimistic Active revision binding, explicit confirmation and bounded secret-free errors remain.
-- Web — load and render the latest exact Preview and grant eligibility before presenting an enabled
-  grant action. Show the selected Preview identity/status/binding, why grant is unavailable, and the
-  single recovery action to run or inspect a fresh Preview. Confirmation submits that exact
-  `previewId`; a stale/change race is rejected by the shared Application service. After reload, show
-  the durable Preview linkage and current-permission validity, while revoke remains independently
-  available for an existing grant.
-- Tests — add non-vacuous admission, concurrency, reload, permission-loss, per-item independence,
-  API-bypass, Web journey, zero-mutation, redaction and production-wiring evidence described below.
+- Add one optional, fail-closed mutation-authority hook owned and invoked by
+  `OrganizerExecutor`. Scheduled automatic organization supplies the hook from the existing
+  `UnattendedExecutionGrantService.assert_live(job, definition)` behavior; non-scheduled callers do
+  not gain unattended authority and retain their existing admission semantics.
+- Invoke the hook immediately before each actual mutating Storage call that has not yet begun,
+  including:
+  - destination directory creation;
+  - every attachment Move/Copy/HardLink/SoftLink operation;
+  - the primary same-Storage Move/Copy/HardLink/SoftLink operation;
+  - cross-Storage target writes and the later source delete as distinct mutation boundaries;
+  - every source-directory cleanup file or directory delete;
+  - every rollback/compensation write, move or delete that would otherwise run after a failure.
+- A Storage call already in progress remains an in-flight external call and is not claimed to be
+  force-interruptible. Once it returns, authority must be read again before the next mutation; a
+  once-per-item, once-per-Executor-call or cached permission answer is insufficient.
+- Keep the hook descriptor, if one is introduced, internal, bounded and derived only from the
+  accepted `OrganizePlan` and current Executor step. API, Web, Automation definitions and Jobs must
+  not supply arbitrary paths, operations or mutation commands through it.
+- Preserve the current pre-Task `authorize()` gate and the exact grant/Preview/definition/snapshot/
+  ResourceLibrary/source-scope/run-mode/workload binding. Per-mutation checks are an additional
+  dynamic gate, not a replacement for admission or plan validation.
+- Treat live-authority refusal before the first mutation as a verified zero-effect failure. Treat
+  refusal after verified effects as a partial outcome with the exact completed operations retained;
+  retain uncertain evidence if an earlier Storage call was attempted but could not be verified.
+  No later mutation, cleanup, rollback or sibling replay may run merely to make the item appear
+  complete.
+- Preserve the stable unattended-authority category, bounded durable state, retry safety and one
+  explicit recovery action through `MediaOrganizerItemResult`, persistent Result, TaskItem,
+  Processing Checkpoint, Automation occurrence summary and existing API/Web projections. Do not
+  misclassify a live-authority refusal as an ordinary Storage failure.
+- Preserve OrganizerExecutor as the only application component that invokes mutating Storage
+  methods. Scanner, Parser, Recognition, Metadata, Naming, Classification, Planner, Preview,
+  Scheduler and read/history projections remain zero-mutation.
+- Preserve existing operation, conflict, capability and destructive rules. The hook grants no
+  Overwrite, Delete, source cleanup, rollback, operation fallback or out-of-scope authority; those
+  actions remain available only when their existing independent policy and safety gates permit
+  them.
+- Add focused unit and production-composition evidence for intra-item revocation/current-permission
+  loss. Use temporary Local roots and deterministic fakes only; no production Storage, Provider
+  credentials or user media.
 
-Frozen unless an Acceptance Criterion cannot be met without a narrow change, which must be reported:
+Frozen unless an Acceptance Criterion cannot be met without a narrow compatible change, which must
+be reported:
 
 - Slice User Goal, Required Outcomes, Required Surfaces, Safety Invariants, Explicitly Deferred and
   Base SHA;
-- Scheduler due evaluation/emission, AutomationJob capacity/idempotency, definition schedule
-  enable/disable and immutable Job configuration pinning;
-- Scanner, Parser, Recognition, Metadata, Naming, Classification, conflict semantics, OrganizePlan
-  and OrganizerExecutor operation/mutation ownership;
-- manual/remote one-shot authorization, destructive Overwrite/Delete/cleanup authority, operation
-  fallback and existing recovery admission semantics;
-- configured API role meanings. `GRANT_UNATTENDED_EXECUTION` remains admin-only; do not add a new
-  identity administration surface, credential store or permission-management API.
+- Automation Task Definition, Preview eligibility, grant creation/revocation, Scheduler due
+  emission, Job pinning/capacity, API/Web grant journey and schema 31 persistence;
+- RecognitionTypePolicy ownership, conflict resolution, Storage capability semantics and the
+  planned operation;
+- manual/remote one-shot execution admission and its API/Web journey;
+- automatic replay of uncertain effects, universal compensation, historical rollback, distributed
+  leases and forced interruption of an in-flight external Storage call.
 
 ## Acceptance Criteria
 
-- [ ] 1. Grant admission requires an explicit persisted `previewId`; request RBAC, explicit
-      confirmation and Active revision/version checks remain necessary but are not substitutes for
-      Preview eligibility.
-- [ ] 2. The shared Application service re-reads the selected Preview and verifies current/zero-
-      mutation state plus the exact definition fingerprint, Active configuration
-      revision/version/digest, ResourceLibrary/Storage, normalized source scope, automatic run mode
-      and effective workload bound before creating a grant.
-- [ ] 3. No Preview, an unknown or cross-definition Preview, stale evidence, failed/unavailable
-      analysis, a boundary error, a stale/blocked/failed/unavailable item, or any mismatched binding
-      refuses admission with no grant/audit row and no Job, Task, Provider, Storage probe or media
-      mutation. The response states what remains durable, whether retry is safe and exactly one
-      bounded recovery action.
-- [ ] 4. Excluded, currently unstable, truncated-by-limit and empty-scope evidence is represented as
-      non-executable rather than mutation authority. It may coexist with an otherwise exact Preview,
-      but a grant never overrides those facts or any later normal source-stability, recognition,
-      metadata, classification, conflict, capability or destructive-operation gate.
-- [ ] 5. A successful admission durably and secret-freely links the grant/audit/projection to the
-      exact Preview identity and binding after repository/API/Web reload. Repeating the same request
-      remains idempotent; a different Preview or bound cannot silently replace an active grant.
-- [ ] 6. Preview invalidation or an Active definition/configuration change racing grant creation
-      cannot produce an effective grant for the new or mismatched state. The operation either refuses
-      atomically or leaves authority that is provably unusable before any mutation.
-- [ ] 7. API callers cannot bypass Preview through omitted, forged, stale, cross-definition or
-      transport-only data. API and Web obtain grant eligibility and recovery from the same
-      Application behavior under unchanged RBAC and optimistic concurrency rules.
-- [ ] 8. The Web journey is visibly ordered as exact Preview/DryRun → eligibility review → explicit
-      unattended grant. The enabled grant action and confirmation identify the reviewed Preview and
-      exact scope; ineligible state points to the fresh-Preview recovery action. Read/refresh remains
-      zero-mutation, and revoke stays independently available.
-- [ ] 9. Before automatic occurrence admission, the service resolves the stored granting principal
-      against the current configured permission authority and requires
-      `grant_unattended_execution`. A removed, disabled or downgraded principal, or an unavailable/
-      malformed authority, creates no Task, adapter, Provider request, Storage probe or mutation and
-      leaves bounded occurrence failure/recovery evidence.
-- [ ] 10. The same current-permission check is repeated immediately before every not-yet-performed
-      effect. It is not satisfied by the Job-pinned configuration, the grant-time principal object,
-      API-server startup state or a once-per-run cached answer.
-- [ ] 11. If current permission is lost after one item completes, that item's effect and Result
-      remain intact; the next item is refused before OrganizerExecutor with zero partial effect,
-      durable TaskItem/Result/checkpoint evidence, correct retry safety and one next action. No
-      completed, blocked or uncertain sibling is automatically replayed.
-- [ ] 12. Grant revocation, definition/snapshot/scope/mode/limit matching, per-item plan validation,
-      cancellation and existing conflict/capability/destructive gates remain live and independent.
-      Preview or current permission never implies Overwrite, Delete, source cleanup, rollback or
-      operation fallback.
-- [ ] 13. Grant/permission/Preview projections, audit, failures, logs, TaskItem, Result, checkpoint,
-      API and Web remain bounded and secret-free; no bearer token, token environment value,
-      credential, authorization header, cookie or private endpoint is persisted or exposed.
-- [ ] 14. No new media mutation path is introduced. Preview, eligibility projection, current-
-      permission resolution, API/Web reads and rejected admissions perform zero Storage mutation;
-      only OrganizerExecutor performs an accepted effect.
-- [ ] 15. Existing scan-only and scan-and-plan zero-mutation behavior, mixed-item independence,
-      RecognitionTypePolicy ownership and RecognitionType C → downstream A policies while remaining
-      C regressions continue to pass.
-- [ ] 16. Test Level T4 passes with actual totals/skips/unavailable gates reported. No test is
-      deleted, assertion relaxed, skip hidden or pre-existing failure claimed without reproduction at
-      Task Base.
-- [ ] 17. The checkpoint is one coherent Task Base..Head correction containing no private
-      configuration, credential or unrelated change.
+- [ ] 1. Scheduled automatic organization passes one live unattended-authority hook into the real
+      `OrganizerExecutor`; scan-only, scan-and-plan, Preview/DryRun and read paths never invoke it
+      and remain zero-mutation.
+- [ ] 2. The hook re-reads the active grant, exact persisted Preview linkage and the granting
+      principal's current `grant_unattended_execution` permission. It is invoked immediately before
+      every not-yet-started mutating Storage call and does not use a cached admission result.
+- [ ] 3. Destination directory creation, each attachment operation, the primary operation,
+      cross-Storage target write and source delete, every cleanup delete, and every rollback/
+      compensation mutation are all covered. A focused mutation-sequence test fails if any one of
+      these paths omits the hook.
+- [ ] 4. A revoked/missing/mismatched grant, removed/disabled/downgraded principal or unavailable/
+      malformed current permission authority before the first mutation produces no Storage
+      mutation and retains the existing fail-closed Job/TaskItem/Result recovery semantics.
+- [ ] 5. In one item containing at least one attachment plus a primary operation, revoking the
+      grant or current permission after the first verified effect prevents the next operation.
+      The first effect remains truthfully recorded, the untouched source/destination bytes remain
+      unchanged, and no automatic replay occurs after authority is restored.
+- [ ] 6. In a cross-Storage Move, invalidating authority after the verified target write but before
+      source deletion leaves the source intact, records the target copy as a completed partial
+      effect, refuses cleanup/rollback mutations that lack live authority and exposes an
+      investigation-only recovery path.
+- [ ] 7. When a primary Move succeeds but authority becomes invalid before source-directory
+      cleanup, no ignored file or directory is deleted. The completed primary effect and skipped
+      cleanup boundary are durably distinguishable; the item is not reported as full success.
+- [ ] 8. Rollback/compensation never bypasses the dynamic gate. If authority remains valid, existing
+      rollback policy behavior is unchanged; if it becomes invalid, no new rollback mutation occurs
+      and the remaining effect state is reported as partial or uncertain rather than fabricated as
+      rolled back.
+- [ ] 9. A live-authority refusal inside OrganizerExecutor retains a stable unattended-authority
+      failure category, bounded secret-free message, accurate completed operations/effect certainty,
+      correct retry safety and exactly one explicit next action in Result and Processing Checkpoint.
+- [ ] 10. Successful scheduled Move/Copy/HardLink/SoftLink, attachment and configured cleanup paths
+      still complete when authority remains valid. Unsupported capabilities and Manual/Overwrite
+      conflicts still fail before mutation with no fallback or authority widening.
+- [ ] 11. Manual organization, one-shot remote organization and direct OrganizerExecutor callers
+      remain backward compatible and do not require or receive unattended authority. Their existing
+      mutation, result and rollback tests continue to pass.
+- [ ] 12. RecognitionType C remains C through scheduled planning, execution, Result and checkpoint
+      evidence while downstream A policy ownership remains visible.
+- [ ] 13. Grant, permission, mutation-hook, Result, checkpoint, audit, log and API/Web evidence
+      contains no bearer token, token environment value, credential, authorization header, cookie,
+      private endpoint or unbounded raw exception.
+- [ ] 14. No schema migration is expected. If implementation proves one unavoidable, stop and
+      report the reason before changing schema; do not silently move beyond runtime schema 31.
+- [ ] 15. The Task Base..Head diff contains only this correction, its tests and the Developer
+      Completion Report. It does not edit `SLICE.md`, Roadmap, Progress, canonical requirements or
+      CURRENT product/architecture claims.
+- [ ] 16. All T4 focused, integration, full-regression, packaging, private-config and safety gates
+      are run and reported with honest PASS/FAIL/SKIP/UNAVAILABLE results.
 
 ## Required Tests
 
-Test Level T4. Every command/gate below must be run and its actual result reported. New focused test
-modules are allowed; the named behavior is mandatory even if the Developer chooses different module
-names.
+Focused authority and execution tests:
 
-Focused:
+- Add a focused test module or coherent cases that exercise the real OrganizerExecutor mutation
+  sequence with an observable live hook. It must cover directory creation, multiple attachment
+  operations, primary operation, cross-Storage Move write/delete separation, cleanup deletes and
+  rollback mutations.
+- Add a production-composition test through
+  `AutomationWorker → DefinitionScopedExecutionService → MediaOrganizerService → OrganizerExecutor`
+  that changes the real configured granting principal or revokes its grant after one verified
+  mutation inside a single item. Assert source/target bytes, mutation order, Result, TaskItem,
+  Processing Checkpoint, occurrence summary and no replay after permission restoration.
+- Run:
 
-- `./.venv/bin/python -m unittest tests.test_automation_unattended_grant
-  tests.test_automation_task_definition_preview` — missing/unknown/cross-definition/stale/failed/
-  unavailable/boundary-error/blocker evidence refusal; exact binding and requested limit checks;
-  acceptable no-op discovery facts; successful durable Preview linkage; close/reopen; idempotency;
-  concurrent invalidation/activation; no rejected grant or audit write; bounded errors and redaction.
-- `./.venv/bin/python -m unittest tests.test_automation_definition_execution
-  tests.test_automation_authorized_execution_matrix` — current permission valid at admission and
-  every effect; principal removed/disabled/downgraded before admission; permission-authority failure;
-  loss after the first completed item; no second mutation; preserved sibling Result/checkpoint;
-  recovery and no replay; grant/Preview never overriding conflicts, stability, capabilities or
-  destructive gates; all accepted effects still passing only through OrganizerExecutor.
-- `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui
-  tests.test_api_security` — required `previewId`, API bypass attempts, stale/change race, shared
-  eligibility/error projection, current-permission visibility, RBAC, explicit Web ordering and
-  confirmation, reload/revoke journey, read-only view load and secret-free bounds.
-- Add production-composition coverage in an existing CLI/runtime test module: change a temporary
-  configured principal from enabled admin to disabled/removed/non-admin between two effect
-  boundaries and prove the definition-scoped Worker reads current authority rather than the pinned
-  Job snapshot or the initial answer. Legacy configured admin behavior must remain compatible when
-  still valid; no real credential value may enter assertions or output.
-- If persistence/schema changes, extend `tests.test_migration_rehearsal` and the applicable
-  persistence tests for a real Task-Base database upgrade, grant/Preview linkage survival, atomic
-  failure rollback, supported/runtime schema agreement and legacy-row fail-closed behavior.
+```text
+./.venv/bin/python -m unittest \
+  tests.test_automation_definition_execution \
+  tests.test_automation_authorized_execution_matrix \
+  tests.test_automation_preview_grant_gate \
+  tests.test_automation_unattended_grant \
+  tests.test_configuration_snapshot \
+  tests.test_processing_checkpoint \
+  tests.test_organizer \
+  tests.test_attachments \
+  tests.test_source_directory_cleanup \
+  tests.test_organizer_rollback
+```
 
-Integration and affected regression:
+Related regression:
 
-- `./.venv/bin/python -m unittest tests.test_automation_unattended_grant
-  tests.test_automation_task_definition_preview tests.test_automation_definition_execution
-  tests.test_automation_authorized_execution_matrix tests.test_automation_definition_occurrence
-  tests.test_automation_task_definition tests.test_automation_api tests.test_automation_admission
-  tests.test_automation_job_fencing tests.test_cron_scheduler tests.test_execution_authorization
-  tests.test_processing_checkpoint tests.test_processing_recovery_admission
-  tests.test_recovery_continuation tests.test_recovery_batch tests.test_task_persistence
-  tests.test_task_pause_resume tests.test_task_retry tests.test_organizer tests.test_organizer_rollback
-  tests.test_conflict_resolution tests.test_resource_library_pipeline tests.test_scanner
-  tests.test_recognition tests.test_configuration_snapshot tests.test_configuration_management
-  tests.test_api_credentials tests.test_api_security tests.test_operator_ui
-  tests.test_migration_rehearsal tests.test_final_integration` — adjust only for a genuinely renamed or
-  new focused module and report the exact substitution.
+```text
+./.venv/bin/python -m unittest \
+  tests.test_automation_definition_occurrence \
+  tests.test_automation_task_definition_preview \
+  tests.test_automation_api \
+  tests.test_operator_ui \
+  tests.test_api_security \
+  tests.test_manual_organize_execution \
+  tests.test_execution_authorization \
+  tests.test_final_integration
+```
 
 Full regression:
 
-- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` with actual run and skip totals.
-  Any failure claimed pre-existing/unrelated must be reproduced at Task Base
-  `e9f9baf24a6616a47ec651f17ef7eed57428cf7d` or in a clean `git archive` of that SHA, with command and
-  cause recorded. Known ignored-local-state failures are not automatically accepted without that
-  reproduction. No test, assertion or skip may be weakened to obtain a green result.
+```text
+./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+```
 
-Falsification evidence (record the command and observed failure, not only a claim):
-
-- On a throwaway `git archive HEAD` copy, bypassing the Preview read/binding check or accepting a
-  stale/blocked Preview makes the new grant/API tests fail.
-- On a throwaway copy, caching current permission at grant time or run admission, or replacing the
-  per-effect lookup with unconditional allow, makes the mid-run permission-loss test fail.
-- A counting/refusing Storage double observes zero mutation calls for missing/mismatched/ineligible
-  Preview, invalid/unavailable current permission, revoked grant, unsupported capability and
-  unattended Overwrite conflict cases.
-- A deliberate principal change after the first successful sibling leaves its bytes/Result intact
-  and the next source/destination bytes unchanged; restoring permission does not automatically
-  replay either item.
-- Opening/refreshing Automation list/detail/Preview/grant/history performs no grant, audit, Job,
-  Task, Provider request, Storage probe or mutation. A rejected grant leaves no grant/audit row.
-- Credential-shaped canaries in configured token environment values, headers and adapter errors do
-  not appear in grant/Preview linkage, permission failure, audit, logs, TaskItem/Result/checkpoint or
-  API/Web payloads.
+- Run the full regression from the primary worktree and from a clean `git archive` of Task Head
+  with the archive itself as the working directory. Report totals and skips separately. Any
+  primary-worktree failure attributed to ignored local configuration must be reproduced at Task
+  Base or otherwise proven unrelated; do not call the contaminated run PASS.
 
 Quality and safety gates:
 
-- `./.venv/bin/ruff check .`
-- `./.venv/bin/ruff format --check .`
-- `./.venv/bin/python -m compileall -q mediaflow tests scripts`
-- `./.venv/bin/pip check`
-- `./.venv/bin/mediaflow --config config/strategy.example.json config validate`
-- `./.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`
-- forbidden `ffprobe`/`ffmpeg` runtime scan with no production matches
-- wheel build via `./.venv/bin/pip wheel . --no-deps --no-build-isolation` plus isolated installed-
-  wheel smoke through `scripts/wheel_smoke_test.py`, reporting supported/runtime schema and whether
-  migration is required; report `python -m build` as UNAVAILABLE if this environment still lacks its
-  executable module rather than hiding the substitution
-- if and only if schema changes: Task-Base upgrade rehearsal and every schema-marker test updated;
-  otherwise report the unchanged schema explicitly
-- Markdown relative-link existence check for changed documents
-- private-config/secret scan: `config/alist.json` and `config/strategy.json` remain ignored,
-  untracked and unstaged; no credential-like value appears in Task Base..Head
-- `git diff --check` and `git diff --cached --check`
+```text
+./.venv/bin/ruff check .
+./.venv/bin/ruff format --check .
+./.venv/bin/python -m compileall -q mediaflow tests scripts
+./.venv/bin/pip check
+./.venv/bin/mediaflow --config config/strategy.example.json config validate
+./.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate
+```
 
-External gates must be reported as PASS/FAIL/SKIP/UNAVAILABLE. Do not use production Storage,
-Provider credentials or user media; temporary Local roots and fake/in-memory services are sufficient.
+- Verify runtime schema remains 31 and run the relevant schema-marker/migration regression even
+  though no schema change is expected.
+- Build a wheel with `./.venv/bin/pip wheel . --no-deps --no-build-isolation` and run isolated
+  `scripts/wheel_smoke_test.py`. Report `python -m build` as UNAVAILABLE if this environment still
+  lacks its executable module rather than hiding the substitution.
+- Run a forbidden runtime dependency scan for FFprobe/FFmpeg references, Markdown relative-link
+  validation for changed documents, `git diff --check` and `git diff --cached --check`.
+- Confirm `config/alist.json` and `config/strategy.json` remain ignored, untracked and unstaged.
+  Scan Task Base..Head for credential-shaped values and private endpoints.
+- Falsification evidence must show:
+  - replacing the per-mutation hook with the old once-per-item check makes the intra-item test fail;
+  - skipping the hook before cross-Storage source delete, cleanup or rollback makes the relevant
+    focused test fail;
+  - authority loss after one attachment or target-write effect prevents the next mutation and is
+    not reported as zero-effect, full success or an ordinary Storage failure;
+  - restoring authority does not automatically replay the partial item.
+- Report real Scheduler endurance/process-stop, production SMB/OpenList/S3/R2, Provider credential
+  and destructive acceptance gates as PASS/FAIL/SKIP/UNAVAILABLE. They may remain SKIP/UNAVAILABLE
+  in this offline environment; never use production data or credentials.
 
 ## Non-goals
 
-- Any change to the Slice Contract, Base SHA, Roadmap, Closure Packet or A Final Review decision.
-- A new identity-administration product, principal/role management Web/API, credential store, token
-  rotation workflow or changes to the configured role-permission matrix.
-- Requiring an interactive Preview or Execute click for every scheduled occurrence; one valid
-  persistent grant remains reusable while its exact bounds and all live gates stay valid.
-- Replacing the normal scheduled analysis/planning pipeline with persisted Preview plans, or making
-  Scheduler select items, Providers, policies, destinations, plans or operations.
-- Redesigning Scheduler, Worker claims, manual/remote one-shot authorization, Task/TaskItem/Result,
-  Processing Checkpoint, recovery, OrganizerExecutor, conflict handling or Storage adapters.
-- New Overwrite/Delete/cleanup/rollback/fallback authority, automatic replay of uncertain effects,
-  distributed leases, forced interruption of an in-flight Storage call or universal compensation.
-- P2/P3 cleanup from the prior Closure Packet, copy polish, optional proof or unrelated refactoring.
+- Any edit to the Slice Contract, Base SHA, Roadmap, Progress, canonical requirements,
+  Product Experience or Architecture documentation.
+- Rewriting the stale Slice Closure Packet. B will run Slice Final and replace it only after this
+  Task passes.
+- A new grant type, permission, UI/API action, identity-management product, token store or schema
+  migration.
+- Requiring another interactive Preview or Execute click for every occurrence.
+- Persisting or reusing the original Preview's per-file plans for later scheduled runs; each run
+  continues to build and validate the normal current plan under its pinned snapshot.
+- Changing Scheduler occurrence semantics, AutomationJob admission, grant eligibility, Preview
+  staleness, definition editing, policy ownership, conflict strategy or Storage capabilities.
+- Granting Overwrite, Delete, source cleanup, rollback, fallback or broader path authority.
+- Forced interruption of an in-flight external Storage call, automatic uncertain-effect replay,
+  universal compensation, historical rollback or distributed leases.
+- P2/P3 cleanup, copy polish, unrelated refactoring or optional proof beyond the required
+  falsification cases.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-- `mediaflow/application/automation_task_definition_preview.py`
-- `mediaflow/application/unattended_execution.py`
-- `mediaflow/domain/unattended_execution.py`
-- `mediaflow/final_cli.py`
-- `mediaflow/infrastructure/sqlite_runtime.py`
-- `mediaflow/interfaces/operator_ui.py`
-- `mediaflow/interfaces/service_api.py`
+- `mediaflow/application/organizer.py`
+- `mediaflow/application/media_organizer.py`
+- `mediaflow/application/automation_definition_execution.py`
+- `mediaflow/application/failure_explanation.py`
+- `mediaflow/domain/organizer.py`
+- `tests/test_organizer_mutation_authority.py` (new)
 - `tests/test_automation_definition_execution.py`
-- `tests/test_automation_preview_grant_gate.py`
-- `tests/test_automation_task_definition_preview.py`
-- `tests/test_automation_unattended_grant.py`
-- `tests/test_configuration_classification.py`
-- `tests/test_configuration_destination.py`
-- `tests/test_configuration_destination_activation.py`
-- `tests/test_configuration_destination_precheck.py`
-- `tests/test_configuration_organize.py`
+- `tests/test_automation_authorized_execution_matrix.py`
 - `tests/test_configuration_snapshot.py`
-- `tests/test_migration_rehearsal.py`
-- `tests/test_operator_ui.py`
+- `TASK.md`
 
 ### Implemented
 
-- Removed the unlinked Preview admission bypass. Shared Application grant admission now requires an
-  explicit persisted exact Preview, rechecks its binding and executable items, and fails closed when
-  the Preview authority is unavailable; direct legacy callers inject exact fake Preview evidence.
-- Added a read-only shared eligibility projection. API grant-state and grant responses expose the
-  same bounded eligibility, Preview linkage, current-permission state, explanation and recovery
-  action; Web uses that projection for button state, confirmation and reload/revoke presentation.
-- Enforced the configured principal's current `enabled` flag as well as its role permission. API and
-  production Worker admission fail closed for removed, disabled, downgraded, unavailable or malformed
-  authority, and the Worker resolves current authority before each pending OrganizerExecutor effect.
-- Added real production-composition coverage: after the first sibling effect, a configured principal
-  change preserves the first bytes/Result/checkpoint, refuses the next mutation before
-  OrganizerExecutor, records durable recovery evidence, and does not replay after permission restore.
-- Added a real schema-30-to-31 upgrade rehearsal with legacy unlinked-grant fail-closed behavior and
-  atomic duplicate-row rollback coverage. Recognition/Planner/OrganizerExecutor ownership and all
-  zero-mutation paths remain unchanged.
+- Added an optional fail-closed `mutation_authority` hook to the real
+  `OrganizerExecutor` and invoked it immediately before every not-yet-started
+  mutating Storage call with a bounded plan/step descriptor: destination
+  directory creation, every attachment operation, the primary operation,
+  cross-Storage target write and source delete, cleanup file/directory deletes,
+  and rollback/compensation mutations.
+- Scheduled automatic organization now supplies the hook from
+  `UnattendedExecutionGrantService.assert_live(job, definition)` through
+  `DefinitionScopedExecutionService` and `MediaOrganizerService`; DryRun,
+  scan-only, scan-and-plan, read, manual and remote one-shot paths never invoke
+  it and retain their existing semantics.
+- A live-authority refusal is converted by the executor into a truthful
+  `ExecutionResult`: zero verified effect is `FAILED` with certainty `none`;
+  refusal after verified effects is `PARTIAL` with exact completed operations
+  and certainty `verified_complete`; cross-Storage copy-before-delete refusals
+  retain the verified copy as a completed partial effect. No cleanup, rollback
+  or sibling replay runs merely to make the item appear complete.
+- Rollback and cleanup paths re-read authority before each mutation. Authority
+  loss there stops further mutation and is reported as partial/refused rather
+  than fabricated rollback or ordinary Storage failure, using stable
+  `DirectoryCleanupStatus.REFUSED` / `RollbackStatus.REFUSED` evidence.
+- Failure classification and sanitization now emit the stable bounded
+  `unattended_authority` category with one explicit next action through
+  TaskItem error, persistent Result, Processing Checkpoint and occurrence
+  projections. No bearer token, credential, private endpoint or raw adapter
+  exception enters evidence or logs.
 
 ### Tests and Results
 
-- `./.venv/bin/python -m unittest tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_automation_definition_execution tests.test_configuration_snapshot.ManagedConfigurationSnapshotTests.test_worker_rechecks_current_principal_between_real_effect_boundaries tests.test_migration_rehearsal tests.test_operator_ui`: PASS, 81 tests.
-- `./.venv/bin/python -m unittest tests.test_automation_unattended_grant tests.test_automation_task_definition_preview`: PASS, 29 tests.
-- `./.venv/bin/python -m unittest tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix`: PASS, 29 tests.
-- `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui tests.test_api_security`: PASS, 66 tests.
-- Production composition command above: PASS, 1 test. Migration rehearsal `./.venv/bin/python -m unittest tests.test_migration_rehearsal`: PASS, 6 tests.
-- Safety/read-only command
-  `./.venv/bin/python -m unittest tests.test_automation_task_definition_preview.AutomationTaskDefinitionPreviewTests.test_preview_read_paths_and_api_do_not_probe_storage tests.test_automation_task_definition_preview.AutomationTaskDefinitionPreviewTests.test_read_only_storage_guard_refuses_mutation_and_trees_are_identical tests.test_automation_definition_execution.DefinitionScopedExecutionTests.test_revoked_automatic_mode_fails_before_task_and_mutation tests.test_automation_definition_execution.DefinitionScopedExecutionTests.test_unattended_overwrite_collision_waits_without_mutation tests.test_automation_authorized_execution_matrix.AuthorizedOperationMatrixTests.test_unsupported_and_denied_capabilities_fail_before_mutation tests.test_operator_ui.AutomationPreviewWebTests.test_automation_grant_uses_shared_eligibility_projection tests.test_api_security.ApiSecurityTests.test_audit_success_denial_redaction_order_limit_and_source_sanitizing`:
-  PASS, 7 tests; the counting/refusing storage doubles observed no mutation.
-- Credential-canary command
-  `./.venv/bin/python -m unittest tests.test_api_credentials.ApiCredentialTests.test_token_generation_is_one_time_config_free_and_bounded tests.test_api_security.ApiSecurityTests.test_audit_success_denial_redaction_order_limit_and_source_sanitizing tests.test_automation_task_definition_preview.AutomationTaskDefinitionPreviewTests.test_oversized_values_are_bounded_and_redacted_deterministically tests.test_automation_definition_execution.DefinitionScopedExecutionTests.test_authorized_provider_failure_preserves_first_sibling_and_never_auto_replays tests.test_operator_ui.OperatorUiTests.test_assets_are_self_contained_and_credentials_are_memory_only`:
-  PASS, 5 tests; credential-shaped values were absent from the asserted payloads/errors/assets.
-- Required affected integration command from this Task: FAIL, 434 tests, 4 failures:
-  `test_scan_cli_needs_no_path_or_metadata_token`,
-  `test_credential_check_is_redacted_config_only_and_reports_missing`,
-  `test_legacy_credential_status_is_supported_without_secret_output`, and
-  `test_runtime_configuration_and_final_analyze_cli`. These are ignored local config/state failures;
-  they are not claimed as passing.
-- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'`: FAIL, 1112 tests, 6 failures,
-  7 skips. The six are the four above plus `test_storage_check_is_read_only_and_isolates_failures`
-  and `test_storage_list_does_not_construct_or_connect`. A clean Task-Base archive ran the cited
-  four-module reproduction (`tests.test_api_credentials tests.test_final_integration
-  tests.test_resource_library_pipeline tests.test_runtime_storage_configuration`) as PASS, 23 tests.
-  Repeating from a Task-Base archive with copied ignored `config/strategy.json`, `config/alist.json`
-  and `.mediaflow` state reproduced the same six failures; no Task code was used in that reproduction.
-- Quality gates: `./.venv/bin/ruff check .`, `./.venv/bin/ruff format --check .` (355 files),
-  `./.venv/bin/python -m compileall -q mediaflow tests scripts`, `./.venv/bin/pip check`, both
-  required example `config validate` commands, forbidden `ffprobe`/`ffmpeg` runtime scan,
-  Markdown link existence, `git diff --check` and `git diff --cached --check`: PASS.
-- `git check-ignore -v config/alist.json config/strategy.json` and the Task Base..Head credential
-  scan: PASS; both private configuration files remained ignored, untracked and unstaged.
-- Wheel gate: `./.venv/bin/pip wheel . --no-deps --no-build-isolation` plus isolated
-  `scripts/wheel_smoke_test.py`: PASS; supported/runtime schema 31 and migration required NO.
-  `./.venv/bin/python -m build`: UNAVAILABLE because this environment has no `build.__main__`;
-  the required pip-wheel substitute passed.
-- Falsification evidence on throwaway `git archive HEAD` copies: monkeypatching
-  `_require_preview` to return `None` made
-  `AutomationPreviewGrantGateTests.test_missing_preview_is_rejected_without_grant_or_audit` fail
-  with the expected “not raised” assertion (exit 1); returning a stale/blocked fake Preview made
-  `test_blocked_preview_is_rejected_before_persistence` fail likewise (exit 1). Replacing
-  `_assert_current_permission` with unconditional allow made
-  `test_current_permission_is_resolved_at_admission_and_each_effect_boundary` fail with zero
-  authority calls (exit 1). Making `ReadOnlyStorageGuard._reject` a no-op made the read-only guard
-  test fail with eight mutation assertions (exit 1). The real production composition command above
-  observed the first sibling's bytes/Result/checkpoint intact, the second source/destination bytes
-  unchanged and `worker.run_next()` returning `None` after permission restoration (no replay). Its
-  read-only and credential-canary commands passed 7 and 5 tests respectively.
+- Focused authority/execution suite:
+  `./.venv/bin/python -m unittest tests.test_automation_definition_execution
+  tests.test_automation_authorized_execution_matrix
+  tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant
+  tests.test_configuration_snapshot tests.test_processing_checkpoint
+  tests.test_organizer tests.test_attachments
+  tests.test_source_directory_cleanup tests.test_organizer_rollback
+  tests.test_organizer_mutation_authority`
+  → PASS, 171 tests.
+- Related regression suite:
+  `./.venv/bin/python -m unittest tests.test_automation_definition_occurrence
+  tests.test_automation_task_definition_preview tests.test_automation_api
+  tests.test_operator_ui tests.test_api_security
+  tests.test_manual_organize_execution tests.test_execution_authorization
+  tests.test_final_integration`
+  → PASS, 140 tests.
+- Full regression from the primary worktree:
+  `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'`
+  → PASS, 1124 tests, 7 skips.
+- Full regression from a clean archive of the Task Head (tracked files at the
+  implementation checkpoint plus the completion report, run with the archive as
+  the working directory): PASS, 1124 tests, 7 skips.
+- Ruff lint and format, `compileall`, `pip check`, both example configuration
+  validations, Markdown relative-link check, forbidden FFprobe/FFmpeg scan,
+  credential-shaped diff scan and `git diff --check`: PASS.
+- Schema/migration regressions (`tests.test_migration_rehearsal`,
+  `tests.test_upgrade_preflight`): PASS; runtime schema remains 31; migration
+  required NO.
+- Wheel build plus isolated installed-wheel smoke:
+  `./.venv/bin/pip wheel . --no-deps --no-build-isolation` +
+  `scripts/wheel_smoke_test.py` → PASS, schema 31.
+- `./.venv/bin/python -m build`: UNAVAILABLE (this virtualenv has no executable
+  `build.__main__`); the approved `pip wheel` substitute passed.
+- Real Scheduler endurance/process-stop, production SMB/OpenList/S3/R2,
+  Provider credentials and destructive acceptance gates:
+  SKIP / UNAVAILABLE in this offline environment; no production Storage,
+  Provider credentials or user media were used.
 
 ### Decisions
 
-- The exact Preview identity is part of the grant binding, so another Preview cannot silently replace
-  an active grant. Eligibility is a shared read-only Application projection consumed by API and Web.
-- Production API/Worker composition injects both Preview and current-permission authorities and fails
-  closed when either is absent or invalid. Direct legacy service callers without an injected authority
-  retain compatibility only where the existing non-production contract permits it.
-- Empty, excluded-only, unstable-only and truncated-only discovery evidence remains visible but
-  non-executable; no such item receives mutation authority.
-- Runtime schema 31 adds nullable `preview_id`; legacy grants remain readable but are refused before
-  Task/Storage work when exact Preview linkage is unavailable.
+- The authority hook is owned by `OrganizerExecutor` and passes only the
+  accepted plan plus an internal bounded boundary label. No API/Web/Job input
+  can supply paths, operations or mutation commands through it.
+- Refusals are converted to `ExecutionResult` inside the executor so completed
+  effects and retry safety survive in the durable TaskItem/Result/checkpoint
+  journey instead of being lost in a generic exception path.
+- `DirectoryCleanupStatus.REFUSED` and `RollbackStatus.REFUSED` were added as
+  string-only domain evidence so a skipped cleanup or refused rollback is
+  durably distinguishable from success, safe-stop or ordinary failure without a
+  schema migration.
+- Per-item authority failures use the stable `unattended_authority` failure
+  category; the specific grant/permission code remains visible on pre-Task
+  admission and in bounded executor evidence where useful.
+- Existing between-item tests were updated to revoke at the per-mutation
+  boundary count instead of the old once-per-item call count.
 
 ### Remaining In-Slice Work
 
-None identified within this implementation Task; B determines Task review and any remaining Slice
-review work.
+- No remaining work is known inside this Task. The stale Slice Closure Packet
+  reconciliation and any Slice-level review decision belong to B/A.
 
 ### Risks / Deviations
 
-- The six full-regression failures are not claimed as passing; only the Task-Base clean archive
-  result and the ignored-local-state reproduction are reported above.
-- Python `ResourceWarning` messages for pre-existing unclosed SQLite connections remain visible but
-  did not change test outcomes.
-- Real Scheduler endurance/process-stop, production SMB/OpenList/S3/R2, Provider credentials and
-  destructive acceptance gates were not run; no production data, credentials or user media were used.
+- The primary worktree full and related regressions pass at Task Head. An
+  earlier related-regression failure from stale ignored root `.mediaflow`
+  managed-activation state was reproduced as environment-only; the same test
+  passes after refreshed ignored local state and in the clean archive.
+- `config/alist.json` and `config/strategy.json` remain ignored, untracked and
+  unstaged; no credential-shaped or private-endpoint values were introduced in
+  the Task Base..Head diff.
+- Real external-service and destructive gates remain SKIP/UNAVAILABLE as
+  reported above.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: ea9ed9a62a52a636c8b90360b3e62008b2e97530
+Head SHA: d4da92879b99f1c44ddd717fba1a26e4b0a73493
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: e9f9baf24a6616a47ec651f17ef7eed57428cf7d..44ac7f8f8e5b03411a026b138e82c22935ef0562
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: [Task Base..Head]
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
 
-- Acceptance Criteria 1–3 and 5 are not fail-closed at the shared Application boundary.
-  `UnattendedExecutionGrantService._require_preview()` returns success when both the Preview service
-  and `previewId` are absent (`mediaflow/application/unattended_execution.py:408-409`), and
-  `_assert_persisted_preview()` likewise returns when the service is absent (`:582-584`). Review
-  probe: constructing `UnattendedExecutionGrantService(repository)` and calling `grant(...)` without
-  `previewId` created grant `g` with `preview_id=None` and one audit row. Remove this compatibility
-  bypass: grant admission must require an explicit persisted Preview and unavailable Preview
-  authority must fail closed; update legacy direct callers/tests to inject valid exact Preview
-  evidence rather than permitting an unlinked grant.
-- Acceptance Criteria 7–8 are not implemented through one shared eligibility projection. The Web
-  independently enables the grant action using only `latestPreview.current === true` and
-  `latestPreview.status === 'previewed'`
-  (`mediaflow/interfaces/operator_ui.py:2247-2248,2265-2273`); no Application/API grant-eligibility
-  projection exists, so mismatched Storage/workload/binding conditions can render an enabled action
-  that the grant service rejects. The view also labels an ungranted latest Preview as `Reviewed
-  Preview` (`:2258`). Expose the complete shared Application eligibility/error/recovery result via
-  API and make Web button state, explanation and exact confirmation consume it; add API/Web tests
-  for eligible and each material ineligible binding/race state.
-- Acceptance Criteria 8–10 are not satisfied for disabled principals on the API/Web current-state
-  surface. `_CurrentConfiguredPermissionAuthority.has_permission()` checks roles but not the
-  configured principal's `enabled` flag (`mediaflow/interfaces/service_api.py:100-110`). Review
-  probe with a current managed document containing a disabled admin returned
-  `disabled_principal_allowed=True`. Require enabled current identity for a valid projection and
-  cover removed, disabled, downgraded and unavailable/malformed current authority through the
-  production API projection as well as Worker admission.
-- Acceptance Criteria 9–11 and 16 lack the mandatory non-vacuous execution evidence. The checkpoint
-  changes no production CLI/runtime test module; its new test calls `_ConfiguredPermissionAuthority`
-  and `UnattendedExecutionGrantService.assert_live()` in isolation, while the only existing
-  two-sibling integration test changes grant revocation, not current principal permission
-  (`tests/test_automation_definition_execution.py:1536-1621`). Add production-composition coverage
-  that removes/disables/downgrades the configured granting principal between two real effect
-  boundaries and proves the first sibling bytes/Result/checkpoint remain intact, the next mutation
-  is refused before OrganizerExecutor, recovery is durable and neither sibling is automatically
-  replayed; also cover permission-authority failure before Task creation.
-- Acceptance Criterion 16's schema and falsification evidence is incomplete. Runtime schema changed
-  from 30 to 31, but neither `tests/test_migration_rehearsal.py` nor another Task-Base upgrade test
-  changed; the existing rehearsal only lowers the marker on a database already created with the
-  current schema, so it does not prove a real schema-30 grant migration, legacy unlinked-grant
-  fail-closed behavior or atomic failure rollback. The Completion Report also records none of the
-  required throwaway falsification commands. Add the required real Task-Base migration cases and
-  record all specified Preview-bypass, per-effect-permission, zero-mutation, no-replay, read-only and
-  credential-canary falsification results. Correct the regression report as well: a clean
-  `git archive` of Task Base ran the cited 23 modules/tests as `OK` (23 tests), while running Task-Base
-  code from the primary worktree against its ignored local configuration reproduced six failures;
-  the current claim that the clean archive itself failed is inaccurate.
-
-If `FIX REQUIRED`, only unmet Task blockers are listed below this block. Corrections remain in Task
-25.7. A PASS returns Slice 25 to `READY FOR A REVIEW`; B does not close the Slice.
+If `FIX REQUIRED`, list only blockers for this Task. Corrections remain in Task 25.8. A PASS returns
+Slice 25 to `READY FOR A REVIEW`; B then runs Slice Final and replaces the stale Closure Packet
+before handing the Slice back to A.
