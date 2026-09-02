@@ -738,27 +738,29 @@ organize AutomationJob. Concurrent replay therefore creates at most one Job.
 The API cannot manage authorizations, rejects body-carried tokens, and requires the separate
 `X-MediaFlow-Execution-Token` header plus `execute:true` and an explicit bounded limit. The Worker
 adds `--execute` only when both the persisted command is organize and its persisted authority is
-true; inconsistent Jobs fail closed. Scheduler remains scan/preview-only. This boundary grants no
+true; inconsistent Jobs fail closed. The legacy direct Scheduler/job-submission path remains
+scan/preview-only; managed-definition scheduled organization is provided by Slice 25 below. This boundary grants no
 overwrite/delete bypass: the existing Task, conflict, Storage capability, plan validation, and sole
 OrganizerExecutor mutation boundary remain authoritative.
 
-## Scheduled unattended organization: TARGET V1 (not implemented)
+## Scheduled unattended organization: CURRENT (Slice 25 PASS / CLOSED)
 
-### CURRENT foundation
+### CURRENT implementation
 
-The CURRENT runtime already provides interval/Cron evaluation, atomic and idempotent schedule
-emission, durable AutomationJob claim/cancellation/audit, immutable configuration snapshot pinning,
-the Worker-to-existing-Task/TaskItem/Result boundary, independent RecognitionTypePolicy references,
-and OrganizerExecutor-only mutation. Runtime schedule definitions and ordinary AutomationJob
-submission accept only scan/preview. Protected manual/remote organization instead consumes the
-one-time authorization described above and persists only that Job's execute-authorized decision.
-
-CURRENT does not provide one operator-managed Automation Task Definition that combines a bounded
+Slice 25 adds the operator-managed Automation Task Definition that combines a bounded
 ResourceLibrary/source scope, schedule, enabled state, managed configuration authority and a
-persistent scoped unattended execution grant. The TARGET below is V1 product scope, not a claim
-about current tables, APIs or Web behavior.
+persistent scoped unattended execution grant. It uses the current interval/Cron evaluation, atomic
+and idempotent occurrence emission, durable AutomationJob claim/cancellation/audit, immutable
+configuration snapshot pinning, Worker-to-existing-Task/TaskItem/Result boundary, independent
+RecognitionTypePolicy references and OrganizerExecutor-only mutation. The authenticated API and
+Operator Web expose definition management, exact Preview, grant/revoke, occurrence history and
+linked per-item Result/recovery projections.
 
-### TARGET V1 responsibility flow
+The current implementation is validated with local/fake adapter evidence. Production Scheduler
+endurance, process-stop and external SMB/OpenList/S3/R2 service acceptance remain separately
+SKIP / UNAVAILABLE and are not implied by this CURRENT architecture statement.
+
+### CURRENT responsibility flow
 
 ```text
 Automation Task Definition
@@ -814,7 +816,7 @@ Later activation, including a MetadataPolicy Provider switch, applies only to su
 Jobs. A queued or running Job must never silently replace its RecognitionTypePolicy, Provider,
 NamingPolicy, ClassificationPolicy or OrganizePolicy from a newer Active snapshot.
 
-### TARGET execution authority and safety boundary
+### CURRENT execution authority and safety boundary
 
 Scheduled unattended authority is persistent, explicitly granted, revocable and bound to exactly
 one Automation Task Definition plus its permitted source/run scope. It is separate from the CURRENT
@@ -2049,16 +2051,18 @@ the Processing Checkpoint projection protects embedded Result paths and effects.
 rows are redacted during read without rewrite or side effects. This boundary does not alter
 execution admission, planning, mutation or recovery semantics.
 
-Scheduled unattended execution, automatic crash replay, universal compensation, remote setup and
-provider switching remain outside this boundary.
+Automatic crash replay, universal compensation, remote setup and Provider switching remain outside
+this boundary. Scheduled unattended execution is provided by Slice 25 through the CURRENT
+architecture above.
 
 ### Remaining recovery TARGET
 
 Slice 23 does not implement automatic replay of uncertain media mutation, cross-run compensation or
 historical rollback beyond the existing per-invocation Organizer rollback, distributed Task leases,
-forced interruption of external calls, automatic crash replay, Metadata Provider switching or
-scheduled unattended real execution. Slice 24 now provides the bounded Files/Media manual-organize
-journey, but these remaining capabilities are not part of the closed Slice 24 boundary. These are not
-dependencies of the current checkpoint and DryRun continuation path. OrganizerExecutor remains the
-only Storage mutation boundary, and any future real continuation must independently satisfy current
-authority, Storage capability and conflict/destructive-operation gates.
+forced interruption of external calls, automatic crash replay or Metadata Provider switching. Slice
+24 provides the bounded Files/Media manual-organize journey and Slice 25 provides the bounded
+scheduled unattended journey; those later capabilities are not retroactive claims on the closed
+Slice 23 boundary. These remaining recovery capabilities are not dependencies of the current
+checkpoint and DryRun continuation path. OrganizerExecutor remains the only Storage mutation
+boundary, and any future real continuation must independently satisfy current authority, Storage
+capability and conflict/destructive-operation gates.
