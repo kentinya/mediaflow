@@ -1175,6 +1175,20 @@ class AutomationPreviewWebTests(unittest.TestCase):
         )
         self.assertIn("method: 'POST'", confirm)
 
+    def test_automation_grant_uses_shared_eligibility_projection(self) -> None:
+        script = APP_JS.decode("utf-8")
+        detail = _js_function_body(script, "showAutomationDetail")
+        self.assertIn("/grant-state`", detail)
+        self.assertIn("grantState.grantEligibility", detail)
+        self.assertIn("grantEligibility.eligible === true", detail)
+        self.assertIn("grantEligibility.previewId", detail)
+        self.assertIn("Eligibility explanation", detail)
+        self.assertIn("Eligibility next action", detail)
+        self.assertNotIn(
+            "latestPreview.current === true && latestPreview.status === 'previewed'", detail
+        )
+        self.assertNotIn("['Reviewed Preview'", detail)
+
         preview_view = _js_function_body(script, "showAutomationPreview")
         self.assertIn("'Automation Preview'", preview_view)
         self.assertIn("Stale evidence:", preview_view)

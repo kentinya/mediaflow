@@ -12,7 +12,7 @@ from mediaflow.domain.automation_task_definition_preview import (
     AutomationTaskDefinitionPreviewItemStatus,
     AutomationTaskDefinitionPreviewStatus,
 )
-from mediaflow.domain.manual_safety import redact_evidence_text
+from mediaflow.domain.manual_safety import redact_evidence_text, redact_evidence_value
 from mediaflow.domain.security import ApiPermission
 from mediaflow.domain.unattended_execution import (
     MAX_UNATTENDED_GRANT_PRINCIPAL_LENGTH,
@@ -128,6 +128,8 @@ class UnattendedExecutionGrantService:
             actor = _actor(actor, principal)
         except (TypeError, ValueError) as error:
             raise self._invalid("granting principal is invalid") from error
+        if self._permission_authority is not None:
+            self._assert_current_permission(actor, boundary=False)
         if confirmed is not None:
             if confirmation and confirmation != confirmed:
                 raise self._invalid("grant confirmation was specified twice")
@@ -405,8 +407,6 @@ class UnattendedExecutionGrantService:
         max_items_per_run,
         storage_id,
     ):
-        if self._preview_service is None and preview_id is None:
-            return None
         if not isinstance(preview_id, str) or not preview_id.strip():
             raise UnattendedExecutionGrantError(
                 "a persisted exact Automation Preview is required before granting "
@@ -509,17 +509,7 @@ class UnattendedExecutionGrantService:
                 ),
                 details={"previewId": preview.preview_id},
             )
-        invalid = [
-            item.status.value
-            for item in preview.items
-            if item.status
-            not in {
-                AutomationTaskDefinitionPreviewItemStatus.PREVIEWED,
-                AutomationTaskDefinitionPreviewItemStatus.EXCLUDED,
-                AutomationTaskDefinitionPreviewItemStatus.UNSTABLE,
-                AutomationTaskDefinitionPreviewItemStatus.TRUNCATED,
-            }
-        ]
+        invalid = self._invalid_preview_items(preview)
         if invalid:
             raise UnattendedExecutionGrantError(
                 "Automation Preview contains blocked or failed executable items",
@@ -581,7 +571,15 @@ class UnattendedExecutionGrantService:
 
     def _assert_persisted_preview(self, grant) -> None:
         if self._preview_service is None:
-            return
+            raise UnattendedExecutionGrantError(
+                "the Automation Preview authority is unavailable",
+                code="unattended_execution_preview_unavailable",
+                status=503,
+                durable_state=(
+                    "no Task, adapter, Provider request, Storage probe, or media effect was created"
+                ),
+                next_action="restore the Preview service, then explicitly resume the occurrence",
+            )
         if not grant.preview_id:
             raise UnattendedExecutionGrantError(
                 "unattended execution grant has no exact Preview linkage",
@@ -608,6 +606,7 @@ class UnattendedExecutionGrantService:
             or preview.zero_mutation is not True
             or preview.status is not AutomationTaskDefinitionPreviewStatus.PREVIEWED
             or preview.boundary_errors
+            or self._invalid_preview_items(preview)
         ):
             raise UnattendedExecutionGrantError(
                 "the exact Automation Preview linked to this grant is stale or ineligible",
@@ -617,6 +616,159 @@ class UnattendedExecutionGrantService:
                 ),
                 next_action="run a fresh exact Preview and explicitly create a new grant",
             )
+
+    @staticmethod
+    def _invalid_preview_items(preview) -> list[str]:
+        benign_statuses = {
+            AutomationTaskDefinitionPreviewItemStatus.PREVIEWED,
+            AutomationTaskDefinitionPreviewItemStatus.EXCLUDED,
+            AutomationTaskDefinitionPreviewItemStatus.UNSTABLE,
+            AutomationTaskDefinitionPreviewItemStatus.TRUNCATED,
+        }
+        invalid = []
+        for item in getattr(preview, "items", ()):
+            status = getattr(item, "status", None)
+            status_value = getattr(status, "value", str(status))
+            if status not in benign_statuses:
+                invalid.append(status_value)
+                continue
+            if (
+                getattr(item, "current", True) is not True
+                or getattr(item, "zero_mutation", True) is not True
+                or (
+                    status is AutomationTaskDefinitionPreviewItemStatus.PREVIEWED
+                    and (
+                        not isinstance(getattr(item, "plan", None), dict)
+                        or bool(getattr(item, "blocker", None))
+                    )
+                )
+            ):
+                invalid.append("blocked")
+        return invalid
+
+    def project_eligibility(
+        self,
+        definition,
+        *,
+        configuration_snapshot_id: str,
+        configuration_snapshot_digest: str,
+        configuration_snapshot_version: int,
+        preview_id: str | None,
+        storage_id: str | None,
+        max_items_per_run: int | None = None,
+        principal_id: str | None = None,
+    ) -> dict[str, object]:
+        """Project the exact, shared admission decision for API and Web.
+
+        This is deliberately a read-only projection.  It performs the same
+        bounded Preview and current-authority checks as grant admission while
+        never writing a grant, audit row, Task, or Storage effect.
+        """
+
+        try:
+            definition = _definition(definition)
+            if definition.mode is not AutomationTaskRunMode.AUTOMATIC_ORGANIZATION:
+                raise self._invalid(
+                    "unattended execution grants require automatic-organization mode",
+                    next_action="change the definition to automatic-organization and activate it",
+                )
+            if max_items_per_run is None:
+                max_items_per_run = definition.item_limit
+            if (
+                isinstance(max_items_per_run, bool)
+                or not isinstance(max_items_per_run, int)
+                or not 1 <= max_items_per_run <= definition.item_limit
+            ):
+                raise self._invalid(
+                    f"grant maxItemsPerRun must be between 1 and {definition.item_limit}",
+                    next_action="choose a workload bound no greater than the definition item limit",
+                )
+            preview = self._require_preview(
+                preview_id,
+                definition,
+                configuration_snapshot_id=configuration_snapshot_id,
+                configuration_snapshot_digest=configuration_snapshot_digest,
+                configuration_snapshot_version=configuration_snapshot_version,
+                max_items_per_run=max_items_per_run,
+                storage_id=storage_id,
+            )
+            if (
+                principal_id is None
+                or not isinstance(principal_id, str)
+                or not principal_id.strip()
+            ):
+                raise UnattendedExecutionGrantError(
+                    "a current granting principal is required for eligibility",
+                    code="unattended_permission_invalid",
+                    status=403,
+                    durable_state="no grant or media mutation occurred",
+                    next_action=(
+                        "authenticate as an enabled principal with "
+                        "grant_unattended_execution permission"
+                    ),
+                )
+            if self._permission_authority is None:
+                raise UnattendedExecutionGrantError(
+                    "current configured principal permission authority could not be read",
+                    code="unattended_permission_authority_unavailable",
+                    status=503,
+                    durable_state="no grant or media mutation occurred",
+                    next_action="restore the current permission authority, then reload eligibility",
+                )
+            self._assert_current_permission(principal_id, boundary=False)
+        except UnattendedExecutionGrantError as error:
+            return self._eligibility_failure(error, preview_id)
+        return {
+            "eligible": True,
+            "status": "eligible",
+            "previewId": preview.preview_id,
+            "previewStatus": preview.status.value,
+            "current": preview.current,
+            "zeroMutation": preview.zero_mutation,
+            "effectiveItemLimit": preview.effective_item_limit,
+            "maxItemsPerRun": max_items_per_run,
+            "currentPermission": {
+                "principalId": principal_id,
+                "status": "valid",
+                "allowed": True,
+            },
+            "explanation": (
+                "the exact current zero-mutation Preview and current granting-principal "
+                "permission satisfy the persisted grant bounds"
+            ),
+            "durableState": "no grant or media mutation has been created",
+            "retrySafe": True,
+            "nextAction": "review the exact bounds and explicitly confirm the unattended grant",
+            "error": None,
+        }
+
+    @staticmethod
+    def _eligibility_failure(
+        error: UnattendedExecutionGrantError, preview_id: str | None
+    ) -> dict[str, object]:
+        details = redact_evidence_value(dict(error.details))
+        return {
+            "eligible": False,
+            "status": "ineligible",
+            "previewId": preview_id if isinstance(preview_id, str) and preview_id.strip() else None,
+            "previewStatus": None,
+            "current": False,
+            "zeroMutation": False,
+            "currentPermission": None,
+            "explanation": redact_evidence_text(str(error), limit=512),
+            "durableState": error.durable_state,
+            "retrySafe": error.retry_safe,
+            "nextAction": error.next_action,
+            "error": {
+                "code": error.code,
+                "status": error.status,
+                "message": redact_evidence_text(str(error), limit=512),
+                "durableState": error.durable_state,
+                "retrySafe": error.retry_safe,
+                "nextAction": error.next_action,
+                "details": details,
+            },
+        }
 
     def project(
         self,

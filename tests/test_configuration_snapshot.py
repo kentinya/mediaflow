@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -18,11 +19,19 @@ from mediaflow.application.automation import (
 )
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+from mediaflow.application.organizer import OrganizerExecutor
+from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
+from mediaflow.application.unattended_execution import UnattendedExecutionGrantService
 from mediaflow.domain.automation import (
     AutomationCommand,
+    AutomationJobStatus,
     IntervalSchedule,
     SchedulerConfigurationSnapshot,
+)
+from mediaflow.domain.automation_task_definition_preview import (
+    AutomationTaskDefinitionPreview,
+    AutomationTaskDefinitionPreviewStatus,
 )
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
@@ -38,8 +47,11 @@ from mediaflow.domain.metadata import (
     ProviderCapabilities,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from mediaflow.final_cli import (
     _configuration,
+    _ConfiguredPermissionAuthority,
+    _PersistedPreviewReader,
     _run_queued_workflow,
     _task_snapshot_identity,
     final_main,
@@ -1867,6 +1879,307 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(results[0].task_id, task.task_id)
                 self.assertEqual(results[0].item_id, repository.list_items(task.task_id)[0].item_id)
                 self.assertEqual(results[0].status, "dry_run")
+
+    def test_worker_rechecks_current_principal_between_real_effect_boundaries(self) -> None:
+        class FakeTMDBProvider:
+            provider_id = "tmdb"
+            capabilities = ProviderCapabilities(can_search_movie=True)
+
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def search_movie(self, query, _policy=None, **_kwargs):
+                title = str(getattr(query, "title_candidate", ""))
+                if "Beta" in title:
+                    return (
+                        MediaCandidate(
+                            "tmdb",
+                            "beta",
+                            MediaType.MOVIE,
+                            "Beta Movie",
+                            year=2024,
+                            genres=("Animation",),
+                            countries=("JP",),
+                        ),
+                    )
+                return (
+                    MediaCandidate(
+                        "tmdb",
+                        "alpha",
+                        MediaType.MOVIE,
+                        "Alpha Movie",
+                        year=2024,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                )
+
+            def get_movie(self, provider_id, _policy=None, **_kwargs):
+                title = "Beta Movie" if provider_id == "beta" else "Alpha Movie"
+                return MediaIdentity(
+                    "tmdb",
+                    provider_id,
+                    MediaType.MOVIE,
+                    title,
+                    year=2024,
+                    genres=("Animation",),
+                    countries=("JP",),
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root = root / "source"
+            target_root = root / "target"
+            incoming = source_root / "Media" / "incoming"
+            incoming.mkdir(parents=True)
+            target_root.mkdir()
+            alpha = incoming / "Alpha.Movie.2024.mkv"
+            beta = incoming / "Beta.Movie.2024.mkv"
+            alpha.write_bytes(b"alpha")
+            beta.write_bytes(b"beta")
+            document = example_document()
+            document["storages"] = [
+                {
+                    "id": "source-storage",
+                    "name": "Source",
+                    "type": "local",
+                    "rootPath": str(source_root),
+                },
+                {
+                    "id": "media-target",
+                    "name": "Target",
+                    "type": "local",
+                    "rootPath": str(target_root),
+                },
+            ]
+            document["resourceLibraries"][0]["displayRootPath"] = str(source_root / "Media")
+            document["resourceLibraries"][0]["storagePath"] = "Media"
+            document["resourceLibraries"][0]["enabled"] = True
+            document["recognitionRules"][0]["condition"] = {
+                "field": "resource_library_id",
+                "operator": "equals",
+                "value": "source",
+            }
+            document["automationTaskDefinitions"] = [
+                {
+                    "id": "automatic",
+                    "name": "Automatic",
+                    "resourceLibraryId": "source",
+                    "sourceScope": "incoming",
+                    "mode": "automatic-organization",
+                    "intervalSeconds": 60,
+                    "itemLimit": 2,
+                    "enabled": True,
+                }
+            ]
+            runtime = root / "runtime.sqlite3"
+            document["persistence"]["databasePath"] = str(runtime)
+            document["historyPath"] = str(root / "history.jsonl")
+            config = root / "bootstrap.json"
+            config.write_text(json.dumps(document), encoding="utf-8")
+            disabled_document = json.loads(json.dumps(document))
+            disabled_document["api"]["principals"][0]["enabled"] = False
+
+            with SQLiteConfigurationRepository(runtime) as configuration_repository:
+                managed = ManagedConfigurationService(
+                    configuration_repository, bootstrap_database_path=str(runtime)
+                )
+                active = activate_document(managed, document)
+            pinned = _configuration(
+                str(config),
+                snapshot_id=active.revision_id,
+                snapshot_digest=active.digest,
+            )
+            definition = pinned.automation_task_definitions[0]
+            now = datetime.now(UTC)
+
+            def disable_current_principal() -> None:
+                with SQLiteConfigurationRepository(runtime) as configuration_repository:
+                    activate_document(
+                        ManagedConfigurationService(
+                            configuration_repository, bootstrap_database_path=str(runtime)
+                        ),
+                        disabled_document,
+                    )
+
+            def restore_current_principal() -> None:
+                with SQLiteConfigurationRepository(runtime) as configuration_repository:
+                    activate_document(
+                        ManagedConfigurationService(
+                            configuration_repository, bootstrap_database_path=str(runtime)
+                        ),
+                        document,
+                    )
+
+            with SQLiteTaskRepository(runtime) as repository:
+                emitted = IntervalScheduler(
+                    repository,
+                    pinned.automation_schedules,
+                    automation_task_definitions=pinned.automation_task_definitions,
+                    configuration_snapshot_id=pinned.configuration_snapshot_id,
+                    configuration_snapshot_digest=pinned.configuration_snapshot_digest,
+                    configuration_snapshot_version=pinned.configuration_snapshot_version,
+                ).tick(now)
+                self.assertEqual(len(emitted), 1)
+                preview = AutomationTaskDefinitionPreview(
+                    "preview-production",
+                    definition.definition_id,
+                    definition.definition_fingerprint,
+                    pinned.configuration_snapshot_id,
+                    pinned.configuration_snapshot_version,
+                    pinned.configuration_snapshot_digest,
+                    "active",
+                    definition.resource_library_id,
+                    pinned.resource_libraries[0].storage_id,
+                    definition.source_scope,
+                    definition.mode.value,
+                    definition.item_limit,
+                    {
+                        "discovered": 0,
+                        "selected": 0,
+                        "permitted": 0,
+                        "excludedIgnored": 0,
+                        "unstable": 0,
+                        "truncatedByLimit": 0,
+                    },
+                    AutomationTaskDefinitionPreviewStatus.PREVIEWED,
+                    (),
+                    "local-admin",
+                    now,
+                    now,
+                )
+                repository.create_automation_task_definition_preview(preview)
+                grant_service = UnattendedExecutionGrantService(
+                    repository,
+                    preview_service=_PersistedPreviewReader(repository),
+                    permission_authority=_ConfiguredPermissionAuthority(
+                        lambda: _configuration(str(config))
+                    ),
+                )
+                grant = grant_service.grant(
+                    definition,
+                    configuration_snapshot_id=pinned.configuration_snapshot_id,
+                    configuration_snapshot_digest=pinned.configuration_snapshot_digest,
+                    configuration_snapshot_version=pinned.configuration_snapshot_version,
+                    actor="local-admin",
+                    confirmation=True,
+                    preview_id=preview.preview_id,
+                    storage_id=pinned.resource_libraries[0].storage_id,
+                )
+                self.assertEqual(grant.preview_id, preview.preview_id)
+
+                original_execute = OrganizerExecutor.execute
+                effect_calls = []
+
+                def execute_and_disable(executor, plan, storages, **kwargs):
+                    result = original_execute(executor, plan, storages, **kwargs)
+                    if result.status.value.lower() == "success":
+                        effect_calls.append(plan.plan_id)
+                        if len(effect_calls) == 1:
+                            disable_current_principal()
+                    return result
+
+                worker = AutomationWorker(
+                    repository,
+                    lambda job, cancelled: _run_queued_workflow(
+                        job, str(config), cancelled, repository=repository
+                    ),
+                )
+                original_configuration = _configuration
+                configuration_calls = []
+
+                def fail_current_authority(path, **kwargs):
+                    configuration_calls.append(True)
+                    if len(configuration_calls) == 1:
+                        return original_configuration(path, **kwargs)
+                    raise RuntimeError("current permission authority unavailable")
+
+                with patch(
+                    "mediaflow.final_cli._configuration", side_effect=fail_current_authority
+                ):
+                    authority_failed = worker.run_next()
+                self.assertIsNotNone(authority_failed)
+                self.assertEqual(authority_failed.status.value, "failed")
+                self.assertIsNone(authority_failed.task_id)
+                self.assertEqual(
+                    authority_failed.failure_category,
+                    "unattended_permission_authority_unavailable",
+                )
+                occurrence = repository.get_latest_automation_definition_occurrence(
+                    definition.definition_id
+                )
+                self.assertEqual(occurrence.outcome, "failed")
+                self.assertIn("no Task", occurrence.reason)
+                self.assertTrue(occurrence.next_action)
+                self.assertEqual(repository.list_tasks(), ())
+                self.assertTrue(
+                    repository.admit_job(
+                        replace(
+                            emitted[0],
+                            job_id="production-effect-job",
+                            status=AutomationJobStatus.PENDING,
+                            created_at=now,
+                            updated_at=now,
+                            started_at=None,
+                            completed_at=None,
+                            task_id=None,
+                            error=None,
+                            claim_token=None,
+                            failure_category=None,
+                            failure_durable_state=None,
+                            failure_side_effects=None,
+                            failure_retry_safe=None,
+                            failure_next_action=None,
+                        ),
+                        100,
+                    )
+                )
+                with (
+                    patch.object(OrganizerExecutor, "execute", execute_and_disable),
+                    patch.dict("os.environ", {"TMDB_ACCESS_TOKEN": "test-token"}, clear=False),
+                    patch(
+                        "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBProvider",
+                        FakeTMDBProvider,
+                    ),
+                    patch(
+                        "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBClient",
+                        return_value=object(),
+                    ),
+                ):
+                    finished = worker.run_next()
+                self.assertIsNotNone(finished)
+                self.assertEqual(finished.status.value, "completed")
+                task = repository.get_task(finished.task_id)
+                self.assertEqual(task.status, PersistentTaskStatus.PARTIAL_SUCCESS)
+                items = {
+                    Path(item.source_path).name: item
+                    for item in repository.list_items(task.task_id)
+                }
+                self.assertEqual(items[alpha.name].status, TaskItemStatus.SUCCESS)
+                self.assertEqual(items[beta.name].status, TaskItemStatus.FAILED)
+                self.assertIn("unattended_permission_invalid", items[beta.name].error)
+                results = repository.list_results(task.task_id)
+                self.assertEqual([result.status for result in results], ["success", "failed"])
+                checkpoints = ProcessingCheckpointService(
+                    repository,
+                    snapshot_validator=managed.validate_runtime_snapshot,
+                )
+                alpha_checkpoint = checkpoints.get(items[alpha.name].item_id)
+                beta_checkpoint = checkpoints.get(items[beta.name].item_id)
+                self.assertEqual(alpha_checkpoint.latest_result.status, "success")
+                self.assertEqual(beta_checkpoint.error_category.value, "unattended_authority")
+                self.assertEqual(beta_checkpoint.permitted_action_ids, ("investigate",))
+                self.assertEqual(len(effect_calls), 1)
+                self.assertFalse(alpha.exists())
+                self.assertTrue(beta.exists())
+                self.assertTrue(
+                    any("Alpha Movie" in path.name for path in target_root.rglob("*.mkv"))
+                )
+                self.assertFalse(
+                    any("Beta Movie" in path.name for path in target_root.rglob("*.mkv"))
+                )
+                restore_current_principal()
+                self.assertIsNone(worker.run_next())
 
     def test_checked_local_setup_preview_keeps_original_pin_after_second_activation(
         self,

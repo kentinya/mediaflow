@@ -25,6 +25,7 @@ from mediaflow.domain.automation_task_definition_preview import (
 from mediaflow.domain.security import ApiPrincipalDefinition, ApiRole
 from mediaflow.final_cli import _ConfiguredPermissionAuthority
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.interfaces.service_api import _CurrentConfiguredPermissionAuthority
 
 NOW = datetime(2026, 9, 2, tzinfo=UTC)
 
@@ -73,12 +74,15 @@ class _PreviewReader:
 
 
 class _PermissionAuthority:
-    def __init__(self, allowed=True):
+    def __init__(self, allowed=True, failure=None):
         self.allowed = allowed
+        self.failure = failure
         self.calls = []
 
     def has_permission(self, principal_id, permission):
         self.calls.append((principal_id, permission))
+        if self.failure is not None:
+            raise self.failure
         return self.allowed
 
 
@@ -135,6 +139,68 @@ class AutomationPreviewGrantGateTests(unittest.TestCase):
                     )
                 self.assertIsNone(service.get_for_definition(definition.definition_id))
                 self.assertEqual(repository.list_unattended_execution_grant_audit("missing"), ())
+
+    def test_missing_preview_is_rejected_when_preview_authority_is_unavailable(self):
+        definition = _definition()
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository:
+                service = UnattendedExecutionGrantService(repository)
+                with self.assertRaisesRegex(
+                    UnattendedExecutionGrantError, "exact Automation Preview is required"
+                ):
+                    service.grant(
+                        definition,
+                        configuration_snapshot_id="revision",
+                        configuration_snapshot_digest="a" * 64,
+                        configuration_snapshot_version=1,
+                        actor="principal",
+                        confirmation=True,
+                    )
+                self.assertIsNone(service.get_for_definition(definition.definition_id))
+
+    def test_shared_eligibility_projection_rejects_binding_and_permission_races(self):
+        definition = _definition()
+        preview = _preview(definition)
+        authority = _PermissionAuthority()
+        service = UnattendedExecutionGrantService(
+            object(),
+            preview_service=_PreviewReader(preview),
+            permission_authority=authority,
+        )
+        eligible = service.project_eligibility(
+            definition,
+            configuration_snapshot_id="revision",
+            configuration_snapshot_digest="a" * 64,
+            configuration_snapshot_version=1,
+            preview_id=preview.preview_id,
+            storage_id="storage",
+            principal_id="principal",
+        )
+        self.assertTrue(eligible["eligible"])
+        authority.allowed = False
+        denied = service.project_eligibility(
+            definition,
+            configuration_snapshot_id="revision",
+            configuration_snapshot_digest="a" * 64,
+            configuration_snapshot_version=1,
+            preview_id=preview.preview_id,
+            storage_id="storage",
+            principal_id="principal",
+        )
+        self.assertFalse(denied["eligible"])
+        self.assertEqual(denied["error"]["code"], "unattended_permission_invalid")
+        authority.allowed = True
+        mismatch = service.project_eligibility(
+            definition,
+            configuration_snapshot_id="revision",
+            configuration_snapshot_digest="a" * 64,
+            configuration_snapshot_version=1,
+            preview_id=preview.preview_id,
+            storage_id="different-storage",
+            principal_id="principal",
+        )
+        self.assertFalse(mismatch["eligible"])
+        self.assertEqual(mismatch["error"]["code"], "unattended_execution_preview_mismatch")
 
     def test_exact_preview_linkage_survives_reload_and_different_preview_cannot_replace(self):
         definition = _definition()
@@ -209,6 +275,37 @@ class AutomationPreviewGrantGateTests(unittest.TestCase):
                     )
                 self.assertIsNone(service.get_for_definition(definition.definition_id))
 
+    def test_preview_executable_item_requires_current_zero_mutation_plan(self):
+        definition = _definition()
+        preview = _preview(definition)
+        preview.items = (
+            SimpleNamespace(
+                status=AutomationTaskDefinitionPreviewItemStatus.PREVIEWED,
+                blocker="plan blocker",
+                plan={"operation": "MOVE"},
+                current=True,
+                zero_mutation=True,
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository:
+                service = UnattendedExecutionGrantService(
+                    repository,
+                    preview_service=_PreviewReader(preview),
+                )
+                with self.assertRaisesRegex(UnattendedExecutionGrantError, "blocked or failed"):
+                    service.grant(
+                        definition,
+                        configuration_snapshot_id="revision",
+                        configuration_snapshot_digest="a" * 64,
+                        configuration_snapshot_version=1,
+                        actor="principal",
+                        confirmation=True,
+                        preview_id=preview.preview_id,
+                        storage_id="storage",
+                    )
+                self.assertIsNone(service.get_for_definition(definition.definition_id))
+
     def test_current_permission_is_resolved_at_admission_and_each_effect_boundary(self):
         definition = _definition()
         preview = _preview(definition)
@@ -240,6 +337,36 @@ class AutomationPreviewGrantGateTests(unittest.TestCase):
                 current = service.get_for_definition(definition.definition_id)
                 self.assertEqual(grant.grant_id, current.grant_id)
 
+    def test_worker_grant_admission_fails_closed_for_unavailable_authority(self):
+        definition = _definition()
+        preview = _preview(definition)
+        authority = _PermissionAuthority()
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository:
+                service = UnattendedExecutionGrantService(
+                    repository,
+                    preview_service=_PreviewReader(preview),
+                    permission_authority=authority,
+                )
+                service.grant(
+                    definition,
+                    configuration_snapshot_id="revision",
+                    configuration_snapshot_digest="a" * 64,
+                    configuration_snapshot_version=1,
+                    actor="principal",
+                    confirmation=True,
+                    preview_id=preview.preview_id,
+                    storage_id="storage",
+                )
+                authority.failure = RuntimeError("malformed authority")
+                with self.assertRaises(UnattendedExecutionGrantError) as failure:
+                    service.authorize(_job(definition), definition)
+                self.assertEqual(
+                    failure.exception.code,
+                    "unattended_permission_authority_unavailable",
+                )
+                self.assertIsNotNone(service.get_for_definition(definition.definition_id))
+
     def test_production_permission_authority_reloads_roles_and_enabled_state(self):
         state = SimpleNamespace(
             api_principals=(
@@ -257,6 +384,47 @@ class AutomationPreviewGrantGateTests(unittest.TestCase):
             ApiPrincipalDefinition("principal", "UNUSED_TOKEN_ENV", (ApiRole.ADMIN,), False),
         )
         self.assertFalse(authority.has_permission("principal", "grant_unattended_execution"))
+
+    def test_api_permission_authority_denies_disabled_managed_principal(self):
+        disabled = ApiPrincipalDefinition(
+            "principal", "UNUSED_TOKEN_ENV", (ApiRole.ADMIN,), enabled=False
+        )
+        authority = _CurrentConfiguredPermissionAuthority((disabled,), None)
+        self.assertFalse(authority.has_permission("principal", "grant_unattended_execution"))
+
+    def test_api_permission_authority_removed_downgraded_unavailable_and_malformed_fail_closed(
+        self,
+    ):
+        admin = ApiPrincipalDefinition("principal", "UNUSED_TOKEN_ENV", (ApiRole.ADMIN,))
+        downgraded = ApiPrincipalDefinition("principal", "UNUSED_TOKEN_ENV", (ApiRole.OPERATOR,))
+        self.assertFalse(
+            _CurrentConfiguredPermissionAuthority((), None).has_permission(
+                "principal", "grant_unattended_execution"
+            )
+        )
+        self.assertFalse(
+            _CurrentConfiguredPermissionAuthority((downgraded,), None).has_permission(
+                "principal", "grant_unattended_execution"
+            )
+        )
+
+        class UnavailableConfiguration:
+            def active(self):
+                raise RuntimeError("managed Active unavailable")
+
+        with self.assertRaises(RuntimeError):
+            _CurrentConfiguredPermissionAuthority((), UnavailableConfiguration()).has_permission(
+                "principal", "grant_unattended_execution"
+            )
+
+        class MalformedConfiguration:
+            def active(self):
+                return SimpleNamespace(document={"malformed": True})
+
+        with self.assertRaises(ValueError):
+            _CurrentConfiguredPermissionAuthority(
+                (admin,), MalformedConfiguration()
+            ).has_permission("principal", "grant_unattended_execution")
 
 
 if __name__ == "__main__":

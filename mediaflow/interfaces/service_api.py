@@ -103,6 +103,8 @@ class _CurrentConfiguredPermissionAuthority:
         for principal in principals:
             if principal.principal_id != principal_id:
                 continue
+            if getattr(principal, "enabled", True) is not True:
+                return False
             permissions = getattr(principal, "permissions", ())
             return any(
                 item == permission or getattr(item, "value", str(item)) == expected
@@ -821,9 +823,47 @@ class MediaFlowApi:
             self._require(principal, ApiPermission.READ)
             self._require_empty_query(environ, "unattended execution grant state")
             active, _raw, definition = self._automation_definition_context(environ, parts[4])
+            persisted = self._unattended_grants.get_for_definition(definition.definition_id)
             grant = self._unattended_grants.project(
                 definition,
                 configuration=active.summary(),
+                grant=persisted,
+            )
+            resource = next(
+                (
+                    value
+                    for value in active.document.get("resourceLibraries", [])
+                    if value.get("id") == definition.resource_library_id
+                ),
+                None,
+            )
+            candidate_preview_id = None
+            if persisted is not None and persisted.status.value == "active":
+                candidate_preview_id = persisted.preview_id
+            elif self._automation_previews is not None:
+                try:
+                    candidate_preview_id = self._automation_previews.latest_readonly(
+                        definition.definition_id
+                    ).preview_id
+                except Exception:
+                    candidate_preview_id = None
+            eligibility = self._unattended_grants.project_eligibility(
+                definition,
+                configuration_snapshot_id=active.revision_id,
+                configuration_snapshot_digest=active.digest,
+                configuration_snapshot_version=active.version,
+                preview_id=candidate_preview_id,
+                storage_id=resource.get("storageId") if resource is not None else None,
+                max_items_per_run=(
+                    persisted.max_items_per_run
+                    if persisted is not None and persisted.status.value == "active"
+                    else definition.item_limit
+                ),
+                principal_id=(
+                    persisted.granting_principal
+                    if persisted is not None and persisted.status.value == "active"
+                    else principal.principal_id
+                ),
             )
             return self._response(
                 start_response,
@@ -833,6 +873,8 @@ class MediaFlowApi:
                     "configuration": active.summary(),
                     "grant": grant,
                     "unattendedExecutionGrant": grant,
+                    "grantEligibility": eligibility,
+                    "previewEligibility": eligibility,
                 },
             )
         if (
@@ -921,6 +963,16 @@ class MediaFlowApi:
                 preview_id=document.get("previewId"),
                 storage_id=resource.get("storageId"),
             )
+            eligibility = self._unattended_grants.project_eligibility(
+                definition,
+                configuration_snapshot_id=active.revision_id,
+                configuration_snapshot_digest=active.digest,
+                configuration_snapshot_version=active.version,
+                preview_id=grant.preview_id,
+                storage_id=resource.get("storageId"),
+                max_items_per_run=grant.max_items_per_run,
+                principal_id=grant.granting_principal,
+            )
             return self._response(
                 start_response,
                 201,
@@ -937,6 +989,8 @@ class MediaFlowApi:
                         configuration=active.summary(),
                         grant=grant,
                     ),
+                    "grantEligibility": eligibility,
+                    "previewEligibility": eligibility,
                 },
             )
         if (

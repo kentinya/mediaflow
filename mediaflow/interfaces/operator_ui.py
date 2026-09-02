@@ -2243,7 +2243,11 @@ APP_JS = b"""(() => {
         ['Failure category', occurrenceState.lastFailureCategory || '-'],
         ['Failure reason', occurrenceState.lastReason || '-'],
         ['Next action', occurrenceState.nextAction || '-']].forEach(([label, value]) => field(list, label, value));
-      const grant = item.unattendedExecutionGrant || item.grant || {status: 'none', active: false};
+      const grantState = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/grant-state`);
+      const grant = grantState.grant || grantState.unattendedExecutionGrant ||
+        {status: 'none', active: false};
+      const grantEligibility = grantState.grantEligibility || grantState.previewEligibility ||
+        {eligible: false, nextAction: 'reload the current grant eligibility projection'};
       const previewData = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/previews?limit=1`);
       const latestPreview = (previewData.items || [])[0] || null;
       [['Unattended grant', grant.status || 'none'],
@@ -2255,7 +2259,12 @@ APP_JS = b"""(() => {
         ['Revoked at', grant.revokedAt || '-'],
         ['Definition changed since grant', grant.definitionChangedSinceGrant === true ? 'YES' : 'NO'],
         ['Grant next action', grant.nextAction || '-'],
-        ['Reviewed Preview', grant.previewId || (latestPreview && latestPreview.previewId) || '-'],
+        ['Exact Preview linked to grant', grant.previewId || '-'],
+        ['Latest Preview', latestPreview && latestPreview.previewId || '-'],
+        ['Grant eligibility', grantEligibility.eligible === true ? 'eligible' : 'ineligible'],
+        ['Eligibility explanation', grantEligibility.explanation ||
+          (grantEligibility.error && grantEligibility.error.message) || '-'],
+        ['Eligibility next action', grantEligibility.nextAction || '-'],
         ['Current permission', grant.currentPermission && grant.currentPermission.status || 'not granted']].forEach(([label, value]) => field(list, label, value));
       detailContent.append(list);
       if (occurrenceState.lastTaskId) {
@@ -2266,11 +2275,12 @@ APP_JS = b"""(() => {
         if (grant.active === true || grant.status === 'active') {
           detailContent.append(actionButton('Revoke unattended execution', () =>
             confirmAutomationGrantRevoke(item, grant, configuration)));
-        } else if (latestPreview && latestPreview.current === true && latestPreview.status === 'previewed') {
+        } else if (grantEligibility.eligible === true) {
           detailContent.append(actionButton('Grant unattended execution', () =>
-            confirmAutomationGrant(item, configuration, latestPreview.previewId)));
+            confirmAutomationGrant(item, configuration, grantEligibility.previewId)));
         } else {
-          detailContent.append(text('p', 'Unattended grant is unavailable until a current, completed exact Preview is available. Run a fresh Preview and inspect its recovery action.', 'warning'));
+          detailContent.append(text('p', grantEligibility.nextAction ||
+            'Unattended grant is unavailable until the shared eligibility projection permits it.', 'warning'));
         }
       }
       detailContent.append(actionButton('Open managed Configuration', () => renderConfiguration()));
@@ -2342,7 +2352,7 @@ APP_JS = b"""(() => {
     const confirmation = text('div', '', 'choices');
     confirmation.append(text('p', `Grant persistent unattended execution for ${item.id}? ` +
       `This explicitly authorizes only ${mode} over ResourceLibrary ${item.resourceLibraryId}, ` +
-      `scope ${scope}, with at most ${limit} item(s) per run. Reviewed Preview ${previewId || '-'}. It does not authorize overwrite, ` +
+      `scope ${scope}, with at most ${limit} item(s) per run. Exact Preview ${previewId || '-'}. It does not authorize overwrite, ` +
       'delete, fallback operations, or any path outside that scope.'));
     confirmation.append(actionButton('Confirm unattended grant', async () => {
       try {

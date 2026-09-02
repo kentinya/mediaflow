@@ -9,8 +9,20 @@ import unittest
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
+from shutil import copyfile
 from unittest.mock import patch
 
+from mediaflow.application.unattended_execution import (
+    UnattendedExecutionGrantError,
+    UnattendedExecutionGrantService,
+)
+from mediaflow.domain.automation import (
+    AutomationCommand,
+    AutomationJob,
+    AutomationJobStatus,
+    AutomationTaskDefinition,
+    AutomationTaskRunMode,
+)
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
 from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.task_persistence import (
@@ -28,6 +40,86 @@ NOW = datetime(2026, 8, 22, 15, tzinfo=UTC)
 
 
 class MigrationRehearsalTests(unittest.TestCase):
+    @staticmethod
+    def _legacy_definition() -> AutomationTaskDefinition:
+        return AutomationTaskDefinition(
+            "legacy-definition",
+            "Legacy definition",
+            "resource",
+            "incoming",
+            AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+            interval_seconds=60,
+            item_limit=2,
+        )
+
+    def _legacy_database(
+        self, path: Path, *, duplicate_active: bool = False
+    ) -> AutomationTaskDefinition:
+        definition = self._legacy_definition()
+        with closing(sqlite3.connect(path)) as connection:
+            connection.execute(
+                "CREATE TABLE schema_version (component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO schema_version VALUES ('runtime', ?)",
+                (SCHEMA_VERSION - 1,),
+            )
+            connection.execute(
+                """CREATE TABLE unattended_execution_grants (
+                    grant_id TEXT PRIMARY KEY, definition_id TEXT NOT NULL,
+                    resource_library_id TEXT NOT NULL, source_scope TEXT,
+                    run_mode TEXT NOT NULL, max_items_per_run INTEGER NOT NULL,
+                    status TEXT NOT NULL, granting_principal TEXT NOT NULL,
+                    granted_at TEXT NOT NULL, revoking_principal TEXT,
+                    revoked_at TEXT, reason TEXT, definition_fingerprint TEXT NOT NULL,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    configuration_snapshot_version INTEGER NOT NULL
+                )"""
+            )
+            connection.execute(
+                """CREATE TABLE unattended_execution_grant_audit (
+                    audit_id TEXT PRIMARY KEY, grant_id TEXT NOT NULL,
+                    action TEXT NOT NULL, occurred_at TEXT NOT NULL,
+                    actor TEXT, details_json TEXT NOT NULL
+                )"""
+            )
+            row = (
+                "legacy-grant",
+                "legacy-definition",
+                "resource",
+                "incoming",
+                "automatic-organization",
+                2,
+                "active",
+                "legacy-admin",
+                NOW.isoformat(),
+                None,
+                None,
+                None,
+                definition.definition_fingerprint,
+                "revision-legacy",
+                "a" * 64,
+                1,
+            )
+            connection.execute(
+                "INSERT INTO unattended_execution_grants VALUES "
+                " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                row,
+            )
+            if duplicate_active:
+                connection.execute(
+                    "INSERT INTO unattended_execution_grants VALUES "
+                    " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    ("legacy-grant-2", *row[1:]),
+                )
+            connection.execute(
+                "INSERT INTO unattended_execution_grant_audit VALUES (?, ?, ?, ?, ?, ?)",
+                ("legacy-audit", "legacy-grant", "granted", NOW.isoformat(), "legacy-admin", "{}"),
+            )
+            connection.commit()
+        return definition
+
     def _backup(self, root: Path) -> Path:
         source, backup = root / "source.sqlite3", root / "backup.sqlite3"
         with SQLiteTaskRepository(source) as repository:
@@ -101,6 +193,73 @@ class MigrationRehearsalTests(unittest.TestCase):
             self.assertTrue(older.migration_performed)
             self.assertEqual(hashlib.sha256(backup.read_bytes()).hexdigest(), older_hash)
             self.assertNotEqual(original[1], older_hash)
+            self.assertEqual(list(root.glob(".mediaflow-migration-rehearsal-*")), [])
+
+    def test_schema_30_grant_upgrade_and_legacy_unlinked_grant_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "schema30.sqlite3"
+            definition = self._legacy_database(source)
+            backup = root / "schema30.backup.sqlite3"
+            SQLiteBackupService(source).backup(backup)
+            rehearsal = SQLiteMigrationRehearsalService(backup).rehearse()
+            self.assertEqual(
+                (rehearsal.source_schema, rehearsal.target_schema), (30, SCHEMA_VERSION)
+            )
+            upgraded = root / "upgraded.sqlite3"
+            copyfile(backup, upgraded)
+            with SQLiteTaskRepository(upgraded) as repository:
+                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
+                loaded = repository.get_unattended_execution_grant("legacy-grant")
+                self.assertIsNotNone(loaded)
+                self.assertIsNone(loaded.preview_id)
+                job = AutomationJob(
+                    "legacy-job",
+                    AutomationCommand.ORGANIZE,
+                    AutomationJobStatus.PENDING,
+                    NOW,
+                    NOW,
+                    limit=2,
+                    definition_id=definition.definition_id,
+                    definition_fingerprint=definition.definition_fingerprint,
+                    definition_version=1,
+                    run_mode=definition.mode,
+                    resource_library_id=definition.resource_library_id,
+                    source_scope=definition.source_scope,
+                    configuration_snapshot_id="revision-legacy",
+                    configuration_snapshot_digest="a" * 64,
+                    configuration_snapshot_version=1,
+                )
+                service = UnattendedExecutionGrantService(
+                    repository,
+                    preview_service=object(),
+                )
+                with self.assertRaises(UnattendedExecutionGrantError) as failure:
+                    service.authorize(job, definition)
+                self.assertEqual(failure.exception.code, "unattended_execution_preview_missing")
+
+    def test_migration_failure_keeps_schema30_source_atomic(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            broken = root / "broken-schema30.sqlite3"
+            self._legacy_database(broken, duplicate_active=True)
+            before = hashlib.sha256(broken.read_bytes()).hexdigest()
+            with self.assertRaises(sqlite3.IntegrityError):
+                SQLiteMigrationRehearsalService(broken).rehearse()
+            self.assertEqual(hashlib.sha256(broken.read_bytes()).hexdigest(), before)
+            with closing(sqlite3.connect(broken)) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT version FROM schema_version WHERE component='runtime'"
+                    ).fetchone()[0],
+                    SCHEMA_VERSION - 1,
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM unattended_execution_grants WHERE status='active'"
+                    ).fetchone()[0],
+                    2,
+                )
             self.assertEqual(list(root.glob(".mediaflow-migration-rehearsal-*")), [])
 
     def test_invalid_backups_fail_without_rehearsal_residue(self) -> None:
