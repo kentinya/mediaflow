@@ -51,8 +51,9 @@ class AutomationDefinitionOccurrenceService:
         """Project a bounded definition page with bulk state lookups.
 
         SQLite supplies one bounded due-state query and one bounded latest-row
-        query for the page.  Small test doubles without those optional bulk
-        methods retain the single-definition fallback.
+        query for the page. Grant state is read in bounded ID chunks. Small
+        test doubles without those optional bulk methods retain the
+        single-definition fallback.
         """
 
         values = list(definitions)
@@ -85,13 +86,10 @@ class AutomationDefinitionOccurrenceService:
                 latest_values = {}
         grants = {}
         if self._unattended_grants is not None:
-            try:
-                grants = self._unattended_grants.project_many(
-                    values,
-                    configuration=configuration,
-                )
-            except (TypeError, ValueError):
-                grants = {}
+            grants = self._unattended_grants.project_many(
+                values,
+                configuration=configuration,
+            )
         return [
             self.project_definition(
                 item,
