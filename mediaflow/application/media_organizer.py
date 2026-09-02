@@ -9,6 +9,10 @@ from mediaflow.application.attachments import AttachmentDiscovery, AttachmentPla
 from mediaflow.application.conflict_resolution import ConflictResolver
 from mediaflow.application.duplicates import apply_hash_duplicate_detection
 from mediaflow.application.evidence_capture import build_pipeline_evidence
+from mediaflow.application.failure_explanation import (
+    classify_failure,
+    sanitize_execution_errors,
+)
 from mediaflow.application.library_pipeline import MediaLibraryResolver, ResourceLibraryScanner
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
 from mediaflow.application.strategy_test import StrategyTestResult, StrategyTestRunner
@@ -21,6 +25,7 @@ from mediaflow.application.workflow_retry import (
 )
 from mediaflow.domain.classification import ClassificationStatus
 from mediaflow.domain.classification_review import ClassificationSelection
+from mediaflow.domain.failure import FailureExplanation
 from mediaflow.domain.history import OperationHistoryRecord, OperationHistoryRepository
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.logging import Logger, LogLevel
@@ -30,6 +35,7 @@ from mediaflow.domain.metadata_correction import MetadataCorrectionSelection
 from mediaflow.domain.metadata_review import MetadataSelection
 from mediaflow.domain.organizer import (
     ConflictStrategy,
+    ConflictType,
     ExecutionResult,
     ExecutionStatus,
     OrganizePlan,
@@ -56,12 +62,14 @@ class MediaOrganizerItemResult:
     error: str | None = None
     retry_events: tuple[RetryEvent, ...] = ()
     evidence: PipelineEvidence | None = None
+    failure: FailureExplanation | None = None
 
 
 @dataclass(frozen=True)
 class MediaOrganizerBatchResult:
     items: tuple[MediaOrganizerItemResult, ...]
     scan_errors: tuple[ScanError, ...] = ()
+    bound_reached: bool = False
 
     @property
     def total(self) -> int:
@@ -132,6 +140,7 @@ class MediaOrganizerService:
         recognition_selections: dict[tuple[str, str], RecognitionSelection] | None = None,
         metadata_corrections: dict[tuple[str, str], MetadataCorrectionSelection] | None = None,
         secret_free_errors: bool = False,
+        persist_failure_explanations: bool = False,
         before_execute: Callable[[], object] | None = None,
     ) -> None:
         self._strategy = strategy
@@ -157,6 +166,7 @@ class MediaOrganizerService:
         self._recognition_selections = recognition_selections or {}
         self._metadata_corrections = metadata_corrections or {}
         self._secret_free_errors = secret_free_errors
+        self._persist_failure_explanations = persist_failure_explanations
         self._before_execute = before_execute
 
     def process_file(
@@ -352,6 +362,29 @@ class MediaOrganizerService:
                     plan, type_policy.organize_policy, resolved_library.storage
                 )
             if replacement is None:
+                if self._persist_failure_explanations and any(
+                    conflict.type is ConflictType.UNKNOWN for conflict in plan.conflicts
+                ):
+                    return self._failed(
+                        source,
+                        strategy,
+                        "Storage state could not be verified",
+                        tracked_item,
+                        retry_events,
+                        plan=plan,
+                        stage="storage",
+                    )
+                if plan.status is PlanStatus.INVALID or any(
+                    conflict.type is ConflictType.INVALID_DESTINATION for conflict in plan.conflicts
+                ):
+                    return self._failed(
+                        source,
+                        strategy,
+                        "invalid destination",
+                        tracked_item,
+                        retry_events,
+                        plan=plan,
+                    )
                 item = MediaOrganizerItemResult(source, strategy, plan, retry_events=retry_events)
                 item = self._attach_evidence(item, tracked_item)
                 self._record(item, tracked_item, persist_evidence=False)
@@ -376,11 +409,14 @@ class MediaOrganizerService:
                     else plan.target
                 ),
             )
-            if self._secret_free_errors and execution.errors:
-                execution = replace(
-                    execution,
-                    errors=tuple("workflow execution failed" for _ in execution.errors),
-                )
+            failure = None
+            if execution.errors or execution.status in {
+                ExecutionStatus.FAILED,
+                ExecutionStatus.PARTIAL,
+            }:
+                failure = classify_failure(execution=execution)
+                if self._secret_free_errors:
+                    execution = sanitize_execution_errors(execution, failure)
             self._log(
                 LogLevel.INFO,
                 "organize plan processed",
@@ -390,7 +426,13 @@ class MediaOrganizerService:
                 execution_status=execution.status.value,
             )
             item = MediaOrganizerItemResult(
-                source, strategy, plan, execution, retry_events=retry_events
+                source,
+                strategy,
+                plan,
+                execution,
+                error=(failure.message if failure and self._persist_failure_explanations else None),
+                retry_events=retry_events,
+                failure=failure if self._persist_failure_explanations else None,
             )
             return self._complete(item, tracked_item)
         except RetryInterrupted:
@@ -455,14 +497,49 @@ class MediaOrganizerService:
         skip_sources: set[tuple[str, str]] | None = None,
     ) -> MediaOrganizerBatchResult:
         items: list[MediaOrganizerItemResult] = []
+        selected_count = 0
+        bound_reached = False
         cancellation = CancellationToken()
         self._log(LogLevel.INFO, "library scan started", library_id=library.library_id)
 
         def discovered(file) -> None:
+            nonlocal selected_count, bound_reached
             if cancellation_check and cancellation_check():
                 cancellation.cancel()
                 return
             if file.status is not FileScanStatus.READY:
+                if (
+                    file.status is FileScanStatus.UNSTABLE
+                    and self._task_coordinator
+                    and self._task_id
+                    and self._persist_failure_explanations
+                ):
+                    relative_display_path = file.path
+                    library_root = library.root_path.strip("/")
+                    if library_root and file.path.startswith(f"{library_root}/"):
+                        relative_display_path = file.path[len(library_root) + 1 :]
+                    source = posixpath.join(
+                        self._source_display_roots.get(library.library_id, library.root_path),
+                        relative_display_path,
+                    )
+                    tracked = self._task_coordinator.begin_item(
+                        self._task_id,
+                        library.storage_id,
+                        library.library_id,
+                        file.path,
+                        source,
+                    )
+                    failure = classify_failure(stage="scanning")
+                    items.append(
+                        self._complete(
+                            MediaOrganizerItemResult(
+                                source,
+                                error=failure.message,
+                                failure=failure,
+                            ),
+                            tracked,
+                        )
+                    )
                 return
             if (library.storage_id, file.path) in (skip_sources or set()):
                 return
@@ -474,6 +551,7 @@ class MediaOrganizerService:
                 self._source_display_roots.get(library.library_id, library.root_path),
                 relative_display_path,
             )
+            selected_count += 1
             items.append(
                 self.process_file(
                     source,
@@ -484,7 +562,8 @@ class MediaOrganizerService:
             )
             if progress:
                 progress(len(items), limit, source)
-            if limit is not None and len(items) >= limit:
+            if limit is not None and selected_count >= limit:
+                bound_reached = True
                 cancellation.cancel()
 
         scan = self._scanner.scan(library, cancellation=cancellation, on_discovered=discovered)
@@ -495,7 +574,7 @@ class MediaOrganizerService:
             files=len(items),
             errors=len(scan.errors),
         )
-        return MediaOrganizerBatchResult(tuple(items), scan.errors)
+        return MediaOrganizerBatchResult(tuple(items), scan.errors, bound_reached)
 
     def process_all_libraries(
         self,
@@ -538,7 +617,11 @@ class MediaOrganizerService:
             cancellation_check=cancellation_check,
         )
         errors = tuple(error for result in batch.results for error in result.errors)
-        return MediaOrganizerBatchResult(tuple(items), errors)
+        return MediaOrganizerBatchResult(
+            tuple(items),
+            errors,
+            limit is not None and batch.discovered >= limit,
+        )
 
     def _failed(
         self,
@@ -547,9 +630,22 @@ class MediaOrganizerService:
         error: str | Exception,
         tracked_item: PersistentTaskItem | None = None,
         retry_events: tuple[RetryEvent, ...] = (),
+        *,
+        plan: OrganizePlan | None = None,
+        stage: str | None = None,
     ) -> MediaOrganizerItemResult:
-        message = self._failure_message(error)
-        item = MediaOrganizerItemResult(source, strategy, error=message, retry_events=retry_events)
+        failure = classify_failure(error, strategy=strategy, stage=stage)
+        message = (
+            failure.message if self._persist_failure_explanations else self._failure_message(error)
+        )
+        item = MediaOrganizerItemResult(
+            source,
+            strategy,
+            plan,
+            error=message,
+            retry_events=retry_events,
+            failure=failure if self._persist_failure_explanations else None,
+        )
         self._log(LogLevel.ERROR, "media workflow failed", source=source, error=message)
         return self._complete(item, tracked_item)
 

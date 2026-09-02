@@ -241,10 +241,8 @@ class PersistentTaskCoordinator:
     def complete_item(self, item: PersistentTaskItem, result: MediaOrganizerItemResult) -> None:
         now = datetime.now(UTC)
         execution = result.execution
-        if result.error:
-            status = TaskItemStatus.FAILED
-        elif execution is None:
-            status = TaskItemStatus.SKIPPED
+        if execution is None:
+            status = TaskItemStatus.FAILED if result.error else TaskItemStatus.SKIPPED
         else:
             status = {
                 ExecutionStatus.SUCCESS: TaskItemStatus.SUCCESS,
@@ -253,6 +251,8 @@ class PersistentTaskCoordinator:
                 ExecutionStatus.FAILED: TaskItemStatus.FAILED,
                 ExecutionStatus.SKIPPED: TaskItemStatus.SKIPPED,
             }[execution.status]
+            if result.error and status not in {TaskItemStatus.PARTIAL, TaskItemStatus.FAILED}:
+                status = TaskItemStatus.FAILED
         plan = result.plan
         completed = replace(
             item,
@@ -267,8 +267,12 @@ class PersistentTaskCoordinator:
                 plan.destination_location.path if plan and plan.destination_location else None
             ),
             execution_status=execution.status.value if execution else None,
-            error=result.error
-            or ("; ".join(execution.errors) if execution and execution.errors else None),
+            error=(
+                result.failure.encode()
+                if result.failure is not None
+                else result.error
+                or ("; ".join(execution.errors) if execution and execution.errors else None)
+            ),
         )
         try:
             atomic = getattr(self.repository, "complete_item_with_evidence", None)
@@ -490,7 +494,13 @@ class PersistentTaskCoordinator:
             execution.completed_operations if execution else (),
             len(plan.attachment_plans) if plan else 0,
             len(result.retry_events),
-            result.retry_events[-1].category.value if result.retry_events else None,
+            (
+                result.failure.category
+                if result.failure is not None
+                else result.retry_events[-1].category.value
+                if result.retry_events
+                else None
+            ),
             execution.cleanup_status.value if execution else None,
             len(execution.cleanup_steps) if execution else 0,
             effect_certainty,

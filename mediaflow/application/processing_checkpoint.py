@@ -7,6 +7,7 @@ import json
 from collections.abc import Callable
 
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
+from mediaflow.domain.failure import decode_failure_explanation
 from mediaflow.domain.manual_safety import redact_evidence_text
 from mediaflow.domain.processing_checkpoint import (
     CheckpointAction,
@@ -93,6 +94,67 @@ class ProcessingCheckpointService:
 
     def summary(self, item_id: str, *, task_id: str | None = None) -> dict[str, object]:
         return self.get(item_id, task_id=task_id).summary()
+
+    def summaries_for_items(
+        self,
+        item_ids,
+        *,
+        result_limit: int = 32,
+        audit_limit: int = 64,
+        include_explanation: bool = False,
+    ) -> dict[str, dict[str, object]]:
+        """Project a bounded item set through the same checkpoint implementation.
+
+        The repository bulk seam keeps an Automation occurrence page from issuing one
+        top-level checkpoint read per attention item. Compatibility repositories can
+        fall back to their existing single-item reader without changing the projection.
+        """
+
+        values = tuple(dict.fromkeys(str(item_id) for item_id in item_ids if str(item_id)))
+        if len(values) > 10_000:
+            raise ValueError("checkpoint bulk item limit must be between 1 and 10000")
+        if not values:
+            return {}
+        reader = getattr(self._repository, "get_processing_checkpoint_contexts", None)
+        if callable(reader):
+            try:
+                contexts = reader(
+                    values,
+                    result_limit=result_limit,
+                    audit_limit=audit_limit,
+                )
+            except TypeError:
+                contexts = reader(values)
+            projected = {
+                item_id: self._project(context)
+                for item_id, context in contexts.items()
+                if context is not None
+            }
+        else:
+            projected = {
+                item_id: self.get(item_id, result_limit=result_limit, audit_limit=audit_limit)
+                for item_id in values
+            }
+        return {
+            item_id: self._summary_value(checkpoint, include_explanation=include_explanation)
+            for item_id, checkpoint in projected.items()
+        }
+
+    @staticmethod
+    def _summary_value(checkpoint, *, include_explanation: bool) -> dict[str, object]:
+        value = checkpoint.summary()
+        if include_explanation:
+            value["failure_explanation"] = (
+                checkpoint.failure.document() if checkpoint.failure else None
+            )
+            value["next_action"] = (
+                checkpoint.failure.next_action
+                if checkpoint.failure
+                else checkpoint.actions[0].label
+                if checkpoint.actions
+                else checkpoint.refusal_reason
+            )
+        return value
 
     def _context(
         self, item_id: str, *, result_limit: int, audit_limit: int
@@ -297,10 +359,11 @@ class ProcessingCheckpointService:
         current_continuation = recovery_continuations[0] if recovery_continuations else None
         latest = results[0] if results else None
         prior = results[1:]
+        failure = decode_failure_explanation(item.error) or (latest.failure if latest else None)
         certainty = latest.effect_certainty if latest else EffectCertainty.UNKNOWN
         completed = latest.completed_operations if latest else ()
         uncertain = latest.uncertain_effects if latest else ()
-        error_category = _error_category(item_status, item.stage, latest)
+        error_category = _error_category(item_status, item.stage, latest, failure)
         blocker = _select_blocker(item_status, blockers)
         configuration = self._configuration(
             task.configuration_snapshot_id, task.configuration_snapshot_digest
@@ -314,6 +377,7 @@ class ProcessingCheckpointService:
             raw_stage=_bounded(item.stage),
             recovery_request=active_request,
             recovery_continuation=current_continuation,
+            failure=failure,
         )
         payload = {
             "task_id": item.task_id,
@@ -349,6 +413,7 @@ class ProcessingCheckpointService:
             "recovery_continuation": (
                 current_continuation.document() if current_continuation is not None else None
             ),
+            "failure": failure.document() if failure else None,
         }
         checkpoint_version = hashlib.sha256(
             json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
@@ -383,6 +448,7 @@ class ProcessingCheckpointService:
             refusal_reason=refusal,
             checkpoint_version=checkpoint_version,
             updated_at=item.updated_at,
+            failure=failure,
         )
 
     def _configuration(
@@ -434,6 +500,7 @@ class ProcessingCheckpointService:
             error_category=_result_error_category(value, certainty),
             retry_attempts=value.retry_attempts,
             cleanup_status=_bounded(value.cleanup_status),
+            failure=decode_failure_explanation(getattr(value, "error", None)),
         )
 
     @staticmethod
@@ -458,6 +525,7 @@ class ProcessingCheckpointService:
             "completed_operations": list(value.completed_operations),
             "retry_attempts": value.retry_attempts,
             "cleanup_status": value.cleanup_status,
+            "failure": value.failure.document() if value.failure else None,
         }
 
     @staticmethod
@@ -687,6 +755,10 @@ def _select_blocker(
 
 def _result_error_category(value, certainty: EffectCertainty) -> ErrorCategory:
     retry_category = str(getattr(value, "retry_category", "") or "")
+    try:
+        return ErrorCategory(retry_category)
+    except ValueError:
+        pass
     if retry_category == "timeout":
         return ErrorCategory.TIMEOUT
     if retry_category in {"connection", "rate_limited", "provider_unavailable"}:
@@ -700,11 +772,20 @@ def _result_error_category(value, certainty: EffectCertainty) -> ErrorCategory:
 
 
 def _error_category(
-    status: TaskItemStatus, raw_stage: str, latest: CheckpointResult | None
+    status: TaskItemStatus,
+    raw_stage: str,
+    latest: CheckpointResult | None,
+    failure=None,
 ) -> ErrorCategory:
     status = _item_status(status)
     if status not in {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL}:
         return ErrorCategory.NONE
+    if failure is not None:
+        try:
+            return ErrorCategory(failure.category)
+        except ValueError:
+            if failure.category.startswith("unattended_"):
+                return ErrorCategory.UNATTENDED_AUTHORITY
     if latest is not None and latest.error_category is not ErrorCategory.NONE:
         return latest.error_category
     mapped = _RAW_STAGE_MAP.get(raw_stage)
@@ -727,6 +808,7 @@ def _actions(
     raw_stage: str = "",
     recovery_request=None,
     recovery_continuation=None,
+    failure=None,
 ) -> tuple[RetrySafety, tuple[CheckpointAction, ...], str | None]:
     status = _item_status(status)
     if status in {
@@ -739,6 +821,36 @@ def _actions(
         if status is TaskItemStatus.DRY_RUN:
             reason = "replay_not_offered: DryRun produced no mutation and is already recorded"
         return RetrySafety.UNSAFE, (), reason
+    if failure is not None:
+        if failure.retry_safe:
+            return (
+                RetrySafety.SAFE,
+                (
+                    CheckpointAction(
+                        "retry",
+                        failure.next_action,
+                        True,
+                        "task_recovery",
+                        None,
+                        True,
+                    ),
+                ),
+                None,
+            )
+        return (
+            RetrySafety.UNSAFE,
+            (
+                CheckpointAction(
+                    "investigate",
+                    failure.next_action,
+                    False,
+                    "none",
+                    None,
+                    False,
+                ),
+            ),
+            failure.next_action,
+        )
     if blocker is not None:
         action = CheckpointAction(
             f"resolve_{blocker.kind}",

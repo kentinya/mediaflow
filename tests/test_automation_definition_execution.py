@@ -34,6 +34,7 @@ from mediaflow.domain.automation import (
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.notification import NotificationEventType
+from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from mediaflow.final_cli import _run_queued_workflow
@@ -726,6 +727,96 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 (root / "source" / "Media" / "incoming" / "C" / "Charlie.Movie.2024.mkv").exists()
             )
             self.assertEqual(len(list((root / "target").rglob("*.mkv"))), 2)
+
+    def test_unattended_overwrite_collision_waits_without_mutation(self) -> None:
+        definition = _definition(
+            "overwrite-collision",
+            mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
+            limit=1,
+        )
+        base_strategy = smoke_strategy_configuration()
+        overwrite_policies = tuple(
+            replace(
+                type_policy,
+                organize_policy=replace(
+                    type_policy.organize_policy,
+                    conflict_strategy=ConflictStrategy.OVERWRITE,
+                ),
+            )
+            for type_policy in base_strategy.recognition_type_policies
+        )
+        strategy = replace(base_strategy, recognition_type_policies=overwrite_policies)
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "movie-a",
+                    MediaType.MOVIE,
+                    "Alpha Movie",
+                    year=2024,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_file = root / "source/Media/incoming/A/Alpha.Movie.2024.mkv"
+            source_file.parent.mkdir(parents=True)
+            source_file.write_bytes(b"new")
+            existing = root / "target/Movies/Anime/Alpha Movie (2024)/Alpha Movie (2024).mkv"
+            existing.parent.mkdir(parents=True)
+            existing.write_bytes(b"old")
+            configuration = self._configuration(root, definition, strategy=strategy)
+            storages = {
+                "source": LocalStorage("source", str(root / "source")),
+                "target": LocalStorage("target", str(root / "target")),
+            }
+
+            def storage_factory(external=None, storage_ids=None):
+                selected = storages
+                if storage_ids is not None:
+                    selected = {key: value for key, value in storages.items() if key in storage_ids}
+                if external:
+                    selected = {**selected, **external}
+                return selected
+
+            with (
+                SQLiteTaskRepository(configuration.database_path) as repository,
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+            ):
+                job = self._emit(repository, definition)
+                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service.grant(
+                    definition,
+                    configuration_snapshot_id=job.configuration_snapshot_id,
+                    configuration_snapshot_digest=job.configuration_snapshot_digest,
+                    configuration_snapshot_version=job.configuration_snapshot_version,
+                    actor="admin",
+                    confirmation=True,
+                )
+                finished = self._run(
+                    repository,
+                    DefinitionScopedExecutionService(
+                        repository,
+                        file_index,
+                        configuration,
+                        storage_factory=storage_factory,
+                        provider_factory=lambda _ids: MetadataProviderRegistry((provider,)),
+                        strategy_factory=strategy_runner_from_configuration,
+                        history_factory=JsonLinesOperationHistoryRepository,
+                        unattended_grant_service=grant_service,
+                    ),
+                )
+                task = repository.get_task(finished.task_id)
+                self.assertEqual(task.status, PersistentTaskStatus.PARTIAL_SUCCESS)
+                item = repository.list_items(task.task_id)[0]
+                self.assertEqual(item.status, TaskItemStatus.WAITING_CONFIRM)
+                confirmation = repository.list_confirmations()[0]
+                self.assertEqual(confirmation.configured_strategy, ConflictStrategy.OVERWRITE.value)
+                self.assertFalse(confirmation.overwrite_authorized)
+                self.assertEqual(existing.read_bytes(), b"old")
+            self.assertEqual(source_file.read_bytes(), b"new")
 
     def test_revoked_automatic_mode_fails_before_task_and_mutation(self) -> None:
         definition = _definition(

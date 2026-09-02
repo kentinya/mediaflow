@@ -2270,6 +2270,39 @@ APP_JS = b"""(() => {
       detailContent.append(actionButton('Open managed Configuration', () => renderConfiguration()));
       const occurrenceData = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/occurrences?limit=10`);
       detailContent.append(text('h3', 'Scheduled occurrences'));
+      const latestOccurrence = (occurrenceData.items || [])[0] || null;
+      const outcomeSummary = latestOccurrence &&
+        (latestOccurrence.outcomeSummary || latestOccurrence.itemOutcomeSummary) ||
+        item.outcomeSummary || item.itemOutcomeSummary || null;
+      detailContent.append(text('h3', 'Per-item outcome summary'));
+      if (outcomeSummary && typeof outcomeSummary === 'object') {
+        const counts = outcomeSummary.statusCounts || outcomeSummary.counts || {};
+        detailContent.append(cards(Object.entries(counts).map(([key, value]) => [key, value])));
+        const bound = outcomeSummary.bound && typeof outcomeSummary.bound === 'object' ?
+          outcomeSummary.bound : {};
+        detailContent.append(text('p', bound.statement ||
+          'Bound state was not published for this occurrence.', 'warning'));
+        const attention = Array.isArray(outcomeSummary.attention) ? outcomeSummary.attention : [];
+        detailContent.append(text('h4', `Items needing attention (${attention.length}; display limit ${outcomeSummary.attentionLimit || 32})`));
+        if (attention.length) {
+          detailContent.append(table(
+            ['Task item', 'Status', 'Stage', 'Blocker', 'Effect certainty', 'Retry safety', 'Failure category', 'Next action'],
+            attention.map(value => [value.itemId, value.status, value.stage || '-',
+              value.blockerKind ? `${value.blockerKind}:${value.blockerId || '-'}` : '-',
+              value.effectCertainty || 'unknown', value.retrySafety || 'unknown',
+              value.failureExplanation && value.failureExplanation.category || '-', value.nextAction || '-']),
+            index => showTaskItem(attention[index].taskId, attention[index].itemId)));
+        } else {
+          detailContent.append(text('p', 'No item currently needs an operator decision.'));
+        }
+        if (outcomeSummary.moreAttention === true || outcomeSummary.attentionTruncated === true) {
+          detailContent.append(text('p',
+            `The attention list is capped at ${outcomeSummary.attentionLimit || 32}; more items need review in the linked Task.`,
+            'warning'));
+        }
+      } else {
+        detailContent.append(text('p', 'No per-item outcome summary has been published yet.', 'warning'));
+      }
       const occurrenceRows = (occurrenceData.items || []).map(value => [value.occurrenceId,
         value.occurrenceAt, value.emittedAt, value.jobId, value.taskId || '-', value.configurationRevisionId,
         value.configurationRevisionVersion, value.configurationRevisionDigest,
@@ -2618,6 +2651,15 @@ APP_JS = b"""(() => {
         configuration.resolvable === false ? `NO (${configuration.reason || 'unavailable'})` :
         'NOT DETERMINED');
       field(list, 'Error category', data.error_category);
+      const failure = data.failureExplanation && typeof data.failureExplanation === 'object' ?
+        data.failureExplanation : null;
+      if (failure) {
+        field(list, 'Failure explanation', failure.message || '-');
+        field(list, 'Durable state', failure.durableState || '-');
+        field(list, 'Failure side effects', failure.sideEffects || '-');
+        field(list, 'Failure retry safe', failure.retrySafe === true ? 'YES' : 'NO');
+        field(list, 'Failure next action', failure.nextAction || '-');
+      }
       const effects = data.effects && typeof data.effects === 'object' ? data.effects : {};
       field(list, 'Completed effects', Array.isArray(effects.completed_operations) &&
         effects.completed_operations.length ? effects.completed_operations.join(', ') : 'none');

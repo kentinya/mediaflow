@@ -57,6 +57,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationVersionConflict,
     RuntimeSnapshotUnavailable,
 )
+from mediaflow.domain.failure import failure_document
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_organize import (
     ManualIntentError,
@@ -213,6 +214,7 @@ class MediaFlowApi:
             )
         self._automation_occurrences = AutomationDefinitionOccurrenceService(repository)
         self._automation_occurrences.attach_unattended_grant_service(self._unattended_grants)
+        self._automation_occurrences.attach_checkpoint_service(self._checkpoint_service)
         self._recovery_admission = RecoveryAdmissionService(
             repository,
             snapshot_validator=snapshot_validator,
@@ -1017,7 +1019,7 @@ class MediaFlowApi:
                 {
                     "definitionId": parts[4],
                     "configuration": active.summary(),
-                    "items": [item.document() for item in page],
+                    "items": self._automation_occurrences.project_occurrences(page),
                     "limit": limit,
                     "truncated": has_next,
                     "previous_cursor": self._page_cursor(
@@ -4658,6 +4660,9 @@ class MediaFlowApi:
             "cleanupStatus": result.cleanup_status,
             "error": result.error,
         }
+        explanation = failure_document(result.error)
+        if explanation is not None:
+            document["failureExplanation"] = explanation
         if include_source:
             document["sourceStorageId"] = result.source_storage_id
             document["sourcePath"] = result.source_path
@@ -4728,11 +4733,15 @@ class MediaFlowApi:
     @classmethod
     def _value(cls, value):
         if hasattr(value, "__dataclass_fields__"):
-            return {
+            document = {
                 key: cls._value(item)
                 for key, item in asdict(value).items()
                 if key not in {"claim_token", "scope_path"}
             }
+            explanation = failure_document(document.get("error"))
+            if explanation is not None:
+                document["failureExplanation"] = explanation
+            return document
         if isinstance(value, datetime):
             return value.isoformat()
         if isinstance(value, Enum):

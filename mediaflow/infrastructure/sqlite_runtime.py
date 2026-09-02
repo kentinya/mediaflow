@@ -175,6 +175,17 @@ from mediaflow.domain.unattended_execution import (
 # rewriting existing rows.
 SCHEMA_VERSION = 30
 
+_ATTENTION_TASK_ITEM_STATUSES = (
+    TaskItemStatus.WAITING_CONFIRM.value,
+    TaskItemStatus.WAITING_RECOGNITION.value,
+    TaskItemStatus.WAITING_METADATA.value,
+    TaskItemStatus.WAITING_METADATA_CORRECTION.value,
+    TaskItemStatus.WAITING_CLASSIFICATION.value,
+    TaskItemStatus.FAILED.value,
+    TaskItemStatus.PARTIAL.value,
+    TaskItemStatus.CANCELLED.value,
+)
+
 
 def _canonical_json(value: object) -> str:
     """Compare persisted JSON values without allowing formatting to affect identity."""
@@ -454,6 +465,85 @@ class SQLiteTaskRepository:
             rows = self._connection.execute(query, parameters).fetchall()
         values = tuple(self._item(row) for row in rows)
         return tuple(reversed(values)) if reverse else values
+
+    def list_task_item_status_counts(self, task_ids: Iterable[str]) -> dict[str, dict[str, int]]:
+        """Return bounded status/outcome counts for an occurrence page in bulk."""
+
+        values = tuple(dict.fromkeys(task_ids))
+        if len(values) > 1000:
+            raise ValueError("Task status count page is too large")
+        if any(not isinstance(value, str) or not value.strip() for value in values):
+            raise ValueError("Task ID is required")
+        result = {task_id: {} for task_id in values}
+        if not values:
+            return result
+        placeholders = ", ".join("?" for _ in values)
+        with self._lock:
+            rows = self._connection.execute(
+                f"""SELECT task_id, status, COUNT(*) AS value_count
+                FROM task_items WHERE task_id IN ({placeholders})
+                GROUP BY task_id, status""",
+                values,
+            ).fetchall()
+            outcome_rows = self._connection.execute(
+                f"""WITH latest AS (
+                    SELECT item_id, operation, retry_category,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY item_id ORDER BY created_at DESC, result_id DESC
+                           ) AS row_number
+                    FROM task_results WHERE task_id IN ({placeholders})
+                )
+                SELECT i.task_id,
+                       SUM(CASE WHEN r.operation='NOOP' THEN 1 ELSE 0 END) AS unchanged_count,
+                       SUM(CASE WHEN r.retry_category='unstable_source' THEN 1 ELSE 0 END)
+                           AS unstable_count
+                FROM task_items i JOIN latest r ON r.item_id=i.item_id
+                WHERE i.task_id IN ({placeholders}) AND r.row_number=1
+                GROUP BY i.task_id""",
+                (*values, *values),
+            ).fetchall()
+        for row in rows:
+            result[row["task_id"]][row["status"]] = int(row["value_count"])
+        for row in outcome_rows:
+            result[row["task_id"]]["unchanged"] = int(row["unchanged_count"] or 0)
+            result[row["task_id"]]["__unstable_source"] = int(row["unstable_count"] or 0)
+        return result
+
+    def list_task_items_needing_attention(
+        self,
+        task_ids: Iterable[str],
+        *,
+        limit: int = 33,
+    ) -> dict[str, tuple[PersistentTaskItem, ...]]:
+        """Read a hard-bounded attention window per Task without page N+1 queries."""
+
+        values = tuple(dict.fromkeys(task_ids))
+        if len(values) > 1000:
+            raise ValueError("Task attention page is too large")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("Task attention limit must be between 1 and 100")
+        result = {task_id: () for task_id in values}
+        if not values:
+            return result
+        task_placeholders = ", ".join("?" for _ in values)
+        status_placeholders = ", ".join("?" for _ in _ATTENTION_TASK_ITEM_STATUSES)
+        query = f"""SELECT * FROM (
+            SELECT i.*, ROW_NUMBER() OVER (
+                PARTITION BY task_id ORDER BY updated_at DESC, item_id DESC
+            ) AS row_number
+            FROM task_items i
+            WHERE task_id IN ({task_placeholders})
+              AND status IN ({status_placeholders})
+        ) WHERE row_number <= ? ORDER BY task_id, updated_at DESC, item_id DESC"""
+        with self._lock:
+            rows = self._connection.execute(
+                query,
+                (*values, *_ATTENTION_TASK_ITEM_STATUSES, limit),
+            ).fetchall()
+        grouped: dict[str, list[PersistentTaskItem]] = {task_id: [] for task_id in values}
+        for row in rows:
+            grouped[row["task_id"]].append(self._item(row))
+        return {task_id: tuple(items) for task_id, items in grouped.items()}
 
     def list_failed_items(self, *, limit=100, task_id=None):
         if not 1 <= limit <= 1000:
@@ -1713,6 +1803,229 @@ class SQLiteTaskRepository:
                 raise
             self._connection.commit()
             return context
+
+    def get_processing_checkpoint_contexts(
+        self,
+        item_ids: tuple[str, ...],
+        *,
+        result_limit: int = 32,
+        audit_limit: int = 64,
+    ) -> dict[str, ProcessingCheckpointContext]:
+        """Read a bounded set of checkpoint contexts with fixed-count SQL reads."""
+
+        values = tuple(dict.fromkeys(item_ids))
+        if len(values) > 10_000:
+            raise ValueError("checkpoint context page is too large")
+        if any(not isinstance(value, str) or not value.strip() for value in values):
+            raise ValueError("TaskItem ID is required")
+        if (
+            isinstance(result_limit, bool)
+            or not isinstance(result_limit, int)
+            or not 1 <= result_limit <= 100
+        ):
+            raise ValueError("checkpoint result limit must be between 1 and 100")
+        if (
+            isinstance(audit_limit, bool)
+            or not isinstance(audit_limit, int)
+            or not 1 <= audit_limit <= 200
+        ):
+            raise ValueError("checkpoint audit limit must be between 1 and 200")
+        if not values:
+            return {}
+        placeholders = ", ".join("?" for _ in values)
+        blocker_specs = (
+            ("recognition", "recognition_reviews", "review_id"),
+            ("metadata", "metadata_reviews", "review_id"),
+            ("metadata_correction", "metadata_corrections", "review_id"),
+            ("classification", "classification_reviews", "review_id"),
+            ("conflict", "conflict_confirmations", "confirmation_id"),
+        )
+        blocker_paths = {
+            "recognition": "/api/v1/recognition-reviews/",
+            "metadata": "/api/v1/metadata-reviews/",
+            "metadata_correction": "/api/v1/metadata-corrections/",
+            "classification": "/api/v1/classification-reviews/",
+            "conflict": "/api/v1/confirmations/",
+        }
+        item_audit_specs = (
+            ("task_retry", "task_retry_audit", "decision_id", "decided_at"),
+            ("recognition_retry", "recognition_retry_audit", "decision_id", "decided_at"),
+            ("manual_ignore", "manual_ignore_audit", "decision_id", "decided_at"),
+        )
+        review_audit_specs = (
+            (
+                "recognition_review",
+                "recognition_review_decision_audit",
+                "recognition_reviews",
+            ),
+            ("metadata_review", "metadata_review_decision_audit", "metadata_reviews"),
+            (
+                "metadata_correction",
+                "metadata_correction_decision_audit",
+                "metadata_corrections",
+            ),
+            (
+                "classification_review",
+                "classification_review_decision_audit",
+                "classification_reviews",
+            ),
+        )
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                item_rows = self._connection.execute(
+                    f"SELECT * FROM task_items WHERE item_id IN ({placeholders})", values
+                ).fetchall()
+                task_ids = tuple(dict.fromkeys(row["task_id"] for row in item_rows))
+                task_placeholders = ", ".join("?" for _ in task_ids)
+                task_rows = (
+                    self._connection.execute(
+                        f"SELECT * FROM tasks WHERE task_id IN ({task_placeholders})",
+                        task_ids,
+                    ).fetchall()
+                    if task_ids
+                    else ()
+                )
+                result_rows = self._connection.execute(
+                    f"""SELECT * FROM (
+                        SELECT r.*, ROW_NUMBER() OVER (
+                            PARTITION BY r.item_id
+                            ORDER BY r.created_at DESC, r.result_id DESC
+                        ) AS row_number
+                        FROM task_results r WHERE r.item_id IN ({placeholders})
+                    ) WHERE row_number <= ?
+                    ORDER BY item_id, created_at DESC, result_id DESC""",
+                    (*values, result_limit),
+                ).fetchall()
+                blocker_rows = {}
+                for kind, table, identifier_column in blocker_specs:
+                    blocker_rows[kind] = self._connection.execute(
+                        f"""SELECT blocker_id, task_id, item_id, status, updated_at FROM (
+                            SELECT {identifier_column} AS blocker_id, task_id, item_id, status,
+                                   updated_at,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY item_id
+                                       ORDER BY updated_at DESC, {identifier_column} DESC
+                                   ) AS row_number
+                            FROM {table} WHERE item_id IN ({placeholders})
+                        ) WHERE row_number <= 32
+                        ORDER BY item_id, updated_at DESC, blocker_id DESC""",
+                        values,
+                    ).fetchall()
+                item_audit_rows = {}
+                for kind, table, identifier_column, timestamp_column in item_audit_specs:
+                    item_audit_rows[kind] = self._connection.execute(
+                        f"""SELECT audit_id, item_id, occurred_at, actor FROM (
+                            SELECT {identifier_column} AS audit_id, item_id,
+                                   {timestamp_column} AS occurred_at, actor,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY item_id
+                                       ORDER BY {timestamp_column}, {identifier_column}
+                                   ) AS row_number
+                            FROM {table} WHERE item_id IN ({placeholders})
+                        ) WHERE row_number <= ?
+                        ORDER BY item_id, occurred_at, audit_id""",
+                        (*values, audit_limit),
+                    ).fetchall()
+                review_audit_rows = {}
+                for kind, table, parent_table in review_audit_specs:
+                    review_audit_rows[kind] = self._connection.execute(
+                        f"""SELECT audit_id, item_id, occurred_at, actor FROM (
+                            SELECT a.audit_id, p.item_id, a.decided_at AS occurred_at, a.actor,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY p.item_id
+                                       ORDER BY a.decided_at, a.audit_id
+                                   ) AS row_number
+                            FROM {table} a JOIN {parent_table} p
+                              ON p.review_id = a.review_id
+                            WHERE p.item_id IN ({placeholders})
+                        ) WHERE row_number <= ?
+                        ORDER BY item_id, occurred_at, audit_id""",
+                        (*values, audit_limit),
+                    ).fetchall()
+                recovery_request_rows = self._connection.execute(
+                    f"""SELECT * FROM (
+                        SELECT r.*, ROW_NUMBER() OVER (
+                            PARTITION BY r.item_id
+                            ORDER BY r.requested_at, r.request_id
+                        ) AS row_number
+                        FROM recovery_requests r WHERE r.item_id IN ({placeholders})
+                    ) WHERE row_number <= ?
+                    ORDER BY item_id, requested_at, request_id""",
+                    (*values, audit_limit),
+                ).fetchall()
+                continuation_rows = self._connection.execute(
+                    f"""SELECT * FROM (
+                        SELECT r.*, ROW_NUMBER() OVER (
+                            PARTITION BY r.source_item_id
+                            ORDER BY r.created_at DESC, r.continuation_id DESC
+                        ) AS row_number
+                        FROM recovery_continuations r
+                        WHERE r.source_item_id IN ({placeholders})
+                    ) WHERE row_number <= 32
+                    ORDER BY source_item_id, created_at DESC, continuation_id DESC""",
+                    values,
+                ).fetchall()
+            except BaseException:
+                self._connection.rollback()
+                raise
+            self._connection.commit()
+
+        items = {row["item_id"]: self._item(row) for row in item_rows}
+        tasks = {row["task_id"]: self._task(row) for row in task_rows}
+        results_by_item: dict[str, list[PersistentResultRecord]] = {}
+        for row in result_rows:
+            results_by_item.setdefault(row["item_id"], []).append(self._result(row))
+        blockers_by_item: dict[str, list[CheckpointBlocker]] = {}
+        for kind, rows in blocker_rows.items():
+            for row in rows:
+                blockers_by_item.setdefault(row["item_id"], []).append(
+                    CheckpointBlocker(
+                        kind,
+                        row["blocker_id"],
+                        row["status"],
+                        row["task_id"],
+                        row["item_id"],
+                        blocker_paths[kind] + row["blocker_id"],
+                    )
+                )
+        audits_by_item: dict[str, list[CheckpointAudit]] = {}
+        for kind, rows in (*item_audit_rows.items(), *review_audit_rows.items()):
+            for row in rows:
+                audits_by_item.setdefault(row["item_id"], []).append(
+                    CheckpointAudit(
+                        row["audit_id"],
+                        kind,
+                        datetime.fromisoformat(row["occurred_at"]),
+                        row["actor"],
+                    )
+                )
+        recovery_by_item: dict[str, list[RecoveryRequest]] = {}
+        for row in recovery_request_rows:
+            recovery_by_item.setdefault(row["item_id"], []).append(self._recovery_request(row))
+        continuations_by_item: dict[str, list[RecoveryContinuation]] = {}
+        for row in continuation_rows:
+            continuations_by_item.setdefault(row["source_item_id"], []).append(
+                self._recovery_continuation(row)
+            )
+        return {
+            item_id: ProcessingCheckpointContext(
+                tasks[item.task_id],
+                item,
+                tuple(results_by_item.get(item_id, ())),
+                tuple(blockers_by_item.get(item_id, ())),
+                tuple(
+                    sorted(
+                        audits_by_item.get(item_id, ()),
+                        key=lambda value: (value.occurred_at, value.audit_id),
+                    )[-audit_limit:]
+                ),
+                tuple(recovery_by_item.get(item_id, ())),
+                tuple(continuations_by_item.get(item_id, ())),
+            )
+            for item_id, item in items.items()
+            if item.task_id in tasks
+        }
 
     def _get_processing_checkpoint_context_locked(
         self, item_id: str, *, result_limit: int = 32, audit_limit: int = 64
