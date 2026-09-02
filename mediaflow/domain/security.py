@@ -33,6 +33,7 @@ class ApiPermission(StrEnum):
     READ_SECURITY_AUDIT = "read_security_audit"
     MANAGE_CONFIGURATION = "manage_configuration"
     ACTIVATE_CONFIGURATION = "activate_configuration"
+    GRANT_UNATTENDED_EXECUTION = "grant_unattended_execution"
 
 
 ROLE_PERMISSIONS = {

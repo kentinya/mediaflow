@@ -18,6 +18,10 @@ from mediaflow.application.media_organizer import MediaOrganizerBatchResult, Med
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.scanner import StorageScanner, normalize_resource_root
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
+from mediaflow.application.unattended_execution import (
+    UnattendedExecutionGrantError,
+    UnattendedExecutionGrantService,
+)
 from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationFailureEvidence,
@@ -53,6 +57,7 @@ class DefinitionScopedExecutionService:
         provider_factory: ProviderFactory | None = None,
         strategy_factory: StrategyFactory | None = None,
         history_factory: HistoryFactory | None = None,
+        unattended_grant_service: UnattendedExecutionGrantService | None = None,
         logger=None,
     ) -> None:
         self._repository = repository
@@ -62,6 +67,7 @@ class DefinitionScopedExecutionService:
         self._provider_factory = provider_factory
         self._strategy_factory = strategy_factory
         self._history_factory = history_factory
+        self._unattended_grants = unattended_grant_service
         self._logger = logger
 
     def run(self, job, cancellation_check: Callable[[], bool]) -> str:
@@ -71,17 +77,25 @@ class DefinitionScopedExecutionService:
         resource = self._resolve_resource_library(definition)
         scope_root = self._resolve_scope_root(resource, definition, job)
 
-        # RO-5 is intentionally not implemented in this Task.  This check is
-        # before any adapter or pipeline construction, and before Task creation.
+        authority = None
         if definition.mode is AutomationTaskRunMode.AUTOMATIC_ORGANIZATION:
-            raise self._failure(
-                "unattended_execution_authority_missing",
-                "automatic organization has no separate unattended execution grant; no Task "
-                "was created",
-                False,
-                "keep the definition in scan-and-plan until an explicit unattended grant is "
-                "available",
-            )
+            if self._unattended_grants is None:
+                raise self._failure(
+                    "unattended_execution_authority_missing",
+                    "automatic organization has no separate unattended execution grant; no Task "
+                    "was created",
+                    False,
+                    "review the exact definition bounds and explicitly grant unattended execution",
+                )
+            try:
+                authority = self._unattended_grants.authorize(job, definition)
+            except UnattendedExecutionGrantError as error:
+                raise self._failure(
+                    error.code,
+                    error.durable_state,
+                    error.retry_safe,
+                    error.next_action,
+                ) from error
 
         if cancellation_check():
             raise AutomationCancelled()
@@ -90,7 +104,7 @@ class DefinitionScopedExecutionService:
         coordinator = PersistentTaskCoordinator(self._repository, self._repository)
         task = coordinator.create(
             job.command.value,
-            execute_authorized=False,
+            execute_authorized=authority is not None,
             scope_path=scope_root,
             item_limit=definition.item_limit,
             configuration_snapshot_id=job.configuration_snapshot_id,
@@ -115,6 +129,9 @@ class DefinitionScopedExecutionService:
                     scope_root,
                     source_storages,
                     cancellation_check,
+                    execute=authority is not None,
+                    definition=definition,
+                    job=job,
                 )
         except AutomationCancelled:
             self._cancel_task_if_running(coordinator, task.task_id)
@@ -403,6 +420,10 @@ class DefinitionScopedExecutionService:
         scope_root: str,
         source_storages: Mapping[str, object],
         cancellation_check: Callable[[], bool],
+        *,
+        execute: bool = False,
+        definition=None,
+        job=None,
     ) -> None:
         self._require_file_index()
         if self._provider_factory is None or self._strategy_factory is None:
@@ -450,10 +471,15 @@ class DefinitionScopedExecutionService:
             retry_policy=self._configuration.workflow_retry_policy,
             retry_cancellation_check=workflow_stop,
             secret_free_errors=True,
+            before_execute=(
+                (lambda: self._unattended_grants.assert_live(job, definition))
+                if execute and self._unattended_grants is not None
+                else None
+            ),
         )
         summary = service.process_library(
             scoped,
-            execute=False,
+            execute=execute,
             limit=task.item_limit,
             cancellation_check=workflow_stop,
         )

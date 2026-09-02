@@ -132,6 +132,7 @@ class MediaOrganizerService:
         recognition_selections: dict[tuple[str, str], RecognitionSelection] | None = None,
         metadata_corrections: dict[tuple[str, str], MetadataCorrectionSelection] | None = None,
         secret_free_errors: bool = False,
+        before_execute: Callable[[], object] | None = None,
     ) -> None:
         self._strategy = strategy
         self._scanner = scanner
@@ -156,6 +157,7 @@ class MediaOrganizerService:
         self._recognition_selections = recognition_selections or {}
         self._metadata_corrections = metadata_corrections or {}
         self._secret_free_errors = secret_free_errors
+        self._before_execute = before_execute
 
     def process_file(
         self,
@@ -362,6 +364,8 @@ class MediaOrganizerService:
                     )
                 return item
             plan = replacement
+            if execute and self._before_execute is not None:
+                self._before_execute()
             execution = self._executor.execute(
                 plan,
                 self._storages,
@@ -558,6 +562,9 @@ class MediaOrganizerService:
             return f"storage operation error: {error.code.value}"
         if isinstance(error, RetryExhausted):
             return f"workflow retry exhausted: {error.category.value}"
+        safe_message = getattr(error, "safe_message", None)
+        if isinstance(safe_message, str) and safe_message.strip():
+            return safe_message[:1000]
         return "single-item DryRun analysis failed"
 
     def _complete(

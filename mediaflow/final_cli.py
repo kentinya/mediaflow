@@ -61,6 +61,7 @@ from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_retry import TaskRetryRequestService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
+from mediaflow.application.unattended_execution import UnattendedExecutionGrantService
 from mediaflow.cli import render_strategy_result
 from mediaflow.domain.automation import (
     AutomationCommand,
@@ -2981,6 +2982,7 @@ def _run_definition_scoped_workflow(
             provider_factory=metadata_provider_registry_from_environment,
             strategy_factory=strategy_runner_from_configuration,
             history_factory=JsonLinesOperationHistoryRepository,
+            unattended_grant_service=UnattendedExecutionGrantService(task_repository),
             logger=operational_logger,
         )
         return service.run(job, cancellation_check)
