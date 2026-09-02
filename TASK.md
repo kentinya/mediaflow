@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.3
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 7540581cca98abcc94ccb4ac7d64cd52f238f272
 Difficulty: High
 Test Level: T4
@@ -128,50 +128,50 @@ Frozen in this Task
 
 ## Acceptance Criteria
 
-- [ ] With one enabled interval definition and one enabled Cron+timezone definition in the current
+- [x] With one enabled interval definition and one enabled Cron+timezone definition in the current
       Active revision, a Scheduler tick at a due instant emits exactly one bounded AutomationJob per
       definition, and a tick before the due instant emits none. The emitted Job carries the
       definition id, definition fingerprint/version, occurrence instant, run mode, ResourceLibrary,
       normalized source scope and the definition's item limit as its bound.
-- [ ] Each emitted Job pins the exact configuration revision id, version and digest resolved at the
+- [x] Each emitted Job pins the exact configuration revision id, version and digest resolved at the
       emission boundary. A later Draft edit or a newer activation changes only later occurrences and
       never rewrites a queued or running occurrence's pinned identity.
-- [ ] Emission is atomic and idempotent: due-state advancement, Job insert and occurrence audit
+- [x] Emission is atomic and idempotent: due-state advancement, Job insert and occurrence audit
       commit together or not at all. Two concurrent ticks over the same database, and a tick repeated
       after a simulated process restart mid-emission, produce at most one Job for one
       definition-occurrence pair, with no orphan audit row and no advanced due state without a Job.
-- [ ] Configured active-Job capacity is honored: when capacity is reached nothing is emitted, due
+- [x] Configured active-Job capacity is honored: when capacity is reached nothing is emitted, due
       state does not advance, the definition stays due, and the operator sees a bounded reason with an
       explicit next action. Disabling a definition prevents future emission without deleting existing
       occurrence history.
-- [ ] Missed or coalesced occurrences emit at most one Job per definition per tick and never replay a
+- [x] Missed or coalesced occurrences emit at most one Job per definition per tick and never replay a
       backlog; Cron definitions evaluate in their configured timezone across a DST transition without
       duplicate or skipped occurrences.
-- [ ] The Scheduler performs no scan, Parse, Recognition, Provider, policy, plan, Storage or mutation
+- [x] The Scheduler performs no scan, Parse, Recognition, Provider, policy, plan, Storage or mutation
       work: falsification evidence shows no Storage adapter, Provider registry, Scanner, Parser,
       planner or OrganizePlan object is constructed during a tick, and no Task, TaskItem, Result or
       grant row is created.
-- [ ] A definition-pinned Job is never executed as legacy unscoped work: the existing queued-workflow
+- [x] A definition-pinned Job is never executed as legacy unscoped work: the existing queued-workflow
       consumption path refuses it with bounded secret-free failure evidence (category, durable state,
       side effects, retry safety, next action) rather than running a whole-library scan or preview,
       and no in-flight or completed legacy Job behavior changes.
-- [ ] Fail-closed boundaries each leave durable bounded state and one explicit next action, and never
+- [x] Fail-closed boundaries each leave durable bounded state and one explicit next action, and never
       advance due state on failure: missing/disabled definition, removed or disabled ResourceLibrary,
       unavailable or invalid Active revision, unparsable schedule, duplicate/concurrent tick.
       One definition's failure neither hides nor blocks another definition's emission in the same
       tick.
-- [ ] Occurrence state and audit survive SQLite close/reopen and migration from a schema-28 database
+- [x] Occurrence state and audit survive SQLite close/reopen and migration from a schema-28 database
       with identical identity, instants, pins and outcomes; legacy `automation_schedules`,
       `schedule_audit`, Task 25.1 definition rows and Task 25.2 preview rows are preserved.
-- [ ] The authenticated versioned API and Operator Web Automation surfaces expose the same occurrence
+- [x] The authenticated versioned API and Operator Web Automation surfaces expose the same occurrence
       state, next run, pinned identity, failure reason and next action under the same RBAC and error
       contract; a read-only principal can inspect occurrence state, view load issues no mutating
       request, and projections are bounded, deterministic and secret-free.
-- [ ] Legacy `/api/v1/schedules`, `IntervalScheduler.tick` for `ScheduleDefinition`,
+- [x] Legacy `/api/v1/schedules`, `IntervalScheduler.tick` for `ScheduleDefinition`,
       `AutomationJobService.submit`, Worker claim/fencing/cancellation, manual and remote one-shot
       authority and the configuration lifecycle remain compatible, and RecognitionType C behavior is
       untouched by this Task.
-- [ ] Required T4 tests and quality/safety gates pass with actual evidence, and the checkpoint
+- [x] Required T4 tests and quality/safety gates pass with actual evidence, and the checkpoint
       contains only this Task plus necessary focused documentation/test updates.
 
 ## Required Tests
@@ -400,10 +400,11 @@ Head SHA: 0ae6a6e64a0452b2fdb55c297132acbbfe149864
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 7540581cca98abcc94ccb4ac7d64cd52f238f272..9de3a2389eced30bdbe67d9f010d63eff2fa53bc
+         (implementation checkpoint 0ae6a6e64a0452b2fdb55c297132acbbfe149864)
+Decision: PASS
+Slice Required Outcomes all satisfied: NO
+Next: NEXT TASK
 ```
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
