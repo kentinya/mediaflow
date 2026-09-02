@@ -816,9 +816,7 @@ class MediaFlowApi:
                     "grantId": grant.grant_id,
                     "items": [
                         item.document()
-                        for item in self._unattended_grants.list_audit(
-                            grant.grant_id, limit=limit
-                        )
+                        for item in self._unattended_grants.list_audit(grant.grant_id, limit=limit)
                     ],
                     "limit": limit,
                 },

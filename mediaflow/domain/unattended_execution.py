@@ -95,16 +95,14 @@ class UnattendedExecutionGrant:
             object.__setattr__(self, "run_mode", AutomationTaskRunMode.parse(self.run_mode))
         if self.run_mode is not AutomationTaskRunMode.AUTOMATIC_ORGANIZATION:
             raise ValueError("unattended execution grants require automatic-organization mode")
-        if isinstance(self.max_items_per_run, bool) or not isinstance(
-            self.max_items_per_run, int
-        ) or not 1 <= self.max_items_per_run <= self.MAX_ITEM_LIMIT:
-            raise ValueError(
-                "unattended execution maxItemsPerRun must be between 1 and 10000"
-            )
+        if (
+            isinstance(self.max_items_per_run, bool)
+            or not isinstance(self.max_items_per_run, int)
+            or not 1 <= self.max_items_per_run <= self.MAX_ITEM_LIMIT
+        ):
+            raise ValueError("unattended execution maxItemsPerRun must be between 1 and 10000")
         if not isinstance(self.status, UnattendedExecutionGrantStatus):
-            object.__setattr__(
-                self, "status", UnattendedExecutionGrantStatus(self.status)
-            )
+            object.__setattr__(self, "status", UnattendedExecutionGrantStatus(self.status))
         for label, value in (
             ("granting principal", self.granting_principal),
             ("revoking principal", self.revoking_principal),
