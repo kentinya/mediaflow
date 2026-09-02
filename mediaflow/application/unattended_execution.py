@@ -80,6 +80,8 @@ class UnattendedExecutionAuthority:
 class UnattendedExecutionGrantService:
     """Grant/revoke and live authority checks over one repository boundary."""
 
+    _MAX_DEFINITION_IDS_PER_READ = 100
+
     def __init__(
         self,
         repository: UnattendedExecutionGrantRepository,
@@ -288,7 +290,7 @@ class UnattendedExecutionGrantService:
         return self._get(_bounded(grant_id, 128, "grant ID"))
 
     def get_for_definition(self, definition_id: str) -> UnattendedExecutionGrant | None:
-        return self._latest_for_definition(_bounded(definition_id, 128, "definition ID"))
+        return self._current_for_definition(_bounded(definition_id, 128, "definition ID"))
 
     def list(
         self,
@@ -425,7 +427,17 @@ class UnattendedExecutionGrantService:
     ) -> dict[str, dict[str, object]]:
         values = tuple(definitions)
         ids = tuple(_definition(value).definition_id for value in values)
-        grants = {value.definition_id: value for value in self._list(definition_ids=ids, limit=100)}
+        grants = {}
+        unique_ids = tuple(dict.fromkeys(ids))
+        for offset in range(0, len(unique_ids), self._MAX_DEFINITION_IDS_PER_READ):
+            chunk = unique_ids[offset : offset + self._MAX_DEFINITION_IDS_PER_READ]
+            for value in self._list(
+                definition_ids=chunk,
+                limit=self._MAX_DEFINITION_IDS_PER_READ,
+            ):
+                current = grants.get(value.definition_id)
+                if _prefer_grant(value, current):
+                    grants[value.definition_id] = value
         return {
             definition_id: self.project(
                 definition,
@@ -530,7 +542,12 @@ class UnattendedExecutionGrantService:
             getter = getattr(self._repository, "get_unattended_grant", None)
         if not callable(getter):
             return None
-        return getter(grant_id)
+        try:
+            return getter(grant_id)
+        except UnattendedExecutionGrantError:
+            raise
+        except Exception as error:
+            raise self._state_unavailable() from error
 
     def _get_active(self, definition_id):
         getter = getattr(self._repository, "get_active_unattended_execution_grant", None)
@@ -538,14 +555,28 @@ class UnattendedExecutionGrantService:
             getter = getattr(self._repository, "get_active_unattended_grant", None)
         if not callable(getter):
             return None
-        return getter(definition_id)
+        try:
+            return getter(definition_id)
+        except UnattendedExecutionGrantError:
+            raise
+        except Exception as error:
+            raise self._state_unavailable() from error
 
     def _latest_for_definition(self, definition_id):
         getter = getattr(self._repository, "get_latest_unattended_execution_grant", None)
         if callable(getter):
-            return getter(definition_id)
+            try:
+                return getter(definition_id)
+            except UnattendedExecutionGrantError:
+                raise
+            except Exception as error:
+                raise self._state_unavailable() from error
         values = self._list(definition_ids=(definition_id,), limit=1)
         return values[0] if values else None
+
+    def _current_for_definition(self, definition_id):
+        active = self._get_active(definition_id)
+        return active if active is not None else self._latest_for_definition(definition_id)
 
     def _list(self, *, definition_ids=None, limit=100):
         getter = getattr(self._repository, "list_unattended_execution_grants", None)
@@ -553,7 +584,25 @@ class UnattendedExecutionGrantService:
             getter = getattr(self._repository, "list_unattended_grants", None)
         if not callable(getter):
             return ()
-        return getter(definition_ids=definition_ids, limit=limit)
+        try:
+            return tuple(getter(definition_ids=definition_ids, limit=limit))
+        except UnattendedExecutionGrantError:
+            raise
+        except Exception as error:
+            raise self._state_unavailable() from error
+
+    @staticmethod
+    def _state_unavailable() -> UnattendedExecutionGrantError:
+        return UnattendedExecutionGrantError(
+            "unattended execution grant state is unavailable",
+            code="unattended_execution_grant_state_unavailable",
+            status=503,
+            durable_state="grant state could not be read; no execution authority was granted",
+            next_action=(
+                "reload the Automation view and retry; do not treat unavailable grant state "
+                "as no grant"
+            ),
+        )
 
     @staticmethod
     def _invalid(message: str, *, next_action: str = "inspect the grant request and correct it"):
@@ -628,6 +677,22 @@ def _grant_binding(value: UnattendedExecutionGrant) -> tuple[object, ...]:
         value.configuration_snapshot_id,
         value.configuration_snapshot_digest,
         value.configuration_snapshot_version,
+    )
+
+
+def _prefer_grant(
+    candidate: UnattendedExecutionGrant,
+    current: UnattendedExecutionGrant | None,
+) -> bool:
+    """Select the same current grant semantics as the single-definition path."""
+
+    if current is None:
+        return True
+    if candidate.active != current.active:
+        return candidate.active
+    return (candidate.granted_at, candidate.grant_id) > (
+        current.granted_at,
+        current.grant_id,
     )
 
 

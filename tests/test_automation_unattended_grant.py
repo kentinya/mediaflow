@@ -10,6 +10,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from mediaflow.application.automation_definition_occurrence import (
+    AutomationDefinitionOccurrenceService,
+)
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.unattended_execution import (
@@ -259,6 +262,92 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
             self.assertFalse(service.project(disabled)["definitionChangedSinceGrant"])
             self.assertEqual(service.project(replace(disabled, enabled=True))["status"], "active")
 
+    def test_bulk_projection_prefers_active_regrant_like_single_definition_projection(self) -> None:
+        definition = _definition()
+        clock = iter((NOW, NOW.replace(second=1), NOW.replace(second=2))).__next__
+        identifiers = iter(("grant-1", "audit-1", "audit-2", "grant-2", "audit-3")).__next__
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository,
+        ):
+            service = UnattendedExecutionGrantService(
+                repository,
+                clock=clock,
+                id_factory=identifiers,
+            )
+            first = service.grant(
+                definition,
+                configuration_snapshot_id="revision-1",
+                configuration_snapshot_digest="a" * 64,
+                configuration_snapshot_version=1,
+                principal=_principal(),
+                confirmation=True,
+            )
+            service.revoke(first.grant_id, principal=_principal())
+            second = service.grant(
+                definition,
+                configuration_snapshot_id="revision-1",
+                configuration_snapshot_digest="a" * 64,
+                configuration_snapshot_version=1,
+                principal=_principal(),
+                confirmation=True,
+            )
+
+            batched = service.project_many((definition,))[definition.definition_id]
+            single = service.project(definition)
+            self.assertEqual(batched["status"], "active")
+            self.assertEqual(batched["grantId"], second.grant_id)
+            self.assertEqual(batched["grantId"], single["grantId"])
+            self.assertEqual(service.get_for_definition(definition.definition_id), second)
+
+    def test_bulk_projection_chunks_definition_page_and_does_not_hide_read_failure(self) -> None:
+        definitions = tuple(_definition(f"definition-{index:03d}") for index in range(101))
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository,
+        ):
+            service = UnattendedExecutionGrantService(repository, clock=lambda: NOW)
+            grant = service.grant(
+                definitions[0],
+                configuration_snapshot_id="revision-1",
+                configuration_snapshot_digest="a" * 64,
+                configuration_snapshot_version=1,
+                principal=_principal(),
+                confirmation=True,
+            )
+            projected = service.project_many(definitions)
+            self.assertEqual(projected[definitions[0].definition_id]["status"], "active")
+            self.assertEqual(
+                projected[definitions[0].definition_id]["grantId"],
+                grant.grant_id,
+            )
+
+            occurrences = AutomationDefinitionOccurrenceService(repository)
+            occurrences.attach_unattended_grant_service(service)
+            page = occurrences.project_definitions(definitions)
+            self.assertEqual(len(page), 101)
+            self.assertEqual(page[0]["unattendedExecutionGrant"]["status"], "active")
+            self.assertEqual(
+                page[0]["unattendedExecutionGrant"]["grantId"],
+                grant.grant_id,
+            )
+
+        class BrokenGrantRepository:
+            def list_unattended_execution_grants(self, *, definition_ids, limit):
+                raise RuntimeError("private grant database details")
+
+        broken_service = UnattendedExecutionGrantService(BrokenGrantRepository())
+        broken_occurrences = AutomationDefinitionOccurrenceService(BrokenGrantRepository())
+        broken_occurrences.attach_unattended_grant_service(broken_service)
+        with self.assertRaises(UnattendedExecutionGrantError) as failure:
+            broken_occurrences.project_definitions((definitions[0],))
+        self.assertEqual(
+            (failure.exception.code, failure.exception.status),
+            ("unattended_execution_grant_state_unavailable", 503),
+        )
+        self.assertTrue(failure.exception.next_action)
+        self.assertNotIn("private grant database details", str(failure.exception))
+
     def test_schema_29_forward_migration_adds_grants_without_losing_rows(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "runtime.sqlite3"
@@ -401,6 +490,40 @@ class UnattendedGrantApiAndWebTests(unittest.TestCase):
                 self.assertEqual(
                     [item["action"] for item in audit["items"]], ["granted", "revoked"]
                 )
+                status, regranted = _request(
+                    api,
+                    "/api/v1/automation/task-definitions/automatic/grant",
+                    method="POST",
+                    body={
+                        "revisionId": active.revision_id,
+                        "expectedVersion": active.version,
+                        "maxItemsPerRun": 3,
+                        "confirmation": True,
+                    },
+                )
+                self.assertEqual(status, 201, regranted)
+                status, listed = _request(api, "/api/v1/automation/task-definitions")
+                self.assertEqual(status, 200)
+                status, detailed = _request(
+                    api,
+                    "/api/v1/automation/task-definitions/automatic",
+                )
+                self.assertEqual(status, 200)
+                status, state = _request(
+                    api,
+                    "/api/v1/automation/task-definitions/automatic/grant-state",
+                )
+                self.assertEqual(status, 200)
+                list_grant = listed["items"][0]["unattendedExecutionGrant"]
+                detail_grant = detailed["definition"]["unattendedExecutionGrant"]
+                state_grant = state["grant"]
+                for projected in (list_grant, detail_grant, state_grant):
+                    self.assertEqual(projected["status"], "active")
+                    self.assertEqual(projected["grantId"], regranted["grant"]["grantId"])
+                # The Operator Web detail is rendered from the list item payload.
+                web_grant = listed["items"][0]["unattendedExecutionGrant"]
+                self.assertEqual(web_grant["status"], "active")
+                self.assertEqual(web_grant["grantId"], state_grant["grantId"])
 
     def test_web_grant_confirmation_is_distinct_and_explicit(self) -> None:
         script = ASSETS["/ui/app.js"][1].decode("utf-8")
