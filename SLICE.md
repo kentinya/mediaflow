@@ -6,10 +6,10 @@ rules are defined only in [`docs/development-workflow.md`](docs/development-work
 ```text
 Slice ID: 25
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: PASS / CLOSED
 Base SHA: 2cee7cc756b90618f14d5d7b112f974fb445a580
-Implementation Head: NOT SET
-A Final Review: NOT STARTED
+Implementation Head: d4da92879b99f1c44ddd717fba1a26e4b0a73493
+A Final Review: PASS / CLOSED — 2026-09-02
 ```
 
 The Base is the repository HEAD immediately before this Contract was activated. `NOT SET` is the
@@ -225,17 +225,130 @@ B performs one `SLICE FINAL` validation before readiness:
 ## Closure Packet
 
 ```text
-NOT SUBMITTED
+Slice: 25 — Scheduled Automation and Unattended Organization
+Base SHA: 2cee7cc756b90618f14d5d7b112f974fb445a580
+Head SHA: d4da92879b99f1c44ddd717fba1a26e4b0a73493
 
-B completes this section only after every Required Outcome and Required Surface is satisfied and
-the Slice Final validation has been run against one explicit Implementation Head.
+Required Outcomes:
+- RO-1: COMPLETE
+- RO-2: COMPLETE
+- RO-3: COMPLETE
+- RO-4: COMPLETE
+- RO-5: COMPLETE
+- RO-6: COMPLETE
+- RO-7: COMPLETE
+
+Required Surfaces:
+- Managed Automation Task Definition configuration contracts: COMPLETE
+- Durable exact-definition validation/Preview evidence and unattended-grant lifecycle: COMPLETE
+- Shared definition, Preview, grant/revoke, occurrence, execution and history/recovery
+  application services: COMPLETE
+- Immutable configuration, Scheduler, AutomationJob, Worker, Task/TaskItem/Result/Log and
+  Processing Checkpoint boundaries: COMPLETE
+- Existing pipeline, policy, conflict/capability, source-lock, OrganizePlan and OrganizerExecutor
+  authorities without a Scheduler-specific policy or mutation path: COMPLETE
+- Authenticated versioned API and Operator Web Automation management, Preview, authority,
+  occurrence, Result and recovery journey: COMPLETE
+- Domain, persistence/migration, application, Scheduler/Worker, API, Web, RBAC, concurrency,
+  zero-mutation and real-execution safety evidence: COMPLETE
+
+Implemented:
+- Versioned managed Automation Task Definitions with stable identity, bounded ResourceLibrary scope,
+  run mode, schedule/timezone/limits, validation, optimistic edits, audit and immutable Active truth
+- Reloadable exact-definition and exact-snapshot Preview/DryRun evidence with policy ownership,
+  item decisions, destinations, operations, attachments, capability/conflict facts, blockers and
+  stale invalidation under a zero-mutation boundary
+- Atomic idempotent due-occurrence emission with exact definition/configuration pins, capacity,
+  restart/concurrency semantics and Scheduler isolation from Storage, Provider and policy decisions
+- Definition-scoped Worker handoff through the existing Task/TaskItem/Result pipeline for scan-only,
+  scan-and-plan and authorized automatic-organization modes
+- Separate persistent scope/version-bound unattended execution grants with explicit confirmation,
+  grant/revoke audit, invalidation and live revalidation before each not-yet-performed mutation
+- Fail-closed authorized execution across operation capabilities, conflicts, unstable input,
+  Provider/Storage failure, partial or uncertain effects and checkpoint-aware recovery without
+  silent fallback or automatic replay
+- Shared bounded Automation API/Web occurrence summaries with per-item status counts, configured
+  bound visibility, capped attention rows and links to existing TaskItem recovery after reload
+- RecognitionType C preserved through scheduled Preview, planning, execution and Result while
+  downstream A policy ownership remains visible
+
+Tasks completed:
+- 25.1 — Managed Automation Task Definition lifecycle
+- 25.2 — Exact Automation Task Definition validation and Preview evidence
+- 25.3 — Due-occurrence resolution and atomic Automation Job emission
+- 25.4 — Definition-scoped Worker and Task execution handoff
+- 25.5 — Persistent revocable unattended execution grant
+- 25.6 — Fail-closed authorized scheduled organization and per-item outcome/recovery
+- 25.7 — Preview-gated unattended authority and live permission revalidation
+- 25.8 — Per-mutation unattended authority enforcement
+
+Final Tests:
+- Focused authority/execution suite: PASS, 171 tests
+- Related Automation/API/Web/manual execution suite: PASS, 140 tests
+- Full primary-worktree regression: PASS, 1124 tests, 7 skips
+- Full clean-archive regression from the Slice implementation Head: PASS, 1124 tests, 7 skips
+- Ruff lint/format, compileall, pip check, both example configuration validations, forbidden
+  FFprobe/FFmpeg runtime scan, Markdown relative links, private-config scan and Git diff checks: PASS
+- Schema/migration regression: PASS; runtime schema 31; migration required NO
+- Wheel build plus isolated installed-wheel smoke: PASS; supported/runtime schema 31
+- `python -m build`: UNAVAILABLE because this virtualenv has no executable `build.__main__`; the
+  Task-approved `pip wheel --no-deps --no-build-isolation` substitute passed
+- Real Scheduler endurance/process-stop, production SMB/OpenList/S3/R2, Provider credentials and
+  destructive acceptance: SKIP / UNAVAILABLE in this offline environment; no production data,
+  credentials or user media were used
+
+Safety Evidence:
+- Definition reads/edits, validation, Preview, Scheduler emission and Automation history/detail
+  projections remain zero-Storage-mutation; read/refresh paths create no Job, Task, grant, Provider
+  request or Storage probe
+- Scheduler emits only bounded pinned Jobs and owns no Provider, policy, destination, plan or
+  operation decision; only OrganizerExecutor performs Storage mutation
+- Persistent unattended authority remains distinct from scheduling and one-shot authority, is
+  exact definition/version/scope bound, independently revocable and rechecked before each pending
+  Storage mutation, including intra-item attachment, primary, cleanup and rollback boundaries
+- Overwrite, Delete, cleanup, rollback, out-of-scope work and unsupported operation fallback remain
+  denied without their independent authority; Manual/Overwrite conflicts block only affected items
+- Per-item Results/checkpoints preserve successful siblings and known effects; uncertain mutation is
+  investigation-only and retry admission rechecks blockers, interrupted admission, effect certainty
+  and pinned snapshot availability
+- Byte-level temporary-Local operation/conflict tests cover Move/Copy/HardLink/SoftLink,
+  attachments, Skip/Rename/Manual/Overwrite and injected failures with no silent substitution
+- Definition, Preview, grant, Job, Result, checkpoint, audit and API/Web evidence is bounded and
+  secret-free; `config/alist.json` and `config/strategy.json` remain ignored, untracked and unstaged
+
+Known Non-blocking Issues:
+- P3: existing unclosed SQLite connections emit ResourceWarning messages without changing test
+  results
+
+Explicitly Deferred:
+- Unchanged; the Explicitly Deferred capabilities in this Slice Contract remain non-claims
+
+Documentation Reconciliation Needed:
+- A should reconcile the canonical Chinese specification's CURRENT implementation baseline,
+  `docs/product-experience.md`, `docs/architecture.md`, `docs/roadmap.md` and `docs/progress.md` to
+  record the reviewed Slice facts; no Contract or stable requirement scope change is requested
+
+Decision: PASS / CLOSED
 ```
 
 ## A Final Review
 
 ```text
-Reviewed Range: NOT STARTED
-Decision: NOT STARTED
+Reviewed Range: 2cee7cc756b90618f14d5d7b112f974fb445a580..d4da92879b99f1c44ddd717fba1a26e4b0a73493
+Decision: PASS / CLOSED
 P0/P1 Blockers:
-- Not reviewed; Slice is ACTIVE.
+- None.
+Closure Reconciliation:
+- Slice 25 is closed at Base `2cee7cc756b90618f14d5d7b112f974fb445a580` and reviewed
+  Implementation Head `d4da92879b99f1c44ddd717fba1a26e4b0a73493`.
+- `docs/roadmap.md` and `docs/progress.md` now record Slice 25 as PASS / CLOSED with its delivered
+  managed Automation Task Definition, exact Preview, scheduled occurrence, persistent unattended
+  authority, existing-pipeline execution and per-item recovery behavior.
+- The Chinese product specification, Product Experience, Architecture and README now describe the
+  bounded Slice 25 capability as CURRENT. They retain the explicit deferrals for Provider switching,
+  remote guided setup/prechecks, uncertain-effect replay, universal compensation, historical rollback,
+  and other deferred V1 capabilities.
+- Final validation remains truthful: offline full regression and safety/packaging gates pass; real
+  external-service and destructive acceptance gates remain SKIP / UNAVAILABLE and are not promoted
+  into production-service claims.
 ```

@@ -375,9 +375,11 @@ state performs no Storage/Provider work.
 
 This Slice grants no execute, overwrite, delete, cleanup or rollback authority. It does not replay
 uncertain mutations, provide distributed crash recovery, switch Metadata Providers, complete the
-broader Files/Media manual-organize journey or enable scheduled unattended execution. Any future
-real mutation still requires current authority and the normal plan/conflict/capability checks and
-can occur only through OrganizerExecutor.
+broader Files/Media manual-organize journey or enable scheduled unattended execution. Slice 24 and
+Slice 25 subsequently delivered those bounded manual and scheduled journeys; uncertain-mutation
+replay, distributed crash recovery and Provider switching remain deferred. Any real mutation still
+requires current authority and the normal plan/conflict/capability checks and can occur only through
+OrganizerExecutor.
 
 ## A. First-time setup
 
@@ -755,16 +757,20 @@ was never captured, the UI says unavailable rather than fabricating an explanati
 The operator must not join FileIndex, TaskResult, review, or history records manually, decode cursor
 formats, or understand internal pipeline object names.
 
-## I. Scheduled unattended organization (TARGET V1; not implemented)
+## I. Scheduled unattended organization (CURRENT; PASS / CLOSED)
 
-### CURRENT foundation
+### CURRENT implementation
 
-MediaFlow currently has managed immutable configuration snapshots, interval/Cron schedule
-evaluation, durable scan/preview AutomationJobs, a Worker that delegates into the existing media
-Task/TaskItem/Result pipeline, and an independent one-time authorization boundary for protected
-manual/remote organization. Current Scheduler definitions remain scan/preview-only. There is no
-complete operator-managed Automation Task Definition with source scope and persistent unattended
-execution authority, so the journey below must not be presented as CURRENT.
+Slice 25 provides the operator-managed Automation Task Definition journey on top of managed
+immutable configuration snapshots, interval/Cron schedule evaluation, durable AutomationJobs, the
+existing Worker and Task/TaskItem/Result pipeline, and the independent one-time authorization
+boundary for protected manual/remote organization. The implementation is bounded to one configured
+ResourceLibrary and safe Storage-relative source scope, uses persistent exact Preview evidence and
+revocable unattended authority, and is available through the authenticated API and Operator Web.
+
+The implementation is current for the tested local/fake adapter boundary. Production Scheduler
+endurance, process-stop and external SMB/OpenList/S3/R2 service acceptance remain separately
+SKIP / UNAVAILABLE and do not become production compatibility claims.
 
 ### Starting point
 

@@ -8,6 +8,26 @@ workflow authority. Closure rules live only in
 
 ## Most Recently Closed Slice
 
+### Slice 25 — Scheduled Automation and Unattended Organization
+
+```text
+Status: PASS / CLOSED
+Base: 2cee7cc756b90618f14d5d7b112f974fb445a580
+Implementation Head: d4da92879b99f1c44ddd717fba1a26e4b0a73493
+A Final Review: PASS / CLOSED — 2026-09-02
+```
+
+Delivered the bounded operator-managed Automation Task Definition journey: exact validation and
+zero-mutation Preview, idempotent snapshot-pinned scheduled occurrences, persistent revocable
+unattended authority, existing-pipeline execution, per-item Result/checkpoint recovery and
+intra-item live-authority enforcement across API and Operator Web. RecognitionType C, independent
+policy ownership, fail-closed mutation, redaction and no automatic uncertain-effect replay remain
+intact.
+
+Provider switching, remote guided setup/prechecks, scheduled cache/log cleanup, uncertain-effect
+replay, universal compensation, historical rollback and the other explicit Slice deferrals remain
+outside this closed Slice.
+
 ### Slice 24 — Files / Media Detail and Manual Organize
 
 ```text
@@ -61,6 +81,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 | 22.6 — Naming / Classification / Organize configuration | PASS / CLOSED | `7339a8b21b244e57bdb8067f688df91c7dc03280` | `89f064b22be5c1f04ae75bfc0d6fbe72c9147e7d` | A Final Review PASS — 2026-08-29 | Managed policy editing, exact-revision preview, Local read-only destination precheck and checked activation | See `SLICE.md` Explicitly Deferred |
 | 23 — Stage-aware per-item recovery | PASS / CLOSED | `b3083c417849e744b1b9c4629ce9ef312dd194ff` | `26c0450054e4b3d65d6fbf3641d61e022e9561fd` | A Final Review PASS — 2026-08-30 | Durable checkpoints, exact-version admission and independent DryRun single/batch continuation | Manual organization, Provider switching, uncertain/crash replay and unattended execution |
 | 24 — Files / Media detail and manual organize | PASS / CLOSED | `4ff5479d9f4a81906ee52a9f784931b65cd9ab90` | `d2e399803078317f2092d895eae627327998de2f` | A Final Review PASS — 2026-09-01 | Bounded detail/history, exact manual Preview and execution, per-item results and recovery across API/Web | Provider switching, unattended real organization, automatic uncertain/crash replay, universal rollback and remote setup/probing |
+| 25 — Scheduled automation and unattended organization | PASS / CLOSED | `2cee7cc756b90618f14d5d7b112f974fb445a580` | `d4da92879b99f1c44ddd717fba1a26e4b0a73493` | A Final Review PASS / CLOSED — 2026-09-02 | Managed Automation Task Definition, exact Preview, scheduled occurrences, persistent unattended authority, existing-pipeline execution and per-item recovery | Provider switching, remote guided setup/prechecks, scheduled cache/log cleanup, uncertain-effect replay, universal compensation and historical rollback |
 
 Earlier completed delivery and every historical Task/Fix/test/review record remain available in Git
 and the legacy archive. They are intentionally not duplicated here or translated into new Slices.

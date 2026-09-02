@@ -182,9 +182,10 @@ retains its pinned revision identity even after a later activation.
 
 Configuration validation, preview, precheck, and activation grant no media execution authority and
 perform no media mutation. Real execution uses a separate explicit authority boundary, and only
-`OrganizerExecutor` may invoke mutating Storage operations. Provider switching, guided remote
-destination precheck, broader manual organization, and scheduled unattended real organization are
-not current capabilities.
+`OrganizerExecutor` may invoke mutating Storage operations. Provider switching and guided remote
+destination precheck remain outside current capability; the bounded Files/Media manual-organize
+journey and scheduled unattended organization are current capabilities under their separate explicit
+authority boundaries.
 
 ## Configuration and architecture
 
@@ -545,8 +546,14 @@ Configuration-driven API principals, least-privilege roles, and redacted audit a
 The authenticated Operator UI exposes the operational Dashboard, Files, managed Configuration,
 Task/Job/Scheduler/Notification/Log views, and bounded conflict, Recognition, Metadata, and
 Classification review actions through the same application and permission boundaries as the API.
-Database-managed users/login, automatic secret rotation, broader end-to-end per-item recovery, and
-scheduled unattended real organization are not current capabilities.
+Database-managed users/login, automatic secret rotation, broader recovery beyond the delivered
+checkpoint journeys and the remaining remote/provider setup capabilities are not current.
+
+The Automation view also manages the bounded scheduled unattended journey: operators can define a
+ResourceLibrary scope and schedule, validate and Preview the exact definition, explicitly grant or
+revoke persistent unattended authority, and inspect linked occurrences, Tasks, per-item Results and
+recovery. Scheduled work reuses the normal RecognitionType policy chain and remains fail-closed at
+every OrganizerExecutor mutation boundary.
 
 Organizer rollback is an explicit per-policy option and remains disabled by default:
 
