@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.5
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 94044e4d2e7678fc866e4c3400d74e1b41672f8c
 Difficulty: High
 Test Level: T4
@@ -411,11 +411,80 @@ Head SHA: da1355ac45e8457c7ec7b7ca1df5d005c466cdcf
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 94044e4d2e7678fc866e4c3400d74e1b41672f8c..da1355ac45e8457c7ec7b7ca1df5d005c466cdcf
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+Everything else in this Task was independently verified at the reported Head, including the full
+regression (1077 tests, 7 skips, OK on a clean `git archive` tree), the five falsification probes
+required by this Task, a real schema 29 → 30 upgrade of a database built by Task Base code, and every
+quality/safety gate. Only the points below block the Task.
+
+### 1. AC 9 unmet — the list/Web grant projection reports a stale grant after a re-grant (P1)
+
+Where it fails: `mediaflow/application/unattended_execution.py:420-436`. `project_many` builds
+`{value.definition_id: value for value in self._list(definition_ids=ids, limit=100)}` over rows
+ordered `granted_at DESC, grant_id DESC`, so the dict comprehension keeps the **last** row iterated —
+the **oldest** grant for that definition. The single-definition path
+(`get_for_definition` → `get_latest_unattended_execution_grant`, lines 290-291) keeps the **latest**.
+Any definition with grant history therefore projects two different grant states depending on which
+surface the operator opens.
+
+Evidence (run at `da1355a`, no test modified — grant, revoke, re-grant through the real API):
+
+```text
+POST /api/v1/automation/task-definitions/automatic/grant        -> 201
+POST /api/v1/automation/task-definitions/automatic/grant/revoke -> 200
+POST /api/v1/automation/task-definitions/automatic/grant        -> 201 (re-granted)
+
+GET  /api/v1/automation/task-definitions/automatic             -> grant status='active'  grantId='abc2c154…'
+GET  /api/v1/automation/task-definitions                       -> grant status='revoked' grantId='aa9c1882…'
+GET  /api/v1/automation/task-definitions/automatic/grant-state -> grant status='active'
+repository truth: active grant = abc2c154…
+```
+
+The service-level projection diverges on `status`, `active`, `grantId`, `grantedAt`, `revokedAt`,
+`revokingPrincipal`, `reason` and `nextAction`. This reaches the Operator Web as the visible state and
+as the wrong action: `operator_ui.py:2222` renders the detail panel from `items[index]` of the **list**
+payload, `:2246` reads `item.unattendedExecutionGrant`, and `:2262` chooses the button from
+`grant.active === true || grant.status === 'active'` — so the Web shows `Unattended grant: revoked`
+with a `Revoked at` timestamp and offers **"Grant unattended execution"** for a definition whose grant
+is live and will mutate media at the next occurrence. That is the opposite of the state the API detail
+and `grant-state` routes report, and AC 9 requires them to be the same.
+
+Required fix direction: make the batched projection resolve the same grant the single-definition path
+resolves (active when present, otherwise latest) with a bounded read — do not rely on iteration order
+of a multi-row page. Add a regression test that grants, revokes and re-grants one definition, then
+asserts the list projection, the detail projection, `grant-state` and the list-derived Web state all
+report `active` with one identical `grantId`.
+
+### 2. AC 9 unmet — above 100 definitions the list silently reports no grant at all (P1)
+
+Where it fails: `mediaflow/application/unattended_execution.py:428` passes every definition id of the
+page to a repository read bounded at 100 ids (`mediaflow/infrastructure/sqlite_runtime.py:4846-4847`
+raises `ValueError("unattended execution definition page is too large")`), and
+`mediaflow/application/automation_definition_occurrence.py:87-94` swallows that `ValueError` into
+`grants = {}`. The list projection then omits grant state for every definition, and the Web — whose
+detail panel is built from that same payload — shows `Unattended grant: none` and offers
+"Grant unattended execution" for definitions that already hold a live grant.
+
+Evidence (run at `da1355a`, one active grant on `definition-000`):
+
+```text
+100 definitions: project_many -> definition-000 status='active'
+100 definitions: list projection -> definition-000 grant status='active' (repository truth: active)
+101 definitions: project_many raised ValueError: unattended execution definition page is too large
+101 definitions: list projection -> definition-000 grant status=None  (repository truth: active)
+```
+
+Required fix direction: keep the read bounded but complete for the page actually rendered (chunk the
+definition ids against the repository bound instead of sending the whole page in one call), and stop
+degrading a failed grant read into a silent "no grant" display — an unreadable grant state must
+surface as an explicit bounded error with one next action, never as absence of authority. Add a
+regression test that crosses the 100-definition bound and asserts the granted definition still
+projects its active grant.
+
+Fixes remain in this Task: Task ID, Task Base, Goal and Implementation Scope are unchanged. No test,
+assertion or skip may be weakened to close these points.
