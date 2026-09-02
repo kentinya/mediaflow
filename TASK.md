@@ -365,6 +365,8 @@ fake/in-memory Provider and adapter doubles.
   1077 tests, 6 failures, 7 skips.  Failures were the two credential checks, final integration,
   resource-library scan, and two runtime-storage checks; the worktree's ignored
   `.mediaflow/mediaflow.sqlite3` and `config/strategy.json` supplied stale local configuration.
+  The exact 23-test affected set at Task Base, run in a throwaway copy with those ignored files
+  copied in, reproduced the same 6 failures; the clean Task Base run passed the affected set.
   Running the full command at Task Base `94044e4d2e7678fc866e4c3400d74e1b41672f8c` in a clean
   detached worktree produced 1067 tests, 0 failures, 7 skips; the clean `da1355a` worktree also
   produced 1077 tests, 0 failures, 7 skips.
