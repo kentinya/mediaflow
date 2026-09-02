@@ -290,76 +290,101 @@ Provider credentials or user media; temporary Local roots and fake/in-memory ser
 - `mediaflow/application/automation_task_definition_preview.py`
 - `mediaflow/application/unattended_execution.py`
 - `mediaflow/domain/unattended_execution.py`
-- `mediaflow/infrastructure/sqlite_runtime.py`
-- `mediaflow/interfaces/service_api.py`
-- `mediaflow/interfaces/operator_ui.py`
 - `mediaflow/final_cli.py`
+- `mediaflow/infrastructure/sqlite_runtime.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `mediaflow/interfaces/service_api.py`
+- `tests/test_automation_definition_execution.py`
 - `tests/test_automation_preview_grant_gate.py`
-- `tests/test_automation_unattended_grant.py`
 - `tests/test_automation_task_definition_preview.py`
+- `tests/test_automation_unattended_grant.py`
 - `tests/test_configuration_classification.py`
 - `tests/test_configuration_destination.py`
 - `tests/test_configuration_destination_activation.py`
 - `tests/test_configuration_destination_precheck.py`
 - `tests/test_configuration_organize.py`
+- `tests/test_configuration_snapshot.py`
+- `tests/test_migration_rehearsal.py`
+- `tests/test_operator_ui.py`
 
 ### Implemented
 
-- Added shared persisted Preview eligibility checks for unattended grant admission, including exact
-  definition/configuration/ResourceLibrary/Storage/scope/mode/workload binding, zero-mutation and
-  current-state checks, benign non-executable empty/excluded/unstable/truncated evidence, and
-  fail-closed blocker handling.
-- Persisted and projected the exact `previewId` linkage, included it in grant idempotency binding
-  and grant audit evidence, and added the additive runtime schema 31 migration.
-- Added current configured principal permission resolution before automatic Task creation and again
-  immediately before each pending OrganizerExecutor effect; production CLI Worker composition reloads
-  roles/enabled state without resolving or exposing credentials.
-- Updated API and Operator Web grant flows to require and display the exact Preview linkage and
-  current permission state, while keeping revoke independently available and reads mutation-free.
-- Preserved Recognition/Planner/OrganizerExecutor boundaries and updated empty/benign Preview status
-  semantics so exact no-op discovery evidence can be reviewed without becoming item authority.
+- Removed the unlinked Preview admission bypass. Shared Application grant admission now requires an
+  explicit persisted exact Preview, rechecks its binding and executable items, and fails closed when
+  the Preview authority is unavailable; direct legacy callers inject exact fake Preview evidence.
+- Added a read-only shared eligibility projection. API grant-state and grant responses expose the
+  same bounded eligibility, Preview linkage, current-permission state, explanation and recovery
+  action; Web uses that projection for button state, confirmation and reload/revoke presentation.
+- Enforced the configured principal's current `enabled` flag as well as its role permission. API and
+  production Worker admission fail closed for removed, disabled, downgraded, unavailable or malformed
+  authority, and the Worker resolves current authority before each pending OrganizerExecutor effect.
+- Added real production-composition coverage: after the first sibling effect, a configured principal
+  change preserves the first bytes/Result/checkpoint, refuses the next mutation before
+  OrganizerExecutor, records durable recovery evidence, and does not replay after permission restore.
+- Added a real schema-30-to-31 upgrade rehearsal with legacy unlinked-grant fail-closed behavior and
+  atomic duplicate-row rollback coverage. Recognition/Planner/OrganizerExecutor ownership and all
+  zero-mutation paths remain unchanged.
 
 ### Tests and Results
 
-- `./.venv/bin/python -m unittest tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_automation_task_definition_preview tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix tests.test_automation_api tests.test_operator_ui tests.test_api_security tests.test_migration_rehearsal`: PASS, 131 tests.
-- Required affected integration command from this Task: FAIL, 434 tests, 4 failures. The failures are
-  `test_scan_cli_needs_no_path_or_metadata_token`, the two API credential tests, and
-  `test_runtime_configuration_and_final_analyze_cli`;
-  the affected failures were reproduced at Task Base as pre-existing/unrelated. The exact current
-  affected run reported 434 tests and 4 failures.
-- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'`: FAIL, 1101 tests, 6 failures,
-  7 skips. All six failures were reproduced from clean Task Base `e9f9baf24a6616a47ec651f17ef7eed57428cf7d`
-  and are PRE-EXISTING / UNRELATED ignored-local-state failures.
-- Task Base reproduction command in a clean archive: `tests.test_api_credentials
-  tests.test_final_integration tests.test_resource_library_pipeline tests.test_runtime_storage_configuration`:
-  FAIL, 23 tests, 6 failures, same six local-state failures; no Task code was used.
-- `./.venv/bin/ruff check .`: PASS.
-- `./.venv/bin/ruff format --check .`: PASS, 355 files formatted.
-- `./.venv/bin/python -m compileall -q mediaflow tests scripts`: PASS.
-- `./.venv/bin/pip check`: PASS.
-- Both required example configuration validation commands: PASS.
-- Forbidden runtime `ffprobe`/`ffmpeg` scan: PASS, no production Python matches.
-- `./.venv/bin/python -m unittest tests.test_migration_rehearsal`: PASS; schema 31 migration/rehearsal
-  coverage passes and legacy rows remain readable.
-- `./.venv/bin/pip wheel . --no-deps --no-build-isolation` and
-  `scripts/wheel_smoke_test.py`: PASS; supported/runtime schema 31, migration required NO.
-- `./.venv/bin/python -m build`: UNAVAILABLE because this environment has no `build.__main__`;
+- `./.venv/bin/python -m unittest tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_automation_definition_execution tests.test_configuration_snapshot.ManagedConfigurationSnapshotTests.test_worker_rechecks_current_principal_between_real_effect_boundaries tests.test_migration_rehearsal tests.test_operator_ui`: PASS, 81 tests.
+- `./.venv/bin/python -m unittest tests.test_automation_unattended_grant tests.test_automation_task_definition_preview`: PASS, 29 tests.
+- `./.venv/bin/python -m unittest tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix`: PASS, 29 tests.
+- `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui tests.test_api_security`: PASS, 66 tests.
+- Production composition command above: PASS, 1 test. Migration rehearsal `./.venv/bin/python -m unittest tests.test_migration_rehearsal`: PASS, 6 tests.
+- Safety/read-only command
+  `./.venv/bin/python -m unittest tests.test_automation_task_definition_preview.AutomationTaskDefinitionPreviewTests.test_preview_read_paths_and_api_do_not_probe_storage tests.test_automation_task_definition_preview.AutomationTaskDefinitionPreviewTests.test_read_only_storage_guard_refuses_mutation_and_trees_are_identical tests.test_automation_definition_execution.DefinitionScopedExecutionTests.test_revoked_automatic_mode_fails_before_task_and_mutation tests.test_automation_definition_execution.DefinitionScopedExecutionTests.test_unattended_overwrite_collision_waits_without_mutation tests.test_automation_authorized_execution_matrix.AuthorizedOperationMatrixTests.test_unsupported_and_denied_capabilities_fail_before_mutation tests.test_operator_ui.AutomationPreviewWebTests.test_automation_grant_uses_shared_eligibility_projection tests.test_api_security.ApiSecurityTests.test_audit_success_denial_redaction_order_limit_and_source_sanitizing`:
+  PASS, 7 tests; the counting/refusing storage doubles observed no mutation.
+- Credential-canary command
+  `./.venv/bin/python -m unittest tests.test_api_credentials.ApiCredentialTests.test_token_generation_is_one_time_config_free_and_bounded tests.test_api_security.ApiSecurityTests.test_audit_success_denial_redaction_order_limit_and_source_sanitizing tests.test_automation_task_definition_preview.AutomationTaskDefinitionPreviewTests.test_oversized_values_are_bounded_and_redacted_deterministically tests.test_automation_definition_execution.DefinitionScopedExecutionTests.test_authorized_provider_failure_preserves_first_sibling_and_never_auto_replays tests.test_operator_ui.OperatorUiTests.test_assets_are_self_contained_and_credentials_are_memory_only`:
+  PASS, 5 tests; credential-shaped values were absent from the asserted payloads/errors/assets.
+- Required affected integration command from this Task: FAIL, 434 tests, 4 failures:
+  `test_scan_cli_needs_no_path_or_metadata_token`,
+  `test_credential_check_is_redacted_config_only_and_reports_missing`,
+  `test_legacy_credential_status_is_supported_without_secret_output`, and
+  `test_runtime_configuration_and_final_analyze_cli`. These are ignored local config/state failures;
+  they are not claimed as passing.
+- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'`: FAIL, 1112 tests, 6 failures,
+  7 skips. The six are the four above plus `test_storage_check_is_read_only_and_isolates_failures`
+  and `test_storage_list_does_not_construct_or_connect`. A clean Task-Base archive ran the cited
+  four-module reproduction (`tests.test_api_credentials tests.test_final_integration
+  tests.test_resource_library_pipeline tests.test_runtime_storage_configuration`) as PASS, 23 tests.
+  Repeating from a Task-Base archive with copied ignored `config/strategy.json`, `config/alist.json`
+  and `.mediaflow` state reproduced the same six failures; no Task code was used in that reproduction.
+- Quality gates: `./.venv/bin/ruff check .`, `./.venv/bin/ruff format --check .` (355 files),
+  `./.venv/bin/python -m compileall -q mediaflow tests scripts`, `./.venv/bin/pip check`, both
+  required example `config validate` commands, forbidden `ffprobe`/`ffmpeg` runtime scan,
+  Markdown link existence, `git diff --check` and `git diff --cached --check`: PASS.
+- `git check-ignore -v config/alist.json config/strategy.json` and the Task Base..Head credential
+  scan: PASS; both private configuration files remained ignored, untracked and unstaged.
+- Wheel gate: `./.venv/bin/pip wheel . --no-deps --no-build-isolation` plus isolated
+  `scripts/wheel_smoke_test.py`: PASS; supported/runtime schema 31 and migration required NO.
+  `./.venv/bin/python -m build`: UNAVAILABLE because this environment has no `build.__main__`;
   the required pip-wheel substitute passed.
-- `git diff --check`, `git diff --cached --check`, private-config/secret review: PASS;
-  `config/alist.json` and `config/strategy.json` remained ignored, untracked and unstaged.
+- Falsification evidence on throwaway `git archive HEAD` copies: monkeypatching
+  `_require_preview` to return `None` made
+  `AutomationPreviewGrantGateTests.test_missing_preview_is_rejected_without_grant_or_audit` fail
+  with the expected “not raised” assertion (exit 1); returning a stale/blocked fake Preview made
+  `test_blocked_preview_is_rejected_before_persistence` fail likewise (exit 1). Replacing
+  `_assert_current_permission` with unconditional allow made
+  `test_current_permission_is_resolved_at_admission_and_each_effect_boundary` fail with zero
+  authority calls (exit 1). Making `ReadOnlyStorageGuard._reject` a no-op made the read-only guard
+  test fail with eight mutation assertions (exit 1). The real production composition command above
+  observed the first sibling's bytes/Result/checkpoint intact, the second source/destination bytes
+  unchanged and `worker.run_next()` returning `None` after permission restoration (no replay). Its
+  read-only and credential-canary commands passed 7 and 5 tests respectively.
 
 ### Decisions
 
-- The exact Preview identity is part of the grant binding, so a different Preview cannot silently
-  replace an active grant even when the other bounds are equal.
-- Direct legacy application test doubles without injected Preview/permission authorities retain their
-  pre-managed compatibility behavior; API and production Worker composition always inject both
-  authorities and fail closed when either is missing or invalid.
-- Empty, excluded-only, unstable-only and truncated-only Preview discovery is accepted as exact,
-  zero-mutation, non-executable evidence; no such item receives mutation authority.
-- The new Preview linkage uses one nullable additive column and runtime schema 31. Existing legacy
-  grants without linkage are refused by production definition-scoped execution before any Task or
-  Storage effect.
+- The exact Preview identity is part of the grant binding, so another Preview cannot silently replace
+  an active grant. Eligibility is a shared read-only Application projection consumed by API and Web.
+- Production API/Worker composition injects both Preview and current-permission authorities and fails
+  closed when either is absent or invalid. Direct legacy service callers without an injected authority
+  retain compatibility only where the existing non-production contract permits it.
+- Empty, excluded-only, unstable-only and truncated-only discovery evidence remains visible but
+  non-executable; no such item receives mutation authority.
+- Runtime schema 31 adds nullable `preview_id`; legacy grants remain readable but are refused before
+  Task/Storage work when exact Preview linkage is unavailable.
 
 ### Remaining In-Slice Work
 
@@ -368,29 +393,74 @@ review work.
 
 ### Risks / Deviations
 
-- The six full-regression failures are pre-existing/unrelated local configuration-state failures,
-  with clean Task Base reproduction recorded above. They are not claimed as passing.
+- The six full-regression failures are not claimed as passing; only the Task-Base clean archive
+  result and the ignored-local-state reproduction are reported above.
 - Python `ResourceWarning` messages for pre-existing unclosed SQLite connections remain visible but
   did not change test outcomes.
 - Real Scheduler endurance/process-stop, production SMB/OpenList/S3/R2, Provider credentials and
-  destructive acceptance gates were not run in this environment; no production data, credentials or
-  user media were used.
+  destructive acceptance gates were not run; no production data, credentials or user media were used.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 44ac7f8f8e5b03411a026b138e82c22935ef0562
+Head SHA: ea9ed9a62a52a636c8b90360b3e62008b2e97530
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: e9f9baf24a6616a47ec651f17ef7eed57428cf7d..44ac7f8f8e5b03411a026b138e82c22935ef0562
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- Acceptance Criteria 1–3 and 5 are not fail-closed at the shared Application boundary.
+  `UnattendedExecutionGrantService._require_preview()` returns success when both the Preview service
+  and `previewId` are absent (`mediaflow/application/unattended_execution.py:408-409`), and
+  `_assert_persisted_preview()` likewise returns when the service is absent (`:582-584`). Review
+  probe: constructing `UnattendedExecutionGrantService(repository)` and calling `grant(...)` without
+  `previewId` created grant `g` with `preview_id=None` and one audit row. Remove this compatibility
+  bypass: grant admission must require an explicit persisted Preview and unavailable Preview
+  authority must fail closed; update legacy direct callers/tests to inject valid exact Preview
+  evidence rather than permitting an unlinked grant.
+- Acceptance Criteria 7–8 are not implemented through one shared eligibility projection. The Web
+  independently enables the grant action using only `latestPreview.current === true` and
+  `latestPreview.status === 'previewed'`
+  (`mediaflow/interfaces/operator_ui.py:2247-2248,2265-2273`); no Application/API grant-eligibility
+  projection exists, so mismatched Storage/workload/binding conditions can render an enabled action
+  that the grant service rejects. The view also labels an ungranted latest Preview as `Reviewed
+  Preview` (`:2258`). Expose the complete shared Application eligibility/error/recovery result via
+  API and make Web button state, explanation and exact confirmation consume it; add API/Web tests
+  for eligible and each material ineligible binding/race state.
+- Acceptance Criteria 8–10 are not satisfied for disabled principals on the API/Web current-state
+  surface. `_CurrentConfiguredPermissionAuthority.has_permission()` checks roles but not the
+  configured principal's `enabled` flag (`mediaflow/interfaces/service_api.py:100-110`). Review
+  probe with a current managed document containing a disabled admin returned
+  `disabled_principal_allowed=True`. Require enabled current identity for a valid projection and
+  cover removed, disabled, downgraded and unavailable/malformed current authority through the
+  production API projection as well as Worker admission.
+- Acceptance Criteria 9–11 and 16 lack the mandatory non-vacuous execution evidence. The checkpoint
+  changes no production CLI/runtime test module; its new test calls `_ConfiguredPermissionAuthority`
+  and `UnattendedExecutionGrantService.assert_live()` in isolation, while the only existing
+  two-sibling integration test changes grant revocation, not current principal permission
+  (`tests/test_automation_definition_execution.py:1536-1621`). Add production-composition coverage
+  that removes/disables/downgrades the configured granting principal between two real effect
+  boundaries and proves the first sibling bytes/Result/checkpoint remain intact, the next mutation
+  is refused before OrganizerExecutor, recovery is durable and neither sibling is automatically
+  replayed; also cover permission-authority failure before Task creation.
+- Acceptance Criterion 16's schema and falsification evidence is incomplete. Runtime schema changed
+  from 30 to 31, but neither `tests/test_migration_rehearsal.py` nor another Task-Base upgrade test
+  changed; the existing rehearsal only lowers the marker on a database already created with the
+  current schema, so it does not prove a real schema-30 grant migration, legacy unlinked-grant
+  fail-closed behavior or atomic failure rollback. The Completion Report also records none of the
+  required throwaway falsification commands. Add the required real Task-Base migration cases and
+  record all specified Preview-bypass, per-effect-permission, zero-mutation, no-replay, read-only and
+  credential-canary falsification results. Correct the regression report as well: a clean
+  `git archive` of Task Base ran the cited 23 modules/tests as `OK` (23 tests), while running Task-Base
+  code from the primary worktree against its ignored local configuration reproduced six failures;
+  the current claim that the clean archive itself failed is inaccurate.
 
 If `FIX REQUIRED`, only unmet Task blockers are listed below this block. Corrections remain in Task
 25.7. A PASS returns Slice 25 to `READY FOR A REVIEW`; B does not close the Slice.
