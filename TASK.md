@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.3
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 7540581cca98abcc94ccb4ac7d64cd52f238f272
 Difficulty: High
 Test Level: T4
@@ -276,21 +276,125 @@ fake/in-memory Provider and adapter doubles.
 
 ### Changed Files
 
+- `mediaflow/application/automation.py`
+- `mediaflow/application/automation_definition_occurrence.py`
+- `mediaflow/domain/automation.py`
+- `mediaflow/final_cli.py`
+- `mediaflow/infrastructure/runtime_configuration.py`
+- `mediaflow/infrastructure/sqlite_runtime.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `mediaflow/interfaces/pagination.py`
+- `mediaflow/interfaces/service_api.py`
+- `tests/test_automation_api.py`
+- `tests/test_automation_definition_occurrence.py`
+- `tests/test_automation_task_definition_preview.py`
+- `tests/test_classification_review.py`
+- `tests/test_configuration_classification.py`
+- `tests/test_configuration_destination.py`
+- `tests/test_configuration_destination_activation.py`
+- `tests/test_configuration_destination_precheck.py`
+- `tests/test_configuration_organize.py`
+- `tests/test_cron_scheduler.py`
+- `tests/test_execution_authorization.py`
+- `tests/test_metadata_resolution.py`
+- `tests/test_metadata_review.py`
+- `tests/test_notifications.py`
+- `tests/test_processing_checkpoint.py`
+
 ### Implemented
+
+- Added bounded managed-definition due state and occurrence records, canonical definition
+  fingerprints, exact configuration/definition pins on managed Jobs, and additive SQLite schema
+  29 migration support.
+- Extended the existing `IntervalScheduler` authority for interval and Cron+timezone definition
+  occurrences. Emission is capacity-aware, coalesces missed intervals, is concurrency-safe and
+  atomic across due state, Job and occurrence audit publication, and performs no media pipeline or
+  Storage work.
+- Added durable bounded failure reasons/next actions for unavailable Active identity, disabled or
+  missing definitions/ResourceLibraries, invalid schedules, clock rollback, capacity and races.
+- Added a shared read-only occurrence projection, authenticated API list/detail state and cursor
+  listing, and Operator Web next-run, pin, outcome, reason and occurrence history views.
+- Added a fail-closed legacy Worker boundary and legacy Job submission rejection for
+  definition-pinned Jobs; legacy `ScheduleDefinition` behavior remains supported.
 
 ### Tests and Results
 
+- `./.venv/bin/python -m unittest tests.test_automation_definition_occurrence` — PASS (15 tests).
+- `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui tests.test_api_security` — PASS (64 tests).
+- Required affected integration command — FAIL / PRE-EXISTING / UNRELATED (288 run, 1 failure:
+  `test_final_integration.FinalIntegrationTests.test_runtime_configuration_and_final_analyze_cli`).
+  The failure is caused by the ignored workspace `.mediaflow` Managed Active database overriding
+  the test's temporary JSON configuration. The same failure set was reproduced from a clean
+  Task-Base archive with the ignored local configuration/database present.
+- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — FAIL / PRE-EXISTING /
+  UNRELATED (1055 run, 6 failures, 7 skipped). The six failures are the known ignored-local
+  `config/strategy.json` / `.mediaflow` environment cases: two `test_api_credentials`, one
+  `test_final_integration`, one `test_resource_library_pipeline`, and two
+  `test_runtime_storage_configuration`. A Task-Base archive probe of the four affected modules
+  (`git archive 7540581cca98abcc94ccb4ac7d64cd52f238f272` followed by
+  `PYTHONPATH=<archive> /root/mediaflow/.venv/bin/python -m unittest tests.test_api_credentials
+  tests.test_final_integration tests.test_resource_library_pipeline
+  tests.test_runtime_storage_configuration`) reproduced 6 failures in 23 tests; no tests or
+  skips were weakened.
+- Falsification in independent `git archive HEAD` copies — PASS as evidence: removing the managed
+  capacity check made the capacity test fail; removing the definition fingerprint pin made the
+  pinning test fail; removing the legacy consumption guard made the guard test fail. The normal
+  atomic rollback/concurrent-tick, zero-pipeline-construction and close/reopen tests pass in the
+  focused run.
+- `./.venv/bin/ruff check .` — PASS.
+- `./.venv/bin/ruff format --check .` — PASS (346 files).
+- `./.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `./.venv/bin/pip check` — PASS.
+- Both required `mediaflow ... config validate` commands — PASS.
+- Forbidden `ffprobe`/`ffmpeg` runtime scan — PASS (no matches).
+- `pip wheel . --no-deps --no-build-isolation` plus `scripts/wheel_smoke_test.py` — PASS; accepted
+  substitute because `python -m build` is unavailable, installed-wheel runtime/backup schema 29.
+- Schema-marker check — PASS; current runtime assertions use the schema-29 marker and the only
+  remaining literal 28 is the intentional schema-28 migration fixture.
+- Markdown relative-link existence check — PASS.
+- Private-config/credential scan — PASS; `config/alist.json` and `config/strategy.json` remain
+  ignored, untracked and unstaged, and no credential-like secret entered the checkpoint.
+- `git diff --check` and `git diff --cached --check` — PASS.
+- Production Storage/Provider credentials, services and destructive real-media execution — SKIP;
+  temporary Local roots and fake/in-memory test doubles were used as required.
+
 ### Decisions
+
+- Definition fingerprints use SHA-256 over the canonical normalized definition document; each
+  emitted occurrence stores the definition fingerprint/version and the exact Active revision
+  id/version/digest consumed at admission.
+- Managed emission reuses the existing scheduler authority and SQLite `BEGIN IMMEDIATE` pattern.
+  Its due-state compare-and-update, capacity check, Job insert and occurrence audit insert commit
+  together; timezone-aware due comparison uses SQLite Julian-day conversion so UTC+ schedules are
+  not rejected by lexicographic ISO ordering.
+- Definition list/detail and occurrence history use one bounded read-only projection service. The
+  API and Web expose only bounded, secret-free identity/reason/action data and never admit work.
+- Pinned Jobs are deliberately refused by the existing unscoped Worker path until the
+  definition-scoped handoff exists; this preserves fail-closed safety and leaves legacy Jobs on
+  their existing path.
 
 ### Remaining In-Slice Work
 
+- The definition-scoped Worker handoff into Task/TaskItem/Result and linked occurrence execution
+  history remains outside this Task.
+- Persistent unattended grant/revoke authority, pre-mutation revalidation and per-item recovery
+  remain outside this Task.
+
 ### Risks / Deviations
+
+- The workspace full regression and affected integration run retain the six ambient ignored-local
+  configuration/database failures recorded above. They are marked FAIL / PRE-EXISTING / UNRELATED
+  for B to assess, not treated as passing evidence.
+- Real external Storage/Provider and destructive execution gates were intentionally not attempted;
+  no credentials, external account or user media were used.
+- Definition-pinned Jobs remain durably failed with bounded recovery evidence if routed to the old
+  worker, by design; the scoped Worker/Task handoff is the next in-Slice capability.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 0ae6a6e64a0452b2fdb55c297132acbbfe149864
 ```
 
 ## B Review Result
