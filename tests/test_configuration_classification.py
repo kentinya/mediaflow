@@ -509,7 +509,7 @@ class ManagedClassificationPolicyJourneyTests(unittest.TestCase):
                         "WHERE component='configuration_management'"
                     ).fetchone()[0]
                 self.assertEqual(marker, CONFIGURATION_SCHEMA_VERSION)
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 28)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 29)
 
                 optional = copy.deepcopy(document)
                 optional.pop("classificationPolicies")

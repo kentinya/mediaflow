@@ -77,6 +77,7 @@ class RuntimeConfiguration:
     configuration_authority: str = "JSON_BOOTSTRAP"
     configuration_snapshot_id: str | None = None
     configuration_snapshot_digest: str | None = None
+    configuration_snapshot_version: int | None = None
     automation_task_definitions: tuple[AutomationTaskDefinition, ...] = ()
 
     def create_storages(
@@ -609,6 +610,7 @@ def with_managed_snapshot(
     *,
     snapshot_id: str,
     digest: str,
+    version: int | None = None,
 ) -> RuntimeConfiguration:
     """Attach the immutable Active identity consumed by new work."""
     if not snapshot_id or not digest:
@@ -618,6 +620,7 @@ def with_managed_snapshot(
         configuration_authority="MANAGED",
         configuration_snapshot_id=snapshot_id,
         configuration_snapshot_digest=digest,
+        configuration_snapshot_version=version,
     )
 
 

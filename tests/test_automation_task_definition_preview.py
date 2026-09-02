@@ -45,7 +45,7 @@ from mediaflow.infrastructure.runtime_configuration import (
     with_managed_snapshot,
 )
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import smoke_strategy_configuration
 from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -1011,7 +1011,7 @@ class AutomationTaskDefinitionPreviewPersistenceTests(unittest.TestCase):
                         "UPDATE schema_version SET version=27 WHERE component='runtime'"
                     )
             with SQLiteTaskRepository(database) as reopened:
-                self.assertEqual(reopened.schema_version, 28)
+                self.assertEqual(reopened.schema_version, SCHEMA_VERSION)
                 columns = {
                     row["name"]
                     for row in reopened._connection.execute(

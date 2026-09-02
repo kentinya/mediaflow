@@ -22,7 +22,7 @@ from mediaflow.domain.automation import AutomationJobStatus, IntervalSchedule
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 
@@ -44,7 +44,7 @@ class AutomationPersistenceTests(unittest.TestCase):
             )
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 28)
+                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
                 job = AutomationJobService(repository).submit("scan")
                 self.assertFalse(job.cancellation_requested)
                 self.assertEqual(repository.list_schedule_states(), ())

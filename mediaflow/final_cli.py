@@ -1299,6 +1299,8 @@ def final_main(
                     maximum_active_jobs=configuration.automation_maximum_active_jobs,
                     configuration_snapshot_id=configuration.configuration_snapshot_id,
                     configuration_snapshot_digest=configuration.configuration_snapshot_digest,
+                    automation_task_definitions=configuration.automation_task_definitions,
+                    configuration_snapshot_version=configuration.configuration_snapshot_version,
                     configuration_snapshot_resolver=lambda: _managed_scheduler_configuration(
                         arguments.config
                     ),
@@ -2823,6 +2825,21 @@ def _run_queued_workflow(
     job, configured_path: str | None, cancellation_check: Callable[[], bool]
 ) -> str | None:
     try:
+        if getattr(job, "definition_id", None) or getattr(job, "automation_definition_id", None):
+            raise AutomationConfigurationUnavailable(
+                AutomationFailureEvidence(
+                    category="definition_scoped_worker_unavailable",
+                    durable_state=(
+                        "definition-pinned Job remains queued; no legacy workflow was started"
+                    ),
+                    side_effects="none",
+                    retry_safe=False,
+                    next_action=(
+                        "use the definition-scoped Worker handoff before retrying this Job; "
+                        "do not execute it as an unscoped legacy workflow"
+                    ),
+                )
+            )
         _require_queued_job_snapshot(job, configured_path)
         resolved_configuration = None
         if job.configuration_snapshot_id:
@@ -3497,6 +3514,7 @@ def _configuration(
         resolved,
         snapshot_id=active.revision_id,
         digest=active.digest,
+        version=active.version,
     )
 
 
@@ -3619,6 +3637,10 @@ def _managed_scheduler_configuration(
         configuration.configuration_snapshot_digest or "",
         configuration.automation_schedules,
         configuration.automation_maximum_active_jobs,
+        configuration.automation_task_definitions,
+        configuration.configuration_snapshot_version,
+        tuple(item.library_id for item in configuration.resource_libraries),
+        tuple(item.library_id for item in configuration.resource_libraries if item.enabled),
     )
 
 
