@@ -286,21 +286,93 @@ fake/in-memory Provider and adapter doubles.
 
 ### Changed Files
 
+- `mediaflow/domain/failure.py` and `mediaflow/application/failure_explanation.py`
+- `mediaflow/application/automation_definition_execution.py`, `mediaflow/application/media_organizer.py`,
+  `mediaflow/application/organizer.py`, `mediaflow/application/task_runtime.py`, and
+  `mediaflow/application/processing_checkpoint.py`
+- `mediaflow/domain/processing_checkpoint.py` and `mediaflow/infrastructure/sqlite_runtime.py`
+- `mediaflow/application/automation_definition_occurrence.py`, `mediaflow/interfaces/service_api.py`,
+  and `mediaflow/interfaces/operator_ui.py`
+- `tests/test_automation_authorized_execution_matrix.py` and
+  `tests/test_automation_definition_execution.py`
+- `TASK.md`
+
 ### Implemented
+
+- Added bounded, static, secret-free failure explanations with durable state, effect certainty,
+  retry safety and exactly one next action; definition-scoped scheduled failures now persist the
+  explanation through `TaskItem`, `Result`, checkpoint and API/Web projections.
+- Added fail-closed operation capability checks, explicit cross-Storage LINK refusal and correct
+  attachment verification for MOVE/COPY/HARD_LINK/SOFT_LINK without substitution. Unattended
+  OVERWRITE collisions remain waiting for explicit confirmation and mutate nothing.
+- Added the shared bounded Automation occurrence outcome projection: all durable item statuses,
+  unchanged outcomes, configured-bound statement, capped attention items and checkpoint recovery
+  fields. SQLite reads the rendered attention page through fixed-count bulk queries.
+- Exposed the projection through the existing API routes and rendered it in the Automation detail
+  panel with links to the existing TaskItem recovery surface; no Automation mutation action was
+  added. Added authorized operation, conflict, failure-persistence, API/Web and bulk-read tests.
 
 ### Tests and Results
 
+- `./.venv/bin/python -m unittest tests.test_automation_definition_execution` — PASS (16 tests).
+- `./.venv/bin/python -m unittest tests.test_automation_authorized_execution_matrix` — PASS (8 tests).
+- `./.venv/bin/python -m unittest tests.test_automation_definition_occurrence tests.test_processing_checkpoint`
+  — PASS (25 tests).
+- `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui tests.test_api_security`
+  — PASS (64 tests).
+- Required integration command from this Task — FAIL / PRE-EXISTING / UNRELATED: 444 tests ran;
+  four failures are the documented ignored local runtime/configuration cases (`test_api_credentials`
+  x2, `test_final_integration`, `test_resource_library_pipeline`).
+- `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — FAIL / PRE-EXISTING /
+  UNRELATED: 1088 tests, 6 failures, 7 skips. The six failures are exactly the documented local
+  ignored runtime database/configuration cases (`test_api_credentials` x2, `test_final_integration`,
+  `test_resource_library_pipeline`, `test_runtime_storage_configuration` x2).
+- The six failures were reproduced from a clean Task Base `git archive` with only the ignored
+  `config/strategy.json` and runtime SQLite files copied into the temporary tree: the four
+  resource/API/final-integration failures and the two runtime-storage failures reproduced there.
+- `ruff check .`, `ruff format --check .`, `python -m compileall -q mediaflow tests scripts`,
+  `pip check`, both required `config validate` commands and the runtime `ffprobe|ffmpeg` scan —
+  PASS (no forbidden runtime matches).
+- `pip wheel . --no-deps --no-build-isolation` plus `scripts/wheel_smoke_test.py` — PASS. The
+  `python -m build` alternative is UNAVAILABLE in this virtualenv; the installed-wheel smoke
+  reported supported/runtime schema 30 and migration required `NO`.
+- Markdown relative-link check, private-config/secret scan, `git diff --check` and staged diff
+  check — PASS. `config/alist.json` and `config/strategy.json` remain ignored and unstaged.
+- Deliberate falsification on throwaway `git archive HEAD` copies — expected FAIL: allowing
+  cross-Storage LINK to fall back to COPY failed the new LINK test, and auto-authorizing OVERWRITE
+  failed the new unattended collision test. The workspace stayed untouched by both experiments.
+- Production Storage/Provider services and credentials — SKIP by design; tests use temporary Local
+  roots and fake/in-memory adapters.
+
 ### Decisions
+
+- Used an immutable failure envelope in the existing `error` columns, avoiding a schema bump while
+  keeping legacy non-definition compatibility and giving scheduled definitions a stronger contract.
+- Kept conflict resolution and execution authority unchanged: only configured SKIP/RENAME resolve
+  automatically; OVERWRITE/MANUAL remain waiting, and OrganizerExecutor remains the sole mutation
+  boundary.
+- Implemented checkpoint bulk reads as bounded per-table queries under one SQLite snapshot, while
+  retaining the existing single-item projection and recovery actions.
 
 ### Remaining In-Slice Work
 
+- No additional implementation work is known inside this Task. Task and Slice review status remain
+  with B/A.
+
 ### Risks / Deviations
+
+- The required integration/full regression commands have the six documented pre-existing,
+  environment-state failures when the workspace's ignored runtime database/configuration is
+  present; clean Task Base archive evidence is recorded above. ResourceWarning messages from
+  pre-existing unclosed SQLite test connections were also observed but did not alter outcomes.
+- No schema marker or migration changed. No production credentials, external account authorization
+  or user media were used.
 
 ### Checkpoint
 
 ```text
-Status: PENDING
-Head SHA: [full SHA]
+Status: READY FOR B REVIEW
+Head SHA: 450ffc9a82cb0efefa619dc441c6fdf3be500d9e
 ```
 
 ## B Review Result
