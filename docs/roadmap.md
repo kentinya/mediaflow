@@ -14,15 +14,23 @@ only in [the development workflow](development-workflow.md).
 | 23 — Stage-aware per-item recovery | Provide checkpoint-aware single and bounded batch recovery without replaying successful siblings or uncertain mutation | PASS / CLOSED | 22.6 closure |
 | 24 — Files / Media detail and manual organize | Complete the operator journey from explanation and review to safe manual Preview/Organize and recovery | PASS / CLOSED | 23 |
 | 25 — Scheduled automation and unattended organization | Complete operator-configured scheduled scanning and unattended organization using RecognitionType-selected policies under explicit bounded execution authority, plus the production-loop hardening required by that journey | PASS / CLOSED | 24 |
+| 26 — Web-first fresh setup and Storage completion | Let an authenticated operator start from a minimal fresh-instance bootstrap, create the first complete managed Draft, configure/test all V1 Storage types and libraries, browse bounded Storage directories, and checked-activate the first immutable runtime without hand-authoring a full JSON runtime | ACTIVE | 25 |
+| 27 — Web-first operations administration | Complete the day-2 Web journeys for consumed System Settings, versioned secret-free configuration/result import-export, managed Webhook delivery configuration/test and delivery recovery | PLANNED | 26 |
+| 28 — Docker production self-hosted release | Deliver and verify the one-image, multi-service Docker Compose product journey with production HTTP serving, local durable `/data`, explicit media mounts, non-root operation, lifecycle health, restart persistence and fail-closed upgrade/migration | PLANNED | 27 |
 
 ## Current boundary
 
-Slice 25 is PASS / CLOSED at Base `2cee7cc756b90618f14d5d7b112f974fb445a580` and reviewed
-Implementation Head `d4da92879b99f1c44ddd717fba1a26e4b0a73493`. It delivered the operator-managed
-Automation Task Definition journey from exact-scope validation and zero-mutation Preview through
-idempotent scheduled occurrence emission, persistent revocable unattended authority, existing-pipeline
-execution and per-item Result/recovery. It does not claim Provider switching, scheduled cache/log
-cleanup, remote guided setup or automatic replay of uncertain mutation.
+Slice 26 is ACTIVE at Base `3c660d5a1512b5b221b0284bcff9ae6dd00bbf23`. It owns the complete
+fresh-instance Web setup journey and V1 Storage-management completion. It does not own Webhook/System
+administration, Docker packaging/runtime release, Metadata Provider switching, a built-in user
+database, OIDC, a full Secret Store, mutation-based Storage capability probes or any redesign of the
+closed media-processing engine.
+
+The remaining V1 order is intentional: configuration and Storage semantics must be product-complete
+before day-2 administration is finalized, and both contracts must be stable before the final Docker
+integration/release Slice. V1 retains environment-owned API-principal bearer authentication and the
+TMDB production Provider. Built-in user/session identity and Metadata Provider switching are explicit
+post-V1 work, not hidden Docker Tasks.
 
 ## Roadmap rules
 
