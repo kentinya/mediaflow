@@ -8,8 +8,21 @@ import json
 from collections.abc import Mapping
 
 from mediaflow.domain.automation import AutomationTaskDefinition
+from mediaflow.domain.task_persistence import TaskItemStatus
 
 _UNSET = object()
+_ATTENTION_LIMIT = 32
+_SUMMARY_STATUSES = tuple(item.value for item in TaskItemStatus) + ("unchanged",)
+_ATTENTION_STATUSES = (
+    TaskItemStatus.WAITING_CONFIRM.value,
+    TaskItemStatus.WAITING_RECOGNITION.value,
+    TaskItemStatus.WAITING_METADATA.value,
+    TaskItemStatus.WAITING_METADATA_CORRECTION.value,
+    TaskItemStatus.WAITING_CLASSIFICATION.value,
+    TaskItemStatus.FAILED.value,
+    TaskItemStatus.PARTIAL.value,
+    TaskItemStatus.CANCELLED.value,
+)
 
 
 class AutomationDefinitionOccurrenceService:
@@ -22,11 +35,17 @@ class AutomationDefinitionOccurrenceService:
     def __init__(self, repository) -> None:
         self._repository = repository
         self._unattended_grants = None
+        self._checkpoint_service = None
 
     def attach_unattended_grant_service(self, service) -> None:
         """Attach the shared read-only grant projection without changing callers."""
 
         self._unattended_grants = service
+
+    def attach_checkpoint_service(self, service) -> None:
+        """Use the shared per-item checkpoint projection for attention rows."""
+
+        self._checkpoint_service = service
 
     def due_state(self, definition_id: str):
         getter = getattr(self._repository, "get_automation_definition_due_state", None)
@@ -90,6 +109,7 @@ class AutomationDefinitionOccurrenceService:
                 values,
                 configuration=configuration,
             )
+        outcome_summaries = self._outcome_summaries(tuple(latest_values.values()))
         return [
             self.project_definition(
                 item,
@@ -97,6 +117,9 @@ class AutomationDefinitionOccurrenceService:
                 _state=states.get(definition_id),
                 _latest=latest_values.get(definition_id),
                 _grant=grants.get(definition_id),
+                _outcome_summary=outcome_summaries.get(
+                    getattr(latest_values.get(definition_id), "occurrence_id", "")
+                ),
             )
             for item, definition_id in zip(values, ids, strict=True)
         ]
@@ -109,6 +132,7 @@ class AutomationDefinitionOccurrenceService:
         _state=_UNSET,
         _latest=_UNSET,
         _grant=_UNSET,
+        _outcome_summary=_UNSET,
     ) -> dict[str, object]:
         """Add current due/last-occurrence state to a safe definition document."""
 
@@ -139,6 +163,12 @@ class AutomationDefinitionOccurrenceService:
                 definition_fingerprint = hashlib.sha256(encoded).hexdigest()
         state = self.due_state(definition_id) if _state is _UNSET else _state
         latest = self.latest(definition_id) if _latest is _UNSET else _latest
+        if _outcome_summary is _UNSET:
+            _outcome_summary = (
+                self._outcome_summaries([latest]).get(getattr(latest, "occurrence_id", ""))
+                if latest is not None
+                else None
+            )
         occurrence = self._state_document(state)
         occurrence["enabled"] = bool(document.get("enabled", False))
         latest_document = latest.document() if latest is not None else None
@@ -162,6 +192,8 @@ class AutomationDefinitionOccurrenceService:
         else:
             occurrence["lastTaskId"] = None
             occurrence["lastFailureCategory"] = None
+        occurrence["outcomeSummary"] = _outcome_summary
+        occurrence["itemOutcomeSummary"] = _outcome_summary
         document["occurrence"] = occurrence
         document["occurrenceState"] = occurrence
         document["definitionFingerprint"] = definition_fingerprint
@@ -174,6 +206,8 @@ class AutomationDefinitionOccurrenceService:
         document["nextAction"] = occurrence["nextAction"]
         document["lastTaskId"] = occurrence["lastTaskId"]
         document["lastFailureCategory"] = occurrence["lastFailureCategory"]
+        document["outcomeSummary"] = _outcome_summary
+        document["itemOutcomeSummary"] = _outcome_summary
         if self._unattended_grants is not None:
             if _grant is _UNSET:
                 grant = self._unattended_grants.project(
@@ -191,6 +225,199 @@ class AutomationDefinitionOccurrenceService:
                 if configuration.get(key) is not None
             }
         return document
+
+    def project_occurrences(self, occurrences) -> list[dict[str, object]]:
+        """Project one bounded occurrence page with one shared outcome read."""
+
+        values = list(occurrences)
+        summaries = self._outcome_summaries(values)
+        projected: list[dict[str, object]] = []
+        for value in values:
+            document = (
+                value.document()
+                if callable(getattr(value, "document", None))
+                else dict(value)
+                if isinstance(value, Mapping)
+                else {}
+            )
+            occurrence_id = getattr(value, "occurrence_id", document.get("occurrenceId", ""))
+            document["outcomeSummary"] = summaries.get(occurrence_id)
+            document["itemOutcomeSummary"] = document["outcomeSummary"]
+            projected.append(document)
+        return projected
+
+    def _outcome_summaries(self, occurrences) -> dict[str, dict[str, object]]:
+        values = [value for value in occurrences if value is not None]
+        if not values:
+            return {}
+        task_by_occurrence = {
+            getattr(value, "occurrence_id", ""): getattr(value, "task_id", None) for value in values
+        }
+        task_ids = tuple(
+            dict.fromkeys(task_id for task_id in task_by_occurrence.values() if task_id)
+        )
+        if not task_ids:
+            return {
+                getattr(value, "occurrence_id", ""): self._empty_outcome_summary(
+                    getattr(value, "item_limit", None), None
+                )
+                for value in values
+            }
+        counts_reader = getattr(self._repository, "list_task_item_status_counts", None)
+        counts_by_task = (
+            counts_reader(task_ids) if callable(counts_reader) else self._fallback_counts(task_ids)
+        )
+        attention_reader = getattr(self._repository, "list_task_items_needing_attention", None)
+        attention_by_task = (
+            attention_reader(task_ids, limit=_ATTENTION_LIMIT + 1)
+            if callable(attention_reader)
+            else self._fallback_attention(task_ids)
+        )
+        attention_items = [item for values in attention_by_task.values() for item in values]
+        checkpoints = (
+            self._checkpoint_service.summaries_for_items(
+                [item.item_id for item in attention_items],
+                include_explanation=True,
+            )
+            if self._checkpoint_service is not None
+            else {}
+        )
+        result: dict[str, dict[str, object]] = {}
+        for value in values:
+            occurrence_id = getattr(value, "occurrence_id", "")
+            task_id = task_by_occurrence.get(occurrence_id)
+            result[occurrence_id] = self._build_outcome_summary(
+                getattr(value, "item_limit", None),
+                task_id,
+                counts_by_task.get(task_id, {}) if task_id else {},
+                attention_by_task.get(task_id, ()) if task_id else (),
+                checkpoints,
+            )
+        return result
+
+    @staticmethod
+    def _empty_outcome_summary(item_limit, task_id):
+        counts = {status: 0 for status in _SUMMARY_STATUSES}
+        statement = (
+            "No linked Task has published per-item outcomes for this occurrence."
+            if task_id is None
+            else "The linked Task has not published any per-item outcomes."
+        )
+        return {
+            "taskId": task_id,
+            "totalItems": 0,
+            "counts": counts,
+            "statusCounts": dict(counts),
+            "bound": {
+                "configuredItemLimit": item_limit,
+                "reached": False,
+                "statement": statement,
+            },
+            "boundReached": False,
+            "stoppedAtBound": False,
+            "scopeExhausted": None,
+            "attention": [],
+            "attentionItems": [],
+            "attentionLimit": _ATTENTION_LIMIT,
+            "attentionTruncated": False,
+            "moreAttention": False,
+        }
+
+    @staticmethod
+    def _build_outcome_summary(
+        item_limit,
+        task_id,
+        raw_counts,
+        attention_items,
+        checkpoints,
+    ):
+        counts = {status: int(raw_counts.get(status, 0)) for status in _SUMMARY_STATUSES}
+        total = sum(counts[status.value] for status in TaskItemStatus)
+        unstable = max(0, int(raw_counts.get("__unstable_source", 0)))
+        selected = max(0, total - unstable)
+        reached = isinstance(item_limit, int) and item_limit > 0 and selected >= item_limit
+        if reached:
+            statement = (
+                f"Run stopped at the configured item bound of {item_limit}; "
+                "additional in-scope items were not selected."
+            )
+        elif item_limit:
+            statement = f"Run did not reach the configured item bound of {item_limit}."
+            if unstable:
+                statement += " Unstable source items remain recorded and were not selected."
+        else:
+            statement = "Run had no configured item bound."
+        attention = []
+        for item in attention_items[:_ATTENTION_LIMIT]:
+            checkpoint = checkpoints.get(item.item_id, {})
+            blocker_kind = checkpoint.get("blocker_kind")
+            next_action = checkpoint.get("next_action")
+            if not next_action:
+                if blocker_kind:
+                    next_action = f"resolve {str(blocker_kind).replace('_', ' ')} review"
+                else:
+                    next_action = (
+                        "inspect the linked TaskItem checkpoint and choose its permitted action"
+                    )
+            attention.append(
+                {
+                    "taskId": item.task_id,
+                    "itemId": item.item_id,
+                    "status": item.status.value,
+                    "stage": checkpoint.get("stage", item.stage),
+                    "blockerKind": blocker_kind,
+                    "blockerId": checkpoint.get("blocker_id"),
+                    "effectCertainty": checkpoint.get("effect_certainty", "unknown"),
+                    "retrySafety": checkpoint.get("retry_safety", "unknown"),
+                    "failureExplanation": checkpoint.get("failure_explanation"),
+                    "nextAction": next_action,
+                    "recoveryPath": (
+                        checkpoint.get("recovery_request", {}).get("action_id")
+                        if isinstance(checkpoint.get("recovery_request"), Mapping)
+                        else None
+                    ),
+                }
+            )
+        more = len(attention_items) > _ATTENTION_LIMIT
+        return {
+            "taskId": task_id,
+            "totalItems": total,
+            "counts": counts,
+            "statusCounts": dict(counts),
+            "bound": {
+                "configuredItemLimit": item_limit,
+                "reached": reached,
+                "statement": statement,
+            },
+            "boundReached": reached,
+            "stoppedAtBound": reached,
+            "scopeExhausted": None,
+            "attention": attention,
+            "attentionItems": list(attention),
+            "attentionLimit": _ATTENTION_LIMIT,
+            "attentionTruncated": more,
+            "moreAttention": more,
+        }
+
+    def _fallback_counts(self, task_ids):
+        result = {}
+        for task_id in task_ids:
+            values = self._repository.list_items(task_id)
+            counts = {status: 0 for status in _SUMMARY_STATUSES}
+            for item in values:
+                counts[item.status.value] = counts.get(item.status.value, 0) + 1
+            result[task_id] = counts
+        return result
+
+    def _fallback_attention(self, task_ids):
+        result = {}
+        for task_id in task_ids:
+            result[task_id] = tuple(
+                item
+                for item in self._repository.list_items(task_id)
+                if item.status.value in _ATTENTION_STATUSES
+            )[: _ATTENTION_LIMIT + 1]
+        return result
 
     @staticmethod
     def _state_document(state) -> dict[str, object]:

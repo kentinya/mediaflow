@@ -386,6 +386,16 @@ class OrganizerExecutor:
 
         source_storage = storages[plan.source_storage_id]
         target_storage = storages[plan.target_storage_id]
+        capability_error = _operation_capability_error(plan, source_storage, target_storage)
+        if capability_error:
+            return self._result(
+                plan,
+                ExecutionStatus.FAILED,
+                started,
+                plan_id,
+                errors=(capability_error,),
+                resolved_destination=display_destination,
+            )
         storage_source = (
             source_storage_path
             or (plan.source_location.path if plan.source_location else None)
@@ -498,10 +508,19 @@ class OrganizerExecutor:
                 completed.append(marker)
                 if not attachment_target.exists(attachment.destination.path):
                     raise RuntimeError(f"attachment verification failed: {attachment.source.path}")
-                if (
-                    attachment_target.stat(attachment.destination.path).size
-                    != attachment_sizes[attachment.source.path]
-                ):
+                attachment_entry = attachment_target.stat(attachment.destination.path)
+                if attachment.operation is PlanOperation.LINK:
+                    expected_type = (
+                        StorageEntryType.SYMLINK
+                        if plan.link_operation is OrganizeOperationType.SOFT_LINK
+                        else StorageEntryType.FILE
+                    )
+                    if attachment_entry.entry_type is not expected_type:
+                        raise RuntimeError(
+                            f"attachment verification failed: link type mismatch: "
+                            f"{attachment.source.path}"
+                        )
+                elif attachment_entry.size != attachment_sizes[attachment.source.path]:
                     raise RuntimeError(
                         f"attachment verification failed: size mismatch: {attachment.source.path}"
                     )
@@ -992,7 +1011,7 @@ class OrganizerExecutor:
                 rollback_steps=tuple((step.action, step.success) for step in result.rollback_steps),
                 effect_certainty=result.effect_certainty.value,
                 uncertain_effects=result.uncertain_effects,
-                error=result.errors,
+                error_category=_execution_log_category(result),
             )
         return result
 
@@ -1004,6 +1023,34 @@ def _bounded_error(error: Exception) -> str:
     if isinstance(error, OSError):
         return "os_error"
     return "rollback_safety_error"
+
+
+def _execution_log_category(result: ExecutionResult) -> str | None:
+    """Keep executor logs categorical; raw adapter errors stay transient only."""
+
+    if not result.errors:
+        return None
+    if result.effect_certainty is ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED:
+        return "uncertain_effect"
+    if result.status is ExecutionStatus.PARTIAL:
+        return "partial_effect"
+    text = " ".join(result.errors).casefold().replace("_", " ").replace("-", " ")
+    if "attachment destination already exists" in text:
+        return "attachment_collision"
+    if "destination already exists" in text or "target collision" in text:
+        return "destination_collision"
+    if "invalid destination" in text or "destination does not match" in text:
+        return "invalid_destination"
+    if "unsupported" in text or "not executable" in text or "cross storage link" in text:
+        return "unsupported_capability"
+    if (
+        "capability denied" in text
+        or "permission denied" in text
+        or "read only" in text
+        or "read-only" in text
+    ):
+        return "denied_capability"
+    return "storage_failure"
 
 
 def _missing_directories(storage: Storage, parent: str) -> tuple[str, ...]:
@@ -1069,3 +1116,54 @@ def _storage_validation_error(plan: OrganizePlan, storages: Mapping[str, Storage
     ):
         return "attachment plan references an unavailable Storage"
     return None
+
+
+def _operation_capability_error(
+    plan: OrganizePlan, source_storage: Storage, target_storage: Storage
+) -> str | None:
+    """Refuse unsupported or denied operations before any mutation is attempted."""
+
+    if plan.operation in {PlanOperation.NOOP, PlanOperation.SKIP}:
+        return None
+    same_storage = source_storage is target_storage
+    source_capabilities = getattr(source_storage, "capabilities", None)
+    target_capabilities = getattr(target_storage, "capabilities", None)
+    if source_capabilities is None or target_capabilities is None:
+        # Older in-memory test doubles and third-party adapters may not expose the
+        # capability descriptor yet; the executor still reports their operation error
+        # through the existing mutation boundary.
+        return None
+
+    def denied_or_unsupported(operation: str, storage: Storage, supported: bool) -> str | None:
+        if supported:
+            return None
+        if getattr(storage, "read_only", False):
+            return f"capability denied: {operation} requires writable Storage"
+        return f"unsupported capability: {operation} is not supported"
+
+    if plan.operation is PlanOperation.MOVE:
+        if same_storage:
+            return denied_or_unsupported("MOVE", source_storage, source_capabilities.can_move)
+        error = denied_or_unsupported(
+            "MOVE target COPY", target_storage, target_capabilities.can_copy
+        )
+        if error:
+            return error
+        return denied_or_unsupported(
+            "MOVE source DELETE", source_storage, source_capabilities.can_delete
+        )
+    if plan.operation is PlanOperation.COPY:
+        return denied_or_unsupported("COPY", target_storage, target_capabilities.can_copy)
+    if plan.operation is PlanOperation.LINK:
+        if not same_storage:
+            return "cross-storage LINK is not supported"
+        if plan.link_operation is OrganizeOperationType.SOFT_LINK:
+            return denied_or_unsupported(
+                "SOFT_LINK", source_storage, source_capabilities.can_soft_link
+            )
+        if plan.link_operation in {None, OrganizeOperationType.HARD_LINK}:
+            return denied_or_unsupported(
+                "HARD_LINK", source_storage, source_capabilities.can_hard_link
+            )
+        return "unsupported capability: LINK type is not configured"
+    return f"unsupported capability: {plan.operation.value} is not supported"

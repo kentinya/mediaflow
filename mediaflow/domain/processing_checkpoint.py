@@ -11,6 +11,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 
+from mediaflow.domain.failure import FailureExplanation
+
 if TYPE_CHECKING:
     from mediaflow.domain.recovery import RecoveryRequest
     from mediaflow.domain.recovery_continuation import RecoveryContinuation
@@ -72,6 +74,22 @@ class ErrorCategory(StrEnum):
     CLASSIFICATION = "classification"
     TRANSFER = "transfer"
     TIMEOUT = "timeout"
+    UNSUPPORTED_CAPABILITY = "unsupported_capability"
+    DENIED_CAPABILITY = "denied_capability"
+    DESTINATION_COLLISION = "destination_collision"
+    ATTACHMENT_COLLISION = "attachment_collision"
+    INVALID_DESTINATION = "invalid_destination"
+    STORAGE_FAILURE = "storage_failure"
+    PROVIDER_FAILURE = "provider_failure"
+    UNCERTAIN_EFFECT = "uncertain_effect"
+    PARTIAL_EFFECT = "partial_effect"
+    UNSTABLE_SOURCE = "unstable_source"
+    RECOGNITION_FAILURE = "recognition_failure"
+    METADATA_FAILURE = "metadata_failure"
+    NAMING_FAILURE = "naming_failure"
+    CLASSIFICATION_FAILURE = "classification_failure"
+    WORKFLOW_FAILURE = "workflow_failure"
+    UNATTENDED_AUTHORITY = "unattended_authority"
     UNKNOWN = "unknown"
 
 
@@ -132,6 +150,7 @@ class CheckpointResult:
     error_category: ErrorCategory
     retry_attempts: int
     cleanup_status: str | None
+    failure: FailureExplanation | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +174,14 @@ class ProcessingCheckpointRepository(Protocol):
         result_limit: int = 32,
         audit_limit: int = 64,
     ) -> ProcessingCheckpointContext | None: ...
+
+    def get_processing_checkpoint_contexts(
+        self,
+        item_ids: tuple[str, ...],
+        *,
+        result_limit: int = 32,
+        audit_limit: int = 64,
+    ) -> dict[str, ProcessingCheckpointContext]: ...
 
 
 @dataclass(frozen=True)
@@ -188,6 +215,7 @@ class ProcessingCheckpoint:
     refusal_reason: str | None
     checkpoint_version: str
     updated_at: datetime
+    failure: FailureExplanation | None = None
 
     @property
     def permitted_action_ids(self) -> tuple[str, ...]:
@@ -277,6 +305,8 @@ class ProcessingCheckpoint:
                 "uncertain_effects": list(self.uncertain_effects),
             },
             "error_category": self.error_category.value,
+            "failureExplanation": self.failure.document() if self.failure else None,
+            "nextAction": self.failure.next_action if self.failure else None,
             "retry_safety": self.retry_safety.value,
             "actions": [
                 {
@@ -332,6 +362,7 @@ class ProcessingCheckpoint:
             "error_category": value.error_category.value,
             "retry_attempts": value.retry_attempts,
             "cleanup_status": value.cleanup_status,
+            "failureExplanation": value.failure.document() if value.failure else None,
         }
 
 

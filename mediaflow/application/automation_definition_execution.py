@@ -471,6 +471,7 @@ class DefinitionScopedExecutionService:
             retry_policy=self._configuration.workflow_retry_policy,
             retry_cancellation_check=workflow_stop,
             secret_free_errors=True,
+            persist_failure_explanations=True,
             before_execute=(
                 (lambda: self._unattended_grants.assert_live(job, definition))
                 if execute and self._unattended_grants is not None
