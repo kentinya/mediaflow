@@ -29,7 +29,7 @@ from mediaflow.domain.notification import (
 )
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
@@ -328,7 +328,7 @@ class NotificationTests(unittest.TestCase):
             )
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 28)
+                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
                 self.assertEqual(repository.list_deliveries(), ())
 
     def test_terminal_job_and_schedule_events_enter_outbox(self) -> None:

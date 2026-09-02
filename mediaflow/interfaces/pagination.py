@@ -20,10 +20,18 @@ _KINDS = frozenset(
         "task_results",
         "notification_deliveries",
         "schedule_audit",
+        "automation_definition_occurrences",
         "operational_logs",
     }
 )
-_SCOPED_KINDS = frozenset({"notification_deliveries", "schedule_audit", "operational_logs"})
+_SCOPED_KINDS = frozenset(
+    {
+        "notification_deliveries",
+        "schedule_audit",
+        "automation_definition_occurrences",
+        "operational_logs",
+    }
+)
 MAX_CURSOR_LENGTH = 512
 
 

@@ -2217,23 +2217,43 @@ APP_JS = b"""(() => {
     const rows = items.map(item => [item.id, item.name, item.enabled === true ? 'enabled' : 'disabled',
       item.resourceLibraryId, item.sourceScope || '<root>', item.mode || item.runMode || '-',
       item.intervalSeconds !== undefined ? `${item.intervalSeconds}s` : `${item.cron || '-'} (${item.timezone || '-'})`,
-      item.itemLimit || item.limit || '-']);
-    content.append(table(['ID', 'Name', 'State', 'ResourceLibrary', 'Scope', 'Mode', 'Schedule', 'Limit'], rows,
+      item.itemLimit || item.limit || '-', item.nextRunAt || '-', item.lastOutcome || '-']);
+    content.append(table(['ID', 'Name', 'State', 'ResourceLibrary', 'Scope', 'Mode', 'Schedule', 'Limit', 'Next run', 'Last outcome'], rows,
       index => showAutomationDetail(items[index], configuration)));
   }
   async function showAutomationDetail(item, configuration) {
     try {
       clear(detailContent); detailContent.append(text('h2', 'Automation Task Definition detail'));
+      const occurrenceState = item.occurrenceState || item.occurrence || {};
       const list = document.createElement('dl');
       [['ID', item.id], ['Name', item.name], ['State', item.enabled === true ? 'enabled' : 'disabled'],
         ['ResourceLibrary', item.resourceLibraryId], ['Source scope', item.sourceScope || '<root>'],
         ['Run mode', item.mode || item.runMode], ['Interval seconds', item.intervalSeconds],
         ['Cron', item.cron], ['Timezone', item.timezone], ['Item limit', item.itemLimit || item.limit],
-        ['Active configuration', configuration.revisionId || '-'],
-        ['Active configuration digest', configuration.digest || '-']].forEach(([label, value]) => field(list, label, value));
+        ['Definition fingerprint', item.definitionFingerprint || '-'],
+        ['Active configuration', (item.activeConfiguration || configuration).revisionId || '-'],
+        ['Active configuration version', (item.activeConfiguration || configuration).version || '-'],
+        ['Active configuration sequence', (item.activeConfiguration || configuration).revisionSequence || '-'],
+        ['Active configuration digest', (item.activeConfiguration || configuration).digest || '-'],
+        ['Next run', occurrenceState.nextRunAt || '-'],
+        ['Last occurrence', occurrenceState.lastOccurrenceAt || '-'],
+        ['Last Job', occurrenceState.lastJobId || '-'],
+        ['Last outcome', occurrenceState.lastOutcome || '-'],
+        ['Failure reason', occurrenceState.lastReason || '-'],
+        ['Next action', occurrenceState.nextAction || '-']].forEach(([label, value]) => field(list, label, value));
       detailContent.append(list);
       detailContent.append(actionButton('Run Preview / DryRun', () => confirmAutomationPreview(item)));
       detailContent.append(actionButton('Open managed Configuration', () => renderConfiguration()));
+      const occurrenceData = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/occurrences?limit=10`);
+      detailContent.append(text('h3', 'Scheduled occurrences'));
+      const occurrenceRows = (occurrenceData.items || []).map(value => [value.occurrenceId,
+        value.occurrenceAt, value.emittedAt, value.jobId, value.configurationRevisionId,
+        value.configurationRevisionVersion, value.configurationRevisionDigest,
+        value.runMode, value.outcome, value.reason || '-', value.nextAction || '-']);
+      detailContent.append(table(['Occurrence', 'Due', 'Emitted', 'Job', 'Configuration', 'Version', 'Digest', 'Run mode', 'Outcome', 'Reason', 'Next action'], occurrenceRows));
+      if (!(occurrenceData.items || []).length) {
+        detailContent.append(text('p', 'No scheduled occurrence has been emitted for this definition yet.'));
+      }
       const data = await api(`/api/v1/automation/task-definitions/${encodeURIComponent(item.id)}/previews?limit=10`);
       detailContent.append(text('h3', 'Previews'));
       const rows = (data.items || []).map(value => [value.previewId, value.status,

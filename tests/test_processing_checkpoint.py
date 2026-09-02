@@ -27,7 +27,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskItem,
     TaskItemStatus,
 )
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
 
@@ -522,7 +522,7 @@ class ProcessingCheckpointTests(unittest.TestCase):
             )
             connection.close()
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, 28)
+                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
                 result = repository.list_results_for_item("legacy-item")[0]
                 self.assertEqual(result.effect_certainty, "unknown")
                 self.assertEqual(result.uncertain_effects, ())

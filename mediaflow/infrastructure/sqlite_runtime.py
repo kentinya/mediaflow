@@ -5,6 +5,7 @@ import json
 import secrets
 import sqlite3
 import threading
+from collections.abc import Iterable
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,9 +14,12 @@ from uuid import uuid4
 from mediaflow.domain.automation import (
     AutomationClaimLost,
     AutomationCommand,
+    AutomationDefinitionDueState,
+    AutomationDefinitionOccurrence,
     AutomationJob,
     AutomationJobStatus,
     AutomationQueueFull,
+    AutomationTaskRunMode,
     ScheduleAuditRecord,
     ScheduleState,
 )
@@ -164,7 +168,7 @@ from mediaflow.domain.task_retry import TaskRetryBatchRequest, TaskRetryRequestD
 # Preview tables are additive migrations on the runtime schema.  The table
 # creation below is idempotent and upgrades older runtime databases without
 # rewriting existing rows.
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 
 def _canonical_json(value: object) -> str:
@@ -3791,7 +3795,9 @@ class SQLiteTaskRepository:
                 "cancellation_requested=?, schedule_id=?, execute_authorized=?, claim_token=?, "
                 "configuration_snapshot_id=?, configuration_snapshot_digest=?, "
                 "failure_category=?, failure_durable_state=?, failure_side_effects=?, "
-                "failure_retry_safe=?, failure_next_action=? "
+                "failure_retry_safe=?, failure_next_action=?, definition_id=?, "
+                "definition_fingerprint=?, definition_version=?, occurrence_at=?, run_mode=?, "
+                "resource_library_id=?, source_scope=?, configuration_snapshot_version=? "
                 "WHERE job_id=?",
                 (*self._job_values(job)[1:], job.job_id),
             )
@@ -3911,7 +3917,9 @@ class SQLiteTaskRepository:
                 "cancellation_requested=?, schedule_id=?, execute_authorized=?, claim_token=NULL, "
                 "configuration_snapshot_id=?, configuration_snapshot_digest=?, "
                 "failure_category=?, failure_durable_state=?, failure_side_effects=?, "
-                "failure_retry_safe=?, failure_next_action=? "
+                "failure_retry_safe=?, failure_next_action=?, definition_id=?, "
+                "definition_fingerprint=?, definition_version=?, occurrence_at=?, run_mode=?, "
+                "resource_library_id=?, source_scope=?, configuration_snapshot_version=? "
                 "WHERE job_id=? AND status=? AND claim_token=?",
                 (
                     *self._job_values(job)[1:13],
@@ -4128,6 +4136,342 @@ class SQLiteTaskRepository:
             for row in rows
         )
         return tuple(reversed(values)) if reverse else values
+
+    def get_automation_definition_due_state(
+        self, definition_id: str
+    ) -> AutomationDefinitionDueState | None:
+        if not isinstance(definition_id, str) or not definition_id.strip():
+            raise ValueError("automation definition ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM automation_definition_due_state WHERE definition_id=?",
+                (definition_id,),
+            ).fetchone()
+        return self._automation_definition_due_state(row) if row else None
+
+    def initialize_automation_definition_due_state(
+        self,
+        definition_id: str,
+        next_run_at: datetime,
+        now: datetime,
+        *,
+        definition_fingerprint: str | None = None,
+    ) -> AutomationDefinitionDueState:
+        AutomationDefinitionDueState(
+            definition_id,
+            next_run_at,
+            now,
+            definition_fingerprint=definition_fingerprint,
+        )
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT OR IGNORE INTO automation_definition_due_state "
+                "(definition_id, next_run_at, updated_at, definition_fingerprint) "
+                "VALUES (?, ?, ?, ?)",
+                (definition_id, next_run_at.isoformat(), now.isoformat(), definition_fingerprint),
+            )
+            if definition_fingerprint is not None:
+                self._connection.execute(
+                    "UPDATE automation_definition_due_state SET definition_fingerprint=? "
+                    "WHERE definition_id=? AND definition_fingerprint IS NULL",
+                    (definition_fingerprint, definition_id),
+                )
+            row = self._connection.execute(
+                "SELECT * FROM automation_definition_due_state WHERE definition_id=?",
+                (definition_id,),
+            ).fetchone()
+        if row is None:
+            raise LookupError(f"automation definition {definition_id!r} due-state was not created")
+        return self._automation_definition_due_state(row)
+
+    def reset_automation_definition_due_state(
+        self,
+        definition_id: str,
+        next_run_at: datetime,
+        now: datetime,
+        *,
+        definition_fingerprint: str,
+    ) -> AutomationDefinitionDueState:
+        AutomationDefinitionDueState(
+            definition_id,
+            next_run_at,
+            now,
+            definition_fingerprint=definition_fingerprint,
+        )
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE automation_definition_due_state SET next_run_at=?, updated_at=?, "
+                "last_reason=NULL, last_next_action=NULL, definition_fingerprint=? "
+                "WHERE definition_id=?",
+                (
+                    next_run_at.isoformat(),
+                    now.isoformat(),
+                    definition_fingerprint,
+                    definition_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                self._connection.execute(
+                    "INSERT INTO automation_definition_due_state "
+                    "(definition_id, next_run_at, updated_at, definition_fingerprint) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        definition_id,
+                        next_run_at.isoformat(),
+                        now.isoformat(),
+                        definition_fingerprint,
+                    ),
+                )
+            row = self._connection.execute(
+                "SELECT * FROM automation_definition_due_state WHERE definition_id=?",
+                (definition_id,),
+            ).fetchone()
+        return self._automation_definition_due_state(row)
+
+    def record_automation_definition_failure(
+        self,
+        definition_id: str,
+        *,
+        outcome: str,
+        reason: str,
+        next_action: str,
+        now: datetime,
+        expected_next_run_at: datetime | None = None,
+    ) -> AutomationDefinitionDueState | None:
+        AutomationDefinitionDueState(
+            definition_id,
+            now,
+            now,
+            last_outcome=outcome,
+            last_reason=reason,
+            last_next_action=next_action,
+        )
+        if expected_next_run_at is None:
+            predicate = "definition_id=?"
+            parameters: tuple[object, ...] = (definition_id,)
+        else:
+            predicate = "definition_id=? AND next_run_at=?"
+            parameters = (definition_id, expected_next_run_at.isoformat())
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE automation_definition_due_state SET updated_at=?, last_outcome=?, "
+                "last_reason=?, last_next_action=? WHERE " + predicate,
+                (now.isoformat(), outcome, reason, next_action, *parameters),
+            )
+            row = self._connection.execute(
+                "SELECT * FROM automation_definition_due_state WHERE definition_id=?",
+                (definition_id,),
+            ).fetchone()
+        return self._automation_definition_due_state(row) if row else None
+
+    def active_automation_job_count(self) -> int:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT COUNT(*) AS count FROM automation_jobs WHERE status IN (?, ?)",
+                (AutomationJobStatus.PENDING.value, AutomationJobStatus.RUNNING.value),
+            ).fetchone()
+        return int(row["count"])
+
+    def enqueue_due_automation_definition(
+        self,
+        definition_id: str,
+        job: AutomationJob,
+        occurrence: AutomationDefinitionOccurrence,
+        next_run_at: datetime,
+        now: datetime,
+        maximum_active_jobs: int,
+    ) -> bool:
+        """Atomically publish one managed occurrence and advance its due state."""
+
+        if occurrence.definition_id != definition_id or job.definition_id != definition_id:
+            raise ValueError("automation definition occurrence identity does not match the Job")
+        if job.occurrence_at != occurrence.occurrence_at:
+            raise ValueError("automation definition occurrence time does not match the Job")
+        if (
+            job.definition_fingerprint != occurrence.definition_fingerprint
+            or job.definition_version != occurrence.definition_version
+            or job.configuration_snapshot_id != occurrence.configuration_revision_id
+            or job.configuration_snapshot_version != occurrence.configuration_revision_version
+            or job.configuration_snapshot_digest != occurrence.configuration_revision_digest
+            or job.run_mode != occurrence.run_mode
+            or job.resource_library_id != occurrence.resource_library_id
+            or job.source_scope != occurrence.source_scope
+            or job.limit != occurrence.item_limit
+        ):
+            raise ValueError("automation occurrence pins do not match the Job")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._has_job_capacity(maximum_active_jobs):
+                    self._connection.rollback()
+                    return False
+                cursor = self._connection.execute(
+                    "UPDATE automation_definition_due_state SET next_run_at=?, updated_at=?, "
+                    "last_occurrence_at=?, last_job_id=?, last_outcome=?, last_reason=NULL, "
+                    "last_next_action=NULL, definition_fingerprint=? "
+                    "WHERE definition_id=? AND next_run_at=? AND "
+                    "julianday(next_run_at)<=julianday(?) AND "
+                    "(definition_fingerprint IS NULL OR definition_fingerprint=?)",
+                    (
+                        next_run_at.isoformat(),
+                        now.isoformat(),
+                        occurrence.occurrence_at.isoformat(),
+                        job.job_id,
+                        occurrence.outcome,
+                        occurrence.definition_fingerprint,
+                        definition_id,
+                        occurrence.occurrence_at.isoformat(),
+                        now.isoformat(),
+                        occurrence.definition_fingerprint,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    self._connection.rollback()
+                    return False
+                self._insert_job(job)
+                self._connection.execute(
+                    "INSERT INTO automation_definition_occurrences "
+                    "(occurrence_id, definition_id, occurrence_at, emitted_at, job_id, "
+                    "definition_fingerprint, definition_version, configuration_revision_id, "
+                    "configuration_revision_version, configuration_revision_digest, run_mode, "
+                    "resource_library_id, source_scope, item_limit, outcome, reason, next_action) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        occurrence.occurrence_id,
+                        occurrence.definition_id,
+                        occurrence.occurrence_at.isoformat(),
+                        occurrence.emitted_at.isoformat(),
+                        occurrence.job_id,
+                        occurrence.definition_fingerprint,
+                        occurrence.definition_version,
+                        occurrence.configuration_revision_id,
+                        occurrence.configuration_revision_version,
+                        occurrence.configuration_revision_digest,
+                        occurrence.run_mode.value,
+                        occurrence.resource_library_id,
+                        occurrence.source_scope,
+                        occurrence.item_limit,
+                        occurrence.outcome,
+                        occurrence.reason,
+                        occurrence.next_action,
+                    ),
+                )
+                self._connection.commit()
+                return True
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def get_latest_automation_definition_occurrence(
+        self, definition_id: str
+    ) -> AutomationDefinitionOccurrence | None:
+        values = self.list_automation_definition_occurrences(definition_id, limit=1)
+        return values[0] if values else None
+
+    def list_automation_definition_occurrences(
+        self,
+        definition_id: str,
+        *,
+        limit: int | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+    ) -> tuple[AutomationDefinitionOccurrence, ...]:
+        if not isinstance(definition_id, str) or not definition_id.strip():
+            raise ValueError("automation definition ID is required")
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 101
+        ):
+            raise ValueError("automation occurrence limit must be between 1 and 100")
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
+        query = "SELECT * FROM automation_definition_occurrences WHERE definition_id=?"
+        parameters: list[object] = [definition_id]
+        reverse = before is not None
+        if after is not None:
+            timestamp = after[0].isoformat()
+            query += " AND (emitted_at < ? OR (emitted_at = ? AND occurrence_id < ?))"
+            parameters.extend((timestamp, timestamp, after[1]))
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            query += " AND (emitted_at > ? OR (emitted_at = ? AND occurrence_id > ?))"
+            parameters.extend((timestamp, timestamp, before[1]))
+        query += (
+            " ORDER BY emitted_at ASC, occurrence_id ASC"
+            if reverse
+            else " ORDER BY emitted_at DESC, occurrence_id DESC"
+        )
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters.append(limit)
+        with self._lock:
+            rows = self._connection.execute(query, tuple(parameters)).fetchall()
+        values = tuple(self._automation_definition_occurrence(row) for row in rows)
+        return tuple(reversed(values)) if reverse else values
+
+    def list_latest_automation_definition_occurrences(
+        self, definition_ids: Iterable[str]
+    ) -> tuple[AutomationDefinitionOccurrence, ...]:
+        """Return one newest occurrence per bounded definition page."""
+
+        values = tuple(definition_ids)
+        if len(values) > 10_000:
+            raise ValueError("automation definition page is too large")
+        if any(not isinstance(value, str) or not value.strip() for value in values):
+            raise ValueError("automation definition ID is required")
+        if not values:
+            return ()
+        placeholders = ", ".join("?" for _ in values)
+        query = (
+            "SELECT occurrence.* FROM automation_definition_occurrences occurrence "
+            f"WHERE occurrence.definition_id IN ({placeholders}) AND NOT EXISTS ("
+            "SELECT 1 FROM automation_definition_occurrences newer "
+            "WHERE newer.definition_id=occurrence.definition_id AND ("
+            "newer.emitted_at > occurrence.emitted_at OR "
+            "(newer.emitted_at = occurrence.emitted_at AND "
+            "newer.occurrence_id > occurrence.occurrence_id))) "
+            "ORDER BY occurrence.definition_id"
+        )
+        with self._lock:
+            rows = self._connection.execute(query, values).fetchall()
+        return tuple(self._automation_definition_occurrence(row) for row in rows)
+
+    def list_automation_definition_due_states(
+        self,
+        *,
+        limit: int | None = None,
+        definition_ids: Iterable[str] | None = None,
+    ) -> tuple[AutomationDefinitionDueState, ...]:
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 10_000
+        ):
+            raise ValueError("automation definition due-state limit must be between 1 and 10000")
+        query = "SELECT * FROM automation_definition_due_state"
+        parameters: tuple[object, ...] = ()
+        if definition_ids is not None:
+            values = tuple(definition_ids)
+            if len(values) > 10_000:
+                raise ValueError("automation definition page is too large")
+            if any(not isinstance(value, str) or not value.strip() for value in values):
+                raise ValueError("automation definition ID is required")
+            if not values:
+                return ()
+            placeholders = ", ".join("?" for _ in values)
+            query += f" WHERE definition_id IN ({placeholders})"
+            parameters = values
+        query += " ORDER BY definition_id"
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters = (*parameters, limit)
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return tuple(self._automation_definition_due_state(row) for row in rows)
+
+    # Compatibility spellings used by application adapters and migration probes.
+    get_automation_task_definition_due_state = get_automation_definition_due_state
+    initialize_automation_task_definition_due_state = initialize_automation_definition_due_state
+    enqueue_due_definition = enqueue_due_automation_definition
+    get_latest_automation_occurrence = get_latest_automation_definition_occurrence
+    list_automation_occurrences = list_automation_definition_occurrences
 
     def create_execution_authorization(
         self, value: ExecutionAuthorization, audit: ExecutionAuthorizationAudit
@@ -7001,10 +7345,39 @@ class SQLiteTaskRepository:
                     configuration_snapshot_id TEXT, configuration_snapshot_digest TEXT,
                     failure_category TEXT, failure_durable_state TEXT,
                     failure_side_effects TEXT, failure_retry_safe INTEGER,
-                    failure_next_action TEXT
+                    failure_next_action TEXT,
+                    definition_id TEXT, definition_fingerprint TEXT,
+                    definition_version INTEGER, occurrence_at TEXT,
+                    run_mode TEXT, resource_library_id TEXT, source_scope TEXT,
+                    configuration_snapshot_version INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS automation_jobs_status_created
                     ON automation_jobs(status, created_at, job_id);
+                CREATE TABLE IF NOT EXISTS automation_definition_due_state (
+                    definition_id TEXT PRIMARY KEY, next_run_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, last_occurrence_at TEXT,
+                    last_job_id TEXT, last_outcome TEXT, last_reason TEXT,
+                    last_next_action TEXT, definition_fingerprint TEXT
+                );
+                CREATE TABLE IF NOT EXISTS automation_definition_occurrences (
+                    occurrence_id TEXT PRIMARY KEY, definition_id TEXT NOT NULL,
+                    occurrence_at TEXT NOT NULL, emitted_at TEXT NOT NULL,
+                    job_id TEXT NOT NULL UNIQUE, definition_fingerprint TEXT NOT NULL,
+                    definition_version INTEGER NOT NULL,
+                    configuration_revision_id TEXT NOT NULL,
+                    configuration_revision_version INTEGER NOT NULL,
+                    configuration_revision_digest TEXT NOT NULL,
+                    run_mode TEXT NOT NULL, resource_library_id TEXT NOT NULL,
+                    source_scope TEXT, item_limit INTEGER NOT NULL,
+                    outcome TEXT NOT NULL, reason TEXT, next_action TEXT,
+                    UNIQUE(definition_id, occurrence_at)
+                );
+                CREATE INDEX IF NOT EXISTS automation_definition_occurrences_definition_time
+                    ON automation_definition_occurrences(
+                        definition_id, emitted_at, occurrence_id
+                    );
+                CREATE INDEX IF NOT EXISTS automation_definition_occurrences_time
+                    ON automation_definition_occurrences(emitted_at, occurrence_id);
                 CREATE TABLE IF NOT EXISTS automation_schedules (
                     schedule_id TEXT PRIMARY KEY, next_run_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL, last_job_id TEXT
@@ -7160,6 +7533,24 @@ class SQLiteTaskRepository:
                 )
             if "claim_token" not in job_columns:
                 self._connection.execute("ALTER TABLE automation_jobs ADD COLUMN claim_token TEXT")
+            for column, definition in (
+                ("definition_id", "TEXT"),
+                ("definition_fingerprint", "TEXT"),
+                ("definition_version", "INTEGER"),
+                ("occurrence_at", "TEXT"),
+                ("run_mode", "TEXT"),
+                ("resource_library_id", "TEXT"),
+                ("source_scope", "TEXT"),
+                ("configuration_snapshot_version", "INTEGER"),
+            ):
+                if column not in job_columns:
+                    self._connection.execute(
+                        f"ALTER TABLE automation_jobs ADD COLUMN {column} {definition}"
+                    )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS automation_jobs_definition_occurrence "
+                "ON automation_jobs(definition_id, occurrence_at, job_id)"
+            )
             review_columns = {
                 row["name"]
                 for row in self._connection.execute(
@@ -8085,6 +8476,14 @@ class SQLiteTaskRepository:
             job.failure_side_effects,
             None if job.failure_retry_safe is None else int(job.failure_retry_safe),
             job.failure_next_action,
+            job.definition_id,
+            job.definition_fingerprint,
+            job.definition_version,
+            job.occurrence_at.isoformat() if job.occurrence_at else None,
+            job.run_mode.value if job.run_mode else None,
+            job.resource_library_id,
+            job.source_scope,
+            job.configuration_snapshot_version,
         )
 
     def _insert_job(self, job: AutomationJob) -> None:
@@ -8102,8 +8501,12 @@ class SQLiteTaskRepository:
             "schedule_id, execute_authorized, claim_token, "
             "configuration_snapshot_id, configuration_snapshot_digest, failure_category, "
             "failure_durable_state, failure_side_effects, failure_retry_safe, "
-            "failure_next_action) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "failure_next_action, definition_id, definition_fingerprint, definition_version, "
+            "occurrence_at, run_mode, resource_library_id, source_scope, "
+            "configuration_snapshot_version) "
+            "VALUES ("
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+            ")",
             self._job_values(job),
         )
 
@@ -8131,6 +8534,56 @@ class SQLiteTaskRepository:
             row["failure_side_effects"],
             None if row["failure_retry_safe"] is None else bool(row["failure_retry_safe"]),
             row["failure_next_action"],
+            row["definition_id"],
+            row["definition_fingerprint"],
+            row["definition_version"],
+            datetime.fromisoformat(row["occurrence_at"]) if row["occurrence_at"] else None,
+            AutomationTaskRunMode(row["run_mode"]) if row["run_mode"] else None,
+            row["resource_library_id"],
+            row["source_scope"],
+            row["configuration_snapshot_version"],
+        )
+
+    @staticmethod
+    def _automation_definition_due_state(
+        row: sqlite3.Row,
+    ) -> AutomationDefinitionDueState:
+        return AutomationDefinitionDueState(
+            row["definition_id"],
+            datetime.fromisoformat(row["next_run_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            datetime.fromisoformat(row["last_occurrence_at"])
+            if row["last_occurrence_at"]
+            else None,
+            row["last_job_id"],
+            row["last_outcome"],
+            row["last_reason"],
+            row["last_next_action"],
+            row["definition_fingerprint"],
+        )
+
+    @staticmethod
+    def _automation_definition_occurrence(
+        row: sqlite3.Row,
+    ) -> AutomationDefinitionOccurrence:
+        return AutomationDefinitionOccurrence(
+            row["occurrence_id"],
+            row["definition_id"],
+            datetime.fromisoformat(row["occurrence_at"]),
+            datetime.fromisoformat(row["emitted_at"]),
+            row["job_id"],
+            row["definition_fingerprint"],
+            int(row["definition_version"]),
+            row["configuration_revision_id"],
+            int(row["configuration_revision_version"]),
+            row["configuration_revision_digest"],
+            AutomationTaskRunMode(row["run_mode"]),
+            row["resource_library_id"],
+            row["source_scope"],
+            int(row["item_limit"]),
+            row["outcome"],
+            row["reason"],
+            row["next_action"],
         )
 
     @staticmethod

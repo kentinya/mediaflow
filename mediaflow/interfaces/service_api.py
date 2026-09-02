@@ -11,6 +11,9 @@ from urllib.parse import parse_qs
 from uuid import uuid4
 
 from mediaflow.application.automation import AutomationJobService
+from mediaflow.application.automation_definition_occurrence import (
+    AutomationDefinitionOccurrenceService,
+)
 from mediaflow.application.automation_task_definition_preview import (
     AutomationTaskDefinitionPreviewService,
 )
@@ -199,6 +202,7 @@ class MediaFlowApi:
                 metadata_provider_registry_factory=metadata_provider_registry_factory,
                 file_index=file_index,
             )
+        self._automation_occurrences = AutomationDefinitionOccurrenceService(repository)
         self._recovery_admission = RecoveryAdmissionService(
             repository,
             snapshot_validator=snapshot_validator,
@@ -712,7 +716,10 @@ class MediaFlowApi:
                 )
             detail = self._configuration_objects.revision_detail(active.revision_id)
             all_items = detail["objects"].get("automationTaskDefinitions", [])
-            items = all_items[:100]
+            items = self._automation_occurrences.project_definitions(
+                all_items[:100],
+                configuration=active.summary(),
+            )
             return self._response(
                 start_response,
                 200,
@@ -750,10 +757,79 @@ class MediaFlowApi:
             )
             if item is None:
                 raise LookupError(f"automationTaskDefinitions {parts[4]!r} was not found")
+            item = self._automation_occurrences.project_definition(
+                item,
+                configuration=active.summary(),
+            )
             return self._response(
                 start_response,
                 200,
                 {"configuration": active.summary(), "definition": item},
+            )
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "occurrences"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_service is None or self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            active = self._automation_revision({**environ, "QUERY_STRING": ""})
+            if active is None:
+                raise LookupError(f"automationTaskDefinitions {parts[4]!r} was not found")
+            detail = self._configuration_objects.revision_detail(active.revision_id)
+            definition = next(
+                (
+                    candidate
+                    for candidate in detail["objects"].get("automationTaskDefinitions", [])
+                    if candidate.get("id") == parts[4]
+                ),
+                None,
+            )
+            if definition is None:
+                raise LookupError(f"automationTaskDefinitions {parts[4]!r} was not found")
+            limit, cursor = self._scoped_page_query(
+                environ,
+                "automation_definition_occurrences",
+                parts[4],
+                "automation occurrence",
+            )
+            values = self._list_page(
+                lambda **kwargs: self._automation_occurrences.list(parts[4], **kwargs),
+                limit,
+                cursor,
+            )
+            page, has_previous, has_next = self._page_window(values, limit, cursor)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "definitionId": parts[4],
+                    "configuration": active.summary(),
+                    "items": [item.document() for item in page],
+                    "limit": limit,
+                    "truncated": has_next,
+                    "previous_cursor": self._page_cursor(
+                        "automation_definition_occurrences",
+                        page,
+                        has_previous,
+                        CursorDirection.PREVIOUS,
+                        scope=parts[4],
+                    ),
+                    "next_cursor": self._page_cursor(
+                        "automation_definition_occurrences",
+                        page,
+                        has_next,
+                        CursorDirection.NEXT,
+                        scope=parts[4],
+                    ),
+                },
             )
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "POST":
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3331,6 +3407,7 @@ class MediaFlowApi:
                     ),
                     snapshot_id=active.revision_id,
                     digest=active.digest,
+                    version=active.version,
                 )
                 refreshed_status = build_configuration_snapshot(runtime)
             except Exception as error:
@@ -3476,6 +3553,12 @@ class MediaFlowApi:
             return f"/api/v1/{parts[2]}/{{id}}"
         if len(parts) == 5 and parts[:4] == ["api", "v1", "automation", "task-definitions"]:
             return "/api/v1/automation/task-definitions/{id}"
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "occurrences"
+        ):
+            return "/api/v1/automation/task-definitions/{id}/occurrences"
         if (
             len(parts) == 6
             and parts[:4] == ["api", "v1", "automation", "task-definitions"]
@@ -3864,12 +3947,13 @@ class MediaFlowApi:
             "task_results": "result_id",
             "notification_deliveries": "delivery_id",
             "schedule_audit": "audit_id",
+            "automation_definition_occurrences": "occurrence_id",
             "operational_logs": "log_id",
         }[kind]
         identifier = getattr(record, attribute)
         timestamp = (
             record.emitted_at
-            if kind == "schedule_audit"
+            if kind in {"schedule_audit", "automation_definition_occurrences"}
             else record.occurred_at
             if kind == "operational_logs"
             else record.created_at
@@ -3947,6 +4031,10 @@ class MediaFlowApi:
         }:
             return True
         if parts[:3] == ["api", "v1", "tasks"]:
+            return True
+        if parts[:4] == ["api", "v1", "automation", "task-definitions"] and (
+            len(parts) in {4, 5} or (len(parts) == 6 and parts[5] == "occurrences")
+        ):
             return True
         return parts[:3] == ["api", "v1", "files"] and (
             len(parts) == 4 or parts == ["api", "v1", "files", "by-source"]

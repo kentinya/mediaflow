@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import math
 import posixpath
 from collections.abc import Iterable, Mapping
@@ -73,10 +75,9 @@ AutomationTaskDefinitionMode = AutomationTaskRunMode
 class AutomationTaskDefinition:
     """A reusable, managed source/schedule/run-intent definition.
 
-    This object is deliberately independent from :class:`ScheduleDefinition`:
-    legacy schedules remain scan/preview-only and are consumed by the existing
-    Scheduler.  The managed definition is parsed and persisted in this Task;
-    later work may connect it to occurrence admission.
+    This object remains independent from :class:`ScheduleDefinition`: legacy
+    schedules stay scan/preview-only while the managed Scheduler consumes this
+    definition through its separate due-occurrence admission boundary.
     """
 
     definition_id: str
@@ -338,6 +339,15 @@ class AutomationTaskDefinition:
             result["timezone"] = self.timezone
         return copy.deepcopy(result)
 
+    @property
+    def definition_fingerprint(self) -> str:
+        """The stable identity of this exact definition content."""
+
+        encoded = json.dumps(
+            self.document(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
     to_document = document
     as_document = document
 
@@ -385,6 +395,158 @@ class AutomationFailureEvidence:
 
 
 @dataclass(frozen=True)
+class AutomationDefinitionDueState:
+    """Durable, bounded state for one managed definition's next occurrence."""
+
+    definition_id: str
+    next_run_at: datetime
+    updated_at: datetime
+    last_occurrence_at: datetime | None = None
+    last_job_id: str | None = None
+    last_outcome: str | None = None
+    last_reason: str | None = None
+    last_next_action: str | None = None
+    definition_fingerprint: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.definition_id, str)
+            or not self.definition_id.strip()
+            or len(self.definition_id) > 128
+            or "\x00" in self.definition_id
+        ):
+            raise ValueError("automation definition due-state ID is invalid")
+        for label, value in (
+            ("next run", self.next_run_at),
+            ("updated", self.updated_at),
+            ("last occurrence", self.last_occurrence_at),
+        ):
+            if value is not None and (not isinstance(value, datetime) or value.tzinfo is None):
+                raise ValueError(f"automation definition due-state {label} must include a timezone")
+        for label, value, maximum in (
+            ("last Job ID", self.last_job_id, 128),
+            ("last outcome", self.last_outcome, 64),
+            ("last reason", self.last_reason, 256),
+            ("last next action", self.last_next_action, 512),
+        ):
+            if value is not None and (
+                not isinstance(value, str) or len(value) > maximum or "\x00" in value
+            ):
+                raise ValueError(f"automation definition due-state {label} is invalid")
+        if self.definition_fingerprint is not None and not _is_sha256(self.definition_fingerprint):
+            raise ValueError("automation definition due-state fingerprint is invalid")
+
+
+@dataclass(frozen=True)
+class AutomationDefinitionOccurrence:
+    """One emitted managed-definition occurrence and its immutable pins."""
+
+    occurrence_id: str
+    definition_id: str
+    occurrence_at: datetime
+    emitted_at: datetime
+    job_id: str
+    definition_fingerprint: str
+    definition_version: int
+    configuration_revision_id: str
+    configuration_revision_version: int
+    configuration_revision_digest: str
+    run_mode: AutomationTaskRunMode
+    resource_library_id: str
+    source_scope: str | None
+    item_limit: int
+    outcome: str = "emitted"
+    reason: str | None = None
+    next_action: str | None = None
+
+    def __post_init__(self) -> None:
+        for label, value, maximum in (
+            ("occurrence ID", self.occurrence_id, 192),
+            ("definition ID", self.definition_id, 128),
+            ("Job ID", self.job_id, 128),
+            ("configuration revision ID", self.configuration_revision_id, 128),
+            ("ResourceLibrary ID", self.resource_library_id, 128),
+        ):
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > maximum
+                or "\x00" in value
+            ):
+                raise ValueError(f"automation occurrence {label} is invalid")
+        for label, value in (("occurrence", self.occurrence_at), ("emitted", self.emitted_at)):
+            if not isinstance(value, datetime) or value.tzinfo is None:
+                raise ValueError(f"automation occurrence {label} time must include a timezone")
+        if not _is_sha256(self.definition_fingerprint):
+            raise ValueError("automation occurrence definition fingerprint is invalid")
+        if not _is_sha256(self.configuration_revision_digest):
+            raise ValueError("automation occurrence configuration digest is invalid")
+        for label, value in (
+            ("definition version", self.definition_version),
+            ("configuration revision version", self.configuration_revision_version),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"automation occurrence {label} must be positive")
+        if not isinstance(self.run_mode, AutomationTaskRunMode):
+            object.__setattr__(self, "run_mode", AutomationTaskRunMode.parse(self.run_mode))
+        normalized_scope = AutomationTaskDefinition.normalize_scope(self.source_scope)
+        object.__setattr__(self, "source_scope", normalized_scope)
+        if (
+            isinstance(self.item_limit, bool)
+            or not isinstance(self.item_limit, int)
+            or not 1 <= self.item_limit <= AutomationTaskDefinition.MAX_ITEM_LIMIT
+        ):
+            raise ValueError("automation occurrence item limit is invalid")
+        for label, value, maximum in (
+            ("outcome", self.outcome, 64),
+            ("reason", self.reason, 256),
+            ("next action", self.next_action, 512),
+        ):
+            if value is not None and (
+                not isinstance(value, str) or not value.strip() or len(value) > maximum
+            ):
+                raise ValueError(f"automation occurrence {label} is invalid")
+
+    def document(self) -> dict[str, object]:
+        return {
+            "occurrenceId": self.occurrence_id,
+            "definitionId": self.definition_id,
+            "occurrenceAt": self.occurrence_at.isoformat(),
+            "emittedAt": self.emitted_at.isoformat(),
+            "jobId": self.job_id,
+            "definitionFingerprint": self.definition_fingerprint,
+            "definitionVersion": self.definition_version,
+            "configurationRevisionId": self.configuration_revision_id,
+            "configurationRevisionVersion": self.configuration_revision_version,
+            "configurationRevisionDigest": self.configuration_revision_digest,
+            "runMode": self.run_mode.value,
+            "resourceLibraryId": self.resource_library_id,
+            "sourceScope": self.source_scope,
+            "itemLimit": self.item_limit,
+            "outcome": self.outcome,
+            "reason": self.reason,
+            "nextAction": self.next_action,
+        }
+
+    to_document = document
+    as_document = document
+
+
+# Descriptive aliases keep the persistence/application adapter vocabulary
+# discoverable without creating parallel contracts.
+AutomationDueState = AutomationDefinitionDueState
+AutomationDefinitionOccurrenceRecord = AutomationDefinitionOccurrence
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+@dataclass(frozen=True)
 class AutomationJob:
     job_id: str
     command: AutomationCommand
@@ -407,6 +569,44 @@ class AutomationJob:
     failure_side_effects: str | None = None
     failure_retry_safe: bool | None = None
     failure_next_action: str | None = None
+    # These fields are populated only for managed Automation Task Definition
+    # occurrences.  Legacy jobs deliberately remain unpinned.
+    definition_id: str | None = None
+    definition_fingerprint: str | None = None
+    definition_version: int | None = None
+    occurrence_at: datetime | None = None
+    run_mode: AutomationTaskRunMode | None = None
+    resource_library_id: str | None = None
+    source_scope: str | None = None
+    configuration_snapshot_version: int | None = None
+
+    @property
+    def automation_definition_id(self) -> str | None:
+        return self.definition_id
+
+    @property
+    def automation_definition_fingerprint(self) -> str | None:
+        return self.definition_fingerprint
+
+    @property
+    def automation_definition_version(self) -> int | None:
+        return self.definition_version
+
+    @property
+    def definition_pinned(self) -> bool:
+        return self.definition_id is not None
+
+    @property
+    def configuration_revision_id(self) -> str | None:
+        return self.configuration_snapshot_id
+
+    @property
+    def configuration_revision_digest(self) -> str | None:
+        return self.configuration_snapshot_digest
+
+    @property
+    def configuration_revision_version(self) -> int | None:
+        return self.configuration_snapshot_version
 
 
 @dataclass(frozen=True)
@@ -472,6 +672,10 @@ class SchedulerConfigurationSnapshot:
     snapshot_digest: str
     schedules: tuple[ScheduleDefinition, ...]
     maximum_active_jobs: int
+    automation_task_definitions: tuple[AutomationTaskDefinition, ...] = ()
+    configuration_snapshot_version: int | None = None
+    resource_library_ids: tuple[str, ...] = ()
+    enabled_resource_library_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.snapshot_id or not self.snapshot_digest:
@@ -482,6 +686,12 @@ class SchedulerConfigurationSnapshot:
             raise ValueError("scheduler maximum active Jobs must be an integer")
         if not 1 <= self.maximum_active_jobs <= 10_000:
             raise ValueError("scheduler maximum active Jobs must be between 1 and 10000")
+        if self.configuration_snapshot_version is not None and (
+            isinstance(self.configuration_snapshot_version, bool)
+            or not isinstance(self.configuration_snapshot_version, int)
+            or self.configuration_snapshot_version < 1
+        ):
+            raise ValueError("scheduler configuration snapshot version must be positive")
 
 
 @dataclass(frozen=True)
@@ -546,3 +756,61 @@ class AutomationJobRepository(Protocol):
         after: tuple[datetime, str] | None = None,
         before: tuple[datetime, str] | None = None,
     ) -> tuple[ScheduleAuditRecord, ...]: ...
+    def get_automation_definition_due_state(
+        self, definition_id: str
+    ) -> AutomationDefinitionDueState | None: ...
+    def initialize_automation_definition_due_state(
+        self,
+        definition_id: str,
+        next_run_at: datetime,
+        now: datetime,
+        *,
+        definition_fingerprint: str | None = None,
+    ) -> AutomationDefinitionDueState: ...
+    def reset_automation_definition_due_state(
+        self,
+        definition_id: str,
+        next_run_at: datetime,
+        now: datetime,
+        *,
+        definition_fingerprint: str,
+    ) -> AutomationDefinitionDueState: ...
+    def record_automation_definition_failure(
+        self,
+        definition_id: str,
+        *,
+        outcome: str,
+        reason: str,
+        next_action: str,
+        now: datetime,
+        expected_next_run_at: datetime | None = None,
+    ) -> AutomationDefinitionDueState | None: ...
+    def enqueue_due_automation_definition(
+        self,
+        definition_id: str,
+        job: AutomationJob,
+        occurrence: AutomationDefinitionOccurrence,
+        next_run_at: datetime,
+        now: datetime,
+        maximum_active_jobs: int,
+    ) -> bool: ...
+    def get_latest_automation_definition_occurrence(
+        self, definition_id: str
+    ) -> AutomationDefinitionOccurrence | None: ...
+    def list_automation_definition_occurrences(
+        self,
+        definition_id: str,
+        *,
+        limit: int | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+    ) -> tuple[AutomationDefinitionOccurrence, ...]: ...
+    def list_latest_automation_definition_occurrences(
+        self, definition_ids: Iterable[str]
+    ) -> tuple[AutomationDefinitionOccurrence, ...]: ...
+    def list_automation_definition_due_states(
+        self,
+        *,
+        limit: int | None = None,
+        definition_ids: Iterable[str] | None = None,
+    ) -> tuple[AutomationDefinitionDueState, ...]: ...

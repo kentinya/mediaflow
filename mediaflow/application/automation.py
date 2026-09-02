@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -10,11 +12,14 @@ from mediaflow.application.notification import NotificationPublisher
 from mediaflow.domain.automation import (
     AutomationClaimLost,
     AutomationCommand,
+    AutomationDefinitionOccurrence,
     AutomationFailureEvidence,
     AutomationJob,
     AutomationJobRepository,
     AutomationJobStatus,
     AutomationQueueFull,
+    AutomationTaskDefinition,
+    AutomationTaskRunMode,
     CronSchedule,
     IntervalSchedule,
     ScheduleDefinition,
@@ -71,7 +76,19 @@ class AutomationJobService:
         self._configuration_snapshot_id = snapshot_id
         self._configuration_snapshot_digest = digest
 
-    def submit(self, command: str, *, limit: int | None = None) -> AutomationJob:
+    def submit(
+        self,
+        command: str,
+        *,
+        limit: int | None = None,
+        definition_id: str | None = None,
+        automation_definition_id: str | None = None,
+    ) -> AutomationJob:
+        if definition_id is not None or automation_definition_id is not None:
+            raise ValueError(
+                "definition-pinned Jobs must be emitted by the Automation Scheduler, "
+                "not the legacy Job submission service"
+            )
         try:
             parsed = AutomationCommand(command)
         except ValueError as error:
@@ -279,6 +296,8 @@ class IntervalScheduler:
         configuration_snapshot_resolver: (
             Callable[[], SchedulerConfigurationSnapshot | tuple[str, str] | None] | None
         ) = None,
+        automation_task_definitions: tuple[AutomationTaskDefinition, ...] = (),
+        configuration_snapshot_version: int | None = None,
     ) -> None:
         if (configuration_snapshot_id is None) != (configuration_snapshot_digest is None):
             raise ValueError("Job configuration snapshot ID and digest must be provided together")
@@ -296,6 +315,8 @@ class IntervalScheduler:
         self._configuration_snapshot_id = configuration_snapshot_id
         self._configuration_snapshot_digest = configuration_snapshot_digest
         self._configuration_snapshot_resolver = configuration_snapshot_resolver
+        self._automation_task_definitions = tuple(automation_task_definitions)
+        self._configuration_snapshot_version = configuration_snapshot_version
         self._cron = {
             item.schedule_id: CronExpression.parse(item.expression)
             for item in schedules
@@ -304,22 +325,39 @@ class IntervalScheduler:
 
     def tick(self, now: datetime | None = None) -> tuple[AutomationJob, ...]:
         current = now or datetime.now(UTC)
-        resolved = (
-            self._configuration_snapshot_resolver()
-            if self._configuration_snapshot_resolver is not None
-            else (
-                (self._configuration_snapshot_id, self._configuration_snapshot_digest)
-                if self._configuration_snapshot_id and self._configuration_snapshot_digest
-                else None
+        resolution_error = None
+        try:
+            resolved = (
+                self._configuration_snapshot_resolver()
+                if self._configuration_snapshot_resolver is not None
+                else (
+                    (self._configuration_snapshot_id, self._configuration_snapshot_digest)
+                    if self._configuration_snapshot_id and self._configuration_snapshot_digest
+                    else None
+                )
             )
-        )
+        except Exception as error:
+            # Managed definitions record a durable fail-closed reason below.  A
+            # legacy-only scheduler retains its historical error propagation.
+            if not self._automation_task_definitions:
+                raise
+            resolved = None
+            resolution_error = error
         schedules = self._schedules
         maximum_active_jobs = self._maximum_active_jobs
         snapshot: tuple[str, str] | None
+        snapshot_version: int | None = self._configuration_snapshot_version
+        managed_definitions = self._automation_task_definitions
+        resource_library_ids: tuple[str, ...] = ()
+        enabled_resource_library_ids: tuple[str, ...] = ()
         if isinstance(resolved, SchedulerConfigurationSnapshot):
             schedules = resolved.schedules
             maximum_active_jobs = resolved.maximum_active_jobs
             snapshot = (resolved.snapshot_id, resolved.snapshot_digest)
+            snapshot_version = resolved.configuration_snapshot_version or snapshot_version or 1
+            managed_definitions = resolved.automation_task_definitions
+            resource_library_ids = resolved.resource_library_ids
+            enabled_resource_library_ids = resolved.enabled_resource_library_ids
             cron = {
                 item.schedule_id: CronExpression.parse(item.expression)
                 for item in schedules
@@ -327,7 +365,19 @@ class IntervalScheduler:
             }
         else:
             snapshot = resolved
+            if snapshot is not None and snapshot_version is None:
+                snapshot_version = 1
             cron = self._cron
+        managed_authority = (
+            bool(self._automation_task_definitions)
+            or bool(managed_definitions)
+            or isinstance(resolved, SchedulerConfigurationSnapshot)
+            or resolution_error is not None
+        )
+        if (
+            bool(self._automation_task_definitions) or bool(managed_definitions)
+        ) and current.tzinfo is None:
+            raise ValueError("scheduler tick time must include a timezone")
         queued = []
         for schedule in schedules:
             if not schedule.enabled:
@@ -377,7 +427,308 @@ class IntervalScheduler:
                         )
                     except Exception:
                         pass
+        if managed_authority:
+            queued.extend(
+                self._tick_automation_definitions(
+                    managed_definitions,
+                    current,
+                    snapshot,
+                    snapshot_version,
+                    maximum_active_jobs,
+                    resource_library_ids,
+                    enabled_resource_library_ids,
+                    resolution_error,
+                )
+            )
         return tuple(queued)
+
+    def _tick_automation_definitions(
+        self,
+        definitions: tuple[AutomationTaskDefinition, ...],
+        now: datetime,
+        snapshot: tuple[str, str] | None,
+        snapshot_version: int | None,
+        maximum_active_jobs: int,
+        resource_library_ids: tuple[str, ...],
+        enabled_resource_library_ids: tuple[str, ...],
+        resolution_error: Exception | None,
+    ) -> list[AutomationJob]:
+        """Emit managed-definition occurrences without constructing media work."""
+
+        queued: list[AutomationJob] = []
+        known_ids = set()
+        for definition in definitions:
+            definition_id = _definition_id(definition)
+            if not definition_id:
+                continue
+            known_ids.add(definition_id)
+            try:
+                state = self._ensure_definition_state(definition, now)
+            except Exception:
+                self._record_definition_failure(
+                    definition_id,
+                    now=now,
+                    outcome="failed",
+                    reason="managed definition due-state is unavailable",
+                    next_action="inspect the durable scheduler database, then tick again",
+                )
+                continue
+            if resolution_error is not None:
+                self._record_definition_failure(
+                    definition_id,
+                    now=now,
+                    outcome="blocked",
+                    reason="managed Active configuration is unavailable",
+                    next_action="inspect configuration status and activate a valid revision",
+                    expected_next_run_at=state.next_run_at if state else None,
+                )
+                continue
+            if snapshot is None or not snapshot[0] or not snapshot[1] or snapshot_version is None:
+                self._record_definition_failure(
+                    definition_id,
+                    now=now,
+                    outcome="blocked",
+                    reason="managed Active configuration identity is unavailable",
+                    next_action="activate a valid managed configuration before enabling scheduling",
+                    expected_next_run_at=state.next_run_at if state else None,
+                )
+                continue
+            if not _definition_enabled(definition):
+                self._record_definition_failure(
+                    definition_id,
+                    now=now,
+                    outcome="disabled",
+                    reason="Automation Task Definition is disabled",
+                    next_action="enable the definition in a new validated Active revision",
+                    expected_next_run_at=state.next_run_at if state else None,
+                )
+                continue
+            resource_id = _definition_resource_library_id(definition)
+            if resource_library_ids and resource_id not in resource_library_ids:
+                self._record_definition_failure(
+                    definition_id,
+                    now=now,
+                    outcome="blocked",
+                    reason="referenced ResourceLibrary is missing from Active configuration",
+                    next_action="repair the ResourceLibrary reference and activate a new revision",
+                    expected_next_run_at=state.next_run_at if state else None,
+                )
+                continue
+            if enabled_resource_library_ids and resource_id not in enabled_resource_library_ids:
+                self._record_definition_failure(
+                    definition_id,
+                    now=now,
+                    outcome="blocked",
+                    reason="referenced ResourceLibrary is disabled",
+                    next_action="enable the ResourceLibrary and activate a new revision",
+                    expected_next_run_at=state.next_run_at if state else None,
+                )
+                continue
+            try:
+                schedule = _definition_schedule(definition)
+                if state is None:
+                    state = self._ensure_definition_state(definition, now)
+                if state is None:
+                    raise LookupError("definition due-state could not be initialized")
+                if now < state.updated_at:
+                    self._record_definition_failure(
+                        definition_id,
+                        now=now,
+                        outcome="blocked",
+                        reason="scheduler clock moved backwards",
+                        next_action="restore a monotonic clock, then tick again",
+                        expected_next_run_at=state.next_run_at,
+                    )
+                    continue
+                if state.next_run_at > now:
+                    continue
+                occurrence_at = state.next_run_at
+                next_run_at = self._next_definition_run(schedule, now)
+            except Exception:
+                self._record_definition_failure(
+                    definition_id,
+                    now=now,
+                    outcome="blocked",
+                    reason="Automation Task Definition schedule is invalid",
+                    next_action="correct the interval/Cron and timezone, validate, and activate",
+                    expected_next_run_at=state.next_run_at if state else None,
+                )
+                continue
+            try:
+                mode = _definition_mode(definition)
+                definition_fingerprint = _definition_fingerprint(definition)
+                source_scope = _definition_source_scope(definition)
+                item_limit = _definition_limit(definition)
+                job = AutomationJob(
+                    str(uuid4()),
+                    _command_for_definition_mode(mode),
+                    AutomationJobStatus.PENDING,
+                    now,
+                    now,
+                    limit=item_limit,
+                    definition_id=definition_id,
+                    definition_fingerprint=definition_fingerprint,
+                    definition_version=snapshot_version,
+                    occurrence_at=occurrence_at,
+                    run_mode=mode,
+                    resource_library_id=resource_id,
+                    source_scope=source_scope,
+                    configuration_snapshot_id=snapshot[0],
+                    configuration_snapshot_digest=snapshot[1],
+                    configuration_snapshot_version=snapshot_version,
+                )
+                occurrence = AutomationDefinitionOccurrence(
+                    str(uuid4()),
+                    definition_id,
+                    occurrence_at,
+                    now,
+                    job.job_id,
+                    definition_fingerprint,
+                    snapshot_version,
+                    snapshot[0],
+                    snapshot_version,
+                    snapshot[1],
+                    mode,
+                    resource_id,
+                    source_scope,
+                    item_limit,
+                )
+                admitted = self._repository.enqueue_due_automation_definition(
+                    definition_id,
+                    job,
+                    occurrence,
+                    next_run_at,
+                    now,
+                    maximum_active_jobs,
+                )
+            except Exception:
+                self._record_definition_failure(
+                    definition_id,
+                    now=now,
+                    outcome="failed",
+                    reason="managed occurrence emission failed before publication",
+                    next_action="inspect the durable definition state, then tick again",
+                    expected_next_run_at=occurrence_at,
+                )
+                continue
+            if not admitted:
+                latest = self._repository.get_automation_definition_due_state(definition_id)
+                if latest is not None and latest.next_run_at != occurrence_at:
+                    reason = "duplicate or concurrent tick did not win this occurrence"
+                    action = "inspect the already-emitted occurrence; no duplicate retry is needed"
+                elif self._active_job_capacity_reached(maximum_active_jobs):
+                    reason = "configured active Job capacity has been reached"
+                    action = "wait for an active Job to finish, then tick again"
+                else:
+                    reason = "another scheduler instance owns this occurrence"
+                    action = "inspect the occurrence state, then tick again if it remains due"
+                self._record_definition_failure(
+                    definition_id,
+                    now=now,
+                    outcome="blocked",
+                    reason=reason,
+                    next_action=action,
+                    expected_next_run_at=occurrence_at,
+                )
+                continue
+            queued.append(job)
+            if self._notifications:
+                try:
+                    self._notifications.publish(
+                        NotificationEvent(
+                            f"automation-definition:{definition_id}:{job.job_id}",
+                            NotificationEventType.SCHEDULE_EMITTED,
+                            now,
+                            {
+                                "definitionId": definition_id,
+                                "jobId": job.job_id,
+                                "occurrenceAt": occurrence_at.isoformat(),
+                                "runMode": mode.value,
+                            },
+                        )
+                    )
+                except Exception:
+                    pass
+
+        list_states = getattr(self._repository, "list_automation_definition_due_states", None)
+        if callable(list_states):
+            for state in list_states(limit=10_000):
+                if state.definition_id in known_ids:
+                    continue
+                self._record_definition_failure(
+                    state.definition_id,
+                    now=now,
+                    outcome="blocked",
+                    reason="Automation Task Definition is missing from Active configuration",
+                    next_action="restore the definition or explicitly leave it disabled",
+                    expected_next_run_at=state.next_run_at,
+                )
+        return queued
+
+    def _ensure_definition_state(self, definition, now: datetime):
+        definition_id = _definition_id(definition)
+        state = self._repository.get_automation_definition_due_state(definition_id)
+        fingerprint = None
+        try:
+            fingerprint = _definition_fingerprint(definition)
+        except Exception:
+            pass
+        if state is None:
+            try:
+                initial = self._initial_definition_run(definition, now)
+            except Exception:
+                initial = now
+            return self._repository.initialize_automation_definition_due_state(
+                definition_id,
+                initial,
+                now,
+                definition_fingerprint=fingerprint,
+            )
+        if fingerprint is not None and state.definition_fingerprint not in {None, fingerprint}:
+            try:
+                initial = self._initial_definition_run(definition, now)
+            except Exception:
+                initial = now
+            return self._repository.reset_automation_definition_due_state(
+                definition_id,
+                initial,
+                now,
+                definition_fingerprint=fingerprint,
+            )
+        return state
+
+    def _record_definition_failure(self, definition_id: str, **kwargs) -> None:
+        recorder = getattr(self._repository, "record_automation_definition_failure", None)
+        if not callable(recorder):
+            return
+        try:
+            recorder(definition_id, **kwargs)
+        except Exception:
+            # A diagnostic failure must never make another definition's tick
+            # execute or suppress an already durable occurrence.
+            pass
+
+    def _active_job_capacity_reached(self, maximum_active_jobs: int) -> bool:
+        counter = getattr(self._repository, "active_automation_job_count", None)
+        if not callable(counter):
+            return False
+        try:
+            return counter() >= maximum_active_jobs
+        except Exception:
+            return False
+
+    def _initial_definition_run(self, definition, now: datetime) -> datetime:
+        schedule = _definition_schedule(definition)
+        if schedule[0] == "interval":
+            return now
+        expression = CronExpression.parse(schedule[1])
+        minute = now.astimezone(UTC).replace(second=0, microsecond=0)
+        return expression.next_at_or_after(minute, ZoneInfo(schedule[2]))
+
+    def _next_definition_run(self, schedule: tuple, now: datetime) -> datetime:
+        if schedule[0] == "interval":
+            return now + timedelta(seconds=schedule[1])
+        return CronExpression.parse(schedule[1]).next_after(now, ZoneInfo(schedule[2]))
 
     def _initial_run(
         self,
@@ -418,3 +769,87 @@ class IntervalScheduler:
             emitted += len(self.tick())
             sleep(poll_seconds)
         return emitted
+
+
+def _definition_id(definition) -> str:
+    value = getattr(definition, "definition_id", getattr(definition, "id", None))
+    return value if isinstance(value, str) else ""
+
+
+def _definition_enabled(definition) -> bool:
+    return getattr(definition, "enabled", False) is True
+
+
+def _definition_resource_library_id(definition) -> str:
+    value = getattr(definition, "resource_library_id", None)
+    return value if isinstance(value, str) else ""
+
+
+def _definition_source_scope(definition) -> str | None:
+    value = getattr(definition, "source_scope", getattr(definition, "source_sub_scope", None))
+    return value if isinstance(value, str) else None
+
+
+def _definition_limit(definition) -> int:
+    value = getattr(definition, "item_limit", getattr(definition, "limit", 100))
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 10_000:
+        raise ValueError("Automation Task Definition item limit is invalid")
+    return value
+
+
+def _definition_mode(definition) -> AutomationTaskRunMode:
+    value = getattr(definition, "mode", getattr(definition, "run_mode", None))
+    return value if isinstance(value, AutomationTaskRunMode) else AutomationTaskRunMode.parse(value)
+
+
+def _definition_schedule(definition) -> tuple[str, float | str, str | None]:
+    interval = getattr(definition, "interval_seconds", None)
+    cron = getattr(definition, "cron", None)
+    timezone = getattr(definition, "timezone", None)
+    if interval is not None and cron is None:
+        if isinstance(interval, bool) or not isinstance(interval, (int, float)) or interval <= 0:
+            raise ValueError("Automation Task Definition interval is invalid")
+        return "interval", float(interval), None
+    if cron is not None and interval is None:
+        if not isinstance(cron, str) or not cron.strip() or not isinstance(timezone, str):
+            raise ValueError("Automation Task Definition Cron schedule is invalid")
+        return "cron", cron, timezone
+    raise ValueError("Automation Task Definition requires exactly one schedule")
+
+
+def _definition_fingerprint(definition) -> str:
+    value = getattr(definition, "definition_fingerprint", None)
+    if isinstance(value, str) and len(value) == 64:
+        return value
+    document = getattr(definition, "document", None)
+    if callable(document):
+        value = document()
+    elif isinstance(definition, dict):
+        value = definition
+    else:
+        value = {
+            "id": _definition_id(definition),
+            "enabled": _definition_enabled(definition),
+            "resourceLibraryId": _definition_resource_library_id(definition),
+            "sourceScope": _definition_source_scope(definition),
+            "mode": _definition_mode(definition).value,
+            "schedule": _definition_schedule(definition),
+            "itemLimit": _definition_limit(definition),
+        }
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _command_for_definition_mode(mode: AutomationTaskRunMode) -> AutomationCommand:
+    return {
+        AutomationTaskRunMode.SCAN_ONLY: AutomationCommand.SCAN,
+        AutomationTaskRunMode.SCAN_AND_PLAN: AutomationCommand.PREVIEW,
+        AutomationTaskRunMode.AUTOMATIC_ORGANIZATION: AutomationCommand.ORGANIZE,
+    }[mode]
+
+
+# Explicit names for callers that want the managed occurrence boundary while
+# retaining IntervalScheduler as the single scheduler authority.
+AutomationDefinitionScheduler = IntervalScheduler
+AutomationTaskDefinitionScheduler = IntervalScheduler
+ManagedAutomationScheduler = IntervalScheduler
