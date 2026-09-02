@@ -389,6 +389,8 @@ class UnattendedGrantApiAndWebTests(unittest.TestCase):
             document["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
             document["storages"][0]["rootPath"] = str(root / "source")
             document["storages"][1]["rootPath"] = str(root / "target")
+            (root / "source" / "Media" / "incoming").mkdir(parents=True)
+            document["api"]["principals"][0]["id"] = "admin"
             with (
                 SQLiteConfigurationRepository(root / "configuration.sqlite3") as configuration,
                 SQLiteTaskRepository(root / "runtime.sqlite3") as runtime,
@@ -440,7 +442,14 @@ class UnattendedGrantApiAndWebTests(unittest.TestCase):
                     configuration_service=managed,
                     bootstrap_document=document,
                 )
-                status, body = _request(
+                status, preview_body = _request(
+                    api,
+                    "/api/v1/automation/task-definitions/automatic/preview",
+                    method="POST",
+                    body={},
+                )
+                self.assertEqual(status, 201, preview_body)
+                status, denied_preview_bypass = _request(
                     api,
                     "/api/v1/automation/task-definitions/automatic/grant",
                     method="POST",
@@ -451,8 +460,27 @@ class UnattendedGrantApiAndWebTests(unittest.TestCase):
                         "confirmation": True,
                     },
                 )
+                self.assertEqual(status, 409, denied_preview_bypass)
+                self.assertEqual(
+                    denied_preview_bypass["error"]["code"],
+                    "unattended_execution_preview_required",
+                )
+                status, body = _request(
+                    api,
+                    "/api/v1/automation/task-definitions/automatic/grant",
+                    method="POST",
+                    body={
+                        "revisionId": active.revision_id,
+                        "expectedVersion": active.version,
+                        "maxItemsPerRun": 3,
+                        "confirmation": True,
+                        "previewId": preview_body["previewId"],
+                    },
+                )
                 self.assertEqual(status, 201, body)
                 self.assertEqual(body["grant"]["status"], "active")
+                self.assertEqual(body["grant"]["previewId"], preview_body["previewId"])
+                self.assertEqual(body["grant"]["currentPermission"]["status"], "valid")
                 status, state = _request(
                     api, "/api/v1/automation/task-definitions/automatic/grant-state"
                 )
@@ -499,6 +527,7 @@ class UnattendedGrantApiAndWebTests(unittest.TestCase):
                         "expectedVersion": active.version,
                         "maxItemsPerRun": 3,
                         "confirmation": True,
+                        "previewId": preview_body["previewId"],
                     },
                 )
                 self.assertEqual(status, 201, regranted)

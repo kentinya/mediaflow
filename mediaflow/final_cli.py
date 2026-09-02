@@ -84,6 +84,7 @@ from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.recognition_review import RecognitionReviewStatus, RecognitionSelection
 from mediaflow.domain.scanner import FileScanStatus
+from mediaflow.domain.security import ApiPermission, ApiPrincipalDefinition, ApiRole
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     PersistentTask,
@@ -2903,6 +2904,7 @@ def _run_queued_workflow(
             resolved_configuration,
             cancellation_check,
             repository=repository,
+            configured_path=configured_path,
         )
     if job.command is AutomationCommand.FILE_METADATA_CORRECTION:
         if resolved_configuration is None:
@@ -2951,12 +2953,52 @@ def _run_queued_workflow(
     return task_id
 
 
+class _ConfiguredPermissionAuthority:
+    """Read current configured principal roles without resolving credentials."""
+
+    def __init__(self, configuration_provider: Callable[[], object]) -> None:
+        self._configuration_provider = configuration_provider
+
+    def has_permission(self, principal_id: str, permission: str | ApiPermission) -> bool:
+        configuration = self._configuration_provider()
+        definitions = tuple(getattr(configuration, "api_principals", ()))
+        token_env = getattr(configuration, "api_token_env", None)
+        if not definitions and token_env:
+            definitions = (ApiPrincipalDefinition("legacy-admin", token_env, (ApiRole.ADMIN,)),)
+        expected = permission.value if isinstance(permission, ApiPermission) else str(permission)
+        for definition in definitions:
+            if definition.principal_id != principal_id:
+                continue
+            return bool(
+                definition.enabled
+                and any(
+                    item == permission or getattr(item, "value", str(item)) == expected
+                    for item in definition.permissions
+                )
+            )
+        return False
+
+
+class _PersistedPreviewReader:
+    """Read exact Preview evidence without constructing Storage or Provider adapters."""
+
+    def __init__(self, repository) -> None:
+        self._repository = repository
+
+    def get_readonly(self, preview_id):
+        value = self._repository.get_automation_task_definition_preview(preview_id)
+        if value is None:
+            raise LookupError("linked automation Preview was not found")
+        return value
+
+
 def _run_definition_scoped_workflow(
     job,
     configuration: RuntimeConfiguration,
     cancellation_check: Callable[[], bool],
     *,
     repository=None,
+    configured_path: str | None = None,
 ) -> str:
     """Bridge one claimed managed occurrence to the existing Task pipeline."""
 
@@ -2982,7 +3024,13 @@ def _run_definition_scoped_workflow(
             provider_factory=metadata_provider_registry_from_environment,
             strategy_factory=strategy_runner_from_configuration,
             history_factory=JsonLinesOperationHistoryRepository,
-            unattended_grant_service=UnattendedExecutionGrantService(task_repository),
+            unattended_grant_service=UnattendedExecutionGrantService(
+                task_repository,
+                preview_service=_PersistedPreviewReader(task_repository),
+                permission_authority=_ConfiguredPermissionAuthority(
+                    lambda: _configuration(configured_path)
+                ),
+            ),
             logger=operational_logger,
         )
         return service.run(job, cancellation_check)

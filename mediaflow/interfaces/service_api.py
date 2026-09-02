@@ -90,6 +90,45 @@ class ApiPermissionDenied(RuntimeError):
     pass
 
 
+class _CurrentConfiguredPermissionAuthority:
+    """Resolve principal permissions from the current managed configuration."""
+
+    def __init__(self, fallback, configuration_service=None) -> None:
+        self._fallback = tuple(fallback)
+        self._configuration_service = configuration_service
+
+    def has_permission(self, principal_id: str, permission: str | ApiPermission) -> bool:
+        principals = self._current_principals()
+        expected = permission.value if isinstance(permission, ApiPermission) else str(permission)
+        for principal in principals:
+            if principal.principal_id != principal_id:
+                continue
+            permissions = getattr(principal, "permissions", ())
+            return any(
+                item == permission or getattr(item, "value", str(item)) == expected
+                for item in permissions
+            )
+        return False
+
+    def _current_principals(self):
+        if self._configuration_service is None:
+            return self._fallback
+        active = self._configuration_service.active()
+        if active is None:
+            raise RuntimeError("managed Active configuration is unavailable")
+        from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
+
+        runtime = load_runtime_configuration(active.document)
+        definitions = runtime.api_principals
+        if not definitions and runtime.api_token_env:
+            from mediaflow.domain.security import ApiPrincipalDefinition, ApiRole
+
+            definitions = (
+                ApiPrincipalDefinition("legacy-admin", runtime.api_token_env, (ApiRole.ADMIN,)),
+            )
+        return definitions
+
+
 @dataclass(frozen=True)
 class _ApiRuntimeBinding:
     """One immutable set of config-derived API behavior and its snapshot pin."""
@@ -148,7 +187,6 @@ class MediaFlowApi:
             raise ValueError("at least one API principal must be configured")
         self._repository = repository
         self._principals = principals
-        self._unattended_grants = UnattendedExecutionGrantService(repository)
         if (
             isinstance(stale_job_age_seconds, bool)
             or not isinstance(stale_job_age_seconds, int)
@@ -212,6 +250,13 @@ class MediaFlowApi:
                 metadata_provider_registry_factory=metadata_provider_registry_factory,
                 file_index=file_index,
             )
+        self._unattended_grants = UnattendedExecutionGrantService(
+            repository,
+            preview_service=self._automation_previews,
+            permission_authority=_CurrentConfiguredPermissionAuthority(
+                self._principals, configuration_service
+            ),
+        )
         self._automation_occurrences = AutomationDefinitionOccurrenceService(repository)
         self._automation_occurrences.attach_unattended_grant_service(self._unattended_grants)
         self._automation_occurrences.attach_checkpoint_service(self._checkpoint_service)
@@ -840,11 +885,27 @@ class MediaFlowApi:
                 "maxItemsPerRun",
                 "maxItems",
                 "reason",
+                "previewId",
             }
             if set(document).difference(allowed):
                 raise ValueError("unattended execution grant fields are invalid")
             active, raw, definition = self._automation_definition_context(environ, parts[4])
             self._validate_grant_revision_binding(document, active)
+            resource = next(
+                (
+                    value
+                    for value in active.document.get("resourceLibraries", [])
+                    if value.get("id") == definition.resource_library_id
+                ),
+                None,
+            )
+            if resource is None:
+                raise UnattendedExecutionGrantError(
+                    "the definition ResourceLibrary is unavailable",
+                    code="unattended_execution_resource_unavailable",
+                    status=409,
+                    next_action="repair the ResourceLibrary reference and run a fresh Preview",
+                )
             grant = self._unattended_grants.grant(
                 definition,
                 configuration_snapshot_id=active.revision_id,
@@ -857,6 +918,8 @@ class MediaFlowApi:
                 confirmation=document.get("confirmation", False),
                 confirmed=document.get("confirmed"),
                 reason=document.get("reason"),
+                preview_id=document.get("previewId"),
+                storage_id=resource.get("storageId"),
             )
             return self._response(
                 start_response,
