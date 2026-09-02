@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.5
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 94044e4d2e7678fc866e4c3400d74e1b41672f8c
 Difficulty: High
 Test Level: T4
@@ -424,80 +424,96 @@ Head SHA: 2a8b0f9a2f62ea7da9c258eea6f6c7e5b0574cfb
 ## B Review Result
 
 ```text
-Reviewed: 94044e4d2e7678fc866e4c3400d74e1b41672f8c..da1355ac45e8457c7ec7b7ca1df5d005c466cdcf
-Decision: FIX REQUIRED
+Reviewed: 94044e4d2e7678fc866e4c3400d74e1b41672f8c..2a8b0f9a2f62ea7da9c258eea6f6c7e5b0574cfb
+Decision: PASS
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK
 ```
 
-Everything else in this Task was independently verified at the reported Head, including the full
-regression (1077 tests, 7 skips, OK on a clean `git archive` tree), the five falsification probes
-required by this Task, a real schema 29 → 30 upgrade of a database built by Task Base code, and every
-quality/safety gate. Only the points below block the Task.
+Both blockers from the previous pass are closed. I re-read the actual diff at the reported Head and
+re-ran the evidence myself rather than accepting the report. One non-blocking issue is recorded below
+for the eventual Slice Closure Packet; it is not a reason for another Task and does not gate this one.
 
-### 1. AC 9 unmet — the list/Web grant projection reports a stale grant after a re-grant (P1)
+### Blocker 1 — re-grant projection divergence: fixed
 
-Where it fails: `mediaflow/application/unattended_execution.py:420-436`. `project_many` builds
-`{value.definition_id: value for value in self._list(definition_ids=ids, limit=100)}` over rows
-ordered `granted_at DESC, grant_id DESC`, so the dict comprehension keeps the **last** row iterated —
-the **oldest** grant for that definition. The single-definition path
-(`get_for_definition` → `get_latest_unattended_execution_grant`, lines 290-291) keeps the **latest**.
-Any definition with grant history therefore projects two different grant states depending on which
-surface the operator opens.
+`mediaflow/application/unattended_execution.py` no longer depends on multi-row iteration order.
+`project_many` merges each bounded chunk through the new module-level `_prefer_grant` (active wins;
+otherwise newest `granted_at`, `grant_id`), and the single-definition path now resolves the same rule
+through `_current_for_definition` (active if present, else latest). Verified at the reported Head with
+a live grant → revoke → re-grant through the real API: the list projection, the detail projection,
+`grant-state` and the list-derived Web state all report `active` with one identical `grantId` equal to
+the repository's active grant.
 
-Evidence (run at `da1355a`, no test modified — grant, revoke, re-grant through the real API):
+Non-vacuity proof: on a throwaway `git archive HEAD` copy I reverted only the `_prefer_grant` merge.
+`tests/test_automation_unattended_grant.py` then failed with `AssertionError: 'revoked' != 'active'`
+in two tests plus one error, and passed again once the merge was restored. The new
+`test_bulk_projection_prefers_active_regrant_like_single_definition_projection` asserts the batched
+and single-definition projections are equal and equal to the second grant's id.
 
-```text
-POST /api/v1/automation/task-definitions/automatic/grant        -> 201
-POST /api/v1/automation/task-definitions/automatic/grant/revoke -> 200
-POST /api/v1/automation/task-definitions/automatic/grant        -> 201 (re-granted)
+### Blocker 2 — grant state silently absent above 100 definitions: fixed
 
-GET  /api/v1/automation/task-definitions/automatic             -> grant status='active'  grantId='abc2c154…'
-GET  /api/v1/automation/task-definitions                       -> grant status='revoked' grantId='aa9c1882…'
-GET  /api/v1/automation/task-definitions/automatic/grant-state -> grant status='active'
-repository truth: active grant = abc2c154…
-```
+The page is now read in bounded chunks (`_MAX_DEFINITION_IDS_PER_READ = 100`), so a 101-definition page
+no longer raises past the repository bound, and
+`mediaflow/application/automation_definition_occurrence.py:87-92` no longer swallows the failure into
+`grants = {}`. An unreadable grant state now surfaces as an explicit bounded error
+(`unattended_execution_grant_state_unavailable`, HTTP 503) carrying `durableState`
+("no execution authority was granted"), `sideEffects: none`, `retrySafe` and one `nextAction` that
+explicitly forbids reading unavailable state as "no grant" — routed through the existing
+`UnattendedExecutionGrantError` handler at `mediaflow/interfaces/service_api.py:297`. Verified at Head
+with 101 definitions holding one active grant: the granted definition still projects its active grant,
+and the injected read failure produces the bounded 503 with no private detail in the payload. Absence
+of authority and unreadable authority are now distinguishable, which is what the safety invariant
+requires.
 
-The service-level projection diverges on `status`, `active`, `grantId`, `grantedAt`, `revokedAt`,
-`revokingPrincipal`, `reason` and `nextAction`. This reaches the Operator Web as the visible state and
-as the wrong action: `operator_ui.py:2222` renders the detail panel from `items[index]` of the **list**
-payload, `:2246` reads `item.unattendedExecutionGrant`, and `:2262` chooses the button from
-`grant.active === true || grant.status === 'active'` — so the Web shows `Unattended grant: revoked`
-with a `Revoked at` timestamp and offers **"Grant unattended execution"** for a definition whose grant
-is live and will mutate media at the next occurrence. That is the opposite of the state the API detail
-and `grant-state` routes report, and AC 9 requires them to be the same.
+### Independent verification at the reported Head
 
-Required fix direction: make the batched projection resolve the same grant the single-definition path
-resolves (active when present, otherwise latest) with a bounded read — do not rely on iteration order
-of a multi-row page. Add a regression test that grants, revokes and re-grants one definition, then
-asserts the list projection, the detail projection, `grant-state` and the list-derived Web state all
-report `active` with one identical `grantId`.
+- Focused grant/unattended suites: 24 tests, OK. API + Operator Web + RBAC/security suites: 64, OK.
+- Real schema 29 → 30 upgrade of a database created by Task Base code: 4 migration tests, OK; the
+  isolated wheel smoke reports schema 30 with migration NO.
+- Required integration set on a clean `git archive` tree: 362, OK.
+- Full regression on a clean tree: 1079 tests, OK, 7 skipped. The primary worktree runs the same 1079
+  with exactly the 6 known ignored-local-state failures (`test_api_credentials` ×2,
+  `test_final_integration`, `test_resource_library_pipeline`, `test_runtime_storage_configuration` ×2);
+  the clean-tree run on identical code is the proof those are environmental, not this Task.
+- Gates: `ruff check`, `ruff format --check`, `compileall`, `pip check`, both configuration validates,
+  the FFprobe-absence scan, wheel build plus isolated smoke, markdown link check, and `git diff --check`
+  in both forms — all pass.
+- Safety line: no test deleted, no assertion relaxed, no skip added, no silent fallback introduced. The
+  authority path is untouched — `authorize()` and `assert_live()` still read the active grant directly
+  and never go through the projection helper that was changed. No credentials, no `config/alist.json`
+  or `config/strategy.json` (both still ignored, untracked, unstaged), no unrelated files. The five
+  schema-marker test edits are one `29` → `30` line each.
+- `3e5b946`, the commit after the reported Head, touches `TASK.md` only, so the reviewed range is the
+  complete Task 25.5 code.
 
-### 2. AC 9 unmet — above 100 definitions the list silently reports no grant at all (P1)
+### Recorded non-blocking issue (P2 — record only, no new Task)
 
-Where it fails: `mediaflow/application/unattended_execution.py:428` passes every definition id of the
-page to a repository read bounded at 100 ids (`mediaflow/infrastructure/sqlite_runtime.py:4846-4847`
-raises `ValueError("unattended execution definition page is too large")`), and
-`mediaflow/application/automation_definition_occurrence.py:87-94` swallows that `ValueError` into
-`grants = {}`. The list projection then omits grant state for every definition, and the Web — whose
-detail panel is built from that same payload — shows `Unattended grant: none` and offers
-"Grant unattended execution" for definitions that already hold a live grant.
+`list_unattended_execution_grants` (`mediaflow/infrastructure/sqlite_runtime.py:4832-4859`) applies a
+**global** `ORDER BY granted_at DESC, grant_id DESC LIMIT ?`, not a per-definition limit. With grant
+history, one bounded chunk can therefore return fewer definitions than the chunk asked for: measured
+60 definitions × 2 rows → the bounded read covers 50 definitions, and 100 × 2 → 50 covered with the
+other 50 falling back to per-definition reads inside `project()` (1 list call plus 50
+`get_active_unattended_execution_grant` calls), i.e. a hidden N+1 instead of one bounded read per page.
+Projected **status stays correct** whenever `granted_at` strictly increases, which production always
+satisfies (`datetime.now(UTC)`, microsecond precision, at `service_api.py:150` and `final_cli.py:2985`).
+Only a frozen test clock can tie `granted_at` and let the `grant_id` tiebreak keep a revoked row
+(measured: 7–10 of 60 definitions projected `revoked` while truth was `active`). Not reachable by the
+product, so per `docs/development-workflow.md:275-286` this is P2: maintainability/robustness, recorded
+for the Closure Packet's known non-blocking issues, not a blocker and not grounds for another Task.
 
-Evidence (run at `da1355a`, one active grant on `definition-000`):
+### Slice Required Outcome re-check after PASS
 
-```text
-100 definitions: project_many -> definition-000 status='active'
-100 definitions: list projection -> definition-000 grant status='active' (repository truth: active)
-101 definitions: project_many raised ValueError: unattended execution definition page is too large
-101 definitions: list projection -> definition-000 grant status=None  (repository truth: active)
-```
-
-Required fix direction: keep the read bounded but complete for the page actually rendered (chunk the
-definition ids against the repository bound instead of sending the whole page in one call), and stop
-degrading a failed grant read into a silent "no grant" display — an unreadable grant state must
-surface as an explicit bounded error with one next action, never as absence of authority. Add a
-regression test that crosses the 100-definition bound and asserts the granted definition still
-projects its active grant.
-
-Fixes remain in this Task: Task ID, Task Base, Goal and Implementation Scope are unchanged. No test,
-assertion or skip may be weakened to close these points.
+- RO-1 advanced by 25.1, RO-2 by 25.2, RO-3 by 25.3, RO-4's analysis half by 25.4.
+- RO-5 is satisfied by this Task: persistent, scope/version-bound, revocable, permission-checked and
+  audited grant; live re-read before every not-yet-performed mutation; one-shot authority untouched.
+- RO-4's authorized-mutation half is now reachable, and the grant part of RO-7 is in place.
+- **RO-6 is not satisfied.** The fail-closed matrix for an authorized scheduled run is unproven and
+  partly unimplemented: operation capability (Move/Copy/HardLink/SoftLink and attachments) with no
+  silent substitution, conflict strategies Skip/Rename/Manual/Overwrite blocking only affected items,
+  destructive-operation denial (the grant implying no Overwrite, Delete, MOVE source removal or
+  source-directory cleanup), unstable source, Provider/Storage failure, and injected partial or
+  uncertain effect leaving durable per-item state with one safe next action and no automatic replay.
+- **RO-7 is not satisfied.** From the Automation journey the operator still cannot see per-item
+  outcomes and recovery for an occurrence; the occurrence projection exposes only last-occurrence
+  fields and a linked Task id.
+- This matches this Task's own Non-goals, so the remaining work is the next Task, not a fix loop.
