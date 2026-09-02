@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 25.4
 Parent Slice: 25 — Scheduled Automation and Unattended Organization
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 2b60cd34599603a6f4a3672c09e142f9b3c38d4c
 Difficulty: High
 Test Level: T4
@@ -338,17 +338,23 @@ fake/in-memory Provider and adapter doubles.
   cancellation both retain explicit per-run cancellation evidence.
 - Added temporary-Local, synthetic-provider, read-only-storage and API/Web regression coverage,
   including RecognitionType C preservation and SQLite close/reopen linkage.
+- Propagated post-Task definition workflow failures through a bounded secret-free exception so the
+  linked Task, Job, occurrence, API/Web projection and notification now agree on failure while
+  preserving the Task ID and recovery evidence.
+- Split cancellation evidence by durable state: cancellation before Task creation now states that
+  no Task or media effect exists and gives a definition-level next action, while cancellation with
+  a linked Task retains the preserved-item recovery path.
 
 ### Tests and Results
 
-- `./.venv/bin/python -m unittest tests.test_automation_definition_execution` — PASS (11 tests).
+- `./.venv/bin/python -m unittest tests.test_automation_definition_execution` — PASS (12 tests).
 - `./.venv/bin/python -m unittest tests.test_automation_api tests.test_operator_ui tests.test_api_security` — PASS (64 tests).
-- Required integration command from this Task — FAIL / PRE-EXISTING / UNRELATED (296 run, 294 passed,
+- Required integration command from this Task — FAIL / PRE-EXISTING / UNRELATED (297 run, 295 passed,
   2 failed): `test_resource_library_pipeline.test_scan_cli_needs_no_path_or_metadata_token` and
   `test_final_integration.test_runtime_configuration_and_final_analyze_cli`; failures reproduce
   the known ignored local runtime/configuration state.
 - `./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` — FAIL / PRE-EXISTING /
-  UNRELATED (1066 run, 1053 passed, 6 failed, 7 skipped). The six failures are the two
+  UNRELATED (1067 run, 1054 passed, 6 failed, 7 skipped). The six failures are the two
   `test_api_credentials` cases, `test_final_integration`, `test_resource_library_pipeline`, and
   two `test_runtime_storage_configuration` cases; they reproduce with the ignored local
   `.mediaflow` runtime state and `config/strategy.json` at Task Base.
@@ -387,6 +393,11 @@ fake/in-memory Provider and adapter doubles.
   left all organization mutation authority frozen behind `execute=False`.
 - Used bounded, secret-free failure/cancellation evidence with an explicit recovery action while
   preserving completed Task items and not claiming to interrupt in-flight external calls.
+- Used a dedicated trusted application exception for failures after Task creation; its payload is
+  limited to the Task ID and typed failure evidence, while the original exception is chained only
+  in memory and is not copied into persisted operator-facing state.
+- Made the Job's persisted cancellation evidence the source for occurrence projections, preventing
+  pre-Task cancellation from inheriting the linked-Task recovery message.
 
 ### Remaining In-Slice Work
 
@@ -404,7 +415,7 @@ fake/in-memory Provider and adapter doubles.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 614d95e49768408188fb3d84f14af2612334eb23
+Head SHA: 2e0a33817065995f0533cc9af45a26e53b54adbe
 ```
 
 ## B Review Result
