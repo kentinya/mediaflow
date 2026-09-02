@@ -378,8 +378,110 @@ Head SHA: 450ffc9a82cb0efefa619dc441c6fdf3be500d9e
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 1bd8a08eeafa67470e4e39c68e2520e339a0aa2a..20a54263b0e0f4ac374573e710fc02ab122fd093
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+Reviewed diff range covers reported code Head `450ffc9` plus the report-only commit `20a5426`.
+Only the unmet points are listed. Everything not listed here is accepted and must not be changed.
+
+1. Acceptance Criterion 6 and the Slice safety invariant on uncertain effects are broken by
+   `_actions()` in `mediaflow/application/processing_checkpoint.py:824`. The new
+   `if failure is not None:` branch is placed before the blocker, `admission_interrupted`, effect
+   certainty and snapshot guards, so a `retry_safe` explanation now overrides all four refusals, and
+   `RecoveryAdmissionService.request()` (`mediaflow/application/recovery_admission.py:107-129`)
+   re-validates only the snapshot — it never re-checks effect certainty or interrupted admission.
+   Evidence — direct calls to `_actions()` with `failure_explanation("storage_failure",
+   retry_safe=True)` versus `failure=None`, identical in every other argument:
+   - `certainty=ATTEMPTED_UNVERIFIED`: `unknown / investigate(admissible=False) /
+     "automatic_replay_refused: effect certainty is not verified"` becomes
+     `safe / retry(admissible=True) / reason=None`.
+   - `certainty=UNKNOWN`: same refusal becomes `safe / retry(admissible=True)`.
+   - `raw_stage="admission_interrupted"`: `unsafe / investigate(admissible=False) /
+     "manual_execution_reconciliation_required: exact authority was consumed before the execution
+     state was published"` becomes `safe / retry(admissible=True) / reason=None`.
+   - `status=WAITING_CONFIRM` with a confirmation blocker: `resolve_confirmation` with its
+     `resolution_path` becomes `retry(admissible=True)`, so a waiting item loses the explicit
+     resolution action Acceptance Criterion 5 requires.
+   - `snapshot_resolvable=False`: `unsafe / investigate / "automatic_replay_refused: pinned
+     configuration is unavailable"` becomes an advertised `safe / retry(admissible=True)`; admission
+     still refuses, but the checkpoint, API and Web now offer a retry that cannot run.
+   Correction direction: the failure explanation must not be able to grant an action. Subordinate it
+   to the existing guards (evaluate it only after blocker, `admission_interrupted`, effect certainty
+   and snapshot resolution have declined to refuse), or gate the `retry_safe` path on
+   `certainty is EffectCertainty.NONE`, no blocker, `raw_stage != "admission_interrupted"` and
+   `snapshot_resolvable is True`, and keep the explanation as the action description only. Add tests
+   pinning each of the five combinations above.
+
+2. Acceptance Criterion 5 is unproven for three of its four configured strategies and for the
+   invalid-destination case. Evidence — `grep -n "ConflictStrategy\."
+   tests/test_automation_definition_execution.py tests/test_automation_authorized_execution_matrix.py`
+   returns only two hits, both `ConflictStrategy.OVERWRITE` in the single new test
+   `test_unattended_overwrite_collision_waits_without_mutation`; `grep -n
+   "invalid_destination\|INVALID_DESTINATION" tests/test_automation_authorized_execution_matrix.py`
+   returns only line 102, a hand-written string passed to `classify_failure()` in
+   `test_execution_boundary_categories_are_distinguishable_and_bounded`. The new
+   `PlanStatus.INVALID` / `INVALID_DESTINATION` and UNKNOWN-conflict `_failed(..., stage="storage")`
+   branches added in `mediaflow/application/media_organizer.py` therefore have no test at all.
+   Correction direction: on the authorized definition-scoped path over temporary Local roots, prove
+   per item that `SKIP` produces a NOOP with the destination byte-identical, `RENAME` writes only the
+   safe alternative destination and leaves the existing file untouched, `MANUAL` leaves that item
+   waiting with its resolution path, and an invalid destination fails closed with zero mutation and
+   the `invalid_destination` category, with siblings keeping independent status and Results.
+
+3. Acceptance Criterion 6 unstable source has new code and zero tests. Evidence —
+   `grep -rn "UNSTABLE\|unstable" tests/test_automation_definition_execution.py
+   tests/test_automation_authorized_execution_matrix.py` returns no matches, and
+   `grep -rln "unstable_source" tests/` returns no files. Untested code: the new `FileScanStatus`
+   UNSTABLE branch inside `discovered()` in `mediaflow/application/media_organizer.py`, and the
+   `retry_category='unstable_source'` / `__unstable_source` path in
+   `list_task_item_status_counts()` in `mediaflow/infrastructure/sqlite_runtime.py`, which excludes
+   unstable items from `selected` and therefore changes the Acceptance Criterion 7 bound statement.
+   Correction direction: run an authorized occurrence containing one unstable source and assert the
+   durable TaskItem plus Result, the `unstable_source` explanation with its retry safety and single
+   next action, zero mutation, that completed siblings keep their effects, and that the unstable item
+   is excluded from the selected count so the bound statement stays honest.
+
+4. Acceptance Criterion 6 Provider failure and mid-batch Storage failure are unproven on the
+   scheduled path. Evidence — `provider_failure` appears in the new tests only at
+   `tests/test_automation_authorized_execution_matrix.py:106`, inside the same unit-level
+   `classify_failure()` case list; no test drives a Provider failure or a Storage failure occurring
+   after the first successful item through a definition-scoped authorized run. Correction direction:
+   add both cases end to end and assert the failed item's durable state, effect certainty, retry
+   safety and one next action, that the already-successful sibling keeps its effects and Result, and
+   that no automatic replay of the failed item occurs.
+
+5. Acceptance Criterion 9 has no test. Evidence — `git diff --stat
+   1bd8a08..20a5426 -- tests/` shows `tests/test_operator_ui.py` untouched, and
+   `grep -n "outcomeSummary\|itemOutcomeSummary\|attentionItems\|boundReached\|stoppedAtBound"
+   tests/test_operator_ui.py tests/test_automation_api.py tests/test_api_security.py` returns no
+   match, while the module already pins Web behavior with exact `assertIn` checks on `APP_JS`
+   (for example `tests/test_operator_ui.py:772-783`). The new Automation panel block in
+   `mediaflow/interfaces/operator_ui.py` — count cards, bound statement, attention table, the
+   `showTaskItem(taskId, itemId)` cross-links, the cap warning and the five failure fields in the
+   task-item detail — is unverified. Correction direction: extend `tests/test_operator_ui.py` in the
+   existing style to pin the rendered summary, the bound statement, the attention list with its
+   cross-link into the existing per-item recovery surface, the truncation signal, the failure fields,
+   and that the panel adds no Automation mutation action; include the reload path required by the
+   criterion.
+
+6. The Required Test "RBAC refusal for an unauthorized principal" on the summary routes was not
+   added. Evidence — `test_api_definition_detail_and_occurrence_routes_share_summary` in
+   `tests/test_automation_authorized_execution_matrix.py` builds `MediaFlowApi` with a single
+   `ApiPermission.READ` principal and asserts `status == 200` for the list, detail and occurrences
+   routes only; `tests/test_api_security.py` is untouched by this checkpoint. Correction direction:
+   assert that a principal without `READ` is refused on the definition detail and occurrences routes
+   carrying the new summary, and that the refusal body exposes no summary content.
+
+7. Acceptance Criteria 7 and 11 read-only claims are not actually asserted. Evidence — the trace
+   assertion in `tests/test_automation_authorized_execution_matrix.py:489-491` counts only
+   statements matching `statement.lstrip().upper().startswith("SELECT")`, so any INSERT, UPDATE or
+   DELETE executed inside `project_occurrences()` cannot fail that test; and the falsification item
+   "Opening and refreshing the Automation list, detail, occurrence and history views creates no Job,
+   Task, grant, Provider request or Storage probe" is absent from the Developer Completion Report and
+   from the new tests. Correction direction: assert on the already-captured trace that the projection
+   issues no write statement, and add the read-only proof across the Automation list, detail,
+   occurrence and history views — no Job, Task, grant, Provider request or Storage probe created on
+   first open and on refresh — then record that command and its observed result in the report.
