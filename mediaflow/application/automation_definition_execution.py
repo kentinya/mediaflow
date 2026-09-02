@@ -11,6 +11,7 @@ from mediaflow.application.automation import (
     AutomationCancelled,
     AutomationClaimLost,
     AutomationConfigurationUnavailable,
+    AutomationWorkflowFailed,
 )
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
@@ -122,11 +123,22 @@ class DefinitionScopedExecutionService:
             # The Worker no longer owns the Job.  Do not rewrite Task state
             # from a stale claimant.
             raise
-        except Exception:
+        except Exception as error:
             if cancellation_check():
                 self._cancel_task_if_running(coordinator, task.task_id)
                 raise AutomationCancelled(task.task_id)
             self._fail_task(task.task_id)
+            raise AutomationWorkflowFailed(
+                task.task_id,
+                AutomationFailureEvidence(
+                    "definition_scoped_workflow_failed",
+                    "linked Task failed before workflow completion; completed items are preserved",
+                    "none",
+                    True,
+                    "inspect the linked Task and per-item state, repair the runtime condition, "
+                    "then wait for a new occurrence",
+                ),
+            ) from error
         return task.task_id
 
     def _resolve_definition(self, job) -> Any:

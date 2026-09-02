@@ -32,6 +32,7 @@ from mediaflow.domain.automation import (
 )
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.metadata import MediaCandidate, MediaType
+from mediaflow.domain.notification import NotificationEventType
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from mediaflow.final_cli import _run_queued_workflow
@@ -465,6 +466,91 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 )
                 self.assertEqual(len(repository.list_results(task.task_id)), 1)
 
+    def test_post_task_failure_marks_job_occurrence_and_notification_failed(self) -> None:
+        definition = _definition("post-task-failure", mode=AutomationTaskRunMode.SCAN_AND_PLAN)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Media" / "incoming").mkdir(parents=True)
+            configuration = self._configuration(root, definition)
+            _source_guard, _target_guard, storage_factory = self._guarded_storage_factory(
+                configuration
+            )
+            events = []
+
+            def fail_strategy(*_args, **_kwargs):
+                raise RuntimeError("private-failure-detail-8675309")
+
+            with (
+                SQLiteTaskRepository(configuration.database_path) as repository,
+                SQLiteFileIndexRepository(configuration.database_path) as file_index,
+            ):
+                self._emit(repository, definition)
+                service = DefinitionScopedExecutionService(
+                    repository,
+                    file_index,
+                    configuration,
+                    storage_factory=storage_factory,
+                    provider_factory=lambda _ids: MetadataProviderRegistry(
+                        (SyntheticMetadataProvider(()),)
+                    ),
+                    strategy_factory=fail_strategy,
+                    history_factory=JsonLinesOperationHistoryRepository,
+                )
+                finished = AutomationWorker(
+                    repository,
+                    lambda job, cancelled: service.run(job, cancelled),
+                    SimpleNamespace(publish=events.append),
+                ).run_next()
+
+                self.assertEqual(finished.status, AutomationJobStatus.FAILED)
+                self.assertTrue(finished.task_id)
+                self.assertEqual(
+                    finished.failure_category,
+                    "definition_scoped_workflow_failed",
+                )
+                self.assertEqual(finished.failure_side_effects, "none")
+                self.assertTrue(finished.failure_retry_safe)
+                self.assertTrue(finished.failure_next_action)
+                task = repository.get_task(finished.task_id)
+                self.assertEqual(task.status, PersistentTaskStatus.FAILED)
+                occurrence = repository.get_latest_automation_definition_occurrence(
+                    definition.definition_id
+                )
+                self.assertEqual(occurrence.task_id, task.task_id)
+                self.assertEqual(occurrence.outcome, "failed")
+                self.assertEqual(
+                    occurrence.failure_category,
+                    "definition_scoped_workflow_failed",
+                )
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0].event_type, NotificationEventType.JOB_FAILED)
+                persisted = json.dumps(
+                    {
+                        "job": {
+                            "error": finished.error,
+                            "failureCategory": finished.failure_category,
+                            "failureDurableState": finished.failure_durable_state,
+                            "failureNextAction": finished.failure_next_action,
+                        },
+                        "occurrence": occurrence.document(),
+                        "taskError": task.error,
+                    }
+                )
+                self.assertNotIn("private-failure-detail-8675309", persisted)
+
+                api = self._api(repository, (definition,))
+                status, body = self._request(
+                    api,
+                    "/api/v1/automation/task-definitions/post-task-failure/occurrences",
+                )
+                self.assertEqual(status, 200, body)
+                self.assertEqual(body["items"][0]["taskId"], task.task_id)
+                self.assertEqual(body["items"][0]["outcome"], "failed")
+                self.assertEqual(
+                    body["items"][0]["failureCategory"],
+                    "definition_scoped_workflow_failed",
+                )
+
     def test_automatic_mode_fails_before_adapters_task_or_executor(self) -> None:
         definition = _definition(mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION)
         with tempfile.TemporaryDirectory() as directory:
@@ -710,7 +796,9 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(cancelled.status, AutomationJobStatus.CANCELLED)
                 self.assertEqual(cancelled.failure_category, "workflow_cancelled")
                 self.assertEqual(cancelled.failure_side_effects, "none")
-                self.assertFalse(cancelled.failure_retry_safe)
+                self.assertTrue(cancelled.failure_retry_safe)
+                self.assertIn("no Task was created", cancelled.failure_durable_state)
+                self.assertNotIn("linked Task", cancelled.failure_next_action)
                 self.assertEqual(repository.list_tasks(), ())
                 occurrence = repository.get_latest_automation_definition_occurrence(
                     definition.definition_id
@@ -718,7 +806,24 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(occurrence.outcome, "cancelled")
                 self.assertIsNone(occurrence.task_id)
                 self.assertEqual(occurrence.failure_category, "workflow_cancelled")
-                self.assertIn("completed Task items", occurrence.reason)
+                self.assertIn("no Task was created", occurrence.reason)
+                self.assertNotIn("linked Task", occurrence.next_action)
+
+                api = self._api(repository, (definition,))
+                status, body = self._request(
+                    api,
+                    "/api/v1/automation/task-definitions/pending-cancel/occurrences",
+                )
+                self.assertEqual(status, 200, body)
+                self.assertIsNone(body["items"][0]["taskId"])
+                self.assertIn("no Task was created", body["items"][0]["reason"])
+                self.assertNotIn("linked Task", body["items"][0]["nextAction"])
+                status, body = self._request(api, "/api/v1/automation/task-definitions", query="")
+                self.assertEqual(status, 200, body)
+                state = body["items"][0]["occurrenceState"]
+                self.assertIsNone(state["lastTaskId"])
+                self.assertIn("no Task was created", state["lastReason"])
+                self.assertNotIn("linked Task", state["nextAction"])
 
     def test_cancellation_preserves_completed_item_and_occurrence_evidence(self) -> None:
         definition = _definition("cancel", mode=AutomationTaskRunMode.SCAN_AND_PLAN)
@@ -768,6 +873,9 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(finished.status, AutomationJobStatus.CANCELLED)
                 self.assertTrue(finished.task_id)
                 self.assertEqual(finished.failure_category, "workflow_cancelled")
+                self.assertFalse(finished.failure_retry_safe)
+                self.assertIn("completed Task items", finished.failure_durable_state)
+                self.assertIn("linked Task", finished.failure_next_action)
                 task = repository.get_task(finished.task_id)
                 self.assertEqual(task.status, PersistentTaskStatus.CANCELLED)
                 items = repository.list_items(task.task_id)
@@ -780,6 +888,17 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(occurrence.outcome, "cancelled")
                 self.assertEqual(occurrence.failure_category, "workflow_cancelled")
                 self.assertIn("in-flight", occurrence.reason)
+                self.assertIn("linked Task", occurrence.next_action)
+
+                api = self._api(repository, (definition,))
+                status, body = self._request(
+                    api,
+                    "/api/v1/automation/task-definitions/cancel/occurrences",
+                )
+                self.assertEqual(status, 200, body)
+                self.assertEqual(body["items"][0]["taskId"], task.task_id)
+                self.assertIn("completed Task items", body["items"][0]["reason"])
+                self.assertIn("linked Task", body["items"][0]["nextAction"])
 
     def test_api_readback_links_task_without_audit_or_mutation(self) -> None:
         definition = _definition("api")
@@ -800,33 +919,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     repository,
                     self._service(repository, file_index, configuration, storage_factory),
                 )
-                active = SimpleNamespace(
-                    revision_id=SNAPSHOT_ID,
-                    version=1,
-                    revision_sequence=1,
-                    digest=SNAPSHOT_DIGEST,
-                )
-                active.summary = lambda: {
-                    "revisionId": active.revision_id,
-                    "version": active.version,
-                    "revisionSequence": active.revision_sequence,
-                    "digest": active.digest,
-                }
-                api = MediaFlowApi(
-                    repository,
-                    None,
-                    principals=(
-                        ResolvedApiPrincipal(
-                            "viewer", "viewer-token", frozenset({ApiPermission.READ})
-                        ),
-                    ),
-                )
-                api._configuration_service = SimpleNamespace(active=lambda: active)
-                api._configuration_objects = SimpleNamespace(
-                    revision_detail=lambda _revision_id: {
-                        "objects": {"automationTaskDefinitions": [definition.document()]}
-                    }
-                )
+                api = self._api(repository, (definition,))
                 before_audit = repository._connection.execute(
                     "SELECT COUNT(*) FROM security_audit"
                 ).fetchone()[0]
@@ -850,6 +943,37 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     body["items"][0]["occurrenceState"]["lastTaskId"],
                     task_id,
                 )
+
+    @staticmethod
+    def _api(repository, definitions):
+        active = SimpleNamespace(
+            revision_id=SNAPSHOT_ID,
+            version=1,
+            revision_sequence=1,
+            digest=SNAPSHOT_DIGEST,
+        )
+        active.summary = lambda: {
+            "revisionId": active.revision_id,
+            "version": active.version,
+            "revisionSequence": active.revision_sequence,
+            "digest": active.digest,
+        }
+        api = MediaFlowApi(
+            repository,
+            None,
+            principals=(
+                ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
+            ),
+        )
+        api._configuration_service = SimpleNamespace(active=lambda: active)
+        api._configuration_objects = SimpleNamespace(
+            revision_detail=lambda _revision_id: {
+                "objects": {
+                    "automationTaskDefinitions": [value.document() for value in definitions]
+                }
+            }
+        )
+        return api
 
     @staticmethod
     def _request(api, path: str, *, query: str = "limit=10"):

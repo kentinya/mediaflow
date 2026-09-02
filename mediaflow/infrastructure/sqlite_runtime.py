@@ -3888,12 +3888,11 @@ class SQLiteTaskRepository:
                     (
                         "workflow cancelled",
                         "workflow_cancelled",
-                        "completed Task items are preserved; an in-flight external call was not "
-                        "interrupted",
+                        "no Task was created and no media effect occurred",
                         "none",
-                        0,
-                        "inspect the linked Task and explicitly rerun only after confirming its "
-                        "item state",
+                        1,
+                        "inspect the Automation definition and leave it enabled for the next "
+                        "scheduled occurrence",
                         job_id,
                     ),
                 )
@@ -3982,11 +3981,12 @@ class SQLiteTaskRepository:
         if job.status is AutomationJobStatus.CANCELLED:
             outcome = "cancelled"
             reason = (
-                "workflow cancellation was requested; completed Task items are preserved and any "
-                "in-flight external call was not interrupted"
+                job.failure_durable_state
+                or "workflow cancellation was requested; durable work state is preserved"
             )
             next_action = (
-                "inspect the linked Task and explicitly rerun only after confirming its item state"
+                job.failure_next_action
+                or "inspect the Automation definition before the next scheduled occurrence"
             )
         elif job.status is AutomationJobStatus.FAILED:
             blocked_categories = {

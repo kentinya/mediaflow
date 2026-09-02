@@ -45,6 +45,17 @@ class AutomationConfigurationUnavailable(RuntimeError):
         self.evidence = evidence
 
 
+class AutomationWorkflowFailed(RuntimeError):
+    """Trusted, secret-free failure after a durable Task has been created."""
+
+    def __init__(self, task_id: str, evidence: AutomationFailureEvidence) -> None:
+        super().__init__("definition-scoped workflow failed")
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("failed automation workflow requires a Task ID")
+        self.task_id = task_id
+        self.evidence = evidence
+
+
 class AutomationJobService:
     """Queues only the mutation-free workflows admitted by the service boundary."""
 
@@ -174,17 +185,7 @@ class AutomationWorker:
                 raise AutomationCancelled(task_id)
         except AutomationCancelled as error:
             cancellation_evidence = (
-                AutomationFailureEvidence(
-                    "workflow_cancelled",
-                    "completed Task items are preserved; an in-flight external call was not "
-                    "interrupted",
-                    "none",
-                    False,
-                    "inspect the linked Task and explicitly rerun only after confirming its "
-                    "item state",
-                )
-                if job.definition_pinned
-                else None
+                _definition_cancellation_evidence(error.task_id) if job.definition_pinned else None
             )
             finished = replace(
                 job,
@@ -218,6 +219,21 @@ class AutomationWorker:
                 updated_at=datetime.now(UTC),
                 completed_at=datetime.now(UTC),
                 error="saved configuration snapshot is unavailable",
+                failure_category=evidence.category,
+                failure_durable_state=evidence.durable_state,
+                failure_side_effects=evidence.side_effects,
+                failure_retry_safe=evidence.retry_safe,
+                failure_next_action=evidence.next_action,
+            )
+        except AutomationWorkflowFailed as error:
+            evidence = error.evidence
+            finished = replace(
+                job,
+                status=AutomationJobStatus.FAILED,
+                updated_at=datetime.now(UTC),
+                completed_at=datetime.now(UTC),
+                task_id=error.task_id,
+                error="definition-scoped workflow failed",
                 failure_category=evidence.category,
                 failure_durable_state=evidence.durable_state,
                 failure_side_effects=evidence.side_effects,
@@ -304,6 +320,24 @@ class AutomationWorker:
             else:
                 processed += 1
         return processed
+
+
+def _definition_cancellation_evidence(task_id: str | None) -> AutomationFailureEvidence:
+    if task_id:
+        return AutomationFailureEvidence(
+            "workflow_cancelled",
+            "completed Task items are preserved; an in-flight external call was not interrupted",
+            "none",
+            False,
+            "inspect the linked Task and explicitly rerun only after confirming its item state",
+        )
+    return AutomationFailureEvidence(
+        "workflow_cancelled",
+        "no Task was created and no media effect occurred",
+        "none",
+        True,
+        "inspect the Automation definition and leave it enabled for the next scheduled occurrence",
+    )
 
 
 class IntervalScheduler:
