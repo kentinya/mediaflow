@@ -17,6 +17,119 @@ The major boundaries are Storage, ResourceLibrary, MediaLibrary, Scanner, Parser
 RecognitionTypePolicy, Metadata, Naming, Classification, Organizer, Tasks, and Logging. Protocols
 are intentionally small bootstrap contracts rather than complete implementations.
 
+## V1 final architecture decisions (A planning audit — 2026-09-02)
+
+The repository is at Slice 25 closure, not at final self-hosted release. The remaining V1 business
+order is:
+
+```text
+Slice 26 — Web-first fresh setup and Storage completion
+    → Slice 27 — Web-first operations administration
+    → Slice 28 — Docker production self-hosted release
+```
+
+These are vertical product capabilities. They do not authorize a rewrite of the closed media
+processing engine or a decomposition into API/database/frontend-only Slices.
+
+### Identity and Metadata scope
+
+V1 retains the existing environment-owned API-principal Bearer authentication model with explicit
+RBAC. It is the supported self-hosted operator authentication boundary. The Web must describe this as
+API-principal token authentication; it must not imply a built-in username/password database, cookie
+session, OIDC provider or trusted reverse-proxy identity without a separate future architecture and
+product decision. Token rotation remains deployment-owned and requires controlled process restart.
+
+V1 retains the domain `MetadataProvider` port and the TMDB production adapter. The final V1 product
+scope is TMDB-backed Metadata through that abstraction. Provider switching, additional production
+Providers and arbitrary Provider plugins are V1.x/post-V1 work. No runtime path may silently fall
+back to another Provider when the configured TMDB reference or credential is unavailable.
+
+### Production container target (TARGET)
+
+The final release uses one immutable MediaFlow image with independent Docker Compose services:
+
+```text
+Browser
+  → trusted reverse proxy or LAN boundary
+  → mediaflow-api       (production WSGI server)
+  → shared local /data volume
+       ├─ mediaflow-worker
+       ├─ mediaflow-scheduler
+       └─ mediaflow-notifier
+```
+
+The services reuse the existing CLI process boundaries and application services. They do not share a
+Python event loop or use a shell supervisor to run four unrelated long-lived processes in one
+container. API, Worker, Scheduler and Notification Worker therefore have independent restart,
+failure, health and log lifecycles while sharing one durable SQLite authority.
+
+The current `mediaflow api serve` listener is a development/trusted-loopback boundary implemented
+with `wsgiref.simple_server`; it is not the final production HTTP server. Slice 28 must introduce a
+stable WSGI application construction boundary and an explicitly selected production WSGI server,
+bounded request body/response behavior, graceful SIGTERM handling and a documented worker/process
+model. MediaFlow does not silently become a TLS terminator, certificate manager or reverse proxy:
+TLS, public exposure policy and proxy-header trust belong to an explicitly configured deployment
+boundary. Direct Internet exposure without a trusted HTTPS boundary is unsupported.
+
+### Persistent Docker data contract (TARGET)
+
+The container-local durable volume is `/data`. At minimum it contains:
+
+```text
+/data/mediaflow.sqlite3    SQLite runtime and managed-configuration database
+/data/history.jsonl        append-only compatible operation history
+/data/logs/                durable operational logs when configured
+/data/exports/             explicitly requested configuration/result exports
+/data/backups/             operator-created local database backups, when used
+```
+
+The database also owns managed configuration revisions, FileIndex, Tasks, TaskItems, Results,
+Automation Definitions, grants, Jobs, schedule due state, notification delivery state, security and
+operation audit, and migration markers. SQLite stays on the container's local persistent filesystem
+volume. Media Storage is a separate boundary and is connected only through explicit configured
+Storage adapters and mounts; SQLite on SMB, NFS, OpenList, S3 or R2 is unsupported without a separate
+proof.
+
+The Compose contract must explicitly bind media paths into the container. A Local Storage
+`rootPath` in the container means a container-visible absolute path, for example host
+`/mnt/downloads` mounted as `/media/downloads`, with MediaFlow configured to use `/media/downloads`.
+The product must document read-only versus read-write mounts, container UID/GID, ownership and file
+mode expectations, and actionable permission failures. Host `/`, the Docker socket and arbitrary
+unmounted host paths are unsupported. Existing Storage root confinement and symlink/path escape
+checks remain authoritative.
+
+### Bootstrap and lifecycle health (TARGET)
+
+`ManagementBootstrapConfiguration` remains the sole minimal bootstrap boundary: immutable database
+locator plus environment-owned API credential definitions. On a fresh `/data`, API management must
+start without complete Storage, library, policy, schedule or Provider content and must report
+`runtime not configured` rather than attempting to consume an incomplete Draft. A separate, one-time
+exclusive initialization/migration gate must run before dependent Compose services; ordinary service
+startup must not race schema migration.
+
+Docker health is split into three meanings:
+
+- **Liveness**: the named process is alive and can answer its local health endpoint/command.
+- **Readiness**: the process can reach its required local SQLite/bootstrap boundary and, for API,
+  serve authenticated management status. It does not require external media Storage or TMDB to be
+  reachable.
+- **Business/runtime health**: managed Active configuration, configured Storage/Provider readiness,
+  queue state and worker/scheduler/notifier condition as applicable. It is an operator status, not a
+  liveness prerequisite.
+
+Health checks never scan Storage, call a Provider, create Jobs/Tasks, send notifications, mutate
+media or change business state. Worker, Scheduler and Notification Worker retain their current claim,
+lease, fencing and graceful-stop semantics. Restart must not turn stale Running work or uncertain
+mutation into an automatic replay.
+
+### V1 release verification boundary (TARGET)
+
+Slice 28 must retain all offline regression gates and add image build/startup, production HTTP,
+non-root, explicit mount, filesystem permission, intended-port, secret-scan, fresh-volume,
+restart-persistence and schema migration/upgrade smoke coverage. External SMB/OpenList/AWS S3/R2
+and destructive acceptance unavailable in CI remain explicitly `SKIP / UNAVAILABLE`, never a fake
+PASS produced only by doubles.
+
 ## Processing pipeline
 
 ```text
@@ -806,15 +919,16 @@ it never invokes Storage. Different RecognitionTypes in one occurrence therefore
 independently resolved policy mappings. Metadata Provider comes from MetadataPolicy, destination
 comes from ClassificationPolicy, and operation comes from OrganizePolicy.
 
-Metadata selection continues through the existing Provider abstraction and registry. TMDB remains
-the first required V1 production Provider. V1 Provider switching means changing the Provider
-reference owned by MetadataPolicy through the managed Draft → Validate/Test → Activate lifecycle;
-it is not a Scheduler decision and does not require a second production adapter solely as proof.
+Metadata selection continues through the existing Provider abstraction and registry. TMDB is the
+required V1 production Provider. The final V1 scope does not include Provider switching or additional
+production Provider integrations; those are V1.x/post-V1 work. The configured TMDB reference remains
+owned by MetadataPolicy, and an unavailable reference or credential fails closed rather than silently
+selecting another Provider.
 
-Each AutomationJob pins the immutable Active configuration selected at its creation boundary.
-Later activation, including a MetadataPolicy Provider switch, applies only to subsequently created
-Jobs. A queued or running Job must never silently replace its RecognitionTypePolicy, Provider,
-NamingPolicy, ClassificationPolicy or OrganizePolicy from a newer Active snapshot.
+Each AutomationJob pins the immutable Active configuration selected at its creation boundary. A
+queued or running Job must never silently replace its RecognitionTypePolicy, Provider, NamingPolicy,
+ClassificationPolicy or OrganizePolicy from a newer Active snapshot. A future Provider-switching
+capability must preserve this same pinning rule, but it is not a V1 release dependency.
 
 ### CURRENT execution authority and safety boundary
 
@@ -1280,9 +1394,11 @@ resolved File correction → single DryRun continuation path is implemented and 
 closed Metadata configuration Slice.
 Unresolved conflicts/reviews block execution, and silent delete remains unavailable.
 
-## Minimal operator Web UI
+## Minimal operator Web UI (CURRENT development boundary)
 
-Phase 19.1 adds a dependency-free same-origin adapter at `/ui/` to the existing WSGI API process.
+Phase 19.1 adds a dependency-free same-origin adapter at `/ui/` to the existing development WSGI API
+process. The current process is suitable for trusted loopback/development use only; it is not the
+production HTTP serving contract described in the V1 release target above.
 Static HTML/CSS/JavaScript is returned before authentication or repository dispatch, so loading the
 shell performs no persistence, Storage, Provider, Task, Job, or execution operation. Browser
 security headers restrict scripts, styles, connections, framing, forms, referrers, and device
@@ -1312,6 +1428,11 @@ The development WSGI listener remains loopback-only by default. Deterministic va
 localhost plus IPv4/IPv6 loopback; any other valid bind needs
 `--allow-insecure-remote-http` and emits a warning. The acknowledgement supplies no TLS. A trusted
 external reverse proxy remains responsible for HTTPS, certificates, and network policy.
+
+This is an explicit development transport boundary, not a claim that `wsgiref.simple_server` is a
+production server. Slice 28 will retain the WSGI application as a stable construction boundary while
+serving it through a production WSGI server and documenting proxy-header trust, request limits,
+graceful shutdown, TLS termination and direct-Internet non-support.
 
 JSON responses use no-store, nosniff, no-referrer, and frame-denial headers; 401 includes a Bearer
 challenge. Authorization parsing accepts one bounded, non-whitespace Bearer credential and still
@@ -1917,11 +2038,17 @@ Phase 22.2/22.2R implements much of the lifecycle, integrity, recovery boundary,
 foundation for whole-document revisions. F1 fixed repeated invalid-Active bypass, Scheduler
 same-snapshot loading, and valid older pinned continuation. F2 now implements atomic resident API
 binding and actionable missing/corrupt pinned-revision failures and has passed independent review.
-This migration is not the complete configuration product.
-Remote/provider and policy object CRUD, broader dependency impact editing, provider connectivity tests,
-export/import UI, secret-store integration, and user administration remain future work. Until an explicit activation exists, the product labels JSON as
+This migration is not the complete configuration product. Slice 26 owns fresh management-only
+bootstrap, the first complete guided Draft, remote Storage forms/tests and Storage Browser/path
+selection. Slice 27 owns consumed System Settings, configuration/result import-export and managed
+Webhook operations. Until an explicit activation exists, the product labels JSON as
 `JSON_BOOTSTRAP`; after activation the managed snapshot is the sole workflow authority and JSON is
 not consulted for fallback.
+
+V1 keeps TMDB as the production Metadata Provider behind the Provider abstraction. Provider switching,
+additional production Providers and Secret Store integration remain V1.x/post-V1 scope. V1 keeps the
+environment-owned API-principal authentication boundary; built-in users, sessions and OIDC remain
+post-V1 scope.
 
 ## Per-item recovery architecture: CURRENT (Slice 23; PASS / CLOSED)
 

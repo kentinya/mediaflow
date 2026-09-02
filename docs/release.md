@@ -3,6 +3,33 @@
 MediaFlow does not publish artifacts automatically. A maintainer must review and perform every
 release explicitly.
 
+## V1 Docker release target
+
+The repository is not yet a Docker release. Slice 28 is the final V1 integration Slice and must
+deliver one immutable MediaFlow image with Compose services for API, Worker, Scheduler and
+Notification Worker. The services must retain independent process failure/restart boundaries while
+sharing one local persistent `/data` volume. The current `wsgiref.simple_server` API listener remains
+development/trusted-loopback only; production serving requires an explicitly selected production
+WSGI server and a documented TLS/reverse-proxy or LAN boundary.
+
+The Docker acceptance contract includes:
+
+- fresh-volume bootstrap from only a database locator and environment-owned API-principal references;
+- explicit media bind mounts and container-visible Local Storage paths;
+- non-root UID/GID, ownership, permission and no-host-root/no-Docker-socket assertions;
+- bounded liveness, readiness and business/runtime health checks with no Storage/Provider/mutation
+  side effects;
+- intended network-port exposure and secret/private-config/image scans;
+- fresh-volume setup, image startup, Compose integration and `docker compose restart` persistence;
+- old-image/new-image schema migration, migration failure fail-closed behavior and retained backup;
+- no duplicate scheduled occurrence, no stale-owner overwrite and no automatic uncertain-mutation
+  replay after restart.
+
+This target does not claim direct Internet exposure, built-in user/password/OIDC identity, SQLite on
+remote Storage, Docker Secrets-specific ingestion, Provider switching, additional Metadata Providers,
+or external-service compatibility that the validation environment cannot run. Those boundaries remain
+explicitly documented as unsupported, post-V1 or `SKIP / UNAVAILABLE` as applicable.
+
 ## Quality gate
 
 Run from a clean checkout with a supported Python version (3.11, 3.12, or 3.13):

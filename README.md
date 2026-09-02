@@ -41,6 +41,27 @@ export MEDIAFLOW_API_TOKEN="<long-random-development-token>"
 export MEDIAFLOW_WEBHOOK_SECRET="<independent-random-webhook-secret>"
 ```
 
+## V1 self-hosted release status
+
+Slice 25 is closed. The final V1 roadmap is now:
+
+```text
+Slice 26 — Web-first fresh setup and Storage completion
+Slice 27 — Web-first operations administration
+Slice 28 — Docker production self-hosted release
+```
+
+The repository currently provides the Python/CLI development and trusted-loopback WSGI boundary;
+it does not yet ship a Dockerfile, Compose topology or production WSGI server. A fresh instance still
+uses the compatibility JSON bootstrap until Slice 26 provides management-only startup and a guided
+first Draft. Do not describe the current `wsgiref.simple_server` listener as production serving.
+
+The supported V1 identity boundary is an environment-owned API-principal Bearer token with RBAC.
+This is not a built-in username/password login or OIDC integration. V1 Metadata remains TMDB-backed
+through the Provider abstraction; Provider switching and additional production Providers are V1.x/post-
+V1 scope. Environment-variable references and deployment-owned secret injection are the V1 secret
+boundary.
+
 ## CLI
 
 ```bash
@@ -182,8 +203,9 @@ retains its pinned revision identity even after a later activation.
 
 Configuration validation, preview, precheck, and activation grant no media execution authority and
 perform no media mutation. Real execution uses a separate explicit authority boundary, and only
-`OrganizerExecutor` may invoke mutating Storage operations. Provider switching and guided remote
-destination precheck remain outside current capability; the bounded Files/Media manual-organize
+`OrganizerExecutor` may invoke mutating Storage operations. Remote guided Storage setup and the
+Storage Browser are the active Slice 26 gap; guided remote destination precheck remains a later
+boundary. Provider switching is explicitly V1.x/post-V1. The bounded Files/Media manual-organize
 journey and scheduled unattended organization are current capabilities under their separate explicit
 authority boundaries.
 
@@ -503,6 +525,10 @@ Non-loopback HTTP is rejected by default. A bind intended for a trusted HTTPS re
 explicit `--allow-insecure-remote-http`; this acknowledgement does not add encryption. Prefer
 loopback binding and TLS termination at a trusted proxy.
 
+This is a development transport statement. Slice 28 will add a production WSGI serving contract;
+TLS termination, certificates, proxy policy and public Internet exposure remain deployment
+responsibilities rather than hidden MediaFlow behavior.
+
 ## Persistent runtime state
 
 Production scan/preview/organize use the configured SQLite database:
@@ -525,12 +551,16 @@ or a direct Provider ID and returns persisted, secret-free identity, candidate, 
 evidence without activating a revision, starting media work, or mutating Storage. One resolved File
 correction can be submitted as a separately auditable, one-item DryRun continuation pinned to the
 source work's immutable configuration; it does not replay siblings or inherit execute authority.
-Provider switching and generic per-item checkpoint recovery are not current capabilities.
+Stage-aware per-item checkpoint recovery, the bounded Files/Media manual-organize journey and
+scheduled unattended organization are current capabilities. Provider switching and additional
+production Providers are explicitly V1.x/post-V1, not current V1 release work.
 
-For Local guided setup, Storage `rootPath` is host-absolute while ResourceLibrary `storagePath` and
+For the current non-container Local guided setup, Storage `rootPath` is host-absolute while ResourceLibrary `storagePath` and
 MediaLibrary `rootPath` are Storage-relative. The Web action never creates roots or calls a Storage
 mutation. The raw JSON editor remains the explicitly labelled compatibility path for remote Storage
-definitions and configuration families without guided forms.
+definitions and configuration families without guided forms until Slice 26 completes the Web-first
+setup journey. In the final Docker contract, Local `rootPath` is an absolute path visible inside the
+container, not an arbitrary host path.
 
 The authenticated operator console now includes a read-only **System** tab. It is backed by a
 precomputed `GET /api/v1/system/status` snapshot and shows bounded Storage/library/policy wiring plus
@@ -540,14 +570,17 @@ are intentionally excluded. Reselect **System** or use its explicit refresh butt
 same startup snapshot; changing JSON still requires validation and an API restart.
 
 The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries,
-persistent scan/preview jobs, Cron schedules, and signed Webhook notifications are complete.
+persistent scan/preview jobs, Cron schedules, and the signed Webhook delivery engine are complete.
+Webhook configuration/test and delivery recovery in Web/API remain a Slice 27 product-completion
+journey; the existing delivery engine is not being reimplemented.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
 Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
 The authenticated Operator UI exposes the operational Dashboard, Files, managed Configuration,
 Task/Job/Scheduler/Notification/Log views, and bounded conflict, Recognition, Metadata, and
 Classification review actions through the same application and permission boundaries as the API.
-Database-managed users/login, automatic secret rotation, broader recovery beyond the delivered
-checkpoint journeys and the remaining remote/provider setup capabilities are not current.
+Database-managed users/login, OIDC, automatic secret rotation, Provider switching, and broader
+recovery beyond the delivered checkpoint journeys are not V1 capabilities. Remaining remote Storage
+setup, first-instance bootstrap and Storage Browser work belongs to Slice 26.
 
 The Automation view also manages the bounded scheduled unattended journey: operators can define a
 ResourceLibrary scope and schedule, validate and Preview the exact definition, explicitly grant or

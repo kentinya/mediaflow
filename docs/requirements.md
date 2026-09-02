@@ -47,7 +47,7 @@
 | Scanner, filtering, stability and index | `REQ-SCAN-*` | REQUIRED manual, incremental and scheduled discovery without mutation |
 | Parser and NFO input | `REQ-PARSE-*` | REQUIRED local parsing; no media-stream inspection |
 | Recognition and type policy | `REQ-REC-*` | REQUIRED and independent from downstream policies |
-| Metadata | `REQ-META-*` | TMDB REQUIRED; correction and Provider switching are V1 journeys |
+| Metadata | `REQ-META-*` | TMDB REQUIRED through the Provider abstraction; correction is V1, Provider switching is V1.x/post-V1 |
 | Naming | `REQ-NAME-*` | REQUIRED pure and reusable policy |
 | Classification and MediaLibrary selection | `REQ-CLASS-*` | REQUIRED pure and reusable policy |
 | Planning, Preview and organization | `REQ-ORG-*` | REQUIRED explicit plan, safety decision and supported operation |
@@ -56,7 +56,30 @@
 | Logging and results | `REQ-LOG-*`, `REQ-RESULT-*` | REQUIRED persistent, redacted and exportable evidence |
 | Configuration | `REQ-CONFIG-*` | REQUIRED managed lifecycle for all canonical configuration families |
 | Web, API and security | `REQ-WEB-*`, `REQ-API-*`, `REQ-SAFE-*` | REQUIRED shared application behavior and safety boundary |
-| Notifications and other later capabilities | `FUTURE-*` | OUT OF V1 exactly where the canonical second-stage section says so |
+| Notifications | `REQ-NOTIFY-*` | Existing signed HTTPS Webhook management and recovery are V1; specialized channels remain post-V1 |
+| Deployment and self-hosting | `REQ-DEPLOY-*` | Docker Compose production runtime and durable lifecycle are V1 release requirements |
+
+## V1 final scope decisions
+
+The 2026-09-02 A architecture audit resolves two earlier ambiguities without weakening the safety or
+core media-processing requirements:
+
+- V1 retains the `MetadataProvider` abstraction and the current TMDB production Provider. Provider
+  switching, additional production Providers and arbitrary Provider plugins move to V1.x/post-V1;
+  `REQ-META-011` is therefore explicitly OUT OF V1. V1 Metadata correction uses the configured TMDB
+  Provider and never performs an implicit Provider fallback.
+- V1 authentication retains environment-owned API-principal Bearer tokens and the existing RBAC
+  boundary. A built-in user/session database, OIDC and reverse-proxy identity integration are
+  post-V1. This is a documented self-hosted deployment boundary, not a claim of username/password
+  login.
+- The existing signed HTTPS Webhook Outbox is a V1 product journey even though specialized email,
+  chat and media-server refresh channels remain post-V1. Web/API must manage the existing Webhook
+  definition and its safe delivery recovery; the delivery engine is not reimplemented.
+- Environment-variable references plus deployment-owned secret injection are the V1 secret boundary.
+  Full Secret Store and Docker Secrets-specific ingestion are post-V1 unless separately approved.
+
+These decisions are represented by the active Slice 26 and the planned Slices 27 and 28; they do not
+create implementation Tasks.
 
 ## General product requirements
 
@@ -136,14 +159,14 @@ the Chinese specification; Product Experience supplies the journey-level interpr
 | REQ-META-001 | REQUIRED | Metadata is accessed through a Provider abstraction; TMDB is the first required V1 production Provider and business code does not depend on TMDB DTOs or HTTP APIs. | §元数据服务; §元数据 Provider 抽象; §Provider 选择与切换; §第一阶段 MVP / Metadata | Provider responses are converted into internal candidates and identities; a second production Provider is not required solely to prove the abstraction. |
 | REQ-META-002 | REQUIRED | The provider boundary supports movie/TV search and detail, season, episode, external-ID lookup and image metadata concepts. | §元数据 Provider 抽象 | Movie and TV queries remain distinct and future providers can implement the same contract. |
 | REQ-META-003 | REQUIRED | Provider configuration supports credential reference, language, region, proxy, timeouts, concurrency, retry and cache settings. | §TMDB 配置; §Provider 请求控制 | Runtime behavior follows validated configuration without exposing credential values. |
-| REQ-META-004 | REQUIRED | MetadataPolicy references a configured Provider and defines query type, locale, matching thresholds, search behavior, cache and permitted fallback/provider choices. | §元数据策略; §Provider 选择与切换 | RecognitionTypePolicy selects Provider indirectly through MetadataPolicy; multiple policies may reuse one Provider and no hidden Provider default overrides the reference. |
+| REQ-META-004 | REQUIRED | MetadataPolicy references the configured V1 TMDB Provider and defines query type, locale, matching thresholds, search behavior and cache controls. | §元数据策略; §Provider 选择与切换 | RecognitionTypePolicy selects Metadata behavior indirectly through MetadataPolicy; no hidden Provider default or implicit fallback overrides the configured reference. |
 | REQ-META-005 | REQUIRED | Search results are scored using bounded title, alias, original title, year, type, episode and context evidence; the first result is never silently accepted. | §元数据候选评分 | Thresholds distinguish automatic acceptance, human confirmation and failure. |
 | REQ-META-006 | REQUIRED | Existing TMDB, IMDb, TVDB or supported external IDs are tried through the provider lookup boundary. | §外部 ID 识别 | Direct-ID evidence is validated and normalized rather than injected as arbitrary identity. |
 | REQ-META-007 | REQUIRED | A normalized MediaIdentity contains provider identity, media type, titles, dates, episodic data, locale/classification metadata, artwork references, RecognitionType and confidence evidence. | §元数据识别结果 | Provider-specific DTOs do not leak into naming, classification or result models. |
-| REQ-META-008 | REQUIRED | Metadata failure correction supports query/year changes, Movie/TV choice, candidate selection, direct Provider ID, Provider switching, retry and ignore through Web/API. | §人工元数据识别; §元数据识别失败; §第一阶段 MVP / UI | The corrected identity is explained, RecognitionType is preserved and continuation returns through Preview before execution. |
+| REQ-META-008 | REQUIRED | Metadata failure correction supports query/year changes, Movie/TV choice, candidate selection, direct TMDB Provider ID, retry and ignore through Web/API. | §人工元数据识别; §元数据识别失败; §第一阶段 MVP / UI | The corrected identity is explained, RecognitionType is preserved and continuation returns through Preview before execution; an unavailable TMDB reference fails closed. |
 | REQ-META-009 | REQUIRED | Search, detail, season, episode, external-ID and image metadata responses support configurable caching, refresh and clear operations. | §元数据缓存 | Repeated scans do not require unnecessary Provider calls and stale cache can be explicitly refreshed. |
 | REQ-META-010 | REQUIRED | Provider calls enforce bounded concurrency, throttling, timeout, retry/backoff, proxy and HTTP 429/temporary 5xx handling. | §Provider 请求控制; §自动重试 | Permanent/configuration failures do not loop indefinitely and secrets never appear in errors or logs. |
-| REQ-META-011 | REQUIRED | V1 supports selecting and switching the Provider referenced by MetadataPolicy through managed Draft, Validate/Test and Activate lifecycle. | §Provider 选择与切换; §配置生命周期 | New work uses the newly Active reference; already pinned Jobs/Tasks retain their Provider and policy snapshot, and an unavailable selected Provider fails safely instead of triggering an unauthorized implicit switch. |
+| REQ-META-011 | OUT OF V1 | V1.x may support selecting and switching the Provider referenced by MetadataPolicy through managed Draft, Validate/Test and Activate lifecycle. | §Provider 选择与切换; A planning decision 2026-09-02 | When delivered, new work will use the newly Active reference; already pinned Jobs/Tasks must retain their Provider and policy snapshot, and an unavailable selected Provider must fail safely instead of triggering an unauthorized implicit switch. |
 
 ## Naming requirements
 
@@ -204,7 +227,7 @@ the Chinese specification; Product Experience supplies the journey-level interpr
 | REQ-RECOVERY-002 | REQUIRED | Error evidence contains code/message, Task and item context, source/Storage, stage, time, retryability and bounded debug detail. | §错误记录; §可操作错误与恢复 | Evidence is actionable and secret-free. |
 | REQ-RECOVERY-003 | REQUIRED | Temporary network/provider/storage errors may use bounded retry with configurable maximum, delay and backoff; permanent configuration errors do not retry indefinitely. | §自动重试 | Automatic retry never replays uncertain media mutation. |
 | REQ-RECOVERY-004 | REQUIRED | Unrecognized media supports reevaluation, explicit type selection, rule creation/testing and ignore. | §未识别媒体 | Decisions are durable, audited and continue only through the normal pipeline. |
-| REQ-RECOVERY-005 | REQUIRED | Metadata failure supports correction, alternate allowed Provider, direct ID/candidate selection, retry and ignore. | §元数据识别失败 | Correction preserves user input/evidence and does not inject arbitrary identity. |
+| REQ-RECOVERY-005 | REQUIRED | Metadata failure supports correction through the configured V1 TMDB Provider, direct ID/candidate selection, retry and ignore. | §元数据识别失败 | Correction preserves user input/evidence, keeps the configured Provider boundary and does not inject arbitrary identity. |
 | REQ-RECOVERY-006 | REQUIRED | Per-item checkpoints record the last durable stage, completed/verified/uncertain effects, blocking decision, retry safety and permitted actions. | Engineering derivation from §操作状态, §可操作错误与恢复 and §任务操作 | Successful siblings are not replayed and uncertain execution is investigated instead of automatically repeated. |
 | REQ-RECOVERY-007 | REQUIRED | Manual organization lets a user select permitted type/identity/policies, regenerate Preview, resolve conflicts and explicitly authorize the exact reviewed plan. | §人工整理; §策略测试工具 | Arbitrary unsafe target paths or hidden execution are rejected. |
 | REQ-RECOVERY-008 | REQUIRED | Bounded batch operations include rescan, recognition, type assignment, metadata, DryRun, organization, retry and ignore while preserving item independence. | §批量操作; §可操作错误与恢复 | One batch action cannot overwrite another item's decision or conceal its recovery. |
@@ -229,6 +252,13 @@ the Chinese specification; Product Experience supplies the journey-level interpr
 | REQ-LOG-002 | REQUIRED | Per-item logs explain discovery, rule/type, metadata, naming, classification, target, operation, retry and outcome. | §普通整理日志; §Debug 日志; §可解释决策 | Logs supplement durable item/result state rather than serving as its only source. |
 | REQ-LOG-003 | REQUIRED | Passwords, tokens, API keys, access keys, authorization headers, cookies and equivalent secrets are redacted. | §日志脱敏; §安全要求 | No normal/debug/audit/error path emits a recoverable secret. |
 | REQ-RESULT-001 | REQUIRED | Every organization Task persists item results in the database and supports JSON export; CSV export is OPTIONAL. | §整理结果记录 | Result history survives process exit and can be exported without reading media. |
+
+## Notification requirements
+
+| ID | Scope | Requirement | Canonical Source | Acceptance Meaning |
+|---|---|---|---|---|
+| REQ-NOTIFY-001 | REQUIRED | V1 Web/API manages the existing signed HTTPS Webhook subscription: create, edit, enable, disable, secret environment-variable reference, event selection and bounded read-only connection/test semantics. | §配置管理; §自动整理; §日志系统 | The operator can make the existing Outbox useful without editing JSON or database rows; tests never expose or persist the secret value. |
+| REQ-NOTIFY-002 | REQUIRED | V1 Web/API exposes delivery status and safe recovery for retryable, expired-lease and dead-letter deliveries without changing completed media work. | §自动整理; §可操作错误与恢复 | Delivery failure remains independently visible, retry/requeue is explicit, at-least-once semantics are documented and payloads/secrets remain hidden. |
 | REQ-RESULT-002 | REQUIRED | Result items include source, RecognitionType, Provider identity, policy identities, target, status and error plus enough identity/effect evidence for recovery. | §JSON 结果示例; §整理操作记录 | A user can determine what was decided and what happened for each item. |
 | REQ-RESULT-003 | REQUIRED | Result, TaskItem, plan, operations, reviews/conflicts and logs remain linkable by stable identifiers. | Engineering derivation from §任务信息, §整理操作记录 and §媒体详情 | Web/API can traverse history without manual database joins. |
 
@@ -248,6 +278,21 @@ the Chinese specification; Product Experience supplies the journey-level interpr
 | REQ-CONFIG-010 | REQUIRED | Credentials are stored encrypted or resolved through an approved external secret source and never returned in normal configuration payloads. | §TMDB 配置; §安全要求; §配置导入导出 | Copy, diff, export, audit and error paths remain secret-free. |
 | REQ-CONFIG-011 | REQUIRED | System settings cover database/work/cache/log/export locations, default locale/timezone/log level and retention, concurrency and retry policy. | §系统设置 | Values are validated, permission-aware and consumed from the same configuration authority. |
 
+## Deployment and self-hosting requirements
+
+These requirements are engineering derivations from the final self-hosted product goal. They define
+the release contract, not a new media-processing engine.
+
+| ID | Scope | Requirement | Canonical Source | Acceptance Meaning |
+|---|---|---|---|---|
+| REQ-DEPLOY-001 | REQUIRED | V1 ships one immutable MediaFlow image and a Docker Compose topology with independent API, Worker, Scheduler and Notification Worker services. | Final self-hosted product goal; §推荐后端模块 | `docker compose up -d` starts the product while preserving process failure isolation and the existing application boundaries. |
+| REQ-DEPLOY-002 | REQUIRED | Production HTTP serving uses a production WSGI server behind an explicit TLS/reverse-proxy or LAN boundary; the development `wsgiref.simple_server` listener is not the production server. | Engineering derivation from §最终管理界面 and §安全要求 | Worker/process model, request limits, graceful shutdown, host binding, proxy trust and direct-Internet support are documented and tested. |
+| REQ-DEPLOY-003 | REQUIRED | `/data` is the single local persistent MediaFlow volume for SQLite, operation history, durable logs, managed configuration/evidence, Automation state, Task/Result state, notification state, audit and migration markers. | Final self-hosted product goal; §系统设置 | `mediaflow.sqlite3` stays on a persistent local filesystem volume; SQLite on SMB/NFS/OpenList/S3/R2 is unsupported without dedicated proof. |
+| REQ-DEPLOY-004 | REQUIRED | Media Storage is a separate explicit bind-mount/configuration boundary. Local `rootPath` means a container-visible absolute path, and the product documents read-only/read-write mounts, UID/GID, ownership and permission recovery. | §本地存储; final self-hosted product goal | Unmounted host paths, host `/`, Docker socket and arbitrary host filesystem access are rejected or unsupported; Storage root confinement remains enforced. |
+| REQ-DEPLOY-005 | REQUIRED | Liveness, readiness and business/runtime health are distinct bounded signals; health checks do not scan Storage, call Providers, create work, send notifications or mutate media. | Engineering derivation from §系统设置 and §安全要求 | API/bootstrap readiness can be healthy while no Active runtime exists; process failures and business blockers remain distinguishable. |
+| REQ-DEPLOY-006 | REQUIRED | Restart and upgrade preserve durable state and fail closed around stale ownership, uncertain mutation and migration failure. | §配置生命周期; §任务系统; §可操作错误与恢复 | Compose restart creates no duplicate occurrence or mutation, never silently replays uncertain work, and schema migration has a verified preflight/recovery path. |
+| REQ-DEPLOY-007 | REQUIRED | Deployment secrets are injected by the environment/deployment and never enter the image, managed configuration, SQLite evidence, logs, API, Web or exported configuration. | §日志脱敏; §安全要求; §配置导入导出 | Secret rotation is documented as a controlled deployment/process lifecycle; full Secret Store integration is not required for V1. |
+
 ## Web, API and security requirements
 
 | ID | Scope | Requirement | Canonical Source | Acceptance Meaning |
@@ -255,7 +300,7 @@ the Chinese specification; Product Experience supplies the journey-level interpr
 | REQ-WEB-001 | REQUIRED | Web UI is the primary V1 management surface for setup, configuration, daily work, review, recovery and explicit execution. | §最终管理界面; §第一阶段 MVP / UI | Required journeys are discoverable and complete without CLI-only knowledge. |
 | REQ-WEB-002 | REQUIRED | Dashboard shows bounded Storage/library, file, waiting/review, Task, success/failure and recent-error summaries. | §Dashboard | Counts link to the underlying actionable scope and do not expose secrets. |
 | REQ-WEB-003 | REQUIRED | Files support bounded list, search/filter and detail including source/library, recognition, metadata, policies, target, result/history, errors and available actions. | §文件列表; §搜索与筛选; §媒体详情 | Users can answer what, why, outcome and next action without manual joins or raw logs. |
-| REQ-WEB-004 | REQUIRED | Web manages Storage, libraries, Metadata Providers, RecognitionTypes/policies, Automation Task Definitions/schedules, Tasks, manual identity correction and DryRun. | §第一阶段 MVP / UI; §配置管理; §自动化对象与生命周期边界 | Each management surface uses the same validation, permission, audit and safety contract as API. |
+| REQ-WEB-004 | REQUIRED | Web manages Storage, libraries, the V1 TMDB Provider reference/policy, RecognitionTypes/policies, Automation Task Definitions/schedules, Tasks, manual identity correction and DryRun. | §第一阶段 MVP / UI; §配置管理; §自动化对象与生命周期边界 | Each management surface uses the same validation, permission, audit and safety contract as API; arbitrary Provider switching is not a V1 capability. |
 | REQ-WEB-005 | REQUIRED | Task, review, conflict and recovery actions use explicit confirmation and never execute merely by viewing a page. | §任务操作; §人工元数据识别; §冲突策略; §人工整理 | Read paths are side-effect free and write actions show resulting durable state. |
 | REQ-WEB-006 | REQUIRED | System/configuration status is bounded, permission-aware and secret-free, and distinguishes unavailable data from false success. | §Dashboard; §系统设置; §可操作错误与恢复 | Status views do not contact media services or expose paths/options beyond the user's authority. |
 | REQ-API-001 | REQUIRED | Core Storage, libraries, metadata, recognition, policies, files/media, Tasks, logs and settings capabilities have versioned API surfaces. | §API 设计要求 | Web, CLI and automation can invoke shared application use cases. |
@@ -279,9 +324,10 @@ infrastructure do not promote them into V1 acceptance requirements.
 |---|---|---|---|---|
 | FUTURE-STO-001 | OUT OF V1 | Additional Storage providers such as WebDAV, SFTP, FTP, OSS and COS. | §存储管理; §第二阶段 | Storage extension architecture remains required, but these adapters are not V1 closure criteria. |
 | FUTURE-META-001 | OUT OF V1 | Additional public/custom Metadata Providers beyond TMDB as product integrations. | §元数据服务; §第二阶段 | Provider abstraction is V1; additional integrations are later product scope. |
+| FUTURE-META-002 | OUT OF V1 | Metadata Provider selection and switching through managed policy lifecycle. | §Provider 选择与切换; A planning decision 2026-09-02 | Existing V1 Jobs/Tasks remain snapshot-pinned; a future switch must fail closed when the selected Provider is unavailable and must never silently fall back. |
 | FUTURE-MEDIA-001 | OUT OF V1 | Multi-version media, quality-priority policy and automatic media upgrades. | §第二阶段 | These capabilities cannot be inferred from duplicate or naming support. |
 | FUTURE-ASSET-001 | OUT OF V1 | Poster/background download and NFO generation. | §第二阶段 | Organizing existing sidecars remains V1; creating/downloading new assets does not. |
-| FUTURE-NOTIFY-001 | OUT OF V1 | Product notification delivery channels, including email/chat providers and media-server refresh notifications. | §第二阶段 | A generic delivery mechanism is an engineering extension, not V1 acceptance; results, logs and recovery remain V1. |
+| FUTURE-NOTIFY-001 | OUT OF V1 | Specialized notification channels such as email/chat providers and media-server refresh notifications. | §第二阶段; A planning decision 2026-09-02 | The existing signed HTTPS Webhook management and delivery recovery are V1; specialized channels remain later product scope. |
 | FUTURE-ROLLBACK-001 | OUT OF V1 | Complete historical/crash recovery Rollback. | §第二阶段 | V1 still requires known-effect reporting and safe per-item recovery; it does not promise universal rollback. |
 | FUTURE-SEC-001 | OUT OF V1 | A complete user/identity administration system and advanced audit features. | §第二阶段 | V1 still requires authenticated least-privilege access; a full identity product is later scope. |
 | FUTURE-UI-001 | OUT OF V1 | Advanced statistics beyond the required Dashboard and bounded operational views. | §第二阶段 | Core status, results and recovery views remain V1 requirements. |

@@ -56,6 +56,35 @@ Draft. Activation is atomic and fails closed. JSON remains useful for bootstrap,
 migration, and support bundles; after managed activation exists, a JSON file is not a second active
 source of truth.
 
+## V1 final scope decisions (A planning audit — 2026-09-02)
+
+The final V1 target is a normally deployable self-hosted product whose primary management surface is
+Web. The remaining product work is ordered as three business-capability Slices: Web-first fresh setup
+and Storage completion, day-2 operations administration, then Docker production self-hosted release.
+The stable Scanner, Parser, Recognition, Metadata core, Naming, Classification, OrganizePlan,
+OrganizerExecutor, Task/TaskItem/Result, checkpoint and execution-authority foundations are not
+reopened by this plan.
+
+V1 authentication is the existing environment-owned API-principal bearer-token model. The Web entry
+point must say that the operator authenticates with a configured API principal token; it must not
+imply a built-in username/password account, cookie session or OIDC provider. Built-in identity
+administration and external identity integration are post-V1 capabilities.
+
+V1 Metadata is TMDB-backed through the existing Provider abstraction. Provider switching and
+additional production Providers are explicitly V1.x/post-V1 work. A Metadata correction in V1 uses
+the currently configured TMDB Provider and preserves RecognitionType and the immutable snapshot
+contract; no implicit fallback Provider is allowed.
+
+The existing signed HTTPS Webhook Outbox is an engineering foundation, but its operator configuration
+journey is still required for V1. Slice 27 owns Webhook create/edit/enable/disable, secretEnv
+readiness, event selection, explicit read-only test semantics, delivery status and safe retry/dead-
+letter recovery. Specialized email/chat channels and media-server refresh notifications remain
+post-V1.
+
+Environment-variable secret references plus deployment-owned secret injection are the V1 secret
+boundary. Secret Store integrations and Docker Secrets-specific ingestion are deferred unless a
+future product decision expands that boundary.
+
 ## Phase 22.2 / 22.2R implementation boundary (CURRENT)
 
 The Active Configuration Snapshot implementation provides most of the first end-to-end lifecycle:
@@ -90,9 +119,10 @@ lifecycle, activation/request, protected-execute pin, production Web → Worker 
 saved-revision failure, and zero-I/O regressions and found no Task-scope P0/P1 defect. Phase 22.2's
 bounded whole-document snapshot journey is accepted; object-level setup remains the next journey.
 
-This is not the full first-time setup journey: remote/provider Storage forms and Provider switching
-remain TARGET work. Generic per-item stage-aware recovery was subsequently delivered by Slice 23;
-it does not make those configuration gaps complete.
+This is not the full first-time setup journey: remote/provider Storage forms and Storage Browser remain
+the active Slice 26 work. Provider switching is explicitly V1.x/post-V1 by the 2026-09-02 A scope
+decision. Generic per-item stage-aware recovery was subsequently delivered by Slice 23; it does not
+make those configuration gaps complete.
 
 ## Phase 22.3 Local setup slice (CURRENT implementation; PASS / CLOSED)
 
@@ -154,7 +184,7 @@ unreachable; Phase 22.5-E-F1 attached that section to the page and proved it wit
 regression coverage, and independent High re-review accepted the correction checkpoint
 `dce5c0ba53bb4fc91f18d1b5d6d56564cd3cfe62` on 2026-08-27. The same-day phase-level Final Closure
 Audit accepted Phase 22.5 (slices A, B/F1, C/F1/F2, D, E/F1) as `PASS / CLOSED`. Provider switching
-remains later Metadata journey work.
+is explicitly V1.x/post-V1 and is not a final V1 blocker.
 
 ## Phase 22.5-E single-item correction continuation (CURRENT)
 
@@ -340,8 +370,8 @@ completed non-`capability_gap` precheck leaves the checked control and its label
 Remote SMB/OpenList/S3 destination prechecks, mutation-based capability probing,
 multiple RecognitionTypes or destination Storages in one request, `ConflictType.DUPLICATE_MEDIA` /
 known-media detection, attachment prechecks, absolute mounted-path display and execution remain
-TARGET. Provider switching, generic Task resume and unattended execute also remain outside Slice
-22.6. Per-item Processing Checkpoint recovery was subsequently delivered by Slice 23; Slice 22.6
+TARGET. Provider switching is V1.x/post-V1; generic Task resume and unattended execute also remain
+outside Slice 22.6. Per-item Processing Checkpoint recovery was subsequently delivered by Slice 23; Slice 22.6
 remains PASS / CLOSED without claiming it as part of that earlier boundary. Lifecycle authority
 remains root `SLICE.md`, and Active runtime-consumption semantics are unchanged.
 
@@ -382,6 +412,16 @@ requires current authority and the normal plan/conflict/capability checks and ca
 OrganizerExecutor.
 
 ## A. First-time setup
+
+### Current V1 boundary and Slice 26 target
+
+The current repository is not yet at the final first-time setup outcome. With a fresh database, the
+management API still requires the compatibility bootstrap file to contain enough complete runtime
+content for the current startup path, and the guided Web form supports Local Storage only. Slice 26
+closes this gap with a management-only bootstrap, first-Draft construction, guided Local/SMB/OpenList/
+S3/R2 setup, read-only Storage tests, bounded Storage Browser/path selection and checked activation.
+The final user journey must never require editing SQLite or hand-authoring a complete runtime JSON
+document.
 
 ### Starting point
 
@@ -511,7 +551,7 @@ the current review, refresh against Active configuration, test a Draft rule, or 
 The operator must not know RecognitionReview table states, manually craft a selection object, or
 edit a rule file without validation feedback.
 
-## D. Metadata failure correction, including Provider switching
+## D. Metadata failure correction (TMDB V1 boundary)
 
 ### Starting point
 
@@ -524,9 +564,9 @@ breakdowns, matched title source, canonical/regional year evidence, cache state,
 
 ### Actions
 
-Edit query/year, switch Movie/TV, select a candidate, enter a direct Provider ID, or choose another
-Provider allowed by a validated policy. Provider switching is a planned V1 journey and is not
-claimed implemented until its Web/API/configuration path exists.
+Edit query/year, switch Movie/TV, select a candidate, or enter a direct ID for the currently configured
+TMDB Provider. V1 does not offer Provider switching or an implicit fallback Provider; that is explicit
+V1.x/post-V1 work.
 
 ### Safe defaults
 
@@ -718,7 +758,8 @@ plan and recovery linkage, while display projections redact credential-shaped te
 
 Provider switching, scheduled unattended real organization, automatic uncertain/crash replay,
 universal compensation or historical rollback, remote setup/probing and other explicitly deferred
-capabilities remain outside the closed Slice.
+capabilities remain outside the closed Slice. Remote guided Storage setup is now owned by active Slice
+26, while Provider switching remains post-V1 by explicit A decision.
 
 ## H. File browsing, detail, history, and explanation
 
@@ -855,6 +896,58 @@ authority prevents not-yet-performed mutation without rewriting completed histor
 The operator must not create queue records, construct an OrganizePlan, select policies per file,
 calculate Storage-relative destinations, manage one-shot tickets for every scheduled run, or inspect
 database tables to connect an Automation definition to its Jobs, Tasks and Results.
+
+## J. Day-2 operations administration (PLANNED; Slice 27)
+
+### Starting point
+
+The operator has an Active runtime and opens Settings, Configuration export/import, or Notifications.
+
+### Information shown
+
+Consumed system settings and their exact Active snapshot, safe operational bounds, export/import
+version and validation state, configured Webhooks, selected events, secret reference readiness,
+delivery status, retry/dead-letter state and the explicit next action for each failure.
+
+### Actions
+
+```text
+Review settings → edit Draft → Validate → explicitly Activate
+Export configuration/result evidence → import as Draft → Validate → Activate when appropriate
+Create/Edit/Enable/Disable Webhook → read-only Test → inspect Delivery → explicit Retry/Requeue
+```
+
+### Safe defaults, success and recovery
+
+Settings changes are snapshot-bound, auditable and fail closed. Export never includes secrets. Webhook
+tests do not mutate media and delivery failure never changes a completed Task or Result. A retryable,
+expired-lease or dead-letter delivery remains independently visible with durable state, safe repeat
+semantics and an explicit recovery action. Specialized email/chat channels and media-server refresh
+notifications are not part of V1.
+
+## K. Docker self-hosted operation (PLANNED; Slice 28)
+
+### Starting point and action
+
+On a clean supported Linux host, the operator prepares deployment-owned environment/secrets and
+explicit media bind mounts, then runs `docker compose up -d`. The Compose project starts one immutable
+MediaFlow image as independent API, Worker, Scheduler and Notification Worker services.
+
+### Visible state and success
+
+The browser reaches the supported LAN/reverse-proxy endpoint; API liveness/readiness and business
+runtime status are distinguishable. Fresh setup follows the same no-Active → first-Draft → tested
+Active journey. `/data` preserves SQLite, history, configuration, FileIndex, Tasks/Results,
+Automation, grants, notification state, audit and migration state across restart. Health checks are
+side-effect free, and the operator can tell a process failure from a business blocker.
+
+### Failure and recovery
+
+Missing mounts, UID/GID permission errors, missing deployment secrets, unsupported direct exposure,
+schema incompatibility and migration failure are explicit and actionable. Restart does not duplicate
+scheduled work, replay uncertain mutation or let a fenced old Worker overwrite a later owner. Upgrade
+requires backup/preflight, migration validation and a recoverable fail-closed path. TLS, certificates,
+reverse proxy and public Internet policy remain deployment responsibilities.
 
 ## Journey acceptance rule
 
