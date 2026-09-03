@@ -313,6 +313,16 @@ class ConfigurationSetupCheckStatus(StrEnum):
     FAILED = "failed"
 
 
+class ConfigurationStorageCheckStatus(StrEnum):
+    PASSED = "passed"
+    FAILED = "failed"
+
+
+# Compatibility spelling for callers that describe this evidence as a setup
+# check.  The persisted/API status remains the same bounded pair of outcomes.
+StorageSetupCheckStatus = ConfigurationStorageCheckStatus
+
+
 class ConfigurationStrategyTestStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
@@ -925,6 +935,171 @@ class LocalSetupCheckEvidence:
 
 
 @dataclass(frozen=True)
+class StorageSetupCheckEvidence:
+    """Bounded, secret-free read-only evidence for one configured Storage."""
+
+    revision_id: str
+    revision_version: int
+    revision_digest: str
+    status: ConfigurationStorageCheckStatus
+    checked_at: datetime
+    actor: str
+    storage_id: str
+    storage_type: str
+    read_only: bool
+    capabilities: dict[str, bool]
+    operations: tuple[str, ...] = ()
+    attempted_operations: tuple[str, ...] = ()
+    secret_readiness: tuple[dict[str, str], ...] = ()
+    duration_ms: int = 0
+    failure_category: str | None = None
+    message: str | None = None
+    next_action: str | None = None
+
+    CAPABILITY_FIELDS = (
+        "can_move",
+        "can_copy",
+        "can_delete",
+        "can_hard_link",
+        "can_soft_link",
+    )
+    FAILURE_CATEGORIES = frozenset(
+        {
+            "invalid_path",
+            "not_found",
+            "permission_denied",
+            "authentication_failed",
+            "connection_failed",
+            "timeout",
+            "rate_limited",
+            "unsupported_operation",
+            "unknown",
+            "missing_secret",
+            "disabled",
+            "invalid_configuration",
+            "read_only_violation",
+            "capacity_unavailable",
+            "worker_unavailable",
+        }
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.revision_id, str) or not self.revision_id.strip():
+            raise ValueError("Storage check revision ID is required")
+        if isinstance(self.revision_version, bool) or not isinstance(self.revision_version, int):
+            raise ValueError("Storage check revision version must be an integer")
+        if self.revision_version < 1:
+            raise ValueError("Storage check revision version must be positive")
+        if not isinstance(self.revision_digest, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.revision_digest
+        ):
+            raise ValueError("Storage check revision digest must be a SHA-256 hex digest")
+        if not isinstance(self.status, ConfigurationStorageCheckStatus):
+            raise ValueError("Storage check status is required")
+        if not isinstance(self.checked_at, datetime) or self.checked_at.tzinfo is None:
+            raise ValueError("Storage check time must include a timezone")
+        for label, value, maximum in (
+            ("actor", self.actor, 200),
+            ("Storage ID", self.storage_id, 128),
+            ("Storage type", self.storage_type, 32),
+        ):
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > maximum
+                or "\x00" in value
+            ):
+                raise ValueError(f"Storage check {label} must be bounded and non-empty")
+        if not isinstance(self.read_only, bool):
+            raise ValueError("Storage check read-only intent must be boolean")
+        if not isinstance(self.capabilities, dict):
+            raise ValueError("Storage check capabilities must be an object")
+        if set(self.capabilities) != set(self.CAPABILITY_FIELDS):
+            raise ValueError("Storage check capabilities must declare every supported operation")
+        if any(not isinstance(self.capabilities[key], bool) for key in self.CAPABILITY_FIELDS):
+            raise ValueError("Storage check capability values must be boolean")
+        if self.read_only and any(self.capabilities.values()):
+            raise ValueError("read-only Storage cannot declare mutation capabilities")
+        if not isinstance(self.operations, tuple) or len(self.operations) > 32:
+            raise ValueError("Storage check operations must be bounded")
+        if any(
+            not isinstance(value, str) or not value.strip() or len(value) > 128 or "\x00" in value
+            for value in self.operations
+        ):
+            raise ValueError("Storage check operations must be bounded strings")
+        if not isinstance(self.attempted_operations, tuple) or len(self.attempted_operations) > 32:
+            raise ValueError("Storage check attempted operations must be bounded")
+        if any(
+            not isinstance(value, str) or not value.strip() or len(value) > 128 or "\x00" in value
+            for value in self.attempted_operations
+        ):
+            raise ValueError("Storage check attempted operations must be bounded strings")
+        if not isinstance(self.secret_readiness, tuple) or len(self.secret_readiness) > 16:
+            raise ValueError("Storage check secret readiness must be bounded")
+        for entry in self.secret_readiness:
+            if not isinstance(entry, dict) or set(entry) != {"field", "env", "state"}:
+                raise ValueError("Storage check secret readiness is malformed")
+            if any(
+                not isinstance(entry[key], str)
+                or not entry[key].strip()
+                or len(entry[key]) > 128
+                or "\x00" in entry[key]
+                for key in ("field", "env")
+            ):
+                raise ValueError("Storage check secret readiness names are malformed")
+            if entry["state"] not in {"SET", "UNSET"}:
+                raise ValueError("Storage check secret readiness state is invalid")
+        if isinstance(self.duration_ms, bool) or not isinstance(self.duration_ms, int):
+            raise ValueError("Storage check duration must be an integer")
+        if self.duration_ms < 0 or self.duration_ms > 86_400_000:
+            raise ValueError("Storage check duration is out of bounds")
+        if self.failure_category is not None and (
+            not isinstance(self.failure_category, str)
+            or self.failure_category not in self.FAILURE_CATEGORIES
+        ):
+            raise ValueError("Storage check failure category is not supported")
+        for label, value in (("message", self.message), ("next action", self.next_action)):
+            if value is not None and (
+                not isinstance(value, str) or not value.strip() or len(value) > 500
+            ):
+                raise ValueError(f"Storage check {label} must be bounded text")
+        if self.status is ConfigurationStorageCheckStatus.PASSED:
+            if self.failure_category is not None or self.message is not None:
+                raise ValueError("a passed Storage check cannot contain failure details")
+        elif self.failure_category is None or self.message is None or self.next_action is None:
+            raise ValueError("a failed Storage check requires bounded recovery details")
+
+    def document(self) -> dict[str, object]:
+        capabilities = dict(self.capabilities)
+        operations = list(self.operations)
+        return {
+            "revisionId": self.revision_id,
+            "revisionVersion": self.revision_version,
+            "revisionDigest": self.revision_digest,
+            "status": self.status.value,
+            "checkedAt": self.checked_at.isoformat(),
+            "actor": self.actor,
+            "storageId": self.storage_id,
+            "storageType": self.storage_type,
+            "readOnly": self.read_only,
+            "capabilities": capabilities,
+            "declaredCapabilities": dict(capabilities),
+            "capabilitySource": "configured_storage_abstraction",
+            "capabilityProbe": "not_run",
+            "operations": operations,
+            "completedReadOperations": list(operations),
+            "attemptedOperations": list(self.attempted_operations),
+            "secretReadiness": [dict(entry) for entry in self.secret_readiness],
+            "durationMs": self.duration_ms,
+            "failureCategory": self.failure_category,
+            "message": self.message,
+            "nextAction": self.next_action,
+            "sideEffects": "none",
+            "retrySafe": self.failure_category != "read_only_violation",
+        }
+
+
+@dataclass(frozen=True)
 class ConfigurationReference:
     source_kind: ConfigurationObjectKind
     source_id: str
@@ -1182,6 +1357,18 @@ class ManagedConfigurationRepository(Protocol):
     ) -> LocalSetupCheckEvidence: ...
 
     def get_local_setup_check(self, revision_id: str) -> LocalSetupCheckEvidence | None: ...
+
+    def save_storage_setup_check(
+        self, evidence: StorageSetupCheckEvidence
+    ) -> StorageSetupCheckEvidence: ...
+
+    def get_storage_setup_check(
+        self, revision_id: str, storage_id: str
+    ) -> StorageSetupCheckEvidence | None: ...
+
+    def list_storage_setup_checks(
+        self, revision_id: str, *, limit: int = 64
+    ) -> tuple[StorageSetupCheckEvidence, ...]: ...
 
     def save_recognition_strategy_test(
         self, evidence: RecognitionStrategyTestEvidence

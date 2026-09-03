@@ -64,6 +64,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationReferenceEvidence,
     ConfigurationReferenceItem,
     ConfigurationSetupCheckStatus,
+    ConfigurationStorageCheckStatus,
     ConfigurationStrategyTestStatus,
     ConfigurationVersionConflict,
     DestinationPrecheckEvidence,
@@ -77,6 +78,7 @@ from mediaflow.domain.configuration_management import (
     OrganizeAuthorityEvidence,
     RecognitionStrategyTestEvidence,
     StorageConfigurationType,
+    StorageSetupCheckEvidence,
     validate_storage_configuration,
 )
 from mediaflow.domain.library import MediaLibrary
@@ -125,11 +127,18 @@ from mediaflow.domain.recognition import (
     RecognitionTypePolicy,
     ResolvedRecognitionPolicy,
 )
-from mediaflow.domain.storage import StorageCapabilities, StorageError, StorageErrorCode
+from mediaflow.domain.storage import (
+    StorageCapabilities,
+    StorageEntry,
+    StorageError,
+    StorageErrorCode,
+)
 from mediaflow.infrastructure.metadata_provider_bootstrap import MetadataProviderBootstrapError
 from mediaflow.infrastructure.runtime_configuration import (
+    create_storage_from_definition,
     load_managed_runtime_configuration,
     load_runtime_configuration,
+    load_storage_definition,
 )
 from mediaflow.infrastructure.strategy_user_configuration import parse_organize_policy
 
@@ -191,6 +200,50 @@ class _ReadOnlyDestinationStorage(ReadOnlyStorageGuard):
         return _DestinationPrecheckMutationError(
             f"destination precheck forbids Storage mutation: {operation}"
         )
+
+
+class _ReadOnlyStorageCheck(ReadOnlyStorageGuard):
+    """Record bounded read evidence while keeping every mutator behind a guard."""
+
+    _MAX_RECORDED_OPERATIONS = 32
+
+    def __init__(self, storage) -> None:
+        super().__init__(storage)
+        self.attempted_operations: list[str] = []
+        self.read_operations: list[str] = []
+        self.last_storage_error: StorageError | None = None
+
+    @property
+    def capabilities(self) -> StorageCapabilities:
+        # A configured read-only intent is stronger than any adapter declaration.
+        if self._storage.read_only:
+            return StorageCapabilities()
+        return self._storage.capabilities
+
+    def _read(self, operation: str, callback):
+        label = f"{operation}:root"
+        if len(self.attempted_operations) < self._MAX_RECORDED_OPERATIONS:
+            self.attempted_operations.append(label)
+        try:
+            value = callback()
+        except StorageError as error:
+            self.last_storage_error = error
+            raise
+        if len(self.read_operations) < self._MAX_RECORDED_OPERATIONS:
+            self.read_operations.append(label)
+        return value
+
+    def list(self, path: str):
+        return self._read("list", lambda: self._storage.list(path))
+
+    def stat(self, path: str):
+        return self._read("stat", lambda: self._storage.stat(path))
+
+    def exists(self, path: str) -> bool:
+        return self._read("exists", lambda: self._storage.exists(path))
+
+    def read(self, path: str):
+        return self._read("read", lambda: self._storage.read(path))
 
 
 @dataclass(frozen=True)
@@ -419,6 +472,7 @@ class ConfigurationObjectService:
         metadata_provider_registry_factory: (
             Callable[[tuple[str, ...]], MetadataProviderRegistry] | None
         ) = None,
+        storage_adapters: Mapping[str, object] | None = None,
     ) -> None:
         if (
             isinstance(setup_check_timeout_seconds, bool)
@@ -431,6 +485,7 @@ class ConfigurationObjectService:
         self._repository = managed.repository
         self._setup_check_timeout_seconds = float(setup_check_timeout_seconds)
         self._metadata_provider_registry_factory = metadata_provider_registry_factory
+        self._storage_adapters = dict(storage_adapters or {})
         self._strategy_test_operation_lock = RLock()
         self._setup_check_capacity = BoundedSemaphore(self._SETUP_CHECK_CAPACITY)
         self._setup_check_state_lock = Lock()
@@ -519,6 +574,7 @@ class ConfigurationObjectService:
             "organizeAuthority": self._organize_authority_document(revision),
             "destinationPreview": self._destination_preview_document(revision),
             "destinationPrecheck": self._destination_precheck_document(revision),
+            "storageChecks": self._storage_checks_document(revision),
         }
 
     def references(self, revision_id: str) -> dict[str, dict[str, object]]:
@@ -4094,6 +4150,507 @@ class ConfigurationObjectService:
         finally:
             lease.response_finished()
 
+    def storage_check(
+        self,
+        revision_id: str,
+        *,
+        storage_id: str,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+    ) -> StorageSetupCheckEvidence:
+        """Run one provider-neutral, read-only root check for an exact revision."""
+
+        revision = self._managed.require(revision_id)
+        if revision.status not in {
+            ManagedConfigurationStatus.DRAFT,
+            ManagedConfigurationStatus.VALIDATED,
+        }:
+            raise ConfigurationVersionConflict(
+                "Storage check requires a Draft or Validated revision",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+                durable_state="draft_and_prior_active_preserved",
+                next_action="reload a Draft or Validated revision before checking Storage",
+            )
+        if revision.version != expected_version or revision.digest != expected_digest:
+            raise ConfigurationVersionConflict(
+                "Storage check requires the exact current revision; reload before checking",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+                durable_state="draft_and_prior_active_preserved",
+                next_action="reload the revision and explicitly rerun the read-only Storage check",
+            )
+        storage_value = next(
+            (
+                item
+                for item in self._canonical_objects(revision.document, "storages")
+                if item.get("id") == storage_id
+            ),
+            None,
+        )
+        if storage_value is None:
+            raise LookupError(f"Storage {storage_id!r} was not found in the revision")
+        storage_type = str(storage_value.get("type", "unknown")).lower() or "unknown"
+        options = self._storage_options(storage_value)
+        secret_readiness = tuple(
+            dict(entry) for entry in self._storage_secret_readiness(storage_type, options)
+        )
+        read_only = storage_value.get("readOnly", False) is True
+        progress = _StorageCheckProgress(
+            storage_id=storage_id,
+            storage_type=storage_type,
+            read_only=read_only,
+            secret_readiness=secret_readiness,
+        )
+        if storage_value.get("enabled", True) is False:
+            evidence = self._storage_check_failure(
+                revision,
+                actor,
+                progress,
+                "disabled",
+            )
+            return self._repository.save_storage_setup_check(evidence)
+        if any(entry["state"] == "UNSET" for entry in secret_readiness):
+            evidence = self._storage_check_failure(
+                revision,
+                actor,
+                progress,
+                "missing_secret",
+            )
+            return self._repository.save_storage_setup_check(evidence)
+        if not self._acquire_setup_check():
+            evidence = self._storage_check_failure(
+                revision,
+                actor,
+                progress,
+                "capacity_unavailable",
+            )
+            return self._repository.save_storage_setup_check(evidence)
+        started = time.monotonic()
+        try:
+            try:
+                future = self._setup_check_executor.submit(
+                    self._run_storage_check,
+                    revision,
+                    actor,
+                    storage_value,
+                    progress,
+                    started,
+                )
+            except Exception:
+                self._release_setup_check()
+                evidence = self._storage_check_failure(
+                    revision,
+                    actor,
+                    progress,
+                    "worker_unavailable",
+                    started=started,
+                )
+                return self._repository.save_storage_setup_check(evidence)
+            lease = _SetupCheckLease(self._release_setup_check)
+            future.add_done_callback(lambda _future: lease.worker_finished())
+            try:
+                try:
+                    remaining = max(
+                        0.0,
+                        started + self._setup_check_timeout_seconds - time.monotonic(),
+                    )
+                    evidence = future.result(timeout=remaining)
+                except FutureTimeoutError:
+                    evidence = self._storage_check_failure(
+                        revision,
+                        actor,
+                        progress,
+                        "timeout",
+                        started=started,
+                    )
+                except Exception:
+                    evidence = self._storage_check_failure(
+                        revision,
+                        actor,
+                        progress,
+                        "unknown",
+                        started=started,
+                    )
+                return self._repository.save_storage_setup_check(evidence)
+            finally:
+                lease.response_finished()
+        except Exception:
+            # Persistence failures are intentionally not converted into a fake
+            # passed/failed check.  The caller receives the repository failure and
+            # no unbounded adapter exception is returned through the API.
+            raise
+
+    def _run_storage_check(
+        self,
+        revision: ManagedConfigurationRevision,
+        actor: str,
+        storage_value: Mapping[str, object],
+        progress: _StorageCheckProgress,
+        started: float,
+    ) -> StorageSetupCheckEvidence:
+        adapter_created = False
+        guarded = None
+
+        def sync_read_progress() -> None:
+            if guarded is not None:
+                progress.record(guarded)
+
+        try:
+            definition = load_storage_definition(dict(storage_value))
+            progress.storage_type = definition.storage_type
+            progress.read_only = definition.read_only
+            adapter = self._storage_adapters.get(definition.storage_id)
+            if adapter is None:
+                adapter = create_storage_from_definition(definition)
+            adapter_created = True
+            progress.capabilities = self._declared_storage_capabilities(
+                adapter, definition.read_only
+            )
+            guarded = _ReadOnlyStorageCheck(adapter)
+            root_entry = guarded.stat("")
+            progress.record(guarded)
+            if not isinstance(root_entry, StorageEntry):
+                raise _StorageCheckFailure("unknown")
+            entries = guarded.list("")
+            progress.record(guarded)
+            if isinstance(entries, (str, bytes, bytearray)) or not isinstance(entries, Sequence):
+                raise _StorageCheckFailure("unknown")
+            if any(not isinstance(entry, StorageEntry) for entry in entries):
+                raise _StorageCheckFailure("unknown")
+            return self._storage_check_evidence(
+                revision,
+                actor,
+                progress,
+                ConfigurationStorageCheckStatus.PASSED,
+                started,
+            )
+        except _StorageCheckFailure as error:
+            sync_read_progress()
+            return self._storage_check_evidence(
+                revision,
+                actor,
+                progress,
+                ConfigurationStorageCheckStatus.FAILED,
+                started,
+                failure_category=error.category,
+            )
+        except ReadOnlyStorageMutationError:
+            sync_read_progress()
+            return self._storage_check_evidence(
+                revision,
+                actor,
+                progress,
+                ConfigurationStorageCheckStatus.FAILED,
+                started,
+                failure_category="read_only_violation",
+            )
+        except StorageError as error:
+            sync_read_progress()
+            return self._storage_check_evidence(
+                revision,
+                actor,
+                progress,
+                ConfigurationStorageCheckStatus.FAILED,
+                started,
+                failure_category=self._storage_check_error_category(error.code),
+            )
+        except (TimeoutError, FutureTimeoutError):
+            sync_read_progress()
+            return self._storage_check_evidence(
+                revision,
+                actor,
+                progress,
+                ConfigurationStorageCheckStatus.FAILED,
+                started,
+                failure_category="timeout",
+            )
+        except (PermissionError,):
+            sync_read_progress()
+            return self._storage_check_evidence(
+                revision,
+                actor,
+                progress,
+                ConfigurationStorageCheckStatus.FAILED,
+                started,
+                failure_category="permission_denied",
+            )
+        except (FileNotFoundError,):
+            sync_read_progress()
+            return self._storage_check_evidence(
+                revision,
+                actor,
+                progress,
+                ConfigurationStorageCheckStatus.FAILED,
+                started,
+                failure_category="not_found",
+            )
+        except ConnectionError:
+            sync_read_progress()
+            return self._storage_check_evidence(
+                revision,
+                actor,
+                progress,
+                ConfigurationStorageCheckStatus.FAILED,
+                started,
+                failure_category="connection_failed",
+            )
+        except ValueError:
+            sync_read_progress()
+            # Missing references are checked before an adapter is constructed;
+            # a value error from an already-created fake/adapter is a malformed
+            # response and is deliberately reported as unknown.
+            category = (
+                "missing_secret"
+                if not adapter_created
+                and any(entry["state"] == "UNSET" for entry in progress.secret_readiness)
+                else "invalid_configuration"
+                if not adapter_created
+                else "unknown"
+            )
+            return self._storage_check_evidence(
+                revision,
+                actor,
+                progress,
+                ConfigurationStorageCheckStatus.FAILED,
+                started,
+                failure_category=category,
+            )
+        except Exception:
+            sync_read_progress()
+            return self._storage_check_evidence(
+                revision,
+                actor,
+                progress,
+                ConfigurationStorageCheckStatus.FAILED,
+                started,
+                failure_category="unknown",
+            )
+
+    @staticmethod
+    def _declared_storage_capabilities(adapter, read_only: bool) -> dict[str, bool]:
+        if read_only:
+            return {key: False for key in StorageSetupCheckEvidence.CAPABILITY_FIELDS}
+        capabilities = adapter.capabilities
+        if not isinstance(capabilities, StorageCapabilities):
+            raise ValueError("Storage adapter capabilities are malformed")
+        return {
+            key: bool(getattr(capabilities, key))
+            for key in StorageSetupCheckEvidence.CAPABILITY_FIELDS
+        }
+
+    @staticmethod
+    def _storage_check_error_category(code: StorageErrorCode) -> str:
+        return {
+            StorageErrorCode.INVALID_PATH: "invalid_path",
+            StorageErrorCode.PATH_TRAVERSAL: "invalid_path",
+            StorageErrorCode.NOT_FOUND: "not_found",
+            StorageErrorCode.PERMISSION_DENIED: "permission_denied",
+            StorageErrorCode.READ_ONLY: "permission_denied",
+            StorageErrorCode.AUTHENTICATION_FAILED: "authentication_failed",
+            StorageErrorCode.CONNECTION_FAILED: "connection_failed",
+            StorageErrorCode.CONNECTION_LOST: "connection_failed",
+            StorageErrorCode.TIMEOUT: "timeout",
+            StorageErrorCode.RATE_LIMITED: "rate_limited",
+            StorageErrorCode.UNSUPPORTED_OPERATION: "unsupported_operation",
+            StorageErrorCode.IO_ERROR: "connection_failed",
+        }.get(code, "unknown")
+
+    @classmethod
+    def _storage_check_failure_details(cls, category: str) -> tuple[str, str]:
+        return {
+            "invalid_path": (
+                "Storage root path is invalid for the configured adapter",
+                "correct the Storage root path, reload the Draft, and retry the read-only check",
+            ),
+            "not_found": (
+                "Storage root was not found",
+                "make the configured root available, reload the Draft, and retry the "
+                "read-only check",
+            ),
+            "permission_denied": (
+                "Storage root read permission was denied",
+                "grant read/list permission to MediaFlow, reload the Draft, and retry the check",
+            ),
+            "authentication_failed": (
+                "Storage authentication failed",
+                "correct the deployment-owned credential reference or access policy, "
+                "reload, and retry",
+            ),
+            "connection_failed": (
+                "Storage could not be reached",
+                "check the endpoint, network and service availability, reload, and retry",
+            ),
+            "timeout": (
+                "Storage root check exceeded its bounded deadline",
+                "check service availability and timeout settings, reload, and retry",
+            ),
+            "rate_limited": (
+                "Storage rejected the read request because it was rate limited",
+                "wait for the provider limit to clear, then reload and retry",
+            ),
+            "missing_secret": (
+                "A required deployment-owned credential environment reference is unset",
+                "set the referenced environment variable outside MediaFlow, reload the "
+                "Draft, and retry",
+            ),
+            "disabled": (
+                "The selected Storage is disabled in this Draft",
+                "enable the Storage in the Draft, validate it, then retry the read-only check",
+            ),
+            "invalid_configuration": (
+                "Storage configuration is invalid before an adapter read could start",
+                "correct the bounded Storage fields, reload the Draft, and retry",
+            ),
+            "unsupported_operation": (
+                "The configured Storage adapter does not support the required root read",
+                "use a compatible Storage adapter, reload the Draft, and retry",
+            ),
+            "read_only_violation": (
+                "The read-only check encountered a forbidden Storage mutation",
+                "do not activate; inspect the setup-check implementation before retrying",
+            ),
+            "capacity_unavailable": (
+                "Storage check capacity is occupied by an unfinished check",
+                "wait for the in-flight check to finish, reload the Draft, and retry",
+            ),
+            "worker_unavailable": (
+                "Storage check worker is unavailable",
+                "inspect service health, reload the Draft, and retry the read-only check",
+            ),
+            "unknown": (
+                "Storage root check failed with an unclassified provider response",
+                "inspect the bounded Storage configuration and service health, then "
+                "reload and retry",
+            ),
+        }.get(
+            category,
+            (
+                "Storage root check failed with an unclassified error",
+                "inspect the bounded Storage configuration and service health, then "
+                "reload and retry",
+            ),
+        )
+
+    def _storage_check_evidence(
+        self,
+        revision: ManagedConfigurationRevision,
+        actor: str,
+        progress: _StorageCheckProgress,
+        status: ConfigurationStorageCheckStatus,
+        started: float,
+        *,
+        failure_category: str | None = None,
+    ) -> StorageSetupCheckEvidence:
+        message = next_action = None
+        if status is ConfigurationStorageCheckStatus.PASSED:
+            next_action = "review the read-only evidence and continue the setup journey"
+        else:
+            message, next_action = self._storage_check_failure_details(
+                failure_category or "unknown"
+            )
+        snapshot = progress.snapshot()
+        return StorageSetupCheckEvidence(
+            revision.revision_id,
+            revision.version,
+            revision.digest,
+            status,
+            datetime.now(UTC),
+            actor,
+            snapshot.storage_id,
+            snapshot.storage_type,
+            snapshot.read_only,
+            dict(snapshot.capabilities),
+            tuple(snapshot.operations),
+            tuple(snapshot.attempted_operations),
+            tuple(dict(entry) for entry in snapshot.secret_readiness),
+            max(0, int((time.monotonic() - started) * 1000)),
+            failure_category,
+            message,
+            next_action,
+        )
+
+    def _storage_check_failure(
+        self,
+        revision: ManagedConfigurationRevision,
+        actor: str,
+        progress: _StorageCheckProgress,
+        category: str,
+        *,
+        started: float | None = None,
+    ) -> StorageSetupCheckEvidence:
+        return self._storage_check_evidence(
+            revision,
+            actor,
+            progress,
+            ConfigurationStorageCheckStatus.FAILED,
+            started if started is not None else time.monotonic(),
+            failure_category=category,
+        )
+
+    def storage_check_evidence(self, revision_id: str, storage_id: str) -> dict[str, object] | None:
+        revision = self._managed.require(revision_id)
+        getter = getattr(self._repository, "get_storage_setup_check", None)
+        evidence = getter(revision_id, storage_id) if getter is not None else None
+        return (
+            None
+            if evidence is None
+            else self._storage_check_document_for_revision(revision, evidence)
+        )
+
+    def _storage_checks_document(
+        self, revision: ManagedConfigurationRevision
+    ) -> list[dict[str, object]]:
+        getter = getattr(self._repository, "list_storage_setup_checks", None)
+        if getter is None:
+            return []
+        return [
+            self._storage_check_document_for_revision(revision, evidence)
+            for evidence in getter(revision.revision_id, limit=128)
+        ]
+
+    def _storage_check_document_for_revision(
+        self,
+        revision: ManagedConfigurationRevision,
+        evidence: StorageSetupCheckEvidence,
+    ) -> dict[str, object]:
+        value = evidence.document()
+        current_storage = next(
+            (
+                item
+                for item in self._canonical_objects(revision.document, "storages")
+                if item.get("id") == evidence.storage_id
+            ),
+            None,
+        )
+        stale_reason = None
+        if current_storage is None:
+            stale_reason = "storage_missing"
+        elif current_storage.get("enabled", True) is False:
+            stale_reason = "storage_disabled"
+        elif (
+            evidence.revision_version != revision.version
+            or evidence.revision_digest != revision.digest
+        ):
+            stale_reason = "revision_changed"
+        else:
+            current_type = str(current_storage.get("type", "")).lower()
+            current_readiness = tuple(
+                dict(entry)
+                for entry in self._storage_secret_readiness(
+                    current_type, self._storage_options(current_storage)
+                )
+            )
+            if current_readiness != evidence.secret_readiness:
+                stale_reason = "secret_readiness_changed"
+        value["stale"] = stale_reason is not None
+        value["current"] = stale_reason is None
+        value["staleReason"] = stale_reason
+        return value
+
     def _run_local_check(
         self,
         revision: ManagedConfigurationRevision,
@@ -5853,6 +6410,59 @@ class _SetupCheckLease:
                 release = True
         if release:
             self._release()
+
+
+@dataclass(frozen=True)
+class _StorageCheckProgressSnapshot:
+    storage_id: str
+    storage_type: str
+    read_only: bool
+    capabilities: dict[str, bool]
+    operations: tuple[str, ...]
+    attempted_operations: tuple[str, ...]
+    secret_readiness: tuple[dict[str, str], ...]
+
+
+class _StorageCheckProgress:
+    def __init__(
+        self,
+        *,
+        storage_id: str,
+        storage_type: str,
+        read_only: bool,
+        secret_readiness: tuple[dict[str, str], ...],
+    ) -> None:
+        self._lock = Lock()
+        self.storage_id = storage_id
+        self.storage_type = storage_type
+        self.read_only = read_only
+        self.capabilities = {key: False for key in StorageSetupCheckEvidence.CAPABILITY_FIELDS}
+        self.operations: list[str] = []
+        self.attempted_operations: list[str] = []
+        self.secret_readiness = secret_readiness
+
+    def record(self, guarded: _ReadOnlyStorageCheck) -> None:
+        with self._lock:
+            self.operations = list(guarded.read_operations)
+            self.attempted_operations = list(guarded.attempted_operations)
+
+    def snapshot(self) -> _StorageCheckProgressSnapshot:
+        with self._lock:
+            return _StorageCheckProgressSnapshot(
+                self.storage_id,
+                self.storage_type,
+                self.read_only,
+                dict(self.capabilities),
+                tuple(self.operations),
+                tuple(self.attempted_operations),
+                tuple(dict(entry) for entry in self.secret_readiness),
+            )
+
+
+class _StorageCheckFailure(RuntimeError):
+    def __init__(self, category: str) -> None:
+        super().__init__(category)
+        self.category = category
 
 
 class _SetupCheckFailure(RuntimeError):
