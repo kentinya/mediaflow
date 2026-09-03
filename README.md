@@ -47,8 +47,9 @@ Slice 25 is closed. The final V1 roadmap is now:
 
 ```text
 Slice 26 — Web-first fresh setup and Storage completion
-Slice 27 — Web-first operations administration
-Slice 28 — Docker production self-hosted release
+Slice 27 — Manual operations and file lifecycle
+Slice 28 — Web-first configuration and operations administration
+Slice 29 — Docker production self-hosted release
 ```
 
 The repository currently provides the Python/CLI development and trusted-loopback WSGI boundary;
@@ -525,7 +526,7 @@ Non-loopback HTTP is rejected by default. A bind intended for a trusted HTTPS re
 explicit `--allow-insecure-remote-http`; this acknowledgement does not add encryption. Prefer
 loopback binding and TLS termination at a trusted proxy.
 
-This is a development transport statement. Slice 28 will add a production WSGI serving contract;
+This is a development transport statement. Slice 29 will add a production WSGI serving contract;
 TLS termination, certificates, proxy policy and public Internet exposure remain deployment
 responsibilities rather than hidden MediaFlow behavior.
 
@@ -568,11 +569,11 @@ runtime compatibility. Root paths, display paths, scan-rule values, naming templ
 classification paths, endpoints, environment-variable names, arbitrary adapter options, and secrets
 are intentionally excluded. Reselect **System** or use its explicit refresh button to reload the
 same startup snapshot; changing JSON still requires validation and an API restart. System Settings
-consumption and editing remain Slice 27 work.
+consumption and editing remain Slice 28 work.
 
 The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries,
 persistent scan/preview jobs, Cron schedules, and the signed Webhook delivery engine are complete.
-Webhook definition configuration/test and delivery recovery in Web/API remain a Slice 27
+Webhook definition configuration/test and delivery recovery in Web/API remain a Slice 28
 product-completion journey; the existing delivery engine is not being reimplemented. A Storage
 Browser/path picker and guided remote Storage setup remain Slice 26 work.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
@@ -580,6 +581,12 @@ Configuration-driven API principals, least-privilege roles, and redacted audit a
 The authenticated Operator UI exposes the operational Dashboard, Files, managed Configuration,
 Task/Job/Scheduler/Notification/Log views, and bounded conflict, Recognition, Metadata, and
 Classification review actions through the same application and permission boundaries as the API.
+The current **Files** tab is an indexed File Catalog, not a Storage browser. General Jobs submit only
+scan or legacy preview, file-level manual organize starts from indexed records, and repository-wide
+manual organize remains CLI-only. Legacy preview may create formal review/conflict state; the newer
+manual and Automation Definition Previews are analysis-only. Slice 27 will reconcile real Storage
+Files, FileIndex processing disposition, manual Scan/Preview/Organize, conflict continuation and
+processing-Worker readiness without widening execution authority.
 Database-managed users/login, OIDC, automatic secret rotation, Provider switching, and broader
 recovery beyond the delivered checkpoint journeys are not V1 capabilities. Remaining remote Storage
 setup, first-instance bootstrap and Storage Browser work belongs to Slice 26.

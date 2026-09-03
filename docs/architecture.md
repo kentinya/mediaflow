@@ -28,8 +28,9 @@ The repository is at Slice 25 closure with Slice 26 active. Remaining V1 busines
 
 ```text
 Slice 26 — Web-first fresh setup and Storage completion
-    → Slice 27 — Web-first operations administration
-    → Slice 28 — Docker production self-hosted release
+    → Slice 27 — Manual operations and file lifecycle
+    → Slice 28 — Web-first configuration and operations administration
+    → Slice 29 — Docker production self-hosted release
 ```
 
 These are vertical product slices. They do not authorize a rewrite of the closed processing engine
@@ -144,6 +145,13 @@ path, extension/include/exclude rules, depth, scan mode and file stability polic
 read-only and records durable FileIndex state. Temporary/actively written files remain excluded by
 configured stability rules.
 
+The current Operator **Files** page is a File Catalog over those FileIndex records, not a Storage
+browser. `FileIndexRecord.scan_status` and `change` describe discovery/stability only. File detail
+can join TaskItems, Results, reviews and checkpoints by source Storage/path, but Result/TaskItem rows
+do not bind to a distinct current source occurrence or content fingerprint. A changed file at the
+same path retains the path-derived FileIndex ID, so prior processing outcome cannot yet be treated as
+the current file's unified disposition without an additional identity/projection contract.
+
 `MediaLibrary` defines a destination Storage and relative root. Classification selects the library
 and relative path; Naming supplies directory and filename. The final target is composed from the
 MediaLibrary root, classification path and naming path, with path safety checks before planning.
@@ -161,6 +169,11 @@ continue analysis-only stages or create bounded one-item/batch continuations. Su
 not replayed or hidden. Partial or uncertain mutation is investigation-only unless a separately
 proven safe action is offered.
 
+Conflict/review decisions are persistence-only and do not execute media. The current Web explicitly
+reports that a saved decision does not resume the Task, but it does not carry the operator directly
+from a resolved conflict to re-analysis, continuation admission and the original Organize outcome.
+Legacy CLI Task resume remains a separate recovery route.
+
 ## Manual organize
 
 Manual organization uses a durable intent and exact immutable Preview before execution. The Preview
@@ -173,6 +186,10 @@ one SQLite transaction, then acquires source/destination/attachment locks. The e
 reconstructs the plan from persisted Preview data; request bodies cannot supply arbitrary paths,
 operations or provider payloads. `OrganizerExecutor` performs the actual mutation and persists each
 effect/result/checkpoint independently.
+
+The current file-level execute endpoint calls that bounded execution service synchronously inside
+the API request, even though durable Task/TaskItem/Result records are created. Repository-wide
+manual organization remains a CLI workflow, while the general Job API admits only scan and preview.
 
 ## Automation and unattended execution
 
@@ -203,12 +220,18 @@ The current HTTP listener uses `wsgiref.simple_server` and is a development/trus
 boundary. It is not a production WSGI server and does not claim TLS termination, certificate
 management or public Internet exposure.
 
+The Worker uses a fenced per-running-Job claim token and refreshes that Job's `updated_at` when the
+pipeline checks cancellation. There is no resident processing-Worker registration, idle heartbeat
+or readiness projection. Consequently a Pending Job cannot distinguish normal queue delay from an
+installation where only the API is running. The API process does not and must not start a Worker
+subprocess implicitly.
+
 ## Notifications and operational logging
 
 The notification layer contains a signed HTTPS Webhook transport, durable delivery Outbox, bounded
 retry, delivery leases, dead-letter state and explicit requeue/replay actions. The current Web/API
 surface can inspect delivery state, but Webhook definition management, configuration readiness and
-delivery recovery as a complete operator journey are Slice 27 work.
+delivery recovery as a complete operator journey are Slice 28 work.
 
 Operational logs use bounded redacted records with TRACE/DEBUG/INFO/WARN/ERROR semantics. Security
 and configuration audits are separate durable projections. Secret values, authorization headers,
@@ -246,11 +269,25 @@ JSON document. Do not add mutation-based capability probes or arbitrary host-pat
 
 ### Slice 27 target
 
-Add consumed System Settings, versioned secret-free configuration/result import-export and complete
-managed Webhook definition/test/delivery recovery. Reuse the current revision authority, RBAC,
-redaction and immutable snapshot rules.
+Reuse the Slice 26 provider-neutral Storage Browser as the real configured-Storage **Files** entry
+point while renaming the indexed catalog responsibility to **FileIndex**. Add a current-source
+processing-disposition projection without overloading scan status, source occurrence/fingerprint
+correlation, explicit duplicate-work admission and Reprocess, coherent file/ResourceLibrary
+Scan/Preview/Organize manual actions, analysis-only Preview findings, real Organize
+Attention/Conflict/Review/Recovery continuation and processing-Worker readiness. Preserve one-shot
+manual authority, persistent revocable unattended authority, successful-sibling isolation,
+uncertain-effect refusal and OrganizerExecutor-only mutation.
 
 ### Slice 28 target
+
+Complete the day-2 managed-configuration lifecycle and object-management IA, including a natural
+Active-to-new-Draft edit path, consistent create/copy/edit/enable/disable/delete/reference recovery,
+forms-first editing and Advanced JSON/import/export. Add consumed System Settings, versioned
+secret-free configuration/result import-export and complete managed Webhook
+definition/test/delivery recovery. Reuse the current revision authority, RBAC, redaction and
+immutable snapshot rules.
+
+### Slice 29 target
 
 Package one immutable image with independent Compose API, Worker, Scheduler and Notification Worker
 services, a production WSGI server, explicit local `/data` persistence, media bind mounts, non-root

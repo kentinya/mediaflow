@@ -131,6 +131,12 @@ returns that revision to `Draft`.
 The current Web guided forms cover Local Storage, ResourceLibrary, MediaLibrary and the policy graph
 needed by the existing first-runtime journey. The raw whole-document JSON editor remains the
 compatibility path for remote Storage definitions and configuration families without a guided form.
+The current top-level Configuration page leads with whole-document JSON staging. Guided controls are
+available only after opening a revision; several policy families still use bounded JSON-object
+editors, copy/enable/disable actions are not presented consistently across families, and the existing
+successor-Draft action is labelled `Import current JSON as Draft` rather than a natural
+`Edit Active by creating Draft` flow. These are Web/IA limitations, not permission to make Active
+mutable.
 
 ## Storage configuration model
 
@@ -228,7 +234,7 @@ semantics. They include:
 The current UI has a read-only System status view. It reports bounded runtime/configuration status
 and wiring; it does not consume or edit a System Settings object. Webhook delivery exists as an
 engine and read-only operations view, but Web/API Webhook configuration, test and dead-letter
-management are Slice 27 work.
+management are Slice 28 work.
 
 ## Secret boundary
 
@@ -289,8 +295,9 @@ The current repository is not yet the final V1 setup/release product. The remain
 | Status | Capability |
 |---|---|
 | Slice 26 ACTIVE | Minimal fresh-instance bootstrap, first complete managed Draft through Web, guided SMB/OpenList/S3/R2 configuration and read-only tests, bounded Storage Browser/path selection, and complete first-runtime setup recovery |
-| Slice 27 PLANNED | Consumed System Settings, versioned secret-free configuration/result import-export, managed Webhook configuration/test and delivery recovery |
-| Slice 28 PLANNED | Docker Compose production release, production WSGI server, `/data` durability, non-root mounts, health, restart persistence and fail-closed upgrade/migration |
+| Slice 27 PLANNED | Real Storage-backed Files, explicit FileIndex/disposition, coherent manual Scan/Preview/Organize, execution-only blockers, conflict/review continuation and processing-Worker readiness |
+| Slice 28 PLANNED | Day-2 forms-first configuration/object lifecycle, consumed System Settings, versioned secret-free configuration/result import-export, and managed Webhook configuration/test/delivery recovery |
+| Slice 29 PLANNED | Docker Compose production release, production WSGI server, `/data` durability, non-root mounts, health, restart persistence and fail-closed upgrade/migration |
 | V1.x/V2 | Provider switching and additional production Providers, built-in user/session identity, OIDC, general Secret Store and broader recovery such as automatic uncertain-mutation replay or historical rollback |
 
 Storage Browser, arbitrary host-path access, remote destination precheck and mutation-based capability

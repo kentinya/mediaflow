@@ -5,7 +5,7 @@ release explicitly.
 
 ## V1 Docker release target
 
-The repository is not yet a Docker release. Slice 28 is the final V1 integration Slice and must
+The repository is not yet a Docker release. Slice 29 is the final V1 integration Slice and must
 deliver one immutable MediaFlow image with Compose services for API, Worker, Scheduler and
 Notification Worker. The services must retain independent process failure/restart boundaries while
 sharing one local persistent `/data` volume. The current `wsgiref.simple_server` API listener remains
@@ -29,7 +29,7 @@ This target does not claim direct Internet exposure, built-in user/password/OIDC
 remote Storage, Docker Secrets-specific ingestion, Provider switching, additional Metadata Providers,
 or external-service compatibility that the validation environment cannot run. Those boundaries remain
 explicitly documented as unsupported, post-V1 or `SKIP / UNAVAILABLE` as applicable. The current
-repository is still pre-Docker production release; the target is owned by Slice 28.
+repository is still pre-Docker production release; the target is owned by Slice 29.
 
 ## Quality gate
 
