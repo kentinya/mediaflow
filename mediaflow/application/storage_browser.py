@@ -155,11 +155,15 @@ class StorageBrowserCursorCodec:
     def decode(self, token: str, context: Mapping[str, object]) -> str:
         if not isinstance(token, str) or not token or len(token) > _MAX_CURSOR_BYTES:
             raise _CursorError("malformed_cursor")
+        if len(token) % 4 == 1:
+            raise _CursorError("malformed_cursor")
         try:
             padded = token.encode("ascii") + b"=" * (-len(token) % 4)
-            raw = base64.urlsafe_b64decode(padded)
+            raw = base64.b64decode(padded, altchars=b"-_", validate=True)
         except (UnicodeEncodeError, ValueError) as error:
             raise _CursorError("malformed_cursor") from error
+        if base64.urlsafe_b64encode(raw).rstrip(b"=") != token.encode("ascii"):
+            raise _CursorError("malformed_cursor")
         if len(raw) < 1 + 16 + hashlib.sha256().digest_size or raw[:1] != b"s":
             raise _CursorError("malformed_cursor")
         nonce = raw[1:17]
