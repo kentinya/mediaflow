@@ -1958,6 +1958,61 @@ class MediaFlowApi:
             and parts[:3] == ["api", "v1", "configuration"]
             and parts[3] == "revisions"
             and parts[5] == "objects"
+            and parts[6] == "storages"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            detail = self._configuration_objects.revision_detail(parts[4])
+            items = detail["objects"]["storages"]
+            return self._response(
+                start_response,
+                200,
+                {
+                    **detail,
+                    "items": items,
+                    "total": len(items),
+                },
+            )
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "objects"
+            and parts[6] == "storages"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            detail = self._configuration_objects.revision_detail(parts[4])
+            storage = next(
+                (item for item in detail["objects"]["storages"] if item.get("id") == parts[7]),
+                None,
+            )
+            if storage is None:
+                raise LookupError(f"storages {parts[7]!r} was not found")
+            return self._response(
+                start_response,
+                200,
+                {**detail, "storage": storage},
+            )
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "objects"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -1980,6 +2035,14 @@ class MediaFlowApi:
             value = document["object"]
             if not isinstance(value, dict):
                 raise ValueError("configuration object must be an object")
+            if kind is ConfigurationObjectKind.STORAGE:
+                # The inspect response is safe to round-trip through edit.  These
+                # two fields are projection metadata, not persisted Storage input.
+                value = {
+                    key: item
+                    for key, item in value.items()
+                    if key not in {"editability", "secretReadiness"}
+                }
             revision = self._configuration_objects.mutate(
                 parts[4],
                 kind,
@@ -1989,7 +2052,15 @@ class MediaFlowApi:
                 actor=principal.principal_id,
             )
             response = revision.summary()
-            if kind is ConfigurationObjectKind.SCHEDULE:
+            if kind is ConfigurationObjectKind.STORAGE:
+                storages = self._configuration_objects.revision_detail(revision.revision_id)[
+                    "objects"
+                ]["storages"]
+                response["storage"] = next(
+                    (item for item in storages if item.get("id") == value.get("id")),
+                    None,
+                )
+            elif kind is ConfigurationObjectKind.SCHEDULE:
                 values = revision.document.get("automationTaskDefinitions", [])
                 if values:
                     response["automationTaskDefinition"] = values[-1]
@@ -2004,7 +2075,7 @@ class MediaFlowApi:
             and parts[:3] == ["api", "v1", "configuration"]
             and parts[3] == "revisions"
             and parts[5] == "objects"
-            and parts[6] == "automationTaskDefinitions"
+            and parts[6] in {"automationTaskDefinitions", "storages"}
             and parts[8] in {"copy", "enable", "disable"}
             and method == "POST"
         ):
@@ -2021,36 +2092,68 @@ class MediaFlowApi:
             if isinstance(expected, bool) or not isinstance(expected, int):
                 raise ValueError("configuration expectedVersion must be an integer")
             action = parts[8]
+            is_storage = parts[6] == "storages"
+            label = "Storage" if is_storage else "Automation Task Definition"
             if action == "copy":
                 allowed = {"expectedVersion", "newId", "id", "newName", "name"}
                 if set(document).difference(allowed):
-                    raise ValueError("Automation Task Definition copy fields are invalid")
+                    raise ValueError(f"{label} copy fields are invalid")
                 new_id = document.get("newId", document.get("id"))
                 new_name = document.get("newName", document.get("name"))
                 if new_id is not None and not isinstance(new_id, str):
-                    raise ValueError("Automation Task Definition copied id must be a string")
+                    raise ValueError(f"{label} copied id must be a string")
                 if new_name is not None and not isinstance(new_name, str):
-                    raise ValueError("Automation Task Definition copied name must be a string")
-                revision = self._configuration_objects.copy_definition(
-                    parts[4],
-                    object_id=parts[7],
-                    new_object_id=new_id,
-                    new_name=new_name,
-                    expected_version=expected,
-                    actor=principal.principal_id,
-                )
+                    raise ValueError(f"{label} copied name must be a string")
+                if is_storage:
+                    revision = self._configuration_objects.copy_storage(
+                        parts[4],
+                        object_id=parts[7],
+                        new_object_id=new_id,
+                        new_name=new_name,
+                        expected_version=expected,
+                        actor=principal.principal_id,
+                    )
+                else:
+                    revision = self._configuration_objects.copy_definition(
+                        parts[4],
+                        object_id=parts[7],
+                        new_object_id=new_id,
+                        new_name=new_name,
+                        expected_version=expected,
+                        actor=principal.principal_id,
+                    )
             else:
                 if set(document) != {"expectedVersion"}:
-                    raise ValueError(
-                        "Automation Task Definition enable/disable requires expectedVersion"
+                    raise ValueError(f"{label} enable/disable requires expectedVersion")
+                if is_storage:
+                    revision = self._configuration_objects.set_storage_enabled(
+                        parts[4],
+                        object_id=parts[7],
+                        enabled=action == "enable",
+                        expected_version=expected,
+                        actor=principal.principal_id,
                     )
-                revision = self._configuration_objects.set_definition_enabled(
-                    parts[4],
-                    object_id=parts[7],
-                    enabled=action == "enable",
-                    expected_version=expected,
-                    actor=principal.principal_id,
+                else:
+                    revision = self._configuration_objects.set_definition_enabled(
+                        parts[4],
+                        object_id=parts[7],
+                        enabled=action == "enable",
+                        expected_version=expected,
+                        actor=principal.principal_id,
+                    )
+            if is_storage:
+                storages = self._configuration_objects.revision_detail(revision.revision_id)[
+                    "objects"
+                ]["storages"]
+                storage = (
+                    storages[-1]
+                    if action == "copy" and storages
+                    else next((item for item in storages if item.get("id") == parts[7]), None)
                 )
+                response = revision.summary()
+                if storage is not None:
+                    response["storage"] = storage
+                return self._response(start_response, 200, response)
             definitions = revision.document.get("automationTaskDefinitions", [])
             if action == "copy":
                 definition = definitions[-1] if definitions else None
@@ -2092,6 +2195,12 @@ class MediaFlowApi:
             value = document["object"]
             if not isinstance(value, dict):
                 raise ValueError("configuration object must be an object")
+            if kind is ConfigurationObjectKind.STORAGE:
+                value = {
+                    key: item
+                    for key, item in value.items()
+                    if key not in {"editability", "secretReadiness"}
+                }
             revision = self._configuration_objects.mutate(
                 parts[4],
                 kind,
@@ -2101,7 +2210,15 @@ class MediaFlowApi:
                 actor=principal.principal_id,
             )
             response = revision.summary()
-            if kind is ConfigurationObjectKind.SCHEDULE:
+            if kind is ConfigurationObjectKind.STORAGE:
+                storages = self._configuration_objects.revision_detail(revision.revision_id)[
+                    "objects"
+                ]["storages"]
+                response["storage"] = next(
+                    (item for item in storages if item.get("id") == parts[7]),
+                    None,
+                )
+            elif kind is ConfigurationObjectKind.SCHEDULE:
                 response["automationTaskDefinition"] = next(
                     (
                         item

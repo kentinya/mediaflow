@@ -1252,6 +1252,132 @@ class StorageConfigurationValidator:
     MAX_NAME = 120
     MAX_ROOT = 4096
     MAX_OPTIONS_BYTES = 64 * 1024
+    OPTION_FIELDS = {
+        StorageConfigurationType.LOCAL: frozenset(),
+        StorageConfigurationType.OPENLIST: frozenset(
+            {
+                "tokenEnv",
+                "baseUrl",
+                "connectTimeout",
+                "requestTimeout",
+                "maxConcurrency",
+                "maxRetries",
+                "pageSize",
+            }
+        ),
+        StorageConfigurationType.SMB: frozenset(
+            {
+                "usernameEnv",
+                "passwordEnv",
+                "host",
+                "share",
+                "domain",
+                "port",
+                "connectTimeout",
+                "operationTimeout",
+                "maxConcurrency",
+            }
+        ),
+        StorageConfigurationType.S3: frozenset(
+            {
+                "accessKeyEnv",
+                "secretKeyEnv",
+                "sessionTokenEnv",
+                "bucket",
+                "endpoint",
+                "region",
+                "forcePathStyle",
+                "connectTimeout",
+                "requestTimeout",
+                "maxConcurrency",
+                "maxRetries",
+                "pageSize",
+                "multipartThreshold",
+                "multipartPartSize",
+            }
+        ),
+        StorageConfigurationType.R2: frozenset(
+            {
+                "accessKeyEnv",
+                "secretKeyEnv",
+                "sessionTokenEnv",
+                "bucket",
+                "endpoint",
+                "region",
+                "forcePathStyle",
+                "connectTimeout",
+                "requestTimeout",
+                "maxConcurrency",
+                "maxRetries",
+                "pageSize",
+                "multipartThreshold",
+                "multipartPartSize",
+            }
+        ),
+        StorageConfigurationType.S3_COMPATIBLE: frozenset(
+            {
+                "accessKeyEnv",
+                "secretKeyEnv",
+                "sessionTokenEnv",
+                "bucket",
+                "endpoint",
+                "region",
+                "forcePathStyle",
+                "connectTimeout",
+                "requestTimeout",
+                "maxConcurrency",
+                "maxRetries",
+                "pageSize",
+                "multipartThreshold",
+                "multipartPartSize",
+            }
+        ),
+    }
+    OPTION_DEFAULTS = {
+        StorageConfigurationType.OPENLIST: {
+            "connectTimeout": 10,
+            "requestTimeout": 60,
+            "maxConcurrency": 4,
+            "maxRetries": 2,
+            "pageSize": 100,
+        },
+        StorageConfigurationType.SMB: {
+            "port": 445,
+            "connectTimeout": 30,
+            "operationTimeout": 60,
+            "maxConcurrency": 4,
+        },
+        StorageConfigurationType.S3: {
+            "connectTimeout": 10,
+            "requestTimeout": 60,
+            "maxConcurrency": 4,
+            "forcePathStyle": False,
+            "maxRetries": 2,
+            "pageSize": 1000,
+            "multipartThreshold": 64 * 1024 * 1024,
+            "multipartPartSize": 16 * 1024 * 1024,
+        },
+        StorageConfigurationType.R2: {
+            "connectTimeout": 10,
+            "requestTimeout": 60,
+            "maxConcurrency": 4,
+            "forcePathStyle": False,
+            "maxRetries": 2,
+            "pageSize": 1000,
+            "multipartThreshold": 64 * 1024 * 1024,
+            "multipartPartSize": 16 * 1024 * 1024,
+        },
+        StorageConfigurationType.S3_COMPATIBLE: {
+            "connectTimeout": 10,
+            "requestTimeout": 60,
+            "maxConcurrency": 4,
+            "forcePathStyle": False,
+            "maxRetries": 2,
+            "pageSize": 1000,
+            "multipartThreshold": 64 * 1024 * 1024,
+            "multipartPartSize": 16 * 1024 * 1024,
+        },
+    }
 
     @classmethod
     def validate(cls, value: ManagedStorageConfiguration) -> ManagedStorageConfiguration:
@@ -1273,7 +1399,7 @@ class StorageConfigurationValidator:
         ):
             raise ValueError("Storage version must be a positive integer")
         storage_type = cls._storage_type(value.storage_type)
-        options = cls._options(value.options)
+        options = cls._options(value.options, storage_type)
         if storage_type is StorageConfigurationType.LOCAL:
             if not root_path:
                 raise ValueError("Local Storage rootPath must be non-empty")
@@ -1360,14 +1486,16 @@ class StorageConfigurationValidator:
             return StorageConfigurationType(value.lower())
         except ValueError as error:
             supported = ", ".join(item.value for item in StorageConfigurationType)
-            raise ValueError(
-                f"unsupported Storage type {value!r}; expected one of {supported}"
-            ) from error
+            raise ValueError(f"unsupported Storage type; expected one of {supported}") from error
 
     @classmethod
-    def _options(cls, value: object) -> dict[str, Any]:
+    def _options(
+        cls,
+        value: object,
+        storage_type: StorageConfigurationType,
+    ) -> dict[str, Any]:
         if value is None:
-            return {}
+            value = {}
         if not isinstance(value, dict):
             raise ValueError("Storage options must be an object")
         for key in value:
@@ -1379,11 +1507,18 @@ class StorageConfigurationValidator:
                 raise ValueError(
                     f"literal Storage secret field {key!r} is forbidden; use Env fields"
                 )
+        allowed = cls.OPTION_FIELDS[storage_type]
+        if unknown := set(value).difference(allowed):
+            raise ValueError(
+                f"Storage {storage_type.value} contains unsupported option {sorted(unknown)[0]!r}"
+            )
         cls._validate_json_value(value, "Storage options")
         encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
         if len(encoded.encode("utf-8")) > cls.MAX_OPTIONS_BYTES:
             raise ValueError("Storage options must be at most 65536 bytes")
-        return copy.deepcopy(value)
+        normalized = copy.deepcopy(cls.OPTION_DEFAULTS.get(storage_type, {}))
+        normalized.update(copy.deepcopy(value))
+        return normalized
 
     @classmethod
     def _validate_json_value(cls, value: object, label: str) -> None:
@@ -1478,7 +1613,7 @@ class StorageConfigurationValidator:
 
     @staticmethod
     def _boolean(options: dict[str, Any], key: str, *, default: object = None) -> object:
-        if key not in options or options[key] is default:
+        if key not in options:
             return default
         if not isinstance(options[key], bool):
             raise ValueError(f"Storage {key} must be boolean")
@@ -1486,7 +1621,7 @@ class StorageConfigurationValidator:
 
     @staticmethod
     def _positive_number(options: dict[str, Any], key: str, *, default: object = None) -> object:
-        if key not in options or options[key] is default:
+        if key not in options:
             return default
         value = options[key]
         if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
@@ -1504,7 +1639,7 @@ class StorageConfigurationValidator:
         default: object = None,
         minimum: int = 1,
     ) -> object:
-        if key not in options or options[key] is default:
+        if key not in options:
             return default
         value = options[key]
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:

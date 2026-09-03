@@ -732,13 +732,27 @@ def _storage(value: dict) -> StorageDefinition:
     read_only = value.get("readOnly", False)
     if not isinstance(read_only, bool):
         raise ValueError("Storage readOnly must be boolean")
+    raw_options = value.get("options")
+    if raw_options is None:
+        # Preserve the legacy JSON bootstrap spelling where provider fields live
+        # directly on the Storage object.
+        options = dict(value)
+    elif isinstance(raw_options, dict):
+        options = dict(raw_options)
+        # A mixed document can be loaded during the migration from the legacy
+        # spelling.  Canonical managed objects win when both spellings exist.
+        for key, item in value.items():
+            if key not in {"id", "type", "name", "rootPath", "readOnly", "enabled", "options"}:
+                options.setdefault(key, item)
+    else:
+        raise ValueError("Storage options must be an object")
     return StorageDefinition(
         _required(value, "id"),
         storage_type,
         root,
         str(value.get("name") or value["id"]),
         read_only,
-        dict(value),
+        options,
     )
 
 

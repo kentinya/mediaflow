@@ -281,9 +281,92 @@ APP_JS = b"""(() => {
     input.setAttribute('aria-label', label); wrapper.append(input);
     return {wrapper, input};
   }
+  function guidedSelect(label, value, choices) {
+    const wrapper = text('label', label);
+    const input = document.createElement('select');
+    input.setAttribute('aria-label', label);
+    choices.forEach(([choice, choiceLabel]) => {
+      const option = document.createElement('option'); option.value = choice;
+      option.textContent = choiceLabel; input.append(option);
+    });
+    input.value = value || choices[0][0]; wrapper.append(input);
+    return {wrapper, input};
+  }
+  const storageKinds = [
+    ['local', 'Local'], ['smb', 'SMB'], ['openlist', 'OpenList'], ['s3', 'AWS S3'],
+    ['r2', 'Cloudflare R2'], ['s3-compatible', 'S3-compatible']
+  ];
+  const storageNumericOptions = new Set([
+    'port', 'connectTimeout', 'requestTimeout', 'operationTimeout', 'maxConcurrency',
+    'maxRetries', 'pageSize', 'multipartThreshold', 'multipartPartSize'
+  ]);
+  function storageOptionDefinitions(type) {
+    if (type === 'smb') return [
+      ['usernameEnv', 'Username environment variable', 'text'],
+      ['passwordEnv', 'Password environment variable', 'text'],
+      ['host', 'SMB host', 'text'], ['share', 'SMB share', 'text'],
+      ['domain', 'SMB domain (optional)', 'text'], ['port', 'Port', 'number', 445],
+      ['connectTimeout', 'Connect timeout (seconds)', 'number', 30],
+      ['operationTimeout', 'Operation timeout (seconds)', 'number', 60],
+      ['maxConcurrency', 'Maximum concurrency', 'number', 4]
+    ];
+    if (type === 'openlist') return [
+      ['tokenEnv', 'Token environment variable', 'text'], ['baseUrl', 'OpenList base URL', 'text'],
+      ['connectTimeout', 'Connect timeout (seconds)', 'number', 10],
+      ['requestTimeout', 'Request timeout (seconds)', 'number', 60],
+      ['maxConcurrency', 'Maximum concurrency', 'number', 4],
+      ['maxRetries', 'Maximum retries', 'number', 2], ['pageSize', 'Page size', 'number', 100]
+    ];
+    if (type === 's3' || type === 'r2' || type === 's3-compatible') return [
+      ['accessKeyEnv', 'Access key environment variable', 'text'],
+      ['secretKeyEnv', 'Secret key environment variable', 'text'],
+      ['sessionTokenEnv', 'Session token environment variable (optional)', 'text'],
+      ['bucket', 'Bucket', 'text'], ['endpoint', 'Endpoint (optional for AWS S3)', 'text'],
+      ['region', 'Region (optional)', 'text'], ['forcePathStyle', 'Force path style', 'checkbox'],
+      ['connectTimeout', 'Connect timeout (seconds)', 'number', 10],
+      ['requestTimeout', 'Request timeout (seconds)', 'number', 60],
+      ['maxConcurrency', 'Maximum concurrency', 'number', 4],
+      ['maxRetries', 'Maximum retries', 'number', 2], ['pageSize', 'Page size', 'number', 1000],
+      ['multipartThreshold', 'Multipart threshold (bytes)', 'number', 67108864],
+      ['multipartPartSize', 'Multipart part size (bytes)', 'number', 16777216]
+    ];
+    return [];
+  }
+  function renderStorageOptions(type, item, inputs, container) {
+    clear(container); Object.keys(inputs).forEach(key => delete inputs[key]);
+    const options = item && item.options && typeof item.options === 'object' ? item.options : {};
+    storageOptionDefinitions(type).forEach(([key, label, inputType, fallback]) => {
+      const initial = options[key] === undefined ? fallback : options[key];
+      const control = guidedInput(label, initial, inputType);
+      if (inputType === 'checkbox') control.input.checked = initial === true;
+      control.wrapper.dataset.guidedField = key; inputs[key] = control.input;
+      container.append(control.wrapper);
+    });
+  }
   function guidedObjectFields(kind, item = {}) {
+    if (kind === 'storages') {
+      const typeControl = guidedSelect('Storage kind', item.type, storageKinds);
+      const optionsContainer = text('div', '', 'choices');
+      const optionInputs = {};
+      renderStorageOptions(typeControl.input.value, item, optionInputs, optionsContainer);
+      typeControl.input.addEventListener('change', () =>
+        renderStorageOptions(typeControl.input.value, {}, optionInputs, optionsContainer));
+      const result = {};
+      [['id', 'ID'], ['name', 'Name'], ['rootPath', 'Storage root path']].forEach(([key, label]) => {
+        const control = guidedInput(label, item[key]);
+        result[key] = control.input; control.wrapper.dataset.guidedField = key;
+      });
+      result.type = typeControl.input;
+      result._storageOptionInputs = optionInputs;
+      result._storageOptionContainer = optionsContainer;
+      [['readOnly', 'Read-only', false], ['enabled', 'Enabled', true]].forEach(([key, label, fallback]) => {
+        const control = guidedInput(label, item[key] === undefined ? fallback : item[key], 'checkbox');
+        control.input.checked = item[key] === undefined ? fallback : Boolean(item[key]);
+        result[key] = control.input; control.wrapper.dataset.guidedField = key;
+      });
+      return result;
+    }
     const fields = {
-      storages: [['id', 'ID'], ['name', 'Name'], ['rootPath', 'Local root path']],
       resourceLibraries: [['id', 'ID'], ['name', 'Name'], ['storageId', 'Storage ID'],
         ['storagePath', 'Storage-relative source path'], ['displayRootPath', 'Display root path'],
         ['extensions', 'Extensions (comma separated)'], ['maxDepth', 'Maximum depth']],
@@ -309,17 +392,24 @@ APP_JS = b"""(() => {
   function guidedObjectPayload(kind, fields) {
     const value = {};
     Object.entries(fields).forEach(([key, input]) => {
+      if (key.startsWith('_')) return;
       if (input.type === 'checkbox') value[key] = input.checked;
       else if (key === 'extensions') value[key] = input.value.split(',').map(item => item.trim()).filter(Boolean);
       else if (key === 'maxDepth') value[key] = input.value === '' ? null : Number(input.value);
       else value[key] = input.value;
     });
+    if (kind === 'storages') {
+      value.options = {};
+      Object.entries(fields._storageOptionInputs || {}).forEach(([key, input]) => {
+        if (input.type === 'checkbox') value.options[key] = input.checked;
+        else if (input.value !== '') value.options[key] = storageNumericOptions.has(key) ? Number(input.value) : input.value;
+      });
+    }
     if (kind === 'resourceLibraries') {
       if (!value.displayRootPath) delete value.displayRootPath;
       if (!value.extensions || value.extensions.length === 0) delete value.extensions;
       if (value.maxDepth === null) delete value.maxDepth;
     }
-    if (kind === 'storages') value.type = 'local';
     return value;
   }
   async function mutateGuidedObject(revision, kind, objectId, value, method) {
@@ -328,6 +418,12 @@ APP_JS = b"""(() => {
       {method, body: JSON.stringify(objectId && method === 'DELETE' ?
         {expectedVersion: revision.version} : {object: value, expectedVersion: revision.version})});
     message('Guided configuration change saved. Validate the Draft again before activation.');
+    detail.hidden = true; await renderConfiguration();
+  }
+  async function mutateStorageAction(revision, item, action) {
+    await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/objects/storages/${encodeURIComponent(item.id)}/${action}`,
+      {method: 'POST', body: JSON.stringify({expectedVersion: revision.version})});
+    message(`Storage ${action} saved. Validate the Draft again before activation.`);
     detail.hidden = true; await renderConfiguration();
   }
   function configurationRevisionEditable(revision) {
@@ -394,13 +490,37 @@ APP_JS = b"""(() => {
           `; showing ${references.length} (truncated)` : '';
         row.append(text('span', `References (${referenceTotal}${suffix}): ${labels.join(', ')}`, 'warning'));
       }
-      if (kind === 'storages' && item.type !== 'local') {
-        row.append(text('span', 'Remote/read-only here. Use JSON import for changes.', 'warning'));
-      } else if (configurationRevisionEditable(revision)) {
+      if (kind === 'storages') {
+        const readiness = Array.isArray(item.secretReadiness) ? item.secretReadiness : [];
+        const readinessText = readiness.length ? readiness.map(entry =>
+          `${entry.field}: ${entry.state}`).join(', ') : 'No secret reference';
+        row.append(text('span', `Credential readiness: ${readinessText}`));
+      }
+      if (configurationRevisionEditable(revision)) {
         row.append(actionButton('Edit', () => renderGuidedObjectForm(revision, kind, item)));
-        if (kind === 'namingPolicies' || kind === 'classificationPolicies' || kind === 'organizePolicies') row.append(actionButton('Copy', () => {
+        if (kind === 'storages' || kind === 'namingPolicies' || kind === 'classificationPolicies' || kind === 'organizePolicies') row.append(actionButton('Copy', async () => {
+          if (kind === 'storages') {
+            const confirmation = text('span', '', 'choices');
+            confirmation.append(text('span', `Copy Storage ${item.id}? The copy starts disabled.`),
+              actionButton('Confirm copy', async () => {
+                try { await mutateStorageAction(revision, item, 'copy'); }
+                catch (error) { message(errorText(error), true); }
+              }), actionButton('Cancel copy', () => confirmation.remove()));
+            row.append(confirmation);
+            return;
+          }
           const copied = {...item, id: `${item.id}-copy`, name: `${item.name || item.id} copy`};
           renderGuidedObjectForm(revision, kind, copied, true);
+        }));
+        if (kind === 'storages') row.append(actionButton(item.enabled === true ? 'Disable' : 'Enable', async () => {
+          const action = item.enabled === true ? 'disable' : 'enable';
+          const confirmation = text('span', '', 'choices');
+          confirmation.append(text(`${action === 'enable' ? 'Enable' : 'Disable'} Storage ${item.id}? This changes only the Draft.`),
+            actionButton(`Confirm ${action}`, async () => {
+              try { await mutateStorageAction(revision, item, action); }
+              catch (error) { message(errorText(error), true); }
+            }), actionButton('Cancel', () => confirmation.remove()));
+          row.append(confirmation);
         }));
         if (kind === 'automationTaskDefinitions') {
           row.append(actionButton('Copy', async () => {
@@ -449,7 +569,7 @@ APP_JS = b"""(() => {
         organizePolicies: 'OrganizePolicy', automationTaskDefinitions: 'AutomationTaskDefinition'}[kind] || kind;
       const classificationPolicy = kind === 'classificationPolicies';
       const organizePolicy = kind === 'organizePolicies';
-      const guidedJson = kind.startsWith('recognition') ||
+      const guidedJson = kind === 'storages' || kind.startsWith('recognition') ||
         kind === 'metadataPolicies' || kind === 'namingPolicies' || classificationPolicy || organizePolicy ||
         kind === 'automationTaskDefinitions';
       const objectLabel = classificationPolicy ? 'ClassificationPolicy' : organizePolicy ? 'OrganizePolicy' : singular;
@@ -482,12 +602,29 @@ APP_JS = b"""(() => {
       }), actionButton('Back to revision', () => showConfigurationRevision(revision)));
       return;
     }
+    if (kind === 'storages') {
+      clear(detailContent);
+      detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} Storage`));
+      detailContent.append(text('p', 'Choose exactly one supported Storage kind. Credentials are environment-variable references; only SET/UNSET readiness is shown.', 'warning'));
+      detailContent.append(text('p', 'Local Storage rootPath is a host-absolute directory. Remote Storage roots follow the provider contract and are not tested or contacted while editing.', 'warning'));
+      const form = text('div', '', 'choices'); const fields = guidedObjectFields(kind, item || {});
+      Object.entries(fields).forEach(([key, input]) => {
+        if (key === '_storageOptionContainer') form.append(input);
+        else if (!key.startsWith('_')) form.append(input.parentElement);
+      });
+      form.append(text('h4', 'Provider options'));
+      form.append(fields._storageOptionContainer); detailContent.append(form);
+      detailContent.append(actionButton('Save guided object', async () => {
+        try { await mutateGuidedObject(revision, kind, item && item.id && !copyMode ? item.id : null,
+          guidedObjectPayload(kind, fields), item && !copyMode ? 'PUT' : 'POST'); }
+        catch (error) { message(errorText(error), true); }
+      }), actionButton('Back to revision', () => showConfigurationRevision(revision)));
+      return;
+    }
     clear(detailContent);
-    detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} Local ${kind === 'storages' ? 'Storage' :
-      kind === 'resourceLibraries' ? 'ResourceLibrary' : 'MediaLibrary'}`));
-    detailContent.append(text('p', 'Only Local objects are editable here. Remote objects remain redacted and read-only.', 'warning'));
-    detailContent.append(text('p', kind === 'storages' ?
-      'Local Storage rootPath is a host-absolute directory. ResourceLibrary storagePath and MediaLibrary rootPath are Storage-relative paths.' :
+      detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} ${kind === 'resourceLibraries' ? 'ResourceLibrary' : 'MediaLibrary'}`));
+      detailContent.append(text('p',
+      'ResourceLibrary storagePath and MediaLibrary rootPath are Storage-relative paths. ' +
       'Use Storage-relative paths for this object; absolute paths and traversal are rejected.', 'warning'));
     const form = text('div', '', 'choices'); const fields = guidedObjectFields(kind, item || {});
     Object.values(fields).forEach(input => form.append(input.parentElement)); detailContent.append(form);
