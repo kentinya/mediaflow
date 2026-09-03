@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
 import posixpath
 import re
 import time
@@ -71,9 +72,12 @@ from mediaflow.domain.configuration_management import (
     ManagedConfigurationRevision,
     ManagedConfigurationStatus,
     ManagedDocumentRedactor,
+    ManagedStorageConfiguration,
     NamingPreviewEvidence,
     OrganizeAuthorityEvidence,
     RecognitionStrategyTestEvidence,
+    StorageConfigurationType,
+    validate_storage_configuration,
 )
 from mediaflow.domain.library import MediaLibrary
 from mediaflow.domain.metadata import (
@@ -219,7 +223,47 @@ class ConfigurationObjectService:
     _MAX_OBJECT_BYTES = 64 * 1024
     _SETUP_CHECK_TIMEOUT_SECONDS = 10.0
     _SETUP_CHECK_CAPACITY = 1
-    _STORAGE_FIELDS = {"id", "name", "type", "rootPath", "readOnly"}
+    _STORAGE_FIELDS = {
+        "id",
+        "name",
+        "type",
+        "rootPath",
+        "readOnly",
+        "enabled",
+        "options",
+    }
+    _STORAGE_LEGACY_OPTION_FIELDS = {
+        "tokenEnv",
+        "baseUrl",
+        "usernameEnv",
+        "passwordEnv",
+        "host",
+        "share",
+        "domain",
+        "port",
+        "operationTimeout",
+        "accessKeyEnv",
+        "secretKeyEnv",
+        "sessionTokenEnv",
+        "bucket",
+        "endpoint",
+        "region",
+        "forcePathStyle",
+        "connectTimeout",
+        "requestTimeout",
+        "maxConcurrency",
+        "maxRetries",
+        "pageSize",
+        "multipartThreshold",
+        "multipartPartSize",
+    }
+    _STORAGE_SECRET_ENV_FIELDS = {
+        "openlist": ("tokenEnv",),
+        "smb": ("usernameEnv", "passwordEnv"),
+        "s3": ("accessKeyEnv", "secretKeyEnv", "sessionTokenEnv"),
+        "r2": ("accessKeyEnv", "secretKeyEnv", "sessionTokenEnv"),
+        "s3-compatible": ("accessKeyEnv", "secretKeyEnv", "sessionTokenEnv"),
+    }
     _RESOURCE_FIELDS = {
         "id",
         "name",
@@ -610,6 +654,124 @@ class ConfigurationObjectService:
                 "after": after,
                 **(audit_metadata or {}),
             },
+        )
+
+    def copy_storage(
+        self,
+        revision_id: str,
+        *,
+        object_id: str,
+        new_object_id: str | None = None,
+        new_name: str | None = None,
+        expected_version: int,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        """Copy one Storage definition as a new, disabled Draft object."""
+
+        revision = self._managed.require(revision_id)
+        values = self._canonical_objects(revision.document, "storages")
+        source = next((item for item in values if item.get("id") == object_id), None)
+        if source is None:
+            raise LookupError(f"storages {object_id!r} was not found")
+        candidate = copy.deepcopy(source)
+        if new_object_id is None:
+            existing = {str(item.get("id")) for item in values}
+            base = f"{object_id}-copy"
+            if len(base) > 64:
+                base = f"{object_id[:58]}-copy"
+            candidate_id = base
+            if candidate_id in existing:
+                for index in range(2, 101):
+                    suffix = f"-{index}"
+                    candidate_id = f"{base[: 64 - len(suffix)]}{suffix}"
+                    if candidate_id not in existing:
+                        break
+                else:
+                    raise ValueError("could not allocate a unique copied Storage id")
+        else:
+            candidate_id = new_object_id
+        candidate["id"] = candidate_id
+        if new_name is not None:
+            candidate["name"] = new_name
+        else:
+            source_name = str(source.get("name") or object_id)
+            candidate["name"] = f"{source_name[:115]} copy"
+        candidate["enabled"] = False
+        return self.mutate(
+            revision_id,
+            ConfigurationObjectKind.STORAGE,
+            object_id=None,
+            value=candidate,
+            expected_version=expected_version,
+            actor=actor,
+            audit_action="copy",
+            audit_metadata={"sourceId": object_id},
+        )
+
+    copy_storage_definition = copy_storage
+
+    def set_storage_enabled(
+        self,
+        revision_id: str,
+        *,
+        object_id: str,
+        enabled: bool,
+        expected_version: int,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        """Enable or disable a Storage in the candidate Draft only."""
+
+        if not isinstance(enabled, bool):
+            raise ValueError("Storage enabled must be boolean")
+        revision = self._managed.require(revision_id)
+        values = self._canonical_objects(revision.document, "storages")
+        source = next((item for item in values if item.get("id") == object_id), None)
+        if source is None:
+            raise LookupError(f"storages {object_id!r} was not found")
+        candidate = copy.deepcopy(source)
+        candidate["enabled"] = enabled
+        return self.mutate(
+            revision_id,
+            ConfigurationObjectKind.STORAGE,
+            object_id=object_id,
+            value=candidate,
+            expected_version=expected_version,
+            actor=actor,
+            audit_action="enable" if enabled else "disable",
+        )
+
+    set_storage_definition_enabled = set_storage_enabled
+
+    def enable_storage(
+        self,
+        revision_id: str,
+        storage_id: str,
+        *,
+        expected_version: int,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        return self.set_storage_enabled(
+            revision_id,
+            object_id=storage_id,
+            enabled=True,
+            expected_version=expected_version,
+            actor=actor,
+        )
+
+    def disable_storage(
+        self,
+        revision_id: str,
+        storage_id: str,
+        *,
+        expected_version: int,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        return self.set_storage_enabled(
+            revision_id,
+            object_id=storage_id,
+            enabled=False,
+            expected_version=expected_version,
+            actor=actor,
         )
 
     def copy_automation_task_definition(
@@ -4312,13 +4474,20 @@ class ConfigurationObjectService:
     @classmethod
     def _objects(cls, document: Mapping[str, object], section: str, *, redact_remote: bool = False):
         result = cls._canonical_objects(document, section)
-        if redact_remote:
-            result = [copy.deepcopy(item) for item in result]
         redacted = []
         for item in result:
-            if redact_remote and str(item.get("type", "")).lower() != "local":
-                item["readOnly"] = True
-                item["editability"] = "json_import_only"
+            if redact_remote:
+                # Storage definitions are editable through the typed form for every
+                # supported provider.  The projection is deliberately separate from
+                # the canonical document so readiness can reflect deployment state
+                # without becoming persisted configuration or a runtime side effect.
+                item = copy.deepcopy(item)
+                storage_type = str(item.get("type", "")).lower()
+                item.setdefault("readOnly", False)
+                item.setdefault("enabled", True)
+                options = cls._storage_options(item)
+                item["options"] = options
+                item["editability"] = "guided"
                 item = ManagedDocumentRedactor.redact(
                     item,
                     {
@@ -4329,10 +4498,69 @@ class ConfigurationObjectService:
                         "accesskey",
                         "access_key",
                         "secret_key",
+                        "sessiontoken",
+                        "session_token",
+                        "authorization",
+                        "username",
+                        "cookie",
+                        "api_key",
                     },
                 )
+                item["secretReadiness"] = cls._storage_secret_readiness(storage_type, options)
             redacted.append(item)
         return redacted
+
+    @classmethod
+    def _storage_options(cls, item: Mapping[str, object]) -> dict[str, object]:
+        options = item.get("options")
+        if isinstance(options, Mapping):
+            return copy.deepcopy(dict(options))
+        # Complete JSON bootstrap documents historically kept provider fields at
+        # the Storage object level.  Project those fields into the same safe form
+        # used by guided managed objects while retaining the canonical document.
+        provider_fields = {
+            field for fields in cls._STORAGE_SECRET_ENV_FIELDS.values() for field in fields
+        }
+        provider_fields.update(
+            {
+                "baseUrl",
+                "connectTimeout",
+                "requestTimeout",
+                "maxConcurrency",
+                "maxRetries",
+                "pageSize",
+                "host",
+                "share",
+                "domain",
+                "port",
+                "operationTimeout",
+                "bucket",
+                "endpoint",
+                "region",
+                "forcePathStyle",
+                "multipartThreshold",
+                "multipartPartSize",
+            }
+        )
+        return {field: copy.deepcopy(item[field]) for field in provider_fields if field in item}
+
+    @classmethod
+    def _storage_secret_readiness(
+        cls, storage_type: str, options: Mapping[str, object]
+    ) -> list[dict[str, object]]:
+        readiness = []
+        for field in cls._STORAGE_SECRET_ENV_FIELDS.get(storage_type, ()):
+            env_name = options.get(field)
+            if not isinstance(env_name, str) or not env_name:
+                continue
+            readiness.append(
+                {
+                    "field": field,
+                    "env": env_name,
+                    "state": "SET" if os.environ.get(env_name) else "UNSET",
+                }
+            )
+        return readiness
 
     @classmethod
     def _automation_definition_objects(
@@ -4366,6 +4594,8 @@ class ConfigurationObjectService:
             ConfigurationObjectKind.ORGANIZE_POLICY: cls._ORGANIZE_POLICY_FIELDS,
             ConfigurationObjectKind.SCHEDULE: cls._AUTOMATION_TASK_DEFINITION_FIELDS,
         }[kind]
+        if kind is ConfigurationObjectKind.STORAGE:
+            allowed = allowed | cls._STORAGE_LEGACY_OPTION_FIELDS
         unknown = set(value).difference(allowed)
         if unknown:
             raise ValueError(f"{section} contains unsupported field {sorted(unknown)[0]!r}")
@@ -4667,14 +4897,54 @@ class ConfigurationObjectService:
             )
             return cls._bounded_object(section, result)
         if kind is ConfigurationObjectKind.STORAGE:
-            if str(value.get("type", "")).lower() != "local":
-                raise ValueError("guided Storage editing supports Local type only")
-            root = cls._host_absolute_path(value.get("rootPath"))
-            read_only = value.get("readOnly", False)
-            if not isinstance(read_only, bool):
-                raise ValueError("Local Storage readOnly must be boolean")
-            result.update({"type": "local", "rootPath": root, "readOnly": read_only})
-            return result
+            storage_type = value.get("type", StorageConfigurationType.LOCAL.value)
+            root_input = value.get("rootPath", "")
+            if str(storage_type).lower() == StorageConfigurationType.LOCAL.value:
+                root = cls._host_absolute_path(root_input)
+            else:
+                root = root_input
+            raw_options = value.get("options")
+            if raw_options is None:
+                storage_options = {
+                    key: copy.deepcopy(value[key])
+                    for key in cls._STORAGE_LEGACY_OPTION_FIELDS
+                    if key in value
+                }
+            elif isinstance(raw_options, Mapping):
+                storage_options = copy.deepcopy(dict(raw_options))
+                for key in cls._STORAGE_LEGACY_OPTION_FIELDS:
+                    if key in value:
+                        storage_options.setdefault(key, copy.deepcopy(value[key]))
+            else:
+                storage_options = raw_options
+            try:
+                storage = validate_storage_configuration(
+                    ManagedStorageConfiguration(
+                        object_id,
+                        storage_type,  # type: ignore[arg-type]
+                        name,
+                        root,
+                        value.get("readOnly", False),  # type: ignore[arg-type]
+                        value.get("enabled", True),  # type: ignore[arg-type]
+                        storage_options,  # type: ignore[arg-type]
+                    )
+                )
+            except ValueError as error:
+                # Validator messages contain field names and bounded categories,
+                # never submitted secret values.  Keep that property at the API
+                # boundary while retaining useful recovery guidance.
+                message = cls._bounded_utf8(str(error), 384)
+                raise ValueError(f"Storage {message}") from error
+            result.update(
+                {
+                    "type": storage.storage_type.value,
+                    "rootPath": storage.root_path,
+                    "readOnly": storage.read_only,
+                    "enabled": storage.enabled,
+                    "options": storage.options or {},
+                }
+            )
+            return cls._bounded_object(section, result)
         storage_id = value.get("storageId")
         if not isinstance(storage_id, str) or not storage_id.strip():
             raise ValueError(f"{section} storageId must be a non-empty string")

@@ -328,7 +328,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 detail = objects.revision_detail(changed.revision_id)
                 self.assertEqual(detail["objects"]["storages"][-1]["id"], "local-extra")
 
-    def test_remote_storage_is_preserved_redacted_and_read_only(self) -> None:
+    def test_remote_storage_is_preserved_redacted_and_guided(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             document = self._document(root)
@@ -349,9 +349,10 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 remote = next(
                     item for item in detail["objects"]["storages"] if item["id"] == "remote"
                 )
-                self.assertTrue(remote["readOnly"])
-                self.assertEqual(remote["editability"], "json_import_only")
+                self.assertFalse(remote["readOnly"])
+                self.assertEqual(remote["editability"], "guided")
                 self.assertEqual(remote["options"]["tokenEnv"], "OPENLIST_TOKEN")
+                self.assertEqual(remote["secretReadiness"][0]["field"], "tokenEnv")
 
     def test_guided_local_create_and_update_preserve_host_absolute_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -4119,7 +4120,8 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(changed.document["storages"][-1], remote)
                 displayed = objects.revision_detail(changed.revision_id)["objects"]["storages"][-1]
                 self.assertEqual(displayed["options"]["tokenEnv"], "OPENLIST_TOKEN")
-                self.assertTrue(displayed["readOnly"])
+                self.assertFalse(displayed["readOnly"])
+                self.assertEqual(displayed["editability"], "guided")
 
     def test_references_after_former_limit_block_each_delete(self) -> None:
         cases = (
