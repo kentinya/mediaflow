@@ -12,6 +12,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
     ConfigurationAuthority,
     ConfigurationChangeAudit,
+    ConfigurationFirstDraftConflict,
     ConfigurationObjectKind,
     ConfigurationVersionConflict,
     ManagedConfigurationRepository,
@@ -20,11 +21,15 @@ from mediaflow.domain.configuration_management import (
     RuntimeSnapshotUnavailable,
 )
 from mediaflow.infrastructure.runtime_configuration import (
+    is_minimal_management_bootstrap,
     load_managed_runtime_configuration,
+    load_minimal_management_bootstrap,
     load_runtime_configuration,
 )
 
 MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION = 1
+FIRST_SETUP_STARTER_DOCUMENT_VERSION = 1
+FIRST_SETUP_KIND = "first_runtime_setup"
 MAX_VALIDATION_ERRORS = 16
 _ENV_FIELD = re.compile(r"(?:env|environment)$", re.IGNORECASE)
 _SECRET_KEYS = {
@@ -44,6 +49,56 @@ _SECRET_KEYS = {
     "sessiontoken",
 }
 
+_FIRST_SETUP_BLOCKERS = (
+    {
+        "code": "storage_required",
+        "message": "Add at least one Storage before runtime validation.",
+        "nextAction": "Add a safe, explicit Storage definition in the guided setup.",
+    },
+    {
+        "code": "resource_library_required",
+        "message": "Connect a ResourceLibrary to an enabled Storage.",
+        "nextAction": "Add a ResourceLibrary and choose a Storage-relative source path.",
+    },
+    {
+        "code": "media_library_required",
+        "message": "Add a destination MediaLibrary with an explicit Storage-relative root.",
+        "nextAction": "Add a MediaLibrary after configuring its destination Storage.",
+    },
+    {
+        "code": "recognition_strategy_required",
+        "message": "Define RecognitionTypes, rules, and type policies.",
+        "nextAction": "Complete the Recognition strategy in the Draft.",
+    },
+    {
+        "code": "metadata_strategy_required",
+        "message": "Define a MetadataPolicy with an environment-owned Provider credential.",
+        "nextAction": "Add the MetadataPolicy and Provider reference required by recognition.",
+    },
+    {
+        "code": "naming_strategy_required",
+        "message": "Define a NamingPolicy for each supported media type.",
+        "nextAction": "Add and offline-preview the NamingPolicy templates.",
+    },
+    {
+        "code": "classification_strategy_required",
+        "message": "Define ClassificationPolicies and safe destination-relative paths.",
+        "nextAction": "Add and offline-preview the ClassificationPolicy rules.",
+    },
+    {
+        "code": "organize_authority_required",
+        "message": "Declare explicit non-destructive organize authority and conflict handling.",
+        "nextAction": "Add an OrganizePolicy and review its authority explanation.",
+    },
+    {
+        "code": "activation_required",
+        "message": "The Draft is not runtime authority until validation and activation succeed.",
+        "nextAction": (
+            "Validate the complete Draft, run required read-only checks, then activate it."
+        ),
+    },
+)
+
 
 class ManagedConfigurationService:
     """Stages, validates, and atomically publishes runtime configuration revisions.
@@ -60,6 +115,8 @@ class ManagedConfigurationService:
         loader: Callable[[object], object] = load_runtime_configuration,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         bootstrap_database_path: str | None = None,
+        bootstrap_document: object | None = None,
+        management_only: bool = False,
     ) -> None:
         self._repository = repository
         self._loader = (
@@ -74,12 +131,26 @@ class ManagedConfigurationService:
         )
         self._clock = clock
         self._bootstrap_database_path = bootstrap_database_path
+        self._bootstrap_document = copy.deepcopy(bootstrap_document)
+        self._management_only = bool(
+            management_only
+            or (
+                bootstrap_document is not None
+                and is_minimal_management_bootstrap(bootstrap_document)
+            )
+        )
 
     @property
     def repository(self) -> ManagedConfigurationRepository:
         """Expose the existing persistence boundary to focused app adapters."""
 
         return self._repository
+
+    @property
+    def management_only(self) -> bool:
+        """Whether this service is serving the fresh-setup authority boundary."""
+
+        return self._management_only
 
     def status_document(self) -> dict[str, object]:
         active = None
@@ -113,63 +184,83 @@ class ManagedConfigurationService:
             revisions = self._repository.list_revisions(limit=100)
         except Exception:
             revisions = ()
+        setup_draft = self._first_setup_draft(revisions)
+        setup_required = self._management_only and not managed_activation
+        if self._management_only and not managed_activation:
+            authority = ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value
+            status_health = "SETUP_REQUIRED"
+            runtime_configured = False
+        elif managed_activation:
+            authority = ConfigurationAuthority.MANAGED.value
+            status_health = health
+            runtime_configured = active is not None and health == "HEALTHY"
+        else:
+            authority = ConfigurationAuthority.JSON_BOOTSTRAP.value
+            status_health = "BOOTSTRAP"
+            # Complete JSON bootstrap remains a supported pre-activation
+            # compatibility runtime.  It is distinct from management-only
+            # setup, which explicitly has no business runtime.
+            runtime_configured = True
+        runtime_ready = managed_activation and runtime_configured
+        if setup_draft is not None:
+            next_action = (
+                "open and resume the existing setup Draft, complete guided setup, "
+                "validate it, and activate it"
+            )
+        elif setup_required:
+            next_action = "create the first setup Draft, then complete guided setup"
+        elif managed_activation and not runtime_configured:
+            next_action = "inspect configuration status and stage an explicit recovery Draft"
+        else:
+            next_action = None
         return {
-            "authority": (
-                ConfigurationAuthority.MANAGED.value
-                if managed_activation
-                else ConfigurationAuthority.JSON_BOOTSTRAP.value
-            ),
+            "authority": authority,
             "active": active.summary() if active else None,
             "lastKnownActive": self._last_known_active(),
-            "health": health if managed_activation else "BOOTSTRAP",
-            "runtimeReady": managed_activation and health == "HEALTHY",
+            "health": status_health,
+            "managementReady": True,
+            "setupRequired": setup_required,
+            "runtimeConfigured": runtime_configured,
+            "runtimeReady": runtime_ready,
+            "workflowAvailable": runtime_configured,
+            "recoveryRequired": managed_activation and not runtime_configured,
             "unavailableReason": unavailable_reason,
             "revisions": [self._revision_summary(item) for item in revisions],
             "managedActivation": managed_activation,
+            "setupDraft": setup_draft.summary() if setup_draft is not None else None,
+            "setupBlockers": _first_setup_blockers() if setup_required else [],
+            "nextAction": next_action,
+            "bootstrapMode": "MANAGEMENT_ONLY" if self._management_only else "COMPATIBILITY",
         }
 
     def detail(self, revision_id: str) -> dict[str, object]:
         revision = self.require(revision_id)
-        active = None
-        health = "HEALTHY"
-        unavailable_reason = None
+        status = self.status_document()
+        active_document = None
         try:
-            active = self._repository.get_active_revision()
-        except Exception as error:
-            health = "UNAVAILABLE"
-            unavailable_reason = (
-                f"managed Active configuration is unreadable ({type(error).__name__})"
-            )
-        if active is not None:
-            try:
-                self.verify_integrity(active)
-                self._load_for_runtime(active.document)
-            except RuntimeSnapshotUnavailable as error:
-                health = "UNAVAILABLE"
-                unavailable_reason = str(error)
-            except Exception as error:
-                health = "UNAVAILABLE"
-                unavailable_reason = (
-                    "managed Active configuration is not runtime-consumable "
-                    f"({type(error).__name__})"
-                )
-        managed_activation = active is not None or self._has_managed_activation()
-        if managed_activation and active is None:
-            health = "UNAVAILABLE"
-            unavailable_reason = "managed Active configuration is missing"
+            active_revision = self._repository.get_active_revision()
+            active_document = active_revision.document if active_revision is not None else None
+        except Exception:
+            # Detail remains useful for recovery Drafts even when the old
+            # Active payload is unreadable.
+            active_document = None
         return {
             **revision.summary(),
-            "authority": (
-                ConfigurationAuthority.MANAGED.value
-                if managed_activation
-                else ConfigurationAuthority.JSON_BOOTSTRAP.value
-            ),
-            "health": health if managed_activation else "BOOTSTRAP",
-            "runtimeReady": managed_activation and health == "HEALTHY",
-            "unavailableReason": unavailable_reason,
-            "lastKnownActive": self._last_known_active(),
+            "authority": status["authority"],
+            "health": status["health"],
+            "managementReady": status["managementReady"],
+            "setupRequired": status["setupRequired"],
+            "runtimeConfigured": status["runtimeConfigured"],
+            "runtimeReady": status["runtimeReady"],
+            "workflowAvailable": status["workflowAvailable"],
+            "recoveryRequired": status["recoveryRequired"],
+            "unavailableReason": status["unavailableReason"],
+            "lastKnownActive": status["lastKnownActive"],
+            "setupDraft": status["setupDraft"],
+            "setupBlockers": status["setupBlockers"],
+            "nextAction": status["nextAction"],
             "document": _redact_document(revision.document),
-            "diff": self._diff(active.document if active else None, revision.document),
+            "diff": self._diff(active_document, revision.document),
             "audit": [
                 _audit_document(item)
                 for item in self._repository.list_revision_audits(revision.revision_id)
@@ -239,6 +330,111 @@ class ManagedConfigurationService:
         created = self._repository.create_revision(revision)
         self._record_audit(audit)
         return created
+
+    def create_first_draft(
+        self,
+        bootstrap_document: object | None = None,
+        *,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        """Create the server-owned first setup Draft before runtime activation.
+
+        Only the strict management bootstrap projection is copied.  The
+        repository's first-Draft transaction repeats the authority and
+        duplicate checks under ``BEGIN IMMEDIATE`` so concurrent API workers
+        cannot create competing setup roots.
+        """
+
+        source = self._bootstrap_document if bootstrap_document is None else bootstrap_document
+        bootstrap = load_minimal_management_bootstrap(source)
+        self._management_only = True
+        active = self._repository.get_active_revision()
+        if active is not None:
+            raise ConfigurationFirstDraftConflict(
+                "managed Active configuration already exists; first setup is closed",
+                revision=active,
+                durable_state="active_configuration_preserved",
+                next_action="import a new Draft from the current Active configuration",
+            )
+        if self._has_managed_activation():
+            marker = self._last_known_active() or {}
+            raise ConfigurationFirstDraftConflict(
+                "managed Active configuration is unavailable; first setup is closed",
+                revision_id=marker.get("revisionId"),
+                version=marker.get("revisionSequence", marker.get("version")),
+                digest=marker.get("digest"),
+                durable_state="managed_active_unavailable",
+                next_action="inspect configuration status and stage an explicit recovery Draft",
+            )
+        existing = self._first_setup_draft()
+        if existing is not None:
+            raise ConfigurationFirstDraftConflict(
+                "the first setup Draft already exists",
+                revision=existing,
+                durable_state="setup_draft_preserved",
+                next_action=("reload configuration status and resume the existing setup Draft"),
+            )
+        document = build_first_setup_starter_document(bootstrap)
+        now = self._clock()
+        revision = ManagedConfigurationRevision(
+            str(uuid4()),
+            1,
+            ManagedConfigurationStatus.DRAFT,
+            MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+            _digest(document),
+            document,
+            now,
+            now,
+        )
+        audit = self._audit(
+            revision,
+            "first_draft_create",
+            actor,
+            {
+                "starterVersion": FIRST_SETUP_STARTER_DOCUMENT_VERSION,
+                "setupKind": FIRST_SETUP_KIND,
+                "revisionId": revision.revision_id,
+                "digest": revision.digest,
+                "status": revision.status.value,
+                "sections": sorted(document),
+            },
+            before={
+                "authority": ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value,
+                "revisionId": None,
+            },
+        )
+        create = getattr(self._repository, "create_first_draft_with_audit", None)
+        if callable(create):
+            return create(revision, audit)
+        # Small in-memory repositories used by focused unit tests may not yet
+        # expose the SQLite atomic extension.  They still receive the normal
+        # audited lifecycle; production uses the transaction above.
+        create = getattr(self._repository, "create_revision_with_audit", None)
+        if callable(create):
+            return create(revision, audit)
+        created = self._repository.create_revision(revision)
+        self._record_audit(audit)
+        return created
+
+    def _first_setup_draft(
+        self,
+        revisions: tuple[ManagedConfigurationRevision, ...] | None = None,
+    ) -> ManagedConfigurationRevision | None:
+        values = revisions
+        if values is None:
+            try:
+                values = self._repository.list_revisions(limit=100)
+            except Exception:
+                return None
+        for revision in values:
+            setup = revision.document.get("setup")
+            if (
+                isinstance(setup, dict)
+                and setup.get("kind") == FIRST_SETUP_KIND
+                and revision.status is not ManagedConfigurationStatus.ACTIVE
+            ):
+                return revision
+        return None
 
     def require(self, revision_id: str) -> ManagedConfigurationRevision:
         revision = self._repository.get_revision(revision_id)
@@ -594,6 +790,85 @@ class ManagedConfigurationService:
             key for key in set(active).union(candidate) if active.get(key) != candidate.get(key)
         )
         return {"changedSections": changed, "baseline": "ACTIVE"}
+
+
+def build_first_setup_starter_document(bootstrap) -> dict[str, object]:
+    """Build the bounded, inactive document used by a fresh setup Draft."""
+
+    api: dict[str, object] = {
+        "remoteExecution": {"enabled": False, "maximumTtlSeconds": 900},
+    }
+    if bootstrap.api_token_env:
+        api["tokenEnv"] = bootstrap.api_token_env
+    if bootstrap.api_principals:
+        api["principals"] = [
+            {
+                "id": item.principal_id,
+                "tokenEnv": item.token_env,
+                "roles": [role.value for role in item.roles],
+                "enabled": item.enabled,
+            }
+            for item in bootstrap.api_principals
+        ]
+    return {
+        "version": 1,
+        "setup": {
+            "starterVersion": FIRST_SETUP_STARTER_DOCUMENT_VERSION,
+            "kind": FIRST_SETUP_KIND,
+            "status": "setup_required",
+            "runtimeReady": False,
+            "workflowAvailable": False,
+            "blockers": _first_setup_blockers(),
+            "nextAction": (
+                "complete the guided setup, validate the Draft, run required read-only checks, "
+                "and activate it"
+            ),
+        },
+        "persistence": {"databasePath": bootstrap.database_path},
+        "api": api,
+        # Empty sections are intentional.  No fabricated path, endpoint,
+        # strategy, or media authority is promoted into a runtime by the starter.
+        "storages": [],
+        "resourceLibraries": [],
+        "mediaLibraries": [],
+        "metadataPolicies": [],
+        "namingPolicies": [],
+        "classificationPolicies": [],
+        "organizePolicies": [],
+        "recognitionTypes": [],
+        "recognitionRules": [],
+        "recognitionTypePolicies": [],
+        "automationTaskDefinitions": [],
+        "automation": {
+            "workerPollSeconds": 2,
+            "schedulerPollSeconds": 5,
+            "maximumActiveJobs": 100,
+            "staleJobAgeSeconds": 3600,
+            "schedules": [],
+        },
+        "notifications": {
+            "pollSeconds": 5,
+            "deliveryLeaseSeconds": 300,
+            "webhooks": [],
+        },
+        "operationalLogging": {
+            "enabled": False,
+            "minimumLevel": "INFO",
+            "retentionDays": 30,
+            "maximumRecords": 10000,
+        },
+        "workflowRetry": {
+            "enabled": False,
+            "maxAttempts": 3,
+            "baseDelaySeconds": 1,
+            "maxDelaySeconds": 30,
+            "jitterRatio": 0.2,
+        },
+    }
+
+
+def _first_setup_blockers() -> list[dict[str, str]]:
+    return copy.deepcopy(list(_FIRST_SETUP_BLOCKERS))
 
 
 def _canonical_document(document: object) -> dict[str, object]:

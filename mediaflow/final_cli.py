@@ -102,8 +102,10 @@ from mediaflow.infrastructure.operational_logging import SQLiteOperationalLogger
 from mediaflow.infrastructure.runtime_configuration import (
     ManagementBootstrapConfiguration,
     RuntimeConfiguration,
+    is_minimal_management_bootstrap,
     load_managed_runtime_configuration,
     load_management_bootstrap,
+    load_minimal_management_bootstrap,
     load_runtime_configuration,
     with_managed_snapshot,
 )
@@ -585,6 +587,8 @@ def final_main(
                     service = ManagedConfigurationService(
                         repository,
                         bootstrap_database_path=database_path,
+                        bootstrap_document=bootstrap_document,
+                        management_only=is_minimal_management_bootstrap(bootstrap_document),
                     )
                     if arguments.config_command == "status":
                         stdout.write(
@@ -1370,6 +1374,8 @@ def final_main(
             )
             from mediaflow.interfaces.service_api import MediaFlowApi
 
+            management_only = isinstance(configuration, ManagementBootstrapConfiguration)
+
             file_index_context = (
                 nullcontext(None)
                 if isinstance(configuration, ManagementBootstrapConfiguration)
@@ -1382,6 +1388,12 @@ def final_main(
                     configuration.database_path
                 ) as configuration_repository,
             ):
+                configuration_service = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=configuration.database_path,
+                    bootstrap_document=bootstrap_document,
+                    management_only=management_only,
+                )
                 file_catalog = (
                     FileCatalogService(
                         file_index,
@@ -1429,10 +1441,7 @@ def final_main(
                     metadata_policies=getattr(
                         getattr(configuration, "strategy", None), "metadata_policies", ()
                     ),
-                    configuration_service=ManagedConfigurationService(
-                        configuration_repository,
-                        bootstrap_database_path=configuration.database_path,
-                    ),
+                    configuration_service=configuration_service,
                     configuration_snapshot_id=getattr(
                         configuration, "configuration_snapshot_id", None
                     ),
@@ -1440,6 +1449,7 @@ def final_main(
                         configuration, "configuration_snapshot_digest", None
                     ),
                     bootstrap_document=bootstrap_document,
+                    management_only=management_only,
                     metadata_provider_registry_factory=(
                         LazyMetadataProviderRegistryFactory(
                             metadata_provider_registry_from_environment
@@ -3591,6 +3601,8 @@ def _configuration(
                     digest=marker.get("digest") if marker else None,
                     reason="active_missing",
                 )
+        if is_minimal_management_bootstrap(raw_document):
+            return load_minimal_management_bootstrap(raw_document)
         return load_runtime_configuration(raw_document)
     if active.schema_version != MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION:
         raise RuntimeSnapshotUnavailable(
