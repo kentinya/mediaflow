@@ -271,17 +271,30 @@ for a later Task.
   retry recovery, directory-only selection, text-safe hostile-name rendering and Local execution
   environment/Docker mount and UID/GID guidance. Documented the same path semantics.
 
+### Fix Loop (FIX REQUIRED correction)
+
+- Replaced the permissive `base64.urlsafe_b64decode` cursor path with strict URL-safe Base64
+  validation (`validate=True`) plus a canonical re-encode equality check in
+  `StorageBrowserCursorCodec.decode`, so malformed, non-ASCII, non-canonical or alphabet-invalid
+  cursor input is rejected before HMAC/context processing and before any Storage/provider read.
+- Added an Application-level regression test asserting that appended invalid/whitespace
+  characters, an inserted invalid/padding character, a substituted standard-alphabet character
+  and padded non-canonical input are all rejected without increasing fake Storage `list_page`
+  call counts. Existing opaque-cursor binding, tamper, expiry and context checks are unchanged.
+
 ### Tests and Results
 
-- PASS — `.venv/bin/python -m unittest tests.test_storage_browser tests.test_storage_setup_check
+- PASS — fix-loop focused regression rerun: `.venv/bin/python -m unittest
+  tests.test_storage_browser tests.test_storage_setup_check
   tests.test_guided_storage_lifecycle tests.test_configuration_objects
   tests.test_configuration_snapshot tests.test_configuration_status
   tests.test_configuration_destination_precheck tests.test_configuration_destination_activation
-  tests.test_api_security tests.test_operator_ui tests.test_management_setup` — 224 tests.
-- FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python -m unittest discover -s tests` — 1155 tests,
+  tests.test_api_security tests.test_operator_ui tests.test_management_setup` — 225 tests.
+- FAIL / PRE-EXISTING / UNRELATED — fix-loop full-suite rerun:
+  `.venv/bin/python -m unittest discover -s tests` — 1156 tests,
   6 failures, 7 skipped. The failures are the previously recorded state-dependent API credential,
   final-analyze, ResourceLibrary scan, and runtime Storage list/check cases; the Task Base report
-  records the same six failures. No Storage Browser test failed.
+  records the same six failures and the new Storage Browser malformed-cursor regression passed.
 - PASS — `.venv/bin/ruff format --check .` — 361 files already formatted.
 - PASS — `.venv/bin/ruff check .`.
 - PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`.
@@ -290,8 +303,8 @@ for a later Task.
 - PASS — `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`.
 - PASS — `if rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml; then exit 1; else echo
   'No ffprobe/ffmpeg matches'; fi`.
-- PASS — `git diff --check`.
-- PASS — isolated `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w
+- PASS — fix-loop rerun of `git diff --check`.
+- PASS — fix-loop isolated `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w
   "$release_dir"` followed by `.venv/bin/python scripts/wheel_smoke_test.py
   "$release_dir"/mediaflow-*.whl`; wheel smoke backup, migration, restore, verify and
   upgrade-preflight checks completed.
@@ -309,6 +322,8 @@ for a later Task.
   browser never exposes the host root or becomes the File Catalog.
 - Kept selection on the existing managed configuration mutation/audit path so failures preserve
   the Draft and prior Active revision.
+- Used strict decoded-then-re-encoded canonical Base64 equality rather than accepting Python's
+  permissive unpadded decode, keeping the emitted opaque cursor format unchanged.
 
 ### Remaining In-Slice Work
 
@@ -329,17 +344,28 @@ for a later Task.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 33a27bbaf6c34902dc5dd9b0de55f50baccb94ff
+Head SHA: 78a77a3031c18f95f7c476d575d6f959c405f4e5
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: b662c9073c17d724045488db378d78174ed71abe..33a27bbaf6c34902dc5dd9b0de55f50baccb94ff
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- Cursor malformed-input rejection is not satisfied. `StorageBrowserCursorCodec.decode` at
+  `mediaflow/application/storage_browser.py:155-162` uses the permissive
+  `base64.urlsafe_b64decode` path without strict alphabet/canonical-input validation, so an
+  invalid character can be inserted into an otherwise valid cursor and still be accepted.
+  Evidence: an Application-level browse with `first["nextCursor"] + "!"` returned the next page
+  successfully, and the fake Storage `list_page` call count increased from `1` to `2`.
+  Required fix direction: reject non-canonical/invalid Base64 cursor input before HMAC/context
+  processing and before any Storage/provider call, while preserving the existing opaque cursor
+  binding and expiry checks; add a regression assertion for inserted, appended and otherwise
+  malformed characters.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
