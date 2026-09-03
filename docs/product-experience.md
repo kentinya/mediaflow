@@ -91,7 +91,8 @@ action to correct the deployment mount/ownership or Draft path and retry.
   SQLite or a complete runtime JSON document.
 - **Entry:** authenticate against management-only bootstrap state with no Active workflow revision.
 - **Visible state:** setup required, Draft contents, validation errors, Storage/library selections,
-  read-only test evidence and checked-activation readiness.
+  per-Storage read-only check evidence, destination precheck evidence and checked-activation
+  readiness.
 - **Action:** create the first complete Draft, configure Local/SMB/OpenList/S3/R2 Storage and
   libraries, select bounded paths, validate, test and checked-activate.
 - **Success:** the first immutable Active snapshot is bound to runtime and can be used by an explicit
@@ -101,6 +102,12 @@ action to correct the deployment mount/ownership or Draft path and retry.
   Draft or any prior Active.
 - **Recovery:** correct only the stated blocker, rerun the bounded read-only action and activate the
   same or a new Draft after exact evidence becomes current.
+
+Checked activation is provider-neutral. It requires current read-only per-Storage checks for every
+enabled Storage referenced by a library, a current Recognition Strategy Test, and a current
+read-only destination precheck for the MediaLibrary destination on any supported Storage kind. The
+older Local-only setup check stays available as a Local diagnostic and is not required for
+activation.
 
 ## Recognition and metadata
 
@@ -129,10 +136,10 @@ action to correct the deployment mount/ownership or Draft path and retry.
   MediaLibrary and relative path, operation, conflict strategy, required capabilities, warnings and
   composed destination.
 - **Action:** edit the Draft, run Naming/Classification/Organize authority and destination previews,
-  and run the Local read-only destination precheck where applicable.
+  and run the read-only destination precheck where applicable.
 - **Success:** the operator can inspect a complete explainable plan; a Preview remains zero-mutation.
 - **Failure:** unsafe template/path, missing library, unsupported capability, conflict, stale
-  revision/evidence or unavailable Local destination blocks the affected action.
+  revision/evidence or unavailable destination blocks the affected action.
 - **Recovery:** correct the named policy or reference and rerun the exact-revision preview/check.
   Unsupported operations never silently fall back to another operation.
 

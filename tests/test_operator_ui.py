@@ -409,7 +409,7 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn(mount, guided_body)
         self.assertLess(show_revision.index(mount), visible)
         self.assertIn(
-            "detailContent.append(text('h3', 'Read-only Local destination precheck'));",
+            "detailContent.append(text('h3', 'Read-only destination precheck'));",
             precheck,
         )
         for activation_line in (
@@ -423,8 +423,8 @@ class OperatorUiTests(unittest.TestCase):
         ):
             self.assertIn(activation_line, activation)
         self.assertIn(
-            "Checked activation requirement: not applicable because this Draft has no Local "
-            "destination.",
+            "Checked activation requirement: not applicable because this Draft has no "
+            "MediaLibrary destination.",
             precheck,
         )
         self.assertIn(
@@ -433,7 +433,7 @@ class OperatorUiTests(unittest.TestCase):
         )
         self.assertIn("const activation = destinationPrecheckActivationRequirement", precheck)
         self.assertIn("else if (!activation.satisfied)", precheck)
-        self.assertIn("const applicable = mediaLibraries.some", activation)
+        self.assertIn("const applicable = mediaLibraries.length > 0", activation)
         self.assertIn("controls.append(recognitionType, sample, actionButton(", precheck)
         self.assertIn("Destination precheck RecognitionType", precheck)
         self.assertIn("Destination precheck sample JSON", precheck)
@@ -471,7 +471,7 @@ class OperatorUiTests(unittest.TestCase):
         precheck = _js_function_body(script, "renderDestinationPrecheck")
 
         for predicate_line in (
-            "const applicable = mediaLibraries.some",
+            "const applicable = mediaLibraries.length > 0",
             "const current = destinationPrecheckIsCurrent(revision, evidence);",
             "const completed = Boolean(evidence && evidence.status === 'completed');",
             "evidence.result.verdict === 'capability_gap'",
@@ -511,13 +511,12 @@ class OperatorUiTests(unittest.TestCase):
             show_revision,
         )
         self.assertIn(
-            "checked activation is blocked by the Local destination precheck; "
-            "${destination.nextAction}.",
+            "checked activation is blocked by the destination precheck; ${destination.nextAction}.",
             show_revision,
         )
         self.assertIn(
-            "requires both a current passed Local setup check and a current completed "
-            "Recognition Strategy Test.",
+            "requires current passed read-only Storage checks for every referenced "
+            "enabled Storage and a current completed Recognition Strategy Test.",
             show_revision,
         )
 
@@ -995,10 +994,12 @@ class OperatorUiTests(unittest.TestCase):
         self.assertNotIn("activateConfigurationRevision", actions)
 
         setup_and_strategy = _js_function_body(script, "setupAndStrategyEvidenceIsCurrent")
-        self.assertIn("local.status === 'passed'", setup_and_strategy)
-        self.assertIn("setupEvidenceIsCurrent(revision, local)", setup_and_strategy)
+        self.assertIn("referencedStorageChecksSatisfied(guided)", setup_and_strategy)
         self.assertIn("strategy.status === 'completed'", setup_and_strategy)
         self.assertIn("strategyEvidenceIsCurrent(revision, strategy)", setup_and_strategy)
+        blocker_helper = _js_function_body(script, "firstStorageCheckBlocker")
+        self.assertIn("storageCheckEvidenceFor(guided, storageId)", blocker_helper)
+        self.assertIn("evidence.status !== 'passed'", blocker_helper)
         checked_helper = _js_function_body(script, "checkedActivationEvidenceIsCurrent")
         self.assertIn("setupAndStrategyEvidenceIsCurrent(revision, guided)", checked_helper)
 
@@ -1018,7 +1019,7 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("checkedActivationEvidenceIsCurrent(data, guided)", show_revision)
         checked_branch = show_revision[show_revision.index("if (data.status === 'validated')") :]
         self.assertNotIn("setupEvidenceIsCurrent(data, guided.localSetupCheck)", checked_branch)
-        self.assertIn("current passed Local setup check", checked_branch)
+        self.assertIn("current passed read-only Storage checks", checked_branch)
         self.assertIn("current completed Recognition Strategy Test", checked_branch)
 
     def test_strategy_evidence_rows_are_bounded_explainable_and_read_only(self) -> None:

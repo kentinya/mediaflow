@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import sqlite3
 import tempfile
 import time
@@ -14,13 +15,17 @@ from mediaflow.application.configuration_objects import ConfigurationObjectServi
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.organizer import OrganizePlanner
 from mediaflow.domain.configuration_management import (
+    ConfigurationActivationConflict,
     ConfigurationObjectKind,
     ConfigurationVersionConflict,
 )
 from mediaflow.domain.naming import NamingResult
 from mediaflow.domain.organizer import Conflict, ConflictStrategy, ConflictType, PlanStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.domain.storage import StorageError, StorageErrorCode
+from mediaflow.domain.storage import (
+    StorageError,
+    StorageErrorCode,
+)
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_configuration_management import (
@@ -30,6 +35,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION as RUNTIME_SCHEMA_VERSION
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.test_configuration_destination_activation import RemoteDestinationFake
 from tests.test_configuration_objects import example_document, request
 
 
@@ -1418,12 +1424,23 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "source-private").mkdir()
-            variants = []
-            remote = self._document(root)
-            remote["storages"][1]["type"] = "s3"
-            variants.append(("unsupported_storage_type", remote))
-            missing = self._document(root)
             (root / "target-private").mkdir()
+            variants = []
+            missing_secret = self._document(root)
+            missing_secret["storages"][1] = {
+                "id": "media-target",
+                "name": "Remote",
+                "type": "s3",
+                "rootPath": "remote-media",
+                "bucket": "bucket",
+                "accessKeyEnv": "MEDIAFLOW_TEST_UNSET_S3_ACCESS",
+                "secretKeyEnv": "MEDIAFLOW_TEST_UNSET_S3_SECRET",
+            }
+            variants.append(("missing_secret", missing_secret))
+            disabled = self._document(root)
+            disabled["storages"][1]["enabled"] = False
+            variants.append(("disabled", disabled))
+            missing = self._document(root)
             variants.append(("missing_destination_root", missing))
             for category, document in variants:
                 with self.subTest(category=category):
@@ -1435,7 +1452,7 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                                 "create_storages",
                                 side_effect=AssertionError("unsupported adapter constructed"),
                             )
-                            if category == "unsupported_storage_type"
+                            if category in {"missing_secret", "disabled"}
                             else nullcontext()
                         ):
                             evidence = self._run(objects, draft)
@@ -1453,6 +1470,129 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             try:
                 evidence = self._run(objects, draft)
                 self.assertEqual(evidence.failure_category, "destination_root_not_directory")
+                self._assert_revision_and_other_evidence_unchanged(repository, managed, draft)
+            finally:
+                repository.close()
+
+    def test_provider_neutral_precheck_supports_remote_destination_kinds(self) -> None:
+        kinds = (
+            (
+                "smb",
+                {
+                    "host": "nas.example.test",
+                    "share": "Media",
+                    "usernameEnv": "MEDIAFLOW_TEST_SMB_USER",
+                    "passwordEnv": "MEDIAFLOW_TEST_SMB_PASSWORD",
+                },
+                ("MEDIAFLOW_TEST_SMB_USER", "MEDIAFLOW_TEST_SMB_PASSWORD"),
+            ),
+            (
+                "openlist",
+                {
+                    "baseUrl": "http://127.0.0.1:1",
+                    "tokenEnv": "MEDIAFLOW_TEST_OPENLIST_TOKEN",
+                },
+                ("MEDIAFLOW_TEST_OPENLIST_TOKEN",),
+            ),
+            (
+                "s3",
+                {
+                    "bucket": "bucket",
+                    "accessKeyEnv": "MEDIAFLOW_TEST_S3_ACCESS",
+                    "secretKeyEnv": "MEDIAFLOW_TEST_S3_SECRET",
+                },
+                ("MEDIAFLOW_TEST_S3_ACCESS", "MEDIAFLOW_TEST_S3_SECRET"),
+            ),
+            (
+                "r2",
+                {
+                    "bucket": "bucket",
+                    "endpoint": "https://account.r2.cloudflarestorage.com",
+                    "accessKeyEnv": "MEDIAFLOW_TEST_R2_ACCESS",
+                    "secretKeyEnv": "MEDIAFLOW_TEST_R2_SECRET",
+                },
+                ("MEDIAFLOW_TEST_R2_ACCESS", "MEDIAFLOW_TEST_R2_SECRET"),
+            ),
+            (
+                "s3-compatible",
+                {
+                    "bucket": "bucket",
+                    "endpoint": "https://minio.example.test",
+                    "accessKeyEnv": "MEDIAFLOW_TEST_S3C_ACCESS",
+                    "secretKeyEnv": "MEDIAFLOW_TEST_S3C_SECRET",
+                },
+                ("MEDIAFLOW_TEST_S3C_ACCESS", "MEDIAFLOW_TEST_S3C_SECRET"),
+            ),
+        )
+        for storage_type, fields, env_names in kinds:
+            with self.subTest(storage_type=storage_type):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "source-private").mkdir()
+                    document = self._document(root)
+                    document["storages"][1] = {
+                        "id": "media-target",
+                        "name": "Remote destination",
+                        "type": storage_type,
+                        "rootPath": "remote-media",
+                        **fields,
+                    }
+                    repository, managed, objects, draft = self._open(root, document)
+                    try:
+                        fake = RemoteDestinationFake()
+
+                        def fake_create(_self, external=None, storage_ids=None, _fake=fake):
+                            return {"media-target": _fake}
+
+                        environment = {name: "test-value" for name in env_names}
+                        with (
+                            patch.dict(os.environ, environment),
+                            patch.object(RuntimeConfiguration, "create_storages", fake_create),
+                        ):
+                            evidence = self._run(objects, draft)
+                        self.assertEqual(evidence.status.value, "completed")
+                        self.assertEqual(evidence.result["verdict"], "ready")
+                        self.assertEqual(fake.mutations, [])
+                        guard_calls = evidence.result["guardMutationCalls"]
+                        self.assertTrue(guard_calls)
+                        self.assertTrue(all(value == 0 for value in guard_calls.values()))
+                        self._assert_revision_and_other_evidence_unchanged(
+                            repository, managed, draft
+                        )
+                    finally:
+                        repository.close()
+
+    def test_remote_precheck_capability_gap_blocks_checked_activation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source-private").mkdir()
+            document = self._document(root)
+            document["storages"][1] = {
+                "id": "media-target",
+                "name": "Remote destination",
+                "type": "openlist",
+                "rootPath": "remote-media",
+                "baseUrl": "http://127.0.0.1:1",
+                "tokenEnv": "MEDIAFLOW_TEST_OPENLIST_TOKEN",
+                "enabled": True,
+            }
+            repository, managed, objects, draft = self._open(root, document)
+            try:
+                fake = RemoteDestinationFake(read_only=True)
+
+                def fake_create(_self, external=None, storage_ids=None):
+                    return {"media-target": fake}
+
+                with (
+                    patch.dict(os.environ, {"MEDIAFLOW_TEST_OPENLIST_TOKEN": "test-token"}),
+                    patch.object(RuntimeConfiguration, "create_storages", fake_create),
+                ):
+                    evidence = self._run(objects, draft)
+                self.assertEqual(evidence.status.value, "completed")
+                self.assertEqual(evidence.result["verdict"], "capability_gap")
+                self.assertEqual(fake.mutations, [])
+                with self.assertRaisesRegex(ConfigurationActivationConflict, "capability_gap"):
+                    objects.require_current_destination_precheck(draft)
                 self._assert_revision_and_other_evidence_unchanged(repository, managed, draft)
             finally:
                 repository.close()

@@ -2264,6 +2264,21 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 if status != 200 or evidence["status"] != "passed":
                     raise AssertionError((status, evidence))
+                for storage_id in ("source-storage", "media-target"):
+                    status, storage_evidence = request(
+                        self.app,
+                        f"/api/v1/configuration/revisions/{revision_id}/storage-check",
+                        method="POST",
+                        body=json.dumps(
+                            {
+                                "storageId": storage_id,
+                                "expectedVersion": validated["version"],
+                                "expectedDigest": validated["digest"],
+                            }
+                        ).encode(),
+                    )
+                    if status != 200 or storage_evidence["status"] != "passed":
+                        raise AssertionError((status, storage_evidence))
                 status, strategy_evidence = request(
                     self.app,
                     f"/api/v1/configuration/revisions/{revision_id}/recognition-strategy-test",

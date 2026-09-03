@@ -527,7 +527,7 @@ class ConfigurationObjectService:
         actor: str,
     ) -> ManagedConfigurationRevision:
         revision = self._managed.require(revision_id)
-        self.require_current_local_check(revision)
+        self.require_current_storage_checks(revision)
         self.require_current_strategy_test(revision)
         self.require_current_destination_precheck(revision)
         return self._managed.activate(
@@ -2001,25 +2001,43 @@ class ConfigurationObjectService:
                 "add or correct the destination Storage in this Draft, then rerun precheck",
             )
             return self._repository.save_destination_precheck(evidence)
-        if any(
-            str(storage_values[storage_id].get("type", "")).lower() != "local"
-            for storage_id in storage_ids
-        ):
-            offending = next(
-                storage_id
-                for storage_id in storage_ids
-                if str(storage_values[storage_id].get("type", "")).lower() != "local"
+
+        # Provider-neutral pre-flight: a destination Storage that could never be
+        # probed read-only fails before any adapter is constructed.
+        for storage_id in sorted(set(storage_ids)):
+            storage_value = storage_values[storage_id]
+            if storage_value.get("enabled", True) is False:
+                evidence = self._destination_precheck_failure(
+                    revision,
+                    actor,
+                    recognition_type,
+                    normalized_input,
+                    "disabled",
+                    f"destination Storage {storage_id!r} is disabled",
+                    (
+                        "enable the Storage or point the MediaLibrary at an enabled "
+                        "Storage, then rerun precheck"
+                    ),
+                )
+                return self._repository.save_destination_precheck(evidence)
+            storage_type = str(storage_value.get("type", "")).lower()
+            readiness = self._storage_secret_readiness(
+                storage_type, self._storage_options(storage_value)
             )
-            evidence = self._destination_precheck_failure(
-                revision,
-                actor,
-                recognition_type,
-                normalized_input,
-                "unsupported_storage_type",
-                f"Storage {offending!r} is not supported; destination precheck is Local-only",
-                "point the MediaLibrary at Local Storage or wait for remote precheck support",
-            )
-            return self._repository.save_destination_precheck(evidence)
+            if any(entry["state"] == "UNSET" for entry in readiness):
+                evidence = self._destination_precheck_failure(
+                    revision,
+                    actor,
+                    recognition_type,
+                    normalized_input,
+                    "missing_secret",
+                    f"destination Storage {storage_id!r} has an unset secret reference",
+                    (
+                        "set the deployment-owned environment value for the credential "
+                        "reference, then rerun precheck"
+                    ),
+                )
+                return self._repository.save_destination_precheck(evidence)
         if len(set(storage_ids)) != 1:
             labels = ", ".join(
                 f"{storage_id}:{str(storage_values[storage_id].get('type', '')).lower()}"
@@ -2159,7 +2177,7 @@ class ConfigurationObjectService:
             adapter = created.get(storage_id)
             if adapter is None:
                 raise _DestinationPreviewFailure(
-                    "invalid_configuration", "Local destination Storage was not created"
+                    "invalid_configuration", "destination Storage was not created"
                 )
             capabilities = adapter.capabilities
             guard = _ReadOnlyDestinationStorage(adapter)
@@ -2348,7 +2366,7 @@ class ConfigurationObjectService:
                 recognition_type,
                 resolution.normalized_input,
                 category,
-                "destination precheck could not read the configured Local path",
+                "destination precheck could not read the configured destination path",
                 "correct availability, permissions or path, then rerun destination precheck",
             )
         except _DestinationPrecheckMutationError:
@@ -2414,7 +2432,7 @@ class ConfigurationObjectService:
             adapter = created.get(storage_id)
             if adapter is None:
                 raise _DestinationPreviewFailure(
-                    "invalid_configuration", "Local destination Storage was not created"
+                    "invalid_configuration", "destination Storage was not created"
                 )
             capabilities = adapter.capabilities
             guard = _ReadOnlyDestinationStorage(adapter)
@@ -2435,7 +2453,7 @@ class ConfigurationObjectService:
                     row = self._destination_sample_failure_row(
                         index,
                         category,
-                        "destination precheck could not read the configured Local path",
+                        "destination precheck could not read the configured destination path",
                     )
                 except _DestinationPrecheckMutationError:
                     raise
@@ -2474,7 +2492,7 @@ class ConfigurationObjectService:
                 recognition_type,
                 normalized_input,
                 category,
-                "destination precheck could not read the configured Local path",
+                "destination precheck could not read the configured destination path",
                 "correct availability, permissions or path, then rerun destination precheck",
                 result={
                     **self._destination_multi_result(len(items), items, []),
@@ -4926,21 +4944,84 @@ class ConfigurationObjectService:
                 next_action="inspect the paths and run the check again",
             )
 
-    def require_current_local_check(self, revision: ManagedConfigurationRevision) -> None:
-        evidence = self._repository.get_local_setup_check(revision.revision_id)
-        if evidence is None or evidence.status is not ConfigurationSetupCheckStatus.PASSED:
-            raise ConfigurationActivationConflict(
-                "a successful Local setup check is required before checked activation",
-                revision_id=revision.revision_id,
-            )
-        if (
-            evidence.revision_version != revision.version
-            or evidence.revision_digest != revision.digest
-        ):
-            raise ConfigurationActivationConflict(
-                "Local setup check is stale; validate and check the Draft again",
-                revision_id=revision.revision_id,
-            )
+    def referenced_storage_ids(self, revision: ManagedConfigurationRevision) -> list[str]:
+        """Return the Storage IDs referenced by ResourceLibraries and MediaLibraries."""
+
+        referenced: list[str] = []
+        for section in ("resourceLibraries", "mediaLibraries"):
+            if section not in revision.document:
+                continue
+            for library in self._canonical_objects(revision.document, section):
+                storage_id = str(library.get("storageId", ""))
+                if storage_id and storage_id not in referenced:
+                    referenced.append(storage_id)
+        return referenced
+
+    def require_current_storage_checks(self, revision: ManagedConfigurationRevision) -> None:
+        """Require current read-only per-Storage checks for referenced enabled Storages.
+
+        Checked activation is provider-neutral: every enabled Storage referenced by
+        a ResourceLibrary or MediaLibrary must have passed, exact-revision evidence.
+        Disabled referenced Storages are not required; a referenced-but-missing
+        Storage fails closed.
+        """
+
+        storage_values = {
+            str(value.get("id")): value
+            for value in self._canonical_objects(revision.document, "storages")
+        }
+        for storage_id in self.referenced_storage_ids(revision):
+            storage = storage_values.get(storage_id)
+            if storage is None:
+                raise ConfigurationActivationConflict(
+                    f"Storage {storage_id!r} referenced by a library is missing from the revision",
+                    revision_id=revision.revision_id,
+                    next_action=(
+                        "add or correct the Storage, then run the read-only Storage "
+                        "checks and activate checked"
+                    ),
+                )
+            if storage.get("enabled", True) is False:
+                continue
+            getter = getattr(self._repository, "get_storage_setup_check", None)
+            evidence = getter(revision.revision_id, storage_id) if getter is not None else None
+            if evidence is None:
+                raise ConfigurationActivationConflict(
+                    "a current read-only Storage check for "
+                    f"{storage_id!r} is required before checked activation",
+                    revision_id=revision.revision_id,
+                    next_action=(
+                        f"run the read-only Storage check for {storage_id!r} on this "
+                        "revision, then activate checked"
+                    ),
+                )
+            if (
+                evidence.revision_version != revision.version
+                or evidence.revision_digest != revision.digest
+            ):
+                raise ConfigurationActivationConflict(
+                    f"the read-only Storage check for {storage_id!r} is stale; "
+                    "rerun it before checked activation",
+                    revision_id=revision.revision_id,
+                    next_action=(
+                        f"reload this revision and rerun the read-only Storage check "
+                        f"for {storage_id!r} on its current version and digest"
+                    ),
+                )
+            if evidence.status is not ConfigurationStorageCheckStatus.PASSED:
+                category = self._bounded_utf8(evidence.failure_category or "unknown", 128)
+                raise ConfigurationActivationConflict(
+                    f"the read-only Storage check for {storage_id!r} failed with "
+                    f"category {category}",
+                    revision_id=revision.revision_id,
+                    next_action=(
+                        evidence.next_action
+                        or (
+                            f"correct Storage {storage_id!r}, rerun its read-only check, "
+                            "then activate checked"
+                        )
+                    ),
+                )
 
     def require_current_strategy_test(self, revision: ManagedConfigurationRevision) -> None:
         evidence = self._repository.get_recognition_strategy_test(revision.revision_id)
@@ -4959,24 +5040,18 @@ class ConfigurationObjectService:
             )
 
     def require_current_destination_precheck(self, revision: ManagedConfigurationRevision) -> None:
-        storages = {
-            str(value.get("id")): str(value.get("type", "")).lower()
-            for value in self._canonical_objects(revision.document, "storages")
-        }
-        applicable = any(
-            storages.get(str(library.get("storageId"))) == "local"
-            for library in (
-                self._canonical_objects(revision.document, "mediaLibraries")
-                if "mediaLibraries" in revision.document
-                else []
-            )
+        media_libraries = (
+            self._canonical_objects(revision.document, "mediaLibraries")
+            if "mediaLibraries" in revision.document
+            else []
         )
+        applicable = bool(media_libraries)
         if not applicable:
             return
         evidence = self._repository.get_destination_precheck(revision.revision_id)
         if evidence is None:
             raise ConfigurationActivationConflict(
-                "a current Local destination precheck is required before checked activation",
+                "a current read-only destination precheck is required before checked activation",
                 revision_id=revision.revision_id,
                 next_action=(
                     "run the read-only destination precheck on this revision, then activate checked"
@@ -4987,17 +5062,17 @@ class ConfigurationObjectService:
             or evidence.revision_digest != revision.digest
         ):
             raise ConfigurationActivationConflict(
-                "Local destination precheck is stale; rerun it before checked activation",
+                "Destination precheck is stale; rerun it before checked activation",
                 revision_id=revision.revision_id,
                 next_action=(
-                    "reload this revision and rerun the destination precheck on its current "
-                    "version and digest"
+                    "reload this revision and rerun the destination precheck on its "
+                    "current version and digest"
                 ),
             )
         if evidence.status is not ConfigurationDestinationPrecheckStatus.COMPLETED:
             category = self._bounded_utf8(evidence.failure_category or "unavailable", 128)
             raise ConfigurationActivationConflict(
-                f"Local destination precheck failed with category {category}",
+                f"Destination precheck failed with category {category}",
                 revision_id=revision.revision_id,
                 next_action=(
                     evidence.next_action
@@ -5007,7 +5082,7 @@ class ConfigurationObjectService:
         result = evidence.result or {}
         if result.get("verdict") == "capability_gap":
             raise ConfigurationActivationConflict(
-                "Local destination precheck completed with a capability_gap verdict",
+                "Destination precheck completed with a capability_gap verdict",
                 revision_id=revision.revision_id,
                 next_action=(
                     "change the configured operation or destination Storage, "

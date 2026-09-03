@@ -125,8 +125,12 @@ available while workflow configuration is unavailable.
 
 Managed Configuration persists whole-document Draft, Validated, Active and Superseded revisions.
 Object edits, references, evidence and audits are revision-bound. Activation is an atomic pointer
-change only after validation and any checked-evidence requirements pass. The previous Active remains
-available when replacement fails.
+change only after validation and any checked-evidence requirements pass. Checked activation is
+provider-neutral: every enabled Storage referenced by a ResourceLibrary or MediaLibrary needs a
+current, passed, read-only per-Storage check; the Recognition Strategy Test and one read-only
+destination precheck for the MediaLibrary destination must be current for every Storage kind. The
+earlier Local-only setup check remains available as a Local diagnostic but is no longer the
+activation authority. The previous Active remains available when replacement fails.
 
 After activation, `ManagedConfigurationService` verifies the digest/schema/runtime load and builds an
 immutable runtime binding containing revision ID, version and digest. API requests, Workers, Jobs and
