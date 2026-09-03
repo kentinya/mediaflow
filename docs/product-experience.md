@@ -36,8 +36,11 @@ All journeys share these rules:
 The authenticated Configuration view and API expose whole-document Draft import/edit, validation,
 revision detail and explicit activation. The current managed object journey also exposes guided
 Local Storage, ResourceLibrary, MediaLibrary and policy-graph editing, exact-revision previews and
-reference protection. The compatibility JSON bootstrap remains the current first-instance entry
-path.
+reference protection. The top-level Web entry is still framed around staging a whole-document JSON
+Draft, guided controls appear only after opening a revision, several policy editors remain bounded
+JSON-object editors, and the existing Active-to-Draft action is labelled as importing current JSON
+rather than editing by creating a new Draft. The compatibility JSON bootstrap remains the current
+first-instance entry path.
 
 The visible states are:
 
@@ -124,10 +127,20 @@ bootstrap-to-first-runtime flow for remote Storage or a Storage Browser/path pic
 - **Recovery:** correct the named policy or reference and rerun the exact-revision preview/check.
   Unsupported operations never silently fall back to another operation.
 
-## Files and Media
+## FileIndex and Media
+
+### Current
+
+The navigation label is **Files**, but the implementation is a File Catalog over durable FileIndex
+records. Only files discovered by a ResourceLibrary scan appear. The page does not list a configured
+Storage directly, and its `scanStatus` describes discovery/stability rather than whether the current
+source occurrence was organized, skipped, blocked or failed. Detail can join prior TaskItems,
+Results, reviews and checkpoints by Storage/path, but there is no unified processing-disposition
+projection for the current indexed source identity.
 
 - **Goal:** determine what MediaFlow knows about a file and what safe action is available next.
-- **Entry:** Files view, Dashboard, Task/Job, review, notification or history link.
+- **Entry:** the current Files/File Catalog view (renamed to FileIndex in Slice 27), Dashboard,
+  Task/Job, review, notification or history link.
 - **Visible state:** bounded FileIndex fields, source/library identity, scan and stability state,
   parser/recognition/metadata evidence, policies, target, latest Results, related reviews/conflicts,
   checkpoint and available actions.
@@ -155,6 +168,29 @@ bootstrap-to-first-runtime flow for remote Storage or a Storage Browser/path pic
 - **Recovery:** inspect the checkpoint/effects and use the explicitly offered safe recovery or
   reconciliation action. Known successful siblings remain terminal; uncertain mutation is never
   automatically replayed.
+
+## Manual operations and file lifecycle
+
+### Slice 27 target
+
+- **Goal:** start from a real configured Storage or from MediaFlow's indexed processing view and
+  safely complete a file- or ResourceLibrary-scoped manual operation.
+- **Entry:** **Files** for bounded real-Storage browsing, **FileIndex** for indexed discovery and
+  processing state, or a ResourceLibrary manual-action entry.
+- **Visible state:** Storage-relative directory contents, whether an entry is indexed, orthogonal
+  scan/discovery state and processing disposition, current source occurrence/fingerprint, prior
+  result relevance, worker readiness, Preview findings and any real execution blocker.
+- **Action:** choose bounded **Scan**, **Preview** or **Organize**; Preview records only inspectable
+  findings, while Organize requires the correct one-shot manual authority. Explicit Reprocess is
+  available when a current source occurrence is otherwise protected from accidental duplicate work.
+- **Success:** Preview performs zero mutation and creates no mandatory review backlog; Organize
+  records an independent result/disposition for every selected item.
+- **Failure:** an actual Organize item may enter Attention/Conflict/Review/Recovery with known
+  effects and retry safety. A queued request with no live processing Worker is reported as such
+  rather than remaining inexplicably Pending.
+- **Recovery:** save the operator decision without executing it, re-analyze the exact item, obtain
+  explicit continuation authority, and continue the original Organize journey without replaying
+  successful siblings or uncertain mutation.
 
 ## Per-item failure and recovery
 
@@ -200,14 +236,17 @@ boundary.
 
 ## Operations administration
 
-### Slice 27 target
+### Slice 28 target
 
 - **Goal:** administer the running installation after first setup.
-- **Entry:** Settings, configuration/result import-export or Notifications.
-- **Visible state:** consumed settings and Active identity, versioned secret-free exports, Webhook
-  definitions/events/readiness, delivery state, leases, dead letters and recovery actions.
-- **Action:** edit and activate settings, export/import a Draft, create/edit/enable/disable a
-  Webhook, run its explicit read-only test, inspect delivery and retry/requeue safely.
+- **Entry:** Configuration, Settings, configuration/result import-export or Notifications.
+- **Visible state:** the immutable Active and its editable successor Draft, discoverable object
+  lifecycle/reference impact, forms-first editors with Advanced JSON, consumed settings and Active
+  identity, versioned secret-free exports, Webhook definitions/events/readiness, delivery state,
+  leases, dead letters and recovery actions.
+- **Action:** create a Draft from Active, manage configuration objects consistently, edit and
+  activate settings, export/import a Draft, create/edit/enable/disable a Webhook, run its explicit
+  read-only test, inspect delivery and retry/requeue safely.
 - **Success:** day-2 operational behavior is managed through Web/API with durable audit and no
   secret leakage.
 - **Failure:** invalid setting, secret reference, delivery or stale import is isolated and does not
@@ -217,7 +256,7 @@ boundary.
 
 ## Docker self-hosted operation
 
-### Slice 28 target
+### Slice 29 target
 
 - **Goal:** deploy and operate MediaFlow as a durable production self-hosted service.
 - **Entry:** prepare deployment-owned secrets and explicit media mounts, then run Docker Compose.
@@ -233,7 +272,7 @@ boundary.
 
 ## V1 and post-V1 boundary
 
-Current V1 work is ordered as Slice 26, Slice 27, then Slice 28. Provider switching and additional
-production Providers, built-in username/password or OIDC identity, a general Secret Store, automatic
-uncertain-mutation replay, historical rollback and specialized email/chat/media-server notifications
-remain V1.x/V2 or deployment-specific work.
+Current V1 work is ordered as Slice 26, Slice 27, Slice 28, then Slice 29. Provider switching and
+additional production Providers, built-in username/password or OIDC identity, a general Secret
+Store, automatic uncertain-mutation replay, historical rollback and specialized email/chat/media-
+server notifications remain V1.x/V2 or deployment-specific work.

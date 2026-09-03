@@ -134,10 +134,20 @@ Web Required Outcome.
 
 ## Explicitly Deferred
 
-- System Settings guided administration, configuration/result export and Webhook management/recovery
-  belong to planned Slice 27.
+- The current Files/File Catalog rename and redesign, a real Storage-backed Files entry point,
+  processing disposition/source-occurrence identity, duplicate-organize admission and explicit
+  Reprocess, repository-level manual Scan/Preview/Organize, Preview-finding versus execution-blocker
+  separation, conflict/review-to-recovery continuation, processing-Worker readiness and Attention
+  navigation convergence belong to planned Slice 27. Slice 26's provider-neutral Storage Browser
+  may supply reusable application/UI primitives, but its only accepted journey here is setup and
+  bounded path selection.
+- Complete day-2 configuration IA beyond the first-setup journey—including the natural
+  Active-to-new-Draft edit flow, consistent object lifecycle discoverability and forms-first versus
+  Advanced JSON placement—plus System Settings, configuration/result export and Webhook
+  management/recovery belong to planned Slice 28. Slice 26 still owns every first-Draft and Storage
+  form/action needed by its Required Outcomes.
 - Dockerfile, Compose, production WSGI serving, `/data` packaging, container UID/GID, container
-  healthchecks, restart and image-upgrade E2E belong to planned Slice 28.
+  healthchecks, restart and image-upgrade E2E belong to planned Slice 29.
 - Metadata Provider switching, additional production Metadata Providers and arbitrary Provider
   plugins are post-V1. V1 keeps the current Provider abstraction and TMDB production integration.
 - Built-in username/password storage, cookie sessions, OIDC and reverse-proxy identity are post-V1.
@@ -160,9 +170,12 @@ Web Required Outcome.
 - Base `3c660d5a1512b5b221b0284bcff9ae6dd00bbf23` and its runtime schema 31/configuration
   schema 10 are the starting facts.
 - Existing Storage adapters and managed configuration services remain the implementation foundation.
-- Slice 27 depends on the first-runtime and Storage contracts becoming stable here.
-- Slice 28 depends on both setup and day-2 management product journeys; this Slice must not implement
-  their packaging.
+- Slice 27 depends on the first-runtime, provider-neutral Storage Browser and Storage-relative path
+  contracts becoming stable here.
+- Slice 28 depends on the first-runtime and managed-configuration authority becoming stable here;
+  it does not expand this Slice's first-setup outcome.
+- Slice 29 depends on the complete setup, manual-operations/file-lifecycle and day-2 administration
+  journeys; this Slice must not implement their packaging.
 
 ## Acceptance Criteria
 
@@ -213,8 +226,10 @@ instance can become a tested, immutable Active MediaFlow runtime through Web, in
 Storage kind and safe path selection. It is not a database/API/frontend decomposition.
 
 It does not implement later Slices early. Day-2 settings/export/notification administration has a
-different user goal and recovery lifecycle, while Docker production release must integrate already
-stable setup and administration semantics rather than defining them during packaging.
+different user goal and recovery lifecycle. Manual operations/file lifecycle must later reuse this
+Slice's Storage Browser without changing its setup acceptance, while Docker production release must
+integrate already stable setup, daily-operation and administration semantics rather than defining
+them during packaging.
 
 ## Review State
 

@@ -61,8 +61,9 @@
 
 ## V1 final scope decisions
 
-The 2026-09-02 A architecture audit resolves two earlier ambiguities without weakening the safety or
-core media-processing requirements:
+The 2026-09-03 A architecture/roadmap reconciliation retains the 2026-09-02 scope decisions below
+and adds the missing manual-operations/file-lifecycle capability without weakening safety or the
+closed processing foundations:
 
 - V1 retains the `MetadataProvider` abstraction and the current TMDB production Provider. Provider
   switching, additional production Providers and arbitrary Provider plugins move to V1.x/post-V1;
@@ -78,8 +79,8 @@ core media-processing requirements:
 - Environment-variable references plus deployment-owned secret injection are the V1 secret boundary.
   Full Secret Store and Docker Secrets-specific ingestion are post-V1 unless separately approved.
 
-These decisions are represented by the active Slice 26 and the planned Slices 27 and 28; they do not
-create implementation Tasks.
+These decisions are represented by the active Slice 26 and the planned Slices 27, 28 and 29; they do
+not create implementation Tasks.
 
 ## General product requirements
 
@@ -132,6 +133,7 @@ the Chinese specification; Product Experience supplies the journey-level interpr
 | REQ-SCAN-003 | REQUIRED | Stability checks exclude actively downloaded, copied or written files using configurable age, modification and stable-size rules. | §文件稳定性检测 | An unstable file cannot enter organization until it satisfies policy. |
 | REQ-SCAN-004 | REQUIRED | Scanned files have a durable index and stable identity with New, Modified, Unchanged and Missing reconciliation. | §数据索引; §增量扫描; §文件状态 | Incremental scans reprocess only appropriate files and do not fabricate deletion from an incomplete scan. |
 | REQ-SCAN-005 | REQUIRED | Scan concurrency, cancellation and per-library isolation are bounded. | Engineering derivation from §并发控制 and §任务操作 | Cancelling or failing one scope preserves already durable observations and does not mutate media. |
+| REQ-SCAN-006 | REQUIRED | Scan/discovery state and media-processing disposition are orthogonal, and a current source occurrence can be distinguished from a different file later appearing at the same Storage/path. | §数据索引; §文件状态; §整理结果记录; Engineering derivation from §增量扫描 | COPY or Skip may leave a READY source with an organized/skipped disposition; MOVE may make it Missing. Prior results do not permanently suppress a new file at the same path, and explicit Reprocess remains possible. |
 
 ## Parser requirements
 
@@ -202,6 +204,7 @@ the Chinese specification; Product Experience supplies the journey-level interpr
 | REQ-ORG-008 | REQUIRED | Only OrganizerExecutor may perform Storage mutation and it executes only an explicitly authorized valid plan. | §安全预览; §最终核心原则 | All analysis stages and DryRun remain zero-mutation; execution effects are recorded. |
 | REQ-ORG-009 | REQUIRED | Unsupported HardLink/SoftLink or transfer behavior fails unless a user-configured fallback explicitly permits another operation. | §HardLink / SoftLink; §高风险文件操作保护 | No silent fallback to Copy or Move is possible. |
 | REQ-ORG-010 | REQUIRED | Optional source-directory cleanup is bounded, never removes unknown files and is disabled by default. | §空目录处理; §高风险文件操作保护 | Cleanup occurs only after verified eligible organization and cannot escape the source library boundary. |
+| REQ-ORG-011 | REQUIRED | Preview/DryRun records inspectable findings and plans but does not create a mandatory execution-blocker backlog; formal Conflict/Review/Recovery state is created only by an explicit Organize attempt. | §安全预览; §Dry Run 整理预演; Engineering derivation from §任务状态 | Preview answers what would happen with zero mutation and no execution authority. Historical Preview-created blockers remain auditable, but new Preview behavior does not require the user to resolve them. |
 
 ## Attachment requirements
 
@@ -223,6 +226,7 @@ the Chinese specification; Product Experience supplies the journey-level interpr
 | REQ-TASK-006 | REQUIRED | Each item stores its plan and per-operation pending/running/success/failed/skipped state. | §整理操作记录; §操作状态 | Recovery can distinguish completed, failed and not-started effects. |
 | REQ-TASK-007 | REQUIRED | Queue admission and work ownership are atomic and bounded; stale ownership cannot overwrite a newer worker's result. | Engineering derivation from §任务系统, §并发控制 and §定时任务 | Capacity or worker races do not duplicate work, consume authority incorrectly or corrupt durable state. |
 | REQ-TASK-008 | REQUIRED | A long-lived Automation Task Definition, each Scheduler-emitted Automation Job, the actual Task/TaskItems and their Results are distinct but traceable objects. | §自动化对象与生命周期边界 | The definition stores reusable intent, a Job represents one occurrence, existing Task/TaskItem semantics track actual work, and Result/Log records per-item outcome without creating a parallel execution model. |
+| REQ-TASK-009 | REQUIRED | Queued work exposes bounded processing-Worker liveness/readiness evidence independently from API process health, and the API never supervises or silently starts Worker subprocesses. | §任务系统; §系统设置; Engineering derivation from §可操作错误与恢复 | A long-Pending Job explains whether a Worker is currently available; production process supervision remains a deployment responsibility. |
 | REQ-RECOVERY-001 | REQUIRED | Errors use stable categories for Storage, file, parse, recognition, metadata, naming, classification, transfer, timeout and unknown failures. | §错误体系 | UI/API can render recovery without parsing exception text. |
 | REQ-RECOVERY-002 | REQUIRED | Error evidence contains code/message, Task and item context, source/Storage, stage, time, retryability and bounded debug detail. | §错误记录; §可操作错误与恢复 | Evidence is actionable and secret-free. |
 | REQ-RECOVERY-003 | REQUIRED | Temporary network/provider/storage errors may use bounded retry with configurable maximum, delay and backoff; permanent configuration errors do not retry indefinitely. | §自动重试 | Automatic retry never replays uncertain media mutation. |
@@ -231,6 +235,7 @@ the Chinese specification; Product Experience supplies the journey-level interpr
 | REQ-RECOVERY-006 | REQUIRED | Per-item checkpoints record the last durable stage, completed/verified/uncertain effects, blocking decision, retry safety and permitted actions. | Engineering derivation from §操作状态, §可操作错误与恢复 and §任务操作 | Successful siblings are not replayed and uncertain execution is investigated instead of automatically repeated. |
 | REQ-RECOVERY-007 | REQUIRED | Manual organization lets a user select permitted type/identity/policies, regenerate Preview, resolve conflicts and explicitly authorize the exact reviewed plan. | §人工整理; §策略测试工具 | Arbitrary unsafe target paths or hidden execution are rejected. |
 | REQ-RECOVERY-008 | REQUIRED | Bounded batch operations include rescan, recognition, type assignment, metadata, DryRun, organization, retry and ignore while preserving item independence. | §批量操作; §可操作错误与恢复 | One batch action cannot overwrite another item's decision or conceal its recovery. |
+| REQ-RECOVERY-009 | REQUIRED | A saved Conflict/Review decision is non-executing and leads through re-analysis plus explicit continuation authorization back to the blocked Organize item. | §冲突策略; §任务操作; §可操作错误与恢复 | Destructive decisions do not execute on save, successful siblings remain terminal, and uncertain mutation is never replayed automatically. |
 
 ## Scheduler and automation requirements
 
@@ -277,6 +282,7 @@ the Chinese specification; Product Experience supplies the journey-level interpr
 | REQ-CONFIG-009 | REQUIRED | Validation and policy tests are zero-mutation; connectivity/read/write tests use the least authority necessary and clearly state their effects. | §策略测试工具; §存储配置; §安全预览 | A test cannot silently scan, organize or grant execution authority. |
 | REQ-CONFIG-010 | REQUIRED | Credentials are stored encrypted or resolved through an approved external secret source and never returned in normal configuration payloads. | §TMDB 配置; §安全要求; §配置导入导出 | Copy, diff, export, audit and error paths remain secret-free. |
 | REQ-CONFIG-011 | REQUIRED | System settings cover database/work/cache/log/export locations, default locale/timezone/log level and retention, concurrency and retry policy. | §系统设置 | Values are validated, permission-aware and consumed from the same configuration authority. |
+| REQ-CONFIG-012 | REQUIRED | The primary Web configuration journey uses discoverable typed forms/cards; editing Active explicitly creates a successor Draft, while whole-document JSON is an Advanced/import/export/support surface. | §配置生命周期; §配置操作; §配置导入导出; §最终管理界面 | Active remains immutable, ordinary object management does not feel JSON-only, and Advanced JSON cannot silently become runtime authority. |
 
 ## Deployment and self-hosting requirements
 
@@ -303,6 +309,7 @@ the release contract, not a new media-processing engine.
 | REQ-WEB-004 | REQUIRED | Web manages Storage, libraries, the V1 TMDB Provider reference/policy, RecognitionTypes/policies, Automation Task Definitions/schedules, Tasks, manual identity correction and DryRun. | §第一阶段 MVP / UI; §配置管理; §自动化对象与生命周期边界 | Each management surface uses the same validation, permission, audit and safety contract as API; arbitrary Provider switching is not a V1 capability. |
 | REQ-WEB-005 | REQUIRED | Task, review, conflict and recovery actions use explicit confirmation and never execute merely by viewing a page. | §任务操作; §人工元数据识别; §冲突策略; §人工整理 | Read paths are side-effect free and write actions show resulting durable state. |
 | REQ-WEB-006 | REQUIRED | System/configuration status is bounded, permission-aware and secret-free, and distinguishes unavailable data from false success. | §Dashboard; §系统设置; §可操作错误与恢复 | Status views do not contact media services or expose paths/options beyond the user's authority. |
+| REQ-WEB-007 | REQUIRED | **Files** browses bounded real directories/files from configured Storage, while **FileIndex** presents MediaFlow discovery, processing disposition, history and available actions. | §存储管理; §数据索引; §文件列表; §媒体详情 | Users do not mistake the scan index for a file manager, and both surfaces use Storage-relative identities without arbitrary host access. |
 | REQ-API-001 | REQUIRED | Core Storage, libraries, metadata, recognition, policies, files/media, Tasks, logs and settings capabilities have versioned API surfaces. | §API 设计要求 | Web, CLI and automation can invoke shared application use cases. |
 | REQ-API-002 | REQUIRED | API validation, concurrency, permissions, state transitions, errors, audit and safety are identical to Web behavior. | §最终管理界面; §API 设计要求 | No alternate endpoint bypasses configuration, conflict or execution gates. |
 | REQ-API-003 | REQUIRED | Collections and evidence are bounded and deterministically ordered; errors have stable safe categories. | Engineering derivation from §搜索与筛选, §错误记录 and §安全要求 | Large histories cannot create unbounded responses or secret-bearing raw exceptions. |
