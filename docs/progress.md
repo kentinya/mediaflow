@@ -8,6 +8,25 @@ workflow authority. Closure rules live only in
 
 ## Most Recently Closed Slice
 
+### Slice 26 — Web-first Fresh Setup and Storage Completion
+
+```text
+Status: PASS / CLOSED
+Base: 3c660d5a1512b5b221b0284bcff9ae6dd00bbf23
+Implementation Head: 928b727552a2fbb298e694cb0312e082e4662dda
+A Final Review: PASS / CLOSED — 2026-09-03
+```
+
+Delivered the authenticated management-only fresh-instance journey through first managed Draft,
+guided Local/SMB/OpenList/S3/R2 Storage configuration, deployment-owned secret references,
+read-only Storage checks, bounded Storage Browser/path selection, provider-neutral destination
+precheck and exact-revision checked activation. The immutable Active snapshot remains the runtime
+authority, and failures preserve the Draft and prior Active without media work.
+
+Slice 27 manual operations/file lifecycle, Slice 28 day-2 configuration and operations
+administration, Slice 29 Docker production release, Provider switching, built-in identity, full
+Secret Store integration and mutation-based Storage probes remain deferred as documented.
+
 ### Slice 25 — Scheduled Automation and Unattended Organization
 
 ```text
@@ -82,6 +101,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 | 23 — Stage-aware per-item recovery | PASS / CLOSED | `b3083c417849e744b1b9c4629ce9ef312dd194ff` | `26c0450054e4b3d65d6fbf3641d61e022e9561fd` | A Final Review PASS — 2026-08-30 | Durable checkpoints, exact-version admission and independent DryRun single/batch continuation | Manual organization, Provider switching, uncertain/crash replay and unattended execution |
 | 24 — Files / Media detail and manual organize | PASS / CLOSED | `4ff5479d9f4a81906ee52a9f784931b65cd9ab90` | `d2e399803078317f2092d895eae627327998de2f` | A Final Review PASS — 2026-09-01 | Bounded detail/history, exact manual Preview and execution, per-item results and recovery across API/Web | Provider switching, unattended real organization, automatic uncertain/crash replay, universal rollback and remote setup/probing |
 | 25 — Scheduled automation and unattended organization | PASS / CLOSED | `2cee7cc756b90618f14d5d7b112f974fb445a580` | `d4da92879b99f1c44ddd717fba1a26e4b0a73493` | A Final Review PASS / CLOSED — 2026-09-02 | Managed Automation Task Definition, exact Preview, scheduled occurrences, persistent unattended authority, existing-pipeline execution and per-item recovery | Provider switching, remote guided setup/prechecks, scheduled cache/log cleanup, uncertain-effect replay, universal compensation and historical rollback |
+| 26 — Web-first fresh setup and Storage completion | PASS / CLOSED | `3c660d5a1512b5b221b0284bcff9ae6dd00bbf23` | `928b727552a2fbb298e694cb0312e082e4662dda` | A Final Review PASS / CLOSED — 2026-09-03 | Management-only fresh bootstrap, first managed Draft, all V1 Storage forms/tests, bounded Storage Browser/path selection and immutable checked activation | Slice 27 manual operations/file lifecycle, Slice 28 day-2 administration, Slice 29 Docker release, Provider switching, built-in identity, full Secret Store and mutation-based probes |
 
 Earlier completed delivery and every historical Task/Fix/test/review record remain available in Git
 and the legacy archive. They are intentionally not duplicated here or translated into new Slices.

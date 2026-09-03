@@ -39,8 +39,9 @@ Local Storage, ResourceLibrary, MediaLibrary and policy-graph editing, exact-rev
 reference protection. The top-level Web entry is still framed around staging a whole-document JSON
 Draft, guided controls appear only after opening a revision, several policy editors remain bounded
 JSON-object editors, and the existing Active-to-Draft action is labelled as importing current JSON
-rather than editing by creating a new Draft. The compatibility JSON bootstrap remains the current
-first-instance entry path.
+rather than editing by creating a new Draft. The minimal management-only bootstrap is the current
+fresh-instance entry path. The compatibility JSON bootstrap remains supported for legacy, migration
+and compatibility operation.
 
 The visible states are:
 
@@ -71,12 +72,13 @@ Active revision leaves recovery/status routes available and does not start media
 
 ### Current boundary
 
-A fresh instance currently starts from a compatibility JSON document containing the complete runtime
-catalog and database/API bootstrap values. Managed configuration can then be used through the
-authenticated Web/API, including guided Storage and library setup. A Draft or Validated revision can
-open the setup-only Storage Browser, which lists bounded immediate children and selects only
-Storage-relative directories; this is not the File Catalog and never becomes a general host
-filesystem browser.
+A fresh instance currently starts from a minimal management-only bootstrap containing the database
+locator and environment-owned API-principal references, with no workflow defaults or Active runtime.
+An authenticated operator can create the first managed Draft through Web/API, including guided
+Storage and library setup. The compatibility JSON bootstrap remains available for legacy, migration
+and compatibility operation. A Draft or Validated revision can open the setup-only Storage Browser,
+which lists bounded immediate children and selects only Storage-relative directories; this is not the
+File Catalog and never becomes a general host filesystem browser.
 
 For Local Storage, `rootPath` is an absolute path visible inside the MediaFlow execution
 environment. A self-hosted Docker deployment must bind-mount the directory explicitly with the
@@ -85,7 +87,7 @@ host paths, host `/`, the Docker socket and arbitrary host filesystem access are
 missing or permission-denied root remains a bounded setup failure after reload with a recovery
 action to correct the deployment mount/ownership or Draft path and retry.
 
-### Slice 26 target
+### Slice 26 delivered
 
 - **Goal:** turn a minimal fresh instance into a tested, immutable first runtime without hand-editing
   SQLite or a complete runtime JSON document.
@@ -288,7 +290,7 @@ boundary.
 
 ## V1 and post-V1 boundary
 
-Current V1 work is ordered as Slice 26, Slice 27, Slice 28, then Slice 29. Provider switching and
+Slice 26 is PASS / CLOSED. Remaining V1 work is ordered as Slice 27, Slice 28, then Slice 29. Provider switching and
 additional production Providers, built-in username/password or OIDC identity, a general Secret
 Store, automatic uncertain-mutation replay, historical rollback and specialized email/chat/media-
 server notifications remain V1.x/V2 or deployment-specific work.

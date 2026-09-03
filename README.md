@@ -43,19 +43,20 @@ export MEDIAFLOW_WEBHOOK_SECRET="<independent-random-webhook-secret>"
 
 ## V1 self-hosted release status
 
-Slice 25 is closed. The final V1 roadmap is now:
+Slice 26 is closed. The remaining V1 roadmap is now:
 
 ```text
-Slice 26 — Web-first fresh setup and Storage completion
 Slice 27 — Manual operations and file lifecycle
 Slice 28 — Web-first configuration and operations administration
 Slice 29 — Docker production self-hosted release
 ```
 
 The repository currently provides the Python/CLI development and trusted-loopback WSGI boundary;
-it does not yet ship a Dockerfile, Compose topology or production WSGI server. A fresh instance still
-uses the compatibility JSON bootstrap until Slice 26 provides management-only startup and a guided
-first Draft. Do not describe the current `wsgiref.simple_server` listener as production serving.
+it does not yet ship a Dockerfile, Compose topology or production WSGI server. A fresh instance can
+start from the minimal management-only bootstrap and create its first managed Draft through the
+authenticated Web/API. The compatibility JSON bootstrap remains available for legacy, migration and
+compatibility operation. Do not describe the current `wsgiref.simple_server` listener as production
+serving.
 
 The supported V1 identity boundary is an environment-owned API-principal Bearer token with RBAC.
 This is not a built-in username/password login or OIDC integration. V1 Metadata remains TMDB-backed
@@ -193,20 +194,22 @@ secret-free recovery evidence in API/Web detail.
 
 The Configuration tab in the authenticated Operator UI exposes status, whole-document import/edit,
 validation, diff, activation, and replacement recovery actions through the bootstrap database
-locator. Guided Draft editing currently covers Local Storage, ResourceLibrary, MediaLibrary,
+locator. Guided Draft editing currently covers Local, SMB, OpenList, AWS S3, Cloudflare R2 and generic
+S3-compatible Storage, ResourceLibrary, MediaLibrary,
 RecognitionType, RecognitionRule, RecognitionTypePolicy, MetadataPolicy, NamingPolicy,
 ClassificationPolicy, and OrganizePolicy. It shows direct reference impact, blocks referenced
 deletion, keeps remote Storage summaries redacted/read-only, and provides exact-revision Local setup,
-recognition, metadata, naming, classification, organize-authority, destination-preview, and Local
-destination-precheck actions where applicable. Checked activation consumes current evidence for the
-exact revision and atomically publishes an immutable runtime snapshot; queued and in-flight work
-retains its pinned revision identity even after a later activation.
+recognition, metadata, naming, classification, organize-authority, destination-preview, Storage
+Browser/path selection, per-Storage read-only checks and provider-neutral destination-precheck actions.
+Checked activation consumes current evidence for the exact revision and atomically publishes an
+immutable runtime snapshot; queued and in-flight work retains its pinned revision identity even after
+a later activation.
 
 Configuration validation, preview, precheck, and activation grant no media execution authority and
 perform no media mutation. Real execution uses a separate explicit authority boundary, and only
-`OrganizerExecutor` may invoke mutating Storage operations. Remote guided Storage setup and the
-Storage Browser are the active Slice 26 gap; guided remote destination precheck remains a later
-boundary. Provider switching is explicitly V1.x/post-V1. The bounded Files/Media manual-organize
+`OrganizerExecutor` may invoke mutating Storage operations. Storage setup checks, Storage Browser and
+destination precheck remain read-only setup evidence and do not grant execution authority. Provider
+switching is explicitly V1.x/post-V1. The bounded Files/Media manual-organize
 journey and scheduled unattended organization are current capabilities under their separate explicit
 authority boundaries.
 
@@ -545,7 +548,8 @@ operation history remains compatible.
 
 ## Current capabilities
 
-The managed Configuration view/API supports Local guided setup, Recognition Strategy Test,
+The managed Configuration view/API supports guided Local/SMB/OpenList/AWS S3/Cloudflare R2/generic
+S3-compatible Storage setup, Storage Browser/path selection, read-only Storage checks, Recognition Strategy Test,
 MetadataPolicy offline/live tests and candidate confirmation, plus same-Provider Metadata correction
 testing against the exact current revision. A correction can use a bounded query/year/Movie-TV input
 or a direct Provider ID and returns persisted, secret-free identity, candidate, failure, and recovery
@@ -558,9 +562,8 @@ production Providers are explicitly V1.x/post-V1, not current V1 release work.
 
 For the current non-container Local guided setup, Storage `rootPath` is host-absolute while ResourceLibrary `storagePath` and
 MediaLibrary `rootPath` are Storage-relative. The Web action never creates roots or calls a Storage
-mutation. The raw JSON editor remains the explicitly labelled compatibility path for remote Storage
-definitions and configuration families without guided forms until Slice 26 completes the Web-first
-setup journey. In the final Docker contract, Local `rootPath` is an absolute path visible inside the
+mutation. The raw JSON editor remains the explicitly labelled compatibility path for configuration
+families without guided forms. In the final Docker contract, Local `rootPath` is an absolute path visible inside the
 container, not an arbitrary host path.
 
 The authenticated operator console now includes a read-only **System** tab. It is backed by a
@@ -574,8 +577,9 @@ consumption and editing remain Slice 28 work.
 The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries,
 persistent scan/preview jobs, Cron schedules, and the signed Webhook delivery engine are complete.
 Webhook definition configuration/test and delivery recovery in Web/API remain a Slice 28
-product-completion journey; the existing delivery engine is not being reimplemented. A Storage
-Browser/path picker and guided remote Storage setup remain Slice 26 work.
+product-completion journey; the existing delivery engine is not being reimplemented. The current
+Files tab remains an indexed File Catalog, while the Slice 26 Storage Browser/path picker remains a
+setup surface until Slice 27 reuses it for real Storage-backed Files.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
 Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
 The authenticated Operator UI exposes the operational Dashboard, Files, managed Configuration,
@@ -588,8 +592,9 @@ manual and Automation Definition Previews are analysis-only. Slice 27 will recon
 Files, FileIndex processing disposition, manual Scan/Preview/Organize, conflict continuation and
 processing-Worker readiness without widening execution authority.
 Database-managed users/login, OIDC, automatic secret rotation, Provider switching, and broader
-recovery beyond the delivered checkpoint journeys are not V1 capabilities. Remaining remote Storage
-setup, first-instance bootstrap and Storage Browser work belongs to Slice 26.
+recovery beyond the delivered checkpoint journeys are not V1 capabilities. Slice 27 owns the next
+manual operations and file-lifecycle journey; Slice 28 owns day-2 configuration and operations
+administration.
 
 The Automation view also manages the bounded scheduled unattended journey: operators can define a
 ResourceLibrary scope and schedule, validate and Preview the exact definition, explicitly grant or

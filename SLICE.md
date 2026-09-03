@@ -6,9 +6,9 @@ rules are defined only in [`docs/development-workflow.md`](docs/development-work
 ```text
 Slice ID: 26
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: PASS / CLOSED
 Base SHA: 3c660d5a1512b5b221b0284bcff9ae6dd00bbf23
-Implementation Head: NOT SET
+Implementation Head: 928b727552a2fbb298e694cb0312e082e4662dda
 ```
 
 The Base is the Slice 25 closure documentation commit and repository HEAD inspected by A when this
@@ -231,11 +231,97 @@ Slice's Storage Browser without changing its setup acceptance, while Docker prod
 integrate already stable setup, daily-operation and administration semantics rather than defining
 them during packaging.
 
+## Closure Packet
+
+```text
+Slice: 26 — Web-first Fresh Setup and Storage Completion
+Base SHA: 3c660d5a1512b5b221b0284bcff9ae6dd00bbf23
+Head SHA: 928b727552a2fbb298e694cb0312e082e4662dda
+
+Required Outcomes:
+- RO-1 COMPLETE — management-only fresh bootstrap and runtime-not-configured state.
+- RO-2 COMPLETE — Web/API first managed Draft creation and guided runtime object graph.
+- RO-3 COMPLETE — Local, SMB, OpenList, AWS S3, Cloudflare R2 and generic S3 lifecycle with secret references.
+- RO-4 COMPLETE — bounded read-only Storage checks, capabilities, evidence, failure and recovery.
+- RO-5 COMPLETE — authenticated bounded Storage Browser with confinement and pagination.
+- RO-6 COMPLETE — Storage-relative ResourceLibrary/MediaLibrary path selection and Local execution-environment semantics.
+- RO-7 COMPLETE — exact-revision evidence, provider-neutral precheck and fail-closed checked activation.
+- RO-8 COMPLETE — API/Web application, RBAC, validation, concurrency, evidence, audit and recovery parity.
+
+Required Surfaces:
+- Operator Web COMPLETE.
+- API COMPLETE.
+- Application COMPLETE.
+- Infrastructure COMPLETE within the existing Storage adapters and abstraction.
+- Persistence COMPLETE using the managed revision/evidence authority.
+- Documentation/tests COMPLETE for the Slice acceptance and unavailable external services.
+
+Implemented:
+- Minimal authenticated management bootstrap and first managed Draft journey.
+- Guided provider-neutral Storage lifecycle and deployment-owned secret readiness.
+- Read-only Storage setup checks and bounded capability evidence.
+- Bounded Storage Browser and Storage-relative library path selection.
+- Provider-neutral destination precheck and exact-revision checked activation with prior Active preservation.
+- API/Web evidence, blocker, redaction, RBAC and recovery parity.
+
+Tasks completed:
+- Task 26.1 — Management-only Bootstrap and First Draft Entry.
+- Task 26.2 — Guided Storage Lifecycle and Secret Reference Management.
+- Task 26.3 — Read-only Storage Checks and Capability Evidence.
+- Task 26.4 — Storage Browser and Bounded Path Selection.
+- Task 26.5 — Provider-neutral Checked Activation for the First Runtime.
+
+Final Tests:
+- Focused Slice/Task regression: 259 tests, OK.
+- Full offline regression in a clean detached worktree at Head: 1161 tests, OK, 7 skipped.
+- Ruff format check: PASS; Ruff lint: PASS.
+- Compileall: PASS; pip check: PASS.
+- Both canonical configuration validations: PASS.
+- Forbidden FFprobe/FFmpeg scan: PASS.
+- Markdown local-link check: PASS.
+- `git diff --check`: PASS.
+- Isolated wheel build and installed-wheel smoke: PASS, including backup, restore, migration rehearsal, verification and upgrade preflight.
+- Production SMB, OpenList, AWS S3, Cloudflare R2 and generic S3-compatible services: SKIP / UNAVAILABLE; fakes/local services and temporary Local roots used, with no production credentials or user media.
+
+Safety Evidence:
+- Checked activation requires current passed exact-revision read-only evidence for every enabled referenced Storage, current strategy evidence and destination precheck evidence.
+- Credential readiness is recomputed at activation admission; changed or unset readiness blocks activation with bounded recovery and preserves Draft/prior Active.
+- Setup checks and Storage Browser use read-only guarded Storage operations; no mutation probe or silent fallback.
+- Activation performs no scan, Job, Task, Automation occurrence, Provider request or media mutation.
+- Secret values are redacted from managed documents, persisted evidence and API/Web projections; tracked diff contains no private configuration or real credentials.
+- RecognitionType identity, OrganizerExecutor-only mutation and closed-Slice safety regressions remain green.
+
+Known Non-blocking Issues:
+- Python test runs emit existing `ResourceWarning` messages for unclosed SQLite connections; all required tests pass and no Slice acceptance is blocked.
+- The Task template referenced a nonexistent `tests.test_strategy_test` module; the two actual strategy modules were run instead.
+
+Explicitly Deferred:
+- Preserve the deferrals already recorded in this Contract, including Slice 27 manual operations/file lifecycle, Slice 28 day-2 administration, Slice 29 Docker release, built-in identity, Provider switching, full Secret Store integration and mutation-based Storage probes.
+
+Documentation Reconciliation Needed:
+- A should reconcile the authoritative product/architecture/progress/roadmap documentation with this factual Slice closure, without changing product scope or safety contracts.
+
+Decision: SLICE READY FOR A REVIEW
+```
+
 ## Review State
 
 ```text
-Slice Status: ACTIVE
-Implementation Head: NOT SET
-P0/P1 Defects: NOT YET REVIEWED
-Decision: B MUST PLAN THE FIRST IMPLEMENTATION TASK
+Slice Status: PASS / CLOSED
+Implementation Head: 928b727552a2fbb298e694cb0312e082e4662dda
+P0/P1 Defects: NONE FOUND
+Decision: PASS / CLOSED
+```
+
+## A Final Review
+
+```text
+Reviewed Range: 3c660d5a1512b5b221b0284bcff9ae6dd00bbf23..928b727552a2fbb298e694cb0312e082e4662dda
+Decision: PASS
+P0/P1 Blockers: NONE
+Closure Reconciliation:
+- Slice 26 status and review state are closed at the reviewed implementation head.
+- Roadmap and Progress record Slice 26 as PASS / CLOSED.
+- CURRENT product, architecture, configuration-guide and requirement-baseline statements now record the delivered fresh setup, remote Storage lifecycle, read-only checks, Storage Browser and provider-neutral checked activation.
+- Explicitly Deferred scope remains unchanged.
 ```

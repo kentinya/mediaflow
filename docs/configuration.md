@@ -20,9 +20,11 @@ locator and environment-owned API-principal references. That boundary keeps auth
 configuration status and recovery available when the managed Active revision is missing, corrupt,
 schema-incompatible or otherwise not runtime-consumable. It does not provide workflow defaults.
 
-The current fresh-instance path still requires a compatibility JSON bootstrap. Slice 26 targets a
-management-only startup that can create the first complete managed Draft from a minimal bootstrap;
-that target is not yet current.
+The current fresh-instance path supports a minimal management-only bootstrap containing only the
+database locator and environment-owned API-principal references. An authenticated operator can
+create the first complete managed Draft through Web/API without supplying workflow defaults or a
+complete runtime JSON document. The compatibility JSON bootstrap remains supported for legacy,
+migration and compatibility operation; it is not a competing Active source after managed activation.
 
 ## Bootstrap configuration
 
@@ -128,9 +130,10 @@ audits, and blocks deletion while an object is referenced. A valid unreferenced 
 the reference check is not a blanket refusal of all deletion. Any edit is applied to the Draft and
 returns that revision to `Draft`.
 
-The current Web guided forms cover Local Storage, ResourceLibrary, MediaLibrary and the policy graph
-needed by the existing first-runtime journey. The raw whole-document JSON editor remains the
-compatibility path for remote Storage definitions and configuration families without a guided form.
+The current Web guided forms cover Local, SMB, OpenList, AWS S3, Cloudflare R2 and generic
+S3-compatible Storage, ResourceLibrary, MediaLibrary and the policy graph needed by the first-runtime
+journey. The raw whole-document JSON editor remains available as a compatibility path for
+configuration families without a guided form.
 The current top-level Configuration page leads with whole-document JSON staging. Guided controls are
 available only after opening a revision; several policy families still use bounded JSON-object
 editors, copy/enable/disable actions are not presented consistently across families, and the existing
@@ -145,11 +148,11 @@ The runtime loader supports these Storage types:
 | Type | Current implementation | Current managed Web setup |
 |---|---|---|
 | Local | Runtime adapter and JSON loading | Guided form and read-only setup checks |
-| SMB | Runtime adapter and JSON loading | Adapter exists; guided setup is Slice 26 work |
-| OpenList | Runtime adapter and JSON loading | Adapter exists; guided setup is Slice 26 work |
-| AWS S3 | Runtime adapter and JSON loading | Adapter exists; guided setup is Slice 26 work |
-| Cloudflare R2 | Runtime adapter and JSON loading | Adapter exists; guided setup is Slice 26 work |
-| Generic S3-compatible | Runtime adapter and JSON loading | Adapter exists; guided setup is Slice 26 work |
+| SMB | Runtime adapter and JSON loading | Guided form, secret reference and read-only setup check |
+| OpenList | Runtime adapter and JSON loading | Guided form, secret reference and read-only setup check |
+| AWS S3 | Runtime adapter and JSON loading | Guided form, secret references and read-only setup check |
+| Cloudflare R2 | Runtime adapter and JSON loading | Guided form, secret references and read-only setup check |
+| Generic S3-compatible | Runtime adapter and JSON loading | Guided form, secret references and read-only setup check |
 
 Adapters implement the Storage port and report capabilities. Unsupported Move, Copy, Delete,
 HardLink or SoftLink operations fail explicitly; there is no implicit fallback. The managed object
@@ -290,16 +293,17 @@ logic for older databases. Do not infer a product capability from a historical m
 
 ## Current limitations and remaining V1 work
 
-The current repository is not yet the final V1 setup/release product. The remaining order is:
+The current repository is not yet the final V1 setup/release product. Slice 26 is closed; the
+remaining order is:
 
 | Status | Capability |
 |---|---|
-| Slice 26 ACTIVE | Minimal fresh-instance bootstrap, first complete managed Draft through Web, guided SMB/OpenList/S3/R2 configuration and read-only tests, bounded Storage Browser/path selection, and complete first-runtime setup recovery |
 | Slice 27 PLANNED | Real Storage-backed Files, explicit FileIndex/disposition, coherent manual Scan/Preview/Organize, execution-only blockers, conflict/review continuation and processing-Worker readiness |
 | Slice 28 PLANNED | Day-2 forms-first configuration/object lifecycle, consumed System Settings, versioned secret-free configuration/result import-export, and managed Webhook configuration/test/delivery recovery |
 | Slice 29 PLANNED | Docker Compose production release, production WSGI server, `/data` durability, non-root mounts, health, restart persistence and fail-closed upgrade/migration |
 | V1.x/V2 | Provider switching and additional production Providers, built-in user/session identity, OIDC, general Secret Store and broader recovery such as automatic uncertain-mutation replay or historical rollback |
 
-Storage Browser, arbitrary host-path access, remote destination precheck and mutation-based capability
-probes are not current capabilities. The current `wsgiref.simple_server` listener is a development /
-trusted-loopback boundary, not production HTTP serving.
+Arbitrary host-path access and mutation-based capability probes are not current capabilities. The
+Storage Browser, read-only setup checks and provider-neutral destination precheck are current only
+within the bounded first-setup journey. The current `wsgiref.simple_server` listener is a development
+/ trusted-loopback boundary, not production HTTP serving.
