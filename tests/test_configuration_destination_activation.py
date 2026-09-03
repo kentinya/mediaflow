@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -16,13 +17,15 @@ from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
     ConfigurationDestinationPrecheckStatus,
-    ConfigurationSetupCheckStatus,
+    ConfigurationStorageCheckStatus,
     ConfigurationStrategyTestStatus,
     DestinationPrecheckEvidence,
-    LocalSetupCheckEvidence,
     RecognitionStrategyTestEvidence,
+    StorageSetupCheckEvidence,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.storage import StorageCapabilities, StorageEntry, StorageEntryType
+from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_configuration_management import (
     CONFIGURATION_SCHEMA_VERSION,
@@ -32,6 +35,61 @@ from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION as RUNTIME_SC
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_configuration_objects import example_document, request
+
+
+class RemoteDestinationFake:
+    """Fake remote adapter proving the setup evidence path stays read-only."""
+
+    def __init__(self, storage_id: str = "media-target", *, read_only: bool = False):
+        self.storage_id = storage_id
+        self.name = storage_id
+        self.read_only = read_only
+        self.capabilities = (
+            StorageCapabilities()
+            if read_only
+            else StorageCapabilities(can_move=True, can_copy=True, can_delete=True)
+        )
+        self.existing_directories = {"Movies"}
+        self.mutations: list[str] = []
+
+    def exists(self, path: str) -> bool:
+        return path == "" or path in self.existing_directories
+
+    def stat(self, path: str) -> StorageEntry:
+        if path == "" or path in self.existing_directories:
+            return StorageEntry(path, path, StorageEntryType.DIRECTORY, 0, datetime.now(UTC))
+        raise FileNotFoundError(path)
+
+    def list(self, path: str):
+        return ()
+
+    def write(self, *args, **kwargs):
+        self.mutations.append("write")
+        raise AssertionError("setup evidence must not write")
+
+    def create_directory(self, path):
+        self.mutations.append("create_directory")
+        raise AssertionError("setup evidence must not create directories")
+
+    def move(self, *args, **kwargs):
+        self.mutations.append("move")
+        raise AssertionError("setup evidence must not move")
+
+    def copy(self, *args, **kwargs):
+        self.mutations.append("copy")
+        raise AssertionError("setup evidence must not copy")
+
+    def delete(self, path):
+        self.mutations.append("delete")
+        raise AssertionError("setup evidence must not delete")
+
+    def hard_link(self, *args, **kwargs):
+        self.mutations.append("hard_link")
+        raise AssertionError("setup evidence must not hard-link")
+
+    def soft_link(self, *args, **kwargs):
+        self.mutations.append("soft_link")
+        raise AssertionError("setup evidence must not soft-link")
 
 
 class DestinationPrecheckActivationTests(unittest.TestCase):
@@ -52,18 +110,8 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
         return validated
 
     @staticmethod
-    def _save_existing_gates(repository, revision) -> None:
+    def _save_strategy_test(repository, revision) -> None:
         now = datetime.now(UTC)
-        repository.save_local_setup_check(
-            LocalSetupCheckEvidence(
-                revision.revision_id,
-                revision.version,
-                revision.digest,
-                ConfigurationSetupCheckStatus.PASSED,
-                now,
-                "operator",
-            )
-        )
         repository.save_recognition_strategy_test(
             RecognitionStrategyTestEvidence(
                 revision.revision_id,
@@ -77,6 +125,69 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 {"outcome": "matched"},
             )
         )
+
+    @staticmethod
+    def _save_storage_check(
+        repository,
+        revision,
+        storage_id: str,
+        *,
+        storage_type: str = "local",
+        status: ConfigurationStorageCheckStatus = ConfigurationStorageCheckStatus.PASSED,
+        version: int | None = None,
+        digest: str | None = None,
+        failure_category: str | None = None,
+    ) -> StorageSetupCheckEvidence:
+        failed = status is ConfigurationStorageCheckStatus.FAILED
+        evidence = StorageSetupCheckEvidence(
+            revision.revision_id,
+            revision.version if version is None else version,
+            revision.digest if digest is None else digest,
+            status,
+            datetime.now(UTC),
+            "operator",
+            storage_id,
+            storage_type,
+            False,
+            {key: False for key in StorageSetupCheckEvidence.CAPABILITY_FIELDS},
+            failure_category=failure_category if failed else None,
+            message="bounded Storage check failure" if failed else None,
+            next_action=(
+                "correct the Storage, rerun its read-only check, then activate checked"
+                if failed
+                else None
+            ),
+        )
+        return repository.save_storage_setup_check(evidence)
+
+    @classmethod
+    def _save_storage_checks(cls, repository, revision) -> None:
+        storages = {
+            str(item.get("id")): item
+            for item in revision.document.get("storages", [])
+            if isinstance(item, dict)
+        }
+        referenced: list[str] = []
+        for section in ("resourceLibraries", "mediaLibraries"):
+            for library in revision.document.get(section, []) or []:
+                storage_id = str(library.get("storageId", ""))
+                if storage_id and storage_id not in referenced:
+                    referenced.append(storage_id)
+        for storage_id in referenced:
+            storage = storages.get(storage_id, {})
+            if storage.get("enabled", True) is False:
+                continue
+            cls._save_storage_check(
+                repository,
+                revision,
+                storage_id,
+                storage_type=str(storage.get("type", "local")).lower() or "local",
+            )
+
+    @classmethod
+    def _save_existing_gates(cls, repository, revision) -> None:
+        cls._save_storage_checks(repository, revision)
+        cls._save_strategy_test(repository, revision)
 
     @staticmethod
     def _save_precheck(
@@ -127,6 +238,161 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 if count != 0:
                     raise AssertionError(f"activation created a row in {table}")
 
+    @staticmethod
+    def _run_remote_precheck(objects, revision, fake):
+        def fake_create(_self, external=None, storage_ids=None):
+            return {"media-target": fake}
+
+        with patch.object(RuntimeConfiguration, "create_storages", fake_create):
+            return objects.destination_precheck(
+                revision.revision_id,
+                expected_version=revision.version,
+                expected_digest=revision.digest,
+                actor="operator",
+                recognition_type="C",
+                sample={
+                    "title": "The Matrix",
+                    "mediaType": "movie",
+                    "year": 1999,
+                    "genres": ["Action"],
+                    "extension": "mkv",
+                },
+            )
+
+    def test_checked_activation_requires_current_per_storage_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                managed = ManagedConfigurationService(repository)
+                objects = ConfigurationObjectService(managed)
+                revision = self._validated(managed, self._document(root))
+                self._save_storage_check(repository, revision, "media-target")
+                with self.assertRaisesRegex(
+                    ConfigurationActivationConflict,
+                    "read-only Storage check for 'source-storage' is required",
+                ):
+                    objects.activate_checked(
+                        revision.revision_id,
+                        expected_version=revision.version,
+                        actor="operator",
+                    )
+                self.assertIsNone(managed.active())
+                self._save_storage_check(repository, revision, "source-storage", digest="0" * 64)
+                with self.assertRaisesRegex(
+                    ConfigurationActivationConflict,
+                    "check for 'source-storage' is stale",
+                ):
+                    objects.activate_checked(
+                        revision.revision_id,
+                        expected_version=revision.version,
+                        actor="operator",
+                    )
+                self.assertIsNone(managed.active())
+                self._save_storage_check(repository, revision, "source-storage")
+                self._save_storage_check(
+                    repository,
+                    revision,
+                    "media-target",
+                    status=ConfigurationStorageCheckStatus.FAILED,
+                    failure_category="not_found",
+                )
+                with self.assertRaisesRegex(
+                    ConfigurationActivationConflict,
+                    "'media-target' failed with category not_found",
+                ):
+                    objects.activate_checked(
+                        revision.revision_id,
+                        expected_version=revision.version,
+                        actor="operator",
+                    )
+                self.assertIsNone(managed.active())
+                self._save_storage_check(repository, revision, "media-target")
+                self._save_strategy_test(repository, revision)
+                self._save_precheck(repository, revision)
+                activated = objects.activate_checked(
+                    revision.revision_id,
+                    expected_version=revision.version,
+                    actor="operator",
+                )
+                self.assertEqual(activated.status.value, "active")
+
+    def test_provider_neutral_storage_checks_and_remote_destination_activation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir()
+            document = self._document(root)
+            document["storages"][1] = {
+                "id": "media-target",
+                "name": "Remote media",
+                "type": "openlist",
+                "rootPath": "remote-media",
+                "baseUrl": "http://127.0.0.1:1",
+                "tokenEnv": "MEDIAFLOW_TEST_OPENLIST_TOKEN",
+                "enabled": True,
+            }
+            runtime_database = root / "runtime.sqlite3"
+            with (
+                SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository,
+                SQLiteTaskRepository(runtime_database) as runtime_repository,
+            ):
+                managed = ManagedConfigurationService(repository)
+                fake = RemoteDestinationFake()
+                objects = ConfigurationObjectService(
+                    managed,
+                    storage_adapters={
+                        "source-storage": LocalStorage("source-storage", root / "source"),
+                        "media-target": fake,
+                    },
+                )
+                revision = self._validated(managed, document)
+                with patch.dict(os.environ, {"MEDIAFLOW_TEST_OPENLIST_TOKEN": "test-token"}):
+                    for storage_id, storage_type in (
+                        ("source-storage", "local"),
+                        ("media-target", "openlist"),
+                    ):
+                        evidence = objects.storage_check(
+                            revision.revision_id,
+                            storage_id=storage_id,
+                            expected_version=revision.version,
+                            expected_digest=revision.digest,
+                            actor="operator",
+                        )
+                        self.assertEqual(
+                            evidence.status,
+                            ConfigurationStorageCheckStatus.PASSED,
+                        )
+                    destination_evidence = self._run_remote_precheck(objects, revision, fake)
+                self.assertEqual(destination_evidence.status.value, "completed")
+                self.assertEqual(destination_evidence.result["verdict"], "ready")
+                self.assertEqual(fake.mutations, [])
+                self._save_strategy_test(repository, revision)
+                activated = objects.activate_checked(
+                    revision.revision_id,
+                    expected_version=revision.version,
+                    actor="operator",
+                )
+                self.assertEqual(activated.status.value, "active")
+                self._assert_runtime_empty(runtime_database)
+                principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
+                api = MediaFlowApi(
+                    runtime_repository,
+                    None,
+                    principals=(principal,),
+                    configuration_service=managed,
+                    bootstrap_document=document,
+                )
+                status, created = request(
+                    api,
+                    "/api/v1/jobs",
+                    method="POST",
+                    body={"command": "preview"},
+                )
+                self.assertEqual(status, 202)
+                stored = runtime_repository.get_job(created["job_id"])
+                self.assertIsNotNone(stored)
+                self.assertEqual(stored.configuration_revision_id, activated.revision_id)
+                self.assertEqual(stored.configuration_revision_digest, activated.digest)
+
     def _assert_activation_module_namespace_is_hardened(self, namespace) -> None:
         for name in (
             "OrganizerExecutor",
@@ -158,7 +424,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                         expected_version=candidate.version,
                         actor="operator",
                     )
-                self.assertIn("current Local destination precheck", str(caught.exception))
+                self.assertIn("current read-only destination precheck", str(caught.exception))
                 self.assertIn(
                     "run the read-only destination precheck", caught.exception.next_action
                 )
@@ -187,7 +453,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 self._save_existing_gates(repository, revalidated)
                 stale = repository.get_destination_precheck(revalidated.revision_id)
                 with self.assertRaisesRegex(
-                    ConfigurationActivationConflict, "destination precheck is stale"
+                    ConfigurationActivationConflict, "Destination precheck is stale"
                 ) as caught:
                     objects.activate_checked(
                         revalidated.revision_id,
@@ -282,7 +548,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 )
                 self.assertEqual(activated.status.value, "active")
 
-    def test_current_completed_outcomes_activate_and_non_local_is_not_applicable(self) -> None:
+    def test_current_completed_outcomes_activate_and_remote_requires_precheck(self) -> None:
         for verdict in (
             "ready",
             "skip",
@@ -340,14 +606,32 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                     objects = ConfigurationObjectService(managed)
                     revision = self._validated(managed, document)
                     self._save_existing_gates(repository, revision)
-                    objects.require_current_destination_precheck(revision)
+                    if mode == "remote_only":
+                        with self.assertRaisesRegex(
+                            ConfigurationActivationConflict,
+                            "current read-only destination precheck",
+                        ):
+                            objects.activate_checked(
+                                revision.revision_id,
+                                expected_version=revision.version,
+                                actor="operator",
+                            )
+                        self.assertIsNone(managed.active())
+                        self._save_precheck(repository, revision)
+                    else:
+                        objects.require_current_destination_precheck(revision)
                     activated = objects.activate_checked(
                         revision.revision_id,
                         expected_version=revision.version,
                         actor="operator",
                     )
                     self.assertEqual(activated.status.value, "active")
-                    self.assertIsNone(repository.get_destination_precheck(revision.revision_id))
+                    if mode == "remote_only":
+                        self.assertIsNotNone(
+                            repository.get_destination_precheck(revision.revision_id)
+                        )
+                    else:
+                        self.assertIsNone(repository.get_destination_precheck(revision.revision_id))
 
     def test_omitted_media_libraries_is_not_applicable_for_checked_activation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -415,24 +699,14 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 objects = ConfigurationObjectService(managed)
                 revision = self._validated(managed, self._document(root))
                 with self.assertRaisesRegex(
-                    ConfigurationActivationConflict, "successful Local setup check"
+                    ConfigurationActivationConflict, "read-only Storage check"
                 ):
                     objects.activate_checked(
                         revision.revision_id,
                         expected_version=revision.version,
                         actor="operator",
                     )
-                now = datetime.now(UTC)
-                repository.save_local_setup_check(
-                    LocalSetupCheckEvidence(
-                        revision.revision_id,
-                        revision.version,
-                        revision.digest,
-                        ConfigurationSetupCheckStatus.PASSED,
-                        now,
-                        "operator",
-                    )
-                )
+                self._save_storage_checks(repository, revision)
                 with self.assertRaisesRegex(
                     ConfigurationActivationConflict, "completed Recognition Strategy Test"
                 ):
@@ -441,6 +715,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                         expected_version=revision.version,
                         actor="operator",
                     )
+                self._save_strategy_test(repository, revision)
                 unchecked = managed.activate(
                     revision.revision_id,
                     expected_version=revision.version,
@@ -454,7 +729,8 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 document = self._document(root)
                 document["persistence"]["databasePath"] = str(root / "second.sqlite3")
                 revision = self._validated(managed, document)
-                self._save_existing_gates(repository, revision)
+                self._save_storage_checks(repository, revision)
+                self._save_strategy_test(repository, revision)
                 with (
                     patch(
                         "mediaflow.application.configuration_objects.MetadataProviderRegistry",
@@ -536,7 +812,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 409)
                 self.assertEqual(blocked["error"]["code"], "configuration_conflict")
-                self.assertIn("current Local destination precheck", blocked["error"]["message"])
+                self.assertIn("current read-only destination precheck", blocked["error"]["message"])
                 self.assertIn(
                     "run the read-only destination precheck",
                     blocked["error"]["details"]["nextAction"],

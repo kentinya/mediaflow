@@ -592,6 +592,14 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertIsNone(service.active())
                 self._strategy_test(objects, validated)
                 self._destination_precheck(objects, validated)
+                for storage_id in ("source-storage", "media-target"):
+                    objects.storage_check(
+                        validated.revision_id,
+                        storage_id=storage_id,
+                        expected_version=validated.version,
+                        expected_digest=validated.digest,
+                        actor="tester",
+                    )
                 activated = objects.activate_checked(
                     validated.revision_id,
                     expected_version=validated.version,
@@ -762,6 +770,14 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     synthetic_path="/C/Special.Movie.2024.mkv",
                 )
                 self._destination_precheck(objects, revalidated)
+                for storage_id in ("source-storage", "media-target"):
+                    objects.storage_check(
+                        revalidated.revision_id,
+                        storage_id=storage_id,
+                        expected_version=revalidated.version,
+                        expected_digest=revalidated.digest,
+                        actor="tester",
+                    )
                 activated = objects.activate_checked(
                     revalidated.revision_id,
                     expected_version=revalidated.version,
@@ -5063,6 +5079,19 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(evidence["status"], "passed")
+                for storage_id in ("source-storage", "media-target"):
+                    status, storage_evidence = request(
+                        api,
+                        f"/api/v1/configuration/revisions/{revision_id}/storage-check",
+                        method="POST",
+                        body={
+                            "storageId": storage_id,
+                            "expectedVersion": validated["version"],
+                            "expectedDigest": validated["digest"],
+                        },
+                    )
+                    self.assertEqual(status, 200)
+                    self.assertEqual(storage_evidence["status"], "passed")
                 status, active = request(
                     api,
                     f"/api/v1/configuration/revisions/{revision_id}/recognition-strategy-test",

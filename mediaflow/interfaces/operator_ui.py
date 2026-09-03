@@ -1087,12 +1087,8 @@ APP_JS = b"""(() => {
   function destinationPrecheckActivationRequirement(revision, guided) {
     const evidence = guided && guided.destinationPrecheck;
     const objects = guided && guided.objects && typeof guided.objects === 'object' ? guided.objects : {};
-    const storages = Array.isArray(objects.storages) ? objects.storages : [];
     const mediaLibraries = Array.isArray(objects.mediaLibraries) ? objects.mediaLibraries : [];
-    const localDestinationIds = new Set(storages.filter(storage =>
-      String(storage.type || '').toLowerCase() === 'local').map(storage => String(storage.id)));
-    const applicable = mediaLibraries.some(library =>
-      localDestinationIds.has(String(library.storageId)));
+    const applicable = mediaLibraries.length > 0;
     const current = destinationPrecheckIsCurrent(revision, evidence);
     const completed = Boolean(evidence && evidence.status === 'completed');
     const capabilityGap = Boolean(evidence && evidence.result &&
@@ -1122,14 +1118,14 @@ APP_JS = b"""(() => {
   function renderDestinationPrecheck(revision, guided) {
     const activation = destinationPrecheckActivationRequirement(revision, guided);
     const evidence = activation.evidence;
-    detailContent.append(text('h3', 'Read-only Local destination precheck'));
+    detailContent.append(text('h3', 'Read-only destination precheck'));
     if (!activation.applicable) detailContent.append(text('p',
-      'Checked activation requirement: not applicable because this Draft has no Local destination.'));
+      'Checked activation requirement: not applicable because this Draft has no MediaLibrary destination.'));
     else if (!activation.satisfied) detailContent.append(text('p', activation.message, activation.style));
     else detailContent.append(text('p',
       'Checked activation requirement: satisfied by current destination precheck evidence.'));
     if (!evidence) detailContent.append(text('p',
-      'Status: not run. This observes one Local destination without changing it.', 'warning'));
+      'Status: not run. This observes one destination without changing it.', 'warning'));
     else {
       const current = activation.current;
       const result = evidence.result && typeof evidence.result === 'object' ? evidence.result : {};
@@ -1343,10 +1339,35 @@ APP_JS = b"""(() => {
       evidence.revisionId === revision.revisionId &&
       evidence.revisionVersion === revision.version && evidence.revisionDigest === revision.digest);
   }
+  function firstStorageCheckBlocker(guided) {
+    const objects = guided && guided.objects && typeof guided.objects === 'object' ? guided.objects : {};
+    const storages = Array.isArray(objects.storages) ? objects.storages : [];
+    const resourceLibraries = Array.isArray(objects.resourceLibraries) ? objects.resourceLibraries : [];
+    const mediaLibraries = Array.isArray(objects.mediaLibraries) ? objects.mediaLibraries : [];
+    const libraries = resourceLibraries.concat(mediaLibraries);
+    for (const library of libraries) {
+      const storageId = String(library.storageId || '');
+      if (!storageId) return 'correct the library Storage reference';
+      const storage = storages.find(item => String(item.id) === storageId);
+      if (!storage) return `add the referenced Storage ${storageId}`;
+      if (storage.enabled === false) continue;
+      const evidence = storageCheckEvidenceFor(guided, storageId);
+      if (!evidence) return `run the read-only Storage check for ${storageId}`;
+      if (evidence.current !== true || evidence.stale !== false) {
+        return `reload this revision and rerun the read-only Storage check for ${storageId}`;
+      }
+      if (evidence.status !== 'passed') {
+        return `correct Storage ${storageId}, rerun its read-only check, then activate checked`;
+      }
+    }
+    return null;
+  }
+  function referencedStorageChecksSatisfied(guided) {
+    return firstStorageCheckBlocker(guided) === null;
+  }
   function setupAndStrategyEvidenceIsCurrent(revision, guided) {
-    const local = guided && guided.localSetupCheck;
     const strategy = guided && guided.recognitionStrategyTest;
-    return Boolean(local && local.status === 'passed' && setupEvidenceIsCurrent(revision, local) &&
+    return Boolean(referencedStorageChecksSatisfied(guided) &&
       strategy && strategy.status === 'completed' && strategyEvidenceIsCurrent(revision, strategy));
   }
   function checkedActivationEvidenceIsCurrent(revision, guided) {
@@ -1724,9 +1745,12 @@ APP_JS = b"""(() => {
             () => activateConfigurationRevision(data, Boolean(checked))));
           if (!checked && guided) {
             const destination = destinationPrecheckBlocksCheckedActivation(data, guided);
+            const storageBlocker = firstStorageCheckBlocker(guided);
             const warning = destination ?
-              `Activation is available for compatibility, but checked activation is blocked by the Local destination precheck; ${destination.nextAction}.` :
-              'Activation is available for compatibility, but the guided safe path requires both a current passed Local setup check and a current completed Recognition Strategy Test.';
+              `Activation is available for compatibility, but checked activation is blocked by the destination precheck; ${destination.nextAction}.` :
+              storageBlocker ?
+              `Activation is available for compatibility, but checked activation is blocked: ${storageBlocker}.` :
+              'Activation is available for compatibility, but the guided safe path requires current passed read-only Storage checks for every referenced enabled Storage and a current completed Recognition Strategy Test.';
             actions.append(text('p', warning, 'warning'));
           }
         }
