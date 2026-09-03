@@ -14,14 +14,15 @@ only in [the development workflow](development-workflow.md).
 | 23 — Stage-aware per-item recovery | Provide checkpoint-aware single and bounded batch recovery without replaying successful siblings or uncertain mutation | PASS / CLOSED | 22.6 closure |
 | 24 — Files / Media detail and manual organize | Complete the operator journey from explanation and review to safe manual Preview/Organize and recovery | PASS / CLOSED | 23 |
 | 25 — Scheduled automation and unattended organization | Complete operator-configured scheduled scanning and unattended organization using RecognitionType-selected policies under explicit bounded execution authority, plus the production-loop hardening required by that journey | PASS / CLOSED | 24 |
-| 26 — Web-first fresh setup and Storage completion | Let an authenticated operator start from a minimal fresh-instance bootstrap, create the first complete managed Draft, configure/test all V1 Storage types and libraries, browse bounded Storage directories, and checked-activate the first immutable runtime without hand-authoring a full JSON runtime | ACTIVE | 25 |
+| 26 — Web-first fresh setup and Storage completion | Let an authenticated operator start from a minimal fresh-instance bootstrap, create the first complete managed Draft, configure/test all V1 Storage types and libraries, browse bounded Storage directories, and checked-activate the first immutable runtime without hand-authoring a full JSON runtime | PASS / CLOSED | 25 |
 | 27 — Manual operations and file lifecycle | Let an operator browse real configured Storage, distinguish it from FileIndex, run file- or ResourceLibrary-scoped Scan/Preview/Organize with the correct authority, understand current processing disposition, and complete conflict/review/recovery through an explicit safe continuation | PLANNED | 26 and closed 23–25 foundations |
 | 28 — Web-first configuration and operations administration | Complete the day-2 Web configuration lifecycle and object-management experience, consumed System Settings, versioned secret-free configuration/result import-export, and managed Webhook delivery configuration/test/recovery | PLANNED | 26 |
 | 29 — Docker production self-hosted release | Deliver and verify the one-image, multi-service Docker Compose product journey with production HTTP serving, local durable `/data`, explicit media mounts, non-root operation, lifecycle health, restart persistence and fail-closed upgrade/migration | PLANNED | 27 and 28 |
 
 ## Current boundary
 
-Slice 26 is ACTIVE at Base `3c660d5a1512b5b221b0284bcff9ae6dd00bbf23`. It owns the complete
+Slice 26 is PASS / CLOSED at Base `3c660d5a1512b5b221b0284bcff9ae6dd00bbf23` and
+Implementation Head `928b727552a2fbb298e694cb0312e082e4662dda`. It delivered the complete
 fresh-instance Web setup journey and V1 Storage-management completion. It does not own Webhook/System
 administration, Docker packaging/runtime release, Metadata Provider switching, a built-in user
 database, OIDC, a full Secret Store, mutation-based Storage capability probes or any redesign of the

@@ -24,11 +24,10 @@ provider SDK APIs directly. It uses domain interfaces and application services.
 
 ## V1 order and architecture decisions
 
-The repository is at Slice 25 closure with Slice 26 active. Remaining V1 business capabilities are:
+Slice 26 is PASS / CLOSED. Remaining V1 business capabilities are:
 
 ```text
-Slice 26 — Web-first fresh setup and Storage completion
-    → Slice 27 — Manual operations and file lifecycle
+Slice 27 — Manual operations and file lifecycle
     → Slice 28 — Web-first configuration and operations administration
     → Slice 29 — Docker production self-hosted release
 ```
@@ -118,10 +117,12 @@ Storage root.
 
 ## Configuration authority and runtime binding
 
-Before managed activation, the compatibility JSON document is the runtime authority. It is labelled
-`JSON_BOOTSTRAP`. The bootstrap boundary can independently load the SQLite locator and
-environment-owned API-principal definitions so configuration status and replacement recovery remain
-available while workflow configuration is unavailable.
+On the compatibility path before managed activation, the JSON document is the runtime authority and
+is labelled `JSON_BOOTSTRAP`. A fresh instance may instead start from the minimal management-only
+bootstrap, which loads only the SQLite locator and environment-owned API-principal definitions;
+that state has no workflow runtime authority until an operator creates, validates and activates a
+managed revision. Both bootstrap paths keep configuration status and replacement recovery available
+without treating incomplete workflow content as Active.
 
 Managed Configuration persists whole-document Draft, Validated, Active and Superseded revisions.
 Object edits, references, evidence and audits are revision-bound. Activation is an atomic pointer
@@ -271,14 +272,14 @@ validate Python support, backup integrity, schema agreement and representative s
 changing the live database. Migration failure must leave the live authority untouched and fail
 closed before work resumes.
 
+## Current Slice 26 delivery
+
+Slice 26 delivered the management-only fresh bootstrap, first complete managed Draft through Web,
+guided Local/SMB/OpenList/AWS S3/Cloudflare R2/generic S3-compatible configuration and read-only
+tests, bounded Storage Browser/path selection, Local path recovery and first-runtime checked
+activation. It did not add mutation-based capability probes or arbitrary host-path access.
+
 ## TARGET architecture
-
-### Slice 26 target
-
-Add management-only fresh bootstrap, first complete managed Draft through Web, guided SMB/OpenList/
-AWS S3/R2/generic S3-compatible configuration and read-only tests, bounded Storage Browser/path
-selection, Local path recovery and first-runtime activation without hand-authoring a full runtime
-JSON document. Do not add mutation-based capability probes or arbitrary host-path access.
 
 ### Slice 27 target
 
