@@ -341,6 +341,52 @@ def load_management_bootstrap(document: Any) -> ManagementBootstrapConfiguration
     )
 
 
+def is_minimal_management_bootstrap(document: Any) -> bool:
+    """Return whether a document contains only the fresh-setup authority.
+
+    The recovery loader intentionally accepts extra stale workflow content so a
+    previously managed installation can still expose configuration recovery.
+    Fresh setup needs a stricter boundary: workflow sections must not silently
+    become part of the management-only bootstrap or be mistaken for a usable
+    runtime.
+    """
+
+    if not isinstance(document, dict):
+        return False
+    if set(document).difference({"version", "persistence", "api"}):
+        return False
+    if "version" in document and (
+        isinstance(document["version"], bool) or document["version"] != 1
+    ):
+        return False
+    persistence = document.get("persistence")
+    if (
+        not isinstance(persistence, dict)
+        or "databasePath" not in persistence
+        or set(persistence).difference({"databasePath"})
+    ):
+        return False
+    api = document.get("api")
+    if (
+        not isinstance(api, dict)
+        or not ({"tokenEnv", "principals"} & set(api))
+        or set(api).difference({"tokenEnv", "principals"})
+    ):
+        return False
+    return True
+
+
+def load_minimal_management_bootstrap(document: Any) -> ManagementBootstrapConfiguration:
+    """Load the strict bootstrap allowed for first-time setup."""
+
+    if not is_minimal_management_bootstrap(document):
+        raise ValueError(
+            "minimal management bootstrap may contain only version, persistence.databasePath, "
+            "and environment-reference API principal configuration"
+        )
+    return load_management_bootstrap(document)
+
+
 def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     if not isinstance(document, dict):
         raise ValueError("runtime configuration must be a JSON object")

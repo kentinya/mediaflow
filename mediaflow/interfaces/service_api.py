@@ -52,9 +52,11 @@ from mediaflow.domain.automation import (
 )
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
+    ConfigurationFirstDraftConflict,
     ConfigurationObjectKind,
     ConfigurationObjectReferenced,
     ConfigurationVersionConflict,
+    RuntimeConfigurationNotConfigured,
     RuntimeSnapshotUnavailable,
 )
 from mediaflow.domain.failure import failure_document
@@ -178,6 +180,7 @@ class MediaFlowApi:
         manual_preview_service: ManualOrganizePreviewService | None = None,
         manual_execution_service: ManualOrganizeExecutionService | None = None,
         automation_preview_service: AutomationTaskDefinitionPreviewService | None = None,
+        management_only: bool = False,
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -223,6 +226,18 @@ class MediaFlowApi:
             else None
         )
         self._bootstrap_document = bootstrap_document
+        from mediaflow.infrastructure.runtime_configuration import (
+            is_minimal_management_bootstrap,
+        )
+
+        self._management_only = bool(
+            management_only
+            or getattr(configuration_service, "management_only", False)
+            or (
+                bootstrap_document is not None
+                and is_minimal_management_bootstrap(bootstrap_document)
+            )
+        )
         self._configuration_snapshot_id = configuration_snapshot_id
         self._configuration_snapshot_digest = configuration_snapshot_digest
         snapshot_validator = (
@@ -298,7 +313,11 @@ class MediaFlowApi:
         request_id = str(uuid4())
         try:
             if path == "/health" and method == "GET":
-                return self._response(start_response, 200, {"status": "ok"})
+                return self._response(
+                    start_response,
+                    200,
+                    {"status": "ok", "processAlive": True},
+                )
             if path in OPERATOR_UI_ASSETS:
                 if method != "GET":
                     return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -582,6 +601,47 @@ class MediaFlowApi:
                 str(error),
                 details=details,
             )
+        except ConfigurationFirstDraftConflict as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "configuration-first-draft",
+                "conflict",
+                409,
+            )
+            existing = error.revision.summary() if error.revision is not None else None
+            details = {
+                key: value
+                for key, value in {
+                    "revisionId": error.revision_id,
+                    "version": error.version,
+                    "digest": error.digest,
+                    "existingRevision": existing,
+                    "durableState": error.durable_state,
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": error.next_action,
+                    "resumeAction": (
+                        {
+                            "method": "GET",
+                            "path": (f"/api/v1/configuration/revisions/{error.revision_id}"),
+                        }
+                        if error.revision_id
+                        else None
+                    ),
+                }.items()
+                if value is not None
+            }
+            return self._error(
+                start_response,
+                409,
+                "configuration_first_draft_conflict",
+                str(error),
+                details=details,
+            )
         except ConfigurationVersionConflict as error:
             self._safe_audit(
                 environ,
@@ -613,6 +673,36 @@ class MediaFlowApi:
                 "configuration_version_conflict",
                 str(error),
                 details=details,
+            )
+        except RuntimeConfigurationNotConfigured as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "runtime-admission",
+                "denied",
+                503,
+            )
+            return self._error(
+                start_response,
+                503,
+                "runtime_not_configured",
+                str(error),
+                details={
+                    "managementReady": True,
+                    "setupRequired": True,
+                    "runtimeConfigured": False,
+                    "workflowAvailable": False,
+                    "durableState": "no_workflow_work_created",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "create or resume the first setup Draft, complete guided setup, "
+                        "validate it, and activate it"
+                    ),
+                },
             )
         except ConfigurationObjectReferenced as error:
             self._safe_audit(
@@ -778,9 +868,17 @@ class MediaFlowApi:
             "automation",
             "task-definitions",
         ]
+        management_readiness_route = parts == ["api", "v1", "management", "readiness"]
         task_read_route = parts[:3] == ["api", "v1", "tasks"] and method == "GET"
+        if self._is_management_only_setup() and self._is_workflow_producing_route(method, parts):
+            raise RuntimeConfigurationNotConfigured()
         binding = self._runtime_binding
-        if not configuration_route and not automation_definition_route and not task_read_route:
+        if (
+            not configuration_route
+            and not management_readiness_route
+            and not automation_definition_route
+            and not task_read_route
+        ):
             binding = self._refresh_configuration_binding()
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
@@ -1443,6 +1541,58 @@ class MediaFlowApi:
                     "nextAfter": next_after,
                 },
             )
+        if parts == ["api", "v1", "management", "readiness"]:
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            self._require_empty_query(environ, "management readiness")
+            self._require(principal, ApiPermission.READ)
+            return self._response(
+                start_response,
+                200,
+                self._management_readiness_document(principal),
+            )
+        if parts == ["api", "v1", "configuration", "status"]:
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            self._require_empty_query(environ, "configuration status")
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            return self._response(
+                start_response,
+                200,
+                self._configuration_status_document(principal),
+            )
+        if parts == ["api", "v1", "configuration", "drafts", "first"]:
+            if method != "POST":
+                return self._error(start_response, 405, "method_not_allowed", "POST required")
+            self._require_empty_query(environ, "first setup Draft")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._optional_document(environ)
+            if set(document):
+                raise ValueError("first setup Draft does not accept configuration fields")
+            revision = self._configuration_service.create_first_draft(
+                self._bootstrap_document,
+                actor=principal.principal_id,
+            )
+            response = revision.summary()
+            response["created"] = True
+            response["nextAction"] = (
+                "open the setup Draft and complete guided setup before validation and activation"
+            )
+            return self._response(start_response, 201, response)
         if parts == ["api", "v1", "configuration"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -1455,7 +1605,7 @@ class MediaFlowApi:
                     "managed configuration service is unavailable",
                 )
             return self._response(
-                start_response, 200, self._configuration_service.status_document()
+                start_response, 200, self._configuration_status_document(principal)
             )
         if (
             len(parts) == 5
@@ -2186,6 +2336,18 @@ class MediaFlowApi:
             self._require_empty_query(environ, "system status")
             self._require(principal, ApiPermission.READ)
             if binding.system_status is None:
+                if self._management_only and self._configuration_service is not None:
+                    from mediaflow.infrastructure.configuration_snapshot import (
+                        build_management_configuration_snapshot,
+                    )
+
+                    return self._response(
+                        start_response,
+                        200,
+                        build_management_configuration_snapshot(
+                            self._configuration_service.status_document()
+                        ).as_document(),
+                    )
                 return self._error(
                     start_response, 503, "service_unavailable", "system status is unavailable"
                 )
@@ -3684,6 +3846,54 @@ class MediaFlowApi:
         if permission not in principal.permissions:
             raise ApiPermissionDenied(f"principal lacks {permission.value} permission")
 
+    def _configuration_status_document(
+        self,
+        principal: ResolvedApiPrincipal,
+    ) -> dict[str, object]:
+        if self._configuration_service is None:
+            return {
+                "authority": None,
+                "managementReady": False,
+                "setupRequired": False,
+                "runtimeConfigured": False,
+                "runtimeReady": False,
+                "workflowAvailable": False,
+                "unavailableReason": "managed configuration service is unavailable",
+                "canManageConfiguration": False,
+                "canActivateConfiguration": False,
+            }
+        status = self._configuration_service.status_document()
+        status["canManageConfiguration"] = (
+            ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+        )
+        status["canActivateConfiguration"] = (
+            ApiPermission.ACTIVATE_CONFIGURATION in principal.permissions
+        )
+        return status
+
+    def _management_readiness_document(
+        self,
+        principal: ResolvedApiPrincipal,
+    ) -> dict[str, object]:
+        status = self._configuration_status_document(principal)
+        return {
+            "processAlive": True,
+            "managementReady": status.get("managementReady", False),
+            "setupRequired": status.get("setupRequired", False),
+            "runtimeConfigured": status.get("runtimeConfigured", False),
+            "runtimeReady": status.get("runtimeReady", False),
+            "workflowAvailable": status.get("workflowAvailable", False),
+            "authority": status.get("authority"),
+            "active": status.get("active"),
+            "setupDraft": status.get("setupDraft"),
+            "recoveryRequired": status.get("recoveryRequired", False),
+            "health": status.get("health"),
+            "unavailableReason": status.get("unavailableReason"),
+            "nextAction": status.get("nextAction"),
+            "canManageConfiguration": status.get("canManageConfiguration", False),
+            "canActivateConfiguration": status.get("canActivateConfiguration", False),
+        }
+
     @staticmethod
     def _require_manual_execution(principal: ResolvedApiPrincipal) -> None:
         if ApiPermission.EXECUTE_MANUAL_ORGANIZE not in principal.permissions:
@@ -3692,6 +3902,48 @@ class MediaFlowApi:
     def _refresh_configuration_binding(self) -> _ApiRuntimeBinding:
         with self._runtime_binding_lock:
             return self._refresh_configuration_binding_locked()
+
+    def _is_management_only_setup(self) -> bool:
+        if not self._management_only:
+            return False
+        if self._configuration_service is None:
+            return True
+        try:
+            if self._configuration_service.active() is not None:
+                return False
+            return not self._configuration_service.has_managed_activation()
+        except RuntimeSnapshotUnavailable:
+            # A prior managed installation is a recovery/unavailable state;
+            # the normal binding refresh will return that more specific error.
+            return False
+
+    @staticmethod
+    def _is_workflow_producing_route(method: str, parts: list[str]) -> bool:
+        if method in {"GET", "HEAD", "OPTIONS"}:
+            return False
+        if parts[:3] == ["api", "v1", "configuration"]:
+            return False
+        if parts == ["api", "v1", "management", "readiness"]:
+            return False
+        if tuple(parts[:3]) in {
+            ("api", "v1", "jobs"),
+            ("api", "v1", "tasks"),
+            ("api", "v1", "manual-intents"),
+            ("api", "v1", "manual-previews"),
+            ("api", "v1", "manual-executions"),
+            ("api", "v1", "manual-execution-authorizations"),
+            ("api", "v1", "automation"),
+            ("api", "v1", "schedules"),
+            ("api", "v1", "files"),
+            ("api", "v1", "recovery"),
+            ("api", "v1", "recovery-batches"),
+            ("api", "v1", "confirmations"),
+            ("api", "v1", "recognition-reviews"),
+            ("api", "v1", "metadata-corrections"),
+            ("api", "v1", "classification-reviews"),
+        }:
+            return True
+        return False
 
     def _refresh_configuration_binding_locked(self) -> _ApiRuntimeBinding:
         if self._configuration_service is None:
@@ -4393,6 +4645,17 @@ class MediaFlowApi:
         if not isinstance(value, dict):
             raise ValueError("request JSON must be an object")
         return value
+
+    @staticmethod
+    def _optional_document(environ: dict) -> dict:
+        raw_length = environ.get("CONTENT_LENGTH", "0") or "0"
+        try:
+            length = int(raw_length)
+        except ValueError as error:
+            raise ValueError("invalid Content-Length") from error
+        if length == 0:
+            return {}
+        return MediaFlowApi._document(environ)
 
     @staticmethod
     def _configuration_object_kind(value: str) -> ConfigurationObjectKind:

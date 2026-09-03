@@ -48,6 +48,7 @@ class ManagedConfigurationStatus(StrEnum):
 
 class ConfigurationAuthority(StrEnum):
     JSON_BOOTSTRAP = "JSON_BOOTSTRAP"
+    MANAGEMENT_BOOTSTRAP = "MANAGEMENT_BOOTSTRAP"
     MANAGED = "MANAGED"
 
 
@@ -203,6 +204,39 @@ class ConfigurationVersionConflict(RuntimeError):
         self.current_digest = current_digest
         self.durable_state = durable_state
         self.next_action = next_action
+
+
+class ConfigurationFirstDraftConflict(RuntimeError):
+    """A first-setup Draft already exists or managed authority is present."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        revision: ManagedConfigurationRevision | None = None,
+        revision_id: str | None = None,
+        version: int | None = None,
+        digest: str | None = None,
+        durable_state: str = "existing_configuration_preserved",
+        next_action: str = "reload configuration status and resume the current setup Draft",
+    ) -> None:
+        super().__init__(message)
+        self.revision = revision
+        self.revision_id = revision.revision_id if revision is not None else revision_id
+        self.version = revision.version if revision is not None else version
+        self.digest = revision.digest if revision is not None else digest
+        self.durable_state = durable_state
+        self.next_action = next_action
+
+
+class RuntimeConfigurationNotConfigured(RuntimeError):
+    """Workflow admission was attempted before a managed runtime was active."""
+
+    def __init__(
+        self,
+        message: str = "runtime configuration is not configured; explicit activation is required",
+    ) -> None:
+        super().__init__(message)
 
 
 class ConfigurationActivationConflict(RuntimeError):
@@ -1098,6 +1132,12 @@ class ManagedConfigurationRepository(Protocol):
     ) -> ManagedConfigurationRevision: ...
 
     def create_revision_with_audit(
+        self,
+        revision: ManagedConfigurationRevision,
+        audit: ConfigurationChangeAudit,
+    ) -> ManagedConfigurationRevision: ...
+
+    def create_first_draft_with_audit(
         self,
         revision: ManagedConfigurationRevision,
         audit: ConfigurationChangeAudit,

@@ -146,6 +146,61 @@ def build_configuration_snapshot(configuration: RuntimeConfiguration) -> Configu
     return ConfigurationSnapshot(_freeze(document))
 
 
+def build_management_configuration_snapshot(status: Mapping[str, Any]) -> ConfigurationSnapshot:
+    """Project management-only readiness without exposing workflow configuration."""
+
+    document = {
+        "system": {
+            "application_version": _application_version(),
+            "python_version": platform.python_version(),
+            "python_supported": (3, 11) <= sys.version_info[:2] < (3, 14),
+            "runtime_schema_version": SCHEMA_VERSION,
+            "platform": sys.platform,
+            "maintenance_lock_support": (
+                "posix_shared_exclusive" if os.name == "posix" else "shared_only"
+            ),
+            "configuration_valid": False,
+            "configuration_authority": status.get("authority"),
+            "configuration_snapshot_id": None,
+            "configuration_snapshot_digest": None,
+            "configuration_state": (
+                "SETUP_REQUIRED"
+                if status.get("setupRequired")
+                else "RUNTIME_NOT_CONFIGURED"
+                if not status.get("runtimeConfigured")
+                else "READY"
+            ),
+            "management_ready": status.get("managementReady", False),
+            "setup_required": status.get("setupRequired", False),
+            "runtime_configured": status.get("runtimeConfigured", False),
+            "workflow_available": status.get("workflowAvailable", False),
+        },
+        "management": {
+            "managementReady": status.get("managementReady", False),
+            "setupRequired": status.get("setupRequired", False),
+            "runtimeConfigured": status.get("runtimeConfigured", False),
+            "workflowAvailable": status.get("workflowAvailable", False),
+            "authority": status.get("authority"),
+            "active": status.get("active"),
+            "setupDraft": status.get("setupDraft"),
+            "recoveryRequired": status.get("recoveryRequired", False),
+            "health": status.get("health"),
+            "nextAction": status.get("nextAction"),
+        },
+        "storages": {"total": 0, "truncated": False, "items": []},
+        "resource_libraries": {"total": 0, "truncated": False, "items": []},
+        "media_libraries": {"total": 0, "truncated": False, "items": []},
+        "recognition_types": {"total": 0, "truncated": False, "items": []},
+        "recognition_rules": {"total": 0, "truncated": False, "items": []},
+        "recognition_type_policies": {"total": 0, "truncated": False, "items": []},
+        "metadata_policies": {"total": 0, "truncated": False, "items": []},
+        "naming_policies": {"total": 0, "truncated": False, "items": []},
+        "classification_policies": {"total": 0, "truncated": False, "items": []},
+        "organize_policies": {"total": 0, "truncated": False, "items": []},
+    }
+    return ConfigurationSnapshot(_freeze(document))
+
+
 def _section(values, *, key, value) -> dict[str, Any]:
     ordered = sorted(values, key=key)
     return {

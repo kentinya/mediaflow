@@ -15,6 +15,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationClassificationPreviewStatus,
     ConfigurationDestinationPrecheckStatus,
     ConfigurationDestinationPreviewStatus,
+    ConfigurationFirstDraftConflict,
     ConfigurationNamingPreviewStatus,
     ConfigurationObjectKind,
     ConfigurationObjectReferenced,
@@ -321,6 +322,140 @@ class SQLiteConfigurationRepository:
                 self._connection.rollback()
                 raise
         return created
+
+    def create_first_draft_with_audit(
+        self,
+        revision: ManagedConfigurationRevision,
+        audit: ConfigurationChangeAudit,
+    ) -> ManagedConfigurationRevision:
+        """Admit the server-owned first setup Draft exactly once.
+
+        The transaction serializes the authority check, existing-starter check,
+        revision insert, and audit insert.  This keeps two API processes from
+        both observing an empty setup store and creating competing starters.
+        """
+
+        self._validate_revision(revision)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                active_row = self._connection.execute(
+                    "SELECT * FROM managed_configuration_revisions WHERE status=? "
+                    "ORDER BY revision_sequence DESC LIMIT 1",
+                    (ManagedConfigurationStatus.ACTIVE.value,),
+                ).fetchone()
+                if active_row is not None:
+                    raise self._first_draft_conflict(
+                        active_row,
+                        message=(
+                            "managed Active configuration already exists; first setup is closed"
+                        ),
+                        durable_state="active_configuration_preserved",
+                        next_action="import a new Draft from the current Active configuration",
+                    )
+
+                authority = self._connection.execute(
+                    "SELECT last_active_revision_id, last_active_version, last_active_digest "
+                    "FROM managed_configuration_authority WHERE singleton=1"
+                ).fetchone()
+                if authority is not None:
+                    raise ConfigurationFirstDraftConflict(
+                        "managed Active configuration is unavailable; first setup is closed",
+                        revision_id=authority["last_active_revision_id"],
+                        version=int(authority["last_active_version"]),
+                        digest=authority["last_active_digest"],
+                        durable_state="managed_active_unavailable",
+                        next_action=(
+                            "inspect configuration status and stage an explicit recovery Draft"
+                        ),
+                    )
+
+                existing_row = self._first_setup_revision_row()
+                if existing_row is not None:
+                    raise self._first_draft_conflict(
+                        existing_row,
+                        message="the first setup Draft already exists",
+                        durable_state="setup_draft_preserved",
+                        next_action=(
+                            "reload configuration status and resume the existing setup Draft"
+                        ),
+                    )
+
+                created = self._insert_revision(revision)
+                self._insert_audit(
+                    self._normalize_audit(
+                        audit,
+                        ConfigurationObjectKind.SYSTEM_SETTINGS,
+                        created.revision_id,
+                        audit.before,
+                        {**audit.after, "revisionSequence": created.revision_sequence},
+                    )
+                )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return created
+
+    def _first_setup_revision_row(self) -> sqlite3.Row | None:
+        """Find a first setup revision without trusting a user-editable payload alone."""
+
+        audited = self._connection.execute(
+            """
+            SELECT r.*
+            FROM managed_configuration_revisions AS r
+            JOIN configuration_change_audits AS a
+              ON a.object_kind=? AND a.object_id=r.revision_id
+             AND a.action=?
+            ORDER BY a.sequence ASC
+            LIMIT 1
+            """,
+            (
+                ConfigurationObjectKind.SYSTEM_SETTINGS.value,
+                "first_draft_create",
+            ),
+        ).fetchone()
+        if audited is not None:
+            return audited
+        rows = self._connection.execute(
+            "SELECT * FROM managed_configuration_revisions "
+            "ORDER BY revision_sequence ASC, revision_id ASC"
+        ).fetchall()
+        for row in rows:
+            try:
+                document = json.loads(row["payload"])
+            except (TypeError, ValueError):
+                continue
+            setup = document.get("setup") if isinstance(document, dict) else None
+            if isinstance(setup, dict) and setup.get("kind") == "first_runtime_setup":
+                return row
+        return None
+
+    @staticmethod
+    def _first_draft_conflict(
+        row: sqlite3.Row,
+        *,
+        message: str,
+        durable_state: str,
+        next_action: str,
+    ) -> ConfigurationFirstDraftConflict:
+        try:
+            revision = SQLiteConfigurationRepository._revision(row)
+        except Exception:
+            return ConfigurationFirstDraftConflict(
+                message,
+                revision_id=row["revision_id"],
+                version=int(row["version"]),
+                digest=row["digest"],
+                durable_state=durable_state,
+                next_action=next_action,
+            )
+        return ConfigurationFirstDraftConflict(
+            message,
+            revision=revision,
+            durable_state=durable_state,
+            next_action=next_action,
+        )
 
     def _insert_revision(
         self, revision: ManagedConfigurationRevision

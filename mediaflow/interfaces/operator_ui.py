@@ -71,6 +71,8 @@ APP_JS = b"""(() => {
   'use strict';
   let token = '';
   let view = 'dashboard';
+  let canManageConfiguration = false;
+  let canActivateConfiguration = false;
   const content = document.getElementById('content');
   const notice = document.getElementById('notice');
   const detail = document.getElementById('detail');
@@ -197,13 +199,18 @@ APP_JS = b"""(() => {
   }
   async function renderConfiguration() {
     const data = await api('/api/v1/configuration');
+    canManageConfiguration = data.canManageConfiguration !== false;
+    canActivateConfiguration = data.canActivateConfiguration !== false;
     clear(content); content.append(text('h2', 'Configuration lifecycle'));
     const active = data.active || {};
     content.append(cards([
       ['Authority', data.authority], ['Active status', active.status || '-'],
       ['Active version', active.version || '-'], ['Revision sequence', active.revisionSequence || '-'],
       ['Active digest', active.digest || '-'], ['Health', data.health || '-'],
-      ['Runtime ready', data.runtimeReady === undefined ? '-' : data.runtimeReady]
+      ['Management ready', data.managementReady === undefined ? '-' : data.managementReady],
+      ['Setup required', data.setupRequired === undefined ? '-' : data.setupRequired],
+      ['Runtime configured', data.runtimeConfigured === undefined ? '-' : data.runtimeConfigured],
+      ['Workflow available', data.workflowAvailable === undefined ? '-' : data.workflowAvailable]
     ]));
     if (data.unavailableReason) content.append(text('p',
       `${data.unavailableReason}. ${data.lastKnownActive ?
@@ -214,26 +221,53 @@ APP_JS = b"""(() => {
       'No media side effect occurred; inspect the status, then validate and activate a replacement.',
       'error'));
     content.append(text('p', 'Activation is explicit and does not scan or mutate Storage.', 'warning'));
-    content.append(text('h3', 'Stage a whole-document JSON Draft'));
-    const editor = document.createElement('textarea');
-    editor.setAttribute('aria-label', 'Configuration JSON draft');
-    editor.placeholder = 'Paste a complete configuration document here. Secrets must remain environment references.';
-    content.append(editor);
-    content.append(actionButton('Import pasted JSON as Draft', async () => {
-      try {
-        const parsed = JSON.parse(editor.value);
-        await api('/api/v1/configuration/drafts',
-          {method: 'POST', body: JSON.stringify({document: parsed})});
-        message('Draft imported. Open the revision, correct any validation errors, then validate.');
-        await renderConfiguration();
-      } catch (error) { message(errorText(error), true); }
-    }));
-    content.append(actionButton('Import current JSON as Draft', async () => {
-      try { await api('/api/v1/configuration/drafts',
-        {method: 'POST', body: JSON.stringify({source: 'current'})});
-        message('Draft imported. Validate it before activation.'); await renderConfiguration();
-      } catch (error) { message(errorText(error), true); }
-    }));
+    if (data.setupRequired === true) {
+      content.append(text('h3', 'Setup required'));
+      content.append(text('p',
+        'MediaFlow is alive and management is ready, but no business runtime or Active revision exists. ' +
+        'Creating this Draft does not validate, test Storage, contact a Provider, queue work, or touch media.',
+        'warning'));
+      if (data.setupDraft) {
+        const setup = data.setupDraft;
+        content.append(text('p', `A setup Draft already exists: ${setup.revisionId} / ${setup.digest}.`));
+        content.append(actionButton('Resume setup Draft', () => showConfigurationRevision(setup)));
+      } else if (data.canManageConfiguration !== false) {
+        content.append(actionButton('Create first Draft', async () => {
+          try {
+            await api('/api/v1/configuration/drafts/first',
+              {method: 'POST', body: '{}'});
+            message('First setup Draft created. Resume it to complete guided setup before validation and activation.');
+            await renderConfiguration();
+          } catch (error) { message(errorText(error), true); await renderConfiguration(); }
+        }));
+      } else {
+        content.append(text('p',
+          'This principal is read-only. Ask a configuration administrator to create the first Draft.',
+          'warning'));
+      }
+      if (data.nextAction) content.append(text('p', `Next action: ${data.nextAction}`, 'warning'));
+    } else {
+      content.append(text('h3', 'Stage a whole-document JSON Draft'));
+      const editor = document.createElement('textarea');
+      editor.setAttribute('aria-label', 'Configuration JSON draft');
+      editor.placeholder = 'Paste a complete configuration document here. Secrets must remain environment references.';
+      content.append(editor);
+      content.append(actionButton('Import pasted JSON as Draft', async () => {
+        try {
+          const parsed = JSON.parse(editor.value);
+          await api('/api/v1/configuration/drafts',
+            {method: 'POST', body: JSON.stringify({document: parsed})});
+          message('Draft imported. Open the revision, correct any validation errors, then validate.');
+          await renderConfiguration();
+        } catch (error) { message(errorText(error), true); }
+      }));
+      content.append(actionButton('Import current JSON as Draft', async () => {
+        try { await api('/api/v1/configuration/drafts',
+          {method: 'POST', body: JSON.stringify({source: 'current'})});
+          message('Draft imported. Validate it before activation.'); await renderConfiguration();
+        } catch (error) { message(errorText(error), true); }
+      }));
+    }
     const revisions = data.revisions || [];
     content.append(text('h3', `Revisions (${revisions.length})`));
     content.append(table(['Revision', 'Status', 'Version', 'Digest', 'Updated'],
@@ -297,7 +331,7 @@ APP_JS = b"""(() => {
     detail.hidden = true; await renderConfiguration();
   }
   function configurationRevisionEditable(revision) {
-    return revision.status === 'draft' || revision.status === 'validated';
+    return canManageConfiguration && (revision.status === 'draft' || revision.status === 'validated');
   }
   function renderGuidedObjectList(revision, guided, kind, label) {
     const values = guided.objects && guided.objects[kind] || [];
@@ -1341,7 +1375,7 @@ APP_JS = b"""(() => {
         renderDestinationPrecheck(data, guided);
       }
       const actions = text('div', '', 'choices');
-      if (data.status === 'draft') actions.append(actionButton('Validate Draft', async () => {
+      if (data.status === 'draft' && canManageConfiguration) actions.append(actionButton('Validate Draft', async () => {
         try { await api(`/api/v1/configuration/revisions/${encodeURIComponent(data.revisionId)}/validate`,
           {method: 'POST', body: '{}'}); detail.hidden = true; await renderConfiguration();
         } catch (error) { message(errorText(error), true); }
@@ -1362,16 +1396,18 @@ APP_JS = b"""(() => {
         }));
       }
       if (data.status === 'validated') {
-        const checked = guided && checkedActivationEvidenceIsCurrent(data, guided);
-        actions.append(actionButton(checked ? 'Activate checked revision' :
-          (guided ? 'Activate unchecked compatibility revision' : 'Activate revision'),
-          () => activateConfigurationRevision(data, Boolean(checked))));
-        if (!checked && guided) {
-          const destination = destinationPrecheckBlocksCheckedActivation(data, guided);
-          const warning = destination ?
-            `Activation is available for compatibility, but checked activation is blocked by the Local destination precheck; ${destination.nextAction}.` :
-            'Activation is available for compatibility, but the guided safe path requires both a current passed Local setup check and a current completed Recognition Strategy Test.';
-          actions.append(text('p', warning, 'warning'));
+        if (canActivateConfiguration) {
+          const checked = guided && checkedActivationEvidenceIsCurrent(data, guided);
+          actions.append(actionButton(checked ? 'Activate checked revision' :
+            (guided ? 'Activate unchecked compatibility revision' : 'Activate revision'),
+            () => activateConfigurationRevision(data, Boolean(checked))));
+          if (!checked && guided) {
+            const destination = destinationPrecheckBlocksCheckedActivation(data, guided);
+            const warning = destination ?
+              `Activation is available for compatibility, but checked activation is blocked by the Local destination precheck; ${destination.nextAction}.` :
+              'Activation is available for compatibility, but the guided safe path requires both a current passed Local setup check and a current completed Recognition Strategy Test.';
+            actions.append(text('p', warning, 'warning'));
+          }
         }
       }
       if (data.status === 'active') actions.append(actionButton('Queue first DryRun Preview', async () => {
@@ -3123,8 +3159,17 @@ APP_JS = b"""(() => {
       else await renderQueue(view); message('Connected.');
     } catch (error) { clear(content); message(errorText(error), true); }
   }
-  document.getElementById('connect').addEventListener('click', () => {
-    token = tokenInput.value; tokenInput.value = ''; load();
+  document.getElementById('connect').addEventListener('click', async () => {
+    token = tokenInput.value; tokenInput.value = '';
+    try {
+      const readiness = await api('/api/v1/management/readiness');
+      if (readiness.setupRequired || readiness.recoveryRequired) {
+        view = 'configuration';
+        document.querySelectorAll('nav button').forEach(item =>
+          item.classList.toggle('active', item.dataset.view === view));
+      }
+      await load();
+    } catch (error) { clear(content); message(errorText(error), true); }
   });
   document.getElementById('disconnect').addEventListener('click', () => {
     token = ''; tokenInput.value = ''; clear(content); detail.hidden = true; message('Disconnected.');
