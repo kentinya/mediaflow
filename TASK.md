@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 26.5
 Parent Slice: 26 — Web-first Fresh Setup and Storage Completion
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 07a46c5d84b0bb858c159060bb68c9b9d448673d
 Difficulty: High
 Test Level: T4
@@ -267,6 +267,28 @@ RO-7 and the first-runtime activation journey remain incomplete.
 - Docs: architecture.md and product-experience.md record the provider-neutral activation
   evidence model and first-runtime completion semantics.
 
+### Fix Loop (FIX REQUIRED correction)
+
+- `require_current_storage_checks()` now compares the current deployment-owned secret
+  readiness for every enabled referenced Storage with the readiness persisted in its
+  read-only Storage check evidence, immediately before checked activation. A changed
+  readiness (for example `SET` at check time and `UNSET` at activation time) is rejected
+  with a bounded `ConfigurationActivationConflict` naming the affected Storage, stating
+  that the Draft and any prior Active remain unchanged, and giving the explicit recovery
+  action: restore the recorded readiness, rerun that Storage's read-only check on the
+  current revision, then activate checked.
+- The gate also rejects a passed evidence whose current deployment-owned credential
+  readiness is `UNSET`, so an evidence row that cannot have been produced by a real
+  passed check cannot slip through activation.
+- Added an automated SET-to-UNSET regression through the API activation endpoint
+  (`activate_checked` inside `MediaFlowApi`) after real `storage_check` evidence was
+  produced with the environment reference `SET`: the second validated Draft stays
+  `validated`, the prior Active revision stays Active, evidence rows are unchanged, no
+  Storage mutation occurs, and the API returns a bounded 409 `configuration_conflict`
+  with recovery guidance. Existing remote-evidence tests were adjusted so manually
+  persisted evidence records the same current secret readiness that a real passed check
+  would record.
+
 ### Tests and Results
 
 - DEVIATION — the Task's Required Tests command lists `tests.test_strategy_test`, which does not
@@ -295,6 +317,27 @@ RO-7 and the first-runtime activation journey remain incomplete.
 - SKIP / UNAVAILABLE — production SMB, OpenList, AWS S3, Cloudflare R2 and generic S3-compatible
   services: no approved isolated environment, so fake adapters/local services and temporary
   Local roots were used. No production credentials or user media were touched.
+- PASS — fix-loop focused regression
+  (`.venv/bin/python -m unittest tests.test_configuration_destination_activation
+  tests.test_configuration_destination_precheck tests.test_storage_setup_check
+  tests.test_configuration_objects tests.test_configuration_snapshot
+  tests.test_configuration_status tests.test_guided_storage_lifecycle
+  tests.test_management_setup tests.test_api_security tests.test_operator_ui
+  tests.test_storage_browser tests.test_strategy_configuration
+  tests.test_strategy_cli`): 259 tests, OK, including the new SET-to-UNSET API
+  regression.
+- PASS — fix-loop full offline suite in a clean detached worktree of the fix checkpoint
+  (`928b727`): 1161 tests, OK, 7 skipped. The main worktree was not used for the full
+  run because its ignored `.mediaflow` runtime database is the previously recorded
+  environment-dependent failure source; the clean-worktree run avoids that artifact.
+- PASS — fix-loop `.venv/bin/ruff format --check .` (361 files already formatted).
+- PASS — fix-loop `.venv/bin/ruff check .`.
+- PASS — fix-loop `.venv/bin/python -m compileall -q mediaflow tests scripts`.
+- PASS — fix-loop `.venv/bin/python -m pip check`.
+- PASS — fix-loop both canonical configuration validations.
+- PASS — fix-loop forbidden FFprobe/FFmpeg scan: no matches.
+- PASS — fix-loop isolated wheel build and `scripts/wheel_smoke_test.py`: backup,
+  migration rehearsal, restore, verify and upgrade preflight completed.
 
 ### Decisions
 
@@ -307,6 +350,10 @@ RO-7 and the first-runtime activation journey remain incomplete.
   guard, with new pre-flight `disabled`/`missing_secret` failures before adapter construction.
 - Kept the one-destination-Storage-per-precheck rule and the strategy-test gate unchanged; this
   Task wires evidence applicability, it does not redesign existing policy semantics.
+- Compared persisted evidence readiness against readiness recomputed from the current
+  environment at activation time rather than trusting the projection, so the Web/API
+  evidence display and the Application activation admission cannot disagree.
+
 ### Remaining In-Slice Work
 
 - None known inside Task 26.5's scope; re-evaluation of all Slice Required Outcomes belongs to B.
@@ -323,17 +370,29 @@ RO-7 and the first-runtime activation journey remain incomplete.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 6ed11d3320363448568498264018044916951516
+Head SHA: 928b727552a2fbb298e694cb0312e082e4662dda
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 07a46c5d84b0bb858c159060bb68c9b9d448673d..6ed11d377206f54b7c750ed53ae44109763fdaba
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- Checked activation does not fail closed when deployment-owned Storage credentials become
+   unavailable after a passed check. Evidence: after a remote Storage check with its environment
+   reference `SET`, changing the same environment reference to `UNSET` makes
+   `storage_check_evidence()` report `current=false`, `stale=true`, `staleReason=secret_readiness_changed`,
+   but `activate_checked()` still succeeds and makes the revision Active. The reviewer reproduced
+   this with a temporary SQLite repository and fake remote adapter; the focused regression otherwise
+   ran 258 tests successfully. Required fix direction: make `require_current_storage_checks()`
+   compare the current deployment-owned secret readiness for every enabled referenced Storage with
+   the persisted evidence, and reject changed/unset readiness with a bounded recovery conflict before
+   activation; preserve the Draft and prior Active and add an automated SET-to-UNSET activation
+   regression through the application/API path.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
