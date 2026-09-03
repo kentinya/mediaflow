@@ -175,6 +175,7 @@ class MediaFlowApi:
         configuration_snapshot_digest: str | None = None,
         bootstrap_document: object | None = None,
         metadata_provider_registry_factory=None,
+        storage_adapters=None,
         recovery_snapshot_validator: Callable[[str, str], None] | None = None,
         manual_intent_service: ManualOrganizeIntentService | None = None,
         manual_preview_service: ManualOrganizePreviewService | None = None,
@@ -221,6 +222,7 @@ class MediaFlowApi:
             ConfigurationObjectService(
                 configuration_service,
                 metadata_provider_registry_factory=metadata_provider_registry_factory,
+                storage_adapters=storage_adapters,
             )
             if configuration_service is not None
             else None
@@ -2008,6 +2010,142 @@ class MediaFlowApi:
                 200,
                 {**detail, "storage": storage},
             )
+        if (
+            len(parts) == 9
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5:7] == ["objects", "storages"]
+            and parts[8] == "check"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            if set(document) != {"expectedVersion", "expectedDigest"}:
+                raise ValueError("Storage check requires expectedVersion and expectedDigest")
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            if not isinstance(document["expectedDigest"], str):
+                raise ValueError("configuration expectedDigest is required")
+            evidence = self._configuration_objects.storage_check(
+                parts[4],
+                storage_id=parts[7],
+                expected_version=expected,
+                expected_digest=document["expectedDigest"],
+                actor=principal.principal_id,
+            )
+            response = self._configuration_objects.storage_check_evidence(parts[4], parts[7])
+            return self._response(start_response, 200, response or evidence.document())
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "storage-check"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            if set(document) != {"storageId", "expectedVersion", "expectedDigest"}:
+                raise ValueError(
+                    "Storage check requires storageId, expectedVersion and expectedDigest"
+                )
+            storage_id = document["storageId"]
+            if not isinstance(storage_id, str) or not storage_id.strip():
+                raise ValueError("Storage check storageId is required")
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            if not isinstance(document["expectedDigest"], str):
+                raise ValueError("configuration expectedDigest is required")
+            evidence = self._configuration_objects.storage_check(
+                parts[4],
+                storage_id=storage_id,
+                expected_version=expected,
+                expected_digest=document["expectedDigest"],
+                actor=principal.principal_id,
+            )
+            response = self._configuration_objects.storage_check_evidence(parts[4], storage_id)
+            return self._response(start_response, 200, response or evidence.document())
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "storage-checks"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            detail = self._configuration_objects.revision_detail(parts[4])
+            items = detail.get("storageChecks", [])
+            return self._response(
+                start_response,
+                200,
+                {**detail, "items": items, "total": len(items)},
+            )
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "storage-checks"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            evidence = self._configuration_objects.storage_check_evidence(parts[4], parts[6])
+            if evidence is None:
+                raise LookupError(f"Storage check evidence for {parts[6]!r} was not found")
+            detail = self._configuration_objects.revision_detail(parts[4])
+            return self._response(
+                start_response,
+                200,
+                {**detail, "storageCheck": evidence},
+            )
+        if (
+            len(parts) == 9
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5:7] == ["objects", "storages"]
+            and parts[8] == "check"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            evidence = self._configuration_objects.storage_check_evidence(parts[4], parts[7])
+            if evidence is None:
+                raise LookupError(f"Storage check evidence for {parts[7]!r} was not found")
+            return self._response(start_response, 200, evidence)
         if (
             len(parts) == 7
             and parts[:3] == ["api", "v1", "configuration"]

@@ -23,6 +23,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationReference,
     ConfigurationReferencePolicy,
     ConfigurationSetupCheckStatus,
+    ConfigurationStorageCheckStatus,
     ConfigurationStrategyTestStatus,
     ConfigurationVersionConflict,
     DestinationPrecheckEvidence,
@@ -36,6 +37,7 @@ from mediaflow.domain.configuration_management import (
     RecognitionStrategyTestEvidence,
     RuntimeSnapshotUnavailable,
     StorageConfigurationType,
+    StorageSetupCheckEvidence,
     validate_configuration_object_id,
     validate_storage_configuration,
 )
@@ -906,6 +908,109 @@ class SQLiteConfigurationRepository:
             row["next_action"],
         )
 
+    def save_storage_setup_check(
+        self, evidence: StorageSetupCheckEvidence
+    ) -> StorageSetupCheckEvidence:
+        if not isinstance(evidence, StorageSetupCheckEvidence):
+            raise ValueError("Storage check evidence is required")
+        payload = evidence.document()
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO managed_storage_setup_checks
+                (revision_id, storage_id, revision_version, revision_digest, status,
+                 checked_at, actor, storage_type, read_only, capabilities_json,
+                 operations_json, attempted_operations_json, secret_readiness_json, duration_ms,
+                 failure_category,
+                 message, next_action)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(revision_id, storage_id) DO UPDATE SET
+                    revision_version=excluded.revision_version,
+                    revision_digest=excluded.revision_digest,
+                    status=excluded.status,
+                    checked_at=excluded.checked_at,
+                    actor=excluded.actor,
+                    storage_type=excluded.storage_type,
+                    read_only=excluded.read_only,
+                    capabilities_json=excluded.capabilities_json,
+                    operations_json=excluded.operations_json,
+                    attempted_operations_json=excluded.attempted_operations_json,
+                    secret_readiness_json=excluded.secret_readiness_json,
+                    duration_ms=excluded.duration_ms,
+                    failure_category=excluded.failure_category,
+                    message=excluded.message,
+                    next_action=excluded.next_action
+                """,
+                (
+                    evidence.revision_id,
+                    evidence.storage_id,
+                    evidence.revision_version,
+                    evidence.revision_digest,
+                    evidence.status.value,
+                    evidence.checked_at.isoformat(),
+                    evidence.actor,
+                    evidence.storage_type,
+                    int(evidence.read_only),
+                    self._json(payload["capabilities"]),
+                    self._json(payload["operations"]),
+                    self._json(payload["attemptedOperations"]),
+                    self._json(payload["secretReadiness"]),
+                    evidence.duration_ms,
+                    evidence.failure_category,
+                    evidence.message,
+                    evidence.next_action,
+                ),
+            )
+        return evidence
+
+    def get_storage_setup_check(
+        self, revision_id: str, storage_id: str
+    ) -> StorageSetupCheckEvidence | None:
+        self._object_id(revision_id)
+        self._object_id(storage_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM managed_storage_setup_checks WHERE revision_id=? AND storage_id=?",
+                (revision_id, storage_id),
+            ).fetchone()
+        return None if row is None else self._storage_setup_check(row)
+
+    def list_storage_setup_checks(
+        self, revision_id: str, *, limit: int = 64
+    ) -> tuple[StorageSetupCheckEvidence, ...]:
+        self._object_id(revision_id)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 128:
+            raise ValueError("Storage check evidence limit must be between 1 and 128")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM managed_storage_setup_checks "
+                "WHERE revision_id=? ORDER BY storage_id LIMIT ?",
+                (revision_id, limit),
+            ).fetchall()
+        return tuple(self._storage_setup_check(row) for row in rows)
+
+    @staticmethod
+    def _storage_setup_check(row: sqlite3.Row) -> StorageSetupCheckEvidence:
+        return StorageSetupCheckEvidence(
+            row["revision_id"],
+            int(row["revision_version"]),
+            row["revision_digest"],
+            ConfigurationStorageCheckStatus(row["status"]),
+            datetime.fromisoformat(row["checked_at"]),
+            row["actor"],
+            row["storage_id"],
+            row["storage_type"],
+            bool(row["read_only"]),
+            dict(json.loads(row["capabilities_json"])),
+            tuple(json.loads(row["operations_json"])),
+            tuple(json.loads(row["attempted_operations_json"])),
+            tuple(dict(value) for value in json.loads(row["secret_readiness_json"])),
+            int(row["duration_ms"]),
+            row["failure_category"],
+            row["message"],
+            row["next_action"],
+        )
+
     def save_recognition_strategy_test(
         self, evidence: RecognitionStrategyTestEvidence
     ) -> RecognitionStrategyTestEvidence:
@@ -1642,6 +1747,29 @@ class SQLiteConfigurationRepository:
                 );
                 CREATE INDEX IF NOT EXISTS managed_local_setup_checks_status
                     ON managed_local_setup_checks(status, checked_at);
+                CREATE TABLE IF NOT EXISTS managed_storage_setup_checks (
+                    revision_id TEXT NOT NULL,
+                    storage_id TEXT NOT NULL,
+                    revision_version INTEGER NOT NULL,
+                    revision_digest TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    checked_at TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    storage_type TEXT NOT NULL,
+                    read_only INTEGER NOT NULL,
+                    capabilities_json TEXT NOT NULL,
+                    operations_json TEXT NOT NULL,
+                    attempted_operations_json TEXT NOT NULL,
+                    secret_readiness_json TEXT NOT NULL,
+                    duration_ms INTEGER NOT NULL,
+                    failure_category TEXT,
+                    message TEXT,
+                    next_action TEXT,
+                    PRIMARY KEY(revision_id, storage_id),
+                    FOREIGN KEY(revision_id) REFERENCES managed_configuration_revisions(revision_id)
+                );
+                CREATE INDEX IF NOT EXISTS managed_storage_setup_checks_status
+                    ON managed_storage_setup_checks(status, checked_at, storage_id);
                 CREATE TABLE IF NOT EXISTS managed_recognition_strategy_tests (
                     revision_id TEXT PRIMARY KEY,
                     revision_version INTEGER NOT NULL,
@@ -1777,6 +1905,17 @@ class SQLiteConfigurationRepository:
                 self._connection.execute(
                     "ALTER TABLE managed_configuration_revisions "
                     "ADD COLUMN revision_sequence INTEGER"
+                )
+            storage_check_columns = {
+                row["name"]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(managed_storage_setup_checks)"
+                ).fetchall()
+            }
+            if "attempted_operations_json" not in storage_check_columns:
+                self._connection.execute(
+                    "ALTER TABLE managed_storage_setup_checks "
+                    "ADD COLUMN attempted_operations_json TEXT NOT NULL DEFAULT '[]'"
                 )
             self._connection.execute(
                 "UPDATE managed_configuration_revisions SET revision_sequence=rowid "

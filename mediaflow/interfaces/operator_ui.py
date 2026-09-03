@@ -426,6 +426,51 @@ APP_JS = b"""(() => {
     message(`Storage ${action} saved. Validate the Draft again before activation.`);
     detail.hidden = true; await renderConfiguration();
   }
+  async function runStorageCheck(revision, item) {
+    try {
+      const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/storage-check`,
+        {method: 'POST', body: JSON.stringify({storageId: item.id,
+          expectedVersion: revision.version, expectedDigest: revision.digest})});
+      message(result.status === 'passed' ?
+        'Storage read-only root check passed. Review the declared capabilities and continue setup.' :
+        `${result.message || 'Storage read-only root check failed.'} ${result.nextAction || ''} ` +
+        `Side effects: ${result.sideEffects || 'unknown'}. Retry safe: ${result.retrySafe === true ? 'yes' : 'no'}.`,
+        result.status !== 'passed');
+      await showConfigurationRevision(revision);
+    } catch (error) { message(errorText(error), true); }
+  }
+  function storageCheckEvidenceFor(guided, storageId) {
+    const values = guided && Array.isArray(guided.storageChecks) ? guided.storageChecks : [];
+    return values.find(item => item && item.storageId === storageId) || null;
+  }
+  function renderStorageCheckEvidence(revision, evidence) {
+    const list = document.createElement('dl');
+    const current = Boolean(evidence && evidence.current === true && evidence.stale === false);
+    const capabilities = evidence && evidence.capabilities && typeof evidence.capabilities === 'object' ? evidence.capabilities : {};
+    const operations = Array.isArray(evidence && evidence.completedReadOperations) ? evidence.completedReadOperations :
+      (Array.isArray(evidence && evidence.operations) ? evidence.operations : []);
+    const attempted = Array.isArray(evidence && evidence.attemptedOperations) ? evidence.attemptedOperations : [];
+    const readiness = Array.isArray(evidence && evidence.secretReadiness) ? evidence.secretReadiness.map(item =>
+      `${item.field || '-'}: ${item.state || '-'}`).join(', ') : '-';
+    field(list, 'Storage check state', current ? 'current' : 'stale');
+    field(list, 'Status', boundedSetupText(evidence && evidence.status));
+    field(list, 'Check revision', `${boundedSetupText(evidence && evidence.revisionId)} / v${Number.isInteger(evidence && evidence.revisionVersion) ? evidence.revisionVersion : '-'}`);
+    field(list, 'Check digest', boundedSetupText(evidence && evidence.revisionDigest));
+    field(list, 'Storage', `${boundedSetupText(evidence && evidence.storageId)} (${boundedSetupText(evidence && evidence.storageType)})`);
+    field(list, 'Completed read operations', operations.length ? operations.join(', ') : '-');
+    field(list, 'Attempted read operations', attempted.length ? attempted.join(', ') : '-');
+    field(list, 'Declared capabilities', Object.entries(capabilities).map(([key, value]) => `${key}: ${value === true ? 'yes' : 'no'}`).join(', ') || '-');
+    field(list, 'Capability source', boundedSetupText(evidence && evidence.capabilitySource));
+    field(list, 'Capability probe', boundedSetupText(evidence && evidence.capabilityProbe));
+    field(list, 'Credential readiness', readiness);
+    field(list, 'Failure category', boundedSetupText(evidence && evidence.failureCategory));
+    field(list, 'Message', boundedSetupText(evidence && evidence.message));
+    field(list, 'Side effects', boundedSetupText(evidence && evidence.sideEffects, 'unknown'));
+    field(list, 'Retry safe', evidence && evidence.retrySafe === true ? 'YES' : 'NO');
+    field(list, 'Next action', boundedSetupText(evidence && evidence.nextAction));
+    if (evidence && evidence.staleReason) field(list, 'Stale reason', boundedSetupText(evidence.staleReason));
+    return list;
+  }
   function configurationRevisionEditable(revision) {
     return canManageConfiguration && (revision.status === 'draft' || revision.status === 'validated');
   }
@@ -495,6 +540,14 @@ APP_JS = b"""(() => {
         const readinessText = readiness.length ? readiness.map(entry =>
           `${entry.field}: ${entry.state}`).join(', ') : 'No secret reference';
         row.append(text('span', `Credential readiness: ${readinessText}`));
+        const storageEvidence = storageCheckEvidenceFor(guided, item.id);
+        row.append(text('span', storageEvidence ?
+          `Read-only root check: ${storageEvidence.current === true && storageEvidence.stale === false ? 'current' : 'stale'} / ${storageEvidence.status || 'unknown'}` :
+          'Read-only root check: not run', storageEvidence && storageEvidence.status === 'failed' ? 'warning' : ''));
+        if (storageEvidence) row.append(renderStorageCheckEvidence(revision, storageEvidence));
+        if (configurationRevisionEditable(revision)) row.append(actionButton(
+          storageEvidence ? 'Rerun read-only Storage check' : 'Run read-only Storage check',
+          () => runStorageCheck(revision, item)));
       }
       if (configurationRevisionEditable(revision)) {
         row.append(actionButton('Edit', () => renderGuidedObjectForm(revision, kind, item)));

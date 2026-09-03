@@ -91,98 +91,7 @@ class RuntimeConfiguration:
                 continue
             if value.storage_id in storages:
                 continue
-            if value.storage_type != "local":
-                if value.storage_type == "openlist":
-                    options = value.options or {}
-                    token_env = str(options.get("tokenEnv", ""))
-                    token = os.environ.get(token_env) if token_env else None
-                    if not token:
-                        raise ValueError(
-                            f"OpenList Storage {value.storage_id!r} requires environment "
-                            f"variable {token_env or '<tokenEnv>'}"
-                        )
-                    storages[value.storage_id] = OpenListStorage(
-                        OpenListStorageConfig(
-                            value.storage_id,
-                            value.name,
-                            str(options.get("baseUrl", "")),
-                            token,
-                            value.root_path,
-                            value.read_only,
-                            float(options.get("connectTimeout", 10)),
-                            float(options.get("requestTimeout", 60)),
-                            int(options.get("maxConcurrency", 4)),
-                            int(options.get("maxRetries", 2)),
-                            int(options.get("pageSize", 100)),
-                        )
-                    )
-                    continue
-                if value.storage_type == "smb":
-                    options = value.options or {}
-                    storages[value.storage_id] = SMBStorage(
-                        SMBStorageConfig(
-                            value.storage_id,
-                            value.name,
-                            str(options.get("host", "")),
-                            str(options.get("share", "")),
-                            _secret(value, "usernameEnv"),
-                            _secret(value, "passwordEnv"),
-                            str(options["domain"]) if options.get("domain") is not None else None,
-                            value.root_path,
-                            int(options.get("port", 445)),
-                            value.read_only,
-                            float(options.get("connectTimeout", 30)),
-                            float(options.get("operationTimeout", 60)),
-                            int(options.get("maxConcurrency", 4)),
-                        )
-                    )
-                    continue
-                if value.storage_type in {"s3", "r2", "s3-compatible"}:
-                    options = value.options or {}
-                    provider = {
-                        "s3": S3Provider.AWS_S3,
-                        "r2": S3Provider.CLOUDFLARE_R2,
-                        "s3-compatible": S3Provider.S3_COMPATIBLE,
-                    }[value.storage_type]
-                    session_env = options.get("sessionTokenEnv")
-                    session_token = (
-                        _secret(value, "sessionTokenEnv") if session_env is not None else None
-                    )
-                    storages[value.storage_id] = S3Storage(
-                        S3StorageConfig(
-                            value.storage_id,
-                            value.name,
-                            provider,
-                            str(options.get("bucket", "")),
-                            _secret(value, "accessKeyEnv"),
-                            _secret(value, "secretKeyEnv"),
-                            str(options["endpoint"]) if options.get("endpoint") else None,
-                            str(options["region"]) if options.get("region") else None,
-                            session_token,
-                            value.root_path,
-                            value.read_only,
-                            float(options.get("connectTimeout", 10)),
-                            float(options.get("requestTimeout", 60)),
-                            int(options.get("maxConcurrency", 4)),
-                            int(options.get("multipartThreshold", 64 * 1024 * 1024)),
-                            int(options.get("multipartPartSize", 16 * 1024 * 1024)),
-                            bool(options.get("forcePathStyle", False)),
-                            int(options.get("maxRetries", 2)),
-                            int(options.get("pageSize", 1000)),
-                        )
-                    )
-                    continue
-                raise ValueError(
-                    f"Storage {value.storage_id!r} type {value.storage_type!r} requires an "
-                    "injected configured adapter"
-                )
-            else:
-                storages[value.storage_id] = LocalStorage(
-                    value.storage_id,
-                    value.root_path,
-                    name=value.name,
-                    read_only=value.read_only,
-                )
+            storages[value.storage_id] = create_storage_from_definition(value)
         return storages
 
     def resolve_webhook_targets(self) -> dict[str, tuple[WebhookDefinition, str]]:
@@ -857,6 +766,111 @@ def _validate_storage_definition(value: StorageDefinition) -> None:
         )
         return
     raise ValueError(f"unsupported Storage type {value.storage_type!r}")
+
+
+def load_storage_definition(value: object) -> StorageDefinition:
+    """Parse and validate one Storage without loading the full runtime graph.
+
+    Managed setup checks intentionally need this narrow compatibility boundary:
+    a first Draft may contain one Storage before its ResourceLibrary, policies or
+    other runtime sections exist.  The function performs configuration-only
+    validation and never resolves a credential or opens an adapter.
+    """
+
+    if not isinstance(value, dict):
+        raise ValueError("Storage definition must be an object")
+    definition = _storage(value)
+    _validate_storage_definition(definition)
+    return definition
+
+
+def create_storage_from_definition(definition: StorageDefinition) -> Storage:
+    """Construct one configured Storage adapter at the infrastructure boundary."""
+
+    if not isinstance(definition, StorageDefinition):
+        raise ValueError("Storage definition is required")
+    _validate_storage_definition(definition)
+    options = definition.options or {}
+    if definition.storage_type == "local":
+        return LocalStorage(
+            definition.storage_id,
+            definition.root_path,
+            name=definition.name,
+            read_only=definition.read_only,
+        )
+    if definition.storage_type == "openlist":
+        token = _secret(definition, "tokenEnv")
+        return OpenListStorage(
+            OpenListStorageConfig(
+                definition.storage_id,
+                definition.name,
+                str(options.get("baseUrl", "")),
+                token,
+                definition.root_path,
+                definition.read_only,
+                float(options.get("connectTimeout", 10)),
+                float(options.get("requestTimeout", 60)),
+                int(options.get("maxConcurrency", 4)),
+                int(options.get("maxRetries", 2)),
+                int(options.get("pageSize", 100)),
+            )
+        )
+    if definition.storage_type == "smb":
+        return SMBStorage(
+            SMBStorageConfig(
+                definition.storage_id,
+                definition.name,
+                str(options.get("host", "")),
+                str(options.get("share", "")),
+                _secret(definition, "usernameEnv"),
+                _secret(definition, "passwordEnv"),
+                str(options["domain"]) if options.get("domain") is not None else None,
+                definition.root_path,
+                int(options.get("port", 445)),
+                definition.read_only,
+                float(options.get("connectTimeout", 30)),
+                float(options.get("operationTimeout", 60)),
+                int(options.get("maxConcurrency", 4)),
+            )
+        )
+    if definition.storage_type in {"s3", "r2", "s3-compatible"}:
+        provider = {
+            "s3": S3Provider.AWS_S3,
+            "r2": S3Provider.CLOUDFLARE_R2,
+            "s3-compatible": S3Provider.S3_COMPATIBLE,
+        }[definition.storage_type]
+        session_token = (
+            _secret(definition, "sessionTokenEnv")
+            if options.get("sessionTokenEnv") is not None
+            else None
+        )
+        return S3Storage(
+            S3StorageConfig(
+                definition.storage_id,
+                definition.name,
+                provider,
+                str(options.get("bucket", "")),
+                _secret(definition, "accessKeyEnv"),
+                _secret(definition, "secretKeyEnv"),
+                str(options["endpoint"]) if options.get("endpoint") else None,
+                str(options["region"]) if options.get("region") else None,
+                session_token,
+                definition.root_path,
+                definition.read_only,
+                float(options.get("connectTimeout", 10)),
+                float(options.get("requestTimeout", 60)),
+                int(options.get("maxConcurrency", 4)),
+                int(options.get("multipartThreshold", 64 * 1024 * 1024)),
+                int(options.get("multipartPartSize", 16 * 1024 * 1024)),
+                bool(options.get("forcePathStyle", False)),
+                int(options.get("maxRetries", 2)),
+                int(options.get("pageSize", 1000)),
+            )
+        )
+    raise ValueError(
+        f"Storage {definition.storage_id!r} type {definition.storage_type!r} requires an "
+        "injected configured adapter"
+    )
 
 
 def _reject_literal_secrets(options: dict[str, Any], fields: set[str]) -> None:
