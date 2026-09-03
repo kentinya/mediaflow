@@ -567,12 +567,14 @@ precomputed `GET /api/v1/system/status` snapshot and shows bounded Storage/libra
 runtime compatibility. Root paths, display paths, scan-rule values, naming templates,
 classification paths, endpoints, environment-variable names, arbitrary adapter options, and secrets
 are intentionally excluded. Reselect **System** or use its explicit refresh button to reload the
-same startup snapshot; changing JSON still requires validation and an API restart.
+same startup snapshot; changing JSON still requires validation and an API restart. System Settings
+consumption and editing remain Slice 27 work.
 
 The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries,
 persistent scan/preview jobs, Cron schedules, and the signed Webhook delivery engine are complete.
-Webhook configuration/test and delivery recovery in Web/API remain a Slice 27 product-completion
-journey; the existing delivery engine is not being reimplemented.
+Webhook definition configuration/test and delivery recovery in Web/API remain a Slice 27
+product-completion journey; the existing delivery engine is not being reimplemented. A Storage
+Browser/path picker and guided remote Storage setup remain Slice 26 work.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
 Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
 The authenticated Operator UI exposes the operational Dashboard, Files, managed Configuration,

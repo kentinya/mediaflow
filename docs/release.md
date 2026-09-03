@@ -28,7 +28,8 @@ The Docker acceptance contract includes:
 This target does not claim direct Internet exposure, built-in user/password/OIDC identity, SQLite on
 remote Storage, Docker Secrets-specific ingestion, Provider switching, additional Metadata Providers,
 or external-service compatibility that the validation environment cannot run. Those boundaries remain
-explicitly documented as unsupported, post-V1 or `SKIP / UNAVAILABLE` as applicable.
+explicitly documented as unsupported, post-V1 or `SKIP / UNAVAILABLE` as applicable. The current
+repository is still pre-Docker production release; the target is owned by Slice 28.
 
 ## Quality gate
 
@@ -46,6 +47,11 @@ mediaflow --config config/mediaflow.phase13.2.example.json config validate
 test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"
 git diff --check
 ```
+
+The current runtime and configuration-management compatibility markers are implementation facts,
+not release labels: runtime SQLite schema `31`, configuration-management schema `10`, and managed
+configuration document schema `1`. A release claim must be tied to the actual migration and upgrade
+evidence for the target revision, not to an old migration number.
 
 Build and validate the exact installable artifact in a new isolated environment:
 
@@ -117,10 +123,11 @@ Restore is recovery-only and never overwrites:
 The command refuses any occupied destination or sidecar and does not detect process liveness. Never
 use it as an in-place replacement mechanism.
 
-Automation Job claims are fenced in Runtime schema v14 and cooperative workflow boundaries refresh
-their age. This prevents an old Worker from committing over a requeued/later claim, but it does not
-prove that an in-flight provider or Storage operation stopped. Before `jobs requeue`, stop and inspect
-the Worker, Job/Task history, source, and destination. Never infer safe replay solely from stale age.
+Automation Job claims are fenced by the current runtime persistence model and cooperative workflow
+boundaries refresh their age. This prevents an old Worker from committing over a requeued/later claim,
+but it does not prove that an in-flight provider or Storage operation stopped. Before `jobs requeue`,
+stop and inspect the Worker, Job/Task history, source, and destination. Never infer safe replay solely
+from stale age.
 
 On POSIX, every production runtime command holds a shared kernel advisory lease for its lifetime and
 restore requires the exclusive lease. Contention is evidence that a cooperating MediaFlow process is
