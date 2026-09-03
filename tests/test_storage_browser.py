@@ -435,6 +435,59 @@ class StorageBrowserApplicationTests(unittest.TestCase):
                     )
                 self.assertEqual(len(adapter.list_page_calls), calls)
 
+    def test_malformed_cursor_characters_are_rejected_before_provider_contact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "media").mkdir()
+            document = _document(root)
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                managed = ManagedConfigurationService(
+                    repository,
+                    bootstrap_document={
+                        "persistence": {"databasePath": str(root / "configuration.sqlite3")}
+                    },
+                    management_only=True,
+                )
+                draft = managed.import_draft(document, actor="admin")
+                adapter = PagedStorage()
+                browser = StorageBrowserService(
+                    managed,
+                    storage_adapters={"storage": adapter},
+                    cursor_secret="browser-test-secret",
+                )
+                first = browser.browse(draft.revision_id, storage_id="storage", limit=1)
+                cursor = first["nextCursor"]
+                self.assertIsNotNone(cursor)
+                cursor = str(cursor)
+                midpoint = len(cursor) // 2
+                padding = -len(cursor) % 4
+                padded = cursor + "=" * (padding or 4)
+                malformed_cursors = (
+                    ("appended-invalid", cursor + "!"),
+                    ("appended-whitespace", cursor + " "),
+                    ("inserted-invalid", cursor[:midpoint] + "!" + cursor[midpoint:]),
+                    (
+                        "inserted-padding",
+                        cursor[:midpoint] + "=" + cursor[midpoint:],
+                    ),
+                    (
+                        "replaced-with-standard-alphabet",
+                        cursor[:midpoint] + "+" + cursor[midpoint + 1 :],
+                    ),
+                    ("padded-noncanonical", padded),
+                )
+                for label, malformed in malformed_cursors:
+                    with self.subTest(label=label):
+                        calls = len(adapter.list_page_calls)
+                        with self.assertRaises(StorageBrowserError):
+                            browser.browse(
+                                draft.revision_id,
+                                storage_id="storage",
+                                limit=1,
+                                cursor=malformed,
+                            )
+                        self.assertEqual(len(adapter.list_page_calls), calls)
+
     def test_provider_failures_are_stable_and_secret_free(self) -> None:
         class ErrorStorage(PagedStorage):
             def __init__(self, code: StorageErrorCode) -> None:
