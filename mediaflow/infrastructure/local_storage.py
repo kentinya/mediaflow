@@ -14,6 +14,7 @@ from mediaflow.domain.storage import (
     StorageEntryType,
     StorageError,
     StorageErrorCode,
+    StoragePage,
     WriteSource,
 )
 
@@ -147,6 +148,37 @@ class LocalStorage:
             )
 
         return self._execute("list", path, perform)
+
+    def list_page(self, path: str, *, limit: int, cursor: str | None = None) -> StoragePage:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise StorageError(
+                StorageErrorCode.INVALID_PATH,
+                "list_page",
+                path,
+                "Storage page limit is invalid",
+            )
+
+        def perform() -> StoragePage:
+            directory = self._resolve(path, "list_page")
+            entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
+            if cursor is not None:
+                if not isinstance(cursor, str) or "/" in cursor or "\\" in cursor:
+                    raise InvalidStoragePath(
+                        StorageErrorCode.INVALID_PATH,
+                        "list_page",
+                        path,
+                        "Storage page cursor is invalid",
+                    )
+                entries = [entry for entry in entries if entry.name > cursor]
+            selected = entries[: limit + 1]
+            has_next = len(selected) > limit
+            selected = selected[:limit]
+            result = tuple(
+                self._entry(self._join_logical(path, item.name), item) for item in selected
+            )
+            return StoragePage(result, result[-1].name if has_next and result else None)
+
+        return self._execute("list_page", path, perform)
 
     def stat(self, path: str) -> StorageEntry:
         def perform() -> StorageEntry:

@@ -41,6 +41,7 @@ from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_batch import RecoveryBatchContinuationService
 from mediaflow.application.recovery_continuation import RecoveryContinuationService
+from mediaflow.application.storage_browser import StorageBrowserError
 from mediaflow.application.unattended_execution import (
     UnattendedExecutionGrantError,
     UnattendedExecutionGrantService,
@@ -176,6 +177,7 @@ class MediaFlowApi:
         bootstrap_document: object | None = None,
         metadata_provider_registry_factory=None,
         storage_adapters=None,
+        storage_browser_cursor_secret: bytes | str | None = None,
         recovery_snapshot_validator: Callable[[str, str], None] | None = None,
         manual_intent_service: ManualOrganizeIntentService | None = None,
         manual_preview_service: ManualOrganizePreviewService | None = None,
@@ -223,6 +225,7 @@ class MediaFlowApi:
                 configuration_service,
                 metadata_provider_registry_factory=metadata_provider_registry_factory,
                 storage_adapters=storage_adapters,
+                storage_browser_cursor_secret=storage_browser_cursor_secret,
             )
             if configuration_service is not None
             else None
@@ -792,6 +795,24 @@ class MediaFlowApi:
                 details.setdefault("nextAction", error.next_action)
             return self._error(
                 start_response, error.status, error.code, str(error), details=details
+            )
+        except StorageBrowserError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "storage-browser",
+                "denied" if error.status < 500 else "error",
+                error.status,
+            )
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                error.message,
+                details=error.details,
             )
         except LookupError as error:
             self._safe_audit(
@@ -2146,6 +2167,77 @@ class MediaFlowApi:
             if evidence is None:
                 raise LookupError(f"Storage check evidence for {parts[7]!r} was not found")
             return self._response(start_response, 200, evidence)
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "storage-browser"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            query = self._storage_browser_query(environ)
+            return self._response(
+                start_response,
+                200,
+                self._configuration_objects.browse_storage(parts[4], **query),
+            )
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5:7] == ["storage-browser", "select"]
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            required = {
+                "storageId",
+                "path",
+                "target",
+                "libraryId",
+                "field",
+                "expectedVersion",
+                "expectedDigest",
+            }
+            if set(document) != required:
+                raise ValueError(
+                    "Storage directory selection requires storageId, path, target, libraryId, "
+                    "field, expectedVersion and expectedDigest"
+                )
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("configuration expectedVersion must be an integer")
+            if not isinstance(document["expectedDigest"], str) or not document["expectedDigest"]:
+                raise ValueError("configuration expectedDigest is required")
+            for field in ("storageId", "path", "target", "libraryId", "field"):
+                if not isinstance(document[field], str):
+                    raise ValueError(f"Storage directory selection {field} must be text")
+            result = self._configuration_objects.select_storage_directory(
+                parts[4],
+                storage_id=document["storageId"],
+                path=document["path"],
+                target=document["target"],
+                library_id=document["libraryId"],
+                field=document["field"],
+                expected_version=expected,
+                expected_digest=document["expectedDigest"],
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 200, result)
         if (
             len(parts) == 7
             and parts[:3] == ["api", "v1", "configuration"]
@@ -4813,6 +4905,43 @@ class MediaFlowApi:
         if limit < 1 or limit > 100:
             raise ValueError(f"{resource} limit must be between 1 and 100")
         return limit
+
+    @classmethod
+    def _storage_browser_query(cls, environ: dict) -> dict[str, object]:
+        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"storageId", "path", "limit", "cursor", "expectedVersion", "expectedDigest"}
+        if set(query).difference(allowed) or any(len(value) != 1 for value in query.values()):
+            raise ValueError("Storage browser query contains unsupported or repeated fields")
+        storage_id = query.get("storageId", [""])[0]
+        if not storage_id:
+            raise ValueError("Storage browser storageId is required")
+        path = query.get("path", [""])[0]
+        limit = cls._parse_bounded_limit(query.get("limit", ["50"])[0], "Storage browser")
+        cursor = query.get("cursor", [None])[0]
+        if cursor == "":
+            raise ValueError("Storage browser cursor must not be empty")
+        has_version = "expectedVersion" in query
+        has_digest = "expectedDigest" in query
+        if has_version != has_digest:
+            raise ValueError("Storage browser expectedVersion and expectedDigest must be paired")
+        expected_version = None
+        expected_digest = None
+        if has_version:
+            try:
+                expected_version = int(query["expectedVersion"][0])
+            except ValueError as error:
+                raise ValueError("Storage browser expectedVersion must be an integer") from error
+            expected_digest = query["expectedDigest"][0]
+            if not expected_digest:
+                raise ValueError("Storage browser expectedDigest is required")
+        return {
+            "storage_id": storage_id,
+            "path": path,
+            "limit": limit,
+            "cursor": cursor,
+            "expected_version": expected_version,
+            "expected_digest": expected_digest,
+        }
 
     @classmethod
     def _confirmation_value(cls, value) -> dict:

@@ -16,6 +16,7 @@ from mediaflow.domain.storage import (
     StorageEntryType,
     StorageError,
     StorageErrorCode,
+    StoragePage,
     WriteSource,
 )
 
@@ -213,6 +214,52 @@ class OpenListStorage:
                 page += 1
 
         return self._execute("list", path, operation, retry=True)
+
+    def list_page(self, path: str, *, limit: int, cursor: str | None = None) -> StoragePage:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise StorageError(
+                StorageErrorCode.INVALID_PATH,
+                "list_page",
+                path,
+                "Storage page limit is invalid",
+            )
+        logical, remote = self._paths(path, "list_page")
+        page = 1
+        if cursor is not None:
+            if not isinstance(cursor, str) or not cursor.startswith("page:"):
+                raise StorageError(
+                    StorageErrorCode.INVALID_PATH,
+                    "list_page",
+                    path,
+                    "Storage page cursor is invalid",
+                )
+            try:
+                page = int(cursor[5:])
+            except ValueError as error:
+                raise StorageError(
+                    StorageErrorCode.INVALID_PATH,
+                    "list_page",
+                    path,
+                    "Storage page cursor is invalid",
+                ) from error
+            if page < 1:
+                raise StorageError(
+                    StorageErrorCode.INVALID_PATH,
+                    "list_page",
+                    path,
+                    "Storage page cursor is invalid",
+                )
+        provider_limit = min(limit, self._config.page_size)
+
+        def operation() -> StoragePage:
+            response = self._client.list_page(remote, page, provider_limit)
+            if response.total < 0 or len(response.entries) > provider_limit:
+                raise OpenListClientError(OpenListClientErrorKind.INVALID_RESPONSE)
+            entries = tuple(self._domain_entry(logical, item) for item in response.entries)
+            has_next = page * provider_limit < response.total and bool(entries)
+            return StoragePage(entries, f"page:{page + 1}" if has_next else None)
+
+        return self._execute("list_page", path, operation, retry=True)
 
     def stat(self, path: str) -> StorageEntry:
         logical, remote = self._paths(path, "stat")

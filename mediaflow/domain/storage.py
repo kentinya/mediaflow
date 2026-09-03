@@ -74,6 +74,14 @@ class StorageEntry:
         return self.entry_type is StorageEntryType.DIRECTORY
 
 
+@dataclass(frozen=True)
+class StoragePage:
+    """One bounded, provider-neutral page of Storage entries."""
+
+    entries: Sequence[StorageEntry]
+    next_cursor: str | None = None
+
+
 WriteSource: TypeAlias = bytes | bytearray | memoryview | BinaryIO
 
 
@@ -91,6 +99,7 @@ class Storage(Protocol):
     def capabilities(self) -> StorageCapabilities: ...
 
     def list(self, path: str) -> Sequence[StorageEntry]: ...
+    def list_page(self, path: str, *, limit: int, cursor: str | None = None) -> StoragePage: ...
     def stat(self, path: str) -> StorageEntry: ...
     def exists(self, path: str) -> bool: ...
     def read(self, path: str) -> BinaryIO: ...

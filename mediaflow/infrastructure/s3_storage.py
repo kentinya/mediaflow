@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -17,6 +18,7 @@ from mediaflow.domain.storage import (
     StorageEntryType,
     StorageError,
     StorageErrorCode,
+    StoragePage,
     WriteSource,
 )
 
@@ -142,7 +144,13 @@ class S3ListPage:
 class S3ClientAdapter(Protocol):
     def head_bucket(self) -> None: ...
     def list_objects(
-        self, prefix: str, *, delimiter: str, token: str | None, max_keys: int
+        self,
+        prefix: str,
+        *,
+        delimiter: str,
+        token: str | None,
+        max_keys: int,
+        start_after: str | None = None,
     ) -> S3ListPage: ...
     def head_object(self, key: str) -> S3ClientObject: ...
     def get_object(self, key: str) -> BinaryIO: ...
@@ -285,6 +293,126 @@ class S3Storage:
             return tuple(entries[key] for key in sorted(entries))
 
         return self._execute("list", path, operation, retry=True)
+
+    def list_page(self, path: str, *, limit: int, cursor: str | None = None) -> StoragePage:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise StorageError(
+                StorageErrorCode.INVALID_PATH,
+                "list_page",
+                path,
+                "Storage page limit is invalid",
+            )
+        logical, _ = self._paths(path, "list_page")
+        prefix = self._directory_key(logical)
+        cursor_kind = "f"
+        cursor_name = cursor
+        provider_token = None
+        if isinstance(cursor, str) and cursor.startswith("{"):
+            try:
+                marker = json.loads(cursor)
+            except json.JSONDecodeError as error:
+                raise StorageError(
+                    StorageErrorCode.INVALID_PATH,
+                    "list_page",
+                    path,
+                    "Storage page cursor is invalid",
+                ) from error
+            if not isinstance(marker, dict):
+                raise StorageError(
+                    StorageErrorCode.INVALID_PATH,
+                    "list_page",
+                    path,
+                    "Storage page cursor is invalid",
+                )
+            cursor_kind = marker.get("kind", "")
+            cursor_name = marker.get("name")
+            provider_token = marker.get("token")
+        elif isinstance(cursor, str) and cursor[:2] in {"d:", "f:"}:
+            cursor_kind, cursor_name = cursor[0], cursor[2:]
+        if cursor is not None and (
+            not isinstance(cursor, str)
+            or not cursor_name
+            or "\x00" in cursor
+            or "/" in cursor_name
+            or cursor_kind not in {"d", "f"}
+            or (provider_token is not None and not isinstance(provider_token, str))
+        ):
+            raise StorageError(
+                StorageErrorCode.INVALID_PATH,
+                "list_page",
+                path,
+                "Storage page cursor is invalid",
+            )
+        start_after = (
+            prefix + cursor_name + ("/" if cursor_kind == "d" else "")
+            if cursor_name is not None and provider_token is None
+            else None
+        )
+
+        def operation() -> StoragePage:
+            if logical and not self._directory_exists(prefix):
+                raise S3ClientError(S3ClientErrorKind.NOT_FOUND)
+            arguments = {
+                "delimiter": "/",
+                "token": provider_token,
+                "max_keys": min(limit + 1, self._config.page_size),
+            }
+            if start_after is not None:
+                arguments["start_after"] = start_after
+            try:
+                page = self._client.list_objects(prefix, **arguments)
+            except TypeError:
+                # Preserve compatibility with injected pre-pagination fakes.
+                if start_after is None:
+                    raise
+                page = self._client.list_objects(
+                    prefix,
+                    delimiter="/",
+                    token=None,
+                    max_keys=min(limit + 1, self._config.page_size),
+                )
+            entries: dict[str, StorageEntry] = {}
+            for common_prefix in page.common_prefixes:
+                if not common_prefix.startswith(prefix):
+                    raise S3ClientError(S3ClientErrorKind.INVALID_RESPONSE)
+                name = common_prefix[len(prefix) :].rstrip("/")
+                if name:
+                    item_path = "/".join(filter(None, (logical, name)))
+                    entries[item_path] = self._directory_entry(item_path)
+            for item in page.objects:
+                if item.key == prefix:
+                    continue
+                if not item.key.startswith(prefix):
+                    raise S3ClientError(S3ClientErrorKind.INVALID_RESPONSE)
+                relative = item.key[len(prefix) :]
+                if not relative or "/" in relative:
+                    continue
+                item_path = "/".join(filter(None, (logical, relative)))
+                entries[item_path] = self._file_entry(item_path, item)
+            values = tuple(entries[key] for key in sorted(entries))
+            if cursor_name is not None:
+                values = tuple(entry for entry in values if entry.name > cursor_name)
+            selected = values[:limit]
+            has_next = len(values) > limit or bool(page.next_token)
+            next_adapter_cursor = None
+            if has_next and selected:
+                kind = "d" if selected[-1].entry_type is StorageEntryType.DIRECTORY else "f"
+                if len(values) <= limit and page.next_token is not None:
+                    next_adapter_cursor = json.dumps(
+                        {
+                            "v": 1,
+                            "kind": kind,
+                            "name": selected[-1].name,
+                            "token": page.next_token,
+                        },
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                else:
+                    next_adapter_cursor = f"{kind}:{selected[-1].name}"
+            return StoragePage(selected, next_adapter_cursor)
+
+        return self._execute("list_page", path, operation, retry=True)
 
     def stat(self, path: str) -> StorageEntry:
         logical, key = self._paths(path, "stat")
@@ -681,7 +809,13 @@ class Boto3S3Client:
         self._call(self._client.head_bucket, Bucket=self._bucket)
 
     def list_objects(
-        self, prefix: str, *, delimiter: str, token: str | None, max_keys: int
+        self,
+        prefix: str,
+        *,
+        delimiter: str,
+        token: str | None,
+        max_keys: int,
+        start_after: str | None = None,
     ) -> S3ListPage:
         params: dict[str, object] = {
             "Bucket": self._bucket,
@@ -691,6 +825,8 @@ class Boto3S3Client:
         }
         if token:
             params["ContinuationToken"] = token
+        if start_after:
+            params["StartAfter"] = start_after
         response = self._call(self._client.list_objects_v2, **params)
         try:
             objects = tuple(
