@@ -137,6 +137,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
         version: int | None = None,
         digest: str | None = None,
         failure_category: str | None = None,
+        secret_readiness: tuple[dict[str, str], ...] = (),
     ) -> StorageSetupCheckEvidence:
         failed = status is ConfigurationStorageCheckStatus.FAILED
         evidence = StorageSetupCheckEvidence(
@@ -150,6 +151,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
             storage_type,
             False,
             {key: False for key in StorageSetupCheckEvidence.CAPABILITY_FIELDS},
+            secret_readiness=secret_readiness,
             failure_category=failure_category if failed else None,
             message="bounded Storage check failure" if failed else None,
             next_action=(
@@ -182,6 +184,13 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 revision,
                 storage_id,
                 storage_type=str(storage.get("type", "local")).lower() or "local",
+                secret_readiness=tuple(
+                    dict(entry)
+                    for entry in ConfigurationObjectService._storage_secret_readiness(
+                        str(storage.get("type", "local")).lower() or "local",
+                        ConfigurationObjectService._storage_options(storage),
+                    )
+                ),
             )
 
     @classmethod
@@ -362,15 +371,15 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                             ConfigurationStorageCheckStatus.PASSED,
                         )
                     destination_evidence = self._run_remote_precheck(objects, revision, fake)
-                self.assertEqual(destination_evidence.status.value, "completed")
-                self.assertEqual(destination_evidence.result["verdict"], "ready")
-                self.assertEqual(fake.mutations, [])
-                self._save_strategy_test(repository, revision)
-                activated = objects.activate_checked(
-                    revision.revision_id,
-                    expected_version=revision.version,
-                    actor="operator",
-                )
+                    self.assertEqual(destination_evidence.status.value, "completed")
+                    self.assertEqual(destination_evidence.result["verdict"], "ready")
+                    self.assertEqual(fake.mutations, [])
+                    self._save_strategy_test(repository, revision)
+                    activated = objects.activate_checked(
+                        revision.revision_id,
+                        expected_version=revision.version,
+                        actor="operator",
+                    )
                 self.assertEqual(activated.status.value, "active")
                 self._assert_runtime_empty(runtime_database)
                 principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
@@ -392,6 +401,116 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 self.assertIsNotNone(stored)
                 self.assertEqual(stored.configuration_revision_id, activated.revision_id)
                 self.assertEqual(stored.configuration_revision_digest, activated.digest)
+
+    def test_set_to_unset_credential_readiness_blocks_checked_activation_through_api(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir()
+            document = self._document(root)
+            document["storages"][1] = {
+                "id": "media-target",
+                "name": "Remote media",
+                "type": "openlist",
+                "rootPath": "remote-media",
+                "baseUrl": "http://127.0.0.1:1",
+                "tokenEnv": "MEDIAFLOW_TEST_OPENLIST_TOKEN",
+                "enabled": True,
+            }
+            runtime_database = root / "runtime.sqlite3"
+            with (
+                SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository,
+                SQLiteTaskRepository(runtime_database) as runtime_repository,
+            ):
+                managed = ManagedConfigurationService(repository)
+                fake = RemoteDestinationFake()
+                adapters = {
+                    "source-storage": LocalStorage("source-storage", root / "source"),
+                    "media-target": fake,
+                }
+                objects = ConfigurationObjectService(managed, storage_adapters=adapters)
+
+                def run_evidence_gates(revision) -> None:
+                    with patch.dict(
+                        os.environ,
+                        {"MEDIAFLOW_TEST_OPENLIST_TOKEN": "unit-token"},
+                    ):
+                        for storage_id in ("source-storage", "media-target"):
+                            evidence = objects.storage_check(
+                                revision.revision_id,
+                                storage_id=storage_id,
+                                expected_version=revision.version,
+                                expected_digest=revision.digest,
+                                actor="operator",
+                            )
+                            self.assertEqual(
+                                evidence.status,
+                                ConfigurationStorageCheckStatus.PASSED,
+                            )
+                        destination = self._run_remote_precheck(objects, revision, fake)
+                        self.assertEqual(destination.result["verdict"], "ready")
+                        self._save_strategy_test(repository, revision)
+                        self._save_precheck(repository, revision)
+
+                first = self._validated(managed, document)
+                run_evidence_gates(first)
+                with patch.dict(
+                    os.environ,
+                    {"MEDIAFLOW_TEST_OPENLIST_TOKEN": "unit-token"},
+                ):
+                    activated = objects.activate_checked(
+                        first.revision_id,
+                        expected_version=first.version,
+                        actor="operator",
+                    )
+                self.assertEqual(activated.status.value, "active")
+                self.assertEqual(activated.revision_id, managed.active().revision_id)
+
+                second = self._validated(managed, document)
+                run_evidence_gates(second)
+                principal = ResolvedApiPrincipal(
+                    "admin",
+                    "admin-token",
+                    frozenset(ApiPermission),
+                )
+                api = MediaFlowApi(
+                    runtime_repository,
+                    None,
+                    principals=(principal,),
+                    configuration_service=managed,
+                    storage_adapters=adapters,
+                    bootstrap_document=document,
+                )
+                evidence_before = repository.get_storage_setup_check(
+                    second.revision_id, "media-target"
+                )
+                endpoint = f"/api/v1/configuration/revisions/{second.revision_id}/activate"
+                with patch.dict(
+                    os.environ,
+                    {"MEDIAFLOW_TEST_OPENLIST_TOKEN": ""},
+                ):
+                    status, blocked = request(
+                        api,
+                        endpoint,
+                        method="POST",
+                        body={"expectedVersion": second.version, "checked": True},
+                    )
+                self.assertEqual(status, 409)
+                self.assertEqual(blocked["error"]["code"], "configuration_conflict")
+                self.assertIn("media-target", blocked["error"]["message"])
+                self.assertIn("secret readiness", blocked["error"]["message"])
+                self.assertIn("unchanged", blocked["error"]["message"])
+                self.assertIn("rerun", blocked["error"]["details"]["nextAction"])
+                self.assertLessEqual(len(blocked["error"]["message"]), 384)
+                self.assertNotIn("unit-token", repr(blocked))
+                self.assertEqual(managed.active().revision_id, activated.revision_id)
+                self.assertEqual(managed.require(second.revision_id).status.value, "validated")
+                self.assertEqual(
+                    repository.get_storage_setup_check(second.revision_id, "media-target"),
+                    evidence_before,
+                )
+                self.assertEqual(fake.mutations, [])
 
     def _assert_activation_module_namespace_is_hardened(self, namespace) -> None:
         for name in (
@@ -605,26 +724,29 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                     managed = ManagedConfigurationService(repository)
                     objects = ConfigurationObjectService(managed)
                     revision = self._validated(managed, document)
-                    self._save_existing_gates(repository, revision)
                     if mode == "remote_only":
-                        with self.assertRaisesRegex(
-                            ConfigurationActivationConflict,
-                            "current read-only destination precheck",
-                        ):
-                            objects.activate_checked(
-                                revision.revision_id,
-                                expected_version=revision.version,
-                                actor="operator",
-                            )
-                        self.assertIsNone(managed.active())
-                        self._save_precheck(repository, revision)
+                        with patch.dict(os.environ, {"OPENLIST_TOKEN": "unit-token"}):
+                            self._save_existing_gates(repository, revision)
+                            with self.assertRaisesRegex(
+                                ConfigurationActivationConflict,
+                                "current read-only destination precheck",
+                            ):
+                                objects.activate_checked(
+                                    revision.revision_id,
+                                    expected_version=revision.version,
+                                    actor="operator",
+                                )
+                            self.assertIsNone(managed.active())
+                            self._save_precheck(repository, revision)
                     else:
+                        self._save_existing_gates(repository, revision)
                         objects.require_current_destination_precheck(revision)
-                    activated = objects.activate_checked(
-                        revision.revision_id,
-                        expected_version=revision.version,
-                        actor="operator",
-                    )
+                    with patch.dict(os.environ, {"OPENLIST_TOKEN": "unit-token"}):
+                        activated = objects.activate_checked(
+                            revision.revision_id,
+                            expected_version=revision.version,
+                            actor="operator",
+                        )
                     self.assertEqual(activated.status.value, "active")
                     if mode == "remote_only":
                         self.assertIsNotNone(
