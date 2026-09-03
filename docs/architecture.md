@@ -103,9 +103,18 @@ are normalized paths relative to their referenced Storage. Plans retain Storage 
 relative paths rather than host mount prefixes. Local roots may be host/container absolute paths;
 remote roots are provider-specific logical roots.
 
-The current runtime can load all supported Storage kinds from JSON. Managed Web guided setup and a
-bounded Storage Browser/path picker for remote kinds are Slice 26 targets, not current product
-claims.
+The current runtime can load all supported Storage kinds from JSON. Managed Web/API guided setup
+now exposes one provider-neutral, read-only bounded Storage Browser and directory picker for every
+configured Storage kind. Its browser paths are Storage-relative and its continuation is bound to
+the exact managed revision, Storage, directory and page request. It is a setup surface only; the
+File Catalog remains a FileIndex surface until Slice 27.
+
+For Local Storage, `rootPath` is an absolute path visible inside the execution environment. In a
+self-hosted Docker deployment the path must be explicitly bind-mounted with the intended
+read-only/read-write permission and container UID/GID ownership or access. Unmapped host paths,
+host `/`, the Docker socket and arbitrary host filesystem access are unsupported. The browser
+does not expose the Local root itself to the client and rejects paths outside that configured
+Storage root.
 
 ## Configuration authority and runtime binding
 

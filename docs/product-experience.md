@@ -73,8 +73,17 @@ Active revision leaves recovery/status routes available and does not start media
 
 A fresh instance currently starts from a compatibility JSON document containing the complete runtime
 catalog and database/API bootstrap values. Managed configuration can then be used through the
-authenticated Web/API, including guided Local setup. The current Web does not provide a minimal
-bootstrap-to-first-runtime flow for remote Storage or a Storage Browser/path picker.
+authenticated Web/API, including guided Storage and library setup. A Draft or Validated revision can
+open the setup-only Storage Browser, which lists bounded immediate children and selects only
+Storage-relative directories; this is not the File Catalog and never becomes a general host
+filesystem browser.
+
+For Local Storage, `rootPath` is an absolute path visible inside the MediaFlow execution
+environment. A self-hosted Docker deployment must bind-mount the directory explicitly with the
+intended read-only/read-write permission and make it readable by the container UID/GID. Unmapped
+host paths, host `/`, the Docker socket and arbitrary host filesystem access are unsupported. A
+missing or permission-denied root remains a bounded setup failure after reload with a recovery
+action to correct the deployment mount/ownership or Draft path and retry.
 
 ### Slice 26 target
 

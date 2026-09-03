@@ -16,6 +16,7 @@ from mediaflow.domain.storage import (
     StorageEntryType,
     StorageError,
     StorageErrorCode,
+    StoragePage,
     WriteSource,
 )
 
@@ -96,6 +97,9 @@ class SMBClient(Protocol):
     def connect(self, config: SMBStorageConfig) -> None: ...
     def close(self) -> None: ...
     def list(self, path: str) -> Sequence[SMBClientEntry]: ...
+    def list_page(
+        self, path: str, *, limit: int, cursor: str | None = None
+    ) -> Sequence[SMBClientEntry]: ...
     def stat(self, path: str) -> SMBClientEntry: ...
     def open_read(self, path: str) -> BinaryIO: ...
     def open_write(self, path: str, *, overwrite: bool) -> BinaryIO: ...
@@ -205,6 +209,33 @@ class SMBStorage:
             return tuple(self._domain_entry(logical, item) for item in self._client.list(remote))
 
         return self._execute("list", path, operation, reconnect=True)
+
+    def list_page(self, path: str, *, limit: int, cursor: str | None = None) -> StoragePage:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise StorageError(
+                StorageErrorCode.INVALID_PATH,
+                "list_page",
+                path,
+                "Storage page limit is invalid",
+            )
+        logical, remote = self._paths(path, "list_page")
+
+        def operation() -> StoragePage:
+            method = getattr(self._client, "list_page", None)
+            if callable(method):
+                values = tuple(method(remote, limit=limit, cursor=cursor))
+            else:
+                values = tuple(self._client.list(remote))
+                if cursor is not None:
+                    values = tuple(item for item in values if item.name > cursor)
+                values = values[: limit + 1]
+            values = tuple(sorted(values, key=lambda item: item.name))
+            has_next = len(values) > limit
+            selected = values[:limit]
+            entries = tuple(self._domain_entry(logical, item) for item in selected)
+            return StoragePage(entries, entries[-1].name if has_next and entries else None)
+
+        return self._execute("list_page", path, operation, reconnect=True)
 
     def stat(self, path: str) -> StorageEntry:
         logical, remote = self._paths(path, "stat")
@@ -511,6 +542,23 @@ class SmbProtocolClient:
         try:
             with module.scandir(unc, **self._kwargs()) as entries:
                 return tuple(self._entry(path, entry) for entry in entries)
+        except Exception as error:
+            raise self._convert_error(error) from error
+
+    def list_page(
+        self, path: str, *, limit: int, cursor: str | None = None
+    ) -> Sequence[SMBClientEntry]:
+        module, unc = self._request(path)
+        try:
+            with module.scandir(unc, **self._kwargs()) as entries:
+                selected = []
+                for entry in entries:
+                    if cursor is None or entry.name > cursor:
+                        selected.append(entry)
+                    if len(selected) >= limit + 1:
+                        break
+                selected.sort(key=lambda entry: entry.name)
+                return tuple(self._entry(path, entry) for entry in selected)
         except Exception as error:
             raise self._convert_error(error) from error
 

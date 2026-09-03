@@ -105,6 +105,9 @@ APP_JS = b"""(() => {
     }
     if (details && details.durableState) fragments.push(`State: ${details.durableState}`);
     if (details && details.sideEffects) fragments.push(`Side effects: ${details.sideEffects}`);
+    if (details && details.stage) fragments.push(`Stage: ${details.stage}`);
+    if (details && details.category) fragments.push(`Category: ${details.category}`);
+    if (details && details.path !== undefined) fragments.push(`Path: ${details.path || '<root>'}`);
     if (details && details.retrySafe !== undefined) {
       fragments.push(`Retry safe: ${details.retrySafe ? 'YES' : 'NO'}`);
     }
@@ -549,8 +552,10 @@ APP_JS = b"""(() => {
           storageEvidence ? 'Rerun read-only Storage check' : 'Run read-only Storage check',
           () => runStorageCheck(revision, item)));
       }
+      if (kind === 'storages') row.append(actionButton(
+        'Open Storage browser', () => renderStandaloneStorageBrowser(revision, item, guided)));
       if (configurationRevisionEditable(revision)) {
-        row.append(actionButton('Edit', () => renderGuidedObjectForm(revision, kind, item)));
+        row.append(actionButton('Edit', () => renderGuidedObjectForm(revision, kind, item, false, guided)));
         if (kind === 'storages' || kind === 'namingPolicies' || kind === 'classificationPolicies' || kind === 'organizePolicies') row.append(actionButton('Copy', async () => {
           if (kind === 'storages') {
             const confirmation = text('span', '', 'choices');
@@ -563,7 +568,7 @@ APP_JS = b"""(() => {
             return;
           }
           const copied = {...item, id: `${item.id}-copy`, name: `${item.name || item.id} copy`};
-          renderGuidedObjectForm(revision, kind, copied, true);
+          renderGuidedObjectForm(revision, kind, copied, true, guided);
         }));
         if (kind === 'storages') row.append(actionButton(item.enabled === true ? 'Disable' : 'Enable', async () => {
           const action = item.enabled === true ? 'disable' : 'enable';
@@ -627,10 +632,132 @@ APP_JS = b"""(() => {
         kind === 'automationTaskDefinitions';
       const objectLabel = classificationPolicy ? 'ClassificationPolicy' : organizePolicy ? 'OrganizePolicy' : singular;
       detailContent.append(actionButton(`${guidedJson ? 'Add' : 'Add Local'} ${objectLabel}`,
-        () => renderGuidedObjectForm(revision, kind, null)));
+        () => renderGuidedObjectForm(revision, kind, null, false, guided)));
     }
   }
-  function renderGuidedObjectForm(revision, kind, item, copyMode = false) {
+  function renderStandaloneStorageBrowser(revision, item, guided) {
+    clear(detailContent);
+    detailContent.append(text('h2', `Storage browser: ${item.name || item.id || '-'}`));
+    detailContent.append(text('p',
+      'This setup-only browser is read-only and scoped to the selected configured Storage. ' +
+      'It does not inspect FileIndex entries or provide arbitrary host filesystem access.', 'warning'));
+    const fields = {
+      storageId: {value: item.id},
+      browserPath: {value: ''}
+    };
+    renderStorageBrowserPicker(revision, 'storageBrowser', fields, null, guided, false, true);
+  }
+  function renderStorageBrowserPicker(revision, kind, fields, item, guided, copyMode = false, standalone = false) {
+    const storages = guided && guided.objects && Array.isArray(guided.objects.storages) ?
+      guided.objects.storages.filter(storage => storage.enabled !== false) : [];
+    if (!storages.length || !fields.storageId) return;
+    const pathField = fields.storagePath || fields.rootPath || fields.browserPath;
+    const target = kind === 'resourceLibraries' ? 'resourceLibrary' : 'mediaLibrary';
+    const selectedField = kind === 'resourceLibraries' ? 'storagePath' : 'rootPath';
+    const panel = text('div', '', 'choices');
+    panel.append(text('h3', 'Storage directory browser'));
+    panel.append(text('p',
+      'This bounded setup browser reads the configured Storage directly; it is not the File Catalog. ' +
+      'Directories can be selected after the read-only listing succeeds. Files and symbolic links are not selectable.',
+      'warning'));
+    const storageChoices = storages.map(storage => [storage.id, `${storage.id} - ${storage.name || storage.id}`]);
+    const storage = guidedSelect('Browser Storage', fields.storageId.value, storageChoices);
+    const path = guidedInput('Storage-relative browser path', pathField.value || '');
+    const limit = guidedInput('Browser page size (1-100)', 50, 'number');
+    const controls = text('div', '', 'choices');
+    const results = text('div', '', 'choices');
+    const state = {path: path.input.value || '', cursor: null, requestCursor: null};
+    const renderError = error => {
+      clear(results);
+      results.append(text('p', `Storage browser could not continue. ${errorText(error)}`, 'error'));
+      results.append(text('p',
+        'No Storage mutation occurred. Retry the same bounded read, or reload the revision to restart after a stale cursor.',
+        'warning'));
+    };
+    const renderPage = data => {
+      clear(results);
+      state.path = typeof data.path === 'string' ? data.path : '';
+      state.cursor = data.nextCursor || null;
+      path.input.value = state.path;
+      results.append(text('p', `Storage-relative path: ${state.path || '<root>'}`));
+      const breadcrumbs = text('div', '', 'choices');
+      (Array.isArray(data.breadcrumbs) ? data.breadcrumbs : []).forEach(breadcrumb => {
+        breadcrumbs.append(actionButton(breadcrumb.name || 'Storage root', () => {
+          state.path = breadcrumb.path || ''; state.cursor = null; path.input.value = state.path;
+          browse();
+        }));
+      });
+      results.append(breadcrumbs);
+      const entries = Array.isArray(data.entries) ? data.entries : [];
+      if (!entries.length) results.append(text('p', 'This directory has no entries on this page.'));
+      entries.forEach(entry => {
+        const row = text('div', '', 'choice');
+        const label = `${entry.name || '-'} (${entry.type || 'unknown'})`;
+        if (entry.traversable === true && entry.selectable === true) {
+          row.append(actionButton(label, () => {
+            state.path = entry.path; state.cursor = null; path.input.value = state.path; browse();
+          }));
+        } else {
+          row.append(text('span', label));
+          row.append(text('span', entry.isSymlink ? 'not traversable/selectable' : 'not a directory', 'warning'));
+        }
+        row.append(text('span', `size ${Number.isInteger(entry.size) ? entry.size : '-'}; ` +
+          `${entry.modifiedAt || '-'}`));
+        results.append(row);
+      });
+      const actions = text('div', '', 'choices');
+      actions.append(actionButton(standalone ? 'Keep browsing this directory' :
+        `Select ${state.path || 'Storage root'} for ${target}`, async () => {
+        if (standalone) {
+          actions.append(text('p',
+            `Current directory: ${state.path || '<root>'}. ` +
+            'Use a ResourceLibrary or MediaLibrary picker to select a directory for a Draft.',
+            'warning'));
+          return;
+        }
+        if (item && item.id && !copyMode) {
+          try {
+            const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/storage-browser/select`, {
+              method: 'POST', body: JSON.stringify({storageId: storage.input.value, path: state.path,
+                target, libraryId: item.id, field: selectedField, expectedVersion: revision.version,
+                expectedDigest: revision.digest})});
+            message(`Selected ${result.selected.path || '<root>'}. Draft saved; validate it again before activation.`);
+            detail.hidden = true; await renderConfiguration();
+          } catch (error) { renderError(error); }
+          return;
+        }
+        fields.storageId.value = storage.input.value;
+        pathField.value = state.path;
+        const selected = text('p', `Selected ${storage.input.value}:${state.path || '<root>'}. Save the guided object to persist this Storage-relative path.`, 'warning');
+        actions.append(selected);
+      }));
+      if (data.hasNext && data.nextCursor) actions.append(actionButton('Next page', () => browse(data.nextCursor)));
+      actions.append(actionButton('Retry page', () => browse(state.requestCursor)));
+      results.append(actions);
+    };
+    const browse = async nextCursor => {
+      const query = new URLSearchParams();
+      query.set('storageId', storage.input.value);
+      query.set('path', state.path);
+      query.set('limit', String(Math.max(1, Math.min(100, Number(limit.input.value) || 50))));
+      query.set('expectedVersion', String(revision.version));
+      query.set('expectedDigest', revision.digest);
+      const cursor = nextCursor === undefined ? state.cursor : nextCursor;
+      state.requestCursor = cursor || null;
+      if (cursor) query.set('cursor', cursor);
+      try {
+        const data = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/storage-browser?${query.toString()}`);
+        renderPage(data);
+      } catch (error) { renderError(error); }
+    };
+    storage.input.addEventListener('change', () => { state.path = ''; path.input.value = ''; state.cursor = null; browse(null); });
+    controls.append(storage.wrapper, path.wrapper, limit.wrapper,
+      actionButton('Browse path', () => { state.path = path.input.value || ''; state.cursor = null; browse(null); }));
+    panel.append(controls, results);
+    detailContent.append(panel);
+    browse(null);
+  }
+  function renderGuidedObjectForm(revision, kind, item, copyMode = false, guided = null) {
     if (kind.startsWith('recognition') || kind === 'metadataPolicies' || kind === 'namingPolicies' || kind === 'classificationPolicies' || kind === 'organizePolicies' || kind === 'automationTaskDefinitions') {
       const metadataPolicy = kind === 'metadataPolicies';
       const namingPolicy = kind === 'namingPolicies';
@@ -659,7 +786,9 @@ APP_JS = b"""(() => {
       clear(detailContent);
       detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} Storage`));
       detailContent.append(text('p', 'Choose exactly one supported Storage kind. Credentials are environment-variable references; only SET/UNSET readiness is shown.', 'warning'));
-      detailContent.append(text('p', 'Local Storage rootPath is a host-absolute directory. Remote Storage roots follow the provider contract and are not tested or contacted while editing.', 'warning'));
+      detailContent.append(text('p',
+        'Local Storage rootPath is a host-absolute directory visible inside the MediaFlow execution environment, not an arbitrary host path. In Docker, bind-mount the directory explicitly with the intended read-only/read-write permission and ensure the container user has ownership or access. Host /, the Docker socket, unmapped host paths and arbitrary host filesystem access are unsupported. Remote Storage roots follow the provider contract and are not tested or contacted while editing.',
+        'warning'));
       const form = text('div', '', 'choices'); const fields = guidedObjectFields(kind, item || {});
       Object.entries(fields).forEach(([key, input]) => {
         if (key === '_storageOptionContainer') form.append(input);
@@ -676,11 +805,13 @@ APP_JS = b"""(() => {
     }
     clear(detailContent);
       detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} ${kind === 'resourceLibraries' ? 'ResourceLibrary' : 'MediaLibrary'}`));
-      detailContent.append(text('p',
+    detailContent.append(text('p',
       'ResourceLibrary storagePath and MediaLibrary rootPath are Storage-relative paths. ' +
-      'Use Storage-relative paths for this object; absolute paths and traversal are rejected.', 'warning'));
+      'Use Storage-relative paths for this object; absolute paths, backslashes and traversal are rejected. ' +
+      'Use the displayed Storage-relative breadcrumb to return to a parent; the setup browser uses the same configured Storage and remains read-only.', 'warning'));
     const form = text('div', '', 'choices'); const fields = guidedObjectFields(kind, item || {});
     Object.values(fields).forEach(input => form.append(input.parentElement)); detailContent.append(form);
+    if (guided) renderStorageBrowserPicker(revision, kind, fields, item, guided, copyMode);
     detailContent.append(actionButton('Save guided object', async () => {
       try { await mutateGuidedObject(revision, kind, item && item.id, guidedObjectPayload(kind, fields), item ? 'PUT' : 'POST'); }
       catch (error) { message(errorText(error), true); }

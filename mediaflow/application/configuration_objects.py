@@ -34,6 +34,7 @@ from mediaflow.application.read_only_storage import (
     ReadOnlyStorageGuard,
     ReadOnlyStorageMutationError,
 )
+from mediaflow.application.storage_browser import StorageBrowserService
 from mediaflow.application.strategy_test import (
     StrategyConfigurationError,
     StrategyTestResult,
@@ -473,6 +474,7 @@ class ConfigurationObjectService:
             Callable[[tuple[str, ...]], MetadataProviderRegistry] | None
         ) = None,
         storage_adapters: Mapping[str, object] | None = None,
+        storage_browser_cursor_secret: bytes | str | None = None,
     ) -> None:
         if (
             isinstance(setup_check_timeout_seconds, bool)
@@ -486,6 +488,11 @@ class ConfigurationObjectService:
         self._setup_check_timeout_seconds = float(setup_check_timeout_seconds)
         self._metadata_provider_registry_factory = metadata_provider_registry_factory
         self._storage_adapters = dict(storage_adapters or {})
+        self._storage_browser = StorageBrowserService(
+            managed,
+            storage_adapters=self._storage_adapters,
+            cursor_secret=storage_browser_cursor_secret,
+        )
         self._strategy_test_operation_lock = RLock()
         self._setup_check_capacity = BoundedSemaphore(self._SETUP_CHECK_CAPACITY)
         self._setup_check_state_lock = Lock()
@@ -580,6 +587,124 @@ class ConfigurationObjectService:
     def references(self, revision_id: str) -> dict[str, dict[str, object]]:
         revision = self._managed.require(revision_id)
         return self._references_from_document(revision.document)
+
+    def browse_storage(
+        self,
+        revision_id: str,
+        *,
+        storage_id: str,
+        path: str = "",
+        limit: int = 50,
+        cursor: str | None = None,
+        expected_version: int | None = None,
+        expected_digest: str | None = None,
+    ) -> dict[str, object]:
+        return self._storage_browser.browse(
+            revision_id,
+            storage_id=storage_id,
+            path=path,
+            limit=limit,
+            cursor=cursor,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+        )
+
+    storage_browser = browse_storage
+
+    def select_storage_directory(
+        self,
+        revision_id: str,
+        *,
+        storage_id: str,
+        path: str,
+        target: str,
+        library_id: str,
+        field: str,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+    ) -> dict[str, object]:
+        targets = {
+            "resourceLibrary": (ConfigurationObjectKind.RESOURCE_LIBRARY, "storagePath"),
+            "mediaLibrary": (ConfigurationObjectKind.MEDIA_LIBRARY, "rootPath"),
+        }
+        if target not in targets:
+            raise ValueError("Storage directory selection target is invalid")
+        kind, expected_field = targets[target]
+        if field != expected_field:
+            raise ValueError("Storage directory selection field is invalid")
+        revision = self._managed.require(revision_id)
+        if revision.status not in {
+            ManagedConfigurationStatus.DRAFT,
+            ManagedConfigurationStatus.VALIDATED,
+        }:
+            raise ConfigurationVersionConflict(
+                "Storage directory selection requires a Draft or Validated revision",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+                durable_state="draft_and_prior_active_preserved",
+                next_action="reload a Draft or Validated revision before selecting a directory",
+            )
+        if revision.version != expected_version or revision.digest != expected_digest:
+            raise ConfigurationVersionConflict(
+                "Storage directory selection requires the exact current revision; reload "
+                "before selecting",
+                revision_id=revision_id,
+                current_version=revision.version,
+                current_digest=revision.digest,
+                durable_state="draft_and_prior_active_preserved",
+                next_action="reload the revision and explicitly select the directory again",
+            )
+        section = self._section(kind)
+        values = self._canonical_objects(revision.document, section)
+        selected = next((item for item in values if item.get("id") == library_id), None)
+        if selected is None:
+            raise LookupError(f"{section} {library_id!r} was not found")
+        if selected.get("storageId") != storage_id:
+            raise ValueError("selected Storage does not match the library Storage")
+        normalized_path = self._storage_browser.validate_directory(
+            revision_id,
+            storage_id=storage_id,
+            path=path,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+        )
+        candidate = copy.deepcopy(selected)
+        candidate[expected_field] = normalized_path
+        updated = self.mutate(
+            revision_id,
+            kind,
+            object_id=library_id,
+            value=candidate,
+            expected_version=expected_version,
+            actor=actor,
+            audit_action="storage_directory_selected",
+            audit_metadata={
+                "storageId": storage_id,
+                "path": normalized_path,
+                "target": target,
+                "field": expected_field,
+            },
+        )
+        changed = next(
+            item
+            for item in self._canonical_objects(updated.document, section)
+            if item.get("id") == library_id
+        )
+        return {
+            "revision": updated.summary(),
+            "selected": {
+                "storageId": storage_id,
+                "path": normalized_path,
+                "target": target,
+                "libraryId": library_id,
+                "field": expected_field,
+            },
+            "object": changed,
+        }
+
+    select_storage_path = select_storage_directory
 
     @classmethod
     def _references_from_document(

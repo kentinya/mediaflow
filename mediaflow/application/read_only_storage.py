@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import BinaryIO
 
-from mediaflow.domain.storage import Storage, StorageCapabilities, StorageEntry, WriteSource
+from mediaflow.domain.storage import (
+    Storage,
+    StorageCapabilities,
+    StorageEntry,
+    StoragePage,
+    WriteSource,
+)
 
 
 class ReadOnlyStorageMutationError(RuntimeError):
@@ -45,6 +51,16 @@ class ReadOnlyStorageGuard:
 
     def list(self, path: str):
         return self._storage.list(path)
+
+    def list_page(self, path: str, *, limit: int, cursor: str | None = None) -> StoragePage:
+        list_page = getattr(self._storage, "list_page", None)
+        if callable(list_page):
+            return list_page(path, limit=limit, cursor=cursor)
+        entries = tuple(self._storage.list(path))
+        if cursor:
+            entries = tuple(entry for entry in entries if entry.name > cursor)
+        bounded = entries[:limit]
+        return StoragePage(bounded, bounded[-1].name if len(entries) > limit else None)
 
     def stat(self, path: str) -> StorageEntry:
         return self._storage.stat(path)
