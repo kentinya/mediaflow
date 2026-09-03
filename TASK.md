@@ -231,21 +231,99 @@ RO-7 and the first-runtime activation journey remain incomplete.
 
 ### Changed Files
 
+- `mediaflow/application/configuration_objects.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `tests/test_configuration_destination_activation.py`
+- `tests/test_configuration_destination_precheck.py`
+- `tests/test_configuration_objects.py`
+- `tests/test_configuration_snapshot.py`
+- `tests/test_operator_ui.py`
+- `docs/architecture.md`
+- `docs/product-experience.md`
+
 ### Implemented
+
+- Checked activation is provider-neutral: `activate_checked` now requires current, passed,
+  exact-revision read-only per-Storage checks for every enabled Storage referenced by a
+  ResourceLibrary or MediaLibrary (`require_current_storage_checks`). A referenced-but-missing
+  Storage fails closed; a disabled referenced Storage is not required. The Local-only
+  `require_current_local_check` gate and method were removed; `local_check` itself remains
+  available through API/CLI/Web as a Local diagnostic and is no longer an activation authority.
+- `require_current_destination_precheck` now applies whenever the Draft has MediaLibraries, for
+  every Storage kind; stale, failed and capability_gap evidence still block checked activation
+  with the prior Active preserved.
+- `destination_precheck` now supports SMB, OpenList, AWS S3, Cloudflare R2 and generic
+  S3-compatible destinations: the Local-only `unsupported_storage_type` rejection was removed and
+  replaced with pre-flight `disabled` and `missing_secret` failures that fire before any adapter
+  construction. The existing one-destination-Storage-per-run rule, verdicts, per-sample isolation,
+  redaction and capability_gap blocking are unchanged; runner wording is provider-neutral.
+- Operator Web activation readiness now requires the per-Storage checks (new
+  `firstStorageCheckBlocker`/`referencedStorageChecksSatisfied` helpers reusing the Task 26.3
+  evidence projection); destination precheck gating, blockers and recovery text are
+  provider-neutral. API and Web keep using the same Application rules and RBAC.
+- Activation safety is unchanged: atomic pointer change only after validation and current
+  evidence, optimistic version admission, prior Active preserved, and zero scan/Job/Task/
+  Automation/Provider/media work during activation.
+- Docs: architecture.md and product-experience.md record the provider-neutral activation
+  evidence model and first-runtime completion semantics.
 
 ### Tests and Results
 
+- DEVIATION — the Task's Required Tests command lists `tests.test_strategy_test`, which does not
+  exist in the repository. The two real strategy modules were run instead:
+  `tests.test_strategy_configuration` and `tests.test_strategy_cli`.
+- PASS — focused regression (12 modules incl. the two real strategy modules): 258 tests, OK.
+- PASS — full offline suite in a clean detached worktree of checkpoint `6ed11d3`:
+  1160 tests, OK, 7 skipped (no `.mediaflow` environment artifact present).
+- FAIL / PRE-EXISTING / ENVIRONMENT-DEPENDENT — full suite in the main worktree: 1160 tests,
+  6 failures, 7 skipped. The six failures are exactly the CLI tests named in this Task
+  (`test_api_credentials` ×2, `test_final_integration`, `test_resource_library_pipeline`,
+  `test_runtime_storage_configuration` ×2), caused by the ignored `.mediaflow/mediaflow.sqlite3`
+  Active HDD_2 runtime snapshot overriding `--config`; the identical set reproduces at the Task
+  Base when that artifact is copied into a clean worktree, so it is unrelated to this Task's diff.
+- PASS — `.venv/bin/ruff format --check .` (361 files formatted).
+- PASS — `.venv/bin/ruff check .`.
+- PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`.
+- PASS — `.venv/bin/python -m pip check`.
+- PASS — `.venv/bin/mediaflow --config config/strategy.example.json config validate`.
+- PASS — `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`.
+- PASS — forbidden FFprobe/FFmpeg scan: no matches in `mediaflow`/`pyproject.toml`.
+- PASS — `git diff --check`.
+- PASS — isolated wheel build (`pip wheel` into a temp directory) and
+  `scripts/wheel_smoke_test.py` on the checkpoint tree: backup, migration, restore, verify and
+  upgrade preflight completed.
+- SKIP / UNAVAILABLE — production SMB, OpenList, AWS S3, Cloudflare R2 and generic S3-compatible
+  services: no approved isolated environment, so fake adapters/local services and temporary
+  Local roots were used. No production credentials or user media were touched.
+
 ### Decisions
 
+- Replaced the Local-only activation gate with per-Storage evidence rather than stacking both,
+  so a Draft's activation gates always match its own configuration; `local_check` survives as a
+  Local diagnostic to keep the existing guided-Local UX.
+- Implemented remote destination evidence by removing the Local-only applicability restriction
+  instead of adding a parallel path: the precheck already operates through the guarded Storage
+  abstraction, so remote kinds reuse the same verdicts, failure categories and zero-mutation
+  guard, with new pre-flight `disabled`/`missing_secret` failures before adapter construction.
+- Kept the one-destination-Storage-per-precheck rule and the strategy-test gate unchanged; this
+  Task wires evidence applicability, it does not redesign existing policy semantics.
 ### Remaining In-Slice Work
 
+- None known inside Task 26.5's scope; re-evaluation of all Slice Required Outcomes belongs to B.
+
 ### Risks / Deviations
+
+- The `tests.test_strategy_test` module named by the Task does not exist; the two real strategy
+  modules were run instead (see above).
+- The six main-worktree full-suite failures are environment-dependent (ignored `.mediaflow`
+  runtime database), reproduced at the Task Base with the same artifact; they are not caused by
+  this checkpoint, and the same suite is fully green in a clean worktree of this checkpoint.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 6ed11d3320363448568498264018044916951516
 ```
 
 ## B Review Result
