@@ -5022,6 +5022,38 @@ class ConfigurationObjectService:
                         )
                     ),
                 )
+            current_readiness = tuple(
+                dict(entry)
+                for entry in self._storage_secret_readiness(
+                    str(storage.get("type", "")).lower() or "unknown",
+                    self._storage_options(storage),
+                )
+            )
+            if current_readiness != evidence.secret_readiness:
+                raise ConfigurationActivationConflict(
+                    f"the deployment-owned secret readiness for Storage {storage_id!r} "
+                    "changed since its read-only Storage check; the Draft and any prior "
+                    "Active remain unchanged and checked activation is blocked",
+                    revision_id=revision.revision_id,
+                    next_action=(
+                        "restore the referenced deployment-owned credentials to the "
+                        f"readiness recorded when the read-only Storage check for "
+                        f"{storage_id!r} passed, rerun that check on this revision, "
+                        "then activate checked"
+                    ),
+                )
+            if any(entry["state"] != "SET" for entry in current_readiness):
+                raise ConfigurationActivationConflict(
+                    f"a required deployment-owned credential for Storage {storage_id!r} "
+                    "is unset; the Draft and any prior Active remain unchanged and "
+                    "checked activation is blocked",
+                    revision_id=revision.revision_id,
+                    next_action=(
+                        f"set the referenced deployment-owned credential for Storage "
+                        f"{storage_id!r}, rerun its read-only check on this revision, "
+                        "then activate checked"
+                    ),
+                )
 
     def require_current_strategy_test(self, revision: ManagedConfigurationRevision) -> None:
         evidence = self._repository.get_recognition_strategy_test(revision.revision_id)
