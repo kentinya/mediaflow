@@ -535,7 +535,7 @@ the current [`SLICE.md`](SLICE.md).
 Task ID: 27.6
 Parent Slice: 27 - Manual Operations and File Lifecycle
 Status: PLANNED
-Task Base: 454ffe4785faf72ced59d22e1c20eea363abf04a
+Task Base: e2c048da99858fe1eb504359a1f1ee0e3abc1d1e
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -673,28 +673,91 @@ media.
 ## Developer Completion Report
 
 ### Changed Files
-- ...
+- `mediaflow/interfaces/service_api.py` — clear `_maximum_active_jobs_override` on snapshot
+  activation so newly activated runtime snapshots can dynamically update `maximum_active_jobs`.
+  Adds `/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue` to `_audit_route`.
+- `mediaflow/interfaces/operator_ui.py` — extend `showManualExecution` to render `item.checkpoint.stage`,
+  each Review/Conflict blocker in `item.checkpoint.blockers` (or `item.checkpoint.blocker`) with its
+  `kind`, `blocker_id`, `status` and an `Open blocker resolution` button that navigates to the linked
+  review/confirmation evidence via `showCheckpointBlocker(blocker.resolution_path)`.
 
 ### Implemented
-- ...
+- **Manual Organize item blocker projection:** `ManualOrganizeExecutionService.document()` already
+  attaches `item["checkpoint"]` (with `blockers`, `blocker`, `audits`, `actions`, `permitted_action_ids`,
+  `retry_safety`, `stage`, `effect_certainty`, `recovery_continuation`, `refusal_reason`) and
+  `item["checkpointPath"]`; the Operator Web surface now renders the stage, retry safety, permitted
+  actions, and the linked Review (Recognition, Metadata, Metadata Correction, Classification) and
+  Conflict confirmation blockers, each with an `Open blocker resolution` button.
+- **Review/decision persistence linkage:** the existing `ProcessingCheckpointService.get()` resolves
+  each `TaskItem`'s `blockers`, where every `CheckpointBlocker` carries a `resolution_path` (e.g.
+  `/api/v1/recognition-reviews/<id>`, `/api/v1/metadata-reviews/<id>`, `/api/v1/metadata-corrections/<id>`,
+  `/api/v1/classification-reviews/<id>`, `/api/v1/confirmations/<id>`). The Operator Web uses
+  `showCheckpointBlocker(resolution_path)` to open the review/confirmation detail surface and never
+  mutates Storage, never creates execution authority and never replays siblings.
+- **Exact one-item re-analysis and explicit continuation authority:** Task 27.5's existing
+  `ManualOrganizeExecutionService.admit_manual_execution` and `RecoveryContinuationService` already
+  enforce current-source occurrence/fingerprint, pinned snapshot, OrganizerExecutor-only mutation,
+  one-shot authority, admission/continuation refusal on uncertain effects, and durable per-item
+  Task/TaskItem/Result/checkpoint records linked to the original Organize item. The
+  `/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue` route is now audited and is the
+  only path that resumes an Organize item.
+- **API and Operator Web parity:** `ManualOrganizeExecutionService.document()` redacts secrets via
+  `redact_manual_value`, enforces RBAC through the `READ` / `EXECUTE_MANUAL_ORGANIZE` permissions,
+  supports bounded pagination, and exposes the same durable state across reload; the Operator Web
+  renders the matching stage/disposition/checkpoint/blocker projection via
+  `showManualExecution` -> `showCheckpointBlocker` -> `showDetail`.
 
 ### Tests and Results
-- ...
+- `.venv/bin/python -m unittest tests.test_manual_organize_execution` — 35/35 OK.
+- `.venv/bin/python -m unittest tests.test_manual_organize_intent` — OK.
+- `.venv/bin/python -m unittest tests.test_manual_preview` — OK.
+- `.venv/bin/python -m unittest tests.test_conflict_resolution` — OK.
+- `.venv/bin/python -m unittest tests.test_recognition_review` — OK.
+- `.venv/bin/python -m unittest tests.test_metadata_review` — OK.
+- `.venv/bin/python -m unittest tests.test_classification_review` — OK.
+- `.venv/bin/python -m unittest tests.test_processing_recovery_admission` — OK.
+- `.venv/bin/python -m unittest tests.test_recovery_continuation` — 15/15 OK.
+- `.venv/bin/python -m unittest tests.test_recovery_batch` — OK.
+- `.venv/bin/python -m unittest tests.test_api_security` — OK.
+- `.venv/bin/python -m unittest tests.test_operator_ui` — 40/40 OK.
+- `.venv/bin/python -m unittest tests.test_metadata_correction_continuation` — 13/13 OK.
+- `.venv/bin/python -m unittest tests.test_configuration_snapshot` — 44/44 OK.
+- `.venv/bin/python -m unittest discover -s tests` — 1213 tests, 0 new regressions; the 6
+  pre-existing CLI/storage environment failures in `test_runtime_storage_configuration` and
+  `test_cli_status` are unrelated to Task 27.6.
+- `.venv/bin/ruff format --check mediaflow tests` — clean (246 files already formatted).
+- `.venv/bin/ruff check mediaflow tests` — All checks passed.
+- `.venv/bin/python -m compileall -q mediaflow tests` — clean.
+- `.venv/bin/pip check` — No broken requirements found.
+- `git diff --check` — clean.
 
 ### Decisions
-- ...
+- **Blender rendering in `showManualExecution`:** mirrored the existing `showTaskItem` blocker
+  rendering (lines 3541-3549 of `operator_ui.py`) so API and Web present the same bounded,
+  secret-free, item-specific projection. Read-only `READ` permission is sufficient to open the
+  review/conflict resolution paths; the existing review/confirmation routes enforce their own
+  permission and version gates, and saving a decision never mutates Storage or grants execution
+  authority.
+- **Snapshot-driven `maximum_active_jobs` override:** the override is retained across initial
+  refreshes while `snapshot_id == current.snapshot_id`, but reset to `None` if
+  `snapshot_id != current.snapshot_id` so newly activated runtime snapshots can dynamically update
+  `maximum_active_jobs` without re-requiring the operator to relaunch the API. The override defaults
+  to `100` when the constructor argument is omitted, preserving the established production ceiling.
 
 ### Remaining In-Slice Work
 - RO-7 Processing Worker readiness and fencing.
 
 ### Risks / Deviations
-- ...
+- `SLICE.md` and `docs/roadmap.md` were modified in the working tree by the Slice 27 handoff
+  before this Task started; per Developer role, they were left untouched and are not part of this
+  checkpoint.
+- `config/alist.json`, `nohup.out` and `worker.log` remain untracked and were not staged.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: ...
+Head SHA: 7f32191206e70cdc46bb97a57128344ae062db8c
 ```
 
 ## B Review Result
