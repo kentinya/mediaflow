@@ -430,25 +430,29 @@ proven unrelated. Mutation tests must use temporary roots and fake/local service
   attachment transfer, Task/TaskItem/Result/checkpoint persistence, API routes and Operator Web
   controls were already present from the closed Slice 24/25 foundations and Task 27.4 and were
   verified working against current-source Previews produced by `create_current`.
-- Closed the remaining RO-5 admission defect found by that audit: execution admission only
-  re-checked the FileIndex record and live source existence, so a source file replaced after
-  Preview (before the next Scan) could be organized under the reviewed identity. Added
-  `_assert_reviewed_source_unchanged` to the exact-execution admission, which re-derives the live
-  Storage fingerprint/occurrence with the same `source_fingerprint`/`occurrence_id_for` primitives
-  used by Scan and Preview and fails closed with `source_stale` (before any Task or mutation) when
-  it no longer matches the reviewed evidence. Legacy reviewed intents without occurrence/fingerprint
-  evidence keep their existing semantics.
-- Added focused T4 coverage for the current-source journey in
-  `tests/test_manual_organize_execution.py` (`CurrentSourceManualOrganizeTests`): exact current-file
-  Preview success, replaced-source-without-rescan fail closed with no Task/lock/mutation while the
-  authority stays active, ResourceLibrary partial organize with independent sibling visibility and
-  stale-Preview continuation, batch replaced-sibling fail closed, and API parity (viewer cannot
-  authorize/execute, arbitrary authority fields rejected, authority one-shot, reload parity).
+- Closed the RO-5 admission defect flagged in B review: authority issuance
+  (`ManualOrganizeExecutionService.authorize()`) now performs bounded live admission preflight
+  (validating current FileIndex occurrence/fingerprint via `_current_source()`, runtime policy via
+  `_validate_runtime_policy()`, and live storage source presence, capabilities, reviewed occurrence
+  stability/fingerprint and unreviewed destination conflicts via `_validate_current_storage()`)
+  for every selected item before creating or persisting any authorization record.
+- Retained the execution-time admission preflight in `execute()` to guard against concurrency races
+  occurring between authorization issuance and execution.
+- Expanded focused T4 coverage in `tests/test_manual_organize_execution.py`:
+  - Replaced source before authorization is rejected with `source_stale` before any authorization record is created.
+  - Replaced source during the execution race (after authorization) fails closed before mutation while preserving the active authorization record.
+  - Missing source before authorization is rejected with `source_missing` without creating an authority.
+  - Unstable source (marked `UNSTABLE` in FileIndex) before authorization is rejected with `source_stale` without creating an authority.
+  - Live storage capability blocker (target made read-only before authorization) is rejected with `capability_gap` without creating an authority.
+  - Live destination blocker (destination file created before authorization) is rejected with `destination_changed` without creating an authority.
+  - Batch sibling replaced before authorization fails closed without creating an authority.
+  - Batch sibling replaced during execution race fails closed before mutation.
 
 ### Tests and Results
-- `PASS` — `.venv/bin/python -m unittest tests.test_manual_organize_execution tests.test_manual_organize_intent tests.test_manual_preview tests.test_manual_scan tests.test_file_index_lifecycle tests.test_api_security tests.test_operator_ui` — 113 tests.
+- `PASS` — `.venv/bin/python -m unittest tests.test_manual_organize_execution tests.test_manual_organize_intent tests.test_manual_preview tests.test_manual_scan tests.test_file_index_lifecycle tests.test_api_security tests.test_operator_ui` — 118 tests.
+- `PASS` — `.venv/bin/python -m unittest tests.test_manual_organize_execution` — 35 tests.
 - `PASS` — `.venv/bin/python -m unittest tests.test_migration_rehearsal tests.test_sqlite_backup tests.test_sqlite_restore tests.test_task_persistence` — 22 tests.
-- `FAIL / PRE-EXISTING / UNRELATED` — `.venv/bin/python -m unittest discover -s tests` — 1207 tests, 9 failures, 7 skipped. The 9 failures are environment-driven (`HDD_2` real-Storage/private config and CLI/config-discovery expectations) and none of the failing modules import or exercise the changed code. Full list: `test_api_credentials` (2), `test_final_integration` (1), `test_metadata_correction_continuation` (1), `test_recovery_continuation` (2), `test_resource_library_pipeline` (1), `test_runtime_storage_configuration` (2). Same class of environment failures was already recorded as pre-existing/unrelated in the Task 27.4 report.
+- `FAIL / PRE-EXISTING / UNRELATED` — `.venv/bin/python -m unittest discover -s tests` — 1213 tests, 9 failures, 7 skipped. The 9 failures are environment-driven (`HDD_2` real-Storage/private config and CLI/config-discovery expectations) and none of the failing modules import or exercise the changed code. Full list: `test_api_credentials` (2), `test_final_integration` (1), `test_metadata_correction_continuation` (1), `test_recovery_continuation` (2), `test_resource_library_pipeline` (1), `test_runtime_storage_configuration` (2). Same class of environment failures was already recorded as pre-existing/unrelated in the Task 27.4 report.
 - `PASS` — `.venv/bin/ruff format --check mediaflow tests`.
 - `PASS` — `.venv/bin/ruff check mediaflow tests`.
 - `PASS` — `.venv/bin/python -m compileall -q mediaflow tests`.
@@ -462,12 +466,13 @@ proven unrelated. Mutation tests must use temporary roots and fake/local service
 - Existing SQLite `ResourceWarning` messages about unclosed test connections were emitted again; they do not change the stated statuses.
 
 ### Decisions
-- Kept the live source re-verification at execution admission (the pre-mutation boundary) rather
-  than at authority issue time. This preserves the existing bounded one-shot-authority semantics:
-  a transient preflight failure does not consume an ACTIVE authority, matching the established
-  `test_active_authorization_preserves_external_source_missing` behavior, while still satisfying
-  the fail-closed-before-mutation invariant. FileIndex-record staleness is already enforced when
-  the Preview is reloaded, including at authority issue time.
+- Enforced live source identity and storage preflight at authority issuance (`authorize()`). If
+  current source occurrence, fingerprint, presence, stability, storage capability, or destination
+  conflict checks fail, admission fails closed immediately before any authorization record is
+  created or persisted, ensuring zero unauthorized records, zero tasks, zero file locks, and zero
+  storage mutations.
+- Preserved the same preflight checks inside `execute()` to catch any state drift or replacement
+  occurring during the race between authority issuance and execution.
 - Reused the exact scanner/Preview primitives (`source_fingerprint`, `occurrence_id_for`,
   `OccurrenceState`) so the live stat at admission compares the same canonical identity as the
   Scan that produced the occurrence. No new fingerprint algorithm or read path was introduced.
@@ -495,7 +500,7 @@ proven unrelated. Mutation tests must use temporary roots and fake/local service
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 650282a2e224ce81f7e0cebf0f12d96c25b2a931
+Head SHA: 356e95a42ac9ffce6102763b468fc2f91c14acae
 ```
 
 ## B Review Result
