@@ -43,6 +43,7 @@ from mediaflow.domain.organizer import (
     OrganizeOperationType,
     RollbackPolicy,
 )
+from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
@@ -305,7 +306,34 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
             item = preview.items[0]
             replaced = b"replacement-content-not-reviewed"
             Path(value.source_root, "One.2001.mkv").write_bytes(replaced)
+            with self.assertRaises(ManualExecutionError) as raised:
+                self._authorize_selected(execution, preview, [item.item_id])
+            self.assertEqual("source_stale", raised.exception.code)
+            self.assertTrue(raised.exception.next_action)
+            self.assertEqual(0, len(repository.list_tasks()))
+            self.assertEqual(replaced, Path(value.source_root, "One.2001.mkv").read_bytes())
+            self.assertEqual([], list(Path(value.target_root).rglob("*")))
+            authorizations = repository._connection.execute(
+                "SELECT COUNT(*) AS count FROM manual_execution_authorizations"
+            ).fetchone()["count"]
+            self.assertEqual(0, authorizations)
+            locks = repository._connection.execute(
+                "SELECT COUNT(*) AS count FROM file_locks"
+            ).fetchone()["count"]
+            self.assertEqual(0, locks)
+
+    def test_replaced_source_during_execution_race_fails_closed_before_mutation(self):
+        with (
+            self.fixture(names=("One.2001.mkv",)) as value,
+            SQLiteTaskRepository(value.database) as repository,
+        ):
+            _, _, previews, execution, _ = self.services(value, repository)
+            record = value.records["One.2001.mkv"]
+            preview = previews.create_current(**self.current_request(record))
+            item = preview.items[0]
             authority = self._authorize_selected(execution, preview, [item.item_id])
+            replaced = b"replacement-content-during-execution-race"
+            Path(value.source_root, "One.2001.mkv").write_bytes(replaced)
             with self.assertRaises(ManualExecutionError) as raised:
                 execution.execute(authority.authorization_id, actor="operator", confirmation=True)
             self.assertEqual("source_stale", raised.exception.code)
@@ -319,6 +347,113 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                     authority.authorization_id
                 ).status.value,
             )
+            locks = repository._connection.execute(
+                "SELECT COUNT(*) AS count FROM file_locks"
+            ).fetchone()["count"]
+            self.assertEqual(0, locks)
+
+    def test_missing_source_before_authorization_fails_closed_without_authority(self):
+        with (
+            self.fixture(names=("One.2001.mkv",)) as value,
+            SQLiteTaskRepository(value.database) as repository,
+        ):
+            _, _, previews, execution, _ = self.services(value, repository)
+            record = value.records["One.2001.mkv"]
+            preview = previews.create_current(**self.current_request(record))
+            item = preview.items[0]
+            Path(value.source_root, "One.2001.mkv").unlink()
+            with self.assertRaises(ManualExecutionError) as raised:
+                self._authorize_selected(execution, preview, [item.item_id])
+            self.assertEqual("source_missing", raised.exception.code)
+            self.assertTrue(raised.exception.next_action)
+            self.assertEqual(0, len(repository.list_tasks()))
+            self.assertEqual([], list(Path(value.target_root).rglob("*")))
+            authorizations = repository._connection.execute(
+                "SELECT COUNT(*) AS count FROM manual_execution_authorizations"
+            ).fetchone()["count"]
+            self.assertEqual(0, authorizations)
+            locks = repository._connection.execute(
+                "SELECT COUNT(*) AS count FROM file_locks"
+            ).fetchone()["count"]
+            self.assertEqual(0, locks)
+
+    def test_unstable_source_before_authorization_fails_closed_without_authority(self):
+        with (
+            self.fixture(names=("One.2001.mkv",)) as value,
+            SQLiteTaskRepository(value.database) as repository,
+        ):
+            _, _, previews, execution, _ = self.services(value, repository)
+            record = value.records["One.2001.mkv"]
+            preview = previews.create_current(**self.current_request(record))
+            item = preview.items[0]
+            value.index.batch_upsert((replace(record, scan_status=FileScanStatus.UNSTABLE),))
+            with self.assertRaises(ManualExecutionError) as raised:
+                self._authorize_selected(execution, preview, [item.item_id])
+            self.assertTrue(raised.exception.next_action)
+            self.assertEqual(0, len(repository.list_tasks()))
+            self.assertEqual([], list(Path(value.target_root).rglob("*")))
+            authorizations = repository._connection.execute(
+                "SELECT COUNT(*) AS count FROM manual_execution_authorizations"
+            ).fetchone()["count"]
+            self.assertEqual(0, authorizations)
+            locks = repository._connection.execute(
+                "SELECT COUNT(*) AS count FROM file_locks"
+            ).fetchone()["count"]
+            self.assertEqual(0, locks)
+
+    def test_live_storage_capability_blocker_before_authorization_fails_closed_without_authority(
+        self,
+    ):
+        with (
+            self.fixture(names=("One.2001.mkv",)) as value,
+            SQLiteTaskRepository(value.database) as repository,
+        ):
+            _, _, previews, execution, storages = self.services(value, repository)
+            record = value.records["One.2001.mkv"]
+            preview = previews.create_current(**self.current_request(record))
+            item = preview.items[0]
+            target_storage = storages["target"]
+            target_storage._read_only = True
+            with self.assertRaises(ManualExecutionError) as raised:
+                self._authorize_selected(execution, preview, [item.item_id])
+            self.assertEqual("capability_gap", raised.exception.code)
+            self.assertTrue(raised.exception.next_action)
+            self.assertEqual(0, len(repository.list_tasks()))
+            self.assertEqual([], list(Path(value.target_root).rglob("*")))
+            authorizations = repository._connection.execute(
+                "SELECT COUNT(*) AS count FROM manual_execution_authorizations"
+            ).fetchone()["count"]
+            self.assertEqual(0, authorizations)
+            locks = repository._connection.execute(
+                "SELECT COUNT(*) AS count FROM file_locks"
+            ).fetchone()["count"]
+            self.assertEqual(0, locks)
+
+    def test_live_destination_blocker_before_authorization_fails_closed_without_authority(self):
+        with (
+            self.fixture(names=("One.2001.mkv",)) as value,
+            SQLiteTaskRepository(value.database) as repository,
+        ):
+            _, _, previews, execution, _ = self.services(value, repository)
+            record = value.records["One.2001.mkv"]
+            preview = previews.create_current(**self.current_request(record))
+            item = preview.items[0]
+            target_path = Path(value.target_root, "Movies/Anime/One (2001)/One (2001).mkv")
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_bytes(b"existing-destination-before-authorize")
+            with self.assertRaises(ManualExecutionError) as raised:
+                self._authorize_selected(execution, preview, [item.item_id])
+            self.assertEqual("destination_changed", raised.exception.code)
+            self.assertTrue(raised.exception.next_action)
+            self.assertEqual(0, len(repository.list_tasks()))
+            self.assertEqual(
+                b"existing-destination-before-authorize",
+                target_path.read_bytes(),
+            )
+            authorizations = repository._connection.execute(
+                "SELECT COUNT(*) AS count FROM manual_execution_authorizations"
+            ).fetchone()["count"]
+            self.assertEqual(0, authorizations)
             locks = repository._connection.execute(
                 "SELECT COUNT(*) AS count FROM file_locks"
             ).fetchone()["count"]
@@ -369,9 +504,38 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
             first, second = preview.items
             replaced = b"one-was-replaced-after-preview"
             Path(value.source_root, "One.2001.mkv").write_bytes(replaced)
+            with self.assertRaises(ManualExecutionError) as raised:
+                self._authorize_selected(execution, preview, [first.item_id, second.item_id])
+            self.assertEqual("source_stale", raised.exception.code)
+            self.assertEqual(0, len(repository.list_tasks()))
+            self.assertEqual([], list(Path(value.target_root).rglob("*")))
+            self.assertEqual(replaced, Path(value.source_root, "One.2001.mkv").read_bytes())
+            self.assertEqual(
+                self._media_bytes("Two.2002.mkv"),
+                Path(value.source_root, "Two.2002.mkv").read_bytes(),
+            )
+            authorizations = repository._connection.execute(
+                "SELECT COUNT(*) AS count FROM manual_execution_authorizations"
+            ).fetchone()["count"]
+            self.assertEqual(0, authorizations)
+
+    def test_batch_sibling_race_fails_closed_before_mutation(
+        self,
+    ):
+        names = ("One.2001.mkv", "Two.2002.mkv")
+        with self.fixture(names=names) as value, SQLiteTaskRepository(value.database) as repository:
+            _, _, previews, execution, _ = self.services(value, repository)
+            preview = previews.create_current(
+                scope_kind="resource_library",
+                actor="operator",
+                resource_library_id="library",
+            )
+            first, second = preview.items
             authority = self._authorize_selected(
                 execution, preview, [first.item_id, second.item_id]
             )
+            replaced = b"one-was-replaced-during-race"
+            Path(value.source_root, "One.2001.mkv").write_bytes(replaced)
             with self.assertRaises(ManualExecutionError) as raised:
                 execution.execute(authority.authorization_id, actor="operator", confirmation=True)
             self.assertEqual("source_stale", raised.exception.code)

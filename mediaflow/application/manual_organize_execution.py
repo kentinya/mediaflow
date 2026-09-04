@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 from uuid import uuid4
@@ -75,6 +75,12 @@ _CONCURRENT_PREFLIGHT_ERROR_CODES = frozenset(
         "source_stale",
     }
 )
+
+
+@dataclass(frozen=True)
+class _AuthorityPreflight:
+    allow_overwrite: bool
+    allow_source_cleanup: bool
 
 
 class ManualOrganizeExecutionService:
@@ -225,6 +231,22 @@ class ManualOrganizeExecutionService:
                     item.choice,
                 )
             )
+        runtime = self._load_runtime(
+            preview.configuration_snapshot_id, preview.configuration_snapshot_digest
+        )
+        storage_ids = set()
+        for item in selected:
+            storage_ids.update(self._plan_storage_ids(item.plan))
+        storages = self._create_storages(runtime, storage_ids)
+        preflight_authority = _AuthorityPreflight(
+            allow_overwrite=allow_overwrite,
+            allow_source_cleanup=allow_source_cleanup,
+        )
+        for item in selected:
+            self._current_source(intent, item)
+            plan = self._plan_from_document(item.plan, item, runtime)
+            self._validate_runtime_policy(plan, item, runtime)
+            self._validate_current_storage(plan, item, preflight_authority, storages)
         now = self._clock()
         value = ManualExecutionAuthorization(
             str(uuid4()),
