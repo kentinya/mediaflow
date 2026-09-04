@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 27.4
 Parent Slice: 27 - Manual Operations and File Lifecycle
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 5eae50b79172082ef6481009fad95fa3d731360b
 Difficulty: High
 Test Level: T4
@@ -163,65 +163,65 @@ this Task Base or otherwise proven unrelated.
 ## Developer Completion Report
 
 ### Changed Files
-- `mediaflow/domain/manual_organize.py`
-- `mediaflow/domain/manual_organize_preview.py`
-- `mediaflow/application/manual_organize.py`
-- `mediaflow/application/manual_organize_preview.py`
-- `mediaflow/infrastructure/sqlite_runtime.py`
-- `mediaflow/interfaces/service_api.py`
-- `mediaflow/interfaces/operator_ui.py`
-- `tests/test_manual_preview.py`
+- `tests/test_operator_ui.py`
+- `TASK.md`
 
 ### Implemented
-- Added exact current-source Preview admission from FileIndex and bounded ResourceLibrary scopes.
-  File selections require the current `fileId`, verified occurrence ID and fingerprint; every
-  selected source is checked for discovery/stability state, configured ResourceLibrary authority and
-  the live read-only Storage occurrence before analysis.
-- Reused the existing parser, RecognitionType policy, metadata-provider, naming, classification and
-  OrganizePlan authorities under one immutable managed Active snapshot. Persisted plans include
-  bounded parse/recognition/identity/policy/destination/conflict/capability explanations and an
-  explicit zero-mutation declaration; RecognitionType identity remains separate from downstream
-  policy reuse.
-- Persisted current source occurrence/fingerprint evidence in manual intent items and persisted the
-  exact Preview scope in SQLite, with additive compatibility migration and legacy reload fallback.
-  Current-source reads/listing project stale evidence without publishing a read-time lifecycle
-  mutation.
-- Added independent bounded per-item source-admission outcomes for ResourceLibrary batches, strict
-  authenticated API admission/detail/list routes, and matching Operator Web Preview actions from
-  Files, FileIndex and ResourceLibrary controls. API/Web responses use the existing redaction and
-  RBAC boundaries.
-- Kept Preview analysis read-only: source and target adapters are guarded, no OrganizerExecutor,
-  Task, Worker, execution authority or mandatory review backlog is created, and no move/copy/link/
-  delete/overwrite/cleanup operation is invoked.
+- Correction round for the `FIX REQUIRED` decision recorded against
+  03b744d4f26ee3dc77c9c4556806c201d47b2acf: added a focused
+  `CurrentSourcePreviewWebTests` regression class to `tests/test_operator_ui.py` covering the
+  Task 27.4 current-source Preview Web surfaces that previously had no assertions. No product
+  code was changed; the existing API/security and zero-mutation tests are untouched.
+- Files journey (`renderFiles`): the `Preview` table column, the per-item `Preview file` action
+  built only from a verified current index membership, the explicit
+  `Preview unavailable until a verified current item exists` fallback, and the bounded
+  ResourceLibrary `Preview <id>` controls mounted on the same journey.
+- FileIndex journey (`renderFileIndex`) and file detail (`showDetail`): the `Preview` column and
+  row action from a verified current occurrence, the `Preview current source (DryRun)` entry
+  point, and the actionable `select a verified ready current occurrence` fallback.
+- Request strictness (`manualPreviewPayloadFromFile`, `manualPreviewPayloadFromMembership`):
+  payloads admit only current-identity fields (`scopeKind`/`fileId`/`resourceLibraryId`/
+  `occurrenceId`/`fingerprint`), fail closed without verified ready evidence, and carry no Scan
+  mode, path, operation, authority or Provider field.
+- `confirmCurrentPreview`: bounded-scope confirmation with a fail-closed guard message, POST to
+  the versioned `/api/v1/manual-previews` route, persisted-detail reopen, explicit
+  `Keep source unchanged` cancel, and both zero-mutation statements (`no Task, review backlog,
+  execution authority or Storage mutation is created` / `Storage was not changed and no
+  execution authority was created`).
+- Persisted Preview detail (`showManualPreview`): reloaded `Preview scope`
+  (`kind:id (N item(s))`), pinned snapshot identity, `Storage mutation NONE/INVALID`, execution
+  state, next action, per-item stage, current occurrence/fingerprint/state evidence,
+  RecognitionType/policy/target/capability lines, recognition explanation, per-item
+  `Zero mutation` state, `Blocker/failure` and `Recovery` rows for blocked items, the stale
+  `Request fresh Preview` recovery action, and the executable-items filter that keeps execution
+  authorization gated to `previewed` + current + complete-plan items.
 
 ### Tests and Results
-- `PASS` — `.venv/bin/python -m unittest tests.test_manual_preview tests.test_manual_organize_preview tests.test_manual_organize_intent tests.test_manual_organize_execution tests.test_manual_scan tests.test_file_index_lifecycle tests.test_api_security tests.test_operator_ui` — 111 tests.
+- `PASS` — `.venv/bin/python -m unittest tests.test_operator_ui` — 40 tests (33 existing + 7 new).
+- `PASS` — `.venv/bin/python -m unittest tests.test_manual_preview tests.test_manual_organize_preview tests.test_manual_organize_intent tests.test_manual_organize_execution tests.test_manual_scan tests.test_file_index_lifecycle tests.test_api_security tests.test_operator_ui` — 118 tests.
 - `PASS` — `.venv/bin/python -m unittest tests.test_migration_rehearsal tests.test_sqlite_backup tests.test_sqlite_restore tests.test_task_persistence` — 22 tests.
-- `FAIL / PRE-EXISTING / UNRELATED` — `.venv/bin/python -m unittest discover -s tests` — 1195 tests, 9 failures, 7 skips. The nine failures reproduce the Task Base report's existing credential-status, final-integration CLI, queue-full continuation, ResourceLibrary CLI and runtime-Storage configuration assertions; none is in the current-source Preview path.
+- `FAIL / PRE-EXISTING / UNRELATED` — `.venv/bin/python -m unittest discover -s tests` — 1202 tests, 9 failures, 7 skips. The nine failures are the same set recorded at the previous checkpoint (credential-status ×2, queue-full continuation ×3 including discover's duplicate module identity, final-integration CLI, ResourceLibrary CLI, runtime-Storage CLI ×2). Reproduction evidence: the two queue-full failures reproduce at Task Base `5eae50b` in a clean worktree; with this workspace's ignored local `.mediaflow/` Active-runtime database present, all eight distinct failures reproduce at Task Base code as well. This checkpoint's only product-side change is the test file above.
 - `PASS` — `.venv/bin/ruff format --check mediaflow tests` — 246 files already formatted.
 - `PASS` — `.venv/bin/ruff check mediaflow tests`.
 - `PASS` — `.venv/bin/python -m compileall -q mediaflow tests`.
 - `PASS` — `.venv/bin/pip check` — no broken requirements found.
-- `PASS` — `git diff --check` and staged checkpoint diff check.
 - `PASS` — `.venv/bin/mediaflow --config config/strategy.example.json config validate`.
 - `PASS` — `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`.
-- `PASS` — Markdown local-link validator — 36 local links checked, 0 broken.
-- `PASS` — `git check-ignore -v config/alist.json`, tracking check and private-config boundary check; `config/alist.json` remains ignored, untracked and unstaged.
+- `PASS` — Markdown local-link validator over tracked Markdown — 123 files, 36 local links, 0 broken.
+- `PASS` — `git check-ignore -v config/alist.json config/strategy.json .mediaflow config/.mediaflow`, tracking/staging check and secret scan over the checkpoint diff; private configuration remains ignored, untracked and unstaged.
+- `PASS` — `git diff --check`.
 - `PASS` — forbidden FFprobe/FFmpeg scan over `mediaflow` and `pyproject.toml`; 0 matches.
 - `SKIP / UNAVAILABLE` — production SMB, OpenList, AWS S3/Cloudflare R2, live TMDB and multi-process concurrency gates; no production services or credentials were available or authorized, so validation used temporary LocalStorage and fake/local providers only.
-- ResourceWarnings about unclosed SQLite connections were emitted by existing tests; they did not change the stated test statuses.
 
 ### Decisions
-- Kept `SCHEMA_VERSION` at 32 and used additive, idempotent columns for source identity and
-  Preview scope so current and legacy SQLite databases retain their existing compatibility contract.
-- Used FileIndex occurrence plus Storage-derived SHA-256 evidence as the current-source boundary;
-  the admission path accepts no arbitrary path, operation, Provider payload or execution field.
-- Kept the existing manual intent/Preview and strategy/planner services as the behavior authorities,
-  adding only current-source admission, immutable managed-snapshot checks and read-only Storage
-  guards around them.
-- For a bounded ResourceLibrary batch, a source admission failure is persisted as that item's
-  bounded `STALE`, `BLOCKED` or `UNAVAILABLE` outcome while valid siblings continue independently;
-  a single exact-file admission failure remains fail-closed with no Preview published.
+- Followed the file's established static-asset assertion style (function-body extraction plus
+  exact served-`APP_JS` strings) so the new coverage pins the exact rendered controls, fallbacks,
+  recovery actions and zero-mutation messaging without requiring a browser runtime.
+- Scope kept to exactly the B blocker: only `tests/test_operator_ui.py` gained assertions; no
+  product code, API behavior or existing test was modified.
+- Treated the seven workspace-dependent full-regression failures as environment-specific after
+  proving they reproduce at Task Base code only when this workspace's ignored `.mediaflow/`
+  runtime state is present; the final PASS/FAIL judgment on the full suite remains with B.
 
 ### Remaining In-Slice Work
 - Explicit current-Preview manual Organize admission/execution and attachment transfer (RO-5).
@@ -229,28 +229,38 @@ this Task Base or otherwise proven unrelated.
 - Processing Worker registration, readiness and ownership/fencing projections (RO-7).
 
 ### Risks / Deviations
-- Full regression is `FAIL / PRE-EXISTING / UNRELATED` as listed above; existing SQLite
+- Full regression is `FAIL / PRE-EXISTING / UNRELATED` as evidenced above; existing SQLite
   `ResourceWarning` messages about unclosed test connections were also emitted.
-- Production remote-provider and multi-process behavior is unverified because the required
-  services/credentials were unavailable and no production authority was used.
+- Running the suite inside this workspace exercises the CLI test paths against the workspace's
+  own ignored Active runtime (read-only CLI stages only); the same code passes those tests in a
+  clean checkout, which is where the reproduction evidence comes from.
 - Existing uncommitted `SLICE.md`, `docs/roadmap.md`, `nohup.out` and `worker.log` changes were
-  preserved and not included in the implementation checkpoint; `config/alist.json` was not staged.
+  preserved and are not part of this checkpoint; the `TASK.md` update also carries the
+  previously uncommitted B Review Result text for the reviewed SHA.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 03b744d4f26ee3dc77c9c4556806c201d47b2acf
+Head SHA: be1b6f7ed8a53bcf915975a667526b8f3a2d6991
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 03b744d4f26ee3dc77c9c4556806c201d47b2acf
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+Blockers:
+
+- The Task's required API/Web parity evidence is incomplete: `tests/test_operator_ui.py` has no
+  focused assertions for the new current-source Preview controls and state rendered from the real
+  Files, FileIndex and ResourceLibrary journeys. The `tests.test_operator_ui` command passes but
+  does not exercise the Task 27.4 Web entry points, persisted Preview detail, blocked/stale recovery
+  action or zero-mutation messaging. Add focused Web regression coverage for those paths while
+  keeping the existing API/security and zero-mutation tests intact.
+
+Fixes remain in this Task. This result does not close the Slice or update Roadmap.
