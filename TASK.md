@@ -535,7 +535,7 @@ the current [`SLICE.md`](SLICE.md).
 Task ID: 27.6
 Parent Slice: 27 - Manual Operations and File Lifecycle
 Status: PLANNED
-Task Base: 78297e08e93036145e2995f3303b1dba543684e8
+Task Base: 454ffe4785faf72ced59d22e1c20eea363abf04a
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
