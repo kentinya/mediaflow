@@ -173,7 +173,7 @@ class MediaFlowApi:
         dashboard_media_library_count: int = 0,
         remote_execution_enabled: bool = False,
         remote_execution_maximum_ttl_seconds: int = 900,
-        maximum_active_jobs: int = 100,
+        maximum_active_jobs: int | None = None,
         stale_job_age_seconds: int = 3600,
         system_status=None,
         file_catalog: FileCatalogService | None = None,
@@ -225,6 +225,7 @@ class MediaFlowApi:
         self._storage_browser_cursor_secret = storage_browser_cursor_secret
         self._configuration_service = configuration_service
         self._manual_scans_override = manual_scan_service
+        self._maximum_active_jobs_override = maximum_active_jobs
         self._manual_intents = manual_intent_service
         if self._manual_intents is None and self._file_catalog is not None:
             self._manual_intents = ManualOrganizeIntentService(
@@ -323,7 +324,7 @@ class MediaFlowApi:
         self._runtime_binding = self._build_runtime_binding(
             snapshot_id=configuration_snapshot_id,
             snapshot_digest=configuration_snapshot_digest,
-            maximum_active_jobs=maximum_active_jobs,
+            maximum_active_jobs=100 if maximum_active_jobs is None else maximum_active_jobs,
             remote_execution_enabled=remote_execution_enabled,
             remote_execution_maximum_ttl_seconds=remote_execution_maximum_ttl_seconds,
             stale_job_age_seconds=stale_job_age_seconds,
@@ -4922,14 +4923,19 @@ class MediaFlowApi:
             return current
         if runtime is None or refreshed_status is None:
             return current
-
+        if snapshot_id != current.snapshot_id:
+            self._maximum_active_jobs_override = None
         # Construct every config-derived behavior before publishing one pointer.
         # A request captures this immutable binding and cannot combine a new pin
         # with admission or execute settings retained from the previous Active.
         candidate = self._build_runtime_binding(
             snapshot_id=snapshot_id,
             snapshot_digest=digest,
-            maximum_active_jobs=runtime.automation_maximum_active_jobs,
+            maximum_active_jobs=(
+                self._maximum_active_jobs_override
+                if self._maximum_active_jobs_override is not None
+                else runtime.automation_maximum_active_jobs
+            ),
             remote_execution_enabled=runtime.remote_execution_enabled,
             remote_execution_maximum_ttl_seconds=(runtime.remote_execution_maximum_ttl_seconds),
             stale_job_age_seconds=runtime.automation_stale_job_age_seconds,
@@ -5146,6 +5152,13 @@ class MediaFlowApi:
             and parts[6] == "recovery"
         ):
             return "/api/v1/tasks/{task_id}/items/{item_id}/recovery"
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6:8] == ["recovery", "continue"]
+        ):
+            return "/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"]:
             return "/api/v1/recovery-batches/{id}"
         if (
