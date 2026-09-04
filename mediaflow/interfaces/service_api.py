@@ -41,7 +41,10 @@ from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_batch import RecoveryBatchContinuationService
 from mediaflow.application.recovery_continuation import RecoveryContinuationService
-from mediaflow.application.storage_browser import StorageBrowserError
+from mediaflow.application.storage_browser import (
+    RuntimeFilesBrowserService,
+    StorageBrowserError,
+)
 from mediaflow.application.unattended_execution import (
     UnattendedExecutionGrantError,
     UnattendedExecutionGrantService,
@@ -149,6 +152,7 @@ class _ApiRuntimeBinding:
     schedules: tuple
     metadata_policies: tuple
     dashboard: DashboardService
+    files_browser: RuntimeFilesBrowserService | None = None
 
 
 class MediaFlowApi:
@@ -203,6 +207,9 @@ class MediaFlowApi:
         ):
             raise ValueError("stale Job age must be between 60 and 604800 seconds")
         self._file_catalog = file_catalog
+        self._file_index = file_index
+        self._storage_adapters = dict(storage_adapters or {})
+        self._storage_browser_cursor_secret = storage_browser_cursor_secret
         self._configuration_service = configuration_service
         self._manual_intents = manual_intent_service
         if self._manual_intents is None and self._file_catalog is not None:
@@ -873,6 +880,11 @@ class MediaFlowApi:
         principal: ResolvedApiPrincipal,
     ):
         parts = [part for part in path.split("/") if part]
+        if len(parts) >= 3 and parts[:3] == ["api", "v1", "file-index"]:
+            # ``/file-index`` is the explicit daily catalog contract.  Keep the
+            # older ``/files`` route as a compatibility alias for the same
+            # indexed-discovery surface; real Storage browsing has its own route.
+            parts[2] = "files"
         if (
             len(parts) >= 3
             and parts[:2] == ["api", "v1"]
@@ -2699,6 +2711,34 @@ class MediaFlowApi:
                     start_response, 503, "service_unavailable", "system status is unavailable"
                 )
             return self._response(start_response, 200, binding.system_status.as_document())
+        if (
+            parts == ["api", "v1", "storage", "files"] or parts == ["api", "v1", "files", "browse"]
+        ) and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if binding.files_browser is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "configuration_unavailable",
+                    "managed Active runtime is unavailable for Files browsing",
+                    details={
+                        "authority": "MANAGED",
+                        "runtimeReady": False,
+                        "durableState": "managed_active_unavailable",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": (
+                            "inspect configuration status and restore or activate a valid Active "
+                            "runtime"
+                        ),
+                    },
+                )
+            query = self._runtime_files_query(environ)
+            return self._response(
+                start_response,
+                200,
+                binding.files_browser.browse(**query),
+            )
         if parts == ["api", "v1", "files", "stats"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._file_catalog is None:
@@ -2713,6 +2753,9 @@ class MediaFlowApi:
                 start_response,
                 200,
                 {
+                    "surface": "file_index",
+                    "fileIndexSurface": "/api/v1/file-index",
+                    "filesSurface": "/api/v1/storage/files",
                     "total": stats.total,
                     "byStatus": {
                         status.value: stats.by_status.get(status, 0) for status in FileScanStatus
@@ -2731,6 +2774,9 @@ class MediaFlowApi:
                 start_response,
                 200,
                 {
+                    "surface": "file_index",
+                    "fileIndexSurface": "/api/v1/file-index",
+                    "filesSurface": "/api/v1/storage/files",
                     "items": [self._file_catalog_value(item) for item in values],
                     "limit": filters.limit,
                 },
@@ -2752,6 +2798,9 @@ class MediaFlowApi:
                     start_response,
                     200,
                     {
+                        "surface": "file_index",
+                        "fileIndexSurface": "/api/v1/file-index",
+                        "filesSurface": "/api/v1/storage/files",
                         "available": False,
                         "fileId": None,
                         "unavailableReason": (
@@ -2765,6 +2814,9 @@ class MediaFlowApi:
                 start_response,
                 200,
                 {
+                    "surface": "file_index",
+                    "fileIndexSurface": "/api/v1/file-index",
+                    "filesSurface": "/api/v1/storage/files",
                     "available": True,
                     "fileId": record.file_id,
                     "resourceLibraryId": record.resource_library_id,
@@ -4345,7 +4397,11 @@ class MediaFlowApi:
         snapshot_id = active.revision_id if active else None
         digest = active.digest if active else None
         current = self._runtime_binding
-        if snapshot_id == current.snapshot_id and digest == current.snapshot_digest:
+        if (
+            snapshot_id == current.snapshot_id
+            and digest == current.snapshot_digest
+            and (runtime is None or current.files_browser is not None)
+        ):
             return current
         if runtime is None or refreshed_status is None:
             return current
@@ -4365,6 +4421,8 @@ class MediaFlowApi:
             metadata_policies=runtime.strategy.metadata_policies,
             resource_library_count=sum(item.enabled for item in runtime.resource_libraries),
             media_library_count=sum(item.enabled for item in runtime.media_libraries),
+            runtime_revision=active,
+            runtime_configuration=runtime,
         )
         self._runtime_binding = candidate
         # Compatibility diagnostics only; request behavior uses the single
@@ -4387,7 +4445,19 @@ class MediaFlowApi:
         metadata_policies: tuple,
         resource_library_count: int,
         media_library_count: int,
+        runtime_revision=None,
+        runtime_configuration=None,
     ) -> _ApiRuntimeBinding:
+        files_browser = None
+        if runtime_revision is not None and runtime_configuration is not None:
+            files_browser = RuntimeFilesBrowserService(
+                self._configuration_service,
+                active_revision=runtime_revision,
+                runtime_configuration=runtime_configuration,
+                file_index=self._file_index,
+                storage_adapters=self._storage_adapters,
+                cursor_secret=self._storage_browser_cursor_secret,
+            )
         return _ApiRuntimeBinding(
             snapshot_id,
             snapshot_digest,
@@ -4415,6 +4485,7 @@ class MediaFlowApi:
                 resource_library_count=resource_library_count,
                 media_library_count=media_library_count,
             ),
+            files_browser,
         )
 
     def _audit(
@@ -4465,6 +4536,9 @@ class MediaFlowApi:
             ("api", "v1", "metadata-corrections"),
             ("api", "v1", "recovery-batches"),
             ("api", "v1", "automation", "task-definitions"),
+            ("api", "v1", "file-index"),
+            ("api", "v1", "files"),
+            ("api", "v1", "storage", "files"),
         }
         key = tuple(parts)
         if key in exact:
@@ -4944,6 +5018,26 @@ class MediaFlowApi:
         }
 
     @classmethod
+    def _runtime_files_query(cls, environ: dict) -> dict[str, object]:
+        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"storageId", "resourceLibrary", "path", "limit", "cursor"}
+        if set(query).difference(allowed) or any(len(value) != 1 for value in query.values()):
+            raise ValueError("Files query contains unsupported or repeated fields")
+        storage_id = query.get("storageId", [""])[0]
+        if not storage_id:
+            raise ValueError("Files storageId is required")
+        cursor = query.get("cursor", [None])[0]
+        if cursor == "":
+            raise ValueError("Files cursor must not be empty")
+        return {
+            "storage_id": storage_id,
+            "resource_library_id": query.get("resourceLibrary", [None])[0],
+            "path": query.get("path", [""])[0],
+            "limit": cls._parse_bounded_limit(query.get("limit", ["50"])[0], "Files"),
+            "cursor": cursor,
+        }
+
+    @classmethod
     def _confirmation_value(cls, value) -> dict:
         document = cls._value(value)
         document.pop("note", None)
@@ -5011,9 +5105,10 @@ class MediaFlowApi:
             or (len(parts) == 7 and parts[5:7] == ["grant", "audit"])
         ):
             return True
-        return parts[:3] == ["api", "v1", "files"] and (
-            len(parts) == 4 or parts == ["api", "v1", "files", "by-source"]
-        )
+        return (
+            parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])
+            and (len(parts) == 4 or parts == ["api", "v1", parts[2], "by-source"])
+        ) or parts == ["api", "v1", "storage", "files"]
 
     @staticmethod
     def _document(environ: dict) -> dict:
@@ -5278,6 +5373,8 @@ class MediaFlowApi:
 
     def _file_catalog_detail_value(self, detail) -> dict:
         document = self._file_catalog_value(detail.record)
+        document["surface"] = "file_index"
+        document["filesSurface"] = "/api/v1/storage/files"
         if self._manual_execution is not None:
             document["manualExecutionDiscovery"] = self._manual_execution.discovery_for_source(
                 detail.record.storage_id,
