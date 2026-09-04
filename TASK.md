@@ -271,7 +271,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 27.5
 Parent Slice: 27 - Manual Operations and File Lifecycle
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c2e0c55bf9e20a11a304f512fd9bd20cae07f36b
 Difficulty: High
 Test Level: T4
@@ -506,29 +506,205 @@ Head SHA: 356e95a42ac9ffce6102763b468fc2f91c14acae
 ## B Review Result
 
 ```text
-Reviewed: c2e0c55bf9e20a11a304f512fd9bd20cae07f36b..0419e5abf2b6c95ed58c3394c42ed37fd3592265
-Decision: FIX REQUIRED
+Reviewed: c2e0c55bf9e20a11a304f512fd9bd20cae07f36b..78297e08e93036145e2995f3303b1dba543684e8
+Decision: PASS
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK
 ```
 
-Blockers:
+Task 27.5 satisfied RO-5: exact current-source Preview items can be admitted only after the
+current FileIndex/source occurrence, live Storage, capability, destination and pinned policy
+preflight passes before authorization persistence. The same preflight remains in execution for
+post-authorization races, while the existing one-shot authority, OrganizerExecutor-only mutation,
+attachment, independent TaskItem/Result/checkpoint and API/Web behavior remain intact. The
+correction checkpoint `356e95a42ac9ffce6102763b468fc2f91c14acae8` moved the missing preflight before
+authority creation; the documentation checkpoint is `78297e08e93036145e2995f3303b1dba543684e8`.
 
-- The Task requires manual-organize admission to validate the current FileIndex
-  occurrence/fingerprint, current source presence/stability, and live source/target Storage
-  capability evidence before issuing the separate one-shot execution authority. In the actual
-  implementation, `ManualOrganizeExecutionService.authorize()` checks only persisted Preview,
-  item/version, snapshot, plan and cached capability/conflict evidence; it does not call the
-  current-source or live-Storage preflight. The new `_assert_reviewed_source_unchanged()` is called
-  only from `execute()` (after the authority has already been persisted as `active`). The focused
-  replacement test demonstrates this exact gap: `test_replaced_source_without_rescan_fails_closed_before_mutation`
-  first receives an active authority, then `execute()` rejects with `source_stale`.
-- Correct the same Task so authority issuance itself performs the required bounded current
-  FileIndex/source and live Storage admission checks for every selected item, while preserving the
-  existing no-Task/no-lock/no-mutation and authority-state semantics for rejected admission. Add
-  focused tests proving replaced/missing/unstable source and live capability/destination blockers
-  are rejected before an authorization record is created; retain the existing execution-time
-  revalidation for the race between authorization and execution.
+The Slice is not closed. RO-6 and RO-7 remain incomplete; the next unit is the explicit
+Conflict/Review/Recovery continuation journey for real manual Organize outcomes.
+
+If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
+finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+
+# Task 27.6 — Manual Organize Blocker and Recovery Continuation
+
+This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
+the current [`SLICE.md`](SLICE.md).
+
+```text
+Task ID: 27.6
+Parent Slice: 27 - Manual Operations and File Lifecycle
+Status: PLANNED
+Task Base: 78297e08e93036145e2995f3303b1dba543684e8
+Difficulty: High
+Test Level: T4
+Planner / Reviewer: B
+```
+
+## Goal
+
+Complete Slice 27 RO-6: when an explicit manual Organize attempt reaches a Conflict, Recognition,
+Metadata, Classification, transfer, stale-source, permission, partial or other recoverable
+condition, the operator can identify the exact item and stage, inspect durable effects/checkpoint
+and retry safety, save a persistence-only decision where applicable, re-analyze that same item under
+the correct pinned/current evidence, obtain explicit continuation authority, and return to the
+original manual Organize journey without replaying successful siblings or uncertain mutation.
+
+## Why This Task Exists
+
+Task 27.5 now completes exact manual execution for eligible current-source Preview items, including
+durable per-item results, effect certainty and execution-time fail-closed checks. The remaining
+product gap is what happens when the explicit Organize attempt cannot finish normally: current
+generic review and recovery foundations expose pieces of this behavior, but they do not yet provide
+one coherent manual-Organize-specific lifecycle from the failed/waiting item through persistence-only
+decision, exact re-analysis, explicit continuation admission and the next safe action.
+
+This is the largest reasonable next unit because RO-6 is a vertical operator outcome spanning the
+manual execution result/checkpoint projection, review and conflict linkage, recovery continuation,
+API, Operator Web and sibling isolation. Worker registration/readiness/fencing remains the separate
+RO-7 unit.
+
+## Implementation Scope
+
+```text
+Manual Organize result/checkpoint -> blocker/review linkage -> decision persistence
+-> exact one-item re-analysis -> continuation admission/authority -> Task/Result linkage
+-> versioned API -> Operator Web -> tests
+```
+
+- **Durable blocker projection:** map every real manual Organize blocker to the affected
+  `TaskItem`/stage and a bounded, secret-free checkpoint with known effects, effect certainty,
+  retry safety, current source identity, pinned snapshot and one concrete next action. Pre-mutation
+  admission failures must remain distinguishable from post-admission failures and must not fabricate
+  successful or replayable results.
+- **Conflict and Review decisions:** expose linked Conflict, Recognition, Metadata, Metadata
+  Correction and Classification review evidence from the manual Organize item. Saving a decision is
+  persistence-only, requires the existing permission/version/audit gates, never mutates Storage,
+  never grants execution authority and never hides successful or unrelated siblings.
+- **Exact re-analysis:** after a valid decision or repair, re-enter the applicable production
+  analysis path for exactly the affected current source item using the original/pinned evidence
+  rules. Validate current FileIndex occurrence/fingerprint and immutable Active/pinned snapshot as
+  applicable; stale, replaced, unavailable or uncertain sources fail closed with an actionable
+  state. The re-analysis result must be linked to the original manual Organize item and must not
+  organize media or imply execution authority.
+- **Explicit continuation:** provide a separate authenticated, bounded continuation admission for
+  the reviewed item and exact re-analysis result. Continue only after the operator explicitly
+  confirms the valid reviewed plan/authority through the existing safe OrganizerExecutor path;
+  never turn saving a decision, retry, Preview read or re-analysis into implicit execution. Never
+  replay successful siblings or any item with uncertain mutation effects.
+- **Persistence/API/Web:** persist decision, re-analysis, continuation, Task/TaskItem/Result,
+  checkpoint/effect and audit linkage across reload. API and Operator Web must share validation,
+  RBAC, redaction, pagination, state and recovery actions; display the original item, linked
+  evidence, durable outcome and exact next action without exposing secrets or private paths.
+- **Batch and safety:** preserve independent per-item outcomes in mixed batches. Existing
+  OrganizerExecutor-only mutation, no silent overwrite/delete/fallback, path confinement, source
+  occurrence protection and no-worker deferral remain mandatory.
+
+## Acceptance Criteria
+
+- [ ] An explicit manual Organize failure or waiting condition produces a durable, item-specific
+      stage/disposition/checkpoint projection that states known effects, effect certainty, retry
+      safety and one actionable next step after reload.
+- [ ] Conflict, Recognition, Metadata, Metadata Correction and Classification blockers link to the
+      exact review/decision evidence; saved decisions are persistence-only, audited and permission-
+      checked, and do not mutate Storage, create execution authority or replay siblings.
+- [ ] After a permitted decision/repair, exactly the affected current source item can be re-analyzed
+      through the applicable production path under the required pinned/current snapshot and source
+      occurrence checks; the new analysis is durably linked to the original Organize item.
+- [ ] A separate explicit continuation admission/authority is required before any resumed manual
+      execution. Preview, read, ordinary retry, saved decisions and re-analysis cannot imply it;
+      uncertain effects and successful siblings remain non-replayable.
+- [ ] Continued execution consumes only the exact persisted reviewed plan through
+      `OrganizerExecutor`, preserves operation/attachment/conflict/capability/destructive-policy
+      semantics and records independent new Task/TaskItem/Result/checkpoint evidence.
+- [ ] API and Operator Web expose the same blocker, review, re-analysis, continuation, RBAC,
+      redaction, pagination and recovery-safe state; the original item and sibling outcomes remain
+      visible through reload.
+- [ ] Focused T4 tests cover each review kind, conflict decision, stale/replaced source,
+      re-analysis success/failure, explicit continuation authority, uncertain-effect refusal,
+      sibling isolation, API/Web parity, audit/redaction and OrganizerExecutor-only mutation.
+
+## Required Tests
+
+Run from the repository root with the project environment:
+
+```bash
+.venv/bin/python -m unittest \
+  tests.test_manual_organize_execution \
+  tests.test_manual_organize_intent \
+  tests.test_manual_preview \
+  tests.test_conflict_resolution \
+  tests.test_recognition_review \
+  tests.test_metadata_review \
+  tests.test_classification_review \
+  tests.test_processing_recovery_admission \
+  tests.test_recovery_continuation \
+  tests.test_recovery_batch \
+  tests.test_api_security \
+  tests.test_operator_ui
+.venv/bin/python -m unittest discover -s tests
+.venv/bin/ruff format --check mediaflow tests
+.venv/bin/ruff check mediaflow tests
+.venv/bin/python -m compileall -q mediaflow tests
+.venv/bin/pip check
+git diff --check
+```
+
+Also run applicable migration/persistence checks, configuration validation, Markdown local-link
+validation, private-config/secret scan and forbidden FFprobe/FFmpeg scan. Record production
+SMB/OpenList/AWS S3/Cloudflare R2, live TMDB and multi-process/concurrency gates as
+`SKIP / UNAVAILABLE` unless an explicitly isolated environment is available. Use temporary roots,
+fake/local providers and mutation spies only; no production credentials, private endpoints or user
+media.
+
+## Non-goals
+
+- Processing Worker registration/readiness/fencing, queue supervision, stale Worker recovery or
+  implicit subprocess startup (RO-7).
+- Automatic replay, universal rollback/compensation, uncertain mutation replay or destructive
+  recovery not explicitly authorized by the existing policy and authority gates.
+- New Storage providers, configuration lifecycle redesign, scheduled automation redesign or broad
+  Files/FileIndex UI redesign.
+- Rewriting the closed Scanner, Parser, Recognition, Metadata, Naming, Classification or
+  OrganizerExecutor semantics beyond the minimal compatibility wiring needed for this continuation
+  journey.
+- Optional proof, P2/P3 wording/cleanup or work outside Slice 27.
+
+## Developer Completion Report
+
+### Changed Files
+- ...
+
+### Implemented
+- ...
+
+### Tests and Results
+- ...
+
+### Decisions
+- ...
+
+### Remaining In-Slice Work
+- RO-7 Processing Worker readiness and fencing.
+
+### Risks / Deviations
+- ...
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: ...
+```
+
+## B Review Result
+
+```text
+Reviewed: [Head SHA or Task Base..Head]
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
+```
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
