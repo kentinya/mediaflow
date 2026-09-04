@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+from mediaflow.domain.file_lifecycle import OccurrenceState, occurrence_id_for, source_fingerprint
 from mediaflow.domain.manual_execution import (
     MANUAL_EXECUTION_PERMISSION,
     MAX_MANUAL_EXECUTION_ITEMS,
@@ -54,6 +55,7 @@ from mediaflow.domain.organizer import (
     RollbackPolicy,
     StorageLocation,
 )
+from mediaflow.domain.storage import StorageEntry, StorageEntryType, StorageError, StorageErrorCode
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
     PersistentTaskStatus,
@@ -1557,6 +1559,7 @@ class ManualOrganizeExecutionService:
                     code="source_missing",
                     next_action="refresh Files and request a fresh Preview",
                 )
+            self._assert_reviewed_source_unchanged(item, plan, source_storage)
             required = _required_capabilities(plan)
             missing = []
             for capability in required:
@@ -1628,6 +1631,71 @@ class ManualOrganizeExecutionService:
                 code="storage_unavailable",
                 status=503,
             ) from error
+
+    @staticmethod
+    def _assert_reviewed_source_unchanged(item, plan, source_storage) -> None:
+        """Fail closed when the live source no longer matches the reviewed file.
+
+        A current-source Preview pins the exact Storage occurrence and fingerprint
+        observed when it was created.  The FileIndex record can still match even
+        after the underlying file is replaced before the next Scan, so execution
+        admission must re-derive the fingerprint from the live Storage entry and
+        compare it with the reviewed evidence.  Legacy reviewed intents that carry
+        no occurrence/fingerprint evidence are not promoted by this check.
+        """
+
+        source = item.source
+        reviewed_fingerprint = getattr(source, "fingerprint", None)
+        reviewed_occurrence = getattr(source, "occurrence_id", None)
+        if reviewed_fingerprint is None or reviewed_occurrence is None:
+            return
+        path = plan.source_location.path if plan.source_location else plan.source
+        try:
+            entry = source_storage.stat(path)
+        except StorageError as error:
+            code = getattr(error.code, "value", None)
+            if code == StorageErrorCode.NOT_FOUND.value:
+                raise ManualExecutionError(
+                    "reviewed source disappeared before admission",
+                    code="source_missing",
+                    next_action="refresh Files and request a fresh Preview",
+                ) from error
+            raise ManualExecutionError(
+                "the reviewed source Storage is unavailable for read-only admission",
+                code="storage_unavailable",
+                status=503,
+            ) from error
+        except (OSError, ValueError, KeyError) as error:
+            raise ManualExecutionError(
+                "the reviewed source Storage is unavailable for read-only admission",
+                code="storage_unavailable",
+                status=503,
+            ) from error
+        if not isinstance(entry, StorageEntry) or entry.entry_type is not StorageEntryType.FILE:
+            raise ManualExecutionError(
+                "reviewed source is no longer a file in Storage",
+                code="source_stale",
+                next_action="refresh FileIndex and request a fresh Preview",
+                details={"fileId": getattr(source, "file_id", None)},
+            )
+        observed = source_fingerprint(source.storage_id, source.resource_library_id, entry)
+        observed_occurrence = occurrence_id_for(
+            source.storage_id,
+            source.resource_library_id,
+            entry.path,
+            observed.value,
+        )
+        if (
+            observed.state is not OccurrenceState.VERIFIED
+            or observed.value != reviewed_fingerprint
+            or observed_occurrence != reviewed_occurrence
+        ):
+            raise ManualExecutionError(
+                "reviewed source occurrence changed or was replaced after Preview",
+                code="source_stale",
+                next_action="refresh Files/FileIndex and request a fresh Preview",
+                details={"fileId": getattr(source, "file_id", None)},
+            )
 
     @staticmethod
     def _plan_locks(plan):
