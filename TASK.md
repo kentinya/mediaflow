@@ -534,7 +534,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 27.6
 Parent Slice: 27 - Manual Operations and File Lifecycle
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: e2c048da99858fe1eb504359a1f1ee0e3abc1d1e
 Difficulty: High
 Test Level: T4
@@ -763,11 +763,97 @@ Head SHA: 7f32191206e70cdc46bb97a57128344ae062db8c
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: e2c048da99858fe1eb504359a1f1ee0e3abc1d1e..7f32191206e70cdc46bb97a57128344ae062db8c
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+### Blockers
+
+1. **AC7 unmet — the checkpoint contains zero test changes.**
+   - Where: `git diff --stat e2c048d..7f32191` lists only `mediaflow/interfaces/operator_ui.py`
+     (+17) and `mediaflow/interfaces/service_api.py` (+21/-4); the follow-on commit `69a91b7`
+     touches only `TASK.md`. No file under `tests/` was added or modified by this Task.
+   - Evidence: `grep -rn "Review / conflict blockers\|Open blocker resolution\|checkpoint.blockers" tests/`
+     returns no hits. `grep -rn "recovery/continue" tests/` shows no assertion on the new audit
+     route template `"/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue"`. The required-test
+     list you ran (`Ran 190 tests ... OK`, reproduced here) therefore passes identically with and
+     without this Task's diff — it pins none of it.
+   - Correction: add focused T4 tests that fail without this diff. At minimum (a) the served
+     Operator Web asset asserts the manual-execution blocker section strings and that each blocker
+     renders `kind`, `blocker_id`, `status` and a resolution entry point, following the existing
+     served-asset assertion style in `tests/test_operator_ui.py`; (b) an audit assertion that a real
+     `POST /api/v1/tasks/<id>/items/<id>/recovery/continue` request records the templated route and
+     that no task id or item id leaks into the recorded route value, following
+     `tests/test_operator_job_cancellation.py:84-87`.
+
+2. **AC1 / AC2 / AC3 / AC5 / AC6 unproven for the manual Organize journey — the new blocker
+   surface is unreachable for manual-execution items, and no test drives the journey end to end.**
+   - Where: `mediaflow/application/manual_organize_execution.py` mints its own items with
+     `task_item_id=str(uuid4())` (line 416) and records only `SUCCESS / SKIPPED / FAILED / PARTIAL`
+     (lines 2168-2172). Review and confirmation records — the only sources of
+     `CheckpointBlocker` in `mediaflow/application/processing_checkpoint.py:197-239` — are created
+     exclusively by the automated pipeline: `MetadataReviewService.create` /
+     `RecognitionReviewService.create` / `ClassificationReviewService.create` in
+     `mediaflow/application/task_runtime.py:345,360,392`, and `create_confirmation` in
+     `mediaflow/application/conflict_resolution.py:166` (reached via
+     `task_runtime.py:302-334 wait_for_confirmation`).
+   - Evidence: `grep -n "TaskRuntime\|wait_for_confirmation\|wait_for_metadata\|wait_for_recognition\|wait_for_classification" mediaflow/application/manual_organize_execution.py`
+     returns nothing, so no review or confirmation is ever bound to a manual item id and
+     `item.checkpoint.blockers` is always empty on the manual-execution surface the new code renders.
+     Grepping manual-execution symbols in `tests/test_recovery_continuation.py`,
+     `tests/test_processing_recovery_admission.py` and `tests/test_conflict_resolution.py` also
+     returns nothing; those suites use the synthetic `_seed_failed_item` fixture
+     (`tests/test_recovery_continuation.py:240-300`), not a real manual Organize outcome.
+   - Correction: make the journey real and prove it with one T4 test that starts from an actual
+     manual Organize execution against a temporary storage root, produces a blocked or failed item,
+     and then asserts, on that same item: the blocker/attention projection the operator sees; that
+     saving the decision is persistence-only (no `OrganizerExecutor` mutation); exact single-item
+     re-analysis with `execute_authorized=False`; the durable `source_task_id` / `source_item_id` /
+     `new_task_id` linkage; that continuation requires explicit authority and is refused for
+     `ATTEMPTED_UNVERIFIED` / `UNKNOWN` effects; and that successful siblings in the same execution
+     are neither replayed nor hidden. If manual execution genuinely cannot yield a blocker of any
+     kind, say so explicitly in the report with the code path that proves it and remove the
+     unreachable UI branch instead of shipping it.
+
+3. **`service_api.py` `maximum_active_jobs` change is outside this Task's declared Implementation
+   Scope and is pinned by no regression.**
+   - Where: `mediaflow/interfaces/service_api.py` — the constructor default became
+     `int | None = None`, `self._maximum_active_jobs_override` was added, and
+     `_refresh_runtime_binding` (~line 4923) now prefers that override over
+     `runtime.automation_maximum_active_jobs`, clearing it only when `snapshot_id` differs. This is
+     an Active-runtime-binding behavior change; the Task's scope covers blocker projection, recovery
+     continuation and their surfaces.
+   - Evidence: no test in this diff pins either branch. The behavior is only incidentally exercised
+     by pre-existing tests (`tests/test_recovery_continuation.py:670-715` queue-full case;
+     `tests/test_configuration_snapshot.py:300-362`), so a later regression in either direction
+     would surface as an unrelated failure. Your "Changed Files" rationale is also inverted relative
+     to the code: it says the edit exists "so newly activated runtime snapshots can dynamically
+     update `maximum_active_jobs`", but the pre-change code already always adopted
+     `runtime.automation_maximum_active_jobs`; the edit's actual effect is to make an
+     explicitly-passed ceiling sticky for the constructor-pinned snapshot. The "Decisions" section
+     describes the retention correctly, so the two sections contradict each other.
+   - Correction: keep the change only if you add a regression that pins both halves of the
+     contract — an explicitly-supplied ceiling is honoured while the constructor-pinned snapshot is
+     Active, and a newly activated snapshot's `automation_maximum_active_jobs` governs from then on
+     — and correct the inverted "Changed Files" rationale so it matches the code. Otherwise revert
+     it and fix the failing recovery/continuation tests at their real cause.
+
+4. **Reported regression evidence misattributes the failures.**
+   - Where: the Completion Report attributes the 6 full-suite failures to
+     `test_runtime_storage_configuration` and `test_cli_status`.
+   - Evidence: my own full run reproduces the same totals — `Ran 1213 tests ... FAILED (failures=6, skipped=7)`
+     — but the failing modules are `test_api_credentials` (×2), `test_final_integration` (×1),
+     `test_resource_library_pipeline` (×1) and `test_runtime_storage_configuration` (×2);
+     `test_cli_status` does not fail. All 6 are pre-existing environment leakage (CLI/storage tests
+     reading the workspace's real configuration instead of temp fixtures) and are accepted as
+     unrelated to this diff — the defect is the inaccurate attribution, not the failures.
+   - Correction: restate the failing modules exactly as observed, with the command used.
+
+Everything else in the checkpoint is clean: scope contains no `config/alist.json`, no credentials
+and no unrelated files; the uncommitted `SLICE.md` / `docs/roadmap.md` handoff changes were
+correctly left untouched; no test was deleted, no assertion weakened and no skip hidden.
+
+Task ID, Task Base, Goal and Implementation Scope are unchanged. Fixes remain in this Task. This
+result does not close the Slice or update Roadmap.
