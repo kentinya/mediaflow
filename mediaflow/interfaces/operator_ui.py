@@ -2692,8 +2692,25 @@ APP_JS = b"""(() => {
             effect.verified ? 'YES' : 'NO', effect.certainty || '-'])));
         if (item.checkpoint) {
           section.append(text('p', `Checkpoint: ${item.checkpoint.status}; ` +
+            `stage: ${item.checkpoint.stage || '-'}; ` +
             `retry safety: ${item.checkpoint.retry_safety || '-'}; ` +
             `permitted actions: ${(item.checkpoint.permitted_action_ids || []).join(', ') || 'none'}`));
+          const blockers = Array.isArray(item.checkpoint.blockers) && item.checkpoint.blockers.length ?
+            item.checkpoint.blockers :
+            (item.checkpoint.blocker ? [item.checkpoint.blocker] : []);
+          if (blockers.length) {
+            section.append(text('h4', 'Review / conflict blockers'));
+            blockers.forEach(blocker => {
+              const blockerControls = text('div', '', 'choices');
+              blockerControls.append(text('p',
+                `${blocker.kind}: ${blocker.blocker_id || blocker.id} (${blocker.status})`));
+              if (blocker.resolution_path) {
+                blockerControls.append(actionButton('Open blocker resolution',
+                  () => showCheckpointBlocker(blocker.resolution_path)));
+              }
+              section.append(blockerControls);
+            });
+          }
         }
         section.append(actionButton('Open Processing Checkpoint',
           () => showTaskItem(data.taskId, item.taskItemId)));
