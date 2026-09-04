@@ -51,7 +51,7 @@ _SAFE_STORAGE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 class StorageBrowserError(RuntimeError):
-    """A stable, secret-free failure from the setup-only Storage browser."""
+    """A stable, secret-free failure from a bounded read-only Storage browser."""
 
     def __init__(
         self,
@@ -64,6 +64,7 @@ class StorageBrowserError(RuntimeError):
         path: str = "",
         retry_safe: bool = True,
         next_action: str,
+        durable_state: str = "draft_and_prior_active_preserved",
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -74,6 +75,7 @@ class StorageBrowserError(RuntimeError):
         self.path = path if _is_safe_normalized_path(path) else ""
         self.retry_safe = retry_safe
         self.next_action = next_action
+        self.durable_state = durable_state
 
     @property
     def details(self) -> dict[str, object]:
@@ -82,7 +84,7 @@ class StorageBrowserError(RuntimeError):
             "path": self.path,
             "stage": "storage_browser",
             "category": self.category,
-            "durableState": "draft_and_prior_active_preserved",
+            "durableState": self.durable_state,
             "sideEffects": "none",
             "retrySafe": self.retry_safe,
             "nextAction": self.next_action,
@@ -251,10 +253,37 @@ class StorageBrowserService:
         revision = self._require_revision(
             revision_id, expected_version=expected_version, expected_digest=expected_digest
         )
+        return self.browse_revision(
+            revision,
+            storage_id=storage_id,
+            path=path,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def browse_revision(
+        self,
+        revision: ManagedConfigurationRevision,
+        *,
+        storage_id: str,
+        path: str = "",
+        limit: int = _DEFAULT_PAGE_SIZE,
+        cursor: str | None = None,
+        cursor_scope: str | None = None,
+    ) -> dict[str, object]:
+        """Browse one already-resolved revision without rereading configuration authority.
+
+        Setup browsing resolves a Draft/Validated revision by ID in ``browse``.  Runtime
+        browsing instead receives the immutable Active revision captured by the API binding;
+        keeping this read path separate prevents a Draft or a second repository read from
+        being substituted accidentally.
+        """
         normalized_path = _normalize_storage_relative_path(path)
         normalized_limit = _validate_limit(limit)
         storage_value, definition = self._storage_definition(revision, storage_id)
         context = self._cursor_context(revision, storage_id, normalized_path, normalized_limit)
+        if cursor_scope is not None:
+            context["resourceLibraryId"] = cursor_scope
         adapter_cursor = None
         if cursor is not None:
             try:
@@ -638,14 +667,14 @@ class StorageBrowserService:
                 "reload the configuration revision and choose one configured Storage",
             ),
             "disabled": (
-                "the selected Storage is disabled in this Draft",
+                "the selected Storage is disabled in the current configuration",
                 409,
-                "enable the Storage in the Draft, validate it, then retry browsing",
+                "enable the Storage in the current configuration, validate it, then retry browsing",
             ),
             "invalid_configuration": (
                 "Storage configuration is invalid before a provider read could start",
                 400,
-                "correct the bounded Storage fields, reload the Draft, and retry",
+                "correct the bounded Storage fields, reload the configuration, and retry",
             ),
             "missing_secret": (
                 "a required deployment-owned Storage credential is unavailable",
@@ -723,6 +752,16 @@ class StorageBrowserService:
                 503,
                 "inspect bounded Storage configuration and service health, then reload and retry",
             ),
+            "resource_library_not_found": (
+                "the requested ResourceLibrary is not available in the Active runtime",
+                404,
+                "reload the current Active runtime and choose an enabled ResourceLibrary",
+            ),
+            "resource_library_mismatch": (
+                "the requested ResourceLibrary does not use this Storage",
+                400,
+                "choose a ResourceLibrary bound to the selected configured Storage",
+            ),
         }
         message, status, next_action = messages.get(category, messages["unknown"])
         return StorageBrowserError(
@@ -734,6 +773,213 @@ class StorageBrowserService:
             path=path,
             next_action=next_action,
         )
+
+
+class RuntimeFilesBrowserService:
+    """Read the configured Storage surface from one immutable Active runtime snapshot."""
+
+    MAX_MEMBERSHIP_LIBRARIES = 32
+
+    def __init__(
+        self,
+        managed,
+        *,
+        active_revision: ManagedConfigurationRevision,
+        runtime_configuration,
+        file_index=None,
+        storage_adapters: Mapping[str, object] | None = None,
+        cursor_secret: bytes | str | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        if active_revision.status is not ManagedConfigurationStatus.ACTIVE:
+            raise ValueError("runtime Files browsing requires an Active configuration revision")
+        if (
+            getattr(runtime_configuration, "configuration_snapshot_id", None)
+            != active_revision.revision_id
+            or getattr(runtime_configuration, "configuration_snapshot_digest", None)
+            != active_revision.digest
+        ):
+            raise ValueError("runtime Files browser snapshot does not match the Active revision")
+        self._revision = active_revision
+        self._runtime_configuration = runtime_configuration
+        self._file_index = file_index
+        self._browser = StorageBrowserService(
+            managed,
+            storage_adapters=storage_adapters,
+            cursor_secret=cursor_secret,
+            clock=clock,
+        )
+        self._libraries = tuple(
+            sorted(
+                (
+                    library
+                    for library in getattr(runtime_configuration, "resource_libraries", ())
+                    if getattr(library, "enabled", True) is True
+                ),
+                key=lambda library: library.library_id,
+            )
+        )
+
+    def browse(
+        self,
+        *,
+        storage_id: str,
+        path: str = "",
+        limit: int = _DEFAULT_PAGE_SIZE,
+        cursor: str | None = None,
+        resource_library_id: str | None = None,
+    ) -> dict[str, object]:
+        try:
+            normalized_path = _normalize_storage_relative_path(path)
+        except StorageBrowserError as error:
+            raise self._runtime_error(error) from error
+        libraries = self._libraries_for(storage_id, resource_library_id)
+        try:
+            document = self._browser.browse_revision(
+                self._revision,
+                storage_id=storage_id,
+                path=normalized_path,
+                limit=limit,
+                cursor=cursor,
+                cursor_scope=resource_library_id,
+            )
+        except StorageBrowserError as error:
+            raise self._runtime_error(error) from error
+
+        entries = []
+        for raw_entry in document["entries"]:
+            entry = dict(raw_entry)
+            entry["indexMembership"] = self._membership(
+                entry["path"], libraries, is_file=entry["type"] == StorageEntryType.FILE.value
+            )
+            entries.append(entry)
+        document["entries"] = entries
+        document["surface"] = "files"
+        document["surfaceLabel"] = "Files"
+        document["fileIndexSurface"] = "/api/v1/file-index"
+        document["configuration"] = {
+            "authority": "MANAGED",
+            "revisionId": self._revision.revision_id,
+            "version": self._revision.version,
+            "digest": self._revision.digest,
+        }
+        document["nextAction"] = (
+            "open a directory, inspect FileIndex membership, or use Next to load the next "
+            "bounded page"
+        )
+        return document
+
+    def _libraries_for(
+        self, storage_id: str, resource_library_id: str | None
+    ) -> tuple[object, ...]:
+        if resource_library_id is None:
+            return tuple(library for library in self._libraries if library.storage_id == storage_id)
+        library = next(
+            (item for item in self._libraries if item.library_id == resource_library_id),
+            None,
+        )
+        if library is None:
+            raise self._runtime_error(
+                StorageBrowserService._browser_failure("resource_library_not_found", None, "")
+            )
+        if library.storage_id != storage_id:
+            raise self._runtime_error(
+                StorageBrowserService._browser_failure("resource_library_mismatch", storage_id, "")
+            )
+        return (library,)
+
+    def _membership(
+        self,
+        path: str,
+        libraries: tuple[object, ...],
+        *,
+        is_file: bool,
+    ) -> dict[str, object]:
+        if not is_file:
+            return {
+                "available": True,
+                "indexed": False,
+                "memberships": [],
+                "total": 0,
+                "truncated": False,
+                "nextAction": "FileIndex membership applies to file entries",
+            }
+        if not libraries:
+            return {
+                "available": False,
+                "indexed": False,
+                "memberships": [],
+                "total": 0,
+                "truncated": False,
+                "nextAction": "configure an enabled ResourceLibrary for this Storage",
+            }
+        if self._file_index is None:
+            return {
+                "available": False,
+                "indexed": False,
+                "memberships": [],
+                "total": 0,
+                "truncated": False,
+                "nextAction": "reload after the runtime FileIndex repository is available",
+            }
+        find = getattr(self._file_index, "find_by_path", None)
+        if not callable(find):
+            return {
+                "available": False,
+                "indexed": False,
+                "memberships": [],
+                "total": 0,
+                "truncated": False,
+                "nextAction": "inspect the FileIndex repository and reload Files",
+            }
+        bounded_libraries = libraries[: self.MAX_MEMBERSHIP_LIBRARIES]
+        memberships: list[dict[str, object]] = []
+        try:
+            for library in bounded_libraries:
+                if not _path_in_resource_library(path, library.root_path):
+                    continue
+                record = find(library.storage_id, library.library_id, path)
+                if record is None:
+                    continue
+                memberships.append(
+                    {
+                        "fileId": record.file_id,
+                        "resourceLibraryId": record.resource_library_id,
+                        "path": record.path,
+                        "scanStatus": record.scan_status.value,
+                        "change": record.change.value,
+                        "size": record.size,
+                        "modifiedAt": record.modified_at.isoformat(),
+                        "updatedAt": record.updated_at.isoformat(),
+                    }
+                )
+        except Exception:
+            return {
+                "available": False,
+                "indexed": False,
+                "memberships": [],
+                "total": 0,
+                "truncated": False,
+                "nextAction": "inspect the FileIndex repository and reload Files",
+            }
+        return {
+            "available": True,
+            "indexed": bool(memberships),
+            "memberships": memberships,
+            "total": len(memberships),
+            "truncated": len(libraries) > len(bounded_libraries),
+            "libraryScope": "requested" if len(libraries) == 1 else "all_enabled",
+            "nextAction": (
+                "open FileIndex for indexed discovery state"
+                if memberships
+                else "run a bounded ResourceLibrary scan to add this file to FileIndex"
+            ),
+        }
+
+    @staticmethod
+    def _runtime_error(error: StorageBrowserError) -> StorageBrowserError:
+        error.durable_state = "active_runtime_preserved"
+        return error
 
 
 def _validate_limit(value: object) -> int:
@@ -771,6 +1017,12 @@ def _is_safe_normalized_path(value: object) -> bool:
         return _normalize_storage_relative_path(value) == value
     except StorageBrowserError:
         return False
+
+
+def _path_in_resource_library(path: str, root: str) -> bool:
+    if not root:
+        return True
+    return path == root or path.startswith(root + "/")
 
 
 def _safe_storage_id(value: object) -> str:

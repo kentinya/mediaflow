@@ -19,6 +19,7 @@ INDEX_HTML = b"""<!doctype html>
     <button data-view="dashboard" class="active">Dashboard</button>
     <button data-view="tasks">Tasks</button>
     <button data-view="files">Files</button>
+    <button data-view="file-index">FileIndex</button>
     <button data-view="jobs">Jobs</button>
     <button data-view="schedules">Schedules</button>
     <button data-view="automation">Automation</button>
@@ -1910,7 +1911,88 @@ APP_JS = b"""(() => {
     detailContent.append(confirmation);
   }
   async function renderFiles() {
-    clear(content); content.append(text('h2', 'File catalog'));
+    let status;
+    try {
+      status = await api('/api/v1/system/status');
+    } catch (error) {
+      clear(content); content.append(text('h2', 'Files'));
+      content.append(text('p', errorText(error), 'error'));
+      content.append(actionButton('Retry Files', renderFiles));
+      return;
+    }
+    const storageSection = status && status.storages;
+    const storages = storageSection && Array.isArray(storageSection.items) ?
+      storageSection.items : [];
+    clear(content); content.append(text('h2', 'Files'));
+    content.append(text('p',
+      'Browse immediate entries from the configured Active Storage. This is read-only and separate from FileIndex.',
+      'warning'));
+    if (!storages.length) {
+      content.append(text('p', 'No configured Storage is available in the current Active runtime.', 'warning'),
+        actionButton('Retry Files', renderFiles));
+      return;
+    }
+    let selectedStorage = storages[0].id;
+    let currentPath = '';
+    const storageSelect = document.createElement('select');
+    storageSelect.setAttribute('aria-label', 'Configured Storage');
+    storages.forEach(storage => {
+      const option = document.createElement('option'); option.value = storage.id;
+      option.textContent = `${storage.id} (${storage.type || 'Storage'})`;
+      storageSelect.append(option);
+    });
+    const controls = text('div', '', 'choices');
+    const loadPage = async (cursor = null) => {
+      const query = new URLSearchParams();
+      query.set('storageId', selectedStorage); query.set('limit', '50');
+      if (currentPath) query.set('path', currentPath);
+      if (cursor) query.set('cursor', cursor);
+      let data;
+      try {
+        data = await api(`/api/v1/storage/files?${query.toString()}`);
+      } catch (error) {
+        clear(content); content.append(text('h2', 'Files'));
+        content.append(text('p', errorText(error), 'error'));
+        content.append(actionButton('Retry page', () => loadPage(cursor)));
+        return;
+      }
+      clear(content); content.append(text('h2', 'Files'));
+      content.append(text('p',
+        `Active runtime ${data.configuration && data.configuration.revisionId || '-'}; ` +
+        'Storage browsing is read-only. Use FileIndex for indexed discovery state.', 'warning'));
+      clear(controls);
+      const storageLabel = text('label', 'Storage '); storageLabel.append(storageSelect);
+      controls.append(storageLabel, actionButton('Refresh Files', () => loadPage(null)));
+      const breadcrumbs = text('div', '', 'choices');
+      (Array.isArray(data.breadcrumbs) ? data.breadcrumbs : []).forEach(crumb => {
+        breadcrumbs.append(actionButton(crumb.path ? crumb.name : 'Storage root', () => {
+          currentPath = crumb.path || ''; loadPage(null);
+        }));
+      });
+      content.append(controls, breadcrumbs);
+      const items = Array.isArray(data.entries) ? data.entries : [];
+      if (!items.length) content.append(text('p', 'This configured directory is empty.', 'warning'));
+      const rows = items.map(item => {
+        const membership = item.indexMembership || {};
+        const membershipText = !membership.available ? 'FileIndex unavailable' :
+          membership.indexed ? `Indexed (${membership.total || 0})` : 'Not indexed';
+        return [item.isDirectory ? actionButton(`Open ${item.name}`, () => {
+          currentPath = item.path; loadPage(null);
+        }) : item.name, item.type, item.size, item.modifiedAt, membershipText];
+      });
+      if (items.length) content.append(table(['Name', 'Type', 'Size', 'Modified', 'FileIndex'], rows));
+      if (data.nextCursor) content.append(actionButton('Next page', () => loadPage(data.nextCursor)));
+    };
+    storageSelect.addEventListener('change', () => {
+      selectedStorage = storageSelect.value; currentPath = ''; loadPage(null);
+    });
+    await loadPage();
+  }
+  async function renderFileIndex() {
+    clear(content); content.append(text('h2', 'FileIndex'));
+    content.append(text('p',
+      'Indexed discovery records belong to ResourceLibraries. FileIndex is not a configured Storage browser.',
+      'warning'));
     const selectedFileIds = new Set();
     const filters = [
       ['resourceLibrary', 'Resource library'], ['storage', 'Storage'],
@@ -1936,9 +2018,13 @@ APP_JS = b"""(() => {
         if (input && input.value.trim()) parts.push(`${input.name}=${encodeURIComponent(input.value.trim())}`);
       });
       if (status.value) parts.push(`scanStatus=${encodeURIComponent(status.value)}`);
-      const data = await api(`/api/v1/files?${parts.join('&')}`);
+      // The server keeps /api/v1/files? as a compatibility alias for this FileIndex request.
+      const data = await api(`/api/v1/file-index?${parts.join('&')}`);
       const items = data.items || [];
-      clear(content); content.append(text('h2', 'File catalog'));
+      clear(content); content.append(text('h2', 'FileIndex'));
+      content.append(text('p',
+        'These are indexed discovery records; use Files to browse the configured Storage directly.',
+        'warning'));
       const rows = items.map(item => {
         const fileId = item.fileId || item.file_id;
         const checkbox = document.createElement('input'); checkbox.type = 'checkbox';
@@ -1956,7 +2042,7 @@ APP_JS = b"""(() => {
         index => showDetail('files', items[index].fileId || items[index].file_id)));
       content.append(actionButton('Start manual organize for selected files', () =>
         confirmManualIntent(Array.from(selectedFileIds))));
-      content.append(actionButton('Refresh files', loadFiles));
+      content.append(actionButton('Refresh FileIndex', loadFiles));
     };
     content.append(form, actionButton('Search files', loadFiles));
   }
@@ -3501,6 +3587,7 @@ APP_JS = b"""(() => {
       else if (view === 'system') await renderSystem();
       else if (view === 'configuration') await renderConfiguration();
       else if (view === 'files') await renderFiles();
+      else if (view === 'file-index') await renderFileIndex();
       else await renderQueue(view); message('Connected.');
     } catch (error) { clear(content); message(errorText(error), true); }
   }
