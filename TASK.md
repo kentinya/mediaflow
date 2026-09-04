@@ -130,21 +130,73 @@ Storage compatibility.
 
 ### Changed Files
 
+- `mediaflow/application/storage_browser.py`
+- `mediaflow/interfaces/service_api.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `tests/test_runtime_files_browser.py`
+- `TASK.md`
+
 ### Implemented
+
+- Added a runtime-bound `Files` browser that consumes the exact immutable Active revision and
+  runtime snapshot, reusing the existing bounded Storage Browser, path confinement, breadcrumbs,
+  cursor pagination and read-only Storage guard.
+- Added bounded `indexMembership` projections from FileIndex for listed file entries, limited to
+  configured enabled ResourceLibraries and excluding processing disposition, source occurrence and
+  organization outcome claims.
+- Added versioned `/api/v1/storage/files` and `/api/v1/files/browse` read routes. Made
+  `/api/v1/file-index` the explicit indexed-discovery route while retaining `/api/v1/files` as its
+  compatibility alias and labeling both surfaces in responses.
+- Changed the Operator Web `Files` view to browse configured Storage roots and added a separate
+  `FileIndex` navigation view for indexed discovery records, with directory/breadcrumb traversal,
+  bounded pagination, membership display and retry/empty/error feedback.
+- Added Task-specific Application/API/Web coverage for Active-vs-Draft binding, all supported
+  Storage kinds through a fake adapter, FileIndex membership redaction, pagination and cursor scope,
+  path/RBAC/error boundaries, no Task/Job creation and read-only behavior.
 
 ### Tests and Results
 
+- PASS — `.venv/bin/python -m unittest tests.test_storage_browser tests.test_file_catalog tests.test_file_catalog_api tests.test_api_security tests.test_operator_ui tests.test_dashboard tests.test_runtime_files_browser` — 74 tests, all passed.
+- PASS — `.venv/bin/ruff format --check mediaflow tests` — 238 files already formatted.
+- PASS — `.venv/bin/ruff check mediaflow tests`.
+- PASS — `.venv/bin/python -m compileall -q mediaflow tests`.
+- PASS — `git diff --check`.
+- FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python -m unittest discover -s tests` — 1166 tests, 9 failures and 7 skips in the main worktree. The failures are environment-dependent fixture cases reading the shared ignored `.mediaflow` runtime database/configuration (including `HDD_2` state); the 8 unique failing cases were all green in a clean detached worktree at Task Base `306b77d0aad44ab0a2e233866f8972247b437a7d`.
+- UNAVAILABLE — production SMB, OpenList, S3, Cloudflare R2 and generic S3-compatible services were not contacted because no approved external services or credentials are available. Fake adapter coverage passed; no production credentials, private endpoints or user media were used.
+
 ### Decisions
+
+- Kept `/api/v1/files` as the indexed FileIndex compatibility surface because it is already used by
+  existing clients; real Storage browsing has the unambiguous `/api/v1/storage/files` contract.
+- Built the Files reader from the API's atomically refreshed Active runtime binding rather than
+  resolving a Draft or rereading an arbitrary revision. Cursor context is additionally bound to an
+  explicit ResourceLibrary scope when one is requested.
+- Kept membership as a bounded read projection over existing FileIndex identity and discovery fields;
+  no schema, processing lifecycle or mutation behavior was added.
+- Reused `ReadOnlyStorageGuard` for every runtime Files read and exposed active-runtime-preserved,
+  secret-free recovery details for provider failures.
 
 ### Remaining In-Slice Work
 
+- Current-source occurrence/disposition lifecycle and the later Scan, Preview, Organize and
+  continuation journeys remain outside this Task's read-only Files/FileIndex surface.
+
 ### Risks / Deviations
+
+- The full main-worktree regression gate remains red only for the shared ignored `.mediaflow`
+  environment-dependent cases noted above; the Task Base verification provides the comparison
+  evidence, and the required T3 focused gate is green.
+- Production remote Storage compatibility is represented by fake adapters only; real provider
+  availability was not claimed.
+- Pre-existing `SLICE.md`, `docs/roadmap.md`, `nohup.out` and `worker.log` worktree changes were
+  preserved and are not part of the checkpoint. `config/alist.json` remains untracked/ignored and
+  unstaged.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 6a577b9ac0192954a03ca2f706552517a14bd1e0
 ```
 
 ## B Review Result
