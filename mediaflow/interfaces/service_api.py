@@ -31,6 +31,7 @@ from mediaflow.application.file_replan_request import FileReplanRequestService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_scan import ManualScanError, ManualScanService
 from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_correction_continuation import (
     FileMetadataCorrectionContinuationService,
@@ -155,6 +156,7 @@ class _ApiRuntimeBinding:
     metadata_policies: tuple
     dashboard: DashboardService
     files_browser: RuntimeFilesBrowserService | None = None
+    manual_scans: ManualScanService | None = None
 
 
 class MediaFlowApi:
@@ -189,6 +191,7 @@ class MediaFlowApi:
         manual_intent_service: ManualOrganizeIntentService | None = None,
         manual_preview_service: ManualOrganizePreviewService | None = None,
         manual_execution_service: ManualOrganizeExecutionService | None = None,
+        manual_scan_service: ManualScanService | None = None,
         automation_preview_service: AutomationTaskDefinitionPreviewService | None = None,
         management_only: bool = False,
     ) -> None:
@@ -221,6 +224,7 @@ class MediaFlowApi:
         self._storage_adapters = dict(storage_adapters or {})
         self._storage_browser_cursor_secret = storage_browser_cursor_secret
         self._configuration_service = configuration_service
+        self._manual_scans_override = manual_scan_service
         self._manual_intents = manual_intent_service
         if self._manual_intents is None and self._file_catalog is not None:
             self._manual_intents = ManualOrganizeIntentService(
@@ -813,6 +817,31 @@ class MediaFlowApi:
             return self._error(
                 start_response, error.status, error.code, str(error), details=details
             )
+        except ManualScanError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "manual-scan",
+                "conflict" if error.status == 409 else "denied" if error.status < 500 else "error",
+                error.status,
+            )
+            details = {
+                "durableState": error.durable_state,
+                "sideEffects": "none",
+                "retrySafe": error.retry_safe,
+                "nextAction": error.next_action,
+                **error.details,
+            }
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details=details,
+            )
         except StorageBrowserError as error:
             self._safe_audit(
                 environ,
@@ -931,6 +960,14 @@ class MediaFlowApi:
         ):
             # Keep the public route aliases on the same application semantics.
             parts[2] = "manual-intents"
+        if (
+            len(parts) >= 3
+            and parts[:2] == ["api", "v1"]
+            and parts[2] in {"manual-scans", "manual-scan"}
+        ):
+            # The versioned ``scans`` route is canonical; these aliases keep older operator
+            # links on the same bounded application behavior.
+            parts[2] = "scans"
         configuration_route = parts[:3] == ["api", "v1", "configuration"]
         automation_definition_route = parts[:4] == [
             "api",
@@ -2746,6 +2783,91 @@ class MediaFlowApi:
                     start_response, 503, "service_unavailable", "system status is unavailable"
                 )
             return self._response(start_response, 200, binding.system_status.as_document())
+        if parts == ["api", "v1", "scans"] and method == "POST":
+            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+            self._require_empty_query(environ, "manual Scan")
+            if binding.manual_scans is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual Scan service is unavailable",
+                    details={
+                        "durableState": "no_task_created",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": (
+                            "restore a valid Active runtime and Task repository, then retry"
+                        ),
+                    },
+                )
+            scan = binding.manual_scans.admit_document(
+                self._document(environ), actor=principal.principal_id
+            )
+            return self._response(
+                start_response,
+                202,
+                {
+                    **scan.document(),
+                    "task_id": scan.task_id,
+                    "scope_kind": scan.scope_kind.value,
+                    "resource_library_id": scan.resource_library_id,
+                    "file_id": scan.file_id,
+                    "source_occurrence_id": scan.source_occurrence_id,
+                    "source_fingerprint": scan.source_fingerprint,
+                },
+            )
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "scans"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if binding.manual_scans is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual Scan service is unavailable",
+                )
+            limit, cursor = self._manual_scan_detail_page(environ)
+            after = cursor.position if cursor and cursor.direction is CursorDirection.NEXT else None
+            before = (
+                cursor.position if cursor and cursor.direction is CursorDirection.PREVIOUS else None
+            )
+            value = binding.manual_scans.detail_document(
+                parts[3], limit=limit, after=after, before=before
+            )
+            items = value.get("items", [])
+            has_previous = bool(value.pop("_has_previous_items", False))
+            has_next = bool(value.pop("_has_next_items", False))
+            value["previous_item_cursor"] = None
+            value["next_item_cursor"] = None
+            # The manual Scan service already bounds item pages.  Cursor links use the same
+            # signed task-item cursor contract as the generic Task detail surface.
+            if has_previous:
+                value["previous_item_cursor"] = self._manual_scan_cursor(
+                    items, direction=CursorDirection.PREVIOUS
+                )
+            if has_next:
+                value["next_item_cursor"] = self._manual_scan_cursor(
+                    items, direction=CursorDirection.NEXT
+                )
+            return self._response(start_response, 200, value)
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "scans"]
+            and parts[4] == "cancel"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.CANCEL_JOB)
+            self._require_empty_query(environ, "manual Scan cancellation")
+            self._require_empty_body(environ, "manual Scan cancellation")
+            if binding.manual_scans is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual Scan service is unavailable",
+                )
+            scan = binding.manual_scans.cancel(parts[3])
+            return self._response(start_response, 200, scan.document())
         if (
             parts == ["api", "v1", "storage", "files"] or parts == ["api", "v1", "files", "browse"]
         ) and method == "GET":
@@ -3885,6 +4007,25 @@ class MediaFlowApi:
                     "sideEffects": "none",
                 },
             )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "cancel"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.CANCEL_JOB)
+            self._require_empty_query(environ, "manual Scan cancellation")
+            self._require_empty_body(environ, "manual Scan cancellation")
+            if binding.manual_scans is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual Scan service is unavailable",
+                )
+            return self._response(
+                start_response, 200, binding.manual_scans.cancel(parts[3]).document()
+            )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "tasks"] and method == "GET":
             item_limit, result_limit, item_cursor, result_cursor = self._task_detail_page(environ)
             task = self._repository.get_task(parts[3])
@@ -3918,6 +4059,30 @@ class MediaFlowApi:
                 if self._manual_execution is not None
                 else None
             )
+            manual_scan = None
+            if binding.manual_scans is not None:
+                try:
+                    scan_after = (
+                        item_cursor.position
+                        if item_cursor and item_cursor.direction is CursorDirection.NEXT
+                        else None
+                    )
+                    scan_before = (
+                        item_cursor.position
+                        if item_cursor and item_cursor.direction is CursorDirection.PREVIOUS
+                        else None
+                    )
+                    manual_scan = binding.manual_scans.detail_document(
+                        task.task_id,
+                        limit=item_limit,
+                        after=scan_after,
+                        before=scan_before,
+                    )
+                    manual_scan.pop("_has_previous_items", None)
+                    manual_scan.pop("_has_next_items", None)
+                except ManualScanError as error:
+                    if error.code != "task_not_found":
+                        raise
             return self._response(
                 start_response,
                 200,
@@ -3926,6 +4091,7 @@ class MediaFlowApi:
                     "items": checkpoint_items,
                     "results": [self._value(item) for item in result_page],
                     "manualExecutionDiscovery": manual_discovery,
+                    "manualScan": manual_scan,
                     "recovery_batches": [
                         batch.document()
                         for batch in (
@@ -4422,6 +4588,7 @@ class MediaFlowApi:
         if tuple(parts[:3]) in {
             ("api", "v1", "jobs"),
             ("api", "v1", "tasks"),
+            ("api", "v1", "scans"),
             ("api", "v1", "manual-intents"),
             ("api", "v1", "manual-previews"),
             ("api", "v1", "manual-executions"),
@@ -4495,7 +4662,13 @@ class MediaFlowApi:
         if (
             snapshot_id == current.snapshot_id
             and digest == current.snapshot_digest
-            and (runtime is None or current.files_browser is not None)
+            and (
+                runtime is None
+                or (
+                    current.files_browser is not None
+                    and (self._file_index is None or current.manual_scans is not None)
+                )
+            )
         ):
             return current
         if runtime is None or refreshed_status is None:
@@ -4553,6 +4726,24 @@ class MediaFlowApi:
                 storage_adapters=self._storage_adapters,
                 cursor_secret=self._storage_browser_cursor_secret,
             )
+        manual_scans = self._manual_scans_override
+        if (
+            manual_scans is None
+            and runtime_configuration is not None
+            and self._file_index is not None
+        ):
+            manual_scans = ManualScanService(
+                self._repository,
+                self._file_index,
+                runtime_configuration=runtime_configuration,
+                storage_factory=lambda storage_ids=None, configuration=runtime_configuration: (
+                    configuration.create_storages(
+                        external=self._storage_adapters, storage_ids=storage_ids
+                    )
+                ),
+                configuration_snapshot_id=snapshot_id,
+                configuration_snapshot_digest=snapshot_digest,
+            )
         return _ApiRuntimeBinding(
             snapshot_id,
             snapshot_digest,
@@ -4581,6 +4772,7 @@ class MediaFlowApi:
                 media_library_count=media_library_count,
             ),
             files_browser,
+            manual_scans,
         )
 
     def _audit(
@@ -4616,6 +4808,7 @@ class MediaFlowApi:
         parts = [part for part in path.split("/") if part]
         exact = {
             ("api", "v1", "tasks"),
+            ("api", "v1", "scans"),
             ("api", "v1", "confirmations"),
             ("api", "v1", "schedules"),
             ("api", "v1", "notifications"),
@@ -4641,6 +4834,7 @@ class MediaFlowApi:
         if len(parts) == 4 and parts[:3] in (
             ["api", "v1", "tasks"],
             ["api", "v1", "jobs"],
+            ["api", "v1", "scans"],
         ):
             return f"/api/v1/{parts[2]}/{{id}}"
         if len(parts) == 5 and parts[:4] == ["api", "v1", "automation", "task-definitions"]:
@@ -4713,6 +4907,10 @@ class MediaFlowApi:
             return "/api/v1/recovery-batches/{id}/resume"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
             return "/api/v1/jobs/{id}/cancel"
+        if len(parts) == 5 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "cancel":
+            return "/api/v1/tasks/{id}/cancel"
+        if len(parts) == 5 and parts[:3] == ["api", "v1", "scans"] and parts[4] == "cancel":
+            return "/api/v1/scans/{id}/cancel"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":
             return "/api/v1/schedules/{id}/audit"
         if (
@@ -5021,6 +5219,40 @@ class MediaFlowApi:
         )
 
     @staticmethod
+    def _manual_scan_detail_page(
+        environ: dict,
+    ) -> tuple[int, DecodedCursor | None]:
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"itemLimit", "itemCursor"}
+        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("manual Scan detail query accepts itemLimit and itemCursor")
+        raw_cursor = values.get("itemCursor")
+        return (
+            MediaFlowApi._parse_bounded_limit(
+                values.get("itemLimit", ["100"])[0], "manual Scan item"
+            ),
+            decode_directional_cursor(raw_cursor[0], "task_items") if raw_cursor else None,
+        )
+
+    @staticmethod
+    def _manual_scan_cursor(items, *, direction: CursorDirection) -> str | None:
+        if not items:
+            return None
+        item = items[0] if direction is CursorDirection.PREVIOUS else items[-1]
+        if not isinstance(item, dict):
+            return None
+        raw_timestamp = item.get("createdAt")
+        record_id = item.get("itemId")
+        if not isinstance(raw_timestamp, str) or not isinstance(record_id, str):
+            return None
+        return encode_cursor(
+            "task_items",
+            datetime.fromisoformat(raw_timestamp),
+            record_id,
+            direction,
+        )
+
+    @staticmethod
     def _list_page(list_values: Callable, limit: int, cursor: DecodedCursor | None):
         if cursor is None:
             return list_values(limit=limit + 1)
@@ -5199,6 +5431,8 @@ class MediaFlowApi:
         }:
             return True
         if parts[:3] == ["api", "v1", "tasks"]:
+            return True
+        if parts[:3] == ["api", "v1", "scans"]:
             return True
         if parts[:4] == ["api", "v1", "automation", "task-definitions"] and (
             len(parts) in {4, 5}
