@@ -4,10 +4,12 @@ import io
 import json
 import tempfile
 import unittest
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Event, Lock, Thread
+from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -20,11 +22,13 @@ from mediaflow.application.manual_organize_preview import ManualOrganizePreviewS
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.manual_execution import ManualExecutionError
 from mediaflow.domain.manual_organize_preview import (
     ManualPreviewItemStatus,
+    ManualPreviewStatus,
 )
 from mediaflow.domain.manual_safety import redact_manual_text
 from mediaflow.domain.metadata import MediaCandidate, MediaType
@@ -128,6 +132,362 @@ class _SelectiveExecutor:
                 effect_certainty=ExecutionEffectCertainty.NONE,
             )
         return self.real.execute(plan, storages, **kwargs)
+
+
+class CurrentSourceManualOrganizeTests(unittest.TestCase):
+    """Current-source Preview admission and one-shot exact execution (Task 27.5)."""
+
+    @staticmethod
+    def _media_bytes(name: str) -> bytes:
+        return (name.encode("utf-8") + b"x" * 200)[:123]
+
+    @contextmanager
+    def fixture(self, *, names: tuple[str, ...] = ("One.2001.mkv",)):
+        with (
+            tempfile.TemporaryDirectory() as source_directory,
+            tempfile.TemporaryDirectory() as target_directory,
+            tempfile.TemporaryDirectory() as runtime_directory,
+        ):
+            source_root = Path(source_directory)
+            target_root = Path(target_directory)
+            for name in names:
+                Path(source_root, name).write_bytes(self._media_bytes(name))
+            library = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
+            source = LocalStorage("source", source_root)
+            index = InMemoryFileIndexRepository()
+            result = StorageScanner(
+                {"source": source},
+                index,
+                clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+            ).scan(library)
+            self.assertEqual("completed", result.status.value)
+            records = {}
+            for name in names:
+                record = index.find_by_path("source", "library", name)
+                self.assertIsNotNone(record)
+                records[name] = record
+            candidates = []
+            for offset, name in enumerate(names, start=1):
+                title = Path(name).stem.split(".", 1)[0]
+                candidates.append(
+                    MediaCandidate(
+                        "tmdb",
+                        str(200 + offset),
+                        MediaType.MOVIE,
+                        title,
+                        year=2000 + offset,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    )
+                )
+            configuration = RuntimeConfiguration(
+                development_strategy_configuration(),
+                (
+                    StorageDefinition("source", "local", str(source_root), "Source"),
+                    StorageDefinition("target", "local", str(target_root), "Target"),
+                ),
+                (library,),
+                (),
+                (
+                    MediaLibrary("movies", "Movies", "target", "Movies"),
+                    MediaLibrary("tv", "TV", "target", "TV"),
+                ),
+                str(Path(runtime_directory, "history.jsonl")),
+                str(Path(runtime_directory, "runtime.sqlite3")),
+            )
+            configuration = with_managed_snapshot(
+                configuration,
+                snapshot_id=SNAPSHOT_ID,
+                digest=SNAPSHOT_DIGEST,
+            )
+            provider = SyntheticMetadataProvider(tuple(candidates))
+            yield SimpleNamespace(
+                database=Path(runtime_directory, "runtime.sqlite3"),
+                source_root=source_root,
+                target_root=target_root,
+                index=index,
+                records=records,
+                configuration=configuration,
+                provider=provider,
+                library=library,
+            )
+
+    @staticmethod
+    def services(value, repository):
+        catalog = FileCatalogService(
+            value.index,
+            ("library",),
+            ("source",),
+            task_repository=repository,
+        )
+        intents = ManualOrganizeIntentService(
+            repository, catalog, configuration_resolver=manual_snapshot
+        )
+        source = LocalStorage("source", value.source_root)
+        target = LocalStorage("target", value.target_root)
+        storages = {"source": source, "target": target}
+        previews = ManualOrganizePreviewService(
+            repository,
+            intents,
+            catalog,
+            configuration=value.configuration,
+            file_index=value.index,
+            providers=MetadataProviderRegistry((value.provider,)),
+            storages=storages,
+        )
+        execution = ManualOrganizeExecutionService(repository, previews, executor=None)
+        return catalog, intents, previews, execution, storages
+
+    @staticmethod
+    def current_request(record, *, scope_kind: str = "file") -> dict:
+        return {
+            "scope_kind": scope_kind,
+            "actor": "operator",
+            "file_id": record.file_id if scope_kind == "file" else None,
+            "resource_library_id": record.resource_library_id,
+            "occurrence_id": record.occurrence_id if scope_kind == "file" else None,
+            "fingerprint": record.fingerprint if scope_kind == "file" else None,
+        }
+
+    @staticmethod
+    def _authorize_selected(execution, preview, item_ids, **kwargs):
+        selected = set(item_ids)
+        return execution.authorize(
+            preview.preview_id,
+            item_ids,
+            expected_intent_version=preview.intent_version,
+            expected_item_versions={
+                item.item_id: item.item_version
+                for item in preview.items
+                if item.item_id in selected
+            },
+            snapshot_id=preview.configuration_snapshot_id,
+            snapshot_digest=preview.configuration_snapshot_digest,
+            actor="operator",
+            confirmation=True,
+            **kwargs,
+        )
+
+    def test_current_source_file_preview_authorizes_and_executes_exact_reviewed_plan(self):
+        with (
+            self.fixture(names=("One.2001.mkv",)) as value,
+            SQLiteTaskRepository(value.database) as repository,
+        ):
+            _, _, previews, execution, _ = self.services(value, repository)
+            record = value.records["One.2001.mkv"]
+            preview = previews.create_current(**self.current_request(record))
+            self.assertEqual(ManualPreviewStatus.PREVIEWED, preview.status)
+            item = preview.items[0]
+            self.assertTrue(item.current)
+            self.assertEqual(ManualPreviewItemStatus.PREVIEWED, item.status)
+            self.assertEqual(record.fingerprint, item.source.fingerprint)
+            self.assertEqual(record.occurrence_id, item.source.occurrence_id)
+            authority = self._authorize_selected(execution, preview, [item.item_id])
+            run = execution.execute(authority.authorization_id, actor="operator", confirmation=True)
+            self.assertEqual("completed", run.status.value)
+            self.assertEqual("success", run.items[0].status.value)
+            moved = list(Path(value.target_root).rglob("*.mkv"))
+            self.assertEqual(1, len(moved))
+            self.assertEqual(self._media_bytes("One.2001.mkv"), moved[0].read_bytes())
+            self.assertFalse(Path(value.source_root, "One.2001.mkv").exists())
+            self.assertEqual(1, len(repository.list_tasks()))
+            self.assertIsNotNone(run.items[0].result_id)
+            self.assertEqual("completed", run.status.value)
+
+    def test_replaced_source_without_rescan_fails_closed_before_mutation(self):
+        with (
+            self.fixture(names=("One.2001.mkv",)) as value,
+            SQLiteTaskRepository(value.database) as repository,
+        ):
+            _, _, previews, execution, _ = self.services(value, repository)
+            record = value.records["One.2001.mkv"]
+            preview = previews.create_current(**self.current_request(record))
+            item = preview.items[0]
+            replaced = b"replacement-content-not-reviewed"
+            Path(value.source_root, "One.2001.mkv").write_bytes(replaced)
+            authority = self._authorize_selected(execution, preview, [item.item_id])
+            with self.assertRaises(ManualExecutionError) as raised:
+                execution.execute(authority.authorization_id, actor="operator", confirmation=True)
+            self.assertEqual("source_stale", raised.exception.code)
+            self.assertTrue(raised.exception.next_action)
+            self.assertEqual(0, len(repository.list_tasks()))
+            self.assertEqual(replaced, Path(value.source_root, "One.2001.mkv").read_bytes())
+            self.assertEqual([], list(Path(value.target_root).rglob("*")))
+            self.assertEqual(
+                "active",
+                repository.get_manual_execution_authorization(
+                    authority.authorization_id
+                ).status.value,
+            )
+            locks = repository._connection.execute(
+                "SELECT COUNT(*) AS count FROM file_locks"
+            ).fetchone()["count"]
+            self.assertEqual(0, locks)
+
+    def test_current_source_resource_library_partial_organize_isolates_siblings(self):
+        names = ("One.2001.mkv", "Two.2002.mkv")
+        with self.fixture(names=names) as value, SQLiteTaskRepository(value.database) as repository:
+            _, _, previews, execution, _ = self.services(value, repository)
+            preview = previews.create_current(
+                scope_kind="resource_library",
+                actor="operator",
+                resource_library_id="library",
+            )
+            self.assertEqual(ManualPreviewStatus.PREVIEWED, preview.status)
+            self.assertEqual(2, len(preview.items))
+            first, second = preview.items
+            self.assertEqual("One.2001.mkv", first.source.filename)
+            self.assertEqual("Two.2002.mkv", second.source.filename)
+
+            authority = self._authorize_selected(execution, preview, [first.item_id])
+            run = execution.execute(authority.authorization_id, actor="operator", confirmation=True)
+            self.assertEqual("completed", run.status.value)
+            self.assertEqual((second.item_id,), run.unselected_item_ids)
+            self.assertEqual(1, len(list(Path(value.target_root).rglob("*.mkv"))))
+            self.assertTrue(Path(value.source_root, "One.2001.mkv").exists() is False)
+            self.assertTrue(Path(value.source_root, "Two.2002.mkv").exists())
+            discovery = execution.discovery_for_preview(preview.preview_id)
+            self.assertEqual(1, len(discovery["executions"]))
+            self.assertEqual((first.item_id,), tuple(discovery["executions"][0]["selectedItemIds"]))
+            # The immutable Preview no longer claims currency once part of its
+            # reviewed scope was organized: the surviving sibling must be
+            # re-analyzed under a fresh Preview before it can be executed.
+            self.assertEqual(1, len(repository.list_tasks()))
+            with self.assertRaisesRegex(Exception, "stale"):
+                self._authorize_selected(execution, preview, [second.item_id])
+            self.assertEqual(1, len(repository.list_tasks()))
+
+    def test_current_source_batch_replaced_sibling_fails_closed_before_mutation(self):
+        names = ("One.2001.mkv", "Two.2002.mkv")
+        with self.fixture(names=names) as value, SQLiteTaskRepository(value.database) as repository:
+            _, _, previews, execution, _ = self.services(value, repository)
+            preview = previews.create_current(
+                scope_kind="resource_library",
+                actor="operator",
+                resource_library_id="library",
+            )
+            first, second = preview.items
+            replaced = b"one-was-replaced-after-preview"
+            Path(value.source_root, "One.2001.mkv").write_bytes(replaced)
+            authority = self._authorize_selected(
+                execution, preview, [first.item_id, second.item_id]
+            )
+            with self.assertRaises(ManualExecutionError) as raised:
+                execution.execute(authority.authorization_id, actor="operator", confirmation=True)
+            self.assertEqual("source_stale", raised.exception.code)
+            self.assertEqual(0, len(repository.list_tasks()))
+            self.assertEqual([], list(Path(value.target_root).rglob("*")))
+            self.assertEqual(replaced, Path(value.source_root, "One.2001.mkv").read_bytes())
+            self.assertEqual(
+                self._media_bytes("Two.2002.mkv"),
+                Path(value.source_root, "Two.2002.mkv").read_bytes(),
+            )
+            self.assertEqual(
+                "active",
+                repository.get_manual_execution_authorization(
+                    authority.authorization_id
+                ).status.value,
+            )
+
+    def test_api_parity_viewer_cannot_authorize_or_execute_and_authority_is_one_shot(self):
+        with (
+            self.fixture(names=("One.2001.mkv",)) as value,
+            SQLiteTaskRepository(value.database) as repository,
+        ):
+            catalog, _, previews, execution, _ = self.services(value, repository)
+            record = value.records["One.2001.mkv"]
+            preview = previews.create_current(**self.current_request(record))
+            item = preview.items[0]
+            viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
+            operator = ResolvedApiPrincipal(
+                "operator",
+                "operator-token",
+                frozenset(
+                    {
+                        ApiPermission.READ,
+                        ApiPermission.SUBMIT_DRY_RUN,
+                        ApiPermission.EXECUTE_MANUAL_ORGANIZE,
+                    }
+                ),
+            )
+            api = MediaFlowApi(
+                repository,
+                None,
+                principals=(viewer, operator),
+                file_catalog=catalog,
+                manual_intent_service=previews._intent_service,
+                manual_preview_service=previews,
+                manual_execution_service=execution,
+            )
+            status, document = request(
+                api,
+                f"/api/v1/manual-previews/{preview.preview_id}",
+                token="viewer-token",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual("ready_for_explicit_authorization", document["executionState"])
+            body = {
+                "expectedVersion": preview.intent_version,
+                "expectedItemVersions": {item.item_id: item.item_version},
+                "itemIds": [item.item_id],
+                "snapshotId": preview.configuration_snapshot_id,
+                "snapshotDigest": preview.configuration_snapshot_digest,
+                "confirmation": True,
+            }
+            status, denied = request(
+                api,
+                f"/api/v1/manual-previews/{preview.preview_id}/authorize",
+                method="POST",
+                body=body,
+                token="viewer-token",
+            )
+            self.assertEqual(403, status)
+            self.assertEqual("forbidden", denied["error"]["code"])
+            status, invalid = request(
+                api,
+                f"/api/v1/manual-previews/{preview.preview_id}/authorize",
+                method="POST",
+                body={**body, "operation": "delete"},
+                token="operator-token",
+            )
+            self.assertEqual(400, status)
+            self.assertEqual("invalid_request", invalid["error"]["code"])
+            status, authority = request(
+                api,
+                f"/api/v1/manual-previews/{preview.preview_id}/authorize",
+                method="POST",
+                body=body,
+                token="operator-token",
+            )
+            self.assertEqual(201, status)
+            self.assertEqual("active", authority["status"])
+            status, execution_document = request(
+                api,
+                f"/api/v1/manual-execution-authorizations/{authority['authorizationId']}/execute",
+                method="POST",
+                body={"confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual("completed", execution_document["status"])
+            status, reloaded = request(
+                api,
+                f"/api/v1/manual-executions/{execution_document['executionId']}",
+                token="viewer-token",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual(execution_document, reloaded)
+            status, repeated = request(
+                api,
+                f"/api/v1/manual-execution-authorizations/{authority['authorizationId']}/execute",
+                method="POST",
+                body={"confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(409, status)
+            self.assertEqual("authorization_consumed", repeated["error"]["code"])
+            self.assertTrue(Path(value.source_root, "One.2001.mkv").exists() is False)
+            self.assertEqual(1, len(list(Path(value.target_root).rglob("*.mkv"))))
 
 
 class ManualOrganizeExecutionTests(unittest.TestCase):
