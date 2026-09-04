@@ -1403,6 +1403,17 @@ class CurrentSourcePreviewWebTests(unittest.TestCase):
             detail,
         )
 
+    def test_manual_execution_blocker_section_and_resolution_are_served(self) -> None:
+        script = APP_JS.decode("utf-8")
+        execution_body = _js_function_body(script, "showManualExecution")
+        self.assertIn("Review / conflict blockers", execution_body)
+        self.assertIn(
+            "${blocker.kind}: ${blocker.blocker_id || blocker.id} (${blocker.status})",
+            execution_body,
+        )
+        self.assertIn("Open blocker resolution", execution_body)
+        self.assertIn("showCheckpointBlocker(blocker.resolution_path)", execution_body)
+
 
 if __name__ == "__main__":
     unittest.main()
