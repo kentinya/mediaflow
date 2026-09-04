@@ -60,14 +60,41 @@ class ManualOrganizeIntentService:
     def repository(self):
         return self._repository
 
-    def create(self, file_ids: Iterable[str], *, actor: str) -> ManualOrganizeIntent:
+    def create(
+        self,
+        file_ids: Iterable[str],
+        *,
+        actor: str,
+        snapshot_id: str | None = None,
+        snapshot_digest: str | None = None,
+        allow_unready: bool = False,
+    ) -> ManualOrganizeIntent:
         actor = self._actor(actor)
+        if not isinstance(allow_unready, bool):
+            raise ManualIntentError("manual intent allow_unready flag is invalid")
+        if (snapshot_id is None) != (snapshot_digest is None):
+            raise ManualIntentError(
+                "configuration snapshot ID and digest must be supplied together",
+                code="malformed_snapshot",
+                next_action="reload the current Active snapshot and retry the bounded selection",
+            )
+        if snapshot_id is not None and (
+            not isinstance(snapshot_id, str)
+            or not snapshot_id.strip()
+            or not isinstance(snapshot_digest, str)
+            or not snapshot_digest.strip()
+        ):
+            raise ManualIntentError(
+                "configuration snapshot identity is invalid",
+                code="malformed_snapshot",
+                next_action="reload the current Active snapshot and retry the bounded selection",
+            )
         ids = self._selection(file_ids)
         records = []
         identities: set[tuple[str, str, str]] = set()
         for file_id in ids:
             record = self._resolve_file(file_id)
-            self._assert_selectable(record)
+            self._assert_selectable(record, allow_unready=allow_unready)
             identity = (record.storage_id, record.resource_library_id, record.path)
             if identity in identities:
                 raise ManualIntentError(
@@ -80,6 +107,17 @@ class ManualOrganizeIntentService:
             records.append(record)
 
         snapshot = self._active_snapshot()
+        if snapshot_id is not None and (
+            snapshot.snapshot_id != snapshot_id or snapshot.digest != snapshot_digest
+        ):
+            raise ManualIntentConflict(
+                "the Active configuration changed before the manual intent was created",
+                next_action="reload the current Active configuration and resubmit the same files",
+                details={
+                    "currentSnapshotId": snapshot.snapshot_id,
+                    "currentSnapshotDigest": snapshot.digest,
+                },
+            )
         now = self._clock()
         intent_id = str(uuid4())
         items: list[ManualIntentItem] = []
@@ -470,7 +508,7 @@ class ManualOrganizeIntentService:
                 next_action="return to Files and select a current indexed file",
             ) from error
 
-    def _assert_selectable(self, record) -> None:
+    def _assert_selectable(self, record, *, allow_unready: bool = False) -> None:
         configured_storages = tuple(getattr(self._file_catalog, "_storage_ids", ()))
         if configured_storages and record.storage_id not in configured_storages:
             raise ManualIntentError(
@@ -482,7 +520,7 @@ class ManualOrganizeIntentService:
                 details={"fileId": record.file_id, "storageId": record.storage_id},
             )
         status = getattr(record.scan_status, "value", record.scan_status)
-        if status != "ready":
+        if status != "ready" and not allow_unready:
             raise ManualIntentError(
                 "selected FileIndex record is not currently ready",
                 code="source_stale",
@@ -500,9 +538,15 @@ class ManualOrganizeIntentService:
                 next_action="repair the FileIndex record, then reload Files",
             )
 
-    def _assert_source_unchanged(self, source: ManualSourceIdentity, record) -> None:
+    def _assert_source_unchanged(
+        self,
+        source: ManualSourceIdentity,
+        record,
+        *,
+        allow_unready: bool = False,
+    ) -> None:
         try:
-            self._assert_selectable(record)
+            self._assert_selectable(record, allow_unready=allow_unready)
         except ManualIntentError as error:
             raise error
         try:
@@ -527,6 +571,11 @@ class ManualOrganizeIntentService:
             current.stable_since,
             current.scan_status,
             current.last_scan_id,
+            current.occurrence_id,
+            current.fingerprint,
+            current.fingerprint_algorithm,
+            current.fingerprint_evidence,
+            current.occurrence_state,
         ) != (
             source.file_id,
             source.storage_id,
@@ -541,6 +590,11 @@ class ManualOrganizeIntentService:
             source.stable_since,
             source.scan_status,
             source.last_scan_id,
+            source.occurrence_id,
+            source.fingerprint,
+            source.fingerprint_algorithm,
+            source.fingerprint_evidence,
+            source.occurrence_state,
         ):
             raise ManualIntentError(
                 "selected FileIndex source changed after intent creation",

@@ -238,6 +238,7 @@ class MediaFlowApi:
                 repository,
                 self._manual_intents,
                 self._file_catalog,
+                file_index=self._file_index,
                 configuration_service=configuration_service,
                 metadata_provider_registry_factory=metadata_provider_registry_factory,
             )
@@ -968,6 +969,14 @@ class MediaFlowApi:
             # The versioned ``scans`` route is canonical; these aliases keep older operator
             # links on the same bounded application behavior.
             parts[2] = "scans"
+        if (
+            len(parts) >= 3
+            and parts[:2] == ["api", "v1"]
+            and parts[2] in {"previews", "current-source-previews"}
+        ):
+            # Current-source Preview is the same persisted manual Preview
+            # projection.  Keep concise API aliases on one application path.
+            parts[2] = "manual-previews"
         configuration_route = parts[:3] == ["api", "v1", "configuration"]
         automation_definition_route = parts[:4] == [
             "api",
@@ -2984,6 +2993,90 @@ class MediaFlowApi:
                     "detailUrl": f"/api/v1/files/{record.file_id}",
                 },
             )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "files"]
+            and parts[4] == "previews"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._manual_previews is None or not callable(
+                getattr(self._manual_previews, "list_current", None)
+            ):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "current-source Preview service is unavailable",
+                )
+            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(values).difference({"resourceLibrary", "resourceLibraryId", "limit"}) or any(
+                len(value) != 1 for value in values.values()
+            ):
+                raise ValueError("file Preview list query accepts one ResourceLibrary and limit")
+            resource_library_alias = values.get("resourceLibrary", [None])[0]
+            resource_library_canonical = values.get("resourceLibraryId", [None])[0]
+            if (
+                resource_library_alias is not None
+                and resource_library_canonical is not None
+                and resource_library_alias != resource_library_canonical
+            ):
+                raise ValueError("file Preview list ResourceLibrary fields disagree")
+            resource_library_id = resource_library_alias or resource_library_canonical
+            if not resource_library_id:
+                raise ValueError("file Preview list requires resourceLibrary")
+            limit = self._parse_bounded_limit(values.get("limit", ["100"])[0], "Preview")
+            previews = self._manual_previews.list_current("file", parts[3], limit=limit)
+            if any(
+                any(value.source.resource_library_id != resource_library_id for value in item.items)
+                for item in previews
+            ):
+                raise ValueError("file Preview list ResourceLibrary does not match the source")
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [self._manual_preview_document(value) for value in previews],
+                    "limit": limit,
+                    "total": len(previews),
+                    "scopeKind": "file",
+                    "scopeId": parts[3],
+                },
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "previews"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._manual_previews is None or not callable(
+                getattr(self._manual_previews, "list_current", None)
+            ):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "current-source Preview service is unavailable",
+                )
+            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(values).difference({"limit"}) or any(
+                len(value) != 1 for value in values.values()
+            ):
+                raise ValueError("ResourceLibrary Preview list query accepts limit once")
+            limit = self._parse_bounded_limit(values.get("limit", ["100"])[0], "Preview")
+            previews = self._manual_previews.list_current("resource_library", parts[3], limit=limit)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [self._manual_preview_document(value) for value in previews],
+                    "limit": limit,
+                    "total": len(previews),
+                    "scopeKind": "resource_library",
+                    "scopeId": parts[3],
+                },
+            )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "files"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._file_catalog is None:
@@ -3050,6 +3143,58 @@ class MediaFlowApi:
                     "nextAction": request.next_action,
                 },
             )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "files"]
+            and parts[4] == "preview"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._manual_previews is None or not callable(
+                getattr(self._manual_previews, "create_current", None)
+            ):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "current-source Preview service is unavailable",
+                )
+            self._require_empty_query(environ, "current-source Preview")
+            request = self._current_preview_request(
+                self._document(environ), route_scope_kind="file", route_scope_id=parts[3]
+            )
+            preview = self._manual_previews.create_current(
+                **request,
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 201, self._manual_preview_document(preview))
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] in {"preview", "previews"}
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._manual_previews is None or not callable(
+                getattr(self._manual_previews, "create_current", None)
+            ):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "current-source Preview service is unavailable",
+                )
+            self._require_empty_query(environ, "ResourceLibrary Preview")
+            request = self._current_preview_request(
+                self._document(environ),
+                route_scope_kind="resource_library",
+                route_scope_id=parts[3],
+            )
+            preview = self._manual_previews.create_current(
+                **request,
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 201, self._manual_preview_document(preview))
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "files"]
@@ -3173,6 +3318,109 @@ class MediaFlowApi:
                 start_response,
                 201,
                 self._manual_intent_document(intent),
+            )
+        if parts == ["api", "v1", "manual-previews"] and method == "POST":
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._manual_previews is None or not callable(
+                getattr(self._manual_previews, "create_current", None)
+            ):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "current-source Preview service is unavailable",
+                )
+            self._require_empty_query(environ, "current-source Preview")
+            request = self._current_preview_request(self._document(environ))
+            preview = self._manual_previews.create_current(
+                **request,
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 201, self._manual_preview_document(preview))
+        if parts == ["api", "v1", "manual-previews"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if self._manual_previews is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "current-source Preview service is unavailable",
+                )
+            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(values).difference(
+                {
+                    "scopeKind",
+                    "scopeId",
+                    "fileId",
+                    "resourceLibrary",
+                    "resourceLibraryId",
+                    "intentId",
+                    "limit",
+                }
+            ) or any(len(value) != 1 for value in values.values()):
+                raise ValueError("current-source Preview list query contains unsupported fields")
+            limit = self._parse_bounded_limit(values.get("limit", ["100"])[0], "Preview")
+            intent_id = values.get("intentId", [None])[0]
+            file_id = values.get("fileId", [None])[0]
+            resource_library_id = values.get("resourceLibraryId", [None])[0]
+            resource_library_alias = values.get("resourceLibrary", [None])[0]
+            if (
+                resource_library_id is not None
+                and resource_library_alias is not None
+                and resource_library_id != resource_library_alias
+            ):
+                raise ValueError("Preview list ResourceLibrary fields disagree")
+            resource_library_id = resource_library_id or resource_library_alias
+            scope_kind = values.get("scopeKind", [None])[0]
+            scope_id = values.get("scopeId", [None])[0]
+            if scope_kind == "resourceLibrary":
+                scope_kind = "resource_library"
+            if intent_id is not None:
+                if any(
+                    value is not None
+                    for value in (file_id, resource_library_id, scope_kind, scope_id)
+                ):
+                    raise ValueError("Preview list intentId cannot be combined with a source scope")
+                items = self._manual_previews.list_readonly(intent_id, limit=limit)
+            else:
+                if file_id is not None and resource_library_id is not None:
+                    raise ValueError("Preview list cannot combine fileId and resourceLibraryId")
+                if file_id is not None:
+                    if resource_library_id is None:
+                        raise ValueError("file Preview list requires resourceLibraryId")
+                    if scope_kind not in (None, "file"):
+                        raise ValueError("file Preview list scopeKind must be file")
+                    if scope_id not in (None, file_id):
+                        raise ValueError("file Preview list scopeId disagrees with fileId")
+                    scope_kind, scope_id = "file", file_id
+                elif resource_library_id is not None:
+                    if scope_kind not in (None, "resource_library"):
+                        raise ValueError("ResourceLibrary Preview list scopeKind is invalid")
+                    if scope_id not in (None, resource_library_id):
+                        raise ValueError("ResourceLibrary Preview list scopeId disagrees")
+                    scope_kind, scope_id = "resource_library", resource_library_id
+                elif scope_kind is not None or scope_id is not None:
+                    if scope_kind not in {"file", "resource_library"} or not scope_id:
+                        raise ValueError(
+                            "Preview list scope requires a valid scopeKind and scopeId"
+                        )
+                    if scope_kind == "file":
+                        file_id, scope_id = scope_id, scope_id
+                    else:
+                        resource_library_id, scope_id = scope_id, scope_id
+                else:
+                    raise ValueError("Preview list requires intentId or a bounded source scope")
+                items = self._manual_previews.list_current(scope_kind, scope_id, limit=limit)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [self._manual_preview_document(value) for value in items],
+                    "limit": limit,
+                    "total": len(items),
+                    "scopeKind": scope_kind,
+                    "scopeId": scope_id,
+                },
             )
         if (
             len(parts) == 5
@@ -4593,6 +4841,7 @@ class MediaFlowApi:
             ("api", "v1", "manual-previews"),
             ("api", "v1", "manual-executions"),
             ("api", "v1", "manual-execution-authorizations"),
+            ("api", "v1", "resource-libraries"),
             ("api", "v1", "automation"),
             ("api", "v1", "schedules"),
             ("api", "v1", "files"),
@@ -4913,6 +5162,17 @@ class MediaFlowApi:
             return "/api/v1/scans/{id}/cancel"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":
             return "/api/v1/schedules/{id}/audit"
+        if (
+            len(parts) == 5
+            and parts[:3]
+            in (
+                ["api", "v1", "files"],
+                ["api", "v1", "file-index"],
+                ["api", "v1", "resource-libraries"],
+            )
+            and parts[4] in {"preview", "previews"}
+        ):
+            return f"/api/v1/{parts[2]}/{{id}}/{parts[4]}"
         if (
             len(parts) == 5
             and parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])
@@ -5371,6 +5631,159 @@ class MediaFlowApi:
         }
 
     @classmethod
+    def _current_preview_request(
+        cls,
+        document: dict,
+        *,
+        route_scope_kind: str | None = None,
+        route_scope_id: str | None = None,
+    ) -> dict[str, object]:
+        """Validate the narrow current-source Preview admission contract."""
+
+        if not isinstance(document, dict):
+            raise ValueError("current-source Preview request must be an object")
+        if route_scope_kind == "file":
+            allowed = {
+                "fileId",
+                "resourceLibraryId",
+                "occurrenceId",
+                "sourceOccurrenceId",
+                "fingerprint",
+                "sourceFingerprint",
+                "snapshotId",
+                "snapshotDigest",
+            }
+            kind = "file"
+            file_id = route_scope_id
+        elif route_scope_kind == "resource_library":
+            allowed = {"resourceLibraryId", "snapshotId", "snapshotDigest"}
+            kind = "resource_library"
+            file_id = None
+        else:
+            allowed = {
+                "scope",
+                "scopeKind",
+                "resourceLibraryId",
+                "fileId",
+                "occurrenceId",
+                "sourceOccurrenceId",
+                "fingerprint",
+                "sourceFingerprint",
+                "snapshotId",
+                "snapshotDigest",
+            }
+            raw_kind = document.get("scopeKind")
+            raw_scope = document.get("scope")
+            scope_id = None
+            if isinstance(raw_scope, dict):
+                if set(raw_scope).difference({"kind", "id"}):
+                    raise ValueError("current-source Preview scope object is invalid")
+                if raw_kind is not None:
+                    raise ValueError("current-source Preview scope fields disagree")
+                raw_kind = raw_scope.get("kind")
+                scope_id = raw_scope.get("id")
+            elif raw_scope is not None:
+                if raw_kind is not None and cls._preview_scope_kind(
+                    raw_kind
+                ) != cls._preview_scope_kind(raw_scope):
+                    raise ValueError("current-source Preview scope fields disagree")
+                if raw_kind is None:
+                    raw_kind = raw_scope
+            if raw_kind is not None:
+                raw_kind = cls._preview_scope_kind(raw_kind)
+            kind = raw_kind
+            file_id = document.get("fileId")
+            resource_library_id = document.get("resourceLibraryId")
+            if scope_id is not None:
+                if not isinstance(scope_id, str) or not scope_id.strip():
+                    raise ValueError("current-source Preview scope ID is invalid")
+                if kind == "file":
+                    if file_id is not None and file_id != scope_id:
+                        raise ValueError("current-source Preview scope and fileId disagree")
+                    file_id = scope_id
+                elif kind == "resource_library":
+                    if resource_library_id is not None and resource_library_id != scope_id:
+                        raise ValueError(
+                            "current-source Preview scope and resourceLibraryId disagree"
+                        )
+                    resource_library_id = scope_id
+        if set(document).difference(allowed):
+            raise ValueError(
+                "current-source Preview accepts only bounded FileIndex identity and snapshot fields"
+            )
+        if not isinstance(kind, str) or kind not in {"file", "resource_library"}:
+            raise ValueError("current-source Preview scope must be file or resource_library")
+
+        if route_scope_kind is not None:
+            resource_library_id = document.get("resourceLibraryId")
+        if route_scope_id is not None and route_scope_kind == "resource_library":
+            if resource_library_id is not None and resource_library_id != route_scope_id:
+                raise ValueError("ResourceLibrary Preview route and body scope disagree")
+            resource_library_id = route_scope_id
+        if not isinstance(resource_library_id, str) or not resource_library_id.strip():
+            raise ValueError("current-source Preview requires resourceLibraryId")
+        if route_scope_kind == "file" and not isinstance(file_id, str):
+            raise ValueError("current-source Preview file route is invalid")
+        if (
+            route_scope_kind == "file"
+            and document.get("fileId") is not None
+            and document["fileId"] != file_id
+        ):
+            raise ValueError("current-source Preview file route and body fileId disagree")
+        if kind == "file" and not isinstance(file_id, str):
+            raise ValueError("current-source Preview file scope requires fileId")
+        if kind == "resource_library" and document.get("fileId") is not None:
+            raise ValueError("ResourceLibrary Preview cannot contain fileId")
+
+        occurrence_id = cls._same_request_alias(
+            document, "occurrenceId", "sourceOccurrenceId", "occurrence ID"
+        )
+        fingerprint = cls._same_request_alias(
+            document, "fingerprint", "sourceFingerprint", "source fingerprint"
+        )
+        if kind == "file":
+            if not isinstance(occurrence_id, str) or not occurrence_id.strip():
+                raise ValueError("current-source Preview requires occurrenceId")
+            if not isinstance(fingerprint, str) or not fingerprint.strip():
+                raise ValueError("current-source Preview requires fingerprint")
+        elif occurrence_id is not None or fingerprint is not None:
+            raise ValueError("ResourceLibrary Preview cannot contain source occurrence fields")
+        has_snapshot_id = "snapshotId" in document
+        has_snapshot_digest = "snapshotDigest" in document
+        if has_snapshot_id != has_snapshot_digest:
+            raise ValueError("current-source Preview snapshotId and snapshotDigest must be paired")
+        if has_snapshot_id and (
+            not isinstance(document["snapshotId"], str)
+            or not document["snapshotId"].strip()
+            or not isinstance(document["snapshotDigest"], str)
+            or not document["snapshotDigest"].strip()
+        ):
+            raise ValueError("current-source Preview snapshot identity is invalid")
+        return {
+            "scope_kind": kind,
+            "file_id": file_id,
+            "resource_library_id": resource_library_id,
+            "occurrence_id": occurrence_id,
+            "fingerprint": fingerprint,
+            "snapshot_id": document.get("snapshotId"),
+            "snapshot_digest": document.get("snapshotDigest"),
+        }
+
+    @staticmethod
+    def _preview_scope_kind(value: object) -> object:
+        if value == "resourceLibrary":
+            return "resource_library"
+        return value
+
+    @staticmethod
+    def _same_request_alias(document: dict, first: str, second: str, label: str) -> str | None:
+        first_value = document.get(first)
+        second_value = document.get(second)
+        if first_value is not None and second_value is not None and first_value != second_value:
+            raise ValueError(f"current-source Preview {label} fields disagree")
+        return first_value if first_value is not None else second_value
+
+    @classmethod
     def _confirmation_value(cls, value) -> dict:
         document = cls._value(value)
         document.pop("note", None)
@@ -5424,6 +5837,18 @@ class MediaFlowApi:
         ):
             return True
         if parts[:3] == ["api", "v1", "manual-previews"]:
+            return True
+        if (
+            len(parts) == 5
+            and parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])
+            and parts[4] == "previews"
+        ):
+            return True
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "previews"
+        ):
             return True
         if tuple(parts[:3]) in {
             ("api", "v1", "manual-execution-authorizations"),

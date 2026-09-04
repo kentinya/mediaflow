@@ -255,6 +255,15 @@ class ManualSourceIdentity:
     stable_since: datetime | None
     scan_status: str
     last_scan_id: str | None
+    # These fields are optional for compatibility with pre-Slice-27 intents.  A
+    # current-source Preview must provide the verified occurrence identity and
+    # the Storage-derived fingerprint; legacy intents remain readable but are
+    # never promoted to an exact current-source selection.
+    occurrence_id: str | None = None
+    fingerprint: str | None = None
+    fingerprint_algorithm: str | None = None
+    fingerprint_evidence: dict[str, object] | None = None
+    occurrence_state: str = "legacy"
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -297,6 +306,37 @@ class ManualSourceIdentity:
             not isinstance(self.last_scan_id, str) or not _SAFE_ID.fullmatch(self.last_scan_id)
         ):
             raise ValueError("manual source scan ID is invalid")
+        if self.occurrence_id is not None and (
+            not isinstance(self.occurrence_id, str) or not _SAFE_ID.fullmatch(self.occurrence_id)
+        ):
+            raise ValueError("manual source occurrence ID is invalid")
+        if self.fingerprint is not None and (
+            not isinstance(self.fingerprint, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", self.fingerprint)
+        ):
+            raise ValueError("manual source fingerprint is invalid")
+        if self.fingerprint_algorithm is not None and (
+            not isinstance(self.fingerprint_algorithm, str)
+            or not self.fingerprint_algorithm.strip()
+            or len(self.fingerprint_algorithm) > 128
+        ):
+            raise ValueError("manual source fingerprint algorithm is invalid")
+        if self.fingerprint_evidence is not None:
+            if not isinstance(self.fingerprint_evidence, dict):
+                raise ValueError("manual source fingerprint evidence is invalid")
+            try:
+                encoded_evidence = json.dumps(
+                    self.fingerprint_evidence,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    allow_nan=False,
+                )
+            except (TypeError, ValueError) as error:
+                raise ValueError("manual source fingerprint evidence is invalid") from error
+            if len(encoded_evidence.encode("utf-8")) > 16 * 1024:
+                raise ValueError("manual source fingerprint evidence is too large")
+        if self.occurrence_state not in {"verified", "unverified", "legacy"}:
+            raise ValueError("manual source occurrence state is invalid")
         for value in (self.modified_at, self.last_seen_at, self.updated_at):
             if not isinstance(value, datetime) or value.tzinfo is None:
                 raise ValueError("manual source timestamps must include timezone")
@@ -320,6 +360,17 @@ class ManualSourceIdentity:
             record.stable_since,
             str(status),
             record.last_scan_id,
+            getattr(record, "occurrence_id", None),
+            getattr(record, "fingerprint", None),
+            getattr(record, "fingerprint_algorithm", None),
+            copy.deepcopy(getattr(record, "fingerprint_evidence", None)),
+            str(
+                getattr(
+                    getattr(record, "occurrence_state", "legacy"),
+                    "value",
+                    getattr(record, "occurrence_state", "legacy"),
+                )
+            ),
         )
 
     @classmethod
@@ -340,6 +391,11 @@ class ManualSourceIdentity:
             "stableSince",
             "scanStatus",
             "lastScanId",
+            "occurrenceId",
+            "fingerprint",
+            "fingerprintAlgorithm",
+            "fingerprintEvidence",
+            "occurrenceState",
         }
         unknown = set(value).difference(allowed)
         if unknown:
@@ -370,6 +426,11 @@ class ManualSourceIdentity:
             timestamp("stableSince", optional=True),
             value.get("scanStatus", ""),
             value.get("lastScanId"),
+            value.get("occurrenceId"),
+            value.get("fingerprint"),
+            value.get("fingerprintAlgorithm"),
+            copy.deepcopy(value.get("fingerprintEvidence")),
+            value.get("occurrenceState", "legacy"),
         )
 
     def document(self) -> dict[str, object]:
@@ -387,6 +448,11 @@ class ManualSourceIdentity:
             "stableSince": self.stable_since.isoformat() if self.stable_since else None,
             "scanStatus": self.scan_status,
             "lastScanId": self.last_scan_id,
+            "occurrenceId": self.occurrence_id,
+            "fingerprint": self.fingerprint,
+            "fingerprintAlgorithm": self.fingerprint_algorithm,
+            "fingerprintEvidence": copy.deepcopy(self.fingerprint_evidence),
+            "occurrenceState": self.occurrence_state,
         }
 
 

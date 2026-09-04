@@ -150,6 +150,36 @@ def _versions(value: tuple[dict[str, object], ...], label: str) -> tuple[dict[st
     return result
 
 
+def _stage_for_plan(plan: dict[str, object] | None) -> str:
+    if not isinstance(plan, dict):
+        return "analysis"
+    analysis = plan.get("analysis")
+    if isinstance(analysis, dict):
+        explicit = analysis.get("stage")
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit[:64]
+        metadata = analysis.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("status") == "provider_error":
+            return "metadata"
+        if isinstance(metadata, dict) and metadata.get("available") is False:
+            return "metadata"
+        naming = analysis.get("naming")
+        if isinstance(naming, dict) and naming.get("available") is False:
+            return "naming"
+        classification = analysis.get("classification")
+        if isinstance(classification, dict) and classification.get("available") is False:
+            return "classification"
+        recognition = analysis.get("recognition")
+        if isinstance(recognition, dict) and recognition.get("status") != "matched":
+            return "recognition"
+    if plan.get("conflicts"):
+        return "conflict"
+    capabilities = plan.get("capabilities")
+    if isinstance(capabilities, dict) and capabilities.get("verdict") == "capability_gap":
+        return "capability"
+    return "planning"
+
+
 @dataclass(frozen=True)
 class ManualPreviewItem:
     """One independent and restart-safe item result from a Preview request."""
@@ -269,6 +299,7 @@ class ManualPreviewItem:
             "position": self.position,
             "intentVersion": self.intent_version,
             "itemVersion": self.item_version,
+            "stage": _stage_for_plan(self.plan),
             "source": self.source.document(),
             "choice": self.choice.document(),
             "configurationSnapshotId": self.configuration_snapshot_id,
@@ -320,6 +351,11 @@ class ManualOrganizePreview:
     truncated: bool = False
     previous_preview_id: str | None = None
     unselected_item_ids: tuple[str, ...] = ()
+    # ``None`` keeps the older intent-scoped Preview projection compatible.
+    # Current-source admission persists an explicit scope so a reload can show
+    # whether the exact source or the bounded ResourceLibrary was analyzed.
+    source_scope: str | None = None
+    source_scope_id: str | None = None
 
     def __post_init__(self) -> None:
         _identity(self.preview_id, "Preview")
@@ -384,6 +420,14 @@ class ManualOrganizePreview:
             _identity(item_id, "unselected item")
         if selected.intersection(self.unselected_item_ids):
             raise ValueError("manual Preview selection states overlap")
+        if self.source_scope is not None:
+            if self.source_scope not in {"file", "resource_library"}:
+                raise ValueError("manual Preview source scope is invalid")
+            if self.source_scope_id is None:
+                raise ValueError("manual Preview source scope ID is required")
+            _identity(self.source_scope_id, "source scope")
+        elif self.source_scope_id is not None:
+            raise ValueError("manual Preview source scope ID is not allowed without a scope")
         _text(self.error, "error")
         _text(self.next_action, "next action")
         if not isinstance(self.zero_mutation, bool) or not self.zero_mutation:
@@ -435,6 +479,15 @@ class ManualOrganizePreview:
             "executionState": execution_state,
             "truncated": self.truncated,
         }
+        if self.source_scope is not None:
+            scope = {
+                "kind": self.source_scope,
+                "id": self.source_scope_id,
+                "itemCount": len(self.items),
+            }
+            value["scope"] = scope
+            value["scopeKind"] = self.source_scope
+            value["scopeId"] = self.source_scope_id
         if not include_history:
             value.pop("previousPreviewId", None)
         return value

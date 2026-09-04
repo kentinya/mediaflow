@@ -1984,12 +1984,17 @@ APP_JS = b"""(() => {
         const scanAction = scanPayload ? actionButton('Scan file', () =>
           confirmManualScan(scanPayload, `Scan current FileIndex item ${scanPayload.fileId}`)) :
           text('span', item.isDirectory ? '-' : 'Scan unavailable until a verified current item exists');
+        const previewPayload = item.isDirectory ? null : manualPreviewPayloadFromMembership(membership);
+        const previewAction = previewPayload ? actionButton('Preview file', () =>
+          confirmCurrentPreview(previewPayload, `Preview current FileIndex item ${previewPayload.fileId}`)) :
+          text('span', item.isDirectory ? '-' : 'Preview unavailable until a verified current item exists');
         return [item.isDirectory ? actionButton(`Open ${item.name}`, () => {
           currentPath = item.path; loadPage(null);
-        }) : item.name, item.type, item.size, item.modifiedAt, membershipText, scanAction];
+        }) : item.name, item.type, item.size, item.modifiedAt, membershipText, scanAction,
+          previewAction];
       });
       if (items.length) content.append(table(
-        ['Name', 'Type', 'Size', 'Modified', 'FileIndex', 'Manual Scan'], rows));
+        ['Name', 'Type', 'Size', 'Modified', 'FileIndex', 'Manual Scan', 'Preview'], rows));
       if (data.nextCursor) content.append(actionButton('Next page', () => loadPage(data.nextCursor)));
     };
     storageSelect.addEventListener('change', () => {
@@ -2051,12 +2056,16 @@ APP_JS = b"""(() => {
         const scanAction = scanPayload ? actionButton('Scan', () =>
           confirmManualScan(scanPayload, `Scan current FileIndex item ${fileId}`)) :
           text('span', 'Scan unavailable until source is ready');
+        const previewPayload = manualPreviewPayloadFromFile(item);
+        const previewAction = previewPayload ? actionButton('Preview', () =>
+          confirmCurrentPreview(previewPayload, `Preview current FileIndex item ${fileId}`)) :
+          text('span', 'Preview unavailable until source is verified');
         return [cell, item.path, item.scanStatus || item.scan_status,
           item.processingDisposition || '-', occurrence.occurrenceId || 'unverified',
-          item.updatedAt || item.updated_at, scanAction];
+          item.updatedAt || item.updated_at, scanAction, previewAction];
       });
       content.append(table(['ID', 'Path', 'Scan / discovery', 'Processing disposition',
-        'Current occurrence', 'Updated', 'Manual Scan'], rows,
+        'Current occurrence', 'Updated', 'Manual Scan', 'Preview'], rows,
         index => showDetail('files', items[index].fileId || items[index].file_id)));
       content.append(actionButton('Start manual organize for selected files', () =>
         confirmManualIntent(Array.from(selectedFileIds))));
@@ -2124,6 +2133,50 @@ APP_JS = b"""(() => {
       fingerprint: occurrence.fingerprint
     };
   }
+  function manualPreviewPayloadFromFile(item) {
+    const scan = manualScanPayloadFromFile(item);
+    if (!scan) return null;
+    return {scopeKind: 'file', resourceLibraryId: scan.resourceLibraryId,
+      occurrenceId: scan.occurrenceId, fingerprint: scan.fingerprint,
+      fileId: scan.fileId};
+  }
+  function manualPreviewPayloadFromMembership(membership) {
+    const item = membership && Array.isArray(membership.memberships) &&
+      membership.memberships.length === 1 ? membership.memberships[0] : null;
+    if (!item || item.scanStatus !== 'ready' || item.fingerprintState !== 'verified' ||
+        !item.fileId || !item.resourceLibraryId || !item.occurrenceId || !item.fingerprint) {
+      return null;
+    }
+    return {scopeKind: 'file', fileId: item.fileId,
+      resourceLibraryId: item.resourceLibraryId, occurrenceId: item.occurrenceId,
+      fingerprint: item.fingerprint};
+  }
+  function confirmCurrentPreview(payload, label, onDone = null) {
+    if (!payload || !payload.scopeKind || !payload.resourceLibraryId ||
+        (payload.scopeKind === 'file' &&
+          (!payload.fileId || !payload.occurrenceId || !payload.fingerprint))) {
+      message('Preview is unavailable until a verified current FileIndex occurrence is selected.', true);
+      return;
+    }
+    clear(detailContent);
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('h2', 'Confirm current-source Preview'), text('p',
+      `${label || 'Run this bounded Preview'}? The current FileIndex occurrence and immutable ` +
+      'Active snapshot will be checked. The complete analysis is persisted for inspection; ' +
+      'no Task, review backlog, execution authority or Storage mutation is created.', 'warning'));
+    confirmation.append(actionButton('Confirm Preview', async () => {
+      try {
+        const result = await api('/api/v1/manual-previews', {
+          method: 'POST', body: JSON.stringify(payload)
+        });
+        confirmation.remove();
+        if (typeof onDone === 'function') await onDone(result);
+        await showManualPreview(result.previewId);
+        message('Current-source Preview persisted. Storage was not changed and no execution authority was created.');
+      } catch (error) { message(errorText(error), true); }
+    }), actionButton('Keep source unchanged', () => confirmation.remove()));
+    detailContent.append(confirmation); detail.hidden = false;
+  }
   function manualScanLibraryControls(libraries, storageId) {
     const available = (Array.isArray(libraries) ? libraries : []).filter(item =>
       item.storage_id === storageId && item.enabled !== false);
@@ -2135,9 +2188,14 @@ APP_JS = b"""(() => {
       const option = text('option', value); option.value = value; mode.append(option);
     });
     section.append(mode);
-    available.forEach(item => section.append(actionButton(`Scan ${item.id}`, () =>
-      confirmManualScan({scopeKind: 'resource_library', resourceLibraryId: item.id, mode: mode.value},
-        `Scan ResourceLibrary ${item.id} (${mode.value})`))));
+    available.forEach(item => {
+      section.append(actionButton(`Scan ${item.id}`, () =>
+        confirmManualScan({scopeKind: 'resource_library', resourceLibraryId: item.id, mode: mode.value},
+          `Scan ResourceLibrary ${item.id} (${mode.value})`)));
+      section.append(actionButton(`Preview ${item.id}`, () =>
+        confirmCurrentPreview({scopeKind: 'resource_library', resourceLibraryId: item.id},
+          `Preview ResourceLibrary ${item.id}`)));
+    });
     return section;
   }
   function confirmFileReprocess(id, data) {
@@ -2393,6 +2451,9 @@ APP_JS = b"""(() => {
       field(summary, 'Intent version', data.intentVersion);
       field(summary, 'Pinned snapshot', data.configurationSnapshotId);
       field(summary, 'Pinned digest', data.configurationSnapshotDigest);
+      const scope = data.scope || {};
+      field(summary, 'Preview scope', scope.kind ?
+        `${scope.kind}:${scope.id} (${scope.itemCount || 0} item(s))` : 'intent selection');
       field(summary, 'Storage mutation', data.zeroMutation ? 'NONE' : 'INVALID');
       field(summary, 'Execution state', data.executionState || 'not available in this Task');
       field(summary, 'Next action', data.nextAction || '-');
@@ -2406,8 +2467,13 @@ APP_JS = b"""(() => {
         const identity = plan.mediaIdentity || {};
         const analysis = plan.analysis || {};
         const section = text('div', '', 'choices');
-        section.append(text('h3', item.itemId + ' - ' + item.status));
+        section.append(text('h3', item.itemId + ' - ' + item.status + ' (' +
+          (item.stage || 'analysis') + ')'));
         section.append(text('p', (source.storageId || '-') + ' / ' + (source.path || '-')));
+        section.append(text('p',
+          'Current occurrence: ' + (source.occurrenceId || '-') +
+          '; fingerprint: ' + (source.fingerprint || '-') +
+          '; state: ' + (source.occurrenceState || 'unverified')));
         section.append(text('p',
           'Media identity: ' + (identity.title || '-') +
           (identity.year ? ' (' + identity.year + ')' : '') +
@@ -3665,6 +3731,15 @@ APP_JS = b"""(() => {
         } else {
           detailContent.append(text('p',
             'Manual Scan unavailable: select a verified ready current occurrence from FileIndex.',
+            'warning'));
+        }
+        const previewPayload = manualPreviewPayloadFromFile(data);
+        if (previewPayload) {
+          detailContent.append(actionButton('Preview current source (DryRun)', () =>
+            confirmCurrentPreview(previewPayload, `Preview current FileIndex item ${id}`)));
+        } else {
+          detailContent.append(text('p',
+            'Preview unavailable: select a verified ready current occurrence from FileIndex.',
             'warning'));
         }
         const reprocess = data.reprocess || {};

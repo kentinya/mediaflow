@@ -5805,9 +5805,10 @@ class SQLiteTaskRepository:
                         "(item_id, intent_id, position, file_id, storage_id, resource_library_id, "
                         "source_path, filename, extension, source_size, source_modified_at, "
                         "source_last_seen_at, source_updated_at, source_stable_since, "
-                        "source_scan_status, source_last_scan_id, choice_json, status, error, "
+                        "source_scan_status, source_last_scan_id, source_identity_json, "
+                        "choice_json, status, error, "
                         "version, created_at, updated_at) VALUES "
-                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         self._manual_item_values(item),
                     )
                 self._insert_manual_intent_audit(audit)
@@ -5930,8 +5931,9 @@ class SQLiteTaskRepository:
                     "(preview_id, intent_id, actor, configuration_snapshot_id, "
                     "configuration_snapshot_digest, status, intent_version, created_at, "
                     "updated_at, next_action, error, zero_mutation, current, truncated, "
-                    "previous_preview_id, unselected_item_ids_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "previous_preview_id, unselected_item_ids_json, source_scope, "
+                    "source_scope_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         preview.preview_id,
                         preview.intent_id,
@@ -5953,6 +5955,8 @@ class SQLiteTaskRepository:
                             ensure_ascii=False,
                             sort_keys=True,
                         ),
+                        preview.source_scope,
+                        preview.source_scope_id,
                     ),
                 )
                 for item in values:
@@ -6048,6 +6052,24 @@ class SQLiteTaskRepository:
     def get_latest_manual_preview(self, intent_id: str) -> ManualOrganizePreview | None:
         values = self.list_manual_previews(intent_id, limit=1)
         return values[0] if values else None
+
+    def list_manual_previews_by_scope(
+        self, source_scope: str, source_scope_id: str, *, limit: int = 100
+    ) -> tuple[ManualOrganizePreview, ...]:
+        if source_scope not in {"file", "resource_library"}:
+            raise ValueError("manual Preview source scope is invalid")
+        if not isinstance(source_scope_id, str) or not source_scope_id.strip():
+            raise ValueError("manual Preview source scope ID is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("manual Preview limit must be between 1 and 500")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT preview_id FROM manual_previews "
+                "WHERE source_scope=? AND source_scope_id=? "
+                "ORDER BY created_at DESC, preview_id DESC LIMIT ?",
+                (source_scope, source_scope_id, limit),
+            ).fetchall()
+            return tuple(self._load_manual_preview_locked(row["preview_id"]) for row in rows)
 
     def mark_manual_preview_items_stale(
         self,
@@ -7411,6 +7433,10 @@ class SQLiteTaskRepository:
                 truncated=bool(row["truncated"]),
                 previous_preview_id=row["previous_preview_id"],
                 unselected_item_ids=tuple(json.loads(row["unselected_item_ids_json"])),
+                source_scope=(row["source_scope"] if "source_scope" in row.keys() else None),
+                source_scope_id=(
+                    row["source_scope_id"] if "source_scope_id" in row.keys() else None
+                ),
             )
         except Exception as error:
             raise ManualPreviewUnavailable(
@@ -7621,6 +7647,7 @@ class SQLiteTaskRepository:
             source.stable_since.isoformat() if source.stable_since else None,
             source.scan_status,
             source.last_scan_id,
+            json.dumps(source.document(), ensure_ascii=False, sort_keys=True),
             json.dumps(item.choice.document(), ensure_ascii=False, sort_keys=True),
             item.status.value,
             item.error,
@@ -7631,23 +7658,29 @@ class SQLiteTaskRepository:
 
     @staticmethod
     def _manual_item(row: sqlite3.Row) -> ManualIntentItem:
-        source = ManualSourceIdentity(
-            row["file_id"],
-            row["storage_id"],
-            row["resource_library_id"],
-            row["source_path"],
-            row["filename"],
-            row["extension"],
-            int(row["source_size"]),
-            datetime.fromisoformat(row["source_modified_at"]),
-            datetime.fromisoformat(row["source_last_seen_at"]),
-            datetime.fromisoformat(row["source_updated_at"]),
-            datetime.fromisoformat(row["source_stable_since"])
-            if row["source_stable_since"]
-            else None,
-            row["source_scan_status"],
-            row["source_last_scan_id"],
+        identity_json = (
+            row["source_identity_json"] if "source_identity_json" in row.keys() else None
         )
+        if identity_json:
+            source = ManualSourceIdentity.from_document(json.loads(identity_json))
+        else:
+            source = ManualSourceIdentity(
+                row["file_id"],
+                row["storage_id"],
+                row["resource_library_id"],
+                row["source_path"],
+                row["filename"],
+                row["extension"],
+                int(row["source_size"]),
+                datetime.fromisoformat(row["source_modified_at"]),
+                datetime.fromisoformat(row["source_last_seen_at"]),
+                datetime.fromisoformat(row["source_updated_at"]),
+                datetime.fromisoformat(row["source_stable_since"])
+                if row["source_stable_since"]
+                else None,
+                row["source_scan_status"],
+                row["source_last_scan_id"],
+            )
         return ManualIntentItem(
             row["item_id"],
             row["intent_id"],
@@ -7906,6 +7939,7 @@ class SQLiteTaskRepository:
                     source_modified_at TEXT NOT NULL, source_last_seen_at TEXT NOT NULL,
                     source_updated_at TEXT NOT NULL, source_stable_since TEXT,
                     source_scan_status TEXT NOT NULL, source_last_scan_id TEXT,
+                    source_identity_json TEXT,
                     choice_json TEXT NOT NULL, status TEXT NOT NULL,
                     error TEXT, version INTEGER NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -7933,6 +7967,7 @@ class SQLiteTaskRepository:
                     zero_mutation INTEGER NOT NULL, current INTEGER NOT NULL DEFAULT 1,
                     truncated INTEGER NOT NULL DEFAULT 0, previous_preview_id TEXT,
                     unselected_item_ids_json TEXT NOT NULL,
+                    source_scope TEXT, source_scope_id TEXT,
                     FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id)
                 );
                 CREATE INDEX IF NOT EXISTS manual_previews_intent_created
@@ -8372,6 +8407,25 @@ class SQLiteTaskRepository:
             ).fetchone():
                 ensure_file_index_schema(self._connection)
             ensure_task_occurrence_columns(self._connection)
+            manual_item_columns = {
+                row["name"]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(manual_intent_items)"
+                ).fetchall()
+            }
+            if "source_identity_json" not in manual_item_columns:
+                self._connection.execute(
+                    "ALTER TABLE manual_intent_items ADD COLUMN source_identity_json TEXT"
+                )
+            manual_preview_columns = {
+                row["name"]
+                for row in self._connection.execute("PRAGMA table_info(manual_previews)").fetchall()
+            }
+            for column in ("source_scope", "source_scope_id"):
+                if column not in manual_preview_columns:
+                    self._connection.execute(
+                        f"ALTER TABLE manual_previews ADD COLUMN {column} TEXT"
+                    )
             self._connection.execute(
                 "INSERT OR REPLACE INTO schema_version VALUES ('runtime', ?)",
                 (SCHEMA_VERSION,),

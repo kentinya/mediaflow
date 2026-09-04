@@ -32,6 +32,7 @@ from mediaflow.application.strategy_test import (
     strategy_runner_from_configuration,
 )
 from mediaflow.domain.classification import ClassificationStatus
+from mediaflow.domain.file_lifecycle import OccurrenceState, occurrence_id_for, source_fingerprint
 from mediaflow.domain.manual_organize import (
     ManualChoice,
     ManualIntentError,
@@ -64,11 +65,11 @@ from mediaflow.domain.organizer import (
     StorageLocation,
 )
 from mediaflow.domain.recognition import RecognitionStatus
-from mediaflow.domain.storage import Storage, StorageError
+from mediaflow.domain.storage import Storage, StorageEntry, StorageEntryType, StorageError
 
 _MAX_COLLECTION = 64
 _MAX_TEXT = 512
-_MAX_ID = 128
+_SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -111,6 +112,7 @@ class ManualOrganizePreviewService:
         file_catalog=None,
         *,
         configuration_service=None,
+        file_index=None,
         runtime_resolver: Callable[..., object] | None = None,
         configuration: object | None = None,
         strategy_runner_factory: Callable[..., StrategyTestRunner] | None = None,
@@ -128,6 +130,7 @@ class ManualOrganizePreviewService:
         self._repository = repository
         self._intent_service = intent_service
         self._file_catalog = file_catalog or getattr(intent_service, "_file_catalog", None)
+        self._file_index = file_index or getattr(self._file_catalog, "_repository", None)
         self._configuration_service = configuration_service or getattr(
             intent_service, "_configuration_service", None
         )
@@ -156,8 +159,12 @@ class ManualOrganizePreviewService:
         expected_item_versions: Mapping[str, int] | Sequence[int] | None = None,
         snapshot_id: str | None = None,
         snapshot_digest: str | None = None,
+        source_scope: str | None = None,
+        source_scope_id: str | None = None,
+        source_admission_errors: Mapping[str, ManualPreviewError] | None = None,
     ) -> ManualOrganizePreview:
         actor = self._actor(actor)
+        source_admission_errors = dict(source_admission_errors or {})
         self._positive_version(expected_version, "expectedVersion")
         intent = self._load_intent(intent_id)
         if intent.status.value != "open":
@@ -200,7 +207,11 @@ class ManualOrganizePreviewService:
                 )
             try:
                 record = self._resolve_current_file(item.source.file_id)
-                self._assert_source(item.source, record)
+                self._assert_source(
+                    item.source,
+                    record,
+                    allow_unready=bool(source_admission_errors),
+                )
                 self._validate_choice(intent, item.choice, record)
             except ManualIntentError as error:
                 if error.code in {"source_stale", "source_missing", "source_invalid"}:
@@ -226,12 +237,16 @@ class ManualOrganizePreviewService:
         for item in selected:
             state = states[item.item_id]
             try:
-                outcome = self._run_item(
-                    intent,
-                    item,
-                    records[item.item_id],
-                    preview_id,
-                )
+                admission_error = source_admission_errors.get(item.source.file_id)
+                if admission_error is not None:
+                    outcome = self._source_admission_outcome(item, admission_error)
+                else:
+                    outcome = self._run_item(
+                        intent,
+                        item,
+                        records[item.item_id],
+                        preview_id,
+                    )
             except ManualPreviewUnavailable as error:
                 outcome = _PreviewOutcome(
                     ManualPreviewItemStatus.UNAVAILABLE,
@@ -315,6 +330,8 @@ class ManualOrganizePreviewService:
                 item.item_id for item in intent.items if item.item_id not in selected_ids
             ),
             truncated=any(item.truncated for item in preview_items),
+            source_scope=source_scope,
+            source_scope_id=source_scope_id,
         )
         persisted = self._persist_create(preview)
         return persisted or preview
@@ -323,6 +340,439 @@ class ManualOrganizePreviewService:
     create_manual_preview = create
     preview = create
     preview_intent = create
+
+    def create_current(
+        self,
+        *,
+        scope_kind: str,
+        actor: str,
+        file_id: str | None = None,
+        resource_library_id: str | None = None,
+        occurrence_id: str | None = None,
+        fingerprint: str | None = None,
+        snapshot_id: str | None = None,
+        snapshot_digest: str | None = None,
+    ) -> ManualOrganizePreview:
+        """Preview exact current FileIndex source identities.
+
+        The existing manual intent/Preview pipeline remains the single choice,
+        snapshot and planning authority.  This admission adds only the
+        current-source boundary: all identities come from FileIndex, the
+        configured Active ResourceLibrary is checked, and the observed Storage
+        entry must still produce the requested occurrence/fingerprint before an
+        intent or Preview is published.
+        """
+
+        actor = self._actor(actor)
+        kind = self._current_scope_kind(scope_kind)
+        if kind == "file":
+            if not self._valid_scope_id(file_id):
+                raise ManualPreviewError(
+                    "current file Preview requires fileId",
+                    code="malformed_selection",
+                    next_action="select one current FileIndex item and reload its occurrence",
+                )
+            if not self._valid_scope_id(resource_library_id):
+                raise ManualPreviewError(
+                    "current file Preview requires resourceLibraryId",
+                    code="malformed_selection",
+                    next_action=(
+                        "select one current FileIndex item from a configured ResourceLibrary"
+                    ),
+                )
+            if not self._valid_occurrence_id(occurrence_id) or not self._valid_fingerprint(
+                fingerprint
+            ):
+                raise ManualPreviewError(
+                    "current file Preview requires the exact occurrenceId and fingerprint",
+                    code="malformed_selection",
+                    next_action="reload FileIndex and submit the displayed current occurrence",
+                )
+            records = (self._current_file_record(file_id, resource_library_id),)
+            scope_id = file_id
+        else:
+            if not self._valid_scope_id(resource_library_id):
+                raise ManualPreviewError(
+                    "ResourceLibrary Preview requires resourceLibraryId",
+                    code="malformed_selection",
+                    next_action="select one configured ResourceLibrary and retry Preview",
+                )
+            if any(value is not None for value in (file_id, occurrence_id, fingerprint)):
+                raise ManualPreviewError(
+                    "ResourceLibrary Preview cannot contain a file occurrence selection",
+                    code="malformed_selection",
+                    next_action="submit only the configured ResourceLibrary identity",
+                )
+            records = self._current_library_records(resource_library_id)
+            scope_id = resource_library_id
+
+        snapshot = self._current_snapshot(snapshot_id, snapshot_digest)
+        runtime = self._load_runtime(snapshot.snapshot_id, snapshot.digest)
+        self._assert_runtime_library(runtime, resource_library_id, records)
+        source_admission_errors: dict[str, ManualPreviewError] = {}
+        for record in records:
+            try:
+                self._assert_current_record(record)
+                if kind == "file" and (
+                    record.occurrence_id != occurrence_id or record.fingerprint != fingerprint
+                ):
+                    raise ManualPreviewError(
+                        "the requested source occurrence is stale or replaced",
+                        code="source_stale",
+                        status=409,
+                        next_action=(
+                            "refresh FileIndex and submit the current occurrence and fingerprint"
+                        ),
+                        details={
+                            "fileId": record.file_id,
+                            "currentOccurrenceId": record.occurrence_id,
+                            "currentFingerprint": record.fingerprint,
+                        },
+                    )
+                self._assert_live_record(runtime, record)
+            except ManualPreviewError as error:
+                if kind == "file":
+                    raise
+                source_admission_errors[record.file_id] = error
+
+        intent = self._intent_service.create(
+            tuple(record.file_id for record in records),
+            actor=actor,
+            snapshot_id=snapshot.snapshot_id,
+            snapshot_digest=snapshot.digest,
+            allow_unready=bool(source_admission_errors),
+        )
+        return self.create(
+            intent.intent_id,
+            expected_version=intent.version,
+            expected_item_versions={item.item_id: item.version for item in intent.items},
+            snapshot_id=snapshot.snapshot_id,
+            snapshot_digest=snapshot.digest,
+            actor=actor,
+            source_scope=kind,
+            source_scope_id=scope_id,
+            source_admission_errors=source_admission_errors,
+        )
+
+    create_current_preview = create_current
+    create_source_preview = create_current
+
+    def list_current(
+        self, scope_kind: str, scope_id: str, *, limit: int = 100
+    ) -> tuple[ManualOrganizePreview, ...]:
+        kind = self._current_scope_kind(scope_kind)
+        if not self._valid_scope_id(scope_id):
+            raise ManualPreviewError("source scope ID is required", code="invalid_scope")
+        if isinstance(limit, bool) or not 1 <= limit <= self._max_items:
+            raise ManualPreviewError(
+                f"manual Preview limit must be between 1 and {self._max_items}",
+                code="invalid_limit",
+            )
+        method = getattr(self._repository, "list_manual_previews_by_scope", None)
+        if not callable(method):
+            return ()
+        values = method(kind, scope_id, limit=limit)
+        return tuple(self.get_readonly(value.preview_id) for value in values)
+
+    @staticmethod
+    def _current_scope_kind(value: str) -> str:
+        if not isinstance(value, str):
+            raise ManualPreviewError(
+                "Preview scope must be file or resource_library",
+                code="invalid_scope",
+                next_action="choose one current FileIndex item or one configured ResourceLibrary",
+            )
+        value = value.strip()
+        if value == "resourceLibrary":
+            value = "resource_library"
+        if value not in {"file", "resource_library"}:
+            raise ManualPreviewError(
+                "Preview scope must be file or resource_library",
+                code="invalid_scope",
+                next_action="choose one current FileIndex item or one configured ResourceLibrary",
+            )
+        return value
+
+    @staticmethod
+    def _valid_occurrence_id(value: object) -> bool:
+        return isinstance(value, str) and bool(_SAFE_ID.fullmatch(value))
+
+    @staticmethod
+    def _valid_scope_id(value: object) -> bool:
+        return isinstance(value, str) and bool(_SAFE_ID.fullmatch(value))
+
+    @staticmethod
+    def _valid_fingerprint(value: object) -> bool:
+        return isinstance(value, str) and bool(_SHA256.fullmatch(value))
+
+    def _current_snapshot(self, snapshot_id: str | None, snapshot_digest: str | None):
+        if (snapshot_id is None) != (snapshot_digest is None):
+            raise ManualPreviewError(
+                "configuration snapshot ID and digest must be supplied together",
+                code="malformed_snapshot",
+                next_action="reload the current Active snapshot and retry Preview",
+            )
+        resolver = getattr(self._intent_service, "_active_snapshot", None)
+        if not callable(resolver):
+            raise ManualPreviewUnavailable(
+                "the Active configuration snapshot authority is unavailable"
+            )
+        try:
+            current = resolver()
+        except ManualIntentError as error:
+            raise ManualPreviewUnavailable(
+                "the Active configuration snapshot is unavailable",
+                details={"reason": type(error).__name__},
+            ) from error
+        except Exception as error:
+            raise ManualPreviewUnavailable(
+                "the Active configuration snapshot is unavailable",
+                details={"reason": type(error).__name__},
+            ) from error
+        current_id = getattr(current, "snapshot_id", None)
+        current_digest = getattr(current, "digest", None)
+        if (
+            not isinstance(current_id, str)
+            or not current_id.strip()
+            or not isinstance(current_digest, str)
+            or not current_digest.strip()
+        ):
+            raise ManualPreviewUnavailable("the Active configuration snapshot identity is invalid")
+        if snapshot_id is not None and (
+            snapshot_id != current_id or snapshot_digest != current_digest
+        ):
+            raise ManualPreviewConflict(
+                "the requested Preview snapshot is not the current Active snapshot",
+                details={
+                    "currentSnapshotId": current_id,
+                    "currentSnapshotDigest": current_digest,
+                },
+            )
+        return current
+
+    def _file_index_repository(self):
+        repository = self._file_index
+        if repository is None:
+            repository = getattr(self._file_catalog, "_repository", None)
+        if repository is None or not callable(
+            getattr(repository, "list_by_resource_library", None)
+        ):
+            raise ManualPreviewUnavailable(
+                "current FileIndex lookup is unavailable",
+                details={"stage": "current_source_selection"},
+            )
+        return repository
+
+    def _current_file_record(self, file_id: str, resource_library_id: str):
+        repository = self._file_index_repository()
+        try:
+            values = tuple(
+                value
+                for value in repository.list_by_resource_library(resource_library_id)
+                if getattr(value, "file_id", None) == file_id
+            )
+        except ManualPreviewError:
+            raise
+        except Exception as error:
+            raise ManualPreviewUnavailable(
+                "current FileIndex lookup is unavailable",
+                details={"stage": "current_source_selection", "reason": type(error).__name__},
+            ) from error
+        if not values:
+            raise ManualPreviewError(
+                "current FileIndex source was not found",
+                code="source_missing",
+                status=404,
+                next_action="refresh FileIndex and select an existing current source item",
+                details={"fileId": file_id, "resourceLibraryId": resource_library_id},
+            )
+        if len(values) != 1:
+            raise ManualPreviewError(
+                "FileIndex file ID is ambiguous in this ResourceLibrary",
+                code="source_ambiguous",
+                status=409,
+                next_action="scope the request to one unambiguous current FileIndex item",
+                details={"fileId": file_id, "resourceLibraryId": resource_library_id},
+            )
+        return values[0]
+
+    def _current_library_records(self, resource_library_id: str) -> tuple[object, ...]:
+        repository = self._file_index_repository()
+        try:
+            values = tuple(repository.list_by_resource_library(resource_library_id))
+        except ManualPreviewError:
+            raise
+        except Exception as error:
+            raise ManualPreviewUnavailable(
+                "current FileIndex lookup is unavailable",
+                details={"stage": "current_source_selection", "reason": type(error).__name__},
+            ) from error
+        if not values:
+            raise ManualPreviewError(
+                "configured ResourceLibrary has no current FileIndex sources",
+                code="selection_empty",
+                next_action="run a bounded Scan, then select the current ResourceLibrary again",
+                details={"resourceLibraryId": resource_library_id},
+            )
+        if len(values) > self._max_items:
+            raise ManualPreviewError(
+                f"ResourceLibrary Preview selection exceeds the bound of {self._max_items}",
+                code="selection_over_limit",
+                next_action=(
+                    "narrow the ResourceLibrary or use one exact FileIndex item for Preview"
+                ),
+                details={
+                    "resourceLibraryId": resource_library_id,
+                    "itemCount": len(values),
+                    "maximum": self._max_items,
+                },
+            )
+        ordered = tuple(
+            sorted(
+                values,
+                key=lambda value: (
+                    str(getattr(value, "path", "")),
+                    str(getattr(value, "file_id", "")),
+                ),
+            )
+        )
+        identities = [
+            (
+                getattr(value, "storage_id", None),
+                getattr(value, "resource_library_id", None),
+                getattr(value, "path", None),
+            )
+            for value in ordered
+        ]
+        if len(set(identities)) != len(identities) or len(
+            {getattr(value, "file_id", None) for value in ordered}
+        ) != len(ordered):
+            raise ManualPreviewError(
+                "the ResourceLibrary current source selection is ambiguous",
+                code="source_ambiguous",
+                next_action="repair the duplicate FileIndex identity, then refresh and retry",
+                details={"resourceLibraryId": resource_library_id},
+            )
+        return ordered
+
+    def _assert_current_record(self, record) -> None:
+        raw_status = getattr(record, "scan_status", None)
+        status = getattr(raw_status, "value", raw_status)
+        raw_state = getattr(record, "occurrence_state", None)
+        state = getattr(raw_state, "value", raw_state)
+        if status != "ready":
+            code = "source_missing" if status == "missing" else "source_not_ready"
+            message = (
+                "current FileIndex source is missing"
+                if code == "source_missing"
+                else "current FileIndex source is not stable and ready"
+            )
+            raise ManualPreviewError(
+                message,
+                code=code,
+                status=409,
+                next_action=(
+                    "refresh FileIndex and select the current source after a successful Scan"
+                ),
+                details={
+                    "fileId": getattr(record, "file_id", None),
+                    "scanStatus": str(status),
+                },
+            )
+        if (
+            state != OccurrenceState.VERIFIED.value
+            or not self._valid_occurrence_id(getattr(record, "occurrence_id", None))
+            or not self._valid_fingerprint(getattr(record, "fingerprint", None))
+        ):
+            raise ManualPreviewError(
+                "current FileIndex source occurrence is not verified",
+                code="source_unverified",
+                status=409,
+                next_action="run a complete Scan, then select the refreshed current occurrence",
+                details={"fileId": getattr(record, "file_id", None)},
+            )
+
+    def _assert_runtime_library(self, runtime, resource_library_id: str, records) -> None:
+        values = tuple(
+            value
+            for value in getattr(runtime, "resource_libraries", ())
+            if getattr(value, "library_id", None) == resource_library_id
+        )
+        if len(values) != 1 or not getattr(values[0], "enabled", False):
+            raise ManualPreviewUnavailable(
+                "the selected ResourceLibrary is unavailable in the pinned Active snapshot",
+                details={"resourceLibraryId": resource_library_id},
+            )
+        library = values[0]
+        expected_storage = getattr(library, "storage_id", None)
+        root = str(getattr(library, "root_path", "") or "").replace("\\", "/").strip("/")
+        if any(
+            getattr(record, "storage_id", None) != expected_storage
+            or getattr(record, "resource_library_id", None) != resource_library_id
+            or (root and not str(getattr(record, "path", "")).startswith(root + "/"))
+            for record in records
+        ):
+            raise ManualPreviewError(
+                "current FileIndex source does not belong to the configured ResourceLibrary",
+                code="source_cross_authority",
+                status=409,
+                next_action=(
+                    "refresh FileIndex and select a source from the current Active authority"
+                ),
+                details={"resourceLibraryId": resource_library_id},
+            )
+
+    def _assert_live_record(self, runtime, record) -> None:
+        try:
+            storages = self._create_storages(runtime, {record.storage_id})
+            storage = self._guarded_storage(storages, record.storage_id)
+            entry = storage.stat(record.path)
+        except StorageError as error:
+            code = getattr(getattr(error, "code", None), "value", "unknown")
+            if code == "not_found":
+                raise ManualPreviewError(
+                    "current FileIndex source is no longer present in Storage",
+                    code="source_missing",
+                    status=409,
+                    next_action="run a bounded Scan and select the current source occurrence",
+                    details={"fileId": record.file_id},
+                ) from error
+            raise ManualPreviewUnavailable(
+                "the current source Storage is unavailable for read-only Preview",
+                details={"storageId": record.storage_id, "reason": code},
+            ) from error
+        except (OSError, ValueError, KeyError) as error:
+            raise ManualPreviewUnavailable(
+                "the current source Storage is unavailable for read-only Preview",
+                details={"storageId": record.storage_id, "reason": type(error).__name__},
+            ) from error
+        if not isinstance(entry, StorageEntry) or entry.entry_type is not StorageEntryType.FILE:
+            raise ManualPreviewError(
+                "current FileIndex source is no longer a file in Storage",
+                code="source_missing",
+                status=409,
+                next_action="run a bounded Scan and select the current source occurrence",
+                details={"fileId": record.file_id},
+            )
+        observed = source_fingerprint(record.storage_id, record.resource_library_id, entry)
+        observed_occurrence = occurrence_id_for(
+            record.storage_id,
+            record.resource_library_id,
+            entry.path,
+            observed.value,
+        )
+        if (
+            observed.state is not OccurrenceState.VERIFIED
+            or observed.value != record.fingerprint
+            or observed_occurrence != record.occurrence_id
+        ):
+            raise ManualPreviewError(
+                "current source occurrence changed or was replaced after discovery",
+                code="source_stale",
+                status=409,
+                next_action="refresh FileIndex and submit the current occurrence and fingerprint",
+                details={"fileId": record.file_id},
+            )
 
     def get(self, preview_id: str) -> ManualOrganizePreview:
         if not isinstance(preview_id, str) or not preview_id.strip():
@@ -343,6 +793,13 @@ class ManualOrganizePreviewService:
                 "plan-affecting source, evidence, review, conflict, choice, or "
                 "snapshot input changed"
             )
+            # Current-source Previews are the immutable analysis evidence for the
+            # Files/FileIndex journey.  A read may project stale evidence, but it
+            # must not publish a lifecycle mutation merely because the operator
+            # opened the detail page.  Keep the legacy intent-scoped behavior
+            # below for compatibility with the existing manual-organize loop.
+            if value.source_scope is not None:
+                return self._stale_projection(value, stale_ids, reason)
             self._invalidate_items(stale_ids, reason, intent_id=value.intent_id)
             refreshed = self._repository.get_manual_preview(preview_id)
             if refreshed is not None:
@@ -566,10 +1023,16 @@ class ManualOrganizePreviewService:
             raise ManualPreviewUnavailable("File catalog is unavailable")
         return self._file_catalog.show(file_id)
 
-    def _assert_source(self, source: ManualSourceIdentity, record) -> None:
+    def _assert_source(
+        self,
+        source: ManualSourceIdentity,
+        record,
+        *,
+        allow_unready: bool = False,
+    ) -> None:
         validator = getattr(self._intent_service, "_assert_source_unchanged", None)
         if callable(validator):
-            validator(source, record)
+            validator(source, record, allow_unready=allow_unready)
             return
         current = ManualSourceIdentity.from_file_record(record)
         if current.document() != source.document():
@@ -580,6 +1043,60 @@ class ManualOrganizePreviewService:
                     "refresh/reopen the intent and create a new selection from current Files"
                 ),
             )
+
+    def _source_admission_outcome(self, item, error: ManualPreviewError) -> _PreviewOutcome:
+        stale_codes = {"source_missing", "source_stale", "source_not_ready", "source_unverified"}
+        status = (
+            ManualPreviewItemStatus.STALE
+            if error.code in stale_codes
+            else ManualPreviewItemStatus.UNAVAILABLE
+            if error.status >= 500
+            else ManualPreviewItemStatus.BLOCKED
+        )
+        plan = self._source_failure_plan(item, error)
+        return _PreviewOutcome(
+            status,
+            plan=plan,
+            plan_fingerprint=_fingerprint(plan),
+            error=self._safe_error(error),
+            next_action=error.next_action,
+        )
+
+    @staticmethod
+    def _source_failure_plan(item, error: ManualPreviewError) -> dict[str, object]:
+        return {
+            "source": item.source.document(),
+            "recognitionType": item.choice.recognition_type_id,
+            "policies": {
+                "recognitionTypePolicyId": item.choice.recognition_type_id,
+                "metadataPolicyId": None,
+                "namingPolicyId": item.choice.naming_policy_id,
+                "classificationPolicyId": item.choice.classification_policy_id,
+                "organizePolicyId": item.choice.organize_policy_id,
+            },
+            "analysis": {
+                "stage": "source_admission",
+                "status": "unavailable" if error.status >= 500 else "blocked",
+                "error": safe_manual_error(error, "current source admission failed"),
+            },
+            "destination": None,
+            "operation": None,
+            "attachments": [],
+            "executionPlan": None,
+            "capabilities": {
+                "verdict": "not_determined",
+                "required": [],
+                "declared": [],
+                "missing": [],
+            },
+            "conflicts": [],
+            "warnings": [],
+            "planStatus": "invalid",
+            "zeroMutation": True,
+            "executionState": "not_available_in_this_task",
+            "bounded": True,
+            "deterministic": True,
+        }
 
     def _validate_choice(self, intent, choice: ManualChoice, record) -> None:
         validator = getattr(self._intent_service, "_validate_choice", None)
@@ -609,7 +1126,7 @@ class ManualOrganizePreviewService:
         }
         return {
             "source": source,
-            "sourceFingerprint": _fingerprint(source.document()),
+            "sourceFingerprint": source.fingerprint or _fingerprint(source.document()),
             "sourceEvidenceVersions": source_evidence,
             "reviewVersions": reviews,
             "conflictVersions": conflicts,
@@ -620,6 +1137,17 @@ class ManualOrganizePreviewService:
         self, source: ManualSourceIdentity
     ) -> tuple[dict[str, object], ...]:
         values: list[dict[str, object]] = []
+        if source.occurrence_id is not None and source.fingerprint is not None:
+            values.append(
+                {
+                    "kind": "source_occurrence",
+                    "occurrenceId": source.occurrence_id,
+                    "fingerprint": source.fingerprint,
+                    "algorithm": source.fingerprint_algorithm,
+                    "state": source.occurrence_state,
+                    "evidence": source.fingerprint_evidence or {},
+                }
+            )
         method = getattr(self._repository, "list_evidence_for_source", None)
         if callable(method):
             try:
@@ -1058,6 +1586,11 @@ class ManualOrganizePreviewService:
             raise ManualPreviewUnavailable(
                 f"Storage {storage_id!r} is unavailable", details={"storageId": storage_id}
             ) from error
+        if storage is None or getattr(storage, "storage_id", storage_id) != storage_id:
+            raise ManualPreviewUnavailable(
+                "the selected Storage adapter does not match the pinned authority",
+                details={"storageId": storage_id},
+            )
         return PreviewReadOnlyStorage(storage)
 
     def _provider_registry(self, provider_ids: tuple[str, ...]) -> MetadataProviderRegistry:
@@ -1575,6 +2108,8 @@ class ManualOrganizePreviewService:
         statuses = {item.status for item in items}
         if statuses == {ManualPreviewItemStatus.PREVIEWED}:
             return ManualPreviewStatus.PREVIEWED
+        if statuses == {ManualPreviewItemStatus.STALE}:
+            return ManualPreviewStatus.STALE
         if statuses == {ManualPreviewItemStatus.UNAVAILABLE}:
             return ManualPreviewStatus.UNAVAILABLE
         if statuses == {ManualPreviewItemStatus.FAILED}:
@@ -1586,6 +2121,7 @@ class ManualOrganizePreviewService:
                 ManualPreviewItemStatus.UNAVAILABLE,
                 ManualPreviewItemStatus.FAILED,
                 ManualPreviewItemStatus.BLOCKED,
+                ManualPreviewItemStatus.STALE,
                 ManualPreviewItemStatus.TRUNCATED,
             }
         ):
@@ -1783,3 +2319,4 @@ def _iso(value: object) -> str | None:
 # Compatibility names for adapters that expose the shorter manual Preview
 # terminology while retaining one shared application implementation.
 ManualPreviewService = ManualOrganizePreviewService
+CurrentSourcePreviewService = ManualOrganizePreviewService
