@@ -137,6 +137,7 @@ class LocalStorage:
             entry_type=entry_type,
             size=stat.st_size,
             modified_at=datetime.fromtimestamp(stat.st_mtime, UTC),
+            fingerprint=f"inode:{stat.st_ino}:ctime:{stat.st_ctime_ns}",
         )
 
     def list(self, path: str) -> Sequence[StorageEntry]:

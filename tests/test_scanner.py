@@ -375,7 +375,8 @@ class ScannerTests(unittest.TestCase):
         result = self.scanner.scan(library)
         self.assertEqual(TaskStatus.PARTIAL_SUCCESS, result.status)
         records = self.records()
-        self.assertEqual(FileScanStatus.MISSING, records["good/A.mkv"].scan_status)
+        # An incomplete full scan cannot prove that an unvisited source is missing.
+        self.assertEqual(FileScanStatus.READY, records["good/A.mkv"].scan_status)
         self.assertNotEqual(FileScanStatus.MISSING, records["blocked/B.mkv"].scan_status)
 
     def test_pruned_directory_is_not_reconciled_as_missing(self) -> None:

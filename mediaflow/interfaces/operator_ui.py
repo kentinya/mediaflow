@@ -1991,7 +1991,8 @@ APP_JS = b"""(() => {
   async function renderFileIndex() {
     clear(content); content.append(text('h2', 'FileIndex'));
     content.append(text('p',
-      'Indexed discovery records belong to ResourceLibraries. FileIndex is not a configured Storage browser.',
+      'FileIndex separates Storage discovery/stability from current-source processing disposition. ' +
+      'FileIndex is not a configured Storage browser.',
       'warning'));
     const selectedFileIds = new Set();
     const filters = [
@@ -2036,15 +2037,46 @@ APP_JS = b"""(() => {
           message(`${selectedFileIds.size} file(s) selected; selection is bounded to 100 items.`);
         });
         const cell = text('span', ''); cell.append(checkbox, text('span', ` ${fileId}`));
-        return [cell, item.path, item.scanStatus || item.scan_status, item.updatedAt || item.updated_at];
+        const occurrence = item.currentOccurrence || {};
+        return [cell, item.path, item.scanStatus || item.scan_status,
+          item.processingDisposition || '-', occurrence.occurrenceId || 'unverified',
+          item.updatedAt || item.updated_at];
       });
-      content.append(table(['ID', 'Path', 'Scan status', 'Updated'], rows,
+      content.append(table(['ID', 'Path', 'Scan / discovery', 'Processing disposition',
+        'Current occurrence', 'Updated'], rows,
         index => showDetail('files', items[index].fileId || items[index].file_id)));
       content.append(actionButton('Start manual organize for selected files', () =>
         confirmManualIntent(Array.from(selectedFileIds))));
       content.append(actionButton('Refresh FileIndex', loadFiles));
     };
     content.append(form, actionButton('Search files', loadFiles));
+  }
+  function confirmFileReprocess(id, data) {
+    const occurrence = data && data.currentOccurrence || {};
+    const required = data && data.reprocess && data.reprocess.required || occurrence;
+    const occurrenceId = required.occurrenceId || occurrence.occurrenceId;
+    const fingerprint = required.fingerprint || occurrence.fingerprint;
+    if (!occurrenceId || !fingerprint) {
+      message('Reprocess is unavailable because current source evidence is not verified.', true);
+      return;
+    }
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p',
+      `Request bounded Reprocess for occurrence ${occurrenceId} with fingerprint ${fingerprint}? ` +
+      'This admits an auditable request only. It creates no Task, calls no Provider, and performs no Storage mutation.',
+      'warning'));
+    confirmation.append(actionButton('Confirm Reprocess admission', async () => {
+      try {
+        const result = await api(`/api/v1/files/${encodeURIComponent(id)}/reprocess`, {
+          method: 'POST', body: JSON.stringify({occurrenceId, fingerprint})
+        });
+        confirmation.remove();
+        message(`Reprocess admitted for ${result.occurrenceId}. No Task or media side effect occurred. ` +
+          `${result.nextAction || 'Run the later explicit Scan or Preview admission.'}`);
+        await showDetail('files', id);
+      } catch (error) { message(errorText(error), true); }
+    }), actionButton('Keep current occurrence unchanged', () => confirmation.remove()));
+    detailContent.append(confirmation);
   }
   function confirmManualIntent(fileIds) {
     const values = Array.from(new Set(fileIds || []));
@@ -3475,6 +3507,42 @@ APP_JS = b"""(() => {
       Object.entries(data).filter(([, value]) => !Array.isArray(value) && typeof value !== 'object')
         .forEach(([key, value]) => field(list, key, value)); detailContent.append(list);
       if (kind === 'files') {
+        const discovery = data.discovery || {};
+        const processing = data.processing || {};
+        const occurrence = data.currentOccurrence || {};
+        detailContent.append(text('h3', 'Current-source lifecycle'));
+        detailContent.append(table(['Dimension', 'State', 'Evidence / next action'], [
+          ['Scan / discovery', discovery.status || data.scanStatus || '-',
+            `change ${discovery.change || data.change || '-'}; ` +
+            `last seen ${discovery.lastSeenAt || data.lastSeenAt || '-'}`],
+          ['Processing disposition', processing.disposition || data.processingDisposition || '-',
+            processing.nextAction || '-'],
+          ['Current occurrence', occurrence.occurrenceId || '-',
+            `fingerprint ${occurrence.fingerprint || '-'}; state ${occurrence.state || 'unverified'}`]
+        ]));
+        const reprocess = data.reprocess || {};
+        if (reprocess.eligible === true) {
+          detailContent.append(actionButton('Request explicit Reprocess', () =>
+            confirmFileReprocess(id, data)));
+        } else {
+          detailContent.append(text('p',
+            `Reprocess unavailable: ${reprocess.reason || 'current occurrence is not eligible'}. ` +
+            'Refresh discovery or resolve the durable processing state before retrying.', 'warning'));
+        }
+        const history = Array.isArray(data.occurrenceHistory) ? data.occurrenceHistory : [];
+        if (history.length) {
+          detailContent.append(text('h3', `Occurrence history (${history.length})`), table(
+            ['Occurrence', 'State', 'Current', 'Processing disposition', 'First seen', 'Superseded'],
+            history.map(item => [item.occurrenceId, item.state, item.current ? 'yes' : 'no',
+              item.processingDisposition || '-', item.firstSeenAt || '-', item.supersededAt || '-'])));
+        }
+        const reprocessRequests = Array.isArray(data.reprocessRequests) ? data.reprocessRequests : [];
+        if (reprocessRequests.length) {
+          detailContent.append(text('h3', `Reprocess admissions (${reprocessRequests.length})`), table(
+            ['Request', 'Status', 'Actor', 'Occurrence', 'Next action'],
+            reprocessRequests.map(item => [item.requestId, item.status, item.actor,
+              item.occurrenceId, item.nextAction || '-'])));
+        }
         renderManualExecutionDiscovery(data.manualExecutionDiscovery);
         detailContent.append(actionButton('Start manual organize for this file', () =>
           confirmManualIntent([id])));

@@ -736,6 +736,7 @@ class S3Storage:
             StorageEntryType.FILE,
             max(item.size, 0),
             item.modified_at,
+            item.etag,
         )
 
     @staticmethod

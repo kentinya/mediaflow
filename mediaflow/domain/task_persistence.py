@@ -97,6 +97,9 @@ class PersistentTaskItem:
     destination_path: str | None = None
     execution_status: str | None = None
     error: str | None = None
+    source_occurrence_id: str | None = None
+    source_fingerprint: str | None = None
+    source_fingerprint_state: str = "unverified"
 
 
 @dataclass(frozen=True)
@@ -130,6 +133,9 @@ class PersistentResultRecord:
     # deriving effect certainty from status or the historical operation list.
     effect_certainty: str = "unknown"
     uncertain_effects: tuple[str, ...] = ()
+    source_occurrence_id: str | None = None
+    source_fingerprint: str | None = None
+    source_fingerprint_state: str = "unverified"
 
 
 def redact_persistent_result(

@@ -156,6 +156,12 @@ source occurrence was organized, skipped, blocked or failed. Detail can join pri
 Results, reviews and checkpoints by Storage/path, but there is no unified processing-disposition
 projection for the current indexed source identity.
 
+Task 27.2 adds that current-source projection: FileIndex now separates discovery/stability from
+processing disposition, identifies the current occurrence with bounded fingerprint evidence, and
+marks prior Results as current, historical or unverified. An explicit Reprocess request is shown
+only when the exact current occurrence is eligible; admission records a durable next action and
+does not create processing work or mutate Storage.
+
 - **Goal:** determine what MediaFlow knows about a file and what safe action is available next.
 - **Entry:** the current Files/File Catalog view (renamed to FileIndex in Slice 27), Dashboard,
   Task/Job, review, notification or history link.

@@ -13,6 +13,13 @@ from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
 from mediaflow.domain.file_index import FileIndexRecord, FileIndexRepository
+from mediaflow.domain.file_lifecycle import (
+    OccurrenceState,
+    ProcessingDisposition,
+    next_action_for_disposition,
+    occurrence_id_for,
+    source_fingerprint,
+)
 from mediaflow.domain.library import ResourceLibrary, ScanMode, ScanRule, ScanRuleKind
 from mediaflow.domain.logging import Logger, LogLevel
 from mediaflow.domain.scanner import (
@@ -311,7 +318,9 @@ class StorageScanner:
         if batch:
             self._file_index.batch_upsert(tuple(batch))
         completed = self._clock()
-        if mode is ScanMode.FULL and status in {TaskStatus.COMPLETED, TaskStatus.PARTIAL_SUCCESS}:
+        # A full scan can assert absence only when its complete boundary was observed.  A
+        # partial, failed, or cancelled traversal must leave prior source occurrences intact.
+        if mode is ScanMode.FULL and status is TaskStatus.COMPLETED:
             self._file_index.reconcile_missing(
                 library.library_id,
                 scan_id,
@@ -353,11 +362,18 @@ class StorageScanner:
     ) -> tuple[FileIndexRecord, DiscoveredFile]:
         extension = PurePosixPath(entry.name).suffix.lower().lstrip(".")
         previous = self._file_index.find_by_path(storage.storage_id, library.library_id, entry.path)
+        observed_fingerprint = source_fingerprint(storage.storage_id, library.library_id, entry)
+        same_occurrence = bool(
+            previous
+            and previous.occurrence_state is OccurrenceState.VERIFIED
+            and previous.fingerprint == observed_fingerprint.value
+            and observed_fingerprint.value is not None
+        )
         change = (
             FileChange.NEW
             if previous is None
             else FileChange.UNCHANGED
-            if previous.size == entry.size and previous.modified_at == entry.modified_at
+            if same_occurrence
             else FileChange.MODIFIED
         )
         ignored = extension not in library.file_extensions
@@ -389,6 +405,34 @@ class StorageScanner:
             status = FileScanStatus.READY if stable else FileScanStatus.UNSTABLE
         first_seen = previous.first_seen_at if previous else now
         created = previous.created_at if previous else now
+        occurrence_id = (
+            previous.occurrence_id
+            if same_occurrence and previous is not None
+            else occurrence_id_for(
+                storage.storage_id,
+                library.library_id,
+                entry.path,
+                observed_fingerprint.value,
+            )
+        )
+        if same_occurrence and previous is not None:
+            processing_disposition = previous.processing_disposition
+            processing_result_id = previous.processing_result_id
+            processing_effect_certainty = previous.processing_effect_certainty
+            processing_retry_safety = previous.processing_retry_safety
+            processing_next_action = previous.processing_next_action
+            processing_updated_at = previous.processing_updated_at
+        else:
+            processing_disposition = (
+                ProcessingDisposition.UNKNOWN
+                if observed_fingerprint.state is OccurrenceState.VERIFIED
+                else ProcessingDisposition.UNVERIFIED
+            )
+            processing_result_id = None
+            processing_effect_certainty = "unknown"
+            processing_retry_safety = "unknown"
+            processing_next_action = next_action_for_disposition(processing_disposition)
+            processing_updated_at = None
         record = FileIndexRecord(
             file_id=(
                 previous.file_id
@@ -413,6 +457,17 @@ class StorageScanner:
             updated_at=now,
             missing_since=None,
             last_scan_id=scan_id,
+            occurrence_id=occurrence_id,
+            fingerprint=observed_fingerprint.value,
+            fingerprint_algorithm=observed_fingerprint.algorithm,
+            fingerprint_evidence=observed_fingerprint.evidence,
+            occurrence_state=observed_fingerprint.state,
+            processing_disposition=processing_disposition,
+            processing_result_id=processing_result_id,
+            processing_effect_certainty=processing_effect_certainty,
+            processing_retry_safety=processing_retry_safety,
+            processing_next_action=processing_next_action,
+            processing_updated_at=processing_updated_at,
         )
         discovered = DiscoveredFile(
             storage.storage_id,
@@ -425,6 +480,10 @@ class StorageScanner:
             now,
             status,
             change,
+            record.file_id,
+            record.occurrence_id,
+            record.fingerprint,
+            record.occurrence_state.value,
         )
         return record, discovered
 
