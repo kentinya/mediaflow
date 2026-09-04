@@ -271,7 +271,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 27.5
 Parent Slice: 27 - Manual Operations and File Lifecycle
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c2e0c55bf9e20a11a304f512fd9bd20cae07f36b
 Difficulty: High
 Test Level: T4
@@ -501,11 +501,29 @@ Head SHA: 650282a2e224ce81f7e0cebf0f12d96c25b2a931
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: c2e0c55bf9e20a11a304f512fd9bd20cae07f36b..0419e5abf2b6c95ed58c3394c42ed37fd3592265
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+Blockers:
+
+- The Task requires manual-organize admission to validate the current FileIndex
+  occurrence/fingerprint, current source presence/stability, and live source/target Storage
+  capability evidence before issuing the separate one-shot execution authority. In the actual
+  implementation, `ManualOrganizeExecutionService.authorize()` checks only persisted Preview,
+  item/version, snapshot, plan and cached capability/conflict evidence; it does not call the
+  current-source or live-Storage preflight. The new `_assert_reviewed_source_unchanged()` is called
+  only from `execute()` (after the authority has already been persisted as `active`). The focused
+  replacement test demonstrates this exact gap: `test_replaced_source_without_rescan_fails_closed_before_mutation`
+  first receives an active authority, then `execute()` rejects with `source_stale`.
+- Correct the same Task so authority issuance itself performs the required bounded current
+  FileIndex/source and live Storage admission checks for every selected item, while preserving the
+  existing no-Task/no-lock/no-mutation and authority-state semantics for rejected admission. Add
+  focused tests proving replaced/missing/unstable source and live capability/destination blockers
+  are rejected before an authorization record is created; retain the existing execution-time
+  revalidation for the race between authorization and execution.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
