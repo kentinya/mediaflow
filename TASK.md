@@ -1,13 +1,31 @@
-# Task 27.2 - Current Source Occurrence and Processing Disposition
+# Task 27.3 — Scoped Manual Scan and Durable Task
 
-This Task follows [the development workflow](../docs/development-workflow.md) and is subordinate to
-the current [`SLICE.md`](../SLICE.md).
+This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
+the current [`SLICE.md`](SLICE.md).
+
+## Task 27.2 — B Review Result
 
 ```text
-Task ID: 27.2
+Reviewed: ebe31799a38d07e1dc02aa4a9a343739461e6123..75c64eb3f6d65a09211acdeaa232a1e6cbddf0ea
+Decision: PASS
+Slice Required Outcomes all satisfied: NO
+Next: NEXT TASK
+```
+
+Task 27.2 satisfied the current-source lifecycle unit for RO-2 and its FileIndex projection needed
+by RO-8. The implementation checkpoint is `75c64eb3f6d65a09211acdeaa232a1e6cbddf0ea`; the
+Developer completion report was recorded at `eb675edcbd7a4b25f35f4fcc1b549950740f1ea`.
+
+# Task 27.3 — Scoped Manual Scan and Durable Task
+
+This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
+the current [`SLICE.md`](SLICE.md).
+
+```text
+Task ID: 27.3
 Parent Slice: 27 - Manual Operations and File Lifecycle
 Status: PLANNED
-Task Base: ebe31799a38d07e1dc02aa4a9a343739461e6123
+Task Base: eb675edcbd7a4b25f35f4fcc1b549950740f1ea
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,148 +33,113 @@ Planner / Reviewer: B
 
 ## Goal
 
-Complete the current-source lifecycle portion of Slice 27 RO-2, with the matching FileIndex
-projection needed by RO-8: an authenticated operator can distinguish discovery/stability state from
-the processing disposition of the current source occurrence, see when a prior result is still
-relevant, and explicitly request bounded Reprocess for the exact current occurrence when duplicate
-work protection applies. Reprocess is an auditable admission request only; it does not start a scan,
-Provider request, Task, Preview, organization or Storage mutation.
+Complete Slice 27 RO-3: an authenticated operator can start a bounded manual Scan for either an
+exact current FileIndex source item or a configured ResourceLibrary scope through the same Web/API
+application behavior, observe a durable Task and per-item discovery state, cancel it safely, and
+continue diagnosis from persisted outcomes. The Scan must preserve the existing full/incremental
+discovery and reconciliation semantics, isolate one requested scope from unrelated scopes, and
+perform no organization or other media mutation.
 
 ## Why This Task Exists
 
-Task 27.1 established separate real-Storage `Files` and indexed `FileIndex` surfaces. The current
-FileIndex still primarily identifies a record by Storage/path and exposes scan state, while prior
-Task/Result history can be joined by the same path. A file replaced at that path can therefore be
-mistaken for the earlier occurrence, and the operator has no durable orthogonal processing
-disposition or safe duplicate-work decision. Task 27.1 was reviewed PASS at checkpoint
-`6a577b9ac0192954a03ca2f706552517a14bd1e0`; the report-only follow-up commit is the Task Base for
-this unit.
+Slice 27.1 and 27.2 established the real Storage `Files` surface, indexed `FileIndex` lifecycle,
+current source occurrence identity and processing disposition. The next missing vertical journey is
+the operator action that refreshes that state: today the scanner can run through application/CLI
+foundations, but the manual Web/API path does not yet admit a file- or ResourceLibrary-scoped,
+durable, cancellable Scan with operator-visible Task state and recovery guidance.
 
-This is the largest reasonable next unit because current occurrence identity and disposition are the
-state contract required by the later scoped Scan, Preview, Organize and recovery Tasks. It can be
-accepted independently through durable FileIndex reload, replacement reconciliation and the
-read-only FileIndex journey without introducing those later execution workflows.
+This is the largest reasonable next unit because later Preview and Organize admission must consume a
+known discovery boundary and durable current-occurrence state. It completes the discovery operation
+without coupling analysis, metadata lookup, planning, execution authority or Worker readiness into
+the same Task.
 
 ## Implementation Scope
 
 ```text
-Domain -> Persistence/migration -> discovery/result integration -> Application -> versioned API
--> Operator Web -> tests
+Domain/task scope -> persistence -> scan application runner -> versioned API -> Operator Web -> tests
 ```
 
-- **Domain:** add bounded, immutable source-occurrence identity/fingerprint evidence and a distinct
-  processing-disposition model. Keep `(Storage ID, ResourceLibrary ID, Storage-relative path)` as
-  the FileIndex location identity, but do not use it as the occurrence identity. Evidence must be
-  deterministic, secret-free, provider-neutral and based only on the Storage abstraction; do not
-  use FFprobe/FFmpeg or media-stream inspection. Define an explicit legacy/unverified state rather
-  than inferring success from old rows.
-- **Persistence:** add the minimum durable current-occurrence pointer/history, fingerprint
-  evidence, disposition, prior-result relevance and Reprocess audit/request state. Migrate fresh
-  and existing runtime databases without dropping FileIndex, Task, TaskItem, Result, checkpoint,
-  authority or automation state. Updates that reconcile an occurrence or admit Reprocess must be
-  atomic and bounded; concurrent/stale requests must fail closed.
-- **Discovery integration:** update the existing FileIndex discovery/upsert path so an unchanged
-  source retains its occurrence, a changed or replaced source at the same Storage/path receives a
-  new occurrence, and an incomplete/cancelled/failed scan cannot fabricate `Missing`. Preserve the
-  existing full-scan reconciliation boundary and zero-mutation Scanner semantics. Do not add the
-  file-/ResourceLibrary-scoped Scan submission journey in this Task.
-- **Task/Result integration:** correlate existing TaskItem/Result evidence to the occurrence that
-  was actually observed by the work. Project at least successful/organized, skipped, attention/conflict,
-  review, partial, failed and unknown/unverified outcomes without deriving disposition from
-  `scanStatus`. COPY and Skip must leave the source occurrence present with its independent
-  disposition; a MOVE result must not claim the source is missing until discovery observes that fact.
-  Results for an old occurrence remain historical and cannot suppress or satisfy a replacement
-  occurrence.
-- **Application:** provide one read projection service for FileIndex list/detail and one bounded,
-  auditable Reprocess admission operation. Reprocess must be bound to the exact `fileId`, current
-  occurrence identity/fingerprint and current state, use existing least-privilege authorization,
-  and expose one explicit next action for the later Scan/Preview workflow. It must not execute work,
-  clear history, grant authority or silently reset an unrelated occurrence.
-- **API:** extend the explicit `/api/v1/file-index` list/detail contract, retaining compatible
-  aliases where required, with orthogonal scan/discovery state, current occurrence evidence,
-  processing disposition, prior-result relevance, effect/retry facts where available and bounded
-  actions. Add the corresponding explicit Reprocess write route(s) through the same application
-  service, with stable validation/concurrency errors, actor audit, redaction and no arbitrary path,
-  operation or Provider payload accepted in the request body.
-- **Operator Web:** FileIndex list/detail visibly separates scan status from processing disposition,
-  identifies the current occurrence and marks historical or unverified results as such. Show
-  Reprocess only when the current occurrence is eligible, require explicit confirmation, and render
-  the durable result and next action after admission or failure. Keep the 27.1 `Files` browser
-  read-only and free of processing-disposition claims.
-- **Tests:** cover domain transitions, persistence migration/reload, same-path replacement,
-  unchanged/copy/skip/move/missing cases, incomplete-scan protection, result relevance,
-  duplicate/stale Reprocess requests, API/Web parity, RBAC, redaction and zero Storage/Provider/
-  Task/authority side effects using temporary roots, fakes or isolated local services.
+- **Domain and application:** define a bounded manual Scan request for one exact current FileIndex
+  source item or one configured ResourceLibrary, with explicit `FULL`/`INCREMENTAL` mode where the
+  existing configuration allows it. Bind a file request to the current `fileId`, occurrence and
+  fingerprint; stale or replaced sources fail closed with a durable next action. Reuse the
+  Storage-port-only `StorageScanner` and existing Scanner cancellation/progress semantics.
+- **Task persistence/runtime:** admit a durable Scan Task containing scope kind, scope identity,
+  mode, configuration snapshot identity, status, progress, cancellation request, completion/error
+  state and bounded per-scope/per-item outcomes. Reloaded Tasks must retain the original scope and
+  must not silently broaden to a whole ResourceLibrary. A cancelled, failed or partial Scan must
+  remain distinguishable from a completed full reconciliation.
+- **Execution boundary:** run only discovery/index refresh for this Task. FileIndex updates must use
+  the current-occurrence lifecycle from Task 27.2, and a file-scoped request must not reconcile
+  unrelated FileIndex records as Missing. Do not invoke Metadata Providers, Preview, Planner,
+  OrganizerExecutor, execution authority or mutating Storage methods.
+- **API:** add explicit versioned Scan admission, Task read/detail and cancellation routes through
+  the shared application service. Accept only bounded scope identifiers and declared mode; do not
+  accept arbitrary paths, operations, Provider payloads or execution authority. Preserve RBAC,
+  validation, audit, redaction, bounded errors and pagination. Viewer/read access must not admit or
+  cancel work.
+- **Operator Web:** expose Scan actions from the real `Files` and indexed `FileIndex` journeys for
+  the selected exact item or ResourceLibrary scope. Show the durable Task, scope, mode, progress,
+  per-item discovery result, cancellation state, failure stage, known effects, retry safety and one
+  concrete next action. Keep successful or unaffected sibling scopes/items visible and independent.
+- **Tests:** use temporary Local roots, fake Storage and isolated repositories. Cover file and
+  ResourceLibrary scope, full/incremental behavior, stale occurrence rejection, bounded cancellation,
+  reload, partial/failure reconciliation protection, concurrent scope isolation, API/Web parity,
+  RBAC, redaction and zero Provider/Storage-mutation side effects.
 
 Frozen unless a listed Acceptance Criterion cannot be met without a minimal compatible change:
 
 - `SLICE.md`, its Base SHA, Required Outcomes, Required Surfaces, Safety Invariants and Explicitly
   Deferred entries;
-- the Task 27.1 real-Storage Files browser contract, cursor/confinement semantics and membership
-  projection;
-- new file-/ResourceLibrary-scoped Scan submission and durable Scan Task orchestration (next Task);
-- Preview findings, manual Organize admission/execution, conflict/review/recovery continuation and
-  Worker registration/readiness (later Tasks);
-- Recognition, Metadata, Naming, Classification, OrganizePlan, OrganizerExecutor, Storage mutation
-  semantics, scheduled automation and manual execution authority, except for the minimum compatible
-  result-linkage hook required to preserve occurrence correctness;
-- `config/alist.json`, real credentials, private endpoints and user media.
+- Task 27.1 real-Storage Files browser and Task 27.2 current-occurrence/disposition contracts;
+- Preview findings and production-equivalent analysis/planning (RO-4);
+- manual Organize admission/execution, attachment handling and mutation behavior (RO-5);
+- conflict/review/recovery continuation (RO-6) and Worker registration/readiness/fencing (RO-7);
+- OrganizerExecutor, Storage mutation/fallback policy, scheduled automation and configuration
+  lifecycle behavior.
 
 ## Acceptance Criteria
 
-- [ ] FileIndex exposes `scanStatus`/discovery state and `processingDisposition` as separate
-      durable fields. A scan-state change cannot silently rewrite a processing outcome, and a
-      processing outcome cannot be inferred merely from `READY`, `MISSING` or another scan status.
-- [ ] Repeated observation of an unchanged current file retains the same occurrence identity and
-      preserves its disposition. A changed or replaced file at the same Storage/path gets a new
-      current occurrence with sufficient bounded fingerprint evidence; prior results remain linked
-      to the old occurrence or explicitly `not current` and cannot suppress the new one.
-- [ ] Fingerprint/identity uncertainty, legacy rows, unreadable source evidence and conflicting
-      reconciliation fail closed into an explicit unverified/attention state with durable state,
-      known effects, retry safety and one concrete next action. No success or currentness is
-      fabricated from a path-only match.
-- [ ] Discovery reconciliation preserves the existing safety boundary: a cancelled, failed or
-      partial/incomplete scan does not fabricate `Missing`; a completed full-scan observation may
-      mark a source missing. COPY and Skip keep the source occurrence present with independent
-      dispositions, while MOVE can become source-missing only after discovery confirms absence.
-- [ ] Existing TaskItem/Result outcomes are correlated to the occurrence observed by the work. At
-      minimum, organized/successful, skipped, attention/conflict/review, partial, failed and
-      unknown/unverified outcomes are projected with bounded effect/retry information, while
-      successful or failed history for an older occurrence remains visible but does not become the
-      current occurrence's outcome.
-- [ ] An explicit Reprocess request is admitted only for an eligible exact current `fileId` and
-      occurrence, records a bounded actor/audit and durable state, rejects duplicate, stale,
-      missing, ambiguous and wrong-state requests atomically, and exposes the exact next action
-      for later explicit analysis. It creates no Storage mutation, Provider request, Task/Job,
-      Preview, review obligation or execution authority.
-- [ ] Authenticated API and Operator Web expose the same occurrence/disposition/relevance state,
-      validation, RBAC, pagination, redaction, audit and Reprocess safety semantics. Viewer/read
-      access cannot admit Reprocess or mutate durable lifecycle state, and no request body can
-      supply an arbitrary path, operation or provider payload.
-- [ ] The 27.1 `Files` response remains a real configured-Storage read surface and does not claim
-      current occurrence, processing disposition or organization outcome from membership alone.
-- [ ] Fresh and pre-Task-27.2 runtime databases migrate and reload without loss of existing
-      FileIndex, Task, TaskItem, Result, checkpoint, configuration-authority or automation state;
-      legacy lifecycle values are explicit and bounded.
-- [ ] Required T4 tests, safety scans and quality gates pass. The checkpoint contains only this
-      Task's coherent changes and introduces no real credentials, private endpoints, user media or
-      `config/alist.json`.
+- [ ] Authenticated operator/admin API and Web can admit a manual Scan for exactly one current
+      FileIndex source item or one configured ResourceLibrary, with an explicit bounded mode and no
+      arbitrary path or execution fields in the request.
+- [ ] Admission validates the exact Active runtime binding and, for file scope, the current
+      `fileId`/occurrence/fingerprint. Stale, missing, ambiguous, unready or replaced sources fail
+      closed with bounded durable state and a concrete next action; no Task is created on rejected
+      admission.
+- [ ] Each accepted Scan creates a durable Task before execution, persists scope/mode/configuration
+      identity, exposes status/progress/errors after reload, and preserves independent item outcomes
+      without hiding or overwriting sibling state.
+- [ ] ResourceLibrary-scoped Scan preserves existing configured FULL/INCREMENTAL discovery behavior;
+      only a completed full-scope traversal may reconcile absence, while file-scoped and incomplete,
+      failed or cancelled scans cannot fabricate `Missing` outside their observed boundary.
+- [ ] Cancellation is an explicit persisted request with cooperative bounded behavior. A cancelled
+      or partial Task is not reported as successful, does not claim full reconciliation, and exposes
+      safe retry/recovery guidance. Repeating a safe discovery request does not duplicate or broaden
+      the original scope.
+- [ ] Scan execution performs zero organization, metadata/provider, planning, authority or
+      mutating Storage operations. All reads and FileIndex writes remain behind existing interfaces;
+      no hard-coded filesystem/network access or implicit Worker subprocess startup is introduced.
+- [ ] API and Operator Web use matching application behavior, permissions, validation, status,
+      audit, redaction, pagination and actionable failure semantics. Read-only access cannot admit,
+      cancel or mutate a Scan Task.
+- [ ] Focused and required T4 tests cover success, invalid/stale input, conflict/concurrency,
+      cancellation, partial/failure, reload and sibling isolation; the checkpoint contains only
+      this Task's coherent changes and no private config, credentials, endpoints or user media.
 
 ## Required Tests
 
-Run from the repository root with the project environment. Add the Task-specific lifecycle module
-to the focused command once created:
+Run from the repository root with the project environment. Add the Task-specific module once created:
 
 ```bash
 .venv/bin/python -m unittest \
-  tests.test_file_index_lifecycle \
+  tests.test_manual_scan \
   tests.test_scanner \
-  tests.test_file_catalog \
-  tests.test_file_catalog_api \
+  tests.test_file_index_lifecycle \
   tests.test_task_persistence \
-  tests.test_migration_rehearsal \
   tests.test_api_security \
-  tests.test_operator_ui
+  tests.test_operator_ui \
+  tests.test_automation_api
 .venv/bin/python -m unittest discover -s tests
 .venv/bin/ruff format --check mediaflow tests
 .venv/bin/ruff check mediaflow tests
@@ -165,83 +148,106 @@ to the focused command once created:
 git diff --check
 ```
 
-The focused tests must prove same-path unchanged/replaced behavior, source-fingerprint or
-occurrence uncertainty, COPY/Skip/MOVE/Missing and incomplete-scan semantics, reload/migration,
-result relevance, duplicate/stale Reprocess requests, API/Web parity, RBAC, redaction and that
-read/admission paths do not construct Providers, call mutating Storage methods, create Tasks/Jobs,
-create reviews or grant execution authority. Use temporary Local roots, fakes or isolated local
-services only. Record full-suite skips, baseline/environment failures and unavailable production
-SMB/OpenList/AWS S3/Cloudflare R2 gates truthfully; fake behavior is not production compatibility.
-
-Also run the applicable repository configuration validation, forbidden FFprobe/FFmpeg scan,
-private-config/secret scan and migration/persistence checks. Do not contact production Storage,
-Provider services or use user media.
+Also run applicable configuration validation, migration/persistence checks, Markdown link
+validation, private-config/secret scan and forbidden FFprobe/FFmpeg scan. Record unavailable
+production SMB/OpenList/AWS S3/Cloudflare R2 and multi-process gates as `SKIP / UNAVAILABLE`; use no
+production credentials, private endpoints or user media.
 
 ## Non-goals
 
-- File-/ResourceLibrary-scoped Scan commands, durable Scan Job/Task orchestration, cancellation or
-  per-scope worker execution (Slice 27 RO-3).
-- Complete analysis-only Preview findings and production-equivalent parse/recognition/metadata/
-  naming/classification planning (Slice 27 RO-4).
-- Manual Organize admission/execution, one-shot authority, attachment handling or mutation behavior
-  (Slice 27 RO-5).
-- Conflict/Review/Recovery continuation, automatic replay rules, batch sibling recovery or Worker
-  readiness/fencing (Slice 27 RO-6 and RO-7).
-- New Storage providers, mutation-based capability probes, recursive/unbounded browsing, arbitrary
-  host filesystem access, Metadata Provider switching, built-in identity, Secret Store integration,
-  Docker release work or Slice 28 administration.
-- Redesign of the closed processing pipeline, Scanner semantics beyond the minimum lifecycle hook,
-  OrganizerExecutor, Storage mutation/fallback policy, scheduled automation or execution authority.
+- Analysis-only Preview, parse/recognition/metadata/naming/classification planning or Preview finding
+  persistence (RO-4).
+- Manual Organize admission/execution, one-shot authority, attachments or any Storage mutation
+  (RO-5).
+- Conflict/Review/Recovery continuation, automatic replay or batch recovery (RO-6).
+- Worker registration/readiness/fencing, API health integration or implicit Worker supervision
+  (RO-7).
+- New Storage providers, arbitrary host-path browsing, recursive/unbounded scope expansion,
+  configuration lifecycle changes, scheduled automation redesign, Docker release work or Slice 28
+  administration.
+- Changes to the closed Scanner/Parser/Recognition/Metadata/Naming/Classification/OrganizerExecutor
+  semantics beyond the minimum bounded manual-Scan integration required here.
 - Optional proof, broad UI redesign, test-only cleanup, P2/P3 polish or work outside Slice 27.
 
 ## Developer Completion Report
 
 ### Changed Files
-
-- Lifecycle domain, FileIndex contracts, scanner projection, and task/result persistence: `mediaflow/domain/file_lifecycle.py`, `mediaflow/domain/file_index.py`, `mediaflow/domain/scanner.py`, `mediaflow/domain/storage.py`, `mediaflow/domain/task_persistence.py`.
-- Application and infrastructure lifecycle behavior: `mediaflow/application/file_index_lifecycle.py`, `mediaflow/application/file_catalog.py`, `mediaflow/application/scanner.py`, `mediaflow/application/task_runtime.py`, `mediaflow/infrastructure/file_index_schema.py`, `mediaflow/infrastructure/memory_file_index.py`, `mediaflow/infrastructure/sqlite_file_index.py`, `mediaflow/infrastructure/sqlite_runtime.py`, `mediaflow/infrastructure/local_storage.py`, `mediaflow/infrastructure/s3_storage.py`.
-- Operator surfaces: `mediaflow/interfaces/service_api.py`, `mediaflow/interfaces/operator_ui.py`.
-- Tests: `tests/test_file_index_lifecycle.py`, scanner/migration coverage, and runtime schema-version fixtures in the configuration tests.
-- Documentation: `docs/architecture.md`, `docs/product-experience.md`, `docs/release.md`.
+- `mediaflow/domain/manual_scan.py`
+- `mediaflow/application/manual_scan.py`
+- `mediaflow/application/scanner.py`
+- `mediaflow/application/storage_browser.py`
+- `mediaflow/infrastructure/sqlite_runtime.py`
+- `mediaflow/interfaces/service_api.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `tests/test_manual_scan.py`
 
 ### Implemented
-
-- Added deterministic, Storage-only source fingerprints and explicit source occurrences, including verified, unverified, and migrated-legacy states, occurrence history, and independent processing dispositions.
-- Added additive runtime schema 32 migration and exact occurrence/fingerprint linkage for FileIndex, TaskItems, and ResultRecords. Source replacement, incomplete scans, unreadable sources, stale reconciliation, and operation effect certainty now preserve bounded durable state without allowing old results to represent a new occurrence.
-- Added a shared FileIndex lifecycle projection for API and Web. The Files browser remains read-only and separate from FileIndex; operator-facing data distinguishes discovery state, processing disposition, current occurrence, prior-result relevance, and recovery guidance.
-- Added exact, RBAC-protected Reprocess admission with required current occurrence and fingerprint, duplicate/unsafe-state rejection, audit information, and no Task creation, provider request, or storage mutation.
+- Added bounded file- and ResourceLibrary-scoped manual Scan admission with exact current
+  FileIndex occurrence/fingerprint validation, Active configuration snapshot pinning, strict
+  request fields, and secret-free durable errors.
+- Added durable generic Task and manual-Scan scope/per-item persistence, reloadable progress,
+  cooperative cancellation, same-library concurrency isolation, and cancellation-wins
+  finalization.
+- Reused the Storage-port-only scanner for exact file refresh and configured full/incremental
+  traversal; only a completed full ResourceLibrary traversal can reconcile absence, while
+  file-scoped, partial, failed, and cancelled work cannot mark unrelated records Missing.
+- Added shared authenticated API/Task detail/cancellation routes and Operator Web actions/state
+  rendering. Execution stays discovery-only: no Provider, Preview, Planner, authority,
+  OrganizerExecutor, or mutating Storage operation is invoked.
 
 ### Tests and Results
-
-- PASS — `.venv/bin/python -m unittest tests.test_file_index_lifecycle tests.test_scanner tests.test_file_catalog tests.test_file_catalog_api tests.test_task_persistence tests.test_migration_rehearsal tests.test_api_security tests.test_operator_ui` — 101 tests.
-- FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python -m unittest discover -s tests` — 1178 tests, 9 failures, 7 skips, 0 errors. The three queue-full failures also reproduce at exact Task Base `ebe31799a38d07e1dc02aa4a9a343739461e6123` (Base: 1167 tests, 3 failures, 7 skips). The other six failures are credential/configuration/CLI/storage cases reading the existing ignored private `config/alist.json` and local runtime state; the clean Base worktree does not reproduce them.
-- PASS — `.venv/bin/ruff format --check mediaflow tests` (242 files), `.venv/bin/ruff check mediaflow tests`, `.venv/bin/python -m compileall -q mediaflow tests`, `.venv/bin/pip check`, and `git diff --cached --check`.
-- PASS — `.venv/bin/mediaflow --config config/strategy.example.json config validate` and `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`.
-- PASS — repository scan found no `FFprobe`/`FFmpeg` matches in `mediaflow` or `pyproject.toml`; `config/alist.json` remains ignored, untracked, and absent from the diff.
-- SKIP / UNAVAILABLE — production SMB/OpenList/S3/R2/TMDB services were not contacted because no external credentials or services were in scope; coverage uses fakes, local test servers, and temporary local storage.
+- `PASS` — `.venv/bin/python -m unittest tests.test_manual_scan tests.test_scanner tests.test_file_index_lifecycle tests.test_task_persistence tests.test_api_security tests.test_operator_ui tests.test_automation_api` — 118 tests.
+- `PASS` — `.venv/bin/python -m unittest tests.test_manual_scan` — 9 tests.
+- `PASS` — temporary LocalStorage + SQLite FileIndex/Task repository integration — exact file
+  Scan completed, source bytes remained unchanged, and full reconciliation was not claimed.
+- `FAIL / PRE-EXISTING / UNRELATED` — `.venv/bin/python -m unittest discover -s tests` — 1187
+  tests, 9 failures, 7 skips, 0 errors. The failures reproduce the Task 27.2 baseline: two
+  shared credential/configuration-environment assertions, one final-integration CLI assertion,
+  three existing queue-full assertions, one shared ResourceLibrary CLI configuration assertion,
+  and two shared runtime-Storage configuration assertions.
+- `PASS` — `.venv/bin/ruff format --check mediaflow tests` — 245 files already formatted.
+- `PASS` — `.venv/bin/ruff check mediaflow tests`.
+- `PASS` — `.venv/bin/python -m compileall -q mediaflow tests`.
+- `PASS` — `.venv/bin/pip check` — no broken requirements found.
+- `PASS` — `git diff --check` and staged-diff check.
+- `PASS` — `.venv/bin/mediaflow --config config/strategy.example.json config validate`.
+- `PASS` — `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`.
+- `PASS` — `.venv/bin/python -m unittest tests.test_migration_rehearsal tests.test_sqlite_backup tests.test_sqlite_restore tests.test_task_persistence` — 22 tests.
+- `PASS` — Markdown local-link validator over tracked Markdown — 123 files, 38 local links,
+  0 broken.
+- `PASS` — `git check-ignore -v config/alist.json` plus staged/private-file scan — ignored,
+  untracked, unstaged; no private credential file staged.
+- `PASS` — forbidden FFprobe/FFmpeg scan over `mediaflow` and `pyproject.toml` — no matches.
+- `SKIP / UNAVAILABLE` — production SMB, OpenList, AWS S3, Cloudflare R2, and multi-process
+  concurrency gates; no production services or credentials were authorized, so only fake and
+  temporary LocalStorage coverage was run.
 
 ### Decisions
-
-- A source occurrence is tied to the stable storage/library/path identity plus a deterministic fingerprint; the scanner does not read file content or inspect streams.
-- Only a completed full scan may reconcile missing entries. Partial, failed, cancelled, or unreadable discovery does not turn a source into Missing; stale late reconciliation is represented as bounded Attention state.
-- Reprocess is an admission record for the exact current occurrence. It deliberately creates no workflow and performs no provider, task, or storage operation.
-- Legacy rows are migrated explicitly as `LEGACY` rather than being presented as verified current evidence; result relevance is exact-occurrence and fingerprint-aware.
+- Kept the runtime schema marker at 32 and added idempotent manual-Scan companion tables without
+  changing the existing Task/TaskItem column contract; migration/persistence checks remain green.
+- Pinned the runner to the exact Active configuration snapshot and constructed only the selected
+  Storage for a scan scope; a changed snapshot fails the persisted Task rather than broadening it.
+- Used occurrence ID plus verified fingerprint as the file admission and execution boundary;
+  scanner reads remain `stat`/`list` only and FileIndex writes remain behind the existing port.
+- Kept cancellation cooperative and durable, with persisted item outcomes and explicit next
+  actions instead of treating retry as recovery.
 
 ### Remaining In-Slice Work
-
-- Other Slice 27 journeys, including preview/confirmation, manual organize execution, conflict or review recovery, and worker readiness, remain outside this Task.
+- Slice 27 Preview, Organize, Recovery, and Worker outcomes remain outside this Task.
 
 ### Risks / Deviations
-
-- The full-suite failures listed above remain for B to classify; no unrelated queue/configuration behavior was changed to manufacture a green result.
-- Production storage and metadata-provider compatibility is not live-verified in this environment. Existing SQLite ResourceWarnings from unclosed test connections remain non-blocking and pre-existing.
-- Existing unrelated `SLICE.md`, `docs/roadmap.md`, `nohup.out`, and `worker.log` worktree changes were preserved and are not part of the checkpoint.
+- Full regression is `FAIL / PRE-EXISTING / UNRELATED` as listed above; existing SQLite
+  `ResourceWarning` messages about unclosed test connections were also emitted.
+- Production remote-provider and multi-process behavior is unverified because the required
+  services/credentials were unavailable and out of scope.
+- Pre-existing `SLICE.md`, `docs/roadmap.md`, `nohup.out`, and `worker.log` changes were
+  preserved and not included; `config/alist.json` was not accessed or staged.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 75c64eb3f6d65a09211acdeaa232a1e6cbddf0ea
+Head SHA: 2222647b2b269a967a11e9904d32d76d48d978dd
 ```
 
 ## B Review Result
