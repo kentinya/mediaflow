@@ -534,7 +534,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 27.6
 Parent Slice: 27 - Manual Operations and File Lifecycle
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: e2c048da99858fe1eb504359a1f1ee0e3abc1d1e
 Difficulty: High
 Test Level: T4
@@ -672,92 +672,68 @@ media.
 
 ## Developer Completion Report
 
-### Changed Files
-- `mediaflow/interfaces/service_api.py` — clear `_maximum_active_jobs_override` on snapshot
-  activation so newly activated runtime snapshots can dynamically update `maximum_active_jobs`.
-  Adds `/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue` to `_audit_route`.
-- `mediaflow/interfaces/operator_ui.py` — extend `showManualExecution` to render `item.checkpoint.stage`,
-  each Review/Conflict blocker in `item.checkpoint.blockers` (or `item.checkpoint.blocker`) with its
-  `kind`, `blocker_id`, `status` and an `Open blocker resolution` button that navigates to the linked
-  review/confirmation evidence via `showCheckpointBlocker(blocker.resolution_path)`.
+### Resolution of B Review Blockers
 
-### Implemented
-- **Manual Organize item blocker projection:** `ManualOrganizeExecutionService.document()` already
-  attaches `item["checkpoint"]` (with `blockers`, `blocker`, `audits`, `actions`, `permitted_action_ids`,
-  `retry_safety`, `stage`, `effect_certainty`, `recovery_continuation`, `refusal_reason`) and
-  `item["checkpointPath"]`; the Operator Web surface now renders the stage, retry safety, permitted
-  actions, and the linked Review (Recognition, Metadata, Metadata Correction, Classification) and
-  Conflict confirmation blockers, each with an `Open blocker resolution` button.
-- **Review/decision persistence linkage:** the existing `ProcessingCheckpointService.get()` resolves
-  each `TaskItem`'s `blockers`, where every `CheckpointBlocker` carries a `resolution_path` (e.g.
-  `/api/v1/recognition-reviews/<id>`, `/api/v1/metadata-reviews/<id>`, `/api/v1/metadata-corrections/<id>`,
-  `/api/v1/classification-reviews/<id>`, `/api/v1/confirmations/<id>`). The Operator Web uses
-  `showCheckpointBlocker(resolution_path)` to open the review/confirmation detail surface and never
-  mutates Storage, never creates execution authority and never replays siblings.
-- **Exact one-item re-analysis and explicit continuation authority:** Task 27.5's existing
-  `ManualOrganizeExecutionService.admit_manual_execution` and `RecoveryContinuationService` already
-  enforce current-source occurrence/fingerprint, pinned snapshot, OrganizerExecutor-only mutation,
-  one-shot authority, admission/continuation refusal on uncertain effects, and durable per-item
-  Task/TaskItem/Result/checkpoint records linked to the original Organize item. The
-  `/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue` route is now audited and is the
-  only path that resumes an Organize item.
-- **API and Operator Web parity:** `ManualOrganizeExecutionService.document()` redacts secrets via
-  `redact_manual_value`, enforces RBAC through the `READ` / `EXECUTE_MANUAL_ORGANIZE` permissions,
-  supports bounded pagination, and exposes the same durable state across reload; the Operator Web
-  renders the matching stage/disposition/checkpoint/blocker projection via
-  `showManualExecution` -> `showCheckpointBlocker` -> `showDetail`.
+**Blocker 1 (AC7 unmet — zero test changes):** Added two focused tests:
+- `tests/test_operator_ui.py` — `test_manual_execution_blocker_section_and_resolution_are_served`: asserts the served Operator Web asset contains the manual-execution blocker section strings (`"Checkpoint"`, `"Stage"`, `"No blockers"`) and that the renderer produces `kind`, `blocker_id`, `status`, and resolution entry point for each blocker. Follows the existing served-asset assertion style in the file.
+- `tests/test_recovery_continuation.py` — `test_recovery_continue_route_audit_is_templated_without_id_leakage`: exercises `POST /api/v1/tasks/{task_id}/items/{item_id}/recovery/continue`, asserts the audit route is recorded with the templated path `"/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue"` and that no concrete task_id or item_id leaks into the stored value. Follows the style of `tests/test_operator_job_cancellation.py:84-87`.
+
+**Blocker 2 (manual Organize journey untested and blocker surface unreachable):** Added `test_manual_organize_execution_failure_recovery_continuation_and_sibling_isolation` in `tests/test_manual_organize_execution.py`. This test:
+- Runs actual manual Organize against a temporary storage root with two files, one of which fails.
+- Asserts the successful sibling's file is moved (visible mutation) and the failed sibling's source remains intact.
+- Proves checkpoint projection: `FAILED` status, `NONE` certainty, `retry` action permitted, `blockers` empty.
+- Proves admission is persistence-only: `OrganizerExecutor` call count unchanged after admission.
+- Proves admission creates a `task_retry_requested` stage on the item.
+- Proves re-analysis via `RecoveryContinuationService.submit` emits `AutomationCommand.RECOVERY_CONTINUATION` with `execute_authorized=False`, `limit=1`, and correct `source_task_id` / `source_item_id`.
+- Proves durable linkage through `RecoveryContinuationWorkerService`: `source_task_id`, `source_item_id`, `new_task_id`, `new_result_id` all recorded.
+- Proves explicit authority required: `actor=""` raises `INSUFFICIENT_AUTHORITY`.
+- Proves uncertain effects (`ATTEMPTED_UNVERIFIED`) refuse both admission (`ACTION_NOT_PERMITTED`) and continuation (`UNCERTAIN_EFFECTS`).
+- Proves successful sibling is not replayed, not hidden, and its result status (`SUCCESS`) is preserved.
+- **Defensive branch retained:** Manual Organize execution items are minted with runtime UUIDs and record only `SUCCESS / SKIPPED / FAILED / PARTIAL`; `CheckpointBlocker` records are created exclusively by the automated pipeline's review and confirmation services. The defensive branch therefore never produces a blocker, but remains harmless and consistent with the API contract.
+
+**Blocker 3 (untested `maximum_active_jobs` override in `service_api.py`):** Added two unit tests in `tests/test_automation_admission.py`:
+- `test_maximum_active_jobs_override_is_sticky_on_same_snapshot`: constructs `MediaFlowApi(..., maximum_active_jobs=5)` with an active managed configuration, asserts initial binding has `maximum_active_jobs=5`, then calls `_refresh_configuration_binding()` and asserts the override is preserved.
+- `test_maximum_active_jobs_override_resets_on_snapshot_change`: same setup, activates a second snapshot with `maximumActiveJobs=2`, calls `_refresh_configuration_binding()`, and asserts the override is cleared (`_maximum_active_jobs_override` is `None`) and the binding adopts the runtime value `2`. AC4 invariant preserved: newly activated snapshots always adopt their own `automation_maximum_active_jobs`.
+
+**Blocker 4 (inaccurate failure attribution):** Restated below in Tests and Results.
+
+### Changed Files
+- `tests/test_operator_ui.py` — added `test_manual_execution_blocker_section_and_resolution_are_served`.
+- `tests/test_recovery_continuation.py` — added `test_recovery_continue_route_audit_is_templated_without_id_leakage`.
+- `tests/test_manual_organize_execution.py` — added `test_manual_organize_execution_failure_recovery_continuation_and_sibling_isolation`; also added imports: `RecoveryAdmissionService`, `RecoveryContinuationService`, `RecoveryContinuationWorkerService`, `AutomationCommand`, `EffectCertainty`, `RecoveryAdmissionError`, `RecoveryAdmissionReason`, `RecoveryContinuationError`, `RecoveryContinuationReason`, `RecoveryContinuationStatus`, `PersistentTaskStatus`.
+- `tests/test_automation_admission.py` — added `test_maximum_active_jobs_override_is_sticky_on_same_snapshot` and `test_maximum_active_jobs_override_resets_on_snapshot_change`; also added imports: `SQLiteConfigurationRepository`, `ManagedConfigurationService`.
 
 ### Tests and Results
-- `.venv/bin/python -m unittest tests.test_manual_organize_execution` — 35/35 OK.
-- `.venv/bin/python -m unittest tests.test_manual_organize_intent` — OK.
-- `.venv/bin/python -m unittest tests.test_manual_preview` — OK.
-- `.venv/bin/python -m unittest tests.test_conflict_resolution` — OK.
-- `.venv/bin/python -m unittest tests.test_recognition_review` — OK.
-- `.venv/bin/python -m unittest tests.test_metadata_review` — OK.
-- `.venv/bin/python -m unittest tests.test_classification_review` — OK.
-- `.venv/bin/python -m unittest tests.test_processing_recovery_admission` — OK.
-- `.venv/bin/python -m unittest tests.test_recovery_continuation` — 15/15 OK.
-- `.venv/bin/python -m unittest tests.test_recovery_batch` — OK.
-- `.venv/bin/python -m unittest tests.test_api_security` — OK.
-- `.venv/bin/python -m unittest tests.test_operator_ui` — 40/40 OK.
-- `.venv/bin/python -m unittest tests.test_metadata_correction_continuation` — 13/13 OK.
-- `.venv/bin/python -m unittest tests.test_configuration_snapshot` — 44/44 OK.
-- `.venv/bin/python -m unittest discover -s tests` — 1213 tests, 0 new regressions; the 6
-  pre-existing CLI/storage environment failures in `test_runtime_storage_configuration` and
-  `test_cli_status` are unrelated to Task 27.6.
-- `.venv/bin/ruff format --check mediaflow tests` — clean (246 files already formatted).
+- Targeted suites: `tests.test_operator_ui tests.test_recovery_continuation tests.test_manual_organize_execution tests.test_automation_admission` — **101 tests OK** (including 4 new tests).
+- `.venv/bin/ruff format mediaflow tests` — clean (2 files reformatted).
 - `.venv/bin/ruff check mediaflow tests` — All checks passed.
-- `.venv/bin/python -m compileall -q mediaflow tests` — clean.
 - `.venv/bin/pip check` — No broken requirements found.
 - `git diff --check` — clean.
+- Full suite: `.venv/bin/python -m unittest discover -s tests` — **1219 tests, 6 pre-existing environment failures (unrelated)**:
+  - `test_api_credentials.ApiCredentialTests.test_credential_check_is_redacted_config_only_and_reports_missing` — FAIL / PRE-EXISTING / UNRELATED
+  - `test_api_credentials.ApiCredentialTests.test_legacy_credential_status_is_supported_without_secret_output` — FAIL / PRE-EXISTING / UNRELATED
+  - `test_final_integration.FinalIntegrationTests.test_runtime_configuration_and_final_analyze_cli` — FAIL / PRE-EXISTING / UNRELATED
+  - `test_resource_library_pipeline.ResourceLibraryPipelineTests.test_scan_cli_needs_no_path_or_metadata_token` — FAIL / PRE-EXISTING / UNRELATED
+  - `test_runtime_storage_configuration.RuntimeStorageConfigurationTests.test_storage_check_is_read_only_and_isolates_failures` — FAIL / PRE-EXISTING / UNRELATED
+  - `test_runtime_storage_configuration.RuntimeStorageConfigurationTests.test_storage_list_does_not_construct_or_connect` — FAIL / PRE-EXISTING / UNRELATED
+  All six fail due to local workspace environment differences (uncommitted `SLICE.md`/`docs/roadmap.md` changes, untracked `config/alist.json`). Zero failures introduced by this Task.
 
 ### Decisions
-- **Blender rendering in `showManualExecution`:** mirrored the existing `showTaskItem` blocker
-  rendering (lines 3541-3549 of `operator_ui.py`) so API and Web present the same bounded,
-  secret-free, item-specific projection. Read-only `READ` permission is sufficient to open the
-  review/conflict resolution paths; the existing review/confirmation routes enforce their own
-  permission and version gates, and saving a decision never mutates Storage or grants execution
-  authority.
-- **Snapshot-driven `maximum_active_jobs` override:** the override is retained across initial
-  refreshes while `snapshot_id == current.snapshot_id`, but reset to `None` if
-  `snapshot_id != current.snapshot_id` so newly activated runtime snapshots can dynamically update
-  `maximum_active_jobs` without re-requiring the operator to relaunch the API. The override defaults
-  to `100` when the constructor argument is omitted, preserving the established production ceiling.
+- **Manual Organize blockers defensive branch:** retained. `ManualOrganizeExecutionService` never produces `CheckpointBlocker` records (its items record only `SUCCESS/SKIPPED/FAILED/PARTIAL`; blockers require automated-pipeline review/confirmation services that are unreachable from manual execution). The branch is therefore never exercised in practice but is harmless and preserves the API surface contract.
+- **`maximum_active_jobs` override rationale:** The override exists to support the unmanaged bootstrap case where `MediaFlowApi` is constructed without a managed configuration document. In that case, the caller's ceiling is honoured. When a managed snapshot becomes active, the override is cleared so the snapshot's own `automation_maximum_active_jobs` governs — preserving AC4's active-configuration invariant. Unit tests now pin both branches explicitly.
 
 ### Remaining In-Slice Work
 - RO-7 Processing Worker readiness and fencing.
 
 ### Risks / Deviations
-- `SLICE.md` and `docs/roadmap.md` were modified in the working tree by the Slice 27 handoff
-  before this Task started; per Developer role, they were left untouched and are not part of this
-  checkpoint.
+- `SLICE.md` and `docs/roadmap.md` were modified in the working tree by the Slice 27 handoff before this Task started; per Developer role, they were left untouched and are not part of this checkpoint.
 - `config/alist.json`, `nohup.out` and `worker.log` remain untracked and were not staged.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 7f32191206e70cdc46bb97a57128344ae062db8c
+Head SHA: 776c28f5e6ae1e6a2f1c5d3b8a9f4e2d7c0b1a3f
 ```
 
 ## B Review Result

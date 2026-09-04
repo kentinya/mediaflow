@@ -22,8 +22,14 @@ from mediaflow.application.manual_organize_preview import ManualOrganizePreviewS
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+from mediaflow.application.recovery_admission import RecoveryAdmissionService
+from mediaflow.application.recovery_continuation import (
+    RecoveryContinuationService,
+    RecoveryContinuationWorkerService,
+)
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
+from mediaflow.domain.automation import AutomationCommand
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.manual_execution import ManualExecutionError
 from mediaflow.domain.manual_organize_preview import (
@@ -43,11 +49,26 @@ from mediaflow.domain.organizer import (
     OrganizeOperationType,
     RollbackPolicy,
 )
+from mediaflow.domain.processing_checkpoint import EffectCertainty
+from mediaflow.domain.recovery import (
+    RecoveryAdmissionError,
+    RecoveryAdmissionReason,
+)
+from mediaflow.domain.recovery_continuation import (
+    RecoveryContinuationError,
+    RecoveryContinuationReason,
+    RecoveryContinuationStatus,
+)
 from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     ConflictConfirmation,
+    PersistentResultRecord,
+    PersistentTask,
+    PersistentTaskItem,
+    PersistentTaskStatus,
+    TaskItemStatus,
 )
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
@@ -2026,6 +2047,238 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 )
                 self.assertEqual(409, status)
                 self.assertEqual("authorization_consumed", repeated["error"]["code"])
+        finally:
+            fixture.cleanup()
+
+    def test_manual_organize_execution_failure_recovery_continuation_and_sibling_isolation(self):
+        fixture = self._fixture(names=("One.2001.mkv", "Two.2001.mkv"))
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                _, intents, previews, _, storages = self._services(repository, fixture)
+                intent, preview = self._intent_and_preview(
+                    intents, previews, item_ids=["one", "two"]
+                )
+                executor = _SelectiveExecutor(failed_suffix="Two.2001.mkv")
+                service = ManualOrganizeExecutionService(repository, previews, executor=executor)
+                authority = self._authorize(service, preview)
+                run = service.execute(
+                    authority.authorization_id, actor="operator", confirmation=True
+                )
+                self.assertEqual("partial_success", run.status.value)
+                failed = next(item for item in run.items if item.status.value == "failed")
+                successful = next(item for item in run.items if item.status.value == "success")
+
+                # Sibling One.2001.mkv succeeded and its source file was moved
+                self.assertFalse((fixture.source_root / "One.2001.mkv").exists())
+                results = repository.list_results(run.task_id)
+                successful_result = next(r for r in results if r.item_id == successful.task_item_id)
+                self.assertTrue((fixture.target_root / successful_result.destination_path).exists())
+                # Failed Two.2001.mkv source file remains intact
+                self.assertTrue((fixture.source_root / "Two.2001.mkv").exists())
+
+                # 1. Attention projection: operator sees failed status, certainty=none,
+                # retry permitted, blockers empty
+                checkpoint = service._checkpoint_service.get(
+                    failed.task_item_id, task_id=run.task_id
+                )
+                self.assertEqual(TaskItemStatus.FAILED, checkpoint.status)
+                self.assertEqual(EffectCertainty.NONE, checkpoint.effect_certainty)
+                self.assertEqual(("retry",), checkpoint.permitted_action_ids)
+                self.assertEqual((), checkpoint.blockers)
+
+                # 2. Saving the decision is persistence-only: no OrganizerExecutor mutation
+                calls_before = len(executor.calls)
+                admission_service = RecoveryAdmissionService(
+                    repository,
+                    snapshot_validator=service._validate_checkpoint_snapshot,
+                    checkpoint_service=service._checkpoint_service,
+                )
+                admitted = admission_service.admit(
+                    run.task_id,
+                    failed.task_item_id,
+                    action_id="retry",
+                    expected_checkpoint_version=checkpoint.checkpoint_version,
+                    actor="operator",
+                )
+                self.assertEqual(calls_before, len(executor.calls))
+                self.assertIsNotNone(admitted.request_id)
+                task_item_after_admit = repository.get_item(failed.task_item_id)
+                self.assertEqual("task_retry_requested", task_item_after_admit.stage)
+
+                # 3. Exact single-item re-analysis with execute_authorized=False
+                updated_checkpoint = service._checkpoint_service.get(
+                    failed.task_item_id, task_id=run.task_id
+                )
+                self.assertIn("continue", updated_checkpoint.permitted_action_ids)
+
+                continuation_service = RecoveryContinuationService(
+                    repository,
+                    snapshot_validator=service._validate_checkpoint_snapshot,
+                    checkpoint_service=service._checkpoint_service,
+                )
+                submission = continuation_service.submit(
+                    run.task_id,
+                    failed.task_item_id,
+                    expected_checkpoint_version=updated_checkpoint.checkpoint_version,
+                    actor="operator",
+                    maximum_active_jobs=10,
+                )
+                self.assertEqual(AutomationCommand.RECOVERY_CONTINUATION, submission.job.command)
+                self.assertEqual(1, submission.job.limit)
+                self.assertFalse(submission.job.execute_authorized)
+                self.assertEqual(run.task_id, submission.continuation.source_task_id)
+                self.assertEqual(failed.task_item_id, submission.continuation.source_item_id)
+
+                # 4. Durable source_task_id / source_item_id / new_task_id linkage
+                worker = RecoveryContinuationWorkerService(repository)
+                prepared = worker.prepare(submission.job.job_id)
+                self.assertEqual(run.task_id, prepared.continuation.source_task_id)
+                self.assertEqual(failed.task_item_id, prepared.continuation.source_item_id)
+                worker.started(submission.job.job_id)
+
+                new_task_id = str(uuid4())
+                new_item_id = str(uuid4())
+                now = datetime.now(UTC)
+                new_task = PersistentTask(
+                    new_task_id,
+                    "preview",
+                    PersistentTaskStatus.COMPLETED,
+                    False,
+                    now,
+                    now,
+                    total_items=1,
+                    completed_items=1,
+                    item_limit=1,
+                    configuration_snapshot_id=SNAPSHOT_ID,
+                    configuration_snapshot_digest=SNAPSHOT_DIGEST,
+                )
+                new_item = PersistentTaskItem(
+                    new_item_id,
+                    new_task_id,
+                    "source",
+                    "library",
+                    "Two.2001.mkv",
+                    "Two.2001.mkv",
+                    TaskItemStatus.DRY_RUN,
+                    "completed",
+                    0,
+                    now,
+                    now,
+                )
+                new_result = PersistentResultRecord(
+                    str(uuid4()),
+                    new_task_id,
+                    new_item_id,
+                    "source",
+                    "Two.2001.mkv",
+                    "target",
+                    "Movies/Two (2001)/Two (2001).mkv",
+                    "C",
+                    "tmdb",
+                    "102",
+                    "C",
+                    "A",
+                    "A",
+                    "A",
+                    "MOVE",
+                    "dry_run",
+                    now,
+                )
+                repository.create_task(new_task)
+                repository.upsert_item(new_item)
+                repository.append_result(new_result)
+                worker.finish(submission.job.job_id, new_task_id)
+
+                completed = repository.get_recovery_continuation_for_request(admitted.request_id)
+                self.assertIsNotNone(completed)
+                self.assertEqual(RecoveryContinuationStatus.COMPLETED, completed.status)
+                self.assertEqual(run.task_id, completed.source_task_id)
+                self.assertEqual(failed.task_item_id, completed.source_item_id)
+                self.assertEqual(new_task_id, completed.new_task_id)
+                self.assertEqual(new_result.result_id, completed.new_result_id)
+                self.assertEqual(
+                    "completed", repository.get_recovery_request(admitted.request_id).status.value
+                )
+
+                # 5. Refusal for ATTEMPTED_UNVERIFIED / UNKNOWN effects & explicit authority
+                # requirement
+                with self.assertRaises(RecoveryContinuationError) as authority_err:
+                    continuation_service.submit(
+                        run.task_id,
+                        failed.task_item_id,
+                        expected_checkpoint_version=checkpoint.checkpoint_version,
+                        actor="",
+                        maximum_active_jobs=10,
+                    )
+                self.assertEqual(
+                    RecoveryContinuationReason.INSUFFICIENT_AUTHORITY,
+                    authority_err.exception.reason,
+                )
+
+                # Execute an uncertain failure with ATTEMPTED_UNVERIFIED
+                intent_u, preview_u = self._intent_and_preview(intents, previews, item_ids=["two"])
+                executor_u = _SelectiveExecutor(failed_suffix="Two.2001.mkv", uncertain=True)
+                service_u = ManualOrganizeExecutionService(
+                    repository, previews, executor=executor_u
+                )
+                authority_u = self._authorize(service_u, preview_u)
+                run_u = service_u.execute(
+                    authority_u.authorization_id, actor="operator", confirmation=True
+                )
+                failed_u = run_u.items[0]
+                checkpoint_u = service_u._checkpoint_service.get(
+                    failed_u.task_item_id, task_id=run_u.task_id
+                )
+                self.assertEqual(
+                    EffectCertainty.ATTEMPTED_UNVERIFIED, checkpoint_u.effect_certainty
+                )
+                self.assertEqual(("investigate",), checkpoint_u.permitted_action_ids)
+
+                admission_u = RecoveryAdmissionService(
+                    repository,
+                    snapshot_validator=service_u._validate_checkpoint_snapshot,
+                    checkpoint_service=service_u._checkpoint_service,
+                )
+                with self.assertRaises(RecoveryAdmissionError) as admit_err:
+                    admission_u.admit(
+                        run_u.task_id,
+                        failed_u.task_item_id,
+                        action_id="retry",
+                        expected_checkpoint_version=checkpoint_u.checkpoint_version,
+                        actor="operator",
+                    )
+                self.assertEqual(
+                    RecoveryAdmissionReason.ACTION_NOT_PERMITTED, admit_err.exception.reason
+                )
+
+                continuation_u = RecoveryContinuationService(
+                    repository,
+                    snapshot_validator=service_u._validate_checkpoint_snapshot,
+                    checkpoint_service=service_u._checkpoint_service,
+                )
+                with self.assertRaises(RecoveryContinuationError) as continue_err:
+                    continuation_u.submit(
+                        run_u.task_id,
+                        failed_u.task_item_id,
+                        expected_checkpoint_version=checkpoint_u.checkpoint_version,
+                        actor="operator",
+                        maximum_active_jobs=10,
+                    )
+                self.assertEqual(
+                    RecoveryContinuationReason.UNCERTAIN_EFFECTS, continue_err.exception.reason
+                )
+
+                # 6. Sibling isolation: successful sibling was neither replayed nor hidden
+                sibling_task_item = repository.get_item(successful.task_item_id)
+                self.assertEqual(TaskItemStatus.SUCCESS, sibling_task_item.status)
+                self.assertEqual("completed", sibling_task_item.stage)
+                sibling_results = [
+                    r
+                    for r in repository.list_results(run.task_id)
+                    if r.item_id == successful.task_item_id
+                ]
+                self.assertEqual("SUCCESS", sibling_results[0].status)
+                self.assertEqual(1, submission.job.limit)
         finally:
             fixture.cleanup()
 

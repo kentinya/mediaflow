@@ -1067,6 +1067,36 @@ class RecoveryContinuationTests(unittest.TestCase):
                 self.assertEqual(reopened.get_item(item.item_id).error, "keep me")
                 self.assertEqual(reopened.list_recovery_continuations(item.item_id), ())
 
+    def test_recovery_continue_route_audit_is_templated_without_id_leakage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            source_task, source_item = self._seed_failed_item(environment)
+            admitted, _ = self._admit(environment, source_task, source_item)
+            api = self._api(environment)
+
+            status, checkpoint = api_request(
+                api,
+                f"/api/v1/tasks/{source_task.task_id}/items/{source_item.item_id}",
+            )
+            self.assertEqual(status, 200)
+
+            status, accepted = api_request(
+                api,
+                f"/api/v1/tasks/{source_task.task_id}/items/{source_item.item_id}/recovery/continue",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint["checkpoint_version"]},
+            )
+            self.assertEqual(status, 202)
+
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                audit_routes = [item.route for item in repository.list_security_audit()]
+                self.assertIn(
+                    "/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue",
+                    audit_routes,
+                )
+                self.assertNotIn(source_task.task_id, json.dumps(audit_routes))
+                self.assertNotIn(source_item.item_id, json.dumps(audit_routes))
+
 
 def _coordinator(repository):
     return PersistentTaskCoordinator(repository, repository)

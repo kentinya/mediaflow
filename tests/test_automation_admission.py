@@ -21,6 +21,7 @@ from mediaflow.domain.execution_authorization import ExecutionAuthorizationStatu
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.configuration_snapshot import build_configuration_snapshot
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
+from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -189,6 +190,98 @@ class AutomationAdmissionTests(unittest.TestCase):
         self.assertIn("catch (error) { message(errorText(error), true); }", script)
         for forbidden in ("Force queue", "Purge queue", "Bypass limit"):
             self.assertNotIn(forbidden, script)
+
+    def test_maximum_active_jobs_override_is_sticky_on_same_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime.sqlite3"
+            document = example_document()
+            document["persistence"]["databasePath"] = str(runtime)
+            document["automation"]["maximumActiveJobs"] = 100
+            with (
+                SQLiteConfigurationRepository(runtime) as configuration_repository,
+                SQLiteTaskRepository(runtime) as task_repository,
+            ):
+                from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+
+                def activate_doc(service, doc):
+                    draft = service.import_draft(doc, actor="tester")
+                    validated = service.validate(draft.revision_id, actor="tester")
+                    return service.activate(
+                        validated.revision_id, expected_version=validated.version, actor="tester"
+                    )
+
+                service = ManagedConfigurationService(
+                    configuration_repository, bootstrap_database_path=str(runtime)
+                )
+                first = activate_doc(service, document)
+
+                api = MediaFlowApi(
+                    task_repository,
+                    None,
+                    principals=(ResolvedApiPrincipal("admin", "token", frozenset(ApiPermission)),),
+                    maximum_active_jobs=5,
+                    configuration_service=service,
+                    configuration_snapshot_id=first.revision_id,
+                    configuration_snapshot_digest=first.digest,
+                    bootstrap_document=document,
+                )
+
+                # Override is captured in the initial binding
+                self.assertEqual(api._runtime_binding.maximum_active_jobs, 5)
+
+                # Refreshing the SAME snapshot preserves the override
+                api._refresh_configuration_binding()
+                self.assertEqual(api._runtime_binding.maximum_active_jobs, 5)
+
+    def test_maximum_active_jobs_override_resets_on_snapshot_change(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime.sqlite3"
+            document = example_document()
+            document["persistence"]["databasePath"] = str(runtime)
+            document["automation"]["maximumActiveJobs"] = 100
+            with (
+                SQLiteConfigurationRepository(runtime) as configuration_repository,
+                SQLiteTaskRepository(runtime) as task_repository,
+            ):
+                from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+
+                def activate_doc(service, doc):
+                    draft = service.import_draft(doc, actor="tester")
+                    validated = service.validate(draft.revision_id, actor="tester")
+                    return service.activate(
+                        validated.revision_id, expected_version=validated.version, actor="tester"
+                    )
+
+                service = ManagedConfigurationService(
+                    configuration_repository, bootstrap_database_path=str(runtime)
+                )
+                first = activate_doc(service, document)
+
+                api = MediaFlowApi(
+                    task_repository,
+                    None,
+                    principals=(ResolvedApiPrincipal("admin", "token", frozenset(ApiPermission)),),
+                    maximum_active_jobs=5,
+                    configuration_service=service,
+                    configuration_snapshot_id=first.revision_id,
+                    configuration_snapshot_digest=first.digest,
+                    bootstrap_document=document,
+                )
+
+                self.assertEqual(api._runtime_binding.maximum_active_jobs, 5)
+
+                # Activate a NEW snapshot with a different limit
+                changed = json.loads(json.dumps(document))
+                changed["automation"]["maximumActiveJobs"] = 2
+                activate_doc(service, changed)
+
+                # Snapshot changed: override is cleared, binding adopts runtime value
+                api._refresh_configuration_binding()
+                self.assertEqual(api._runtime_binding.maximum_active_jobs, 2)
+                # The override field is now None
+                self.assertIsNone(api._maximum_active_jobs_override)
 
 
 if __name__ == "__main__":
