@@ -951,6 +951,9 @@ class RuntimeFilesBrowserService:
                         "size": record.size,
                         "modifiedAt": record.modified_at.isoformat(),
                         "updatedAt": record.updated_at.isoformat(),
+                        "occurrenceId": record.occurrence_id,
+                        "fingerprint": record.fingerprint,
+                        "fingerprintState": record.occurrence_state.value,
                     }
                 )
         except Exception:

@@ -56,6 +56,7 @@ from mediaflow.domain.file_lifecycle import (
     next_action_for_disposition,
     retry_safety_for_effect_certainty,
 )
+from mediaflow.domain.library import ScanMode
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
 from mediaflow.domain.manual_execution import (
     ManualExecution,
@@ -98,6 +99,11 @@ from mediaflow.domain.manual_safety import (
     redact_evidence_text,
     redact_manual_text,
     redact_manual_value,
+)
+from mediaflow.domain.manual_scan import (
+    ManualScanItemOutcome,
+    ManualScanScopeKind,
+    ManualScanTask,
 )
 from mediaflow.domain.media_evidence import (
     PipelineEvidence,
@@ -156,6 +162,7 @@ from mediaflow.domain.recovery_continuation import (
     RecoveryContinuationReason,
     RecoveryContinuationStatus,
 )
+from mediaflow.domain.scanner import FileChange, FileScanStatus
 from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
@@ -327,6 +334,209 @@ class SQLiteTaskRepository:
             rows = self._connection.execute(query, parameters).fetchall()
         values = tuple(self._task(row) for row in rows)
         return tuple(reversed(values)) if reverse else values
+
+    def create_manual_scan(self, task: PersistentTask, scan: ManualScanTask) -> None:
+        """Atomically create the generic Task row and its discovery-specific scope row."""
+
+        if task.task_id != scan.task_id:
+            raise ValueError("manual Scan Task and scope identity do not match")
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                self._task_values(task),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO manual_scan_tasks (
+                    task_id, scope_kind, scope_id, resource_library_id, mode, file_id,
+                    source_occurrence_id, source_fingerprint, storage_id, source_path,
+                    configuration_snapshot_id, configuration_snapshot_digest,
+                    cancellation_requested, progress_json, errors_json,
+                    reconciliation_complete, failure_stage, known_effects, retry_safe,
+                    next_action, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                self._manual_scan_values(scan),
+            )
+
+    def get_manual_scan(self, task_id: str) -> ManualScanTask | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT m.*, t.status
+                FROM manual_scan_tasks AS m
+                JOIN tasks AS t ON t.task_id = m.task_id
+                WHERE m.task_id=?
+                """,
+                (task_id,),
+            ).fetchone()
+        return self._manual_scan(row) if row else None
+
+    def update_manual_scan(self, scan: ManualScanTask) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE manual_scan_tasks SET scope_kind=?, scope_id=?, resource_library_id=?,
+                    mode=?, file_id=?, source_occurrence_id=?, source_fingerprint=?,
+                    storage_id=?, source_path=?, configuration_snapshot_id=?,
+                    configuration_snapshot_digest=?, cancellation_requested=CASE
+                        WHEN cancellation_requested=1 THEN 1 ELSE ? END,
+                    progress_json=?, errors_json=?, reconciliation_complete=?, failure_stage=?,
+                    known_effects=?, retry_safe=?, next_action=?, created_at=?, updated_at=?
+                WHERE task_id=?
+                """,
+                (
+                    *self._manual_scan_values(scan)[1:12],
+                    int(scan.cancellation_requested),
+                    *self._manual_scan_values(scan)[13:],
+                    scan.task_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"manual Scan Task {scan.task_id!r} was not found")
+
+    def request_manual_scan_cancellation(
+        self, task_id: str, updated_at: datetime
+    ) -> ManualScanTask:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE manual_scan_tasks SET cancellation_requested=1, updated_at=?
+                WHERE task_id=? AND EXISTS (
+                    SELECT 1 FROM tasks
+                    WHERE tasks.task_id=manual_scan_tasks.task_id
+                      AND tasks.status IN ('pending', 'running')
+                )
+                """,
+                (updated_at.isoformat(), task_id),
+            )
+            if cursor.rowcount != 1:
+                existing = self.get_manual_scan(task_id)
+                if existing is None:
+                    raise LookupError(f"manual Scan Task {task_id!r} was not found")
+                if existing.cancellation_requested:
+                    return existing
+                raise ValueError("only a pending or running manual Scan can be cancelled")
+        value = self.get_manual_scan(task_id)
+        if value is None:
+            raise LookupError(f"manual Scan Task {task_id!r} was not found")
+        return value
+
+    def upsert_manual_scan_item(self, item: ManualScanItemOutcome) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO manual_scan_items (
+                    item_id, task_id, storage_id, resource_library_id, source_path, file_id,
+                    status, change_status, stage, source_occurrence_id, source_fingerprint,
+                    source_fingerprint_state, error, known_effects, retry_safe, next_action,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_id, source_path) DO UPDATE SET
+                    item_id=excluded.item_id, storage_id=excluded.storage_id,
+                    resource_library_id=excluded.resource_library_id, file_id=excluded.file_id,
+                    status=excluded.status, change_status=excluded.change_status,
+                    stage=excluded.stage, source_occurrence_id=excluded.source_occurrence_id,
+                    source_fingerprint=excluded.source_fingerprint,
+                    source_fingerprint_state=excluded.source_fingerprint_state,
+                    error=excluded.error, known_effects=excluded.known_effects,
+                    retry_safe=excluded.retry_safe, next_action=excluded.next_action,
+                    updated_at=excluded.updated_at
+                """,
+                self._manual_scan_item_values(item),
+            )
+
+    def list_manual_scan_items(
+        self,
+        task_id: str,
+        *,
+        limit: int | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+    ) -> tuple[ManualScanItemOutcome, ...]:
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
+        query = "SELECT * FROM manual_scan_items WHERE task_id=?"
+        parameters: tuple[object, ...] = (task_id,)
+        reverse = before is not None
+        if after is not None:
+            timestamp = after[0].isoformat()
+            query += " AND (created_at > ? OR (created_at = ? AND item_id > ?))"
+            parameters += (timestamp, timestamp, after[1])
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            query += " AND (created_at < ? OR (created_at = ? AND item_id < ?))"
+            parameters += (timestamp, timestamp, before[1])
+        query += (
+            " ORDER BY created_at DESC, item_id DESC"
+            if reverse
+            else " ORDER BY created_at, item_id"
+        )
+        if limit is not None:
+            parameters += (limit,)
+            query += " LIMIT ?"
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        values = tuple(self._manual_scan_item(row) for row in rows)
+        return tuple(reversed(values)) if reverse else values
+
+    def finalize_manual_scan(self, task: PersistentTask, scan: ManualScanTask) -> ManualScanTask:
+        """Persist terminal discovery state and generic Task state together.
+
+        A cancellation request wins the terminal race.  This keeps a late worker callback from
+        publishing ``completed`` after an operator has durably requested cancellation.
+        """
+
+        if task.task_id != scan.task_id:
+            raise ValueError("manual Scan Task and scope identity do not match")
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT cancellation_requested FROM manual_scan_tasks WHERE task_id=?",
+                (scan.task_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(f"manual Scan Task {scan.task_id!r} was not found")
+            if row["cancellation_requested"] and scan.status is not PersistentTaskStatus.CANCELLED:
+                scan = replace(
+                    scan,
+                    status=PersistentTaskStatus.CANCELLED,
+                    cancellation_requested=True,
+                    reconciliation_complete=False,
+                    known_effects="partial_discovery_only",
+                    next_action=(
+                        "inspect persisted item outcomes, then repeat the same bounded Scan"
+                    ),
+                )
+                task = replace(
+                    task,
+                    status=PersistentTaskStatus.CANCELLED,
+                    completed_at=scan.updated_at,
+                    updated_at=scan.updated_at,
+                    error="manual Scan cancelled",
+                )
+            self._connection.execute(
+                """
+                UPDATE manual_scan_tasks SET scope_kind=?, scope_id=?, resource_library_id=?,
+                    mode=?, file_id=?, source_occurrence_id=?, source_fingerprint=?,
+                    storage_id=?, source_path=?, configuration_snapshot_id=?,
+                    configuration_snapshot_digest=?, cancellation_requested=?, progress_json=?,
+                    errors_json=?, reconciliation_complete=?, failure_stage=?, known_effects=?,
+                    retry_safe=?, next_action=?, created_at=?, updated_at=?
+                WHERE task_id=?
+                """,
+                (*self._manual_scan_values(scan)[1:], scan.task_id),
+            )
+            self._connection.execute(
+                """
+                UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?,
+                    updated_at=?, started_at=?, completed_at=?, total_items=?, completed_items=?,
+                    failed_items=?, error=?, pause_requested=?, scope_path=?, item_limit=?,
+                    configuration_snapshot_id=?, configuration_snapshot_digest=?
+                WHERE task_id=?
+                """,
+                (*self._task_values(task)[1:], task.task_id),
+            )
+        return scan
 
     def load_dashboard_state(self, *, recent_limit: int) -> DashboardPersistentState:
         if isinstance(recent_limit, bool) or not isinstance(recent_limit, int):
@@ -7532,6 +7742,37 @@ class SQLiteTaskRepository:
                     UNIQUE(task_id, storage_id, source_path),
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
+                CREATE TABLE IF NOT EXISTS manual_scan_tasks (
+                    task_id TEXT PRIMARY KEY, scope_kind TEXT NOT NULL, scope_id TEXT NOT NULL,
+                    resource_library_id TEXT NOT NULL, mode TEXT NOT NULL, file_id TEXT,
+                    source_occurrence_id TEXT, source_fingerprint TEXT, storage_id TEXT,
+                    source_path TEXT, configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    cancellation_requested INTEGER NOT NULL DEFAULT 0,
+                    progress_json TEXT NOT NULL DEFAULT '{}',
+                    errors_json TEXT NOT NULL DEFAULT '[]',
+                    reconciliation_complete INTEGER NOT NULL DEFAULT 0,
+                    failure_stage TEXT, known_effects TEXT NOT NULL DEFAULT 'none',
+                    retry_safe INTEGER NOT NULL DEFAULT 1, next_action TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_scan_tasks_scope
+                    ON manual_scan_tasks(scope_kind, scope_id, created_at, task_id);
+                CREATE TABLE IF NOT EXISTS manual_scan_items (
+                    item_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, storage_id TEXT NOT NULL,
+                    resource_library_id TEXT NOT NULL, source_path TEXT NOT NULL, file_id TEXT,
+                    status TEXT NOT NULL, change_status TEXT, stage TEXT NOT NULL,
+                    source_occurrence_id TEXT, source_fingerprint TEXT,
+                    source_fingerprint_state TEXT NOT NULL DEFAULT 'unverified',
+                    error TEXT, known_effects TEXT NOT NULL DEFAULT 'none',
+                    retry_safe INTEGER NOT NULL DEFAULT 1, next_action TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(task_id, source_path),
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_scan_items_task_order
+                    ON manual_scan_items(task_id, created_at, item_id);
                 CREATE TABLE IF NOT EXISTS manual_ignore_audit (
                     decision_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
                     item_id TEXT NOT NULL UNIQUE, review_kind TEXT NOT NULL,
@@ -8787,6 +9028,106 @@ class SQLiteTaskRepository:
             task.item_limit,
             task.configuration_snapshot_id,
             task.configuration_snapshot_digest,
+        )
+
+    @staticmethod
+    def _manual_scan_values(scan: ManualScanTask) -> tuple[object, ...]:
+        return (
+            scan.task_id,
+            scan.scope_kind.value,
+            scan.scope_id,
+            scan.resource_library_id,
+            scan.mode.value,
+            scan.file_id,
+            scan.source_occurrence_id,
+            scan.source_fingerprint,
+            scan.storage_id,
+            scan.source_path,
+            scan.configuration_snapshot_id,
+            scan.configuration_snapshot_digest,
+            int(scan.cancellation_requested),
+            json.dumps(scan.progress, ensure_ascii=False, sort_keys=True),
+            json.dumps(scan.errors, ensure_ascii=False, sort_keys=True),
+            int(scan.reconciliation_complete),
+            scan.failure_stage,
+            scan.known_effects,
+            int(scan.retry_safe),
+            scan.next_action,
+            scan.created_at.isoformat(),
+            scan.updated_at.isoformat(),
+        )
+
+    @staticmethod
+    def _manual_scan(row: sqlite3.Row) -> ManualScanTask:
+        return ManualScanTask(
+            task_id=row["task_id"],
+            scope_kind=ManualScanScopeKind(row["scope_kind"]),
+            resource_library_id=row["resource_library_id"],
+            mode=ScanMode(row["mode"]),
+            status=PersistentTaskStatus(row["status"]),
+            configuration_snapshot_id=row["configuration_snapshot_id"],
+            configuration_snapshot_digest=row["configuration_snapshot_digest"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+            file_id=row["file_id"],
+            source_occurrence_id=row["source_occurrence_id"],
+            source_fingerprint=row["source_fingerprint"],
+            storage_id=row["storage_id"],
+            source_path=row["source_path"],
+            cancellation_requested=bool(row["cancellation_requested"]),
+            progress=json.loads(row["progress_json"]),
+            errors=tuple(json.loads(row["errors_json"])),
+            reconciliation_complete=bool(row["reconciliation_complete"]),
+            failure_stage=row["failure_stage"],
+            known_effects=row["known_effects"],
+            retry_safe=bool(row["retry_safe"]),
+            next_action=row["next_action"],
+        )
+
+    @staticmethod
+    def _manual_scan_item_values(item: ManualScanItemOutcome) -> tuple[object, ...]:
+        return (
+            item.item_id,
+            item.task_id,
+            item.storage_id,
+            item.resource_library_id,
+            item.source_path,
+            item.file_id,
+            item.status.value,
+            item.change.value if item.change else None,
+            item.stage,
+            item.source_occurrence_id,
+            item.source_fingerprint,
+            item.source_fingerprint_state,
+            item.error,
+            item.known_effects,
+            int(item.retry_safe),
+            item.next_action,
+            item.created_at.isoformat(),
+            item.updated_at.isoformat(),
+        )
+
+    @staticmethod
+    def _manual_scan_item(row: sqlite3.Row) -> ManualScanItemOutcome:
+        return ManualScanItemOutcome(
+            item_id=row["item_id"],
+            task_id=row["task_id"],
+            storage_id=row["storage_id"],
+            resource_library_id=row["resource_library_id"],
+            source_path=row["source_path"],
+            file_id=row["file_id"],
+            status=FileScanStatus(row["status"]),
+            change=FileChange(row["change_status"]) if row["change_status"] else None,
+            stage=row["stage"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+            source_occurrence_id=row["source_occurrence_id"],
+            source_fingerprint=row["source_fingerprint"],
+            source_fingerprint_state=row["source_fingerprint_state"],
+            error=row["error"],
+            known_effects=row["known_effects"],
+            retry_safe=bool(row["retry_safe"]),
+            next_action=row["next_action"],
         )
 
     @staticmethod

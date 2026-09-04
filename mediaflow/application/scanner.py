@@ -139,6 +139,142 @@ class StorageScanner:
         finally:
             self._release(resource_library.library_id)
 
+    def scan_file(
+        self,
+        resource_library: ResourceLibrary,
+        path: str,
+        *,
+        mode: ScanMode | None = None,
+        expected_occurrence_id: str | None = None,
+        expected_fingerprint: str | None = None,
+        cancellation: CancellationToken | None = None,
+        on_progress: ProgressCallback | None = None,
+        on_discovered: DiscoveryCallback | None = None,
+    ) -> ScanResult:
+        """Refresh exactly one Storage source without traversing or reconciling its library."""
+
+        if (expected_occurrence_id is None) != (expected_fingerprint is None):
+            raise ValueError("expected source occurrence and fingerprint must be provided together")
+        self._acquire(resource_library.library_id)
+        try:
+            scan_id = uuid.uuid4().hex
+            started = self._clock()
+            counters = _Counters()
+            errors: list[ScanError] = []
+            token = cancellation or CancellationToken()
+            selected_mode = mode or resource_library.scan_mode
+            if token.is_cancelled:
+                completed = self._clock()
+                return ScanResult(
+                    scan_id,
+                    resource_library.library_id,
+                    selected_mode,
+                    TaskStatus.CANCELLED,
+                    started,
+                    completed,
+                    counters.snapshot(),
+                    (),
+                )
+            if not resource_library.enabled:
+                raise ValueError("resource library is disabled")
+            storage = self._storages.get(resource_library.storage_id)
+            if storage is None:
+                raise ValueError("resource library storage does not exist")
+            root = normalize_resource_root(resource_library.root_path)
+            source_path = normalize_source_path(path)
+            if not source_path or not _contains(root, source_path) or source_path == root:
+                error = StorageError(
+                    StorageErrorCode.INVALID_PATH,
+                    "stat",
+                    source_path,
+                    "source is outside the configured ResourceLibrary",
+                )
+                scan_error = self._scan_error(source_path, error)
+                completed = self._clock()
+                return ScanResult(
+                    scan_id,
+                    resource_library.library_id,
+                    selected_mode,
+                    TaskStatus.FAILED,
+                    started,
+                    completed,
+                    ScanStatistics(errors=1),
+                    (scan_error,),
+                )
+            try:
+                entry = storage.stat(source_path)
+                if entry.entry_type is not StorageEntryType.FILE:
+                    raise StorageError(
+                        StorageErrorCode.INVALID_PATH,
+                        "stat",
+                        source_path,
+                        "manual Scan source is not a file",
+                    )
+                observed = source_fingerprint(
+                    storage.storage_id, resource_library.library_id, entry
+                )
+                observed_occurrence_id = occurrence_id_for(
+                    storage.storage_id,
+                    resource_library.library_id,
+                    entry.path,
+                    observed.value,
+                )
+                if expected_fingerprint is not None and (
+                    observed.value != expected_fingerprint
+                    or observed_occurrence_id != expected_occurrence_id
+                ):
+                    raise StorageError(
+                        StorageErrorCode.INVALID_PATH,
+                        "stat",
+                        source_path,
+                        "current source occurrence changed",
+                    )
+            except StorageError as error:
+                scan_error = self._scan_error(source_path, error)
+                completed = self._clock()
+                return ScanResult(
+                    scan_id,
+                    resource_library.library_id,
+                    selected_mode,
+                    TaskStatus.FAILED,
+                    started,
+                    completed,
+                    ScanStatistics(files_visited=1, errors=1),
+                    (scan_error,),
+                )
+            relative = self._relative(entry.path, root)
+            record, discovered = self._process_file(
+                resource_library, storage, entry, relative, scan_id, self._clock()
+            )
+            # The FileIndex write is application persistence, never a Storage mutation.  It is
+            # deliberately limited to the one observed source and never calls reconciliation.
+            self._file_index.batch_upsert((record,))
+            counters.files_visited = 1
+            if discovered.status is FileScanStatus.READY:
+                counters.media_candidates = 1
+            elif discovered.status is FileScanStatus.UNSTABLE:
+                counters.unstable = 1
+            elif discovered.status is FileScanStatus.IGNORED:
+                counters.ignored = 1
+            if on_discovered:
+                on_discovered(discovered)
+            if on_progress:
+                on_progress(counters.snapshot())
+            completed = self._clock()
+            status = TaskStatus.CANCELLED if token.is_cancelled else TaskStatus.COMPLETED
+            return ScanResult(
+                scan_id,
+                resource_library.library_id,
+                selected_mode,
+                status,
+                started,
+                completed,
+                counters.snapshot(),
+                tuple(errors),
+            )
+        finally:
+            self._release(resource_library.library_id)
+
     def run_task(
         self,
         task: ScanTask,
@@ -569,6 +705,27 @@ def normalize_resource_root(path: str) -> str:
             parts.pop()
         else:
             parts.append(part)
+    return "/".join(parts)
+
+
+def normalize_source_path(path: str) -> str:
+    """Normalize one Storage-relative source path without permitting traversal."""
+
+    if (
+        not isinstance(path, str)
+        or "\x00" in path
+        or urlparse(path).scheme
+        or path.startswith(("/", "\\"))
+        or (len(path) > 1 and path[1] == ":")
+    ):
+        raise ValueError("invalid source path")
+    parts: list[str] = []
+    for part in path.replace("\\", "/").split("/"):
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            raise ValueError("source path traversal")
+        parts.append(part)
     return "/".join(parts)
 
 
