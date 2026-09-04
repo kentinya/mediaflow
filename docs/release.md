@@ -49,7 +49,7 @@ git diff --check
 ```
 
 The current runtime and configuration-management compatibility markers are implementation facts,
-not release labels: runtime SQLite schema `31`, configuration-management schema `10`, and managed
+not release labels: runtime SQLite schema `32`, configuration-management schema `10`, and managed
 configuration document schema `1`. A release claim must be tied to the actual migration and upgrade
 evidence for the target revision, not to an old migration number.
 

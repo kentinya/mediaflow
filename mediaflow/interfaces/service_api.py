@@ -24,6 +24,7 @@ from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
+from mediaflow.application.file_index_lifecycle import FileIndexLifecycleService
 from mediaflow.application.file_metadata_correction import FileMetadataCorrectionService
 from mediaflow.application.file_recognition_request import FileRecognitionRequestService
 from mediaflow.application.file_replan_request import FileReplanRequestService
@@ -64,6 +65,7 @@ from mediaflow.domain.configuration_management import (
     RuntimeSnapshotUnavailable,
 )
 from mediaflow.domain.failure import failure_document
+from mediaflow.domain.file_lifecycle import FileIndexLifecycleError
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_organize import (
     ManualIntentError,
@@ -174,6 +176,7 @@ class MediaFlowApi:
         system_status=None,
         file_catalog: FileCatalogService | None = None,
         file_index=None,
+        file_index_lifecycle: FileIndexLifecycleService | None = None,
         metadata_policies=(),
         configuration_service: ManagedConfigurationService | None = None,
         configuration_snapshot_id: str | None = None,
@@ -208,6 +211,13 @@ class MediaFlowApi:
             raise ValueError("stale Job age must be between 60 and 604800 seconds")
         self._file_catalog = file_catalog
         self._file_index = file_index
+        self._file_lifecycle = file_index_lifecycle
+        if self._file_lifecycle is None and self._file_catalog is not None:
+            self._file_lifecycle = FileIndexLifecycleService(
+                self._file_catalog,
+                file_index=self._file_index,
+                task_repository=repository,
+            )
         self._storage_adapters = dict(storage_adapters or {})
         self._storage_browser_cursor_secret = storage_browser_cursor_secret
         self._configuration_service = configuration_service
@@ -820,6 +830,31 @@ class MediaFlowApi:
                 error.code,
                 error.message,
                 details=error.details,
+            )
+        except FileIndexLifecycleError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "file-index-reprocess",
+                "conflict" if error.status < 500 else "error",
+                error.status,
+            )
+            details = {
+                "durableState": error.durable_state,
+                "sideEffects": "none",
+                "retrySafe": error.retry_safe,
+                "nextAction": error.next_action,
+                **error.details,
+            }
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details=details,
             )
         except LookupError as error:
             self._safe_audit(
@@ -2769,7 +2804,11 @@ class MediaFlowApi:
                     start_response, 503, "service_unavailable", "file catalog is unavailable"
                 )
             filters = self._file_catalog_query(environ)
-            values = self._file_catalog.list(filters)
+            values = (
+                self._file_lifecycle.list(filters)
+                if self._file_lifecycle is not None
+                else self._file_catalog.list(filters)
+            )
             return self._response(
                 start_response,
                 200,
@@ -2835,6 +2874,59 @@ class MediaFlowApi:
                 start_response,
                 200,
                 self._file_catalog_detail_value(detail),
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "files"]
+            and parts[4] == "reprocess"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+            if self._file_lifecycle is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "FileIndex lifecycle service is unavailable",
+                )
+            self._require_empty_query(environ, "FileIndex Reprocess")
+            document = self._document(environ)
+            if set(document) != {"occurrenceId", "fingerprint"}:
+                raise ValueError(
+                    "FileIndex Reprocess requires only the current occurrenceId and fingerprint"
+                )
+            occurrence_id = document["occurrenceId"]
+            fingerprint = document["fingerprint"]
+            if (
+                not isinstance(occurrence_id, str)
+                or not occurrence_id.strip()
+                or not isinstance(fingerprint, str)
+                or not fingerprint.strip()
+            ):
+                raise ValueError("FileIndex Reprocess occurrenceId and fingerprint are required")
+            request = self._file_lifecycle.admit_reprocess(
+                parts[3],
+                occurrence_id,
+                fingerprint,
+                actor=principal.principal_id,
+            )
+            return self._response(
+                start_response,
+                202,
+                {
+                    "surface": "file_index",
+                    "fileId": request.file_id,
+                    "requestId": request.request_id,
+                    "occurrenceId": request.occurrence_id,
+                    "fingerprint": request.fingerprint,
+                    "status": request.status,
+                    "actor": request.actor,
+                    "requestedAt": request.requested_at.isoformat(),
+                    "sideEffects": "none",
+                    "taskCreated": False,
+                    "providerRequested": False,
+                    "nextAction": request.next_action,
+                },
             )
         if (
             len(parts) == 5
@@ -4324,6 +4416,9 @@ class MediaFlowApi:
             return False
         if parts == ["api", "v1", "management", "readiness"]:
             return False
+        if len(parts) == 5 and parts[:3] == ["api", "v1", "files"] and parts[4] == "reprocess":
+            # Reprocess is an auditable admission marker only; it creates no workflow work.
+            return False
         if tuple(parts[:3]) in {
             ("api", "v1", "jobs"),
             ("api", "v1", "tasks"),
@@ -4620,6 +4715,12 @@ class MediaFlowApi:
             return "/api/v1/jobs/{id}/cancel"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":
             return "/api/v1/schedules/{id}/audit"
+        if (
+            len(parts) == 5
+            and parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])
+            and parts[4] == "reprocess"
+        ):
+            return f"/api/v1/{parts[2]}/{{id}}/reprocess"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "confirmations"]:
             return "/api/v1/confirmations/{id}"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "metadata-reviews"]:
@@ -5323,6 +5424,16 @@ class MediaFlowApi:
 
     @staticmethod
     def _file_catalog_value(record) -> dict:
+        disposition = getattr(record.processing_disposition, "value", record.processing_disposition)
+        occurrence_state = getattr(record.occurrence_state, "value", record.occurrence_state)
+        reprocess_eligible = bool(
+            record.scan_status is FileScanStatus.READY
+            and occurrence_state == "verified"
+            and record.fingerprint
+            and record.processing_result_id
+            and disposition not in {"unknown", "unverified", "reprocess_requested"}
+            and record.processing_retry_safety == "safe"
+        )
         return {
             "fileId": record.file_id,
             "storageId": record.storage_id,
@@ -5340,6 +5451,54 @@ class MediaFlowApi:
             "missingSince": record.missing_since.isoformat() if record.missing_since else None,
             "lastScanId": record.last_scan_id,
             "updatedAt": record.updated_at.isoformat(),
+            "discovery": {
+                "status": record.scan_status.value,
+                "change": record.change.value,
+                "stableSince": record.stable_since.isoformat() if record.stable_since else None,
+                "lastSeenAt": record.last_seen_at.isoformat(),
+                "missingSince": record.missing_since.isoformat() if record.missing_since else None,
+                "lastScanId": record.last_scan_id,
+            },
+            "processingDisposition": disposition,
+            "processing": {
+                "disposition": disposition,
+                "resultId": record.processing_result_id,
+                "effectCertainty": record.processing_effect_certainty,
+                "retrySafety": record.processing_retry_safety,
+                "nextAction": record.processing_next_action,
+                "updatedAt": (
+                    record.processing_updated_at.isoformat()
+                    if record.processing_updated_at
+                    else None
+                ),
+            },
+            "priorResultRelevance": {
+                "currentResultId": record.processing_result_id,
+                "current": bool(
+                    record.processing_result_id
+                    and occurrence_state == "verified"
+                    and disposition not in {"unknown", "unverified"}
+                ),
+                "historicalOnly": occurrence_state != "verified",
+            },
+            "currentOccurrence": {
+                "occurrenceId": record.occurrence_id,
+                "fingerprint": record.fingerprint,
+                "fingerprintAlgorithm": record.fingerprint_algorithm,
+                "fingerprintEvidence": dict(record.fingerprint_evidence or {}),
+                "state": occurrence_state,
+                "current": True,
+            },
+            "reprocess": {
+                "eligible": reprocess_eligible,
+                "reason": (
+                    "explicit Reprocess is available for this current occurrence"
+                    if reprocess_eligible
+                    else (
+                        "inspect the current disposition and occurrence before requesting Reprocess"
+                    )
+                ),
+            },
         }
 
     def _manual_intent_document(self, intent, *, include_audit: bool = True) -> dict:
@@ -5372,9 +5531,39 @@ class MediaFlowApi:
         self._automation_previews.invalidate(definition_id, reason)
 
     def _file_catalog_detail_value(self, detail) -> dict:
+        projection = (
+            self._file_lifecycle.project(detail) if self._file_lifecycle is not None else None
+        )
         document = self._file_catalog_value(detail.record)
         document["surface"] = "file_index"
         document["filesSurface"] = "/api/v1/storage/files"
+        if projection is not None:
+            document["currentOccurrence"] = {
+                **document["currentOccurrence"],
+                "history": [value.document() for value in projection.occurrence_history],
+            }
+            document["occurrenceHistory"] = [
+                value.document() for value in projection.occurrence_history
+            ]
+            document["reprocess"] = {
+                "eligible": projection.reprocess_eligible,
+                "reason": projection.reprocess_reason,
+                "required": {
+                    "occurrenceId": detail.record.occurrence_id,
+                    "fingerprint": detail.record.fingerprint,
+                },
+            }
+            document["priorResultRelevance"] = [
+                {
+                    "resultId": result.result_id,
+                    "relevance": relation,
+                    "current": relation == "current",
+                }
+                for result, relation in projection.result_relevance
+            ]
+            document["reprocessRequests"] = [
+                value.document() for value in projection.reprocess_requests
+            ]
         if self._manual_execution is not None:
             document["manualExecutionDiscovery"] = self._manual_execution.discovery_for_source(
                 detail.record.storage_id,
@@ -5456,8 +5645,39 @@ class MediaFlowApi:
         document["relatedReviews"] = related_reviews
         document["evidence"] = [self._pipeline_evidence_value(value) for value in detail.evidence]
         document["evidenceAvailability"] = "available" if detail.evidence else "unavailable"
-        document["items"] = [self._file_detail_item_value(value) for value in detail.items]
-        document["results"] = [self._file_result_value(value) for value in detail.results]
+        document["items"] = []
+        for value in detail.items:
+            item_document = self._file_detail_item_value(value)
+            if (
+                detail.record.occurrence_id is None
+                or detail.record.occurrence_state.value == "legacy"
+                or value.source_occurrence_id is None
+            ):
+                item_document["relevance"] = "unverified_legacy"
+                item_document["current"] = False
+            elif value.source_occurrence_id == detail.record.occurrence_id:
+                if (
+                    value.source_fingerprint_state == "verified"
+                    and value.source_fingerprint == detail.record.fingerprint
+                ):
+                    item_document["relevance"] = "current"
+                    item_document["current"] = True
+                else:
+                    item_document["relevance"] = "historical_fingerprint_mismatch"
+                    item_document["current"] = False
+            else:
+                item_document["relevance"] = "historical_different_occurrence"
+                item_document["current"] = False
+            document["items"].append(item_document)
+        relation_by_result = (
+            {result.result_id: relation for result, relation in projection.result_relevance}
+            if projection is not None
+            else {}
+        )
+        document["results"] = [
+            self._file_result_value(value, relevance=relation_by_result.get(value.result_id))
+            for value in detail.results
+        ]
         document["currentActions"] = [
             {
                 "actionId": value.action_id,
@@ -5472,11 +5692,25 @@ class MediaFlowApi:
             for value in detail.actions
         ]
         document["truncated"] = dict(detail.truncated)
-        if detail.latest_result is None:
+        latest_result = (
+            projection.current_result if projection is not None else detail.latest_result
+        )
+        if latest_result is None:
             document["latestResult"] = None
             return document
         document["latestResult"] = self._file_result_value(
-            detail.latest_result, include_source=False, latest=True
+            latest_result,
+            include_source=False,
+            latest=True,
+            relevance=(
+                "current"
+                if projection is not None
+                and latest_result.source_occurrence_id == detail.record.occurrence_id
+                and latest_result.source_fingerprint == detail.record.fingerprint
+                else "unverified_legacy"
+                if projection is not None
+                else None
+            ),
         )
         return document
 
@@ -5495,11 +5729,20 @@ class MediaFlowApi:
             "sourceStorageId": item.source_storage_id,
             "resourceLibraryId": item.resource_library_id,
             "sourcePath": item.source_path,
+            "sourceOccurrenceId": item.source_occurrence_id,
+            "sourceFingerprint": item.source_fingerprint,
+            "sourceFingerprintState": item.source_fingerprint_state,
             "checkpoint": item.checkpoint,
         }
 
     @staticmethod
-    def _file_result_value(result, *, include_source: bool = True, latest: bool = False) -> dict:
+    def _file_result_value(
+        result,
+        *,
+        include_source: bool = True,
+        latest: bool = False,
+        relevance: str | None = None,
+    ) -> dict:
         document = {
             "resultId": result.result_id,
             "taskId": result.task_id,
@@ -5520,6 +5763,9 @@ class MediaFlowApi:
             "retryAttempts": result.retry_attempts,
             "cleanupStatus": result.cleanup_status,
             "error": result.error,
+            "sourceOccurrenceId": result.source_occurrence_id,
+            "sourceFingerprint": result.source_fingerprint,
+            "sourceFingerprintState": result.source_fingerprint_state,
         }
         explanation = failure_document(result.error)
         if explanation is not None:
@@ -5532,6 +5778,9 @@ class MediaFlowApi:
             document["uncertainEffects"] = list(result.uncertain_effects)
             document["completedOperations"] = list(result.completed_operations)
             document["attachmentCount"] = result.attachment_count
+        if relevance is not None:
+            document["relevance"] = relevance
+            document["current"] = relevance == "current"
         return redact_manual_value(document)
 
     @classmethod

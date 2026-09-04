@@ -40,6 +40,10 @@ class DiscoveredFile:
     discovered_at: datetime
     status: FileScanStatus
     change: FileChange
+    file_id: str | None = None
+    occurrence_id: str | None = None
+    fingerprint: str | None = None
+    fingerprint_state: str = "legacy"
 
 
 @dataclass(frozen=True)

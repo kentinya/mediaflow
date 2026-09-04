@@ -145,7 +145,7 @@ The runtime SQLite repository persists FileIndex, Tasks, TaskItems, Results, loc
 manual intents/previews/executions, Automation Definitions/Jobs/occurrences, notification delivery,
 execution authority, security audit and operational logs. The configuration SQLite repository
 persists managed revisions, object/reference state, activation/test evidence and configuration audits.
-The implementation currently declares runtime schema `31`, configuration-management schema `10` and
+The implementation currently declares runtime schema `32`, configuration-management schema `10` and
 managed document schema `1`. These are compatibility markers, not feature statuses.
 
 Runtime database initialization is additive and refuses a newer unsupported schema. Backup, restore,
@@ -159,12 +159,15 @@ path, extension/include/exclude rules, depth, scan mode and file stability polic
 read-only and records durable FileIndex state. Temporary/actively written files remain excluded by
 configured stability rules.
 
-The current Operator **Files** page is a File Catalog over those FileIndex records, not a Storage
-browser. `FileIndexRecord.scan_status` and `change` describe discovery/stability only. File detail
-can join TaskItems, Results, reviews and checkpoints by source Storage/path, but Result/TaskItem rows
-do not bind to a distinct current source occurrence or content fingerprint. A changed file at the
-same path retains the path-derived FileIndex ID, so prior processing outcome cannot yet be treated as
-the current file's unified disposition without an additional identity/projection contract.
+The current Operator **FileIndex** page is a File Catalog over those indexed records, not a Storage
+browser. `FileIndexRecord.scan_status` and `change` describe discovery/stability only; the separate
+processing disposition is persisted on the current source occurrence. Task 27.2 adds bounded
+Storage-derived occurrence/fingerprint evidence and historical occurrence rows, binds TaskItem and
+Result records to the observed occurrence, and marks path-only legacy rows explicitly unverified.
+The FileIndex projection exposes current versus historical Result relevance. Explicit Reprocess is
+an audited, exact-occurrence admission marker for a later Scan/Preview workflow; it creates no Task,
+Provider request or Storage mutation. File-/ResourceLibrary-scoped Scan and the later processing
+workflows remain Slice 27 target work.
 
 `MediaLibrary` defines a destination Storage and relative root. Classification selects the library
 and relative path; Naming supplies directory and filename. The final target is composed from the

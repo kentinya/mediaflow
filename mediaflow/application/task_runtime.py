@@ -136,6 +136,9 @@ class PersistentTaskCoordinator:
             now,
         )
         self.repository.upsert_item(item)
+        persisted_item = self.repository.get_item(item_id)
+        if persisted_item is not None:
+            item = persisted_item
         if not self.locks.acquire(storage_id, source_path, task_id, now):
             failed = replace(
                 item,
@@ -236,6 +239,9 @@ class PersistentTaskCoordinator:
             now,
         )
         self.repository.upsert_item(item)
+        persisted_item = self.repository.get_item(item.item_id)
+        if persisted_item is not None:
+            item = persisted_item
         return item
 
     def complete_item(self, item: PersistentTaskItem, result: MediaOrganizerItemResult) -> None:
@@ -505,6 +511,9 @@ class PersistentTaskCoordinator:
             len(execution.cleanup_steps) if execution else 0,
             effect_certainty,
             uncertain_effects,
+            item.source_occurrence_id,
+            item.source_fingerprint,
+            item.source_fingerprint_state,
         )
 
 

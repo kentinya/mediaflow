@@ -62,7 +62,7 @@ class MigrationRehearsalTests(unittest.TestCase):
             )
             connection.execute(
                 "INSERT INTO schema_version VALUES ('runtime', ?)",
-                (SCHEMA_VERSION - 1,),
+                (SCHEMA_VERSION - 2,),
             )
             connection.execute(
                 """CREATE TABLE unattended_execution_grants (
@@ -252,7 +252,7 @@ class MigrationRehearsalTests(unittest.TestCase):
                     connection.execute(
                         "SELECT version FROM schema_version WHERE component='runtime'"
                     ).fetchone()[0],
-                    SCHEMA_VERSION - 1,
+                    SCHEMA_VERSION - 2,
                 )
                 self.assertEqual(
                     connection.execute(

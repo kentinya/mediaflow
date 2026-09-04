@@ -50,6 +50,12 @@ from mediaflow.domain.execution_authorization import (
     ExecutionAuthorizationStatus,
 )
 from mediaflow.domain.file_catalog import FileReviewLink
+from mediaflow.domain.file_lifecycle import (
+    ProcessingDisposition,
+    disposition_for_result,
+    next_action_for_disposition,
+    retry_safety_for_effect_certainty,
+)
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
 from mediaflow.domain.manual_execution import (
     ManualExecution,
@@ -168,12 +174,16 @@ from mediaflow.domain.unattended_execution import (
     UnattendedExecutionGrantAudit,
     UnattendedExecutionGrantStatus,
 )
+from mediaflow.infrastructure.file_index_schema import (
+    ensure_file_index_schema,
+    ensure_task_occurrence_columns,
+)
 
 # Manual intent, Preview, exact execution, and Automation Task Definition
 # Preview tables are additive migrations on the runtime schema.  The table
 # creation below is idempotent and upgrades older runtime databases without
 # rewriting existing rows.
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 32
 
 _ATTENTION_TASK_ITEM_STATUSES = (
     TaskItemStatus.WAITING_CONFIRM.value,
@@ -412,15 +422,29 @@ class SQLiteTaskRepository:
 
     def upsert_item(self, item: PersistentTaskItem) -> None:
         with self._lock, self._connection:
+            item = self._bind_item_to_current_occurrence(item)
             self._connection.execute(
                 """
-                INSERT INTO task_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO task_items VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 ON CONFLICT(item_id) DO UPDATE SET
                     status=excluded.status, stage=excluded.stage, attempts=excluded.attempts,
                     updated_at=excluded.updated_at, plan_id=excluded.plan_id,
                     destination_storage_id=excluded.destination_storage_id,
                     destination_path=excluded.destination_path,
-                    execution_status=excluded.execution_status, error=excluded.error
+                    execution_status=excluded.execution_status, error=excluded.error,
+                    source_occurrence_id=COALESCE(
+                        excluded.source_occurrence_id, task_items.source_occurrence_id
+                    ),
+                    source_fingerprint=COALESCE(
+                        excluded.source_fingerprint, task_items.source_fingerprint
+                    ),
+                    source_fingerprint_state=CASE
+                        WHEN excluded.source_occurrence_id IS NULL
+                        THEN task_items.source_fingerprint_state
+                        ELSE excluded.source_fingerprint_state
+                    END
                 """,
                 self._item_values(item),
             )
@@ -1641,21 +1665,7 @@ class SQLiteTaskRepository:
 
     def append_result(self, result: PersistentResultRecord) -> None:
         with self._lock, self._connection:
-            self._connection.execute(
-                """
-                INSERT OR REPLACE INTO task_results (
-                    result_id, task_id, item_id, source_storage_id, source_path,
-                    destination_storage_id, destination_path, recognition_type, provider,
-                    provider_id, metadata_policy_id, naming_policy_id, classification_policy_id,
-                    organize_policy_id, operation, status, created_at, title, error,
-                    completed_operations, attachment_count, retry_attempts, retry_category,
-                    cleanup_status, cleanup_step_count, effect_certainty, uncertain_effects
-                ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )
-                """,
-                self._result_values(result),
-            )
+            self._insert_result_locked(result)
 
     def append_evidence(self, evidence: PipelineEvidence) -> None:
         with self._lock, self._connection:
@@ -1682,30 +1692,30 @@ class SQLiteTaskRepository:
         """Atomically publish item outcome, result, and bounded evidence."""
 
         with self._lock, self._connection:
+            self._insert_result_locked(result)
+            item = self._bind_item_to_current_occurrence(item)
             self._connection.execute(
                 """
-                INSERT OR REPLACE INTO task_results (
-                    result_id, task_id, item_id, source_storage_id, source_path,
-                    destination_storage_id, destination_path, recognition_type, provider,
-                    provider_id, metadata_policy_id, naming_policy_id, classification_policy_id,
-                    organize_policy_id, operation, status, created_at, title, error,
-                    completed_operations, attachment_count, retry_attempts, retry_category,
-                    cleanup_status, cleanup_step_count, effect_certainty, uncertain_effects
-                ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                INSERT INTO task_items VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
-                """,
-                self._result_values(result),
-            )
-            self._connection.execute(
-                """
-                INSERT INTO task_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(item_id) DO UPDATE SET
                     status=excluded.status, stage=excluded.stage, attempts=excluded.attempts,
                     updated_at=excluded.updated_at, plan_id=excluded.plan_id,
                     destination_storage_id=excluded.destination_storage_id,
                     destination_path=excluded.destination_path,
-                    execution_status=excluded.execution_status, error=excluded.error
+                    execution_status=excluded.execution_status, error=excluded.error,
+                    source_occurrence_id=COALESCE(
+                        excluded.source_occurrence_id, task_items.source_occurrence_id
+                    ),
+                    source_fingerprint=COALESCE(
+                        excluded.source_fingerprint, task_items.source_fingerprint
+                    ),
+                    source_fingerprint_state=CASE
+                        WHEN excluded.source_occurrence_id IS NULL
+                        THEN task_items.source_fingerprint_state
+                        ELSE excluded.source_fingerprint_state
+                    END
                 """,
                 self._item_values(item),
             )
@@ -2279,6 +2289,19 @@ class SQLiteTaskRepository:
                 WHERE source_storage_id = ? AND source_path = ?
                 ORDER BY created_at DESC, result_id DESC LIMIT 1""",
                 (storage_id, path),
+            ).fetchone()
+        return self._result(row) if row else None
+
+    def get_latest_result_for_occurrence(
+        self, storage_id: str, path: str, occurrence_id: str, fingerprint: str
+    ) -> PersistentResultRecord | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM task_results
+                WHERE source_storage_id=? AND source_path=?
+                  AND source_occurrence_id=? AND source_fingerprint=?
+                ORDER BY created_at DESC, result_id DESC LIMIT 1""",
+                (storage_id, path, occurrence_id, fingerprint),
             ).fetchone()
         return self._result(row) if row else None
 
@@ -6563,9 +6586,10 @@ class SQLiteTaskRepository:
                 )
                 for item in items:
                     task_item = self._manual_task_item(item, execution, now)
+                    task_item = self._bind_item_to_current_occurrence(task_item)
                     self._connection.execute(
                         "INSERT INTO task_items VALUES "
-                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         self._item_values(task_item),
                     )
                     self._connection.execute(
@@ -6710,15 +6734,27 @@ class SQLiteTaskRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
                 self._insert_result_locked(result)
+                task_item = self._bind_item_to_current_occurrence(task_item)
                 self._connection.execute(
                     """INSERT INTO task_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?)
+                    ?, ?, ?, ?)
                     ON CONFLICT(item_id) DO UPDATE SET
                         status=excluded.status, stage=excluded.stage, attempts=excluded.attempts,
                         updated_at=excluded.updated_at, plan_id=excluded.plan_id,
                         destination_storage_id=excluded.destination_storage_id,
                         destination_path=excluded.destination_path,
-                        execution_status=excluded.execution_status, error=excluded.error""",
+                        execution_status=excluded.execution_status, error=excluded.error,
+                        source_occurrence_id=COALESCE(
+                            excluded.source_occurrence_id, task_items.source_occurrence_id
+                        ),
+                        source_fingerprint=COALESCE(
+                            excluded.source_fingerprint, task_items.source_fingerprint
+                        ),
+                        source_fingerprint_state=CASE
+                            WHEN excluded.source_occurrence_id IS NULL
+                            THEN task_items.source_fingerprint_state
+                            ELSE excluded.source_fingerprint_state
+                        END""",
                     self._item_values(task_item),
                 )
                 self._connection.execute(
@@ -6834,9 +6870,10 @@ class SQLiteTaskRepository:
                 for result in results:
                     self._insert_result_locked(result)
                 for task_item in task_items:
+                    task_item = self._bind_item_to_current_occurrence(task_item)
                     self._connection.execute(
                         """INSERT INTO task_items VALUES (
-                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                         )
                         ON CONFLICT(item_id) DO UPDATE SET
                             status=excluded.status, stage=excluded.stage,
@@ -6844,7 +6881,18 @@ class SQLiteTaskRepository:
                             updated_at=excluded.updated_at, plan_id=excluded.plan_id,
                             destination_storage_id=excluded.destination_storage_id,
                             destination_path=excluded.destination_path,
-                            execution_status=excluded.execution_status, error=excluded.error""",
+                            execution_status=excluded.execution_status, error=excluded.error,
+                            source_occurrence_id=COALESCE(
+                                excluded.source_occurrence_id, task_items.source_occurrence_id
+                            ),
+                            source_fingerprint=COALESCE(
+                                excluded.source_fingerprint, task_items.source_fingerprint
+                            ),
+                            source_fingerprint_state=CASE
+                                WHEN excluded.source_occurrence_id IS NULL
+                                THEN task_items.source_fingerprint_state
+                                ELSE excluded.source_fingerprint_state
+                            END""",
                         self._item_values(task_item),
                     )
                 for item in items:
@@ -8078,6 +8126,11 @@ class SQLiteTaskRepository:
                     ON operational_logs(occurred_at, log_id);
                 """
             )
+            if self._connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
+            ).fetchone():
+                ensure_file_index_schema(self._connection)
+            ensure_task_occurrence_columns(self._connection)
             self._connection.execute(
                 "INSERT OR REPLACE INTO schema_version VALUES ('runtime', ?)",
                 (SCHEMA_VERSION,),
@@ -8515,6 +8568,7 @@ class SQLiteTaskRepository:
         )
 
     def _insert_result_locked(self, result: PersistentResultRecord) -> None:
+        result = self._bind_result_to_occurrence(result)
         self._connection.execute(
             """INSERT OR REPLACE INTO task_results (
                 result_id, task_id, item_id, source_storage_id, source_path,
@@ -8522,10 +8576,159 @@ class SQLiteTaskRepository:
                 provider_id, metadata_policy_id, naming_policy_id, classification_policy_id,
                 organize_policy_id, operation, status, created_at, title, error,
                 completed_operations, attachment_count, retry_attempts, retry_category,
-                cleanup_status, cleanup_step_count, effect_certainty, uncertain_effects
+                cleanup_status, cleanup_step_count, effect_certainty, uncertain_effects,
+                source_occurrence_id, source_fingerprint, source_fingerprint_state
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?)""",
+                      ?, ?, ?, ?, ?)""",
             self._result_values(result),
+        )
+        self._apply_result_to_file_index_locked(result)
+
+    def _bind_item_to_current_occurrence(self, item: PersistentTaskItem) -> PersistentTaskItem:
+        if item.source_occurrence_id and item.source_fingerprint:
+            return item
+        if not self._connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
+        ).fetchone():
+            return item
+        row = self._connection.execute(
+            """SELECT occurrence_id, fingerprint, occurrence_state
+            FROM file_index WHERE storage_id=? AND resource_library_id=? AND path=?""",
+            (item.storage_id, item.resource_library_id, item.source_path),
+        ).fetchone()
+        if row is None:
+            return item
+        return replace(
+            item,
+            source_occurrence_id=item.source_occurrence_id or row["occurrence_id"],
+            source_fingerprint=item.source_fingerprint or row["fingerprint"],
+            source_fingerprint_state=item.source_fingerprint_state
+            if item.source_occurrence_id
+            else row["occurrence_state"],
+        )
+
+    def _bind_result_to_occurrence(self, result: PersistentResultRecord) -> PersistentResultRecord:
+        if result.source_occurrence_id and result.source_fingerprint:
+            return result
+        item = self._connection.execute(
+            """SELECT source_occurrence_id, source_fingerprint, source_fingerprint_state
+            FROM task_items WHERE item_id=?""",
+            (result.item_id,),
+        ).fetchone()
+        occurrence_id = item["source_occurrence_id"] if item else None
+        fingerprint = item["source_fingerprint"] if item else None
+        state = item["source_fingerprint_state"] if item else "unverified"
+        if not occurrence_id or not fingerprint:
+            if not self._connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
+            ).fetchone():
+                return replace(
+                    result,
+                    source_occurrence_id=result.source_occurrence_id or occurrence_id,
+                    source_fingerprint=result.source_fingerprint or fingerprint,
+                    source_fingerprint_state=(
+                        result.source_fingerprint_state if result.source_occurrence_id else state
+                    ),
+                )
+            current_rows = self._connection.execute(
+                """SELECT occurrence_id, fingerprint, occurrence_state FROM file_index
+                WHERE storage_id=? AND path=? ORDER BY updated_at DESC""",
+                (result.source_storage_id, result.source_path),
+            ).fetchall()
+            # A source path can belong to more than one ResourceLibrary.  Without an exact
+            # TaskItem occurrence binding, silently choosing one would corrupt disposition.
+            current = current_rows[0] if len(current_rows) == 1 else None
+            if current is not None:
+                occurrence_id = occurrence_id or current["occurrence_id"]
+                fingerprint = fingerprint or current["fingerprint"]
+                state = state if occurrence_id and item else current["occurrence_state"]
+        return replace(
+            result,
+            source_occurrence_id=result.source_occurrence_id or occurrence_id,
+            source_fingerprint=result.source_fingerprint or fingerprint,
+            source_fingerprint_state=(
+                result.source_fingerprint_state if result.source_occurrence_id else state
+            ),
+        )
+
+    def _apply_result_to_file_index_locked(self, result: PersistentResultRecord) -> None:
+        occurrence_id = result.source_occurrence_id
+        fingerprint = result.source_fingerprint
+        if not occurrence_id or not fingerprint:
+            return
+        if not self._connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
+        ).fetchone():
+            return
+        row = self._connection.execute(
+            """SELECT * FROM file_index
+            WHERE storage_id=? AND path=? AND occurrence_id=? AND fingerprint=?
+            ORDER BY updated_at DESC LIMIT 1""",
+            (result.source_storage_id, result.source_path, occurrence_id, fingerprint),
+        ).fetchone()
+        if (
+            row is None
+            or row["occurrence_id"] != occurrence_id
+            or row["fingerprint"] != fingerprint
+        ):
+            return
+        if row["processing_updated_at"]:
+            try:
+                if result.created_at < datetime.fromisoformat(row["processing_updated_at"]):
+                    return
+            except (TypeError, ValueError):
+                return
+        # Preview/DryRun is deliberately not a processing outcome and cannot suppress later
+        # work.  Only a durable non-preview Result updates the current occurrence disposition.
+        disposition = disposition_for_result(result)
+        if (
+            str(
+                getattr(
+                    result.source_fingerprint_state,
+                    "value",
+                    result.source_fingerprint_state,
+                )
+                or "unverified"
+            ).lower()
+            != "verified"
+        ):
+            disposition = ProcessingDisposition.UNVERIFIED
+        if disposition is ProcessingDisposition.UNKNOWN:
+            return
+        certainty = str(result.effect_certainty or "unknown")
+        retry_safety = retry_safety_for_effect_certainty(certainty)
+        next_action = next_action_for_disposition(disposition)
+        self._connection.execute(
+            """UPDATE file_index SET processing_disposition=?, processing_result_id=?,
+                processing_effect_certainty=?, processing_retry_safety=?,
+                processing_next_action=?, processing_updated_at=?
+            WHERE file_id=? AND occurrence_id=?""",
+            (
+                disposition.value,
+                result.result_id,
+                certainty,
+                retry_safety,
+                next_action,
+                result.created_at.isoformat(),
+                row["file_id"],
+                occurrence_id,
+            ),
+        )
+        self._connection.execute(
+            """UPDATE file_index_occurrences SET processing_disposition=?,
+                processing_result_id=?, processing_effect_certainty=?,
+                processing_retry_safety=?, processing_next_action=?, processing_updated_at=?
+            WHERE file_id=? AND occurrence_id=?""",
+            (
+                disposition.value,
+                result.result_id,
+                certainty,
+                retry_safety,
+                next_action,
+                result.created_at.isoformat(),
+                row["file_id"],
+                occurrence_id,
+            ),
         )
 
     @staticmethod
@@ -8559,6 +8762,9 @@ class SQLiteTaskRepository:
             result.cleanup_step_count,
             result.effect_certainty,
             json.dumps(result.uncertain_effects, ensure_ascii=False),
+            result.source_occurrence_id,
+            result.source_fingerprint,
+            result.source_fingerprint_state,
         )
 
     @staticmethod
@@ -8602,6 +8808,9 @@ class SQLiteTaskRepository:
             item.destination_path,
             item.execution_status,
             item.error,
+            item.source_occurrence_id,
+            item.source_fingerprint,
+            item.source_fingerprint_state,
         )
 
     @staticmethod
@@ -8645,6 +8854,11 @@ class SQLiteTaskRepository:
             row["destination_path"],
             row["execution_status"],
             row["error"],
+            row["source_occurrence_id"] if "source_occurrence_id" in row.keys() else None,
+            row["source_fingerprint"] if "source_fingerprint" in row.keys() else None,
+            row["source_fingerprint_state"]
+            if "source_fingerprint_state" in row.keys()
+            else "unverified",
         )
 
     @staticmethod
@@ -8678,6 +8892,11 @@ class SQLiteTaskRepository:
                 row["cleanup_step_count"],
                 row["effect_certainty"],
                 tuple(json.loads(row["uncertain_effects"] or "[]")),
+                row["source_occurrence_id"] if "source_occurrence_id" in row.keys() else None,
+                row["source_fingerprint"] if "source_fingerprint" in row.keys() else None,
+                row["source_fingerprint_state"]
+                if "source_fingerprint_state" in row.keys()
+                else "unverified",
             )
         )
 

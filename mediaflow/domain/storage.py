@@ -64,6 +64,9 @@ class StorageEntry:
     entry_type: StorageEntryType
     size: int
     modified_at: datetime
+    # Optional provider validator.  It is metadata-only and lets a provider distinguish
+    # same-size/same-mtime replacement without requiring the Scanner to read file contents.
+    fingerprint: str | None = None
 
     @property
     def exists(self) -> bool:

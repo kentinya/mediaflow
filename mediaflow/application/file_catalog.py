@@ -55,6 +55,9 @@ class FileDetailItem:
     resource_library_id: str
     source_path: str
     checkpoint: dict[str, object] | None = None
+    source_occurrence_id: str | None = None
+    source_fingerprint: str | None = None
+    source_fingerprint_state: str = "unverified"
 
 
 @dataclass(frozen=True)
@@ -204,7 +207,7 @@ class FileCatalogService:
                     redact_persistent_result(value, redact_identity=True)
                     for value in result_values[:32]
                 )
-        actions = self._current_actions(items)
+        actions = self._current_actions(items, record)
         return FileCatalogDetail(
             record,
             latest_result,
@@ -275,9 +278,32 @@ class FileCatalogService:
             item.resource_library_id,
             path,
             checkpoint,
+            getattr(item, "source_occurrence_id", None),
+            getattr(item, "source_fingerprint", None),
+            getattr(item, "source_fingerprint_state", "unverified"),
         )
 
-    def _current_actions(self, items: tuple[FileDetailItem, ...]) -> tuple[FileDetailAction, ...]:
+    def _current_actions(
+        self,
+        items: tuple[FileDetailItem, ...],
+        record: FileIndexRecord | None = None,
+    ) -> tuple[FileDetailAction, ...]:
+        if not items:
+            return ()
+        if record is not None and record.occurrence_id is not None:
+            current_items = tuple(
+                item
+                for item in items
+                if item.source_occurrence_id == record.occurrence_id
+                and item.source_fingerprint_state == "verified"
+                and item.source_fingerprint == record.fingerprint
+            )
+            # A legacy item has no occurrence link and must not become a current action for a
+            # verified replacement.  Legacy FileIndex rows retain their old behavior below.
+            if record.occurrence_state.value != "legacy":
+                items = current_items
+            elif current_items:
+                items = current_items
         if not items:
             return ()
         actionable = [
