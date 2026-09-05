@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 27.7
 Parent Slice: 27 — Manual Operations and File Lifecycle
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: abba50ca1b3d65c7f69dc5e70394130d237bbcfa
 Difficulty: High
 Test Level: T4
@@ -303,11 +303,53 @@ Head SHA: 1aeebb2ccd45db3fa035febe3b93ab95cf6a44a5
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: abba50ca1b3d65c7f69dc5e70394130d237bbcfa..1aeebb2ccd45db3fa035febe3b93ab95cf6a44a5
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+### Blockers
+
+- **AC8 / Operator Web evidence incomplete.** `mediaflow/interfaces/operator_ui.py:227-232`
+  renders Worker ID, label, status, timestamps, snapshot ID and schema version, but does not render
+  the persisted `supported_commands` field. The current `tests.test_operator_ui` assertions cover
+  navigation and read-only controls but do not prove this required evidence. Add bounded supported
+  command rendering to the Worker view/detail and a regression assertion.
+- **AC4 / exact Active binding is stale in the Worker readiness route.** The API constructs
+  `ProcessingWorkerService` once with the startup snapshot at `mediaflow/interfaces/service_api.py:343-354`;
+  `_dispatch` explicitly excludes Worker routes from `_refresh_configuration_binding()` at
+  `mediaflow/interfaces/service_api.py:1022-1033`; and `_worker_readiness_document` calls
+  `evaluate_readiness()` without the current Active identity while returning
+  `activeSnapshotId`/`activeSnapshotDigest` as `None` at `mediaflow/interfaces/service_api.py:4995-5009`.
+  After an Active revision changes, readiness can therefore evaluate against the old startup pin and
+  does not expose the bounded active identity. Source the expected snapshot from the current atomic
+  runtime/configuration authority for every readiness/job projection or rebind it atomically, while
+  preserving management-only recovery for an unhealthy Active.
+- **AC5 / claim admission does not enforce Worker lease or compatibility.**
+  `mediaflow/infrastructure/sqlite_runtime.py:4492-4518` only rejects a missing or `STOPPED` Worker,
+  then claims the first pending Job without validating live/stale heartbeat lease, runtime schema or
+  the Worker snapshot against the Job's pinned snapshot. This does not satisfy the criterion that an
+  incompatible Worker cannot claim. Add an atomic claim-time validation and fail closed with bounded
+  evidence; retain the existing ability for an already pinned Job to continue on its exact snapshot.
+- **AC6 / completion fence is not bound to Worker identity.**
+  `complete_claimed_job` uses `WHERE job_id=? AND status=? AND claim_token=?` at
+  `mediaflow/infrastructure/sqlite_runtime.py:4688`; `worker_id` is written but is not part of the
+  ownership predicate. Bind terminal commit to both the claimed Worker ID and claim token, and add a
+  mismatched-owner regression while preserving stale-owner refusal and newer-owner state.
+- **RO-7 operational recovery evidence is missing on stale running Jobs.**
+  `_job_document` projects only `workerId`/`ownerLastHeartbeatAt` for running Jobs and adds
+  `operationalCondition` only in the pending branch at `mediaflow/interfaces/service_api.py:6818-6839`.
+  `/api/v1/jobs/stale` therefore does not expose a Worker-stale condition or concrete next action;
+  `renderStaleJobs` also omits owner and condition fields at `mediaflow/interfaces/operator_ui.py:2838-2848`.
+  Project bounded owner liveness/status and recovery next action for relevant stale/running Jobs in
+  API and Web without adding automatic requeue or mutation controls.
+- **AC7 / registration bounds are incomplete for emitted Worker evidence.**
+  `ProcessingWorker.__post_init__` only checks that `worker_id` is non-empty and that command values
+  are non-empty strings (`mediaflow/domain/automation.py:430-455`); it does not bound command count or
+  length or apply secret/path-safe validation to the exposed Worker ID. `_workers_document` emits the
+  dataclass through `_value` without an additional redaction boundary. Enforce bounded safe IDs and
+  commands at registration/projection and add persistence/API redaction tests for hostile values.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task. This result does
 not close the Slice or update Roadmap.
