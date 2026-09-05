@@ -525,5 +525,5 @@ The resident `worker run` command continues to bind to the Active snapshot.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: ed53f4598ccd26484b1f0521401f869f50bc4c01
+Head SHA: 34365121342557b0f40eacc7ad9bbb74499cc4cb
 ```
