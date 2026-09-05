@@ -170,25 +170,6 @@ class ManualRecoveryContinuationService:
             ),
             None,
         )
-        if (
-            analysis_item.status is not TaskItemStatus.DRY_RUN
-            or analysis_result is None
-            or analysis_result.status != TaskItemStatus.DRY_RUN.value
-            or analysis_result.error
-            or analysis_item.source_path != checkpoint.source_path
-            or analysis_item.storage_id != checkpoint.source_storage_id
-            or analysis_task.configuration_snapshot_id != checkpoint.configuration.snapshot_id
-            or analysis_task.configuration_snapshot_digest
-            != checkpoint.configuration.snapshot_digest
-        ):
-            raise ManualRecoveryContinuationError(
-                "the linked re-analysis did not produce one completed current DryRun plan",
-                code="analysis_result_invalid",
-                next_action=(
-                    "open the linked Task/Result, resolve any blocker, and re-analyze "
-                    "the exact item before continuing"
-                ),
-            )
         analysis_checkpoint = self._checkpoint_service.get(
             analysis_item.item_id, task_id=analysis_task.task_id
         )
@@ -216,10 +197,30 @@ class ManualRecoveryContinuationService:
                     ),
                 },
             )
+        if (
+            analysis_item.status is not TaskItemStatus.DRY_RUN
+            or analysis_result is None
+            or analysis_result.status != TaskItemStatus.DRY_RUN.value
+            or analysis_result.error
+            or analysis_item.source_path != checkpoint.source_path
+            or analysis_item.storage_id != checkpoint.source_storage_id
+            or analysis_task.configuration_snapshot_id != checkpoint.configuration.snapshot_id
+            or analysis_task.configuration_snapshot_digest
+            != checkpoint.configuration.snapshot_digest
+        ):
+            raise ManualRecoveryContinuationError(
+                "the linked re-analysis did not produce one completed current DryRun plan",
+                code="analysis_result_invalid",
+                next_action=(
+                    "open the linked Task/Result, resolve any blocker, and re-analyze "
+                    "the exact item before continuing"
+                ),
+            )
 
         existing = self._repository.get_manual_recovery_link_by_source(
             source_task_id, source_item_id
         )
+        reacquire_stale_link = False
         if existing is not None:
             authorization = self._execution.get_authorization(existing.authorization_id)
             if authorization.status is ManualExecutionAuthorizationStatus.ACTIVE:
@@ -236,12 +237,10 @@ class ManualRecoveryContinuationService:
                     "the continued manual execution authorization is already consumed",
                     code="authorization_consumed",
                 )
+            # An expired or revoked one-shot authority never executed, so the item may
+            # acquire a fresh bounded authority once every gate below still passes.
             self._repository.mark_manual_recovery_link_stale(existing.link_id, now=self._clock())
-            raise ManualRecoveryContinuationError(
-                "the continued manual execution authorization is no longer active",
-                code="authorization_inactive",
-                next_action="inspect the authorization audit and request a fresh continuation",
-            )
+            reacquire_stale_link = True
 
         executions = self._repository.list_manual_executions_for_task_item(
             source_task_id, source_item_id
@@ -329,22 +328,35 @@ class ManualRecoveryContinuationService:
             note=note,
         )
         now = self._clock()
-        link = ManualRecoveryLink(
-            str(uuid4()),
-            source_task_id,
-            source_item_id,
-            continuation.continuation_id,
-            continuation.new_task_id,
-            continuation.new_result_id,
-            intent.intent_id,
-            preview.preview_id,
-            authority.authorization_id,
-            actor,
-            ManualRecoveryLinkStatus.AUTHORIZED,
-            now,
-            now,
-        )
-        self._repository.create_manual_recovery_link(link)
+        if reacquire_stale_link:
+            link = self._repository.supersede_manual_recovery_link(
+                existing.link_id,
+                analysis_continuation_id=continuation.continuation_id,
+                analysis_task_id=continuation.new_task_id,
+                analysis_result_id=continuation.new_result_id,
+                intent_id=intent.intent_id,
+                preview_id=preview.preview_id,
+                authorization_id=authority.authorization_id,
+                actor=actor,
+                now=now,
+            )
+        else:
+            link = ManualRecoveryLink(
+                str(uuid4()),
+                source_task_id,
+                source_item_id,
+                continuation.continuation_id,
+                continuation.new_task_id,
+                continuation.new_result_id,
+                intent.intent_id,
+                preview.preview_id,
+                authority.authorization_id,
+                actor,
+                ManualRecoveryLinkStatus.AUTHORIZED,
+                now,
+                now,
+            )
+            self._repository.create_manual_recovery_link(link)
         return link
 
     def execute_continued(
@@ -388,7 +400,11 @@ class ManualRecoveryContinuationService:
             raise ManualRecoveryContinuationError(
                 "the continued manual execution authority is no longer active",
                 code="authorization_inactive",
-                next_action="inspect the authorization audit and request a fresh continuation",
+                next_action=(
+                    "call the authorize-organize continuation route again to obtain a "
+                    "fresh one-shot authority once the linked re-analysis and current "
+                    "source evidence still hold"
+                ),
             )
         try:
             run = self._execution.execute(

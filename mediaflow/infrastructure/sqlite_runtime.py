@@ -1313,6 +1313,58 @@ class SQLiteTaskRepository:
             raise LookupError(f"manual recovery link {link_id!r} was not found")
         return value
 
+    def supersede_manual_recovery_link(
+        self,
+        link_id: str,
+        *,
+        analysis_continuation_id: str,
+        analysis_task_id: str,
+        analysis_result_id: str,
+        intent_id: str,
+        preview_id: str,
+        authorization_id: str,
+        actor: str,
+        now: datetime,
+    ) -> ManualRecoveryLink:
+        """Replace one stale link's authority with a freshly acquired one.
+
+        A stale link stays the single durable anchor for its source item; the
+        expired or revoked authorization remains auditable in its own table.
+        """
+
+        if now.tzinfo is None:
+            raise ValueError("manual recovery supersede timestamp needs timezone")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE manual_recovery_links
+                SET analysis_continuation_id=?, analysis_task_id=?, analysis_result_id=?,
+                    intent_id=?, preview_id=?, authorization_id=?, actor=?, status=?,
+                    updated_at=?, execution_id=NULL
+                WHERE link_id=? AND status=?""",
+                (
+                    analysis_continuation_id,
+                    analysis_task_id,
+                    analysis_result_id,
+                    intent_id,
+                    preview_id,
+                    authorization_id,
+                    actor,
+                    ManualRecoveryLinkStatus.AUTHORIZED.value,
+                    now.isoformat(),
+                    link_id,
+                    ManualRecoveryLinkStatus.STALE.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                value = self.get_manual_recovery_link(link_id)
+                if value is None:
+                    raise LookupError(f"manual recovery link {link_id!r} was not found")
+                return value
+        value = self.get_manual_recovery_link(link_id)
+        if value is None:
+            raise LookupError(f"manual recovery link {link_id!r} was not found")
+        return value
+
     def create_recovery_batch(self, batch: RecoveryBatch) -> None:
         if not batch.items or len(batch.items) > 100:
             raise ValueError("recovery batch must contain between 1 and 100 items")

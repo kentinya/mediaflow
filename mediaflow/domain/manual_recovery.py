@@ -52,8 +52,9 @@ class ManualRecoveryLink:
                 "Task/TaskItem/Result/checkpoint evidence"
             )
         return (
-            "refresh the original manual item checkpoint and request a fresh "
-            "current-source Preview before authorizing execution"
+            "call the authorize-organize continuation route again to create a fresh "
+            "exact Preview and one-shot authority once the linked re-analysis and "
+            "current source evidence still hold"
         )
 
     def document(self) -> dict[str, object]:
@@ -105,5 +106,18 @@ class ManualRecoveryLinkRepository(Protocol):
         self,
         link_id: str,
         *,
+        now: datetime,
+    ) -> ManualRecoveryLink: ...
+    def supersede_manual_recovery_link(
+        self,
+        link_id: str,
+        *,
+        analysis_continuation_id: str,
+        analysis_task_id: str,
+        analysis_result_id: str,
+        intent_id: str,
+        preview_id: str,
+        authorization_id: str,
+        actor: str,
         now: datetime,
     ) -> ManualRecoveryLink: ...
