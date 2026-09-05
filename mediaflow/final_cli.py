@@ -1276,6 +1276,30 @@ def final_main(
         if arguments.command == "worker":
             worker_snapshot = _managed_snapshot_reference(arguments.config)
             with SQLiteTaskRepository(configuration.database_path) as repository:
+                # One-off worker (run-next): peek the next pending job and bind to its
+                # snapshot so the claim fence matches exactly.  A pinned Job that was
+                # submitted under an older Active snapshot is therefore claimed by a
+                # Worker registered to that snapshot, not to the current Active.
+                # The resident worker (run) always binds to the Active snapshot.
+                bound_snapshot_id = None
+                bound_snapshot_digest = None
+                if arguments.worker_command == "run-next":
+                    next_row = repository._connection.execute(
+                        "SELECT configuration_snapshot_id, configuration_snapshot_digest "
+                        "FROM automation_jobs WHERE status=? "
+                        "ORDER BY created_at, job_id LIMIT 1",
+                        ("pending",),
+                    ).fetchone()
+                    if next_row is not None:
+                        bound_snapshot_id = next_row["configuration_snapshot_id"]
+                        bound_snapshot_digest = next_row["configuration_snapshot_digest"]
+                    # Fall back to Active snapshot if the next job is unpinned
+                    if bound_snapshot_id is None and worker_snapshot is not None:
+                        bound_snapshot_id, bound_snapshot_digest = worker_snapshot
+                else:
+                    # Resident worker: bind to current Active snapshot
+                    if worker_snapshot is not None:
+                        bound_snapshot_id, bound_snapshot_digest = worker_snapshot
                 worker_service = AutomationWorker(
                     repository,
                     lambda job, cancelled: _run_queued_workflow(
@@ -1287,10 +1311,9 @@ def final_main(
                         if hasattr(configuration, "resolve_webhook_targets")
                         else {},
                     ),
-                    configuration_snapshot_id=(worker_snapshot[0] if worker_snapshot else None),
-                    configuration_snapshot_digest=(worker_snapshot[1] if worker_snapshot else None),
+                    configuration_snapshot_id=bound_snapshot_id,
+                    configuration_snapshot_digest=bound_snapshot_digest,
                     runtime_schema_version=SCHEMA_VERSION,
-                    allow_pinned_snapshot_mismatch=True,
                 )
                 if arguments.worker_command == "run-next":
                     job = worker_service.run_next()

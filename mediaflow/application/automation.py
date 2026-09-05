@@ -366,23 +366,24 @@ class AutomationWorker:
         configuration_snapshot_id: str | None = None,
         configuration_snapshot_digest: str | None = None,
         runtime_schema_version: int = 33,
-        allow_pinned_snapshot_mismatch: bool = False,
     ) -> None:
         self._repository = repository
         self._handler = handler
         self._notifications = notifications
-        self._worker_id = worker_id or f"worker-{uuid4().hex[:12]}"
-        self._label = validate_worker_label(label or f"worker-{self._worker_id[-6:]}")
+        raw_worker_id = worker_id or f"worker-{uuid4().hex[:12]}"
+        self._worker_id = validate_worker_id(raw_worker_id)
+        raw_label = label or f"worker-{self._worker_id[-6:]}"
+        self._label = validate_worker_label(raw_label)
         self._heartbeat_interval_seconds = max(0.1, float(heartbeat_interval_seconds))
-        self._supported_commands = (
+        raw_commands = (
             supported_commands
             if supported_commands is not None
             else tuple(c.value for c in AutomationCommand)
         )
+        self._supported_commands = validate_worker_commands(tuple(raw_commands))
         self._configuration_snapshot_id = configuration_snapshot_id
         self._configuration_snapshot_digest = configuration_snapshot_digest
         self._runtime_schema_version = runtime_schema_version
-        self._allow_pinned_snapshot_mismatch = allow_pinned_snapshot_mismatch
         # Preserve the legacy in-process helper path unless the caller supplies
         # the identity needed for durable Worker ownership and snapshot fencing.
         self._worker_registration_enabled = (
@@ -448,7 +449,6 @@ class AutomationWorker:
                 and hasattr(self._repository, "register_worker")
                 else None
             ),
-            allow_pinned_snapshot_mismatch=self._allow_pinned_snapshot_mismatch,
         )
         if job is None:
             return None
