@@ -421,3 +421,32 @@ not close the Slice or update Roadmap.
 Status: READY FOR B REVIEW
 Head SHA: 51d7c02c0f40742c1394e615f3be47c2f1c2d1b0
 ```
+
+## B Review Result
+
+```text
+Reviewed: abba50ca1b3d65c7f69dc5e70394130d237bbcfa..51d7c0279b389fabf6f2394435a55cf6b6cd86d4
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+### Blockers
+
+- **AC5 / incompatible Worker can still claim.** `mediaflow/infrastructure/sqlite_runtime.py:4523-4545`
+  admits every pending Job when `allow_pinned_snapshot_mismatch` is true and also admits
+  `scan`/`recovery-continuation` Jobs through an unconditional command exception even when the
+  registered Worker has a different explicit snapshot. `mediaflow/final_cli.py:1290-1293` always
+  enables that bypass for the resident CLI Worker. Fix claim admission so a registered Worker
+  cannot claim an incompatible Job; preserve already-pinned continuation only through a bounded,
+  explicit per-Job continuation condition that still enforces Worker lease/schema and does not
+  become a general snapshot bypass. Add regression coverage for mismatched `scan` and recovery
+  Jobs as well as `preview`.
+- **AC7 / invalid registration can be persisted before rejection.** `AutomationWorker.register()`
+  at `mediaflow/application/automation.py:403-420` passes raw Worker ID and supported commands to
+  `SQLiteTaskRepository.register_worker()`. That repository writes/commits the row before
+  `_processing_worker()` constructs the validated domain record (`mediaflow/infrastructure/
+  sqlite_runtime.py:4932-4990`), so hostile ID/command data can remain durable even though the
+  subsequent projection raises. Move the bounded ID/command validation to the Worker-owned
+  registration boundary before persistence (or make the repository transactionally reject it),
+  and prove no hostile values remain in persistence/API projection.
