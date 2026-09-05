@@ -2796,7 +2796,10 @@ class MediaFlowApi:
                     "managed configuration service is unavailable",
                 )
             document = self._document(environ)
-            if set(document) == {"source"} and document.get("source") in {"current", "active", "successor"}:
+            if (
+                set(document) == {"source"}
+                and document.get("source") in {"current", "active", "successor"}
+            ):
                 draft_document = self._configuration_service.current_document(
                     self._bootstrap_document
                 )
@@ -2867,6 +2870,7 @@ class MediaFlowApi:
             and parts[5] == "successor"
             and method == "POST"
         ):
+            self._require_empty_query(environ, "successor Draft")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             if self._configuration_service is None:
                 return self._error(
@@ -2875,11 +2879,33 @@ class MediaFlowApi:
                     "service_unavailable",
                     "managed configuration service is unavailable",
                 )
-            document = self._document(environ)
-            if document:
-                raise ValueError("successor Draft from a specific revision does not accept request fields")
+            document = self._optional_document(environ)
+            allowed = {"expectedActiveRevisionId", "expectedActiveVersion", "expectedActiveDigest"}
+            if set(document).difference(allowed):
+                raise ValueError(
+                    "successor Draft from a specific revision accepts optional "
+                    "expectedActiveRevisionId, expectedActiveVersion, and expectedActiveDigest only"
+                )
+            if (
+                "expectedActiveRevisionId" in document
+                and document["expectedActiveRevisionId"] != parts[4]
+            ):
+                raise ValueError(
+                    "expectedActiveRevisionId in request body does not match revision ID in URL"
+                )
+            expected_version = document.get("expectedActiveVersion")
+            if expected_version is not None and (
+                isinstance(expected_version, bool) or not isinstance(expected_version, int)
+            ):
+                raise ValueError("expectedActiveVersion must be an integer")
+            expected_digest = document.get("expectedActiveDigest")
+            if expected_digest is not None and not isinstance(expected_digest, str):
+                raise ValueError("expectedActiveDigest must be a string")
             revision = self._configuration_service.create_successor_draft(
                 actor=principal.principal_id,
+                expected_active_revision_id=parts[4],
+                expected_active_version=expected_version,
+                expected_active_digest=expected_digest,
             )
             response = revision.summary()
             response["created"] = True
