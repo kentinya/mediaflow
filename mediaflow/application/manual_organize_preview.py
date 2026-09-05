@@ -32,6 +32,7 @@ from mediaflow.application.strategy_test import (
     strategy_runner_from_configuration,
 )
 from mediaflow.domain.classification import ClassificationStatus
+from mediaflow.domain.classification_review import ClassificationSelection
 from mediaflow.domain.file_lifecycle import OccurrenceState, occurrence_id_for, source_fingerprint
 from mediaflow.domain.manual_organize import (
     ManualChoice,
@@ -54,8 +55,11 @@ from mediaflow.domain.manual_organize_preview import (
 from mediaflow.domain.manual_safety import safe_manual_error
 from mediaflow.domain.metadata import (
     MediaQueryType,
+    MediaType,
     MetadataIdentificationStatus,
 )
+from mediaflow.domain.metadata_correction import MetadataCorrectionSelection
+from mediaflow.domain.metadata_review import MetadataSelection
 from mediaflow.domain.organizer import (
     ConflictStrategy,
     MediaFileSet,
@@ -98,6 +102,17 @@ class _PreviewOutcome:
     error: str | None = None
     next_action: str = "request a fresh Preview for this item"
     truncated: bool = False
+
+
+@dataclass(frozen=True)
+class _BoundSourceDecisions:
+    """One item's newest resolved continuation decisions for its own source."""
+
+    confirmation: object | None = None
+    metadata_review: object | None = None
+    metadata_correction: object | None = None
+    classification_review: object | None = None
+    recognition_review: object | None = None
 
 
 class ManualOrganizePreviewService:
@@ -162,6 +177,7 @@ class ManualOrganizePreviewService:
         source_scope: str | None = None,
         source_scope_id: str | None = None,
         source_admission_errors: Mapping[str, ManualPreviewError] | None = None,
+        review_decisions: object | None = None,
     ) -> ManualOrganizePreview:
         actor = self._actor(actor)
         source_admission_errors = dict(source_admission_errors or {})
@@ -246,6 +262,7 @@ class ManualOrganizePreviewService:
                         item,
                         records[item.item_id],
                         preview_id,
+                        review_decisions=review_decisions,
                     )
             except ManualPreviewUnavailable as error:
                 outcome = _PreviewOutcome(
@@ -1258,7 +1275,9 @@ class ManualOrganizePreviewService:
                 break
         return tuple(sorted(result, key=lambda value: str(value.get("confirmationId"))))
 
-    def _run_item(self, intent, item, record, preview_id: str) -> _PreviewOutcome:
+    def _run_item(
+        self, intent, item, record, preview_id: str, *, review_decisions: object | None = None
+    ) -> _PreviewOutcome:
         runtime = self._load_runtime(intent.snapshot_id, intent.snapshot_digest)
         type_policy = next(
             (
@@ -1315,21 +1334,32 @@ class ManualOrganizePreviewService:
         # constructing the source adapter first keeps arbitrary API paths out of scope.
         configured_storages = self._create_storages(runtime, needed_storage_ids)
         source_storage = self._guarded_storage(configured_storages, item.source.storage_id)
+        bound = self._bound_source_decisions(review_decisions, item)
         metadata_reference = self._metadata_reference(item.choice, intent, record, metadata_policy)
-        live_metadata = metadata_policy.query_type is not MediaQueryType.NONE
-        if metadata_reference is not None:
-            live_metadata = True
-        providers = (
-            self._provider_registry((metadata_policy.provider_id,)) if live_metadata else None
-        )
-        runner = self._runner(runtime, providers, source_storage, configured_storages)
         metadata_selection = None
+        metadata_correction = None
         if metadata_reference is not None:
             metadata_selection = self._metadata_selection(
                 item.choice.recognition_type_id,
                 type_policy.metadata_policy_id,
                 metadata_reference,
             )
+        else:
+            metadata_selection, metadata_correction = self._bound_metadata_decision(
+                bound, item, type_policy, metadata_policy
+            )
+        live_metadata = metadata_policy.query_type is not MediaQueryType.NONE
+        if (
+            metadata_reference is not None
+            or metadata_selection is not None
+            or metadata_correction is not None
+        ):
+            live_metadata = True
+        providers = (
+            self._provider_registry((metadata_policy.provider_id,)) if live_metadata else None
+        )
+        runner = self._runner(runtime, providers, source_storage, configured_storages)
+        classification_selection = self._bound_classification_decision(bound, item, type_policy)
         strategy = runner.run_path(
             item.source.path,
             live_metadata=live_metadata,
@@ -1338,6 +1368,8 @@ class ManualOrganizePreviewService:
             resource_library_id=source_library.library_id,
             storage_id=source_library.storage_id,
             metadata_selection=metadata_selection,
+            metadata_correction=metadata_correction,
+            classification_selection=classification_selection,
             forced_recognition_type_id=item.choice.recognition_type_id,
             storage_path=item.source.path,
             source_storage=source_storage,
@@ -1443,7 +1475,9 @@ class ManualOrganizePreviewService:
             )
             truncated = True
         plan = AttachmentPlanner().plan(plan, attachments, target_storage)
-        plan = self._resolve_conflicts(plan, type_policy, target_storage)
+        plan = self._resolve_conflicts(
+            plan, type_policy, target_storage, decision=bound.confirmation
+        )
         plan_document = self._plan_document(
             strategy, plan, item, type_policy, source_storage, target_storage
         )
@@ -1685,6 +1719,116 @@ class ManualOrganizePreviewService:
         )
 
     @staticmethod
+    def _bound_source_decisions(review_decisions: object | None, item):
+        """Extract the resolved continuation decisions for one item's source."""
+
+        if review_decisions is None:
+            return _BoundSourceDecisions()
+        key = (item.source.storage_id, item.source.path)
+
+        def lookup(name: str) -> object | None:
+            values = getattr(review_decisions, name, None)
+            if not isinstance(values, Mapping):
+                return None
+            return values.get(key)
+
+        return _BoundSourceDecisions(
+            confirmation=lookup("confirmations"),
+            metadata_review=lookup("metadata_reviews"),
+            metadata_correction=lookup("metadata_corrections"),
+            classification_review=lookup("classification_reviews"),
+            recognition_review=lookup("recognition_reviews"),
+        )
+
+    @staticmethod
+    def _identity_compatible(policy, provider: str | None, media_type: str | None) -> bool:
+        """Whether a resolved identity can be planned under the pinned MetadataPolicy."""
+
+        if not provider or not media_type or not getattr(policy, "enabled", True):
+            return False
+        if getattr(policy, "provider_id", None) != provider:
+            return False
+        if policy.query_type is MediaQueryType.NONE:
+            return False
+        expected = getattr(policy, "media_type", None)
+        if expected is None:
+            return True
+        try:
+            return expected is MediaType(media_type)
+        except ValueError:
+            return False
+
+    def _bound_metadata_decision(self, bound, item, type_policy, metadata_policy):
+        """Bind a resolved identity decision to the item's own manual choice context.
+
+        A Metadata review decision or a Metadata Correction decision made under the
+        linked re-analysis is an identity fact about the source; it can be planned
+        again only when it is compatible with the metadata policy pinned by the
+        manual choice.  Incompatible decisions are left unapplied so the normal
+        analysis runs and reports its own bounded blocker.
+        """
+
+        if bound.metadata_review is not None:
+            review = bound.metadata_review
+            provider = getattr(review, "selected_provider", None)
+            provider_id = getattr(review, "selected_provider_id", None)
+            media_type = getattr(review, "selected_media_type", None)
+            if self._identity_compatible(metadata_policy, provider, media_type):
+                return (
+                    MetadataSelection(
+                        item.choice.recognition_type_id,
+                        type_policy.metadata_policy_id,
+                        provider,
+                        provider_id,
+                        media_type,
+                    ),
+                    None,
+                )
+            return None, None
+        if bound.metadata_correction is not None:
+            correction = bound.metadata_correction
+            provider = getattr(correction, "provider_id", None)
+            media_type = getattr(correction, "corrected_media_type", None)
+            if self._identity_compatible(metadata_policy, provider, media_type):
+                return (
+                    None,
+                    MetadataCorrectionSelection(
+                        item.choice.recognition_type_id,
+                        type_policy.metadata_policy_id,
+                        provider,
+                        getattr(correction, "corrected_query", None),
+                        getattr(correction, "corrected_year", None),
+                        media_type,
+                        getattr(correction, "direct_provider_id", None),
+                    ),
+                )
+        return None, None
+
+    def _bound_classification_decision(self, bound, item, type_policy):
+        """Bind a resolved Classification decision to the pinned manual policy."""
+
+        review = bound.classification_review
+        if review is None:
+            return None
+        if (
+            getattr(review, "classification_policy_id", None)
+            != type_policy.classification_policy_id
+        ):
+            return None
+        rule_id = getattr(review, "selected_rule_id", None)
+        library_id = getattr(review, "selected_media_library_id", None)
+        relative_path = getattr(review, "selected_relative_path", None)
+        if not rule_id or not library_id or not relative_path:
+            return None
+        return ClassificationSelection(
+            item.choice.recognition_type_id,
+            type_policy.classification_policy_id,
+            rule_id,
+            library_id,
+            relative_path,
+        )
+
+    @staticmethod
     def _plan(
         strategy,
         type_policy,
@@ -1818,12 +1962,21 @@ class ManualOrganizePreviewService:
             "deterministic": True,
         }
 
-    def _resolve_conflicts(self, plan, type_policy, target_storage):
+    def _resolve_conflicts(self, plan, type_policy, target_storage, *, decision=None):
         """Apply only an existing configured/recorded decision; never mutate Storage."""
 
         if not plan.conflicts:
             return plan
         resolver = ConflictResolver()
+        # A saved continuation decision for this exact source collision wins.  The
+        # linked re-analysis plan id differs from the manual Preview plan id, so
+        # the decision is matched by source and destination rather than plan id.
+        if decision is not None:
+            replacement = self._apply_conflict_confirmation(
+                plan, type_policy, target_storage, decision
+            )
+            if replacement is not None:
+                return replacement
         configured = resolver.apply_configured(plan, type_policy.organize_policy, target_storage)
         if configured is not None:
             return configured
@@ -1835,35 +1988,46 @@ class ManualOrganizePreviewService:
         except TypeError:
             confirmations = tuple(method(limit=1000))
         for confirmation in confirmations:
-            if (
-                getattr(confirmation, "plan_id", None) != plan.plan_id
-                or getattr(confirmation, "source_storage_id", None) != plan.source_storage_id
-                or getattr(confirmation, "source_path", None)
-                != (plan.source_location.path if plan.source_location else plan.source)
-                or getattr(confirmation, "destination_storage_id", None) != plan.target_storage_id
-                or getattr(confirmation, "destination_path", None)
-                != (plan.destination_location.path if plan.destination_location else plan.target)
-                or getattr(getattr(confirmation, "status", None), "value", None) != "resolved"
-            ):
+            if getattr(confirmation, "plan_id", None) != plan.plan_id:
                 continue
-            selected = getattr(confirmation, "selected_strategy", None)
-            try:
-                strategy = ConflictStrategy(selected)
-            except (TypeError, ValueError):
-                continue
-            if strategy is ConflictStrategy.SKIP:
-                return replace(
-                    plan, operation=PlanOperation.SKIP, status=PlanStatus.NOOP, conflicts=()
-                )
-            if strategy is ConflictStrategy.OVERWRITE:
-                return resolver.overwrite(
-                    plan,
-                    type_policy.organize_policy,
-                    confirmed=bool(getattr(confirmation, "overwrite_authorized", False)),
-                )
-            if strategy is ConflictStrategy.RENAME:
-                return resolver.rename(plan, target_storage)
+            replacement = self._apply_conflict_confirmation(
+                plan, type_policy, target_storage, confirmation
+            )
+            if replacement is not None:
+                return replacement
         return plan
+
+    @staticmethod
+    def _apply_conflict_confirmation(plan, type_policy, target_storage, confirmation):
+        """Apply one resolved conflict confirmation to an exact matching plan."""
+
+        if (
+            getattr(confirmation, "source_storage_id", None) != plan.source_storage_id
+            or getattr(confirmation, "source_path", None)
+            != (plan.source_location.path if plan.source_location else plan.source)
+            or getattr(confirmation, "destination_storage_id", None) != plan.target_storage_id
+            or getattr(confirmation, "destination_path", None)
+            != (plan.destination_location.path if plan.destination_location else plan.target)
+            or getattr(getattr(confirmation, "status", None), "value", None) != "resolved"
+        ):
+            return None
+        selected = getattr(confirmation, "selected_strategy", None)
+        try:
+            strategy = ConflictStrategy(selected)
+        except (TypeError, ValueError):
+            return None
+        resolver = ConflictResolver()
+        if strategy is ConflictStrategy.SKIP:
+            return replace(plan, operation=PlanOperation.SKIP, status=PlanStatus.NOOP, conflicts=())
+        if strategy is ConflictStrategy.OVERWRITE:
+            return resolver.overwrite(
+                plan,
+                type_policy.organize_policy,
+                confirmed=bool(getattr(confirmation, "overwrite_authorized", False)),
+            )
+        if strategy is ConflictStrategy.RENAME:
+            return resolver.rename(plan, target_storage)
+        return None
 
     @staticmethod
     def _execution_plan_document(plan, attachments):

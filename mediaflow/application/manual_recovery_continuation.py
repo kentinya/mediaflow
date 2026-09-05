@@ -18,6 +18,7 @@ from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+from mediaflow.application.recovery_decisions import collect_resolved_continuation_decisions
 from mediaflow.domain.manual_execution import (
     MANUAL_EXECUTION_PERMISSION,
     ManualExecutionAuthorizationStatus,
@@ -286,6 +287,18 @@ class ManualRecoveryContinuationService:
                 code="manual_item_not_found",
                 status=404,
             )
+        # The fresh continuation Preview must consume the same resolved review and
+        # conflict decisions the completed linked re-analysis consumed, otherwise a
+        # decision that made the re-analysis succeed (for example a metadata
+        # identity or a classification rule) is silently dropped and the Preview
+        # blocks again on the same review.  The shared collector returns the newest
+        # RESOLVED decisions for this source across the original item and its prior
+        # single-item re-analysis items; the Preview binds them to this item's own
+        # manual choice context and only applies them when they stay compatible.
+        decisions = collect_resolved_continuation_decisions(
+            self._repository,
+            source_item_id=source_item_id,
+        )
         preview = self._previews.create(
             intent.intent_id,
             [manual_item.item_id],
@@ -294,6 +307,7 @@ class ManualRecoveryContinuationService:
             snapshot_id=intent.snapshot_id,
             snapshot_digest=intent.snapshot_digest,
             actor=actor,
+            review_decisions=decisions,
         )
         preview_item = next(
             (value for value in preview.items if value.item_id == manual_item.item_id), None
