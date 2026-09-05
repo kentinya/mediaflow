@@ -1346,3 +1346,174 @@ the code and the "Decisions" section instead of contradicting it.
 Status: READY FOR B REVIEW
 Head SHA: 54833e26d0ad8137a2ae0c5bd0a6378d54859ec0
 ```
+
+## B Review Result
+
+```text
+Reviewed: e2c048da99858fe1eb504359a1f1ee0e3abc1d1e..54833e26d0ad8137a2ae0c5bd0a6378d54859ec0
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+### Blockers
+
+1. **AC5/AC6/AC7/AC8 未满足：linked re-analysis 上保存的 review decision 被下一次
+   re-analysis 消费后，最终 `authorize-organize` 仍会重新卡在 fresh manual Preview，原
+   Organize journey 不能继续执行。**
+   - 证据：我用临时 LocalStorage root + fake provider 复现真实路径：manual Organize failure →
+     recovery admit/continue → Worker re-analysis 产生 `WAITING_METADATA` linked item → 在该
+     linked item 上 `MetadataReviewService.resolve(...)` 持久化 decision → 第二次 Worker
+     re-analysis 成功 `DRY_RUN` 且 `provider_id == "42"` → 调用真实
+     `POST /api/v1/tasks/{task_id}/items/{item_id}/recovery/authorize-organize`，结果仍返回
+     `409 preview_blocked`；新建 Preview 为 `blocked`，item error 为
+     `metadata identity is not ready for exact planning`，next action 仍要求解决 metadata
+     review。现有回归只断言 re-analysis 消费 decision 并完成 DryRun
+     (`tests/test_recovery_continuation.py:1927-1992`)，没有继续调用
+     `authorize-organize` / execute 验证该 resolved-decision 路径最终可回到 manual Organize。
+   - 代码原因：`ManualRecoveryContinuationService.authorize_continued()` 在 linked analysis
+     `COMPLETED` 后重新调用 `ManualOrganizePreviewService.create(...)` 并再走
+     `ManualOrganizeExecutionService.authorize(...)`
+     (`mediaflow/application/manual_recovery_continuation.py:289-329`)；该 fresh Preview 从原
+     manual intent choice 重新分析，并未接收 `final_cli._run_recovery_continuation()` 收集的
+     linked analysis item decisions (`mediaflow/final_cli.py:3261-3347`)。因此 Metadata、Metadata
+     Correction、Classification 等保存在 linked item 上的 decision 可让第二次 DryRun 成功，
+     但不能保证后续 fresh Preview / one-shot manual authority 使用同一 reviewed plan。
+   - 修正方向：让 continuation authority/execute 使用已经成功的 linked re-analysis reviewed
+     plan，或在创建 continuation 的 fresh exact Preview 时显式、受界地继承同一 source
+     occurrence 下已解决的 linked review/decision evidence；无论采用哪种实现，都必须重新验证
+     current source occurrence/fingerprint、pinned snapshot、capability/conflict/destructive policy，
+     并补 T4 回归证明至少 Metadata、Metadata Correction、Classification（以及 Conflict/
+     Recognition 如受影响）从 linked blocker resolution → re-analysis success →
+     `authorize-organize` success → one-shot `manual-recovery-links/{id}/execute` success 的完整链路，
+     同时保存 decision 仍为 persistence-only、执行前零 Storage mutation、成功 sibling 与 uncertain
+     effect item 不被 replay。
+
+Task ID、Task Base、Goal、Implementation Scope 保持不变；修正继续留在本 Task，不关闭 Slice，也不更新 Roadmap。
+
+## Developer Completion Report (Correction Round 4)
+
+### Resolution of B Review Blockers
+
+**Blocker 1 (AC5/AC6/AC7/AC8 — resolved decisions were consumed by the re-analysis but dropped by
+`authorize-organize`):** `ManualRecoveryContinuationService.authorize_continued()` collected no
+decision evidence; its fresh exact Preview re-ran the original manual choice with a live search and
+ignored the decisions saved on the linked single-item re-analysis. A decision that made the second
+Worker re-analysis succeed (for example metadata identity `42`) therefore blocked the fresh Preview
+again (`409 preview_blocked`), so the original Organize journey could never execute.
+
+The fix makes the continuation authority consume exactly the evidence the completed linked
+re-analysis consumed:
+- New shared collector `mediaflow/application/recovery_decisions.py` returns the newest RESOLVED
+  Conflict / Metadata / Metadata-Correction / Classification / Recognition decisions for the source,
+  collected from the original manual item plus every prior single-item re-analysis item (bounded,
+  newest wins). `final_cli._run_recovery_continuation()` now uses the same collector, so the Worker
+  re-analysis and the continuation Preview cannot diverge again.
+- `ManualOrganizePreviewService.create(..., review_decisions=...)` binds the saved decisions to the
+  original manual choice context: a Metadata identity or Metadata Correction is planned by the
+  pinned provider ID only when compatible with the choice's MetadataPolicy (provider and media
+  type); a Classification decision is applied only when it belongs to the choice's Classification
+  policy; a saved conflict decision is applied by source + destination because the linked
+  re-analysis and the manual Preview plan ids differ by design (one uses the display source, the
+  other the storage-relative path). Incompatible decisions are left unapplied so the normal
+  analysis runs and reports its own bounded blocker instead of silently executing a different plan.
+  Recognition decisions need no Preview binding: the manual choice pins the RecognitionType, and a
+  recognition review is only honoured by the production re-analysis whose result is what the
+  operator reviewed.
+- `authorize_continued()` passes the collected decisions into the fresh Preview. The five round-3
+  decision regressions now drive the full chain through the real API: linked blocker resolution
+  (persistence-only) → Worker re-analysis success → `POST .../recovery/authorize-organize` returns
+  `201` → one-shot `POST /api/v1/manual-recovery-links/{id}/execute` succeeds and moves the source
+  to the reviewed destination. Each journey asserts zero Storage mutation before execute, the
+  reviewed destination after execute, and repeated-execute refusal (`409 authorization_not_active`);
+  the conflict journey additionally asserts the colliding destination is never overwritten.
+
+### Changed Files
+- `mediaflow/application/recovery_decisions.py` — new shared collector: newest resolved
+  decisions per source occurrence (original item + prior linked re-analysis items).
+- `mediaflow/application/manual_organize_preview.py` — `create(..., review_decisions=)` threading
+  and bounded binding of metadata identity / metadata correction / classification decisions to the
+  manual choice context; saved-conflict application in `_resolve_conflicts`.
+- `mediaflow/application/manual_recovery_continuation.py` — `authorize_continued()` collects and
+  passes the source's resolved decisions into the fresh continuation Preview.
+- `mediaflow/final_cli.py` — `_run_recovery_continuation()` now consumes the shared collector
+  (behaviour-preserving; maps built from the same raw records as before).
+- `tests/test_recovery_continuation.py` — the five round-3 decision regressions were extended past
+  the DryRun to the full authorize/execute journey via `_authorize_and_execute_continued`.
+
+### Implemented
+- Continuation `authorize-organize` succeeds after a linked decision resolution that produced a
+  completed DryRun, instead of re-blocking on a fresh live search/classification/conflict.
+- The continuation Preview inherits only evidence that remains compatible with the original manual
+  choice and its pinned policies; execution stays on the existing one-shot exact authority and
+  OrganizerExecutor-only path with all revalidation gates intact.
+
+### Tests and Results
+- `PASS` — `.venv/bin/python -m unittest tests.test_manual_organize_execution
+  tests.test_manual_organize_intent tests.test_manual_preview tests.test_conflict_resolution
+  tests.test_recognition_review tests.test_metadata_review tests.test_classification_review
+  tests.test_processing_recovery_admission tests.test_recovery_continuation
+  tests.test_recovery_batch tests.test_api_security tests.test_operator_ui` — 217 tests OK.
+- `FAIL / PRE-EXISTING / UNRELATED` — `.venv/bin/python -m unittest discover -s tests` —
+  1242 tests, 6 failures, 7 skips. The failing modules are the same environment set recorded at
+  prior checkpoints: `test_api_credentials` ×2, `test_final_integration` ×1,
+  `test_resource_library_pipeline` ×1, `test_runtime_storage_configuration` ×2. None of them
+  imports or exercises this round's diff; the regression was reproduced as `preview_blocked` by
+  stashing only the source changes (4 journey tests failed) and passing after the fix.
+- `PASS` — `.venv/bin/python -m unittest tests.test_migration_rehearsal tests.test_sqlite_backup
+  tests.test_sqlite_restore tests.test_task_persistence tests.test_processing_checkpoint` —
+  33 tests OK.
+- `PASS` — `.venv/bin/ruff format --check mediaflow tests` — 249 files already formatted.
+- `PASS` — `.venv/bin/ruff check mediaflow tests`.
+- `PASS` — `.venv/bin/python -m compileall -q mediaflow tests`.
+- `PASS` — `.venv/bin/pip check` — no broken requirements found.
+- `PASS` — `.venv/bin/mediaflow --config config/strategy.example.json config validate` and
+  `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`.
+- `PASS` — Markdown local-link validation over tracked Markdown — 123 files, 40 local links,
+  0 broken.
+- `PASS` — `git diff --check`.
+- `PASS` — private-config/secret scan over the staged product diff; `config/alist.json`,
+  `config/strategy.json`, `.mediaflow` and `config/.mediaflow` remain ignored/untracked.
+- `PASS` — forbidden FFprobe/FFmpeg scan over `mediaflow` and `pyproject.toml` — 0 matches.
+- `SKIP / UNAVAILABLE` — production SMB, OpenList, AWS S3/Cloudflare R2, live TMDB and
+  multi-process/concurrency gates; temporary LocalStorage roots and fake providers only.
+
+### Decisions
+- **Bounded inheritance, not plan substitution.** The continuation Preview stays in the original
+  manual-choice domain (that is what the existing one-shot execution foundation and its policy/
+  fingerprint revalidation consume). Resolved identity and rule decisions are bound into that
+  domain only when they remain compatible with the pinned Metadata/Classification policies;
+  otherwise the decision is left unapplied and the normal analysis fails closed with its own
+  actionable blocker. A saved decision therefore never silently changes recognition type,
+  destination or policies.
+- **Conflict decisions are matched by source + destination**, not plan id. The linked re-analysis
+  plan id is derived from the display source while the manual Preview plan id is derived from the
+  storage-relative path, so the deterministic plan ids differ even for the same collision.
+- **One collector for both analysis surfaces.** `final_cli._run_recovery_continuation` and the
+  continuation authority now share `recovery_decisions`, removing the possibility that the Preview
+  and the Worker consume different evidence for the same source.
+- No schema change; the new module is additive. `SLICE.md`, `docs/roadmap.md`, `nohup.out` and
+  `worker.log` keep their pre-existing uncommitted/untracked state and are not part of this
+  checkpoint.
+
+### Remaining In-Slice Work
+- RO-7 Processing Worker registration/readiness and ownership/fencing remains outside this Task.
+
+### Risks / Deviations
+- Full regression remains `FAIL / PRE-EXISTING / UNRELATED` with the six CLI/credential/storage
+  environment failures listed above; no failure is introduced by this correction. A non-fatal
+  `ResourceWarning: unclosed database` is emitted at teardown of the pre-existing
+  `test_recovery_continuation` module and also occurs without this round's test changes.
+- A linked decision resolved under a production RecognitionType whose policies are incompatible
+  with the original manual choice cannot be force-applied by the continuation Preview; that case
+  fails closed with an actionable review result instead of executing a different plan.
+- The five journey regressions extend the round-3 tests (all earlier assertions preserved); the
+  round-3 recognition scenario (manual choice A, decision A) confirms the full chain for a
+  Recognition decision as well.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: 307ba699189bfc8a31db2272d08e6c3e78f7bb89
+```
