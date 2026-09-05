@@ -837,9 +837,10 @@ class ConfigurationObjectService:
             },
         )
 
-    def copy_storage(
+    def copy_object(
         self,
         revision_id: str,
+        kind: ConfigurationObjectKind,
         *,
         object_id: str,
         new_object_id: str | None = None,
@@ -847,13 +848,18 @@ class ConfigurationObjectService:
         expected_version: int,
         actor: str,
     ) -> ManagedConfigurationRevision:
-        """Copy one Storage definition as a new, disabled Draft object."""
+        """Copy one managed configuration object as a new, disabled Draft object."""
 
+        section = self._section(kind)
         revision = self._managed.require(revision_id)
-        values = self._canonical_objects(revision.document, "storages")
+        values = (
+            self._automation_definition_objects(revision.document)
+            if kind is ConfigurationObjectKind.SCHEDULE
+            else self._canonical_objects(revision.document, section)
+        )
         source = next((item for item in values if item.get("id") == object_id), None)
         if source is None:
-            raise LookupError(f"storages {object_id!r} was not found")
+            raise LookupError(f"{section} {object_id!r} was not found")
         candidate = copy.deepcopy(source)
         if new_object_id is None:
             existing = {str(item.get("id")) for item in values}
@@ -868,25 +874,86 @@ class ConfigurationObjectService:
                     if candidate_id not in existing:
                         break
                 else:
-                    raise ValueError("could not allocate a unique copied Storage id")
+                    raise ValueError(f"could not allocate a unique copied {kind.value} id")
         else:
             candidate_id = new_object_id
         candidate["id"] = candidate_id
         if new_name is not None:
             candidate["name"] = new_name
-        else:
+        elif "name" in source:
             source_name = str(source.get("name") or object_id)
             candidate["name"] = f"{source_name[:115]} copy"
-        candidate["enabled"] = False
+        if kind is not ConfigurationObjectKind.ORGANIZE_POLICY:
+            candidate["enabled"] = False
         return self.mutate(
             revision_id,
-            ConfigurationObjectKind.STORAGE,
+            kind,
             object_id=None,
             value=candidate,
             expected_version=expected_version,
             actor=actor,
             audit_action="copy",
             audit_metadata={"sourceId": object_id},
+        )
+
+    def set_object_enabled(
+        self,
+        revision_id: str,
+        kind: ConfigurationObjectKind,
+        *,
+        object_id: str,
+        enabled: bool,
+        expected_version: int,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        """Enable or disable a managed configuration object in the candidate Draft only."""
+
+        if not isinstance(enabled, bool):
+            raise ValueError(f"{kind.value} enabled must be boolean")
+        if kind is ConfigurationObjectKind.ORGANIZE_POLICY:
+            raise ValueError("OrganizePolicy does not support enable/disable")
+        section = self._section(kind)
+        revision = self._managed.require(revision_id)
+        values = (
+            self._automation_definition_objects(revision.document)
+            if kind is ConfigurationObjectKind.SCHEDULE
+            else self._canonical_objects(revision.document, section)
+        )
+        source = next((item for item in values if item.get("id") == object_id), None)
+        if source is None:
+            raise LookupError(f"{section} {object_id!r} was not found")
+        candidate = copy.deepcopy(source)
+        candidate["enabled"] = enabled
+        return self.mutate(
+            revision_id,
+            kind,
+            object_id=object_id,
+            value=candidate,
+            expected_version=expected_version,
+            actor=actor,
+            audit_action="enable" if enabled else "disable",
+        )
+
+    # --- delegates for existing named helpers ---
+
+    def copy_storage(
+        self,
+        revision_id: str,
+        *,
+        object_id: str,
+        new_object_id: str | None = None,
+        new_name: str | None = None,
+        expected_version: int,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        return self.copy_object(
+            revision_id,
+            ConfigurationObjectKind.STORAGE,
+            object_id=object_id,
+            new_object_id=new_object_id,
+            new_name=new_name,
+            expected_version=expected_version,
+            actor=actor,
         )
 
     copy_storage_definition = copy_storage
@@ -900,25 +967,13 @@ class ConfigurationObjectService:
         expected_version: int,
         actor: str,
     ) -> ManagedConfigurationRevision:
-        """Enable or disable a Storage in the candidate Draft only."""
-
-        if not isinstance(enabled, bool):
-            raise ValueError("Storage enabled must be boolean")
-        revision = self._managed.require(revision_id)
-        values = self._canonical_objects(revision.document, "storages")
-        source = next((item for item in values if item.get("id") == object_id), None)
-        if source is None:
-            raise LookupError(f"storages {object_id!r} was not found")
-        candidate = copy.deepcopy(source)
-        candidate["enabled"] = enabled
-        return self.mutate(
+        return self.set_object_enabled(
             revision_id,
             ConfigurationObjectKind.STORAGE,
             object_id=object_id,
-            value=candidate,
+            enabled=enabled,
             expected_version=expected_version,
             actor=actor,
-            audit_action="enable" if enabled else "disable",
         )
 
     set_storage_definition_enabled = set_storage_enabled
@@ -965,39 +1020,14 @@ class ConfigurationObjectService:
         expected_version: int,
         actor: str,
     ) -> ManagedConfigurationRevision:
-        revision = self._managed.require(revision_id)
-        values = self._automation_definition_objects(revision.document)
-        source = next((item for item in values if item.get("id") == object_id), None)
-        if source is None:
-            raise LookupError(f"automationTaskDefinitions {object_id!r} was not found")
-        candidate = copy.deepcopy(source)
-        candidate_id = new_object_id
-        if candidate_id is None:
-            base = f"{object_id}-copy"
-            existing = {str(item.get("id")) for item in values}
-            candidate_id = base
-            for index in range(2, 101):
-                if candidate_id not in existing:
-                    break
-                candidate_id = f"{base}-{index}"
-            else:
-                raise ValueError("could not allocate a unique copied Automation Task Definition id")
-        candidate["id"] = candidate_id
-        if new_name is not None:
-            candidate["name"] = new_name
-        else:
-            source_name = str(source.get("name") or object_id)
-            candidate["name"] = f"{source_name[:115]} copy"
-        candidate["enabled"] = False
-        return self.mutate(
+        return self.copy_object(
             revision_id,
             ConfigurationObjectKind.SCHEDULE,
-            object_id=None,
-            value=candidate,
+            object_id=object_id,
+            new_object_id=new_object_id,
+            new_name=new_name,
             expected_version=expected_version,
             actor=actor,
-            audit_action="copy",
-            audit_metadata={"sourceId": object_id},
         )
 
     # Public spelling used by adapters and focused tests.
@@ -1050,23 +1080,13 @@ class ConfigurationObjectService:
         expected_version: int,
         actor: str,
     ) -> ManagedConfigurationRevision:
-        if not isinstance(enabled, bool):
-            raise ValueError("Automation Task Definition enabled must be boolean")
-        revision = self._managed.require(revision_id)
-        values = self._automation_definition_objects(revision.document)
-        source = next((item for item in values if item.get("id") == object_id), None)
-        if source is None:
-            raise LookupError(f"automationTaskDefinitions {object_id!r} was not found")
-        candidate = copy.deepcopy(source)
-        candidate["enabled"] = enabled
-        return self.mutate(
+        return self.set_object_enabled(
             revision_id,
             ConfigurationObjectKind.SCHEDULE,
             object_id=object_id,
-            value=candidate,
+            enabled=enabled,
             expected_version=expected_version,
             actor=actor,
-            audit_action="enable" if enabled else "disable",
         )
 
     set_definition_enabled = set_automation_task_definition_enabled
