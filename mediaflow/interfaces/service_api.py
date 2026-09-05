@@ -59,6 +59,7 @@ from mediaflow.domain.automation import (
     AutomationQueueFull,
     AutomationTaskDefinition,
     WorkerReadiness,
+    WorkerStatus,
 )
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
@@ -4979,6 +4980,9 @@ class MediaFlowApi:
     ) -> dict[str, object]:
         """Worker readiness document (GET /api/v1/workers/readiness)."""
         self._require(principal, ApiPermission.READ)
+        self._refresh_configuration_binding()
+        active_snapshot_id = self._runtime_binding.snapshot_id
+        active_snapshot_digest = self._runtime_binding.snapshot_digest
         if self._worker_service is None:
             return {
                 "ready": False,
@@ -4989,10 +4993,13 @@ class MediaFlowApi:
                 "retrySafe": True,
                 "nextAction": "contact system administrator",
                 "activeWorkersCount": 0,
-                "activeSnapshotId": None,
-                "activeSnapshotDigest": None,
+                "activeSnapshotId": active_snapshot_id,
+                "activeSnapshotDigest": active_snapshot_digest,
             }
-        readiness = self._worker_service.evaluate_readiness()
+        readiness = self._worker_service.evaluate_readiness(
+            active_snapshot_id=active_snapshot_id,
+            active_snapshot_digest=active_snapshot_digest,
+        )
         return redact_manual_value(
             {
                 "ready": readiness.get("ready", False),
@@ -5005,8 +5012,8 @@ class MediaFlowApi:
                 "retrySafe": readiness.get("retrySafe", True),
                 "nextAction": readiness.get("nextAction", ""),
                 "activeWorkersCount": readiness.get("liveWorkers", 0),
-                "activeSnapshotId": None,
-                "activeSnapshotDigest": None,
+                "activeSnapshotId": active_snapshot_id,
+                "activeSnapshotDigest": active_snapshot_digest,
             }
         )
 
@@ -5026,9 +5033,26 @@ class MediaFlowApi:
         # Apply limit to the list (repository list_workers returns all, we slice)
         limited_workers = workers[:limit]
         return {
-            "workers": [self._value(worker) for worker in limited_workers],
+            "workers": [self._worker_document(worker) for worker in limited_workers],
             "count": len(workers),
         }
+
+    @staticmethod
+    def _worker_document(worker) -> dict[str, object]:
+        return redact_manual_value(
+            {
+                "worker_id": worker.worker_id,
+                "label": worker.label,
+                "registered_at": worker.registered_at.isoformat(),
+                "last_heartbeat_at": worker.last_heartbeat_at.isoformat(),
+                "heartbeat_interval_seconds": worker.heartbeat_interval_seconds,
+                "supported_commands": list(worker.supported_commands),
+                "configuration_snapshot_id": worker.configuration_snapshot_id,
+                "configuration_snapshot_digest": worker.configuration_snapshot_digest,
+                "runtime_schema_version": worker.runtime_schema_version,
+                "status": worker.status.value,
+            }
+        )
 
     @staticmethod
     def _require_manual_execution(principal: ResolvedApiPrincipal) -> None:
@@ -5593,9 +5617,8 @@ class MediaFlowApi:
             raise ValueError("stale job query accepts one limit field")
         return MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], "stale job")
 
-    @staticmethod
-    def _stale_job_value(value) -> dict:
-        return {
+    def _stale_job_value(self, value) -> dict:
+        document = {
             "job_id": value.job_id,
             "command": value.command.value,
             "status": value.status.value,
@@ -5607,6 +5630,8 @@ class MediaFlowApi:
             "schedule_id": value.schedule_id,
             "execute_authorized": value.execute_authorized,
         }
+        document.update(self._worker_owner_evidence(value.worker_id))
+        return document
 
     @staticmethod
     def _require_empty_query(environ: dict, resource: str) -> None:
@@ -6810,24 +6835,22 @@ class MediaFlowApi:
     def _job_document(self, job) -> dict[str, object]:
         """Project a Job for API responses, including worker ownership evidence
         (workerId, ownerLastHeartbeatAt) for RUNNING Jobs and operational
-        condition (no-worker / stale-worker) for PENDING Jobs that have waited
-        beyond the bounded threshold.
+        condition (no-worker / stale-worker) for PENDING and stale RUNNING Jobs
+        with a bounded recovery next action.
         """
         document = self._value(job)
         status_value = document.get("status")
         if status_value == "running":
             worker_id = document.get("worker_id") or document.get("workerId")
-            if worker_id and self._worker_service is not None:
-                worker = self._worker_service.get_worker(worker_id)
-                if worker is not None:
-                    document["workerId"] = worker_id
-                    document["ownerLastHeartbeatAt"] = worker.last_heartbeat_at.isoformat()
-                else:
-                    document["workerId"] = worker_id
-                    document["ownerLastHeartbeatAt"] = None
+            if worker_id:
+                document["workerId"] = worker_id
+            document.update(self._worker_owner_evidence(worker_id))
         elif status_value == "pending":
             if self._worker_service is not None:
-                readiness = self._worker_service.evaluate_readiness()
+                readiness = self._worker_service.evaluate_readiness(
+                    active_snapshot_id=self._runtime_binding.snapshot_id,
+                    active_snapshot_digest=self._runtime_binding.snapshot_digest,
+                )
                 if not readiness.get("ready"):
                     document["operationalCondition"] = {
                         "condition": readiness.get("condition"),
@@ -6838,6 +6861,73 @@ class MediaFlowApi:
                         "nextAction": readiness.get("nextAction"),
                     }
         return document
+
+    def _worker_owner_evidence(self, worker_id: str | None) -> dict[str, object]:
+        """Bound worker ownership and recovery evidence for one running Job."""
+
+        if self._worker_service is None:
+            return {}
+        if worker_id:
+            worker = self._worker_service.evaluate_worker(worker_id)
+            evidence: dict[str, object] = {
+                "workerId": worker_id,
+                "ownerStatus": worker.status.value if worker is not None else None,
+                "ownerLastHeartbeatAt": (
+                    worker.last_heartbeat_at.isoformat() if worker is not None else None
+                ),
+            }
+            condition = self._worker_unusable_condition(worker)
+            if condition is not None:
+                evidence["operationalCondition"] = condition
+            return evidence
+        readiness = self._worker_service.evaluate_readiness(
+            active_snapshot_id=self._runtime_binding.snapshot_id,
+            active_snapshot_digest=self._runtime_binding.snapshot_digest,
+        )
+        if readiness.get("ready"):
+            return {}
+        return {
+            "operationalCondition": {
+                "condition": readiness.get("condition"),
+                "stage": "running",
+                "durableState": readiness.get("durableState"),
+                "sideEffects": "none",
+                "retrySafe": True,
+                "nextAction": readiness.get("nextAction"),
+            }
+        }
+
+    @staticmethod
+    def _worker_unusable_condition(worker) -> dict[str, object] | None:
+        if worker is None:
+            return {
+                "condition": WorkerReadiness.NO_WORKER.value,
+                "stage": "running",
+                "durableState": "the owning processing worker is no longer registered",
+                "sideEffects": "none",
+                "retrySafe": True,
+                "nextAction": (
+                    "restart a resident worker with the active configuration, then inspect "
+                    "or explicitly requeue the Job"
+                ),
+            }
+        if worker.status is WorkerStatus.LIVE:
+            return None
+        durable_state = (
+            "the owning processing worker is stopped"
+            if worker.status is WorkerStatus.STOPPED
+            else "the owning processing worker has a stale heartbeat"
+        )
+        return {
+            "condition": WorkerReadiness.STALE_WORKER.value,
+            "stage": "running",
+            "durableState": durable_state,
+            "sideEffects": "none",
+            "retrySafe": True,
+            "nextAction": (
+                "restart the resident worker, then inspect or explicitly requeue the stale Job"
+            ),
+        }
 
     @classmethod
     def _error(

@@ -107,8 +107,12 @@ class StaleJobVisibilityTests(unittest.TestCase):
                         "cancellation_requested",
                         "schedule_id",
                         "execute_authorized",
+                        "operationalCondition",
                     },
                 )
+                self.assertEqual(item["operationalCondition"]["condition"], "no_worker")
+                self.assertTrue(item["operationalCondition"]["retrySafe"])
+                self.assertTrue(item["operationalCondition"]["nextAction"])
                 self.assertNotIn("secret", json.dumps(document))
                 self.assertEqual(repository.list_security_audit()[0].route, "/api/v1/jobs/stale")
 
@@ -131,6 +135,9 @@ class StaleJobVisibilityTests(unittest.TestCase):
         self.assertIn("system.stale_job_age_seconds", script)
         stale_section = script[script.index("async function renderStaleJobs") :]
         stale_section = stale_section[: stale_section.index("function showDryRunJobForm")]
+        self.assertIn("Owner", stale_section)
+        self.assertIn("Next action", stale_section)
+        self.assertIn("operationalCondition", stale_section)
         for forbidden in ("requeue", "cancel", "retry", "execute"):
             self.assertNotIn(f"actionButton('{forbidden}", stale_section.lower())
 
@@ -141,7 +148,7 @@ class StaleJobVisibilityTests(unittest.TestCase):
                 repository.register_worker(
                     worker_id="w-123",
                     label="worker-node-1",
-                    heartbeat_interval_seconds=5.0,
+                    heartbeat_interval_seconds=3600.0,
                     supported_commands=("scan",),
                     configuration_snapshot_id="cfg-1",
                     configuration_snapshot_digest="sha256:test",
@@ -171,9 +178,44 @@ class StaleJobVisibilityTests(unittest.TestCase):
                 doc = json.loads(body)
                 self.assertEqual(doc["workerId"], "w-123")
                 self.assertEqual(doc["ownerLastHeartbeatAt"], NOW.isoformat())
+                self.assertEqual(doc["ownerStatus"], "live")
+                self.assertNotIn("operationalCondition", doc)
                 # No secrets or claim token exposed
                 self.assertNotIn("claim_token", doc)
                 self.assertNotIn("claimToken", doc)
+
+    def test_stale_job_projects_worker_owner_condition_and_next_action(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                repository.register_worker(
+                    worker_id="stale-owner",
+                    label="stale-owner",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("scan",),
+                    configuration_snapshot_id="cfg-1",
+                    configuration_snapshot_digest="sha256:test",
+                    runtime_schema_version=33,
+                    now=NOW - timedelta(hours=3),
+                )
+                job = dataclasses.replace(
+                    self._job("stale-owner-job", NOW - timedelta(hours=2)),
+                    worker_id="stale-owner",
+                )
+                repository.create_job(job)
+                api = self._api(repository)
+                status, document = request(api, query="limit=10")
+                self.assertEqual(status, 200)
+                item = next(
+                    value for value in document["items"] if value["job_id"] == "stale-owner-job"
+                )
+                self.assertEqual(item["workerId"], "stale-owner")
+                self.assertEqual(item["ownerStatus"], "stale")
+                condition = item["operationalCondition"]
+                self.assertEqual(condition["condition"], "stale_worker")
+                self.assertEqual(condition["stage"], "running")
+                self.assertEqual(condition["sideEffects"], "none")
+                self.assertTrue(condition["retrySafe"])
+                self.assertTrue(condition["nextAction"])
 
     def test_pending_job_with_no_worker_projects_operational_condition(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

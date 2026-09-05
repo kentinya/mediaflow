@@ -153,6 +153,9 @@ class AutomationJobFencingTests(unittest.TestCase):
                     runtime_schema_version=33,
                     now=NOW - timedelta(hours=3),
                 )
+                # Worker-a heartbeats immediately before claiming so the claim-time
+                # lease check admits it; it then goes quiet so its Job can age.
+                repository.heartbeat_worker("worker-a", NOW - timedelta(hours=2))
                 repository.register_worker(
                     worker_id="worker-b",
                     label="worker-b",
@@ -195,6 +198,96 @@ class AutomationJobFencingTests(unittest.TestCase):
                 self.assertEqual(persisted.task_id, "task-b")
                 self.assertEqual(persisted.worker_id, "worker-b")
                 self.assertIsNone(persisted.claim_token)
+
+    def test_mismatched_owner_cannot_complete_even_with_matching_claim_token(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                AutomationJobService(repository).submit("preview")
+                repository.register_worker(
+                    worker_id="worker-a",
+                    label="worker-a",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("scan", "preview"),
+                    configuration_snapshot_id=None,
+                    configuration_snapshot_digest=None,
+                    runtime_schema_version=33,
+                    now=NOW,
+                )
+                claimed = repository.claim_next_job(NOW, worker_id="worker-a")
+                assert claimed is not None and claimed.worker_id == "worker-a"
+                # Same claim token but a different owner must not commit.
+                tampered = replace(
+                    claimed,
+                    worker_id="worker-b",
+                    status=AutomationJobStatus.COMPLETED,
+                    updated_at=NOW + timedelta(seconds=5),
+                    completed_at=NOW + timedelta(seconds=5),
+                )
+                self.assertFalse(repository.complete_claimed_job(tampered))
+                persisted = repository.get_job(claimed.job_id)
+                self.assertEqual(persisted.status, AutomationJobStatus.RUNNING)
+                self.assertEqual(persisted.worker_id, "worker-a")
+                self.assertEqual(persisted.claim_token, claimed.claim_token)
+
+    def test_incompatible_or_stale_worker_cannot_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                AutomationJobService(repository).submit("preview")
+                repository.register_worker(
+                    worker_id="worker-stale",
+                    label="worker-stale",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("scan",),
+                    configuration_snapshot_id=None,
+                    configuration_snapshot_digest=None,
+                    runtime_schema_version=33,
+                    now=NOW - timedelta(hours=2),
+                )
+                with self.assertRaises(AutomationClaimLost):
+                    repository.claim_next_job(NOW, worker_id="worker-stale")
+                repository.register_worker(
+                    worker_id="worker-schema",
+                    label="worker-schema",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("scan",),
+                    configuration_snapshot_id=None,
+                    configuration_snapshot_digest=None,
+                    runtime_schema_version=99,
+                    now=NOW,
+                )
+                with self.assertRaises(AutomationClaimLost):
+                    repository.claim_next_job(NOW, worker_id="worker-schema")
+                # A live worker bound to a different snapshot cannot claim a pinned Job.
+                AutomationJobService(
+                    repository,
+                    configuration_snapshot_id="cfg-a",
+                    configuration_snapshot_digest="digest-a",
+                ).submit("preview")
+                repository.register_worker(
+                    worker_id="worker-other-snapshot",
+                    label="worker-other-snapshot",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("scan",),
+                    configuration_snapshot_id="cfg-b",
+                    configuration_snapshot_digest="digest-b",
+                    runtime_schema_version=33,
+                    now=NOW,
+                )
+                self.assertIsNone(repository.claim_next_job(NOW, worker_id="worker-other-snapshot"))
+                # The matching snapshot worker is admitted.
+                repository.register_worker(
+                    worker_id="worker-matching",
+                    label="worker-matching",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("scan",),
+                    configuration_snapshot_id="cfg-a",
+                    configuration_snapshot_digest="digest-a",
+                    runtime_schema_version=33,
+                    now=NOW,
+                )
+                claimed = repository.claim_next_job(NOW, worker_id="worker-matching")
+                self.assertIsNotNone(claimed)
+                self.assertEqual(claimed.worker_id, "worker-matching")
 
     def test_success_clears_token_and_cli_notification_output_is_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

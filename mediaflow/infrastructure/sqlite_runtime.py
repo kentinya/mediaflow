@@ -24,6 +24,7 @@ from mediaflow.domain.automation import (
     ScheduleAuditRecord,
     ScheduleState,
     WorkerStatus,
+    worker_stale_threshold_seconds,
 )
 from mediaflow.domain.automation_task_definition_preview import (
     AutomationPreviewSource,
@@ -4485,23 +4486,64 @@ class SQLiteTaskRepository:
         return tuple(reversed(values)) if reverse else values
 
     def claim_next_job(
-        self, now: datetime, *, worker_id: str | None = None
+        self,
+        now: datetime,
+        *,
+        worker_id: str | None = None,
+        allow_pinned_snapshot_mismatch: bool = False,
     ) -> AutomationJob | None:
         claim_token = secrets.token_urlsafe(32)
         with self._lock, self._connection:
+            worker = None
             if worker_id is not None:
                 worker_row = self._connection.execute(
-                    "SELECT status FROM processing_workers WHERE worker_id=?", (worker_id,)
+                    "SELECT * FROM processing_workers WHERE worker_id=?", (worker_id,)
                 ).fetchone()
                 if worker_row is None or worker_row["status"] == WorkerStatus.STOPPED.value:
                     raise AutomationClaimLost(
                         f"worker {worker_id!r} is not registered or is stopped"
                     )
-            row = self._connection.execute(
-                "SELECT job_id FROM automation_jobs WHERE status=? "
-                "ORDER BY created_at, job_id LIMIT 1",
-                (AutomationJobStatus.PENDING.value,),
-            ).fetchone()
+                worker = self._processing_worker(worker_row)
+                if worker.runtime_schema_version != SCHEMA_VERSION:
+                    raise AutomationClaimLost(
+                        f"worker {worker_id!r} is bound to unsupported runtime schema "
+                        f"{worker.runtime_schema_version}; expected {SCHEMA_VERSION}"
+                    )
+                threshold = worker_stale_threshold_seconds(worker.heartbeat_interval_seconds)
+                if (now - worker.last_heartbeat_at).total_seconds() > threshold:
+                    raise AutomationClaimLost(
+                        f"worker {worker_id!r} has a stale heartbeat; restart the resident worker"
+                    )
+            if worker is None:
+                row = self._connection.execute(
+                    "SELECT job_id FROM automation_jobs WHERE status=? "
+                    "ORDER BY created_at, job_id LIMIT 1",
+                    (AutomationJobStatus.PENDING.value,),
+                ).fetchone()
+            elif worker.configuration_snapshot_id is None or allow_pinned_snapshot_mismatch:
+                # A management-only or temporarily unhealthy Active runtime may
+                # leave the resident Worker without a current snapshot. Pinned
+                # Jobs still carry their own immutable snapshot and are safe to
+                # admit; the handler validates that snapshot before media I/O.
+                row = self._connection.execute(
+                    "SELECT job_id FROM automation_jobs WHERE status=? "
+                    "ORDER BY created_at, job_id LIMIT 1",
+                    (AutomationJobStatus.PENDING.value,),
+                ).fetchone()
+            else:
+                row = self._connection.execute(
+                    "SELECT job_id FROM automation_jobs WHERE status=? AND "
+                    "(configuration_snapshot_id=? AND configuration_snapshot_digest=? "
+                    "OR command IN (?, ?)) "
+                    "ORDER BY created_at, job_id LIMIT 1",
+                    (
+                        AutomationJobStatus.PENDING.value,
+                        worker.configuration_snapshot_id,
+                        worker.configuration_snapshot_digest,
+                        AutomationCommand.SCAN.value,
+                        AutomationCommand.RECOVERY_CONTINUATION.value,
+                    ),
+                ).fetchone()
             if row is None:
                 return None
             cursor = self._connection.execute(
@@ -4685,7 +4727,7 @@ class SQLiteTaskRepository:
                 "failure_retry_safe=?, failure_next_action=?, definition_id=?, "
                 "definition_fingerprint=?, definition_version=?, occurrence_at=?, run_mode=?, "
                 "resource_library_id=?, source_scope=?, configuration_snapshot_version=? "
-                "WHERE job_id=? AND status=? AND claim_token=?",
+                "WHERE job_id=? AND status=? AND claim_token=? AND worker_id IS ?",
                 (
                     *self._job_values(job)[1:13],
                     job.worker_id,
@@ -4693,6 +4735,7 @@ class SQLiteTaskRepository:
                     job.job_id,
                     AutomationJobStatus.RUNNING.value,
                     job.claim_token,
+                    job.worker_id,
                 ),
             )
             if cursor.rowcount == 1:

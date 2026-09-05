@@ -28,7 +28,10 @@ from mediaflow.domain.automation import (
     SchedulerConfigurationSnapshot,
     WorkerReadiness,
     WorkerStatus,
+    validate_worker_commands,
+    validate_worker_id,
     validate_worker_label,
+    worker_stale_threshold_seconds,
 )
 from mediaflow.domain.cron import CronExpression
 from mediaflow.domain.notification import NotificationEvent, NotificationEventType
@@ -167,15 +170,11 @@ class ProcessingWorkerService:
         active_configuration_snapshot_id: str | None = None,
         active_configuration_snapshot_digest: str | None = None,
         runtime_schema_version: int = 33,
-        stale_threshold_multiplier: float = 3.0,
-        minimum_stale_threshold_seconds: float = 10.0,
     ) -> None:
         self._repository = repository
         self._active_configuration_snapshot_id = active_configuration_snapshot_id
         self._active_configuration_snapshot_digest = active_configuration_snapshot_digest
         self._runtime_schema_version = runtime_schema_version
-        self._stale_threshold_multiplier = stale_threshold_multiplier
-        self._minimum_stale_threshold_seconds = minimum_stale_threshold_seconds
 
     def register_worker(
         self,
@@ -188,7 +187,9 @@ class ProcessingWorkerService:
         runtime_schema_version: int | None = None,
         now: datetime | None = None,
     ) -> ProcessingWorker:
+        validated_worker_id = validate_worker_id(worker_id)
         validated_label = validate_worker_label(label)
+        validated_commands = validate_worker_commands(tuple(supported_commands))
         schema_version = (
             runtime_schema_version
             if runtime_schema_version is not None
@@ -196,10 +197,10 @@ class ProcessingWorkerService:
         )
         current_now = now or datetime.now(UTC)
         return self._repository.register_worker(
-            worker_id=worker_id,
+            worker_id=validated_worker_id,
             label=validated_label,
             heartbeat_interval_seconds=float(heartbeat_interval_seconds),
-            supported_commands=supported_commands,
+            supported_commands=validated_commands,
             configuration_snapshot_id=configuration_snapshot_id,
             configuration_snapshot_digest=configuration_snapshot_digest,
             runtime_schema_version=schema_version,
@@ -225,15 +226,30 @@ class ProcessingWorkerService:
             if worker.status == WorkerStatus.STOPPED:
                 evaluated.append(worker)
             else:
-                threshold = max(
-                    worker.heartbeat_interval_seconds * self._stale_threshold_multiplier,
-                    self._minimum_stale_threshold_seconds,
-                )
-                if (current_now - worker.last_heartbeat_at).total_seconds() > threshold:
+                if self._is_stale(worker, current_now):
                     evaluated.append(replace(worker, status=WorkerStatus.STALE))
                 else:
                     evaluated.append(worker)
         return tuple(evaluated)
+
+    @staticmethod
+    def _is_stale(worker: ProcessingWorker, now: datetime) -> bool:
+        threshold = worker_stale_threshold_seconds(worker.heartbeat_interval_seconds)
+        return (now - worker.last_heartbeat_at).total_seconds() > threshold
+
+    def evaluate_worker(
+        self,
+        worker_id: str,
+        now: datetime | None = None,
+    ) -> ProcessingWorker | None:
+        """Return one Worker with its derived status (live/stale/stopped)."""
+        worker = self._repository.get_worker(worker_id)
+        if worker is None or worker.status is WorkerStatus.STOPPED:
+            return worker
+        current_now = now or datetime.now(UTC)
+        if self._is_stale(worker, current_now):
+            return replace(worker, status=WorkerStatus.STALE)
+        return worker
 
     def evaluate_readiness(
         self,
@@ -350,6 +366,7 @@ class AutomationWorker:
         configuration_snapshot_id: str | None = None,
         configuration_snapshot_digest: str | None = None,
         runtime_schema_version: int = 33,
+        allow_pinned_snapshot_mismatch: bool = False,
     ) -> None:
         self._repository = repository
         self._handler = handler
@@ -365,6 +382,14 @@ class AutomationWorker:
         self._configuration_snapshot_id = configuration_snapshot_id
         self._configuration_snapshot_digest = configuration_snapshot_digest
         self._runtime_schema_version = runtime_schema_version
+        self._allow_pinned_snapshot_mismatch = allow_pinned_snapshot_mismatch
+        # Preserve the legacy in-process helper path unless the caller supplies
+        # the identity needed for durable Worker ownership and snapshot fencing.
+        self._worker_registration_enabled = (
+            worker_id is not None
+            or configuration_snapshot_id is not None
+            or configuration_snapshot_digest is not None
+        )
         self._registered = False
 
     @property
@@ -376,7 +401,9 @@ class AutomationWorker:
         return self._label
 
     def register(self, now: datetime | None = None) -> ProcessingWorker | None:
-        if not hasattr(self._repository, "register_worker"):
+        if not self._worker_registration_enabled or not hasattr(
+            self._repository, "register_worker"
+        ):
             return None
         current_now = now or datetime.now(UTC)
         worker = self._repository.register_worker(
@@ -393,23 +420,35 @@ class AutomationWorker:
         return worker
 
     def heartbeat(self, now: datetime | None = None) -> bool:
-        if not hasattr(self._repository, "heartbeat_worker"):
+        if not self._worker_registration_enabled or not hasattr(
+            self._repository, "heartbeat_worker"
+        ):
             return True
         current_now = now or datetime.now(UTC)
         return self._repository.heartbeat_worker(self._worker_id, current_now)
 
     def stop(self, now: datetime | None = None) -> ProcessingWorker | None:
-        if not hasattr(self._repository, "stop_worker"):
+        if not self._worker_registration_enabled or not hasattr(self._repository, "stop_worker"):
             return None
         current_now = now or datetime.now(UTC)
         return self._repository.stop_worker(self._worker_id, current_now)
 
     def run_next(self) -> AutomationJob | None:
-        if not self._registered and hasattr(self._repository, "register_worker"):
+        if (
+            self._worker_registration_enabled
+            and not self._registered
+            and hasattr(self._repository, "register_worker")
+        ):
             self.register()
         job = self._repository.claim_next_job(
             datetime.now(UTC),
-            worker_id=self._worker_id if hasattr(self._repository, "register_worker") else None,
+            worker_id=(
+                self._worker_id
+                if self._worker_registration_enabled
+                and hasattr(self._repository, "register_worker")
+                else None
+            ),
+            allow_pinned_snapshot_mismatch=self._allow_pinned_snapshot_mismatch,
         )
         if job is None:
             return None

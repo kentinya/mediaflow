@@ -225,10 +225,10 @@ APP_JS = b"""(() => {
       return;
     }
     content.append(table(
-      ['worker_id', 'label', 'status', 'registered_at', 'last_heartbeat_at', 'configuration_snapshot_id', 'runtime_schema_version'],
+      ['worker_id', 'label', 'status', 'supported_commands', 'registered_at', 'last_heartbeat_at', 'configuration_snapshot_id', 'runtime_schema_version'],
       items.map(w => [
-        w.worker_id, w.label, w.status, w.registered_at, w.last_heartbeat_at,
-        w.configuration_snapshot_id, w.runtime_schema_version
+        w.worker_id, w.label, w.status, (w.supported_commands || []).join(', ') || '-',
+        w.registered_at, w.last_heartbeat_at, w.configuration_snapshot_id, w.runtime_schema_version
       ])
     ));
   }
@@ -2843,8 +2843,10 @@ APP_JS = b"""(() => {
       'automatic requeue is intentionally unavailable.', 'warning'));
     const rows = items.map(item => [item.job_id, item.command, item.status,
       item.execute_authorized ? 'MUTATION_AUTHORIZED \\u2014 MANUAL RECOVERY ONLY' : 'DRY_RUN',
-      item.task_id || '-', item.updated_at]);
-    content.append(table(['ID', 'Command', 'Status', 'Authority', 'Task', 'Updated'], rows,
+      item.task_id || '-', item.ownerStatus || '-',
+      (item.operationalCondition && item.operationalCondition.nextAction) || '-',
+      item.updated_at]);
+    content.append(table(['ID', 'Command', 'Status', 'Authority', 'Task', 'Owner', 'Next action', 'Updated'], rows,
       index => showJob(items[index].job_id)));
     content.append(actionButton('Back to automation jobs', () => renderObservability('jobs')));
   }
@@ -3785,6 +3787,13 @@ APP_JS = b"""(() => {
         `Side effects: ${data.failure_side_effects || 'unknown'}. ` +
         `Retry safe: ${data.failure_retry_safe ? 'YES' : 'NO'}. ` +
         `Next action: ${data.failure_next_action || 'inspect the saved snapshot'}.`, 'error'));
+      if (data.workerId) detailContent.append(text('p',
+        `Owner worker: ${data.workerId} (${data.ownerStatus || '-'}, last heartbeat ` +
+        `${data.ownerLastHeartbeatAt || '-'}).`, 'hint'));
+      if (data.operationalCondition) detailContent.append(text('p',
+        `Worker condition: ${data.operationalCondition.condition || '-'}. ` +
+        `${data.operationalCondition.durableState || ''} ` +
+        `Next action: ${data.operationalCondition.nextAction || '-'}.`, 'warning'));
       if (data.task_id) detailContent.append(actionButton('Open linked task', () => showTask(data.task_id)));
       if (data.status === 'pending' || data.status === 'running') {
         detailContent.append(text('p', data.status === 'running' ?

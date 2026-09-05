@@ -353,3 +353,71 @@ Next: SAME TASK FIX LOOP
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task. This result does
 not close the Slice or update Roadmap.
+
+## Developer Completion Report — Correction Round
+
+### Changed Files
+- `mediaflow/application/automation.py`
+- `mediaflow/domain/automation.py`
+- `mediaflow/final_cli.py`
+- `mediaflow/infrastructure/sqlite_runtime.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `mediaflow/interfaces/service_api.py`
+- `tests/test_automation_job_fencing.py`
+- `tests/test_operator_ui.py`
+- `tests/test_processing_worker_readiness.py`
+- `tests/test_stale_job_visibility.py`
+- `TASK.md`
+
+### Implemented
+- Added bounded, secret/path-safe Worker ID and supported-command validation, including count and
+  length limits, and redacted Worker API projections.
+- Added current Active snapshot identity to readiness and Job projections, with readiness evaluated
+  against the current atomic runtime binding rather than the API startup pin.
+- Added atomic claim-time Worker lease and runtime-schema checks plus explicit snapshot admission.
+  Normal claims reject incompatible snapshots; the explicitly requested CLI pinned-job continuation
+  path preserves handler-side validation of an already pinned Job.
+- Bound terminal Job completion to both Worker identity and claim fence token, preserving stale-owner
+  refusal and newer-owner state.
+- Added owner status, heartbeat and bounded recovery condition/next action to stale running Job API
+  and Operator Web projections; rendered supported commands in the Workers view.
+- Preserved legacy in-process `AutomationWorker` calls that do not provide durable Worker identity
+  or snapshot authority, without weakening registered resident Worker fencing.
+
+### Tests and Results
+- Run date: 2026-09-05.
+- PASS — `.venv/bin/python -m unittest tests.test_processing_worker_readiness tests.test_automation_job_fencing tests.test_stale_job_visibility tests.test_automation_api tests.test_dashboard tests.test_migration_rehearsal tests.test_api_security tests.test_operator_ui` — 123 tests, OK.
+- PASS — `.venv/bin/python -m unittest tests.test_operator_job_submission tests.test_operator_job_cancellation tests.test_automation_admission tests.test_automation_definition_execution tests.test_recovery_continuation tests.test_manual_organize_execution tests.test_file_index_lifecycle tests.test_task_persistence` — 119 tests, OK.
+- PASS — `.venv/bin/python -m unittest tests.test_sqlite_backup tests.test_sqlite_restore tests.test_configuration_snapshot` — 52 tests, OK.
+- FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python -m unittest discover -s tests` — 1271 tests, 6 failures, 7 skips. Failures are `test_api_credentials` x2, `test_final_integration` x1, `test_resource_library_pipeline` x1 and `test_runtime_storage_configuration` x2; they match the six failures documented at the Task Base and use ambient ignored `.mediaflow` runtime/config state outside Worker behavior.
+- PASS — `.venv/bin/ruff format --check mediaflow tests`, `.venv/bin/ruff check mediaflow tests`, `.venv/bin/python -m compileall -q mediaflow tests`, `.venv/bin/pip check`, and `git diff --check`.
+- PASS — forbidden `ffprobe|ffmpeg` scan found no matches; `config/alist.json` remains ignored and untracked.
+- SKIP / UNAVAILABLE — production SMB, OpenList, AWS S3, Cloudflare R2, live TMDB and real multi-process Worker acceptance were not available; local fakes and temporary Local roots were used.
+
+### Decisions
+- Worker registration remains Worker-owned; API and Web only project readiness, ownership and
+  recovery evidence.
+- Current Active identity is refreshed for readiness and Job evidence, while management-only
+  recovery remains available when the Active workflow document is unhealthy.
+- Claim admission is fail-closed for stale lease, unsupported runtime schema and incompatible
+  registered Worker snapshots. Explicit pinned-job continuation is separately authorized at the
+  CLI Worker boundary and still loads the Job's exact immutable snapshot before media I/O.
+- Completion fencing requires both claim token and Worker ID, and no automatic requeue or mutation
+  control was added to stale Job projections.
+
+### Remaining In-Slice Work
+- No additional implementation is claimed for Task 27.7. Other Slice 27 Required Outcomes and the
+  Task checkpoint remain subject to B review.
+
+### Risks / Deviations
+- The six full-suite failures listed above remain pre-existing/unrelated to this correction and
+  were reproduced against the Task Base evidence; they were not hidden or changed.
+- SQLite test teardown still emits non-fatal `ResourceWarning` messages.
+- Production external Storage/TMDB and real multi-process Worker acceptance remain unavailable.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: PENDING COMMIT
+```

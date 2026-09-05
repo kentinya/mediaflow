@@ -20,6 +20,7 @@ from mediaflow.domain.automation import (
     WorkerReadiness,
     WorkerStatus,
 )
+from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -133,6 +134,116 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
                         supported_commands=("scan",),
                         now=datetime.now(UTC),
                     )
+
+    def test_register_worker_rejects_hostile_id_and_commands(self) -> None:
+        for bad_id in ("/etc/passwd", "C:\\\\secrets", "https://x/token", "token=hunter2"):
+            with self.subTest(worker_id=bad_id):
+                with self.assertRaises(ValueError):
+                    self.service.register_worker(
+                        worker_id=bad_id,
+                        label="safe-label",
+                        heartbeat_interval_seconds=1.0,
+                        supported_commands=("scan",),
+                        now=datetime.now(UTC),
+                    )
+        for bad_commands in (
+            ("scan", "https://x/token"),
+            ("scan", "/etc/passwd"),
+            ("scan", "password=hunter2"),
+            ("scan", "x" * 65),
+        ):
+            with self.subTest(commands=bad_commands):
+                with self.assertRaises(ValueError):
+                    self.service.register_worker(
+                        worker_id="safe-worker",
+                        label="safe-label",
+                        heartbeat_interval_seconds=1.0,
+                        supported_commands=bad_commands,
+                        now=datetime.now(UTC),
+                    )
+
+    def test_worker_projection_is_bounded_and_redacted(self) -> None:
+        self.service.register_worker(
+            worker_id="projection-worker",
+            label="node-1",
+            heartbeat_interval_seconds=2.0,
+            supported_commands=("scan", "preview"),
+            configuration_snapshot_id="cfg-1",
+            configuration_snapshot_digest="sha256:test",
+            runtime_schema_version=33,
+            now=datetime.now(UTC),
+        )
+        status, document = _request(self.api, "GET", "/api/v1/workers", token="api-secret")
+        self.assertEqual(status, 200)
+        worker = document["workers"][0]
+        self.assertEqual(worker["worker_id"], "projection-worker")
+        self.assertEqual(worker["supported_commands"], ["scan", "preview"])
+        self.assertEqual(worker["status"], "live")
+        self.assertNotIn("token", json.dumps(document).lower())
+
+    def test_worker_readiness_uses_current_active_snapshot_after_activation(self) -> None:
+        def activate_document(service, document):
+            draft = service.import_draft(document, actor="tester")
+            validated = service.validate(draft.revision_id, actor="tester")
+            return service.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="tester",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime.sqlite3"
+            document = _example_document()
+            document["persistence"]["databasePath"] = str(runtime)
+            with SQLiteConfigurationRepository(runtime) as configuration_repository:
+                service = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=str(runtime),
+                )
+                first = activate_document(service, document)
+            with (
+                SQLiteConfigurationRepository(runtime) as configuration_repository,
+                SQLiteTaskRepository(runtime) as task_repository,
+            ):
+                service = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=str(runtime),
+                )
+                admin = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
+                api = MediaFlowApi(
+                    task_repository,
+                    None,
+                    principals=(admin,),
+                    configuration_service=service,
+                    configuration_snapshot_id=first.revision_id,
+                    configuration_snapshot_digest=first.digest,
+                    bootstrap_document=document,
+                )
+                task_repository.register_worker(
+                    worker_id="old-worker",
+                    label="old-worker",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("scan",),
+                    configuration_snapshot_id=first.revision_id,
+                    configuration_snapshot_digest=first.digest,
+                    runtime_schema_version=33,
+                    now=datetime.now(UTC),
+                )
+                changed = json.loads(json.dumps(document))
+                changed["historyPath"] = str(root / "second-history.jsonl")
+                second = activate_document(service, changed)
+                status, readiness = _request(
+                    api,
+                    "GET",
+                    "/api/v1/workers/readiness",
+                    token="admin-token",
+                )
+                self.assertEqual(status, 200, readiness)
+                self.assertEqual(readiness["activeSnapshotId"], second.revision_id)
+                self.assertEqual(readiness["activeSnapshotDigest"], second.digest)
+                self.assertFalse(readiness["ready"])
+                self.assertEqual(readiness["condition"], WorkerReadiness.SNAPSHOT_MISMATCH.value)
 
     def test_cli_worker_registration_binds_current_active_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -394,6 +394,12 @@ _WORKER_PATH_PATTERN = re.compile(
 )
 _WORKER_ENV_PATTERN = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\}")
 
+WORKER_STALE_THRESHOLD_MULTIPLIER = 3.0
+WORKER_MINIMUM_STALE_THRESHOLD_SECONDS = 10.0
+MAX_WORKER_ID_LENGTH = 128
+MAX_WORKER_COMMANDS = 64
+MAX_WORKER_COMMAND_LENGTH = 64
+
 
 def validate_worker_label(label: str) -> str:
     if not isinstance(label, str) or not label.strip():
@@ -412,6 +418,56 @@ def validate_worker_label(label: str) -> str:
     return normalized
 
 
+def validate_worker_id(worker_id: str) -> str:
+    if not isinstance(worker_id, str) or not worker_id.strip():
+        raise ValueError("worker id must be a non-empty string")
+    normalized = worker_id.strip()
+    if len(normalized) > MAX_WORKER_ID_LENGTH:
+        raise ValueError(f"worker id must not exceed {MAX_WORKER_ID_LENGTH} characters")
+    if _WORKER_SECRET_PATTERN.search(normalized):
+        raise ValueError("worker id must not contain secrets, tokens, or credentials")
+    if _WORKER_ENDPOINT_PATTERN.search(normalized):
+        raise ValueError("worker id must not contain URLs or endpoints")
+    if _WORKER_PATH_PATTERN.search(normalized) or normalized.startswith(("/", "\\")):
+        raise ValueError("worker id must not contain filesystem paths")
+    if _WORKER_ENV_PATTERN.search(normalized):
+        raise ValueError("worker id must not contain environment variable references")
+    return normalized
+
+
+def validate_worker_commands(commands: tuple[str, ...]) -> tuple[str, ...]:
+    if not isinstance(commands, tuple):
+        raise ValueError("supported commands must be a tuple")
+    if len(commands) > MAX_WORKER_COMMANDS:
+        raise ValueError(f"worker supports at most {MAX_WORKER_COMMANDS} commands")
+    normalized: list[str] = []
+    for command in commands:
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError("supported command must be a non-empty string")
+        value = command.strip()
+        if len(value) > MAX_WORKER_COMMAND_LENGTH:
+            raise ValueError(
+                f"supported command must not exceed {MAX_WORKER_COMMAND_LENGTH} characters"
+            )
+        if _WORKER_SECRET_PATTERN.search(value):
+            raise ValueError("supported command must not contain secrets or credentials")
+        if _WORKER_ENDPOINT_PATTERN.search(value):
+            raise ValueError("supported command must not contain URLs or endpoints")
+        if _WORKER_PATH_PATTERN.search(value) or value.startswith(("/", "\\")):
+            raise ValueError("supported command must not contain filesystem paths")
+        if _WORKER_ENV_PATTERN.search(value):
+            raise ValueError("supported command must not contain environment variable references")
+        normalized.append(value)
+    return tuple(normalized)
+
+
+def worker_stale_threshold_seconds(heartbeat_interval_seconds: float) -> float:
+    return max(
+        float(heartbeat_interval_seconds) * WORKER_STALE_THRESHOLD_MULTIPLIER,
+        WORKER_MINIMUM_STALE_THRESHOLD_SECONDS,
+    )
+
+
 @dataclass(frozen=True)
 class ProcessingWorker:
     """A durable processing-Worker registration record."""
@@ -428,14 +484,7 @@ class ProcessingWorker:
     status: WorkerStatus
 
     def __post_init__(self) -> None:
-        for label_, value, maximum in (
-            ("Worker ID", self.worker_id, 128),
-            ("label", self.label, 256),
-        ):
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"{label_} must be a non-empty string")
-            if isinstance(maximum, int) and len(value) > maximum:
-                raise ValueError(f"{label_} must not exceed {maximum} characters")
+        validate_worker_id(self.worker_id)
         validate_worker_label(self.label)
         if (
             isinstance(self.heartbeat_interval_seconds, bool)
@@ -449,10 +498,7 @@ class ProcessingWorker:
             or self.runtime_schema_version < 0
         ):
             raise ValueError("runtime schema version must be a non-negative integer")
-        if not isinstance(self.supported_commands, tuple) or not all(
-            isinstance(c, str) and c.strip() for c in self.supported_commands
-        ):
-            raise ValueError("supported commands must be a tuple of non-empty strings")
+        validate_worker_commands(self.supported_commands)
 
 
 class ProcessingWorkerRepository(Protocol):
@@ -860,7 +906,13 @@ class AutomationJobRepository(Protocol):
         after: tuple[datetime, str] | None = None,
         before: tuple[datetime, str] | None = None,
     ) -> tuple[AutomationJob, ...]: ...
-    def claim_next_job(self, now: datetime) -> AutomationJob | None: ...
+    def claim_next_job(
+        self,
+        now: datetime,
+        *,
+        worker_id: str | None = None,
+        allow_pinned_snapshot_mismatch: bool = False,
+    ) -> AutomationJob | None: ...
     def update_job(self, job: AutomationJob) -> None: ...
     def request_job_cancellation(self, job_id: str, now: datetime) -> AutomationJob: ...
     def job_cancellation_requested(self, job_id: str) -> bool: ...
