@@ -299,6 +299,32 @@ class ManualRecoveryContinuationService:
             self._repository,
             source_item_id=source_item_id,
         )
+        # A linked Recognition decision may select a different RecognitionType
+        # from the original manual intent.  The continuation authority is bound
+        # to the original intent's downstream policy choice, so silently forcing
+        # that old choice would execute a plan the linked re-analysis did not
+        # review.  Fail closed until the operator creates a compatible manual
+        # intent/Preview rather than mixing RecognitionType policy identities.
+        recognition_decision = decisions.recognition_reviews.get(
+            (checkpoint.source_storage_id, checkpoint.source_path)
+        )
+        if (
+            recognition_decision is not None
+            and recognition_decision.selected_recognition_type
+            != manual_item.choice.recognition_type_id
+        ):
+            raise ManualRecoveryContinuationError(
+                "the linked Recognition decision does not match the original manual choice",
+                code="recognition_plan_mismatch",
+                next_action=(
+                    "create a fresh manual intent and Preview using the reviewed RecognitionType, "
+                    "then continue that exact plan"
+                ),
+                details={
+                    "reviewedRecognitionType": recognition_decision.selected_recognition_type,
+                    "manualRecognitionType": manual_item.choice.recognition_type_id,
+                },
+            )
         preview = self._previews.create(
             intent.intent_id,
             [manual_item.item_id],
