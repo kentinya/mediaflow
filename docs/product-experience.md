@@ -35,8 +35,8 @@ All journeys share these rules:
 
 The authenticated Configuration view and API expose whole-document Draft import/edit, validation,
 revision detail and explicit activation. The current managed object journey also exposes guided
-Local Storage, ResourceLibrary, MediaLibrary and policy-graph editing, exact-revision previews and
-reference protection. The top-level Web entry is still framed around staging a whole-document JSON
+Local, SMB, OpenList, AWS S3, Cloudflare R2 and generic S3-compatible Storage, ResourceLibrary,
+MediaLibrary and policy-graph editing, exact-revision previews and reference protection. The top-level Web entry is still framed around staging a whole-document JSON
 Draft, guided controls appear only after opening a revision, several policy editors remain bounded
 JSON-object editors, and the existing Active-to-Draft action is labelled as importing current JSON
 rather than editing by creating a new Draft. The minimal management-only bootstrap is the current
@@ -95,8 +95,9 @@ action to correct the deployment mount/ownership or Draft path and retry.
 - **Visible state:** setup required, Draft contents, validation errors, Storage/library selections,
   per-Storage read-only check evidence, destination precheck evidence and checked-activation
   readiness.
-- **Action:** create the first complete Draft, configure Local/SMB/OpenList/S3/R2 Storage and
-  libraries, select bounded paths, validate, test and checked-activate.
+- **Action:** create the first complete Draft, configure Local/SMB/OpenList/AWS S3/Cloudflare R2/
+  generic S3-compatible Storage and libraries, select bounded paths, validate, test and
+  checked-activate.
 - **Success:** the first immutable Active snapshot is bound to runtime and can be used by an explicit
   Preview or work request.
 - **Failure:** missing secret reference, invalid path, permission/authentication/timeout/not-found,
