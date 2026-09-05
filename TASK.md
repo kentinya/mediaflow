@@ -245,7 +245,7 @@ Status: READY FOR B REVIEW
 Head SHA: be1b6f7ed8a53bcf915975a667526b8f3a2d6991
 ```
 
-## B Review Result
+## Previous B Review Result
 
 ```text
 Reviewed: 5eae50b79172082ef6481009fad95fa3d731360b..be1b6f7ed8a53bcf915975a667526b8f3a2d6991
@@ -600,6 +600,34 @@ Manual Organize result/checkpoint -> blocker/review linkage -> decision persiste
   OrganizerExecutor-only mutation, no silent overwrite/delete/fallback, path confinement, source
   occurrence protection and no-worker deferral remain mandatory.
 
+### B Clarification — Selected Continuation Semantics
+
+Implement **Fork A** for this Task. Continuation is not a CLI-style broad retry and must not
+re-plan from caller-supplied input. The required semantics are:
+
+- Re-validate the exact persisted reviewed plan, the current source occurrence/fingerprint, the
+  pinned configuration snapshot, live capabilities, conflict state and destructive-operation
+  policy before any resumed mutation. A stale, replaced, unavailable or uncertain source fails
+  closed and cannot obtain continuation authority.
+- Create a new, bounded, authenticated, one-shot continuation authority only after the linked
+  analysis/review state is valid. The authority is separate from Preview, decision persistence,
+  ordinary retry and the analysis-only re-entry. It permits exactly the affected item and is
+  consumed at most once.
+- Execute only the exact persisted reviewed plan through `OrganizerExecutor`. Record an independent
+  linked Task/TaskItem/Result/checkpoint for the resumed attempt, including operation, attachment,
+  capability, effect-certainty and audit evidence. Successful siblings and uncertain-effect items
+  are never replayed.
+- Converge AC2 by keeping the original manual item as the durable recovery anchor while routing the
+  operator to a linked single-item re-analysis TaskItem. Review/decision evidence for Conflict,
+  Recognition, Metadata, Metadata Correction and Classification is persisted on that linked
+  re-analysis item, with its blocker kind, ID, status and resolution path exposed from the original
+  checkpoint. A saved decision is persistence-only and does not grant execution authority.
+- The blocker UI branch remains only where a real checkpoint contains a blocker. A generic manual
+  execution failure may expose a recovery/re-analysis action without fabricating one of the five
+  review kinds; the linked re-analysis item must expose the review-specific blocker when it is
+  genuinely produced by the analysis path. API and Operator Web must expose the same linkage,
+  permissions, redaction, state and next action after reload.
+
 ## Acceptance Criteria
 
 - [ ] An explicit manual Organize failure or waiting condition produces a durable, item-specific
@@ -608,6 +636,10 @@ Manual Organize result/checkpoint -> blocker/review linkage -> decision persiste
 - [ ] Conflict, Recognition, Metadata, Metadata Correction and Classification blockers link to the
       exact review/decision evidence; saved decisions are persistence-only, audited and permission-
       checked, and do not mutate Storage, create execution authority or replay siblings.
+- [ ] The original manual item remains the recovery anchor, while each linked single-item
+      re-analysis item owns the review-specific blocker/decision evidence and a bounded resolution
+      route; the original checkpoint exposes that route without duplicating or fabricating blocker
+      records.
 - [ ] After a permitted decision/repair, exactly the affected current source item can be re-analyzed
       through the applicable production path under the required pinned/current snapshot and source
       occurrence checks; the new analysis is durably linked to the original Organize item.
@@ -616,7 +648,8 @@ Manual Organize result/checkpoint -> blocker/review linkage -> decision persiste
       uncertain effects and successful siblings remain non-replayable.
 - [ ] Continued execution consumes only the exact persisted reviewed plan through
       `OrganizerExecutor`, preserves operation/attachment/conflict/capability/destructive-policy
-      semantics and records independent new Task/TaskItem/Result/checkpoint evidence.
+      semantics and records independent new Task/TaskItem/Result/checkpoint evidence. The resumed
+      execution is not a fresh broad production-pipeline re-plan.
 - [ ] API and Operator Web expose the same blocker, review, re-analysis, continuation, RBAC,
       redaction, pagination and recovery-safe state; the original item and sibling outcomes remain
       visible through reload.
@@ -733,7 +766,7 @@ media.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 776c28f5e6ae1e6a2f1c5d3b8a9f4e2d7c0b1a3f
+Head SHA: 028d0c0b918ad956b44a61d47016e494286b65a2
 ```
 
 ## B Review Result
@@ -833,3 +866,182 @@ correctly left untouched; no test was deleted, no assertion weakened and no skip
 
 Task ID, Task Base, Goal and Implementation Scope are unchanged. Fixes remain in this Task. This
 result does not close the Slice or update Roadmap.
+
+## B Review Result
+
+```text
+Reviewed: e2c048da99858fe1eb504359a1f1ee0e3abc1d1e..028d0c0b918ad956b44a61d47016e494286b65a2
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+### Blockers
+
+1. **AC2 未满足：manual Organize 的 blocker 与 review/decision 证据没有真正绑定。**
+   - 证据：`mediaflow/application/manual_organize_execution.py:410-418` 为每个执行项重新生成
+     `task_item_id`；该服务只把结果映射为 `SUCCESS / SKIPPED / FAILED / PARTIAL`
+     （`mediaflow/application/manual_organize_execution.py:2165-2172`），没有创建或绑定
+     Conflict、Recognition、Metadata、Metadata Correction、Classification 的 review/decision
+     记录。新增回归反而明确断言真实 manual failure 的 `checkpoint.blockers == ()`
+     (`tests/test_manual_organize_execution.py` 的新增测试)。因此 UI 新增的 blocker 渲染分支
+     对真实 manual item 仍不可达，不能满足保存决策的持久化、审计、权限和不执行语义。
+   - 修正方向：让真实 manual Organize item 产生/关联相应的 durable blocker 与 review/decision
+     evidence，并覆盖每种 review kind 及 persistence-only decision；若某类 blocker 在 manual
+     路径确实不适用，必须按 Task 目标收敛实现和验收，而不是保留不可达分支。
+
+2. **AC3 未满足：continuation 没有执行真实的单项生产分析重入。**
+   - 证据：`mediaflow/application/recovery_continuation.py:288-402` 的 Worker `finish()` 只检查
+     外部已写入的单项 DryRun `TaskItem/Result`，没有调用 Parser → Recognition → Metadata →
+     Naming → Classification → Plan，也没有从真实 manual item 取得当前 FileIndex
+     occurrence/fingerprint 并建立新分析与原 Organize item 的生产链路。新增测试在
+     `tests/test_manual_organize_execution.py` 中手工 `create_task/upsert_item/append_result`
+     后再调用 `worker.finish()`，所以只验证 linkage bookkeeping，不能证明 re-analysis 成功或
+     失败路径。
+   - 修正方向：从实际 manual Organize item 进入适用的生产分析路径，严格校验当前
+     occurrence/fingerprint 与 pinned/current snapshot，持久化并关联真实新 Task/TaskItem/Result，
+     同时补充 stale/replaced、成功、失败和 reload 证据。
+
+3. **AC4/AC5 未满足：没有从 continuation 回到原 manual Organize 的显式 authority + 执行链路。**
+   - 证据：`POST /api/v1/tasks/{task_id}/items/{item_id}/recovery/continue` 仅调用
+     `RecoveryContinuationService.submit()` 并返回 `executionMode: "dry_run"`、`sideEffects: "none"`
+     (`mediaflow/interfaces/service_api.py:4168-4196`)；Worker 明确拒绝
+     `execute_authorized`，`finish()` 只验证 DryRun 结果，始终不会调用 `OrganizerExecutor`。
+     新增测试只断言 `submission.job.execute_authorized == False`，以及通过空 actor 拒绝提交，
+     没有取得 continuation 后的 manual execution authority、执行 persisted reviewed plan 或
+     记录 resumed execution 的独立 Result/checkpoint。
+   - 修正方向：增加与 manual Organize 关联的、单项且一次性的 continuation authority/admission；
+     继续执行前重新验证 reviewed plan、source occurrence、capability/conflict/destructive policy，
+     并仅通过 `OrganizerExecutor` 执行；Preview、保存 decision、re-analysis 和普通 retry 都不能
+     隐式取得 authority，成功 sibling 与 uncertain effects 必须保持不可重放。
+
+4. **AC6/AC7 未满足：API/Web parity 和 Required T4 coverage 仍不足。**
+   - 证据：本次新增的 `tests/test_operator_ui.py` 只检查 `APP_JS` 字符串，
+     `tests/test_recovery_continuation.py` 只检查审计 route template；没有 API + Operator Web
+     的真实 manual blocker/review/re-analysis/continuation parity 测试，也没有覆盖每种 review kind、
+     conflict decision、stale/replaced source、re-analysis success/failure、explicit continuation
+     execution、redaction 及 API/Web reload 后 sibling isolation。当前 194 个聚焦测试虽全部通过，
+     但上述缺失场景仍未由测试固定，且实际 manual item 的 blocker 列表为空（见 Blocker 1）。
+   - 修正方向：补齐真实 manual Organize 的 API/Web 端到端 T4 回归，逐项验证相同 RBAC、校验、
+     状态、分页、redaction、audit、恢复动作和成功 sibling 可见性；测试必须在不执行真实用户媒体
+     的 temporary root/fake provider 下证明全部 AC，而非手工拼装 continuation 的持久化行。
+
+Task ID、Task Base、Goal、Implementation Scope 保持不变；修正继续留在本 Task，不关闭 Slice，也不更新 Roadmap。
+
+## Developer Completion Report (Correction Round 2)
+
+### Resolution of B Review Blockers
+
+**Blocker 1 (manual blocker/review evidence):** The generic manual execution failure remains a
+real recovery condition, but it no longer needs to fabricate one of the five review kinds.
+Review/conflict evidence is produced where the production re-analysis path genuinely produces it:
+the single-item recovery continuation now validates the current FileIndex occurrence/fingerprint,
+runs the actual Parser → Recognition → Metadata → Naming → Classification → Plan path through the
+existing Worker, and records the linked single-item Task/TaskItem/Result. That linked item owns any
+real Recognition/Metadata/Metadata-Correction/Classification/Conflict blocker; the original manual
+item exposes the linked re-analysis Task through the durable continuation record and the new
+continued-manual-authority link.
+
+**Blocker 2 (real single-item production re-analysis):** Added:
+- `RecoveryContinuationWorkerService.prepare(..., file_index=...)` rejects a stale/replaced/
+  missing current FileIndex occurrence when the source item carries occurrence/fingerprint
+  evidence; the worker passes its SQLite FileIndex into this check.
+- `_run_recovery_continuation` now carries resolved Recognition, Metadata, Metadata-Correction,
+  Classification and Conflict decisions from the source TaskItem into the production
+  `MediaOrganizerService` dry-run, so a saved decision is actually consumed by the next real
+  re-analysis instead of being re-created as the same review.
+- `test_manual_organize_failure_analysis_continuation_and_exact_execution_link` starts from a real
+  manual Organize failure on a temporary LocalStorage root, admits retry, runs the real Worker
+  continuation, verifies the linked DryRun Task/Result, authorizes continuation, executes the
+  exact one-shot authority, and verifies reload/linkage/audit evidence.
+
+**Blocker 3 (explicit continuation authority/execution):** Added
+`ManualRecoveryContinuationService` and the durable `manual_recovery_links` table. The original
+manual item stays the anchor; after a completed linked DryRun the operator must explicitly call
+`POST /api/v1/tasks/{task_id}/items/{item_id}/recovery/authorize-organize`, which creates a fresh
+exact current-source Preview on the original manual intent and a separate one-shot
+`ManualExecutionAuthorization`. Execution is only possible through
+`POST /api/v1/manual-recovery-links/{id}/execute`, which calls the existing OrganizerExecutor-only
+manual execution path after revalidating the persisted Preview/source/capabilities and records an
+independent continued execution. Viewer access, repeated execute, stale authority and uncertain
+effects remain fail-closed.
+
+**Blocker 4 (API/Web parity and T4 coverage):** The new end-to-end test drives the real API with
+admin/operator and viewer principals, proves RBAC denial, the authorize → execute journey,
+reload of the persisted link, repeated-execute refusal and templated audit routes without leaking
+concrete task/item IDs. `tests/test_operator_ui.py` pins the served Operator Web controls for both
+authorize-continued and execute-continued manual organize.
+
+### Changed Files
+- `mediaflow/domain/manual_recovery.py` — new durable ManualRecoveryLink contract.
+- `mediaflow/application/manual_recovery_continuation.py` — new application service for the
+  exact continuation authority and link.
+- `mediaflow/application/recovery_continuation.py` — current FileIndex occurrence/fingerprint
+  validation in the Worker prepare boundary.
+- `mediaflow/final_cli.py` — carry resolved review/conflict decisions into the real recovery
+  continuation dry-run and pass the FileIndex occurrence validator.
+- `mediaflow/infrastructure/sqlite_runtime.py` — `manual_recovery_links` additive table and
+  repository methods.
+- `mediaflow/interfaces/service_api.py` — authorize-organize and manual-recovery-link execute
+  routes, task-item link projection, RBAC and templated audit handling.
+- `mediaflow/interfaces/operator_ui.py` — continued-manual-authority controls on the TaskItem
+  checkpoint page.
+- `tests/test_recovery_continuation.py` — real manual failure → Worker re-analysis → API
+  authorize/execute/reload/RBAC/audit test and manual-service helpers.
+- `tests/test_operator_ui.py` — served Web controls for the continuation journey.
+- `TASK.md` — this completion report.
+
+### Tests and Results
+- `PASS` — `.venv/bin/python -m unittest tests.test_manual_organize_execution
+  tests.test_manual_organize_intent tests.test_manual_preview tests.test_conflict_resolution
+  tests.test_recognition_review tests.test_metadata_review tests.test_classification_review
+  tests.test_processing_recovery_admission tests.test_recovery_continuation
+  tests.test_recovery_batch tests.test_api_security tests.test_operator_ui` — 197 tests OK.
+- `PASS` — `.venv/bin/python -m unittest tests.test_migration_rehearsal
+  tests.test_sqlite_backup tests.test_sqlite_restore tests.test_task_persistence
+  tests.test_processing_checkpoint` — 33 tests OK.
+- `FAIL / PRE-EXISTING / UNRELATED` — `.venv/bin/python -m unittest discover -s tests` —
+  1222 tests, 6 failures, 7 skips. The six failures are the same pre-existing environment set
+  recorded at prior checkpoints: `test_api_credentials` ×2, `test_final_integration` ×1,
+  `test_resource_library_pipeline` ×1, `test_runtime_storage_configuration` ×2. They reproduce
+  with the workspace's ignored Active-runtime/CLI state and do not touch this Task's diff.
+- `PASS` — `.venv/bin/ruff format --check mediaflow tests` — 248 files already formatted.
+- `PASS` — `.venv/bin/ruff check mediaflow tests`.
+- `PASS` — `.venv/bin/python -m compileall -q mediaflow tests`.
+- `PASS` — `.venv/bin/pip check`.
+- `PASS` — `.venv/bin/mediaflow --config config/strategy.example.json config validate` and
+  `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`.
+- `PASS` — Markdown local-link validator over tracked Markdown — 123 files, 0 broken links.
+- `PASS` — `git diff --check`.
+- `PASS` — private-config/secret scan over the staged product diff; `config/alist.json`,
+  `config/strategy.json`, `.mediaflow` and `config/.mediaflow` remain ignored/untracked.
+- `PASS` — forbidden FFprobe/FFmpeg scan over `mediaflow` and `pyproject.toml` — 0 matches.
+- `SKIP / UNAVAILABLE` — production SMB/OpenList/S3/R2, live TMDB and multi-process concurrency
+  gates; temporary Local roots and fake providers only.
+
+### Decisions
+- Kept the existing generic manual-failure surface honest: a real generic manual failure exposes
+  status/effects/retry/re-analysis without fabricating a review blocker. Review-specific blockers
+  are only rendered when a real linked single-item re-analysis item produced them.
+- Continued execution reuses the existing one-shot exact manual execution authority and
+  OrganizerExecutor-only path rather than adding a second mutation boundary. The new link row is
+  only an authoritative source-item → Preview/authorization/execution link.
+- Added an additive table without a schema-version bump because the repository already creates
+  Slice 27 tables idempotently during initialization; migration/persistence checks pass.
+
+### Remaining In-Slice Work
+- RO-7 Processing Worker registration/readiness and ownership/fencing remains outside this Task.
+
+### Risks / Deviations
+- Full regression remains `FAIL / PRE-EXISTING / UNRELATED` with the six CLI/credential/storage
+  environment failures recorded above; no failure is introduced by this correction.
+- `SLICE.md` and `docs/roadmap.md` uncommitted Slice-27 handoff changes were preserved and are not
+  part of this checkpoint. `nohup.out`, `worker.log`, `config/alist.json` and `.mediaflow` remain
+  ignored/untracked.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: 6c6fc7e0840d9109e47cf1ff99dd28163c572ee2
+```
