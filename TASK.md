@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 28.1
 Parent Slice: 28
-Status: READY FOR B REVIEW
+Status: IN PROGRESS
 Task Base: 380362e2bd54c4bc3b051c0081bc001c7f39ad50
 Difficulty: High
 Test Level: T4
@@ -158,15 +158,18 @@ reported with its reason.
 
 - `mediaflow/application/configuration_snapshot.py` — Added `create_successor_draft()` to `ManagedConfigurationService`.
 - `mediaflow/application/configuration_objects.py` — Added generic `copy_object()` / `set_object_enabled()` / `mutate_object()`. Removed `ConfigurationObjectKind.SCHEDULE` block in `mutate()` so unreferenced `AutomationTaskDefinition` deletion is now possible via service; Web UI still does not expose delete for automationTaskDefinitions.
-- `mediaflow/interfaces/service_api.py` — Added `POST /api/v1/configuration/drafts/successor` and `POST /api/v1/configuration/revisions/{revision_id}/successor`. Extended `POST /api/v1/configuration/revisions/{revision_id}/objects/{kind}/{object_id}/{action}` (copy/enable/disable) for all 11 object kinds. Restored correct response key (`storage`/`automationTaskDefinition`) for backward parity.
+- `mediaflow/interfaces/service_api.py` — Added `POST /api/v1/configuration/drafts/successor` and `POST /api/v1/configuration/revisions/{revision_id}/successor`. Extended `POST /api/v1/configuration/revisions/{revision_id}/objects/{kind}/{object_id}/{action}` (copy/enable/disable) for all 11 object kinds. Restored correct response key (`storage`/`automationTaskDefinition`) for backward parity. Fixed `POST /api/v1/configuration/revisions/{revision_id}/successor` to require that `{revision_id}` matches the current Active revision ID, rejecting mismatches with HTTP 409 `configuration_version_conflict` and structured recovery evidence.
 - `mediaflow/interfaces/operator_ui.py` — Updated `renderConfiguration()` to show "Create successor Draft from Active" primary action and "Advanced JSON (import/export)" secondary section when Active exists. Relabelled revision-detail JSON editor as "Advanced: Edit Draft JSON". Extended `guidedObjectFields()` / `guidedObjectPayload()` / `renderGuidedObjectForm()` to support typed forms for all 11 object families. Restored `automationTaskDefinition`-specific UI branch to satisfy Slice 27 contract.
-- `tests/test_configuration_successor_draft.py` — New test file: 15 tests covering successor-Draft creation (service + API), optimistic conflict checks, Active immutability, object copy/enable/disable lifecycle for all kinds, reference-blocked deletion, UI presence checks.
+- `tests/test_configuration_successor_draft.py` — Added 18 tests covering successor-Draft creation (service + API), optimistic conflict checks, Active immutability, object copy/enable/disable lifecycle for all kinds, reference-blocked deletion, UI presence checks, and regression tests verifying that `POST /api/v1/configuration/revisions/{revision_id}/successor` rejects unknown, non-active draft, and superseded revision IDs with 409 and creates no Draft.
 
 ### Implemented
 
 1. **Successor Draft from Active** (`ManagedConfigurationService.create_successor_draft()`): Fails closed with `RuntimeSnapshotUnavailable` if Active is missing or corrupt. Accepts optional `expected_active_revision_id`, `expected_active_version`, `expected_active_digest` for optimistic concurrency. Seeds new Draft (version 1, status DRAFT) from the immutable Active document snapshot.
 
-2. **API endpoints** (`service_api.py`): `POST /api/v1/configuration/drafts/successor` and `POST /api/v1/configuration/revisions/{revision_id}/successor` both return 201/409. `POST /api/v1/configuration/drafts` accepts `{"source": "active"}` and `{"source": "successor"}`.
+2. **API endpoints** (`service_api.py`):
+   - `POST /api/v1/configuration/drafts/successor`: accepts optional `expectedActiveRevisionId`, `expectedActiveVersion`, `expectedActiveDigest`. Returns 201 on success, 409 on conflict.
+   - `POST /api/v1/configuration/revisions/{revision_id}/successor`: requires `{revision_id}` to be the exact current Active revision ID (passed as `expected_active_revision_id=parts[4]`). Mismatches fail closed with HTTP 409 `configuration_version_conflict` and structured recovery evidence (`durableState: active_preserved`, `sideEffects: none`, `retrySafe: true`, `nextAction`). Accepts optional `expectedActiveVersion` and `expectedActiveDigest`. Rejects query parameters with `_require_empty_query`.
+   - `POST /api/v1/configuration/drafts`: accepts `{"source": "active"}` and `{"source": "successor"}`.
 
 3. **Generic object lifecycle** (`ConfigurationObjectService`): `copy_object(kind, revision_id, object_id, ...)` and `set_object_enabled(kind, revision_id, object_id, enabled, ...)` delegate from all 11 kinds. `mutate_object()` handles create/update/delete generically. `ConfigurationObjectKind.SCHEDULE` deletion restriction removed from service (AutomationTaskDefinition deletion is allowed at the service level).
 
@@ -174,9 +177,9 @@ reported with its reason.
 
 ### Tests and Results
 
-Focused test suite (161 tests):
+Focused test suite (164 tests):
 ```
-python -m unittest \
+python3 -m unittest \
   tests.test_configuration_management \
   tests.test_configuration_objects \
   tests.test_configuration_status \
@@ -184,7 +187,7 @@ python -m unittest \
   tests.test_operator_ui \
   tests.test_automation_task_definition \
   tests.test_configuration_successor_draft
-→ 161 tests, OK
+→ 164 tests, OK
 ```
 
 T4 gates:
@@ -192,14 +195,18 @@ T4 gates:
 python3 scripts/check_governance.py          → PASS
 python3 -m compileall -q mediaflow tests scripts → OK
 git diff --check                            → OK
+/root/mediaflow/.venv/bin/ruff check mediaflow/interfaces/service_api.py → All checks passed!
 ```
 
-Pre-existing environment failures (unrelated to this Task; reproduced at Task Base SHA):
+Pre-existing environment failures (unrelated to this Task; reproduced at Task Base SHA `380362e`):
 - `test_credential_check_is_redacted_config_only_and_reports_missing` — fails because `.mediaflow/mediaflow.sqlite3` exists in the working directory from prior test runs; the test should use a temporary path.
 - `test_legacy_credential_status_is_supported_without_secret_output` — same root cause.
 - `test_openlist_storage_uses_environment_owned_token` — requires `httpx` (OpenList extra) not installed in environment.
 - `test_runtime_configuration_and_final_analyze_cli` — exit code 2, likely due to local `.mediaflow/` state.
 - `test_scan_cli_needs_no_path_or_metadata_token` — same local state dependency.
+- `test_storage_check_is_read_only_and_isolates_failures` — pre-existing at Base SHA.
+- `test_storage_list_does_not_construct_or_connect` — pre-existing at Base SHA.
+- `test_setup_picker_and_execution_environment_guidance_are_present` — pre-existing at Base SHA.
 
 ### Decisions
 
@@ -207,6 +214,7 @@ Pre-existing environment failures (unrelated to this Task; reproduced at Task Ba
 - Restored correct API response key (`storage`/`automationTaskDefinition`) for copy/enable/disable actions to maintain backward compatibility with existing automation task definition tests.
 - Used conditional rendering for the Save button in `renderGuidedObjectForm` to satisfy both `test_automation_task_definition.py` (which asserts the literal `'Save Automation Task Definition'` string) and `test_operator_ui.py` (which asserts the literal `'Save guided object'` string).
 - Typed form field support added to `guidedInput()`, `guidedObjectFields()`, and `guidedObjectPayload()` for all 11 kinds, including `type === 'textarea'` for multi-line fields and `type === 'number'` for numeric fields, without removing the JSON fallback path.
+- In `POST /api/v1/configuration/revisions/{revision_id}/successor`, pass `expected_active_revision_id=parts[4]` to `create_successor_draft()` and enforce query-string emptiness via `_require_empty_query`. Mismatches raise `ConfigurationVersionConflict`, which the API maps to HTTP 409 with structured recovery details (`revisionId`, `currentVersion`, `currentDigest`, `durableState: active_preserved`, `sideEffects: none`, `retrySafe: true`, `nextAction`).
 
 ### Remaining In-Slice Work
 
@@ -216,23 +224,33 @@ Pre-existing environment failures (unrelated to this Task; reproduced at Task Ba
 
 ### Risks / Deviations
 
-- None. All acceptance criteria satisfied. Governance check passes. All 161 focused tests pass. Pre-existing environment failures are not introduced by this Task.
+- None. B blocker resolved. Governance check passes. All 164 focused tests pass. Pre-existing environment failures are not introduced by this Task.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 685ceaf29abaf5567f0565886b7c2512ad55c426
+Head SHA: e9e3a5db36d873c29ff82ff9b519cc7a82dfcd40
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 380362e2bd54c4bc3b051c0081bc001c7f39ad50..1f29f739bf21d0f742b2717bc5aecea98498c7b6
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+Blockers:
+
+- The API route `POST /api/v1/configuration/revisions/{revision_id}/successor` ignores the
+  `{revision_id}` path value and always calls `create_successor_draft()` against the current Active
+  revision. Evidence: a direct API probe against Head `1f29f739bf21d0f742b2717bc5aecea98498c7b6`
+  posted to `/api/v1/configuration/revisions/not-the-active-revision/successor` and received `201`
+  with a new Draft instead of a bounded stale/not-found conflict. Fix the route to require that the
+  requested revision is the exact current Active revision, or remove the route and its advertised
+  contract; mismatches must fail closed with structured recovery evidence. Add a regression test for
+  a non-Active revision ID and verify that no Draft is created.
+
+Fixes remain in Task 28.1. This result does not close the Slice or update Roadmap.
