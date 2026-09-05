@@ -79,8 +79,8 @@ closed processing foundations:
 - Environment-variable references plus deployment-owned secret injection are the V1 secret boundary.
   Full Secret Store and Docker Secrets-specific ingestion are post-V1 unless separately approved.
 
-These decisions are represented by the closed Slice 26 and the planned Slices 27, 28 and 29; they do
-not create implementation Tasks.
+These decisions are represented by the closed Slices 26 and 27 and the planned Slices 28 and 29; they
+do not create implementation Tasks.
 
 ## General product requirements
 
