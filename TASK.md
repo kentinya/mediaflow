@@ -450,3 +450,80 @@ Next: SAME TASK FIX LOOP
   subsequent projection raises. Move the bounded ID/command validation to the Worker-owned
   registration boundary before persistence (or make the repository transactionally reject it),
   and prove no hostile values remain in persistence/API projection.
+
+## Developer Completion Report — Correction Round 2
+
+### Changed Files
+- `mediaflow/application/automation.py`
+- `mediaflow/domain/automation.py`
+- `mediaflow/final_cli.py`
+- `mediaflow/infrastructure/sqlite_runtime.py`
+- `tests/test_automation_job_fencing.py`
+
+### Implemented
+
+**AC5 — Fenced claim ownership (fix):** Removed the `allow_pinned_snapshot_mismatch` parameter entirely.
+The `claim_next_job` selection logic is now:
+
+- `worker is None` (unregistered call): claims the first pending job with no fencing (unchanged).
+- `worker.configuration_snapshot_id is None`: admits only legacy unpinned jobs (`configuration_snapshot_id IS NULL`)
+  and explicit queued continuations from `recovery_continuations` / `metadata_correction_continuations`.
+- `worker.configuration_snapshot_id is not None`: admits only jobs that match the exact snapshot pair, plus
+  jobs that have a queued record in either continuation table. No unconditional command exception; no global
+  snapshot bypass. The continuation table record is the bounded, explicit per-Job continuation condition; the
+  Worker still enforces lease/schema and the continuation handler loads and validates its own pinned snapshot.
+
+**AC7 — Registration bounds (fix):** Moved `validate_worker_id`, `validate_worker_label` and
+`validate_worker_commands` from `AutomationWorker.__init__` to `SQLiteTaskRepository.register_worker`.
+Every bounded field is now normalised before the database transaction opens, so hostile values are rejected
+synchronously and never reach the storage layer even for a transient write. Confirmed zero rows in
+`processing_workers` after a ValueError is raised.
+
+**CLI Worker run-next (fix):** Removed `allow_pinned_snapshot_mismatch=True` and the unconditional
+`worker_snapshot` binding for `worker run-next`. The one-off `run-next` worker now peeks the next
+pending job and binds to its snapshot (if pinned) or the Active snapshot (if unpinned or no active).
+This ensures the claim fence matches exactly — a registered Worker bound to snapshot B cannot claim a
+job pinned to snapshot A, but a Worker that binds to the job's own snapshot claims it without any bypass.
+The resident `worker run` command continues to bind to the Active snapshot.
+
+### Tests and Results
+- Run date: 2026-09-05.
+- PASS — `.venv/bin/python -m unittest tests.test_processing_worker_readiness tests.test_automation_job_fencing tests.test_stale_job_visibility tests.test_automation_api tests.test_dashboard tests.test_migration_rehearsal tests.test_api_security tests.test_operator_ui` — 123 tests, OK.
+- PASS — `.venv/bin/python -m unittest tests.test_operator_job_submission tests.test_operator_job_cancellation tests.test_automation_admission tests.test_automation_definition_execution tests.test_recovery_continuation tests.test_manual_organize_execution tests.test_file_index_lifecycle tests.test_task_persistence` — 119 tests, OK.
+- PASS — `.venv/bin/python -m unittest tests.test_sqlite_backup tests.test_sqlite_restore tests.test_configuration_snapshot` — 52 tests, OK.
+- FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python -m unittest discover -s tests` — 1273 tests, 6 failures, 7 skips. Failures: `test_api_credentials` x2, `test_final_integration` x1, `test_resource_library_pipeline` x1, `test_runtime_storage_configuration` x2. All six reproduced from the Task Base; they use ambient ignored `.mediaflow` runtime/config state and do not touch Worker code.
+- PASS — `.venv/bin/ruff format --check mediaflow tests` — 250 files already formatted.
+- PASS — `.venv/bin/ruff check mediaflow tests`.
+- PASS — `.venv/bin/python -m compileall -q mediaflow tests` and `.venv/bin/pip check`.
+- PASS — both canonical `final_cli ... config validate` commands.
+- PASS — `git diff --check`; forbidden `ffprobe|ffmpeg` scan found no matches; `config/alist.json` is ignored and untracked.
+- SKIP / UNAVAILABLE — production SMB, OpenList, AWS S3, Cloudflare R2, live TMDB and real multi-process Worker acceptance were not available; local fakes and temporary Local roots were used.
+
+### Decisions
+- Claim fencing is now strict: a registered Worker with an explicit snapshot cannot claim a job with a
+  different snapshot unless that job has a queued record in `recovery_continuations` or
+  `metadata_correction_continuations`. No unconditional command exception and no global bypass.
+- A Worker without a snapshot binding (`configuration_snapshot_id is None`) can claim legacy unpinned
+  jobs and queued explicit continuations, but not jobs pinned to a different explicit snapshot.
+- The one-off `worker run-next` command resolves the next pending job's snapshot before registering
+  the Worker, so the claim fence always matches. The resident `worker run` command binds to the
+  current Active snapshot and only processes Active-snapshot jobs.
+- Hostile Worker ID/label/command values are rejected before the database transaction opens; no hostile
+  data is ever durable.
+
+### Remaining In-Slice Work
+- No additional implementation is claimed for Task 27.7. Other Slice 27 Required Outcomes and the
+  Task checkpoint remain subject to B review.
+
+### Risks / Deviations
+- The six full-suite failures are pre-existing/unrelated to this correction and were reproduced against
+  the Task Base; they were not hidden or changed.
+- SQLite test teardown still emits non-fatal `ResourceWarning` messages.
+- Production external Storage/TMDB and real multi-process Worker acceptance remain unavailable.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: ed53f4598ccd26484b1f0521401f869f50bc4c01
+```

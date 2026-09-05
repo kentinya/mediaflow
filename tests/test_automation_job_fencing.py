@@ -10,7 +10,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mediaflow.application.automation import AutomationJobService, AutomationWorker
-from mediaflow.domain.automation import AutomationClaimLost, AutomationJobStatus
+from mediaflow.domain.automation import (
+    AutomationClaimLost,
+    AutomationCommand,
+    AutomationJob,
+    AutomationJobStatus,
+)
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import render_job
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
@@ -232,6 +237,8 @@ class AutomationJobFencingTests(unittest.TestCase):
     def test_incompatible_or_stale_worker_cannot_claim(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                # A legacy no-snapshot Job is present; a no-snapshot stale worker
+                # has an expired heartbeat and must not be able to claim.
                 AutomationJobService(repository).submit("preview")
                 repository.register_worker(
                     worker_id="worker-stale",
@@ -257,7 +264,21 @@ class AutomationJobFencingTests(unittest.TestCase):
                 )
                 with self.assertRaises(AutomationClaimLost):
                     repository.claim_next_job(NOW, worker_id="worker-schema")
-                # A live worker bound to a different snapshot cannot claim a pinned Job.
+                # A no-snapshot legacy worker claims the legacy Job first so the
+                # remaining queue contains only the pinned cfg-a Job.
+                repository.register_worker(
+                    worker_id="worker-no-snapshot",
+                    label="worker-no-snapshot",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("scan",),
+                    configuration_snapshot_id=None,
+                    configuration_snapshot_digest=None,
+                    runtime_schema_version=33,
+                    now=NOW,
+                )
+                claimed_legacy = repository.claim_next_job(NOW, worker_id="worker-no-snapshot")
+                self.assertIsNotNone(claimed_legacy)
+                # A live worker bound to a different snapshot cannot claim the pinned Job.
                 AutomationJobService(
                     repository,
                     configuration_snapshot_id="cfg-a",
@@ -288,6 +309,135 @@ class AutomationJobFencingTests(unittest.TestCase):
                 claimed = repository.claim_next_job(NOW, worker_id="worker-matching")
                 self.assertIsNotNone(claimed)
                 self.assertEqual(claimed.worker_id, "worker-matching")
+
+    def test_mismatched_scan_recovery_and_preview_jobs_cannot_be_claimed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                # Three pinned Jobs (one per command) bound to a different snapshot.
+                # Use distinct created_at timestamps so the claim order is stable.
+                for offset, command in enumerate(
+                    (
+                        AutomationCommand.SCAN,
+                        AutomationCommand.PREVIEW,
+                        AutomationCommand.RECOVERY_CONTINUATION,
+                    )
+                ):
+                    created_at = NOW + timedelta(seconds=offset)
+                    job = AutomationJob(
+                        job_id=f"job-{command.value}",
+                        command=command,
+                        status=AutomationJobStatus.PENDING,
+                        created_at=created_at,
+                        updated_at=created_at,
+                        configuration_snapshot_id="cfg-a",
+                        configuration_snapshot_digest="digest-a",
+                    )
+                    repository.create_job(job)
+                # A registered Worker bound to a different snapshot cannot claim any
+                # of them; the unconditional command exception is gone.
+                repository.register_worker(
+                    worker_id="worker-other-snapshot",
+                    label="worker-other-snapshot",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=(
+                        AutomationCommand.SCAN.value,
+                        AutomationCommand.PREVIEW.value,
+                        AutomationCommand.RECOVERY_CONTINUATION.value,
+                    ),
+                    configuration_snapshot_id="cfg-b",
+                    configuration_snapshot_digest="digest-b",
+                    runtime_schema_version=33,
+                    now=NOW,
+                )
+                for _ in range(3):
+                    self.assertIsNone(
+                        repository.claim_next_job(NOW, worker_id="worker-other-snapshot")
+                    )
+                # The matching snapshot Worker is admitted and consumes all three.
+                repository.register_worker(
+                    worker_id="worker-matching",
+                    label="worker-matching",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=(
+                        AutomationCommand.SCAN.value,
+                        AutomationCommand.PREVIEW.value,
+                        AutomationCommand.RECOVERY_CONTINUATION.value,
+                    ),
+                    configuration_snapshot_id="cfg-a",
+                    configuration_snapshot_digest="digest-a",
+                    runtime_schema_version=33,
+                    now=NOW,
+                )
+                for expected_command in (
+                    AutomationCommand.SCAN,
+                    AutomationCommand.PREVIEW,
+                    AutomationCommand.RECOVERY_CONTINUATION,
+                ):
+                    claimed = repository.claim_next_job(NOW, worker_id="worker-matching")
+                    self.assertIsNotNone(claimed)
+                    self.assertEqual(claimed.command, expected_command)
+                    self.assertEqual(claimed.worker_id, "worker-matching")
+                    # Release the job so the next claim can pick up the next command.
+                    self.assertTrue(
+                        repository.complete_claimed_job(
+                            replace(
+                                claimed,
+                                status=AutomationJobStatus.COMPLETED,
+                                updated_at=NOW + timedelta(seconds=5),
+                                completed_at=NOW + timedelta(seconds=5),
+                            )
+                        )
+                    )
+
+    def test_hostile_worker_registration_rejected_before_persistence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory, "runtime.sqlite3")
+            with SQLiteTaskRepository(runtime) as repository:
+                hostile_cases = {
+                    "worker_id": "https://x/token",
+                    "label": "/etc/passwd",
+                    "supported_commands": ("scan", "password=hunter2"),
+                }
+                with self.assertRaises(ValueError):
+                    repository.register_worker(
+                        worker_id=hostile_cases["worker_id"],
+                        label=hostile_cases["label"],
+                        heartbeat_interval_seconds=5.0,
+                        supported_commands=hostile_cases["supported_commands"],
+                        configuration_snapshot_id="cfg-a",
+                        configuration_snapshot_digest="digest-a",
+                        runtime_schema_version=33,
+                        now=NOW,
+                    )
+                # The hostile registration must not have produced any row.
+                rows = repository._connection.execute(
+                    "SELECT COUNT(*) AS count FROM processing_workers"
+                ).fetchone()
+                self.assertEqual(rows["count"], 0)
+
+            # The Worker-owned registration boundary must also reject hostile
+            # identity without persisting any row.
+            with SQLiteTaskRepository(runtime) as repository:
+
+                def handler(job, cancelled):
+                    raise AssertionError("handler must not be reached")
+
+                with self.assertRaises(ValueError):
+                    AutomationWorker(
+                        repository,
+                        handler,
+                        worker_id="https://x/token",
+                        label="safe-label",
+                        heartbeat_interval_seconds=5.0,
+                        supported_commands=("scan",),
+                        configuration_snapshot_id="cfg-a",
+                        configuration_snapshot_digest="digest-a",
+                        runtime_schema_version=33,
+                    )
+                rows = repository._connection.execute(
+                    "SELECT COUNT(*) AS count FROM processing_workers"
+                ).fetchone()
+                self.assertEqual(rows["count"], 0)
 
     def test_success_clears_token_and_cli_notification_output_is_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

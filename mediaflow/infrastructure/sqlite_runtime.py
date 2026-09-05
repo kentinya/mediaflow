@@ -24,6 +24,9 @@ from mediaflow.domain.automation import (
     ScheduleAuditRecord,
     ScheduleState,
     WorkerStatus,
+    validate_worker_commands,
+    validate_worker_id,
+    validate_worker_label,
     worker_stale_threshold_seconds,
 )
 from mediaflow.domain.automation_task_definition_preview import (
@@ -4490,7 +4493,6 @@ class SQLiteTaskRepository:
         now: datetime,
         *,
         worker_id: str | None = None,
-        allow_pinned_snapshot_mismatch: bool = False,
     ) -> AutomationJob | None:
         claim_token = secrets.token_urlsafe(32)
         with self._lock, self._connection:
@@ -4514,34 +4516,54 @@ class SQLiteTaskRepository:
                     raise AutomationClaimLost(
                         f"worker {worker_id!r} has a stale heartbeat; restart the resident worker"
                     )
+            # Claim selection: a registered Worker with an explicit snapshot may only
+            # claim a Job whose snapshot matches exactly (AC5).  No unconditional command
+            # exception and no global snapshot bypass are permitted.
+            #
+            # The single bounded per-Job continuation exception: a Job that is bound
+            # to a different snapshot but has a queued record in either
+            # recovery_continuations or metadata_correction_continuations is an
+            # already-pinned continuation.  The continuation table is the explicit
+            # per-Job condition; the Worker still enforces lease/schema and the
+            # continuation handler loads and validates its own pinned snapshot.
+            _RECOVERY_QUEUED = RecoveryContinuationStatus.QUEUED.value
+            _METADATA_CORRECTION_QUEUED = MetadataCorrectionContinuationStatus.QUEUED.value
             if worker is None:
                 row = self._connection.execute(
                     "SELECT job_id FROM automation_jobs WHERE status=? "
                     "ORDER BY created_at, job_id LIMIT 1",
                     (AutomationJobStatus.PENDING.value,),
                 ).fetchone()
-            elif worker.configuration_snapshot_id is None or allow_pinned_snapshot_mismatch:
-                # A management-only or temporarily unhealthy Active runtime may
-                # leave the resident Worker without a current snapshot. Pinned
-                # Jobs still carry their own immutable snapshot and are safe to
-                # admit; the handler validates that snapshot before media I/O.
+            elif worker.configuration_snapshot_id is None:
                 row = self._connection.execute(
-                    "SELECT job_id FROM automation_jobs WHERE status=? "
+                    "SELECT job_id FROM automation_jobs WHERE status=? AND "
+                    "(configuration_snapshot_id IS NULL "
+                    "OR job_id IN (SELECT job_id FROM recovery_continuations "
+                    "              WHERE status=?) "
+                    "OR job_id IN (SELECT job_id FROM metadata_correction_continuations "
+                    "              WHERE status=?)) "
                     "ORDER BY created_at, job_id LIMIT 1",
-                    (AutomationJobStatus.PENDING.value,),
+                    (
+                        AutomationJobStatus.PENDING.value,
+                        _RECOVERY_QUEUED,
+                        _METADATA_CORRECTION_QUEUED,
+                    ),
                 ).fetchone()
             else:
                 row = self._connection.execute(
                     "SELECT job_id FROM automation_jobs WHERE status=? AND "
-                    "(configuration_snapshot_id=? AND configuration_snapshot_digest=? "
-                    "OR command IN (?, ?)) "
+                    "((configuration_snapshot_id=? AND configuration_snapshot_digest=?) "
+                    "OR job_id IN (SELECT job_id FROM recovery_continuations "
+                    "              WHERE status=?) "
+                    "OR job_id IN (SELECT job_id FROM metadata_correction_continuations "
+                    "              WHERE status=?)) "
                     "ORDER BY created_at, job_id LIMIT 1",
                     (
                         AutomationJobStatus.PENDING.value,
                         worker.configuration_snapshot_id,
                         worker.configuration_snapshot_digest,
-                        AutomationCommand.SCAN.value,
-                        AutomationCommand.RECOVERY_CONTINUATION.value,
+                        _RECOVERY_QUEUED,
+                        _METADATA_CORRECTION_QUEUED,
                     ),
                 ).fetchone()
             if row is None:
@@ -4938,9 +4960,27 @@ class SQLiteTaskRepository:
         runtime_schema_version: int,
         now: datetime,
     ) -> ProcessingWorker:
+        # Validate every bounded field before opening a database transaction.
+        # Hostile Worker IDs/labels/commands must never reach the storage layer
+        # even for a single write, so the rejection runs synchronously and the
+        # transactional INSERT/UPDATE never observes the unverified data.
+        normalized_worker_id = validate_worker_id(worker_id)
+        normalized_label = validate_worker_label(label)
+        normalized_commands = validate_worker_commands(
+            tuple(supported_commands) if supported_commands is not None else ()
+        )
+        normalized_heartbeat = float(heartbeat_interval_seconds)
+        if normalized_heartbeat <= 0:
+            raise ValueError("heartbeat interval must be positive")
+        normalized_schema_version = int(runtime_schema_version)
+        if normalized_schema_version <= 0:
+            raise ValueError("runtime schema version must be positive")
+        if (configuration_snapshot_id is None) != (configuration_snapshot_digest is None):
+            raise ValueError("configuration snapshot identity must be provided as a complete pair")
         with self._lock, self._connection:
             existing = self._connection.execute(
-                "SELECT registered_at FROM processing_workers WHERE worker_id=?", (worker_id,)
+                "SELECT registered_at FROM processing_workers WHERE worker_id=?",
+                (normalized_worker_id,),
             ).fetchone()
             if existing is None:
                 self._connection.execute(
@@ -4950,14 +4990,14 @@ class SQLiteTaskRepository:
                     "runtime_schema_version, last_heartbeat_at, status) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
-                        worker_id,
-                        label,
+                        normalized_worker_id,
+                        normalized_label,
                         now.isoformat(),
-                        heartbeat_interval_seconds,
-                        json.dumps(list(supported_commands)),
+                        normalized_heartbeat,
+                        json.dumps(list(normalized_commands)),
                         configuration_snapshot_id,
                         configuration_snapshot_digest,
-                        runtime_schema_version,
+                        normalized_schema_version,
                         now.isoformat(),
                         WorkerStatus.LIVE.value,
                     ),
@@ -4971,19 +5011,19 @@ class SQLiteTaskRepository:
                     "runtime_schema_version=?, last_heartbeat_at=?, status=? "
                     "WHERE worker_id=?",
                     (
-                        label,
-                        heartbeat_interval_seconds,
-                        json.dumps(list(supported_commands)),
+                        normalized_label,
+                        normalized_heartbeat,
+                        json.dumps(list(normalized_commands)),
                         configuration_snapshot_id,
                         configuration_snapshot_digest,
-                        runtime_schema_version,
+                        normalized_schema_version,
                         now.isoformat(),
                         WorkerStatus.LIVE.value,
-                        worker_id,
+                        normalized_worker_id,
                     ),
                 )
             row = self._connection.execute(
-                "SELECT * FROM processing_workers WHERE worker_id=?", (worker_id,)
+                "SELECT * FROM processing_workers WHERE worker_id=?", (normalized_worker_id,)
             ).fetchone()
         return self._processing_worker(row)
 
