@@ -534,7 +534,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 27.6
 Parent Slice: 27 - Manual Operations and File Lifecycle
-Status: FIX REQUIRED
+Status: PASS
 Task Base: e2c048da99858fe1eb504359a1f1ee0e3abc1d1e
 Difficulty: High
 Test Level: T4
@@ -988,6 +988,88 @@ Task ID、Task Base、Goal、Implementation Scope 保持不变；修正继续留
 Status: READY FOR B REVIEW
 Head SHA: 476a8fbe4af119723fe2df94b186f0bdb99f4ced
 ```
+
+## B Review Result (Correction Round 5)
+
+```text
+Reviewed: e2c048da99858fe1eb504359a1f1ee0e3abc1d1e..e44844c7bff1ae04c0b4bf8a951f2e6d236c7004
+Decision: PASS
+Slice Required Outcomes all satisfied: NO
+Next: NEXT TASK
+```
+
+### Verified Resolution of the Round 4 Blocker
+
+- `authorize_continued()` now fails closed **before** the Preview is created and before any
+  continuation authority exists when a linked Recognition decision selects a RecognitionType that
+  differs from the original manual choice
+  (`mediaflow/application/manual_recovery_continuation.py`): API `409`,
+  `code=recognition_plan_mismatch`, bounded `details.reviewedRecognitionType` /
+  `details.manualRecognitionType`, and an actionable `nextAction`. Gate order re-read end to end:
+  actor/permission/confirmation -> checkpoint version -> `task_retry_requested` -> no active
+  recovery request -> completed continuation -> analysis task/single item -> `review_pending` ->
+  `analysis_result_invalid` -> existing-link handling -> single manual execution/manual item ->
+  OPEN intent under the pinned snapshot -> resolved-decision collection -> **recognition
+  mismatch** -> Preview -> authority -> link.
+- The refusal is not a dead end. `nextAction` reaches both the versioned API error body and the
+  Operator Web `errorText` renderer, and `recognitionTypeId` is a patchable manual-choice field
+  with matching naming/classification/organize policies (`mediaflow/application/manual_organize.py`),
+  so the instructed recovery is genuinely performable.
+- Compatible decisions are unchanged: all five decision-kind continuation journeys (Metadata,
+  Recognition, Metadata-Correction, Classification, Conflict) still execute the linked
+  re-analysis's own `destination_path`, with zero mutation before the explicit one-shot execute and
+  `409 authorization_not_active` on repeat.
+
+### Independent Evidence
+
+- The new regression `test_manual_recovery_refuses_incompatible_linked_recognition_decision`
+  genuinely pins the product change: with
+  `mediaflow/application/manual_recovery_continuation.py` reverted to `48331fb` it fails
+  (`AssertionError: 409 != 201`); with the file restored it passes.
+- Focused required suites re-run by B: **219 tests OK**.
+- Full offline suite re-run by B: **1244 tests, 6 failures, 7 skipped**. The six failures are
+  pre-existing environment leakage, not this diff (`test_api_credentials` x2,
+  `test_final_integration` x1, `test_resource_library_pipeline` x1,
+  `test_runtime_storage_configuration` x2). None of those modules reference the manual-recovery,
+  recovery-decision, manual-organize-preview or continuation code, and the failure text shows the
+  CLI preferring this workspace's ambient `.mediaflow` Active runtime (`HDD_2 | local |
+  root=/mnt/HDD_2`) over each test's `--config` temporary file.
+- Migration/persistence regression: **33 tests OK**. Ruff format/check, compileall, pip check,
+  `git diff --check`, configuration validation, Markdown link validation (123 files, 40 local
+  links, 0 broken), forbidden FFprobe/FFmpeg scan (0 matches) and the private-configuration scan
+  (`config/alist.json` ignored and untracked; only `config/alist.example.json` tracked) all PASS.
+- Production SMB / OpenList / AWS S3 / Cloudflare R2, live TMDB and multi-process Worker acceptance
+  remain `SKIP / UNAVAILABLE`. No user media and no real credentials were used.
+- No safety line crossed across `e2c048d..e44844c`: no deleted tests, no weakened assertions, no
+  added or hidden skips, no credentials, no unrelated files. The pre-existing uncommitted
+  `SLICE.md` / `docs/roadmap.md` and untracked `nohup.out` / `worker.log` were left untouched.
+
+### Acceptance Criteria
+
+AC1-AC8 met. AC6 ("continue the exact reviewed plan") is now proven in both directions: a
+compatible linked decision executes exactly the reviewed plan, and an incompatible RecognitionType
+is refused before any authority exists instead of silently executing the original intent's policy
+identity, preserving the RecognitionType-identity invariant.
+
+### Slice Required Outcomes Re-check After This PASS
+
+- RO-1 - RO-6: satisfied by Tasks 27.1-27.6.
+- RO-7: **not satisfied**. Processing-Worker registration, liveness/readiness and ownership/fencing
+  evidence is not projected to API/Web, and queued work cannot report a no-worker or stale-owner
+  condition.
+- RO-8: satisfied for Files, FileIndex, Scan, Preview, Organize and continuation; its Worker
+  readiness portion depends on RO-7.
+
+`Next: NEXT TASK` - Task 27.7 covers RO-7 and the Worker-readiness portion of RO-8.
+
+### Known Non-blocking Observations (Closure Packet candidates, not Task blockers)
+
+- The round-5 "persistence-neutral" wording is slightly overstated for the EXPIRED/REVOKED
+  re-acquisition path, where stale link marking precedes the mismatch refusal. The behaviour is
+  safe (no authority, no Preview, no mutation, link not left ACTIVE), only the wording is loose.
+- The correction-round reports in this file are stored out of chronological order.
+- The six full-suite failures indicate CLI managed-runtime precedence over `--config` in this
+  workspace; it affects test isolation, not product safety.
 
 ## Developer Completion Report (Correction Round 2)
 
