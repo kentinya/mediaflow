@@ -5,7 +5,7 @@ the current [`SLICE.md`](SLICE.md).
 
 ```text
 Task ID: 28.1
-Parent Slice: 28 — Web-first Configuration and Operations Administration
+Parent Slice: 28
 Status: PLANNED
 Task Base: 380362e2bd54c4bc3b051c0081bc001c7f39ad50
 Difficulty: High
