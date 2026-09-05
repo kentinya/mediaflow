@@ -152,6 +152,43 @@ Material Contract change returns to A.
 Slice Base is the immutable checkpoint immediately before Slice implementation starts. Slice Final
 Review always covers Base..Implementation Head, not only the last Task or documentation commit.
 
+## 4.1 Repository governance preflight
+
+Before B plans the first Task for a Slice, the Slice Contract must already be checkpointed in
+reachable Git history. B verifies `HEAD:SLICE.md`, not only the working-tree file, and requires the
+committed Slice ID to match the planned Task's Parent Slice and the committed Slice status to be
+`ACTIVE`. A working-tree Contract that is newer than HEAD is a draft, not an activated Slice; Task
+planning stops until the Contract is committed. The corresponding committed Roadmap row must also be
+`ACTIVE`.
+
+Before any Developer Task execution, the Developer records `git status --short`, classifies every
+pre-existing change, and preserves changes outside the Task ownership. In particular, pre-existing
+`SLICE.md`, `docs/roadmap.md`, A-owned requirement/architecture files, B-owned Task state and user
+files must not be reset, restored from HEAD, checked out over, cleaned, dropped from a stash, or
+silently included in the Task checkpoint. "The Developer does not modify this file" includes
+indirectly making its contents disappear through worktree cleanup.
+
+The read-only `scripts/check_governance.py` guard is the executable check for these rules. It uses
+committed `HEAD:SLICE.md` and the committed Roadmap as authority, fails fast on an uncheckpointed
+working-tree Contract, validates active Task parent/status/Roadmap alignment, and validates Base
+SHA commit existence and ancestry. It never edits, stages, resets, restores, checks out, cleans or
+stashes repository content. The existing quality workflow runs it before formatting, lint and tests.
+
+Base SHA validation is an ancestry check, not an equality check. A valid sequence is:
+
+```text
+Slice Base
+  ↓
+A Slice Contract / Activation commit
+  ↓
+B Task planning
+  ↓
+Developer implementation
+```
+
+The Base remains the immutable checkpoint immediately before the Slice implementation line. Contract
+and planning commits are allowed after Base and must not cause the Base to move.
+
 ## 5. Task planning and sizing
 
 Task planning optimizes for coherent implementation units, not minimum diff size. A Task should

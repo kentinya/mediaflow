@@ -36,3 +36,8 @@ Do not perform:
 - history rewriting
 
 unless explicitly authorized.
+
+Before Task planning or implementation, run `scripts/check_governance.py`. Preserve every
+pre-existing dirty file and do not indirectly discard it with reset, restore, checkout, clean or
+stash/drop. The committed `HEAD:SLICE.md` is the authority for Slice activation; detailed lifecycle
+rules remain in `docs/development-workflow.md`.
