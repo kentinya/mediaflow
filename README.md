@@ -1,7 +1,8 @@
 # MediaFlow
 
-MediaFlow is a safety-first media organizer with Storage adapters for Local, SMB, OpenList, and
-S3/R2. Its production pipeline scans media, parses filenames, recognizes a configured type,
+MediaFlow is a safety-first media organizer with Storage adapters for Local, SMB, OpenList, AWS S3,
+Cloudflare R2, and generic S3-compatible services. Its production pipeline scans media, parses
+filenames, recognizes a configured type,
 identifies metadata, calculates names and classification, plans an operation, and optionally
 executes it. Dry-run is always the default.
 
@@ -43,12 +44,11 @@ export MEDIAFLOW_WEBHOOK_SECRET="<independent-random-webhook-secret>"
 
 ## V1 self-hosted release status
 
-Slice 26 is closed. The remaining V1 roadmap is now:
+Slices 26 and 27 are PASS / CLOSED. The remaining V1 roadmap is now:
 
 ```text
-Slice 27 — Manual operations and file lifecycle
-Slice 28 — Web-first configuration and operations administration
-Slice 29 — Docker production self-hosted release
+Slice 28 — Web-first Configuration and Operations Administration
+→ Slice 29 — Docker Production Self-hosted Release
 ```
 
 The repository currently provides the Python/CLI development and trusted-loopback WSGI boundary;
@@ -198,9 +198,11 @@ locator. Guided Draft editing currently covers Local, SMB, OpenList, AWS S3, Clo
 S3-compatible Storage, ResourceLibrary, MediaLibrary,
 RecognitionType, RecognitionRule, RecognitionTypePolicy, MetadataPolicy, NamingPolicy,
 ClassificationPolicy, and OrganizePolicy. It shows direct reference impact, blocks referenced
-deletion, keeps remote Storage summaries redacted/read-only, and provides exact-revision Local setup,
-recognition, metadata, naming, classification, organize-authority, destination-preview, Storage
-Browser/path selection, per-Storage read-only checks and provider-neutral destination-precheck actions.
+deletion, keeps remote Storage read projections and evidence redacted while Draft definitions and
+deployment-owned secret references remain editable (actual secret values are never persisted or
+exposed), and provides exact-revision recognition, metadata, naming, classification,
+organize-authority, destination-preview, Storage Browser/path selection, per-Storage read-only checks
+and provider-neutral destination-precheck actions.
 Checked activation consumes current evidence for the exact revision and atomically publishes an
 immutable runtime snapshot; queued and in-flight work retains its pinned revision identity even after
 a later activation.

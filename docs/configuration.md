@@ -1,8 +1,8 @@
 # MediaFlow Configuration Architecture and Operator Guide
 
 This document describes the configuration behavior implemented by the current repository. It is an
-operator guide, not a Phase or Task log. Large-Slice order and status are maintained in
-[`roadmap.md`](roadmap.md); current Slice 26 scope is maintained in [`SLICE.md`](../SLICE.md).
+operator guide, not a Phase or Task log. Large-Slice status is maintained in
+[`roadmap.md`](roadmap.md), [`progress.md`](progress.md) and [`SLICE.md`](../SLICE.md).
 
 ## Configuration authority
 
@@ -134,6 +134,9 @@ The current Web guided forms cover Local, SMB, OpenList, AWS S3, Cloudflare R2 a
 S3-compatible Storage, ResourceLibrary, MediaLibrary and the policy graph needed by the first-runtime
 journey. The raw whole-document JSON editor remains available as a compatibility path for
 configuration families without a guided form.
+Remote Storage definitions and their deployment-owned secret references remain editable in Drafts;
+redaction applies to read projections and evidence, while actual secret values are never persisted or
+exposed.
 The current top-level Configuration page leads with whole-document JSON staging. Guided controls are
 available only after opening a revision; several policy families still use bounded JSON-object
 editors, copy/enable/disable actions are not presented consistently across families, and the existing
@@ -188,8 +191,9 @@ The current exact-revision evidence paths are:
 - Classification preview;
 - Organize authority explanation;
 - Composed destination preview;
-- Local destination precheck;
-- Local setup check.
+- provider-neutral per-Storage read-only setup checks;
+- provider-neutral destination precheck;
+- the older Local setup check as a bounded Local diagnostic.
 
 Evidence is bounded, secret-free and tied to exact revision ID/version/digest. It records outcome,
 failure category, side-effect statement, retry safety and next action where applicable. Stale,
@@ -198,11 +202,12 @@ missing or failed evidence cannot silently authorize checked activation.
 ### Read-only checks and previews
 
 Naming, Classification, Organize authority and composed destination preview construct no Storage,
-Provider, Planner, Executor, Task or Job. They calculate or explain behavior only. The Local setup
-check and Local destination precheck construct a read-only Storage view and use bounded read-only
-operations such as `Exists`/`Stat`; they do not create directories, write files, move, copy, delete,
-scan recursively or grant execute authority. Live Strategy Test is the deliberate exception for
-Provider access, but it still starts no media work and performs no Storage mutation.
+Provider, Planner, Executor, Task or Job. They calculate or explain behavior only. Per-Storage setup
+checks and the provider-neutral destination precheck construct a read-only Storage view and use
+bounded read-only operations such as `List`/`Exists`/`Stat`; they do not create directories, write
+files, move, copy, delete, scan recursively or grant execute authority. The older Local setup check
+remains a Local diagnostic with the same read-only boundary. Live Strategy Test is the deliberate
+exception for Provider access, but it still starts no media work and performs no Storage mutation.
 
 ### Checked activation
 
@@ -210,8 +215,10 @@ The guided checked path requires current evidence for the exact revision:
 
 1. the Draft is successfully validated;
 2. the applicable Recognition Strategy Test is complete;
-3. the Local setup check has passed for the selected enabled Local-backed libraries; and
-4. when a Local-backed destination is declared, the current destination precheck is successful.
+3. every applicable enabled Storage referenced by a ResourceLibrary or MediaLibrary has passed its
+   current provider-neutral read-only Storage check; and
+4. when a MediaLibrary destination is declared, the current provider-neutral destination precheck
+   is successful.
 
 The server rechecks revision identity, evidence identity and dependency validity in the activation
 transaction. Compatibility activation is a distinct, explicitly labelled path; it is not evidence
@@ -225,11 +232,16 @@ semantics. They include:
 - Configuration status, revision detail, whole-document Draft import/edit/validate/activate and
   guided object editing;
 - exact-revision Strategy Test, Metadata candidate/correction, Naming, Classification, Organize
-  authority, destination preview, Local setup check and Local destination precheck;
+  authority, destination preview, per-Storage read-only checks, Local diagnostic and
+  provider-neutral destination precheck;
 - Dashboard, Files list/detail/stats, Task/TaskItem and Job observability;
 - Recognition, Metadata, Classification and conflict review actions;
 - bounded manual Preview and reviewed one-shot manual execution;
 - processing checkpoint recovery and bounded batch recovery;
+- real configured Storage Files, separate FileIndex/current-source lifecycle and disposition,
+  bounded manual Scan and explicit Reprocess admission;
+- conflict/review/recovery continuation with independent per-item outcomes;
+- Processing Worker registration/readiness, heartbeat, ownership and claim-fencing evidence;
 - Automation Task Definition validation/Preview, persistent scoped grant/revoke, occurrences and
   per-item outcome/recovery;
 - schedules, notification deliveries, security audit and redacted operational logs.
@@ -281,7 +293,7 @@ authority and does not replace checked activation evidence.
 
 The implementation currently declares:
 
-- runtime SQLite schema: `31` in `mediaflow/infrastructure/sqlite_runtime.py`;
+- runtime SQLite schema: `33` in `mediaflow/infrastructure/sqlite_runtime.py`;
 - configuration-management SQLite schema: `10` in
   `mediaflow/infrastructure/sqlite_configuration_management.py`;
 - managed configuration document schema: `1` in
@@ -293,17 +305,16 @@ logic for older databases. Do not infer a product capability from a historical m
 
 ## Current limitations and remaining V1 work
 
-The current repository is not yet the final V1 setup/release product. Slice 26 is closed; the
-remaining order is:
+Slices 26 and 27 are `PASS / CLOSED`. The remaining V1 order is:
 
 | Status | Capability |
 |---|---|
-| Slice 27 PLANNED | Real Storage-backed Files, explicit FileIndex/disposition, coherent manual Scan/Preview/Organize, execution-only blockers, conflict/review continuation and processing-Worker readiness |
 | Slice 28 PLANNED | Day-2 forms-first configuration/object lifecycle, consumed System Settings, versioned secret-free configuration/result import-export, and managed Webhook configuration/test/delivery recovery |
 | Slice 29 PLANNED | Docker Compose production release, production WSGI server, `/data` durability, non-root mounts, health, restart persistence and fail-closed upgrade/migration |
 | V1.x/V2 | Provider switching and additional production Providers, built-in user/session identity, OIDC, general Secret Store and broader recovery such as automatic uncertain-mutation replay or historical rollback |
 
 Arbitrary host-path access and mutation-based capability probes are not current capabilities. The
-Storage Browser, read-only setup checks and provider-neutral destination precheck are current only
-within the bounded first-setup journey. The current `wsgiref.simple_server` listener is a development
-/ trusted-loopback boundary, not production HTTP serving.
+setup Storage Browser, read-only setup checks and provider-neutral destination precheck remain bounded
+first-setup evidence; the runtime Files browser and Slice 27 manual operations are separate current
+operator surfaces. The current `wsgiref.simple_server` listener is a development / trusted-loopback
+boundary, not production HTTP serving.
