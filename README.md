@@ -575,26 +575,25 @@ same startup snapshot; changing JSON still requires validation and an API restar
 consumption and editing remain Slice 28 work.
 
 The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries,
-persistent scan/preview jobs, Cron schedules, and the signed Webhook delivery engine are complete.
+persistent scan/preview jobs, Cron schedules, signed Webhook delivery engine, and Slice 27 daily
+manual-operations journey are complete.
 Webhook definition configuration/test and delivery recovery in Web/API remain a Slice 28
 product-completion journey; the existing delivery engine is not being reimplemented. The current
-Files tab remains an indexed File Catalog, while the Slice 26 Storage Browser/path picker remains a
-setup surface until Slice 27 reuses it for real Storage-backed Files.
+Files tab browses configured Storage through bounded Storage-relative views, while FileIndex remains
+the separate indexed discovery and processing-disposition surface.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
 Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
 The authenticated Operator UI exposes the operational Dashboard, Files, managed Configuration,
 Task/Job/Scheduler/Notification/Log views, and bounded conflict, Recognition, Metadata, and
 Classification review actions through the same application and permission boundaries as the API.
-The current **Files** tab is an indexed File Catalog, not a Storage browser. General Jobs submit only
-scan or legacy preview, file-level manual organize starts from indexed records, and repository-wide
-manual organize remains CLI-only. Legacy preview may create formal review/conflict state; the newer
-manual and Automation Definition Previews are analysis-only. Slice 27 will reconcile real Storage
-Files, FileIndex processing disposition, manual Scan/Preview/Organize, conflict continuation and
-processing-Worker readiness without widening execution authority.
+General Jobs submit only scan or legacy preview, while bounded Files/FileIndex entry points support
+manual Scan/Preview/Organize and explicit recovery. Legacy preview may create formal review/conflict
+state; the newer manual and Automation Definition Previews are analysis-only. Processing Worker
+readiness and ownership are visible through the read-only Operator Web/API projections without
+widening execution authority.
 Database-managed users/login, OIDC, automatic secret rotation, Provider switching, and broader
-recovery beyond the delivered checkpoint journeys are not V1 capabilities. Slice 27 owns the next
-manual operations and file-lifecycle journey; Slice 28 owns day-2 configuration and operations
-administration.
+recovery beyond the delivered checkpoint journeys are not V1 capabilities. Slice 28 owns day-2
+configuration and operations administration; Slice 29 owns the Docker production release.
 
 The Automation view also manages the bounded scheduled unattended journey: operators can define a
 ResourceLibrary scope and schedule, validate and Preview the exact definition, explicitly grant or

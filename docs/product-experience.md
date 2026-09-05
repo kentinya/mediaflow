@@ -145,25 +145,45 @@ activation.
 - **Recovery:** correct the named policy or reference and rerun the exact-revision preview/check.
   Unsupported operations never silently fall back to another operation.
 
+## Real Storage Files
+
+### Current
+
+Authenticated Operator Web/API can browse configured Active-runtime Storage through bounded
+Storage-relative directory/file views. Listings are lazy, deterministic and read-only, with confined
+roots, breadcrumb/cursor navigation, provider-safe errors and no arbitrary host-path access. This
+Files surface is distinct from the indexed FileIndex and does not recursively scan Storage or create
+work merely by viewing it.
+
+### Journey
+
+- **Goal:** inspect the real configured Storage and choose a bounded file or ResourceLibrary scope.
+- **Entry:** **Files** navigation, Dashboard or a ResourceLibrary/FileIndex action.
+- **Visible state:** Storage identity, relative root/breadcrumb, bounded entries, pagination and
+  provider/error state; whether an entry is indexed is shown separately from Storage membership.
+- **Action:** browse a directory, select a bounded file/directory scope, refresh or continue to the
+  shared Scan/Preview/Organize journey.
+- **Success:** the operator reaches an exact Storage-relative source/scope without confusing it with
+  FileIndex state or granting mutation authority.
+- **Failure:** missing root, permission, timeout, provider or path-escape failures identify the
+  affected Storage-relative request and remain read-only.
+- **Recovery:** correct the configured Storage/path or retry the bounded read; no automatic scan,
+  Provider request, Task or Storage mutation is started.
+
 ## FileIndex and Media
 
 ### Current
 
-The navigation label is **Files**, but the implementation is a File Catalog over durable FileIndex
-records. Only files discovered by a ResourceLibrary scan appear. The page does not list a configured
-Storage directly, and its `scanStatus` describes discovery/stability rather than whether the current
-source occurrence was organized, skipped, blocked or failed. Detail can join prior TaskItems,
-Results, reviews and checkpoints by Storage/path, but there is no unified processing-disposition
-projection for the current indexed source identity.
-
-Task 27.2 adds that current-source projection: FileIndex now separates discovery/stability from
-processing disposition, identifies the current occurrence with bounded fingerprint evidence, and
-marks prior Results as current, historical or unverified. An explicit Reprocess request is shown
-only when the exact current occurrence is eligible; admission records a durable next action and
-does not create processing work or mutate Storage.
+FileIndex presents indexed discovery records separately from the real Storage Files view. Only files
+discovered by a ResourceLibrary scan appear. Its `scanStatus` describes discovery/stability, while
+processing disposition, current source occurrence and bounded fingerprint evidence describe whether
+the indexed occurrence is organized, skipped, blocked or failed. Prior Results are marked current,
+historical or unverified. An explicit Reprocess request is shown only when the exact current
+occurrence is eligible; admission records a durable next action and does not create processing work
+or mutate Storage.
 
 - **Goal:** determine what MediaFlow knows about a file and what safe action is available next.
-- **Entry:** the current Files/File Catalog view (renamed to FileIndex in Slice 27), Dashboard,
+- **Entry:** the current FileIndex view, Dashboard,
   Task/Job, review, notification or history link.
 - **Visible state:** bounded FileIndex fields, source/library identity, scan and stability state,
   parser/recognition/metadata evidence, policies, target, latest Results, related reviews/conflicts,
@@ -195,7 +215,10 @@ does not create processing work or mutate Storage.
 
 ## Manual operations and file lifecycle
 
-### Slice 27 target
+### Current
+
+Slice 27 delivers the bounded daily-operations journey across real Storage Files, FileIndex state,
+manual Scan/Preview/Organize, conflict/review/recovery continuation and Processing Worker readiness.
 
 - **Goal:** start from a real configured Storage or from MediaFlow's indexed processing view and
   safely complete a file- or ResourceLibrary-scoped manual operation.
@@ -296,7 +319,7 @@ boundary.
 
 ## V1 and post-V1 boundary
 
-Slice 26 is PASS / CLOSED. Remaining V1 work is ordered as Slice 27, Slice 28, then Slice 29. Provider switching and
-additional production Providers, built-in username/password or OIDC identity, a general Secret
-Store, automatic uncertain-mutation replay, historical rollback and specialized email/chat/media-
-server notifications remain V1.x/V2 or deployment-specific work.
+Slices 26 and 27 are PASS / CLOSED. Remaining V1 work is Slice 28 followed by Slice 29. Provider
+switching and additional production Providers, built-in username/password or OIDC identity, a
+general Secret Store, automatic uncertain-mutation replay, historical rollback and specialized
+email/chat/media-server notifications remain V1.x/V2 or deployment-specific work.

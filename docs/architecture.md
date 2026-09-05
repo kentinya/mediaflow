@@ -24,11 +24,10 @@ provider SDK APIs directly. It uses domain interfaces and application services.
 
 ## V1 order and architecture decisions
 
-Slice 26 is PASS / CLOSED. Remaining V1 business capabilities are:
+Slices 26 and 27 are PASS / CLOSED. Remaining V1 business capabilities are:
 
 ```text
-Slice 27 — Manual operations and file lifecycle
-    → Slice 28 — Web-first configuration and operations administration
+Slice 28 — Web-first configuration and operations administration
     → Slice 29 — Docker production self-hosted release
 ```
 
@@ -105,8 +104,8 @@ remote roots are provider-specific logical roots.
 The current runtime can load all supported Storage kinds from JSON. Managed Web/API guided setup
 now exposes one provider-neutral, read-only bounded Storage Browser and directory picker for every
 configured Storage kind. Its browser paths are Storage-relative and its continuation is bound to
-the exact managed revision, Storage, directory and page request. It is a setup surface only; the
-File Catalog remains a FileIndex surface until Slice 27.
+the exact managed revision, Storage, directory and page request. It remains a read-only bounded
+Storage browser, while the separate File Catalog is the FileIndex surface.
 
 For Local Storage, `rootPath` is an absolute path visible inside the execution environment. In a
 self-hosted Docker deployment the path must be explicitly bind-mounted with the intended
@@ -145,7 +144,7 @@ The runtime SQLite repository persists FileIndex, Tasks, TaskItems, Results, loc
 manual intents/previews/executions, Automation Definitions/Jobs/occurrences, notification delivery,
 execution authority, security audit and operational logs. The configuration SQLite repository
 persists managed revisions, object/reference state, activation/test evidence and configuration audits.
-The implementation currently declares runtime schema `32`, configuration-management schema `10` and
+The implementation currently declares runtime schema `33`, configuration-management schema `10` and
 managed document schema `1`. These are compatibility markers, not feature statuses.
 
 Runtime database initialization is additive and refuses a newer unsupported schema. Backup, restore,
@@ -161,13 +160,13 @@ configured stability rules.
 
 The current Operator **FileIndex** page is a File Catalog over those indexed records, not a Storage
 browser. `FileIndexRecord.scan_status` and `change` describe discovery/stability only; the separate
-processing disposition is persisted on the current source occurrence. Task 27.2 adds bounded
-Storage-derived occurrence/fingerprint evidence and historical occurrence rows, binds TaskItem and
-Result records to the observed occurrence, and marks path-only legacy rows explicitly unverified.
-The FileIndex projection exposes current versus historical Result relevance. Explicit Reprocess is
-an audited, exact-occurrence admission marker for a later Scan/Preview workflow; it creates no Task,
-Provider request or Storage mutation. File-/ResourceLibrary-scoped Scan and the later processing
-workflows remain Slice 27 target work.
+processing disposition is persisted on the current source occurrence. Storage-derived
+occurrence/fingerprint evidence and historical occurrence rows bind TaskItem and Result records to
+the observed occurrence, while path-only legacy rows are explicitly unverified. The FileIndex
+projection exposes current versus historical Result relevance. Explicit Reprocess is an audited,
+exact-occurrence admission marker for a later Scan/Preview workflow; it creates no Task, Provider
+request or Storage mutation. File-/ResourceLibrary-scoped Scan and the manual processing workflow
+use the same bounded current-source identity and authority rules.
 
 `MediaLibrary` defines a destination Storage and relative root. Classification selects the library
 and relative path; Naming supplies directory and filename. The final target is composed from the
@@ -186,10 +185,10 @@ continue analysis-only stages or create bounded one-item/batch continuations. Su
 not replayed or hidden. Partial or uncertain mutation is investigation-only unless a separately
 proven safe action is offered.
 
-Conflict/review decisions are persistence-only and do not execute media. The current Web explicitly
-reports that a saved decision does not resume the Task, but it does not carry the operator directly
-from a resolved conflict to re-analysis, continuation admission and the original Organize outcome.
-Legacy CLI Task resume remains a separate recovery route.
+Conflict/review decisions are persistence-only and do not execute media. The current Web carries the
+operator from a resolved conflict or review through exact-source re-analysis, continuation admission
+and the original Organize outcome. Successful siblings remain terminal and uncertain effects remain
+investigation-only.
 
 ## Manual organize
 
@@ -205,8 +204,9 @@ operations or provider payloads. `OrganizerExecutor` performs the actual mutatio
 effect/result/checkpoint independently.
 
 The current file-level execute endpoint calls that bounded execution service synchronously inside
-the API request, even though durable Task/TaskItem/Result records are created. Repository-wide
-manual organization remains a CLI workflow, while the general Job API admits only scan and preview.
+the API request, even though durable Task/TaskItem/Result records are created. Files and FileIndex
+provide bounded file/ResourceLibrary Scan, exact Preview and explicit manual Organize entry points;
+the general Job API remains limited to its existing scan/preview automation semantics.
 
 ## Automation and unattended execution
 
@@ -237,11 +237,13 @@ The current HTTP listener uses `wsgiref.simple_server` and is a development/trus
 boundary. It is not a production WSGI server and does not claim TLS termination, certificate
 management or public Internet exposure.
 
-The Worker uses a fenced per-running-Job claim token and refreshes that Job's `updated_at` when the
-pipeline checks cancellation. There is no resident processing-Worker registration, idle heartbeat
-or readiness projection. Consequently a Pending Job cannot distinguish normal queue delay from an
-installation where only the API is running. The API process does not and must not start a Worker
-subprocess implicitly.
+The resident processing Worker durably registers before claiming work, heartbeats while live,
+records clean stop, binds to an immutable runtime snapshot and uses Worker identity plus a per-claim
+fence token for completion. Authenticated API/Web expose bounded Worker registration, readiness,
+owner heartbeat and stale/no-Worker recovery evidence separately from API process health. Claim
+admission fails closed for stale lease, unsupported schema and incompatible snapshots, with explicit
+queued continuation records preserving safe pinned recovery. The API process does not and must not
+start, supervise or register a Worker subprocess implicitly.
 
 ## Notifications and operational logging
 
@@ -282,18 +284,15 @@ guided Local/SMB/OpenList/AWS S3/Cloudflare R2/generic S3-compatible configurati
 tests, bounded Storage Browser/path selection, Local path recovery and first-runtime checked
 activation. It did not add mutation-based capability probes or arbitrary host-path access.
 
+## Current Slice 27 delivery
+
+Slice 27 delivered the real Storage Files/FileIndex distinction, current-source lifecycle and
+disposition, bounded manual Scan/Preview/Organize, conflict/review/recovery continuation, and
+Processing Worker readiness and fenced ownership across the shared Application, Persistence, API and
+Operator Web boundaries. These capabilities reuse the existing Storage abstraction, immutable Active
+snapshot authority, Task/TaskItem/Result model and OrganizerExecutor mutation boundary.
+
 ## TARGET architecture
-
-### Slice 27 target
-
-Reuse the Slice 26 provider-neutral Storage Browser as the real configured-Storage **Files** entry
-point while renaming the indexed catalog responsibility to **FileIndex**. Add a current-source
-processing-disposition projection without overloading scan status, source occurrence/fingerprint
-correlation, explicit duplicate-work admission and Reprocess, coherent file/ResourceLibrary
-Scan/Preview/Organize manual actions, analysis-only Preview findings, real Organize
-Attention/Conflict/Review/Recovery continuation and processing-Worker readiness. Preserve one-shot
-manual authority, persistent revocable unattended authority, successful-sibling isolation,
-uncertain-effect refusal and OrganizerExecutor-only mutation.
 
 ### Slice 28 target
 
