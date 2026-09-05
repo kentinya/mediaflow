@@ -1,305 +1,343 @@
-# Slice 26 — Web-first Fresh Setup and Storage Completion
+# Slice 27 — Manual Operations and File Lifecycle
 
 This is the A-owned Slice Contract. B and Developer may not expand or weaken it. Detailed lifecycle
 rules are defined only in [`docs/development-workflow.md`](docs/development-workflow.md).
 
 ```text
-Slice ID: 26
+Slice ID: 27
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
-Base SHA: 3c660d5a1512b5b221b0284bcff9ae6dd00bbf23
-Implementation Head: 928b727552a2fbb298e694cb0312e082e4662dda
+Status: READY FOR A REVIEW
+Base SHA: 306b77d0aad44ab0a2e233866f8972247b437a7d
+Implementation Head: 34365121342557b0f40eacc7ad9bbb74499cc4cb
 ```
 
-The Base is the Slice 25 closure documentation commit and repository HEAD inspected by A when this
-Contract was activated. B may plan implementation Tasks only inside this Contract. B records the
-real product Implementation Head only when preparing the Slice Closure Packet.
+The Base is the Slice 26 closure checkpoint and the real repository commit immediately before the
+current Slice 27 implementation line began. This document corrects the active Slice Contract to match
+that already-started Slice 27 line; B must still review actual Task checkpoints and may not treat any
+forward commit as accepted merely because it predates this document correction. B records the real
+product Implementation Head only when preparing the Slice Closure Packet.
 
 ## User Goal
 
-On a fresh self-hosted instance, an authenticated operator can open MediaFlow without first writing a
-complete runtime JSON document, see that no runtime configuration is Active, create the first managed
-Draft, configure and safely test Local, SMB, OpenList and S3/R2 Storage, choose bounded source and
-destination directories, bind ResourceLibrary and MediaLibrary, complete the existing Recognition,
-TMDB Metadata, Naming, Classification and Organize configuration journey, Validate/Test, and
-explicitly checked-activate the exact immutable runtime snapshot.
+On an authenticated self-hosted MediaFlow instance with an Active runtime, an operator can browse the
+real configured Storage, distinguish it from MediaFlow's indexed FileIndex, select a bounded file or
+ResourceLibrary scope, run manual Scan or analysis-only Preview, and explicitly organize approved
+items through the existing safe execution authority. The operator can see current source identity,
+processing disposition, Worker readiness, plans, conflicts and failures, then recover an affected
+item through explicit continuation without replaying successful siblings or uncertain mutation.
 
-This Slice ends when that first Active runtime is usable by the existing scan/Preview/Automation
-pipeline. It does not package or deploy Docker itself.
+This Slice ends when that daily manual operations journey is usable through Operator Web and the
+versioned API using the existing processing pipeline, result/checkpoint model and safety boundaries.
+It does not package or deploy Docker and does not redesign the closed processing engine.
 
 ## Vertical Journey
 
 ```text
-minimal management bootstrap + fresh database
-→ authenticated Web reports no Active runtime
-→ create first managed Draft from a supported safe starting point
-→ configure Storage and deployment-owned secret references
-→ read-only connection/root test
-→ bounded lazy directory browse and path selection
-→ bind ResourceLibrary and MediaLibrary
-→ configure existing Recognition/TMDB Metadata/Naming/Classification/Organize policies
-→ Validate and run applicable safe tests/previews
-→ inspect exact revision, references, warnings and blockers
-→ explicitly checked Activate
-→ runtime/API/Worker resolve that immutable Active snapshot
+Active runtime
+→ Files real-Storage browse
+→ FileIndex/current-source state
+→ bounded file or ResourceLibrary selection
+→ manual Scan
+→ exact Active-snapshot Preview
+→ inspect findings, target, conflict and authority requirements
+→ explicit one-shot Organize authority
+→ Worker/Task processing and per-item Result
+→ disposition, Attention/Conflict/Review/Recovery state
+→ explicit decision, re-analysis or safe continuation
 ```
 
-Failure preserves the Draft and the prior Active snapshot, if any. The affected object, failed stage,
-durable evidence, side-effect statement, retry safety and exact recovery action remain visible after
-reload.
+Every operator-facing path must expose the entry point, visible state, available action, success
+outcome, failure outcome and recovery path. Viewing, refreshing, retrying a read-only stage or saving
+a decision must not accidentally start work or mutate Storage unless that explicit action is defined
+as the safe continuation.
 
 ## Current Foundation
 
-- `ManagementBootstrapConfiguration` already isolates the database locator and environment-owned API
-  principal definitions from workflow configuration.
-- Whole-document managed Draft/Validated/Active revisions, optimistic versions, immutable digests,
-  validation, activation, recovery and pinned runtime resolution are CURRENT.
-- Guided Web/API management already covers Local Storage, ResourceLibrary, MediaLibrary,
-  RecognitionType/Rule/TypePolicy, MetadataPolicy, NamingPolicy, ClassificationPolicy,
-  OrganizePolicy and Automation Task Definition objects.
-- Local setup checks, Strategy Test, live TMDB test, naming/classification/destination previews,
-  Local destination precheck and checked activation already provide exact-revision evidence.
-- Local, SMB, OpenList and S3/R2 adapters, environment-reference secrets, capabilities and read-only
-  health/list/stat operations already exist behind the Storage abstraction.
-- The existing pipeline, FileIndex, Organizer, Task/TaskItem/Result, manual execution authority and
-  unattended execution authority are closed foundations and are not redesigned here.
+- Slice 26 is `PASS / CLOSED` and provides the immutable Active runtime authority,
+  provider-neutral bounded Storage Browser/path selection, Storage-relative path semantics and the
+  authenticated API/Web management boundary.
+- Closed Slices 23, 24 and 25 provide durable checkpoints/recovery, bounded manual organize
+  foundations, scheduled/unattended execution authority, Task/TaskItem/Result persistence,
+  conflict/review decisions, audit, RBAC, redaction and OrganizerExecutor-only mutation.
+- The existing pipeline already preserves the core module boundaries: ResourceLibrary → Scan → Parse
+  → RecognitionRule → RecognitionType → RecognitionTypePolicy → Metadata → Naming → Classification
+  → OrganizePlan → OrganizerExecutor → Result.
+- The repository contains current Slice 27 implementation checkpoints and an active Task 27.7 review
+  candidate. Those checkpoints are implementation facts only; B/A review must still inspect actual
+  diff and test evidence before PASS or Slice closure.
 
 ## Current Gap
 
-- With no managed Active revision, `api serve` falls through to the complete runtime loader; a truly
-  minimal bootstrap document therefore cannot currently start the management-only API on a fresh
-  database.
-- The Web can import or paste a complete JSON document, but cannot construct the first complete
-  runtime Draft through a supported guided fresh-instance flow.
-- Remote Storage objects are redacted and `json_import_only`; guided normalization explicitly accepts
-  Local Storage only.
-- There is no live Storage Browser/Path Picker. File Catalog answers what MediaFlow indexed and cannot
-  substitute for browsing a configured Storage.
-- Local `rootPath` copy still describes a host-absolute path. In a future container it must mean an
-  absolute path visible inside the MediaFlow execution environment; an unmapped host path is invalid.
-- Remote Storage/library root checks, credential-reference readiness and actionable setup recovery are
-  not product-complete, and checked activation evidence is Local-specific.
+The product still needs one accepted daily-operations Slice boundary that ties together real Storage
+Files, FileIndex processing state, current source occurrence, manual Scan/Preview/Organize,
+conflict/review recovery continuation and processing Worker readiness. A user must not confuse a
+Storage browser with an index, a scan/stability state with an organize disposition, a stale path with
+a current source occurrence, a Preview blocker with execution authority, or a queued Job with a live
+Worker guarantee.
 
 ## Required Outcomes
 
 | ID | Required Outcome | Initial State |
 |---|---|---|
-| RO-1 | The API can start in an authenticated management-only state from a minimal bootstrap containing only the immutable local database locator and API-principal environment references, even when `/data` is fresh and no Active revision exists; `/health`, management readiness and configuration status distinguish process health, management readiness and missing business runtime without trusting incomplete workflow JSON | NOT STARTED |
-| RO-2 | The Web/API can create the first complete managed Draft from a versioned, schema-valid, secret-free setup starting point and then build the required runtime object graph without editing SQLite or hand-authoring a whole runtime JSON file; no generated default becomes Active, starts work or grants execution authority | NOT STARTED |
-| RO-3 | Guided managed Storage lifecycle covers Local, SMB, OpenList, AWS S3, Cloudflare R2 and generic S3-compatible definitions, including create/copy/edit/enable/disable/delete, reference protection, provider-specific bounded fields, environment-variable secret references and SET/UNSET-style readiness without ever returning secret values | NOT STARTED |
-| RO-4 | Every configured Storage has an explicit read-only connection/root test and declared capability summary with bounded timeout, failure category, completed operations, `sideEffects=none`, retry safety and recovery; tests do not create, write, rename, move, copy, link or delete media and do not convert unavailable real-service acceptance into a fake PASS | NOT STARTED |
-| RO-5 | Authenticated Web/API provide a read-only, directory-level, lazy Storage Browser with root confinement, breadcrumb navigation, bounded deterministic listings and cursor/pagination when required; it uses only the configured Storage abstraction, never recursively scans a Storage, never accepts arbitrary host paths, never exposes credentials and remains semantically separate from File Catalog | NOT STARTED |
-| RO-6 | ResourceLibrary and MediaLibrary guided setup can select a configured Storage and a Storage-relative directory from the browser or validated text input. Local Storage `rootPath` is explicitly an execution-environment-visible absolute path; product guidance explains future Docker bind mounts, read-only/read-write intent, ownership/permission failures and that unmapped host paths, host `/`, Docker socket and arbitrary host filesystem access are unsupported | NOT STARTED |
-| RO-7 | From the first Draft, the operator can complete the existing Recognition, TMDB Metadata, Naming, Classification and Organize setup, run the applicable exact-revision tests/previews, inspect dependency impact and failures, and checked-activate only the exact revision whose required evidence is current; a prior Active remains unchanged on every failure | NOT STARTED |
-| RO-8 | API and Web use the same application services, RBAC, validation, optimistic concurrency, evidence, audit and recovery rules. Reads create no Job/Task, contact no Provider unless the operator explicitly starts the existing live Metadata test, and perform no Storage mutation | NOT STARTED |
+| RO-1 | **Real Files and FileIndex distinction.** Authenticated Web/API users can browse configured Active-runtime Storage through bounded Storage-relative Files views, while FileIndex separately presents indexed discovery records. Membership, root/breadcrumb, pagination, hostile-name, symlink and provider-error behavior are bounded and read-only. | Slice 26 browser exists as setup surface; current Slice 27 commits require review under this Contract. |
+| RO-2 | **Current source lifecycle and disposition.** FileIndex distinguishes discovery/stability state from processing disposition, correlates current Storage/library/path occurrence with bounded fingerprint evidence, marks prior Results current/historical/unverified, and exposes exact-occurrence Reprocess admission without silently creating work or mutating Storage. | Current implementation evidence exists but requires Task/Slice acceptance and migration proof. |
+| RO-3 | **Bounded manual Scan.** From Files, FileIndex or ResourceLibrary, an authenticated operator can submit a file- or ResourceLibrary-scoped manual Scan with durable Task state, bounded cancellation and scope isolation. Scan discovers and reconciles candidates only; it does not organize or silently advance to mutation. | Must be proven through Web/API, persistence and zero-mutation safety. |
+| RO-4 | **Exact analysis-only Preview.** A selected current source or bounded ResourceLibrary scope can run the complete applicable Parse → Recognition → Metadata → Naming → Classification → OrganizePlan path against one immutable Active snapshot. Durable Preview findings explain identity, policies, target, operation, conflict, capability and blockers per item; Preview performs zero Storage mutation and creates no execution authority or mandatory review backlog. | Must be proven at current-source and bounded-scope entry points. |
+| RO-5 | **Explicit manual Organize.** An operator can select exact Preview items, provide separate one-shot manual authority/confirmation and execute only that reviewed plan. OrganizerExecutor remains the sole mutation boundary; attachments, capabilities, conflicts, operation and per-item Result/effect certainty are persisted, with no silent overwrite/delete or unsupported-operation fallback. | Manual execution foundations exist but require current-source journey and safety proof. |
+| RO-6 | **Conflict, review and recovery continuation.** An affected item can enter visible Attention, Conflict, Review or Recovery state with durable stage, known effects, effect certainty, retry safety and next action. The operator can save a decision, re-analyze the exact current occurrence, obtain explicit continuation authority and continue safely while successful/skipped/ignored/DryRun siblings remain independent and uncertain mutation is never automatically replayed. | Must be accepted as continuation of the original Organize journey, not a disconnected retry. |
+| RO-7 | **Processing Worker readiness and fenced ownership.** A resident processing Worker registers itself, heartbeats and stops durably, binds to an immutable runtime snapshot, and exposes bounded readiness/liveness/ownership evidence separately from API process health. No-worker and stale-worker queue conditions have concrete next actions; a stale owner cannot commit over a newer owner. API/Web/CLI do not implicitly spawn, supervise or register a Worker. | Current Task 27.7 is awaiting B review against this outcome. |
+| RO-8 | **Shared application, API/Web parity and operational evidence.** All Slice journeys use the same Application behavior, validation, permissions, state transitions, optimistic/concurrent checks, audit and redaction across versioned API and Operator Web. Collections and diagnostics are bounded and secret-free; missing, stale, unavailable and unauthorized state is shown as such with recovery, never as false success. | Existing foundations must be proven across every new surface and failure path. |
 
 ## Required Surfaces
 
-- **Operator Web**: fresh-state landing/progress, Draft creation, all V1 Storage forms, credential
-  readiness, read-only tests, Storage Browser/path selection, library binding, existing policy setup,
-  exact evidence, checked activation and actionable recovery.
-- **API**: the same management-only startup, typed Storage lifecycle, test/browser endpoints, bounded
-  errors and first-Draft/activation behavior used by Web.
-- **Application**: one provider-neutral setup/test/browser behavior; no UI-specific Storage calls.
-- **Infrastructure**: existing Storage adapters only, with secret resolution at adapter boundaries.
-- **Persistence**: existing managed revision/evidence authority and immutable bootstrap database
-  locator; no second configuration source of truth.
-- **Documentation/tests**: self-hosted path semantics, fake/local-service coverage and explicit
-  `SKIP / UNAVAILABLE` reporting for unavailable production services.
-
-CLI may expose equivalent administration or diagnosis, but CLI-only completion does not satisfy any
-Web Required Outcome.
+- **Operator Web:** real Storage-backed Files browsing; distinct FileIndex list/detail; bounded
+  Scan/Preview/Organize entry points; Task/Result/disposition; conflict/review/recovery continuation;
+  and read-only Worker readiness/registered-worker evidence.
+- **Versioned API:** the same read and write journeys, validation, RBAC, bounded pagination,
+  optimistic checks, error/recovery vocabulary, audit and redaction as Web. API reads cannot
+  substitute for a missing required Web journey.
+- **Application:** shared use cases for Storage browsing, FileIndex lifecycle, scoped Scan, exact
+  Preview, manual authority/execution, recovery continuation and Worker readiness. API and Web must
+  not implement a parallel pipeline.
+- **Runtime Worker and task execution:** existing `worker run` / `worker run-next` entry points,
+  durable registration/readiness/ownership and claim fencing, while preserving the existing Task,
+  TaskItem, Result and OrganizerExecutor authorities.
+- **Persistence and migrations:** durable current-source, disposition, Preview, Task/Result,
+  checkpoint, recovery, Worker and audit evidence with additive fresh/current database coverage.
+- **Storage infrastructure and verification:** configured Local, SMB, OpenList, AWS S3, Cloudflare
+  R2 and generic S3-compatible adapters through the Storage abstraction, using fakes/local services
+  for unavailable production environments and no production media or credentials.
+- **Documentation/tests:** factual CURRENT documentation, focused/integration tests, safety gates and
+  final validation that distinguish production compatibility from fake/local software proof.
 
 ## Safety Invariants
 
-1. Scanner, Parser, Recognition, Metadata, Naming, Classification and Planner remain zero-mutation.
-2. Only OrganizerExecutor may mutate media Storage; setup tests and Storage Browser are read-only.
-3. No connection or capability test may use a mutation probe in this Slice.
-4. Storage Browser is confined to one configured Storage root and never browses the host filesystem
-   directly.
-5. Local symlink/path escape protections and every adapter's Storage-relative path rules remain
-   authoritative.
-6. An absent Active runtime is a valid fresh setup state, not authorization to use an incomplete
-   Draft or silently fall back after a managed Active has existed.
-7. Active means the exact immutable snapshot consumed by runtime. Editing creates a Draft and never
-   mutates Active in place.
-8. Secrets remain deployment-owned values referenced by environment-variable name. Values never
-   enter managed configuration, SQLite evidence, logs, API, Web, exports or tests.
-9. Read-only views and reloads create no Job, Task, grant, Provider request or Storage mutation.
-10. RecognitionType identity and independent policy ownership remain unchanged, including C using A
-    Naming/Classification while remaining C.
-11. Overwrite, Delete, cleanup, rollback, operation fallback, manual execution and unattended
-    execution authority are not widened.
-12. Batch/item failure remains isolated and does not hide or overwrite sibling state.
+- Scanner, Parser, Recognition, Metadata lookup, Naming, Classification and Planner remain
+  zero-mutation.
+- DryRun and Preview execute the complete applicable analysis path but perform zero Storage mutation,
+  create no execution authority and do not create a mandatory review merely because analysis found a
+  blocker.
+- Only OrganizerExecutor may invoke mutating Storage operations. Overwrite, Delete, source removal
+  and directory cleanup require explicit policy and authority; no operation silently falls back to
+  Copy or Move.
+- Every Preview, authority, Task, TaskItem, Result and recovery continuation is bound to the exact
+  immutable Active snapshot and current source occurrence/fingerprint required by its stage. Draft,
+  stale evidence, changed source or stale authority fails closed.
+- Batch work preserves independent item state, known effects, certainty and recovery. Unknown or
+  uncertain mutation is investigation-only unless a separately proven safe action is offered; it is
+  never automatically replayed.
+- Storage access uses the Storage abstraction and confined Storage-relative paths. Files browsing,
+  FileIndex reads, status pages and read-only checks do not scan, invoke a Provider, create work or
+  mutate Storage unless an explicit action says so. Arbitrary host-path escape is not allowed.
+- Worker lifecycle is self-owned by the Worker runtime. API/Web cannot spawn, supervise or register
+  Workers, and durable claim/owner fencing prevents stale owners from overwriting newer results.
+- RecognitionType identity is never changed by downstream policy reuse; RecognitionType C remains C
+  when it uses A Naming, Classification or Organize policies.
+- No FFmpeg or FFprobe dependency or media-stream inspection is introduced.
+- API/Web and persistence evidence is least-privilege, bounded, auditable and secret-free. Passwords,
+  tokens, API keys, authorization headers, cookies, private endpoints and secret values must not enter
+  managed documents, databases, responses, logs, fixtures or Git. `config/alist.json` remains ignored,
+  untracked and unstaged.
 
 ## Explicitly Deferred
 
-- The current Files/File Catalog rename and redesign, a real Storage-backed Files entry point,
-  processing disposition/source-occurrence identity, duplicate-organize admission and explicit
-  Reprocess, repository-level manual Scan/Preview/Organize, Preview-finding versus execution-blocker
-  separation, conflict/review-to-recovery continuation, processing-Worker readiness and Attention
-  navigation convergence belong to planned Slice 27. Slice 26's provider-neutral Storage Browser
-  may supply reusable application/UI primitives, but its only accepted journey here is setup and
-  bounded path selection.
-- Complete day-2 configuration IA beyond the first-setup journey—including the natural
-  Active-to-new-Draft edit flow, consistent object lifecycle discoverability and forms-first versus
-  Advanced JSON placement—plus System Settings, configuration/result export and Webhook
-  management/recovery belong to planned Slice 28. Slice 26 still owns every first-Draft and Storage
-  form/action needed by its Required Outcomes.
-- Dockerfile, Compose, production WSGI serving, `/data` packaging, container UID/GID, container
-  healthchecks, restart and image-upgrade E2E belong to planned Slice 29.
-- Metadata Provider switching, additional production Metadata Providers and arbitrary Provider
-  plugins are post-V1. V1 keeps the current Provider abstraction and TMDB production integration.
-- Built-in username/password storage, cookie sessions, OIDC and reverse-proxy identity are post-V1.
-  V1 retains environment-owned API-principal bearer authentication.
-- Full Secret Store integration and Docker Secrets-specific ingestion are post-V1; environment
-  references plus deployment secret injection are the V1 boundary.
-- Mutation-based Storage write/capability probes, whole-Storage recursive browsing, File Catalog
-  redesign and arbitrary host path browsing are not part of this Slice.
-- Remote destructive acceptance against unavailable SMB/OpenList/AWS/R2 services, distributed
-  workers, automatic uncertain-mutation replay, universal compensation, historical rollback,
-  media streaming, poster download, NFO generation, media-server refresh and visual redesign are
-  not part of this Slice.
-- No refactor of Scanner, Parser, Recognition, Metadata core, Naming, Classification, OrganizePlan,
-  OrganizerExecutor, Task/TaskItem/Result or existing execution authorities is authorized absent a
-  proven in-Slice P0/P1 defect.
+- Slice 28 day-2 configuration and operations administration: Active-to-Draft object-management IA,
+  System Settings, configuration/result import-export and Webhook definition management/delivery
+  recovery.
+- Slice 29 Docker/Compose production packaging, production WSGI topology, container healthchecks,
+  `/data` deployment, restart/upgrade release acceptance and deployment-owned mount lifecycle.
+- Metadata Provider switching, additional production Providers and arbitrary Provider plugins; the
+  V1 production Provider remains TMDB through the existing abstraction.
+- Built-in users, sessions, username/password login, OIDC, reverse-proxy identity integration,
+  general Secret Store and Docker Secrets integration.
+- Automatic uncertain-mutation replay, universal compensation, complete historical/crash Rollback,
+  mutation-based Storage probes, distributed locks, work stealing, queue routing, priorities and a
+  scheduler redesign.
+- Notification Worker registration/delivery redesign and specialized email, chat or media-server
+  notifications; the existing signed Webhook engine remains a Slice 28 management journey.
+- Media streaming, poster/fanart/trailer generation or download, NFO generation, multi-version
+  upgrade policy and other post-V1 media features.
+- Refactoring Scanner, Parser, Recognition, Metadata, Naming, Classification, OrganizePlan,
+  OrganizerExecutor, Task/TaskItem/Result or existing execution authorities except for the minimum
+  compatible integration required by these outcomes.
 
 ## Dependencies
 
-- Slice 25 is `PASS / CLOSED`.
-- Base `3c660d5a1512b5b221b0284bcff9ae6dd00bbf23` and its runtime schema 31/configuration
-  schema 10 are the starting facts.
-- Existing Storage adapters and managed configuration services remain the implementation foundation.
-- Slice 27 depends on the first-runtime, provider-neutral Storage Browser and Storage-relative path
-  contracts becoming stable here.
-- Slice 28 depends on the first-runtime and managed-configuration authority becoming stable here;
-  it does not expand this Slice's first-setup outcome.
-- Slice 29 depends on the complete setup, manual-operations/file-lifecycle and day-2 administration
-  journeys; this Slice must not implement their packaging.
+- Slice 26 is `PASS / CLOSED` at Base `3c660d5a1512b5b221b0284bcff9ae6dd00bbf23` and reviewed
+  Implementation Head `928b727552a2fbb298e694cb0312e082e4662dda`.
+- Closed Slices 23, 24 and 25 provide the current checkpoint/recovery, manual organize and
+  scheduled/unattended execution foundations that this Slice must reuse.
+- An immutable Active runtime and configured Storage/ResourceLibrary/MediaLibrary are prerequisites
+  for the daily operations journey; first-instance setup remains Slice 26 behavior.
+- Slice 28 depends on stable FileIndex, Task/Result and operational evidence contracts here; Slice 29
+  depends on the completed Slice 27 and Slice 28 journeys and does not redefine them.
 
 ## Acceptance Criteria
 
-1. A fresh temporary local database plus a minimal bootstrap starts the authenticated API/Web in
-   management-ready, runtime-not-configured state without requiring Storage/provider/policy content.
-2. Through Web, an operator creates a first complete Draft, configures at least one Local source and
-   destination, selects their Storage-relative paths, completes the existing policy graph, validates,
-   tests/previews and checked-activates it.
-3. The same first-Draft journey has automated provider-neutral coverage for SMB, OpenList, AWS S3,
-   Cloudflare R2 and generic S3-compatible forms, secret references, validation and read-only test
-   outcomes using fakes/local test services.
-4. Storage Browser tests cover bounded listing, breadcrumb/root behavior, empty directories,
-   pagination/cursor boundaries, permission/auth/timeout/not-found failures, hostile names, symlinks
-   where applicable and path-escape rejection without recursive scan or mutation.
-5. An unmapped/nonexistent Local execution-environment path produces actionable permission/path
-   recovery; documentation and UI never claim access to arbitrary host paths.
-6. A failed test, stale evidence, changed Draft, missing secret reference, broken dependency or
-   concurrent edit cannot checked-activate and preserves the Draft plus any prior Active.
-7. Activation starts no scan, Job, Task, Automation occurrence or media mutation. A separately
-   requested existing DryRun Preview uses the exact new Active snapshot.
-8. API and Web acceptance prove matching permissions, validation, evidence, redaction and audit.
-9. No secret value appears in managed documents, SQLite evidence, API/Web payloads, logs, fixtures,
-   Git diff or test output.
-10. RecognitionType C regression, OrganizerExecutor-only mutation and all closed-Slice safety gates
-    remain green.
-11. Real external-service checks unavailable to the validation environment remain explicitly
-    `SKIP / UNAVAILABLE`; test doubles prove software behavior only.
+1. With a valid Active runtime, an authenticated operator can enter real Storage-backed Files, browse
+   bounded Storage-relative directories and entries, and separately inspect FileIndex records without
+   confusing discovery state with Storage contents.
+2. The Files/FileIndex journey preserves exact Storage/library/path and current occurrence identity,
+   distinguishes discovery/stability from processing disposition, and gives a bounded explicit
+   Reprocess action only when the current occurrence is eligible.
+3. A file- or ResourceLibrary-scoped manual Scan is durable, bounded, cancellable and isolated;
+   incomplete or failed discovery cannot fabricate Missing and Scan never performs organization.
+4. A current-source or bounded-scope Preview follows the production analysis chain against one exact
+   Active snapshot, persists inspectable per-item findings and blockers, and proves zero mutation,
+   no implicit Provider/work/authority side effect and no mandatory review creation.
+5. Manual Organize requires the exact Preview, explicit one-shot authority and confirmation, then
+   executes only through OrganizerExecutor with per-item source/target/operation/effect evidence,
+   attachment handling, conflict policy and capability checks.
+6. Failed, waiting and partial items preserve independent durable state and expose an explicit
+   recovery path. Resolved decisions can continue the original journey only after exact source,
+   snapshot, capability, conflict and authority checks; uncertain effects do not auto-replay.
+7. Worker registration, heartbeat, stop, readiness, owner projection and claim fencing are durable
+   and visible through the required read surfaces. API health is distinct from Worker readiness, and
+   stale ownership cannot overwrite a newer owner's terminal result.
+8. API and Web use shared application behavior and identical permission, validation, concurrency,
+   evidence, redaction and recovery semantics. Viewer/read-only users cannot mutate or execute.
+9. Fresh and current database migration/restart paths preserve FileIndex, Tasks, Results,
+   checkpoints, authority, automation and audit state. No Slice behavior introduces secrets,
+   FFprobe/FFmpeg or `config/alist.json` into the tracked tree.
+10. All required focused, integration, full-regression, safety and quality gates in Final Validation
+    Expectations pass, with unavailable production services reported truthfully as
+    `SKIP / UNAVAILABLE`.
 
 ## Final Validation Expectations
 
-- Full offline Python regression suite, Ruff format/lint, compileall, pip check and both canonical
-  configuration validations.
-- Focused fresh-bootstrap, managed-configuration, Storage-form, read-only test, Storage Browser,
-  path confinement, RBAC, redaction, exact activation and immutable snapshot regressions.
-- Temporary Local filesystem tests plus fake/local SMB/OpenList/S3-compatible services; no production
-  credentials or user media.
-- Schema/migration regression proving fresh and current databases preserve all existing state.
-- Wheel build and isolated installed-wheel smoke.
-- Forbidden FFprobe/FFmpeg scan, private-config/secret scan, Markdown link check, `git diff --check`
-  and clean-worktree/archive verification required by the workflow.
-- Production SMB/OpenList/AWS S3/Cloudflare R2 and destructive Storage acceptance remain
-  `SKIP / UNAVAILABLE` unless an explicitly isolated environment exists.
+- Focused vertical regression from the repository root using the project environment:
+
+```bash
+.venv/bin/python -m unittest \
+  tests.test_runtime_files_browser \
+  tests.test_storage_browser \
+  tests.test_file_index_lifecycle \
+  tests.test_manual_scan \
+  tests.test_manual_preview \
+  tests.test_manual_organize_intent \
+  tests.test_manual_organize_preview \
+  tests.test_manual_organize_execution \
+  tests.test_processing_recovery_admission \
+  tests.test_recovery_continuation \
+  tests.test_recovery_batch \
+  tests.test_conflict_resolution \
+  tests.test_processing_worker_readiness \
+  tests.test_automation_job_fencing \
+  tests.test_stale_job_visibility \
+  tests.test_automation_api \
+  tests.test_dashboard \
+  tests.test_migration_rehearsal \
+  tests.test_api_security \
+  tests.test_operator_ui
+```
+
+- Related regression must remain green, including `tests.test_operator_job_submission`,
+  `tests.test_operator_job_cancellation`, `tests.test_task_persistence`,
+  `tests.test_file_media_detail`, `tests.test_attachments`,
+  `tests.test_organizer_mutation_authority`, `tests.test_source_directory_cleanup`,
+  `tests.test_recognition_review`, `tests.test_metadata_review` and
+  `tests.test_classification_review`.
+- Full offline validation:
+
+```bash
+.venv/bin/python -m unittest discover -s tests
+.venv/bin/ruff format --check mediaflow tests
+.venv/bin/ruff check mediaflow tests
+.venv/bin/python -m compileall -q mediaflow tests
+.venv/bin/pip check
+.venv/bin/python -m mediaflow.final_cli --config config/strategy.example.json config validate
+.venv/bin/python -m mediaflow.final_cli --config config/mediaflow.phase13.2.example.json config validate
+git diff --check
+grep -rIn "ffprobe\|ffmpeg" mediaflow tests pyproject.toml
+git check-ignore -v config/alist.json
+git ls-files config/alist.json
+```
+
+- Run migration/persistence checks for fresh and current databases, isolated temporary Local roots,
+  fake/local SMB, OpenList and S3-compatible services, RBAC/redaction, no-mutation probes and
+  installed-wheel smoke where the repository release gate requires them.
+- Production SMB, OpenList, AWS S3, Cloudflare R2 and destructive Storage acceptance remain
+  `SKIP / UNAVAILABLE` unless an explicitly isolated environment exists. Fakes and local services
+  prove software behavior only and must not be reported as production compatibility.
+- Final validation must report actual commands, totals, failures, skips and unavailable gates. No
+  in-process or fake evidence may be presented as multi-process production compatibility.
 
 ## Independent Business Capability
 
-This Slice is independently acceptable because it ends with a complete operator outcome: a fresh
-instance can become a tested, immutable Active MediaFlow runtime through Web, including every V1
-Storage kind and safe path selection. It is not a database/API/frontend decomposition.
-
-It does not implement later Slices early. Day-2 settings/export/notification administration has a
-different user goal and recovery lifecycle. Manual operations/file lifecycle must later reuse this
-Slice's Storage Browser without changing its setup acceptance, while Docker production release must
-integrate already stable setup, daily-operation and administration semantics rather than defining
-them during packaging.
+This Slice is independently acceptable because it completes the authenticated operator's daily manual
+media-operation journey from real Storage browsing and current FileIndex state through bounded Scan,
+exact Preview, explicitly authorized Organize, per-item result/disposition and safe recovery, with
+Worker readiness and ownership visible. It reuses the established processing and authority
+foundations and leaves day-2 administration and Docker release to later Slices.
 
 ## Closure Packet
 
 ```text
-Slice: 26 — Web-first Fresh Setup and Storage Completion
-Base SHA: 3c660d5a1512b5b221b0284bcff9ae6dd00bbf23
-Head SHA: 928b727552a2fbb298e694cb0312e082e4662dda
+Slice: 27 — Manual Operations and File Lifecycle
+Base SHA: 306b77d0aad44ab0a2e233866f8972247b437a7d
+Head SHA: 34365121342557b0f40eacc7ad9bbb74499cc4cb
 
 Required Outcomes:
-- RO-1 COMPLETE — management-only fresh bootstrap and runtime-not-configured state.
-- RO-2 COMPLETE — Web/API first managed Draft creation and guided runtime object graph.
-- RO-3 COMPLETE — Local, SMB, OpenList, AWS S3, Cloudflare R2 and generic S3 lifecycle with secret references.
-- RO-4 COMPLETE — bounded read-only Storage checks, capabilities, evidence, failure and recovery.
-- RO-5 COMPLETE — authenticated bounded Storage Browser with confinement and pagination.
-- RO-6 COMPLETE — Storage-relative ResourceLibrary/MediaLibrary path selection and Local execution-environment semantics.
-- RO-7 COMPLETE — exact-revision evidence, provider-neutral precheck and fail-closed checked activation.
-- RO-8 COMPLETE — API/Web application, RBAC, validation, concurrency, evidence, audit and recovery parity.
+- RO-1 COMPLETE — real Storage-backed Files and distinct FileIndex lifecycle/disposition.
+- RO-2 COMPLETE — current source occurrence, fingerprint evidence and exact Reprocess admission.
+- RO-3 COMPLETE — bounded file/ResourceLibrary manual Scan with durable isolated Task state.
+- RO-4 COMPLETE — exact Active-snapshot analysis-only Preview with durable per-item evidence and zero mutation.
+- RO-5 COMPLETE — explicit Preview-bound manual Organize through OrganizerExecutor with authority, conflicts and effects.
+- RO-6 COMPLETE — visible conflict/review/recovery continuation with independent sibling state and fail-closed uncertainty.
+- RO-7 COMPLETE — durable Worker registration, readiness, ownership fencing and bounded recovery evidence.
+- RO-8 COMPLETE — shared Application behavior, API/Web parity, RBAC, concurrency, audit, redaction and bounded diagnostics.
 
 Required Surfaces:
-- Operator Web COMPLETE.
-- API COMPLETE.
-- Application COMPLETE.
-- Infrastructure COMPLETE within the existing Storage adapters and abstraction.
-- Persistence COMPLETE using the managed revision/evidence authority.
-- Documentation/tests COMPLETE for the Slice acceptance and unavailable external services.
+- Operator Web COMPLETE — Files/FileIndex, Scan, Preview, Organize, Task/Result, recovery and read-only Worker evidence.
+- Versioned API COMPLETE — matching bounded journeys, permissions, validation, evidence, audit and redaction.
+- Application COMPLETE — shared Storage, FileIndex, Scan, Preview, Organize, recovery and Worker readiness behavior.
+- Runtime Worker and task execution COMPLETE — registration, heartbeat, stop, claim and completion fencing.
+- Persistence and migration COMPLETE — current/fresh state-preserving runtime schema and evidence.
+- Documentation/tests COMPLETE for Slice behavior and unavailable external services.
 
 Implemented:
-- Minimal authenticated management bootstrap and first managed Draft journey.
-- Guided provider-neutral Storage lifecycle and deployment-owned secret readiness.
-- Read-only Storage setup checks and bounded capability evidence.
-- Bounded Storage Browser and Storage-relative library path selection.
-- Provider-neutral destination precheck and exact-revision checked activation with prior Active preservation.
-- API/Web evidence, blocker, redaction, RBAC and recovery parity.
+- Real Storage browser and separate FileIndex/current-source lifecycle with bounded identity and disposition.
+- Scoped manual Scan, exact Active-snapshot Preview and explicit one-shot manual Organize.
+- Per-item conflict, review, result and recovery continuation with source/effect/authority safeguards.
+- Durable processing Worker registration, readiness, heartbeat/stop lifecycle, owner projection and claim fencing.
+- Shared authenticated API/Web behavior with RBAC, audit, redaction, bounded collections and recovery evidence.
 
 Tasks completed:
-- Task 26.1 — Management-only Bootstrap and First Draft Entry.
-- Task 26.2 — Guided Storage Lifecycle and Secret Reference Management.
-- Task 26.3 — Read-only Storage Checks and Capability Evidence.
-- Task 26.4 — Storage Browser and Bounded Path Selection.
-- Task 26.5 — Provider-neutral Checked Activation for the First Runtime.
+- Task 27.1 — runtime Files / FileIndex split.
+- Task 27.2 — current file source lifecycle.
+- Task 27.3 — scoped manual Scan Tasks.
+- Task 27.4 — current-source analysis Preview.
+- Task 27.5 — exact manual organization.
+- Task 27.6 — blocker and recovery continuation.
+- Task 27.7 — Processing Worker registration, readiness and fenced ownership.
 
 Final Tests:
-- Focused Slice/Task regression: 259 tests, OK.
-- Full offline regression in a clean detached worktree at Head: 1161 tests, OK, 7 skipped.
-- Ruff format check: PASS; Ruff lint: PASS.
-- Compileall: PASS; pip check: PASS.
-- Both canonical configuration validations: PASS.
-- Forbidden FFprobe/FFmpeg scan: PASS.
-- Markdown local-link check: PASS.
-- `git diff --check`: PASS.
-- Isolated wheel build and installed-wheel smoke: PASS, including backup, restore, migration rehearsal, verification and upgrade preflight.
-- Production SMB, OpenList, AWS S3, Cloudflare R2 and generic S3-compatible services: SKIP / UNAVAILABLE; fakes/local services and temporary Local roots used, with no production credentials or user media.
+- PASS — Slice vertical regression: `.venv/bin/python -m unittest tests.test_runtime_files_browser tests.test_storage_browser tests.test_file_index_lifecycle tests.test_manual_scan tests.test_manual_preview tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_processing_recovery_admission tests.test_recovery_continuation tests.test_recovery_batch tests.test_conflict_resolution tests.test_processing_worker_readiness tests.test_automation_job_fencing tests.test_stale_job_visibility tests.test_automation_api tests.test_dashboard tests.test_migration_rehearsal tests.test_api_security tests.test_operator_ui` — 322 tests, OK.
+- PASS — related regression: `.venv/bin/python -m unittest tests.test_operator_job_submission tests.test_operator_job_cancellation tests.test_task_persistence tests.test_file_media_detail tests.test_attachments tests.test_organizer_mutation_authority tests.test_source_directory_cleanup tests.test_recognition_review tests.test_metadata_review tests.test_classification_review` — 80 tests, OK.
+- FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python -m unittest discover -s tests` — 1273 tests, 6 failures, 7 skips. The six failures are the documented ambient `.mediaflow` configuration failures: API credentials x2, final integration x1, resource library x1 and runtime storage x2; they reproduce at the Task Base and do not touch Slice 27 Worker/manual-operations behavior.
+- PASS — `.venv/bin/ruff format --check mediaflow tests`; `.venv/bin/ruff check mediaflow tests`; `.venv/bin/python -m compileall -q mediaflow tests`; `.venv/bin/pip check`; `git diff --check`.
+- PASS — both canonical `final_cli ... config validate` commands.
+- PASS — wheel build and isolated installed-wheel smoke via `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-slice27-wheel-20260905` and `scripts/wheel_smoke_test.py`.
+- PASS — Markdown local-link check, forbidden FFprobe/FFmpeg scan, private config check and migration/backup/restore evidence.
+- SKIP / UNAVAILABLE — production SMB, OpenList, AWS S3, Cloudflare R2, live TMDB and real multi-process Worker acceptance; fakes/local services and temporary Local roots were used.
 
 Safety Evidence:
-- Checked activation requires current passed exact-revision read-only evidence for every enabled referenced Storage, current strategy evidence and destination precheck evidence.
-- Credential readiness is recomputed at activation admission; changed or unset readiness blocks activation with bounded recovery and preserves Draft/prior Active.
-- Setup checks and Storage Browser use read-only guarded Storage operations; no mutation probe or silent fallback.
-- Activation performs no scan, Job, Task, Automation occurrence, Provider request or media mutation.
-- Secret values are redacted from managed documents, persisted evidence and API/Web projections; tracked diff contains no private configuration or real credentials.
-- RecognitionType identity, OrganizerExecutor-only mutation and closed-Slice safety regressions remain green.
+- Scanner, Parser, Recognition, Metadata, Naming, Classification and Planner remain zero-mutation; DryRun/Preview remains zero-mutation.
+- OrganizerExecutor remains the sole mutating Storage authority; overwrite/delete/fallback safeguards remain explicit.
+- Worker lifecycle is runtime-owned; API/Web expose read-only projections and never start, stop or supervise Workers.
+- Claim completion requires Worker identity and claim token; stale/requeued owners cannot overwrite newer state.
+- Active snapshot, source occurrence, authority, result and recovery evidence remain exact and bounded.
+- API/Web evidence is RBAC-protected, audited, redacted and secret-free; `config/alist.json` remains ignored and untracked.
 
 Known Non-blocking Issues:
-- Python test runs emit existing `ResourceWarning` messages for unclosed SQLite connections; all required tests pass and no Slice acceptance is blocked.
-- The Task template referenced a nonexistent `tests.test_strategy_test` module; the two actual strategy modules were run instead.
+- Six full-suite failures are pre-existing/unrelated ambient configuration failures documented above.
+- Existing SQLite teardown emits non-fatal `ResourceWarning` messages.
 
 Explicitly Deferred:
-- Preserve the deferrals already recorded in this Contract, including Slice 27 manual operations/file lifecycle, Slice 28 day-2 administration, Slice 29 Docker release, built-in identity, Provider switching, full Secret Store integration and mutation-based Storage probes.
+- Slice 28 day-2 administration, Slice 29 Docker/Compose production packaging, Provider switching, built-in identity, full Secret Store integration, mutation probes, distributed workers, automatic uncertain-mutation replay and other deferrals already recorded in this Contract.
 
 Documentation Reconciliation Needed:
-- A should reconcile the authoritative product/architecture/progress/roadmap documentation with this factual Slice closure, without changing product scope or safety contracts.
+- A should reconcile CURRENT product, architecture, requirements, roadmap and progress statements with this factual Slice 27 closure without changing scope or safety contracts.
 
 Decision: SLICE READY FOR A REVIEW
 ```
@@ -307,21 +345,8 @@ Decision: SLICE READY FOR A REVIEW
 ## Review State
 
 ```text
-Slice Status: PASS / CLOSED
-Implementation Head: 928b727552a2fbb298e694cb0312e082e4662dda
+Slice Status: READY FOR A REVIEW
+Implementation Head: 34365121342557b0f40eacc7ad9bbb74499cc4cb
 P0/P1 Defects: NONE FOUND
-Decision: PASS / CLOSED
-```
-
-## A Final Review
-
-```text
-Reviewed Range: 3c660d5a1512b5b221b0284bcff9ae6dd00bbf23..928b727552a2fbb298e694cb0312e082e4662dda
-Decision: PASS
-P0/P1 Blockers: NONE
-Closure Reconciliation:
-- Slice 26 status and review state are closed at the reviewed implementation head.
-- Roadmap and Progress record Slice 26 as PASS / CLOSED.
-- CURRENT product, architecture, configuration-guide and requirement-baseline statements now record the delivered fresh setup, remote Storage lifecycle, read-only checks, Storage Browser and provider-neutral checked activation.
-- Explicitly Deferred scope remains unchanged.
+Decision: SLICE READY FOR A REVIEW
 ```
