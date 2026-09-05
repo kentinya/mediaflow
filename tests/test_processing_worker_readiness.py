@@ -5,19 +5,24 @@ import json
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 from mediaflow.application.automation import (
     ProcessingWorkerService,
     evaluate_pending_job_operational_condition,
 )
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationJob,
     AutomationJobStatus,
     WorkerReadiness,
     WorkerStatus,
+)
+from mediaflow.final_cli import final_main
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -27,7 +32,13 @@ def _example_document() -> dict:
     return json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
 
 
-def _request(api, method: str = "GET", path: str = "/api/v1/workers", query: str = "", token: str = "viewer-token"):
+def _request(
+    api,
+    method: str = "GET",
+    path: str = "/api/v1/workers",
+    query: str = "",
+    token: str = "viewer-token",
+):
     statuses: list[str] = []
     environ = {
         "REQUEST_METHOD": method,
@@ -122,6 +133,41 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
                         supported_commands=("scan",),
                         now=datetime.now(UTC),
                     )
+
+    def test_cli_worker_registration_binds_current_active_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime.sqlite3"
+            document = _example_document()
+            document["persistence"]["databasePath"] = str(runtime)
+            config = root / "bootstrap.json"
+            config.write_text(json.dumps(document), encoding="utf-8")
+            with SQLiteConfigurationRepository(runtime) as configuration_repository:
+                configuration_service = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=str(runtime),
+                )
+                draft = configuration_service.import_draft(document, actor="worker-test")
+                validated = configuration_service.validate(draft.revision_id, actor="worker-test")
+                active = configuration_service.activate(
+                    validated.revision_id,
+                    expected_version=validated.version,
+                    actor="worker-test",
+                )
+
+            output, errors = io.StringIO(), io.StringIO()
+            status = final_main(
+                ["--config", str(config), "worker", "run-next"],
+                stdout=output,
+                stderr=errors,
+            )
+            self.assertEqual(status, 0, errors.getvalue())
+            with SQLiteTaskRepository(runtime) as repository:
+                workers = repository.list_workers()
+                self.assertEqual(len(workers), 1)
+                self.assertEqual(workers[0].configuration_snapshot_id, active.revision_id)
+                self.assertEqual(workers[0].configuration_snapshot_digest, active.digest)
+                self.assertEqual(workers[0].runtime_schema_version, 33)
 
     # AC2: Liveness and readiness
     def test_heartbeat_progression_and_stale_evaluation(self) -> None:
@@ -252,8 +298,9 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
             thread_calls.append((args, kwargs))
             return original_thread_init(self, *args, **kwargs)
 
-        with patch.object(subprocess, "Popen", tracking_popen), patch.object(
-            threading.Thread, "__init__", tracking_thread_init
+        with (
+            patch.object(subprocess, "Popen", tracking_popen),
+            patch.object(threading.Thread, "__init__", tracking_thread_init),
         ):
             status, _ = _request(self.api, "GET", "/api/v1/workers", token="api-secret")
 

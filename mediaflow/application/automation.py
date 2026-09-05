@@ -35,6 +35,7 @@ from mediaflow.domain.notification import NotificationEvent, NotificationEventTy
 
 MAX_AUTOMATION_JOB_LIMIT = 10_000
 
+
 class AutomationCancelled(RuntimeError):
     def __init__(self, task_id: str | None = None) -> None:
         super().__init__("automation job was cancelled")
@@ -293,12 +294,8 @@ class ProcessingWorkerService:
             ]
             if not matching:
                 condition = WorkerReadiness.SNAPSHOT_MISMATCH.value
-                durable_state = (
-                    "registered workers are bound to mismatched configuration snapshots"
-                )
-                next_action = (
-                    "restart resident workers with the active configuration snapshot"
-                )
+                durable_state = "registered workers are bound to mismatched configuration snapshots"
+                next_action = "restart resident workers with the active configuration snapshot"
                 ready = False
             else:
                 condition = WorkerReadiness.READY.value
@@ -421,6 +418,10 @@ class AutomationWorker:
                 raise AutomationClaimLost("claimed automation Job has no ownership token")
 
             def cancelled() -> bool:
+                if not self.heartbeat():
+                    raise AutomationClaimLost(
+                        f"processing worker {self._worker_id!r} lost registration or was stopped"
+                    )
                 return self._repository.heartbeat_job(
                     job.job_id, job.claim_token or "", datetime.now(UTC)
                 )

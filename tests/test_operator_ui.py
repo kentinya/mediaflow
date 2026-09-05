@@ -1435,7 +1435,6 @@ class CurrentSourcePreviewWebTests(unittest.TestCase):
         self.assertIn("actionButton('Do not execute', () => confirmation.remove())", execute)
 
 
-
 class ProcessingWorkersWebTests(unittest.TestCase):
     def test_workers_nav_button_served_in_html(self) -> None:
         html = INDEX_HTML.decode("utf-8")
@@ -1449,10 +1448,13 @@ class ProcessingWorkersWebTests(unittest.TestCase):
         self.assertIn("/api/v1/workers?limit=50", script)
         # Asserts no mutation/spawning buttons or controls
         workers_section = script[script.index("async function renderWorkers") :]
-        workers_section = workers_section[: workers_section.index("async function renderConfiguration")]
+        workers_section = workers_section[
+            : workers_section.index("async function renderConfiguration")
+        ]
         self.assertIn("Read-only projection of registered Processing Workers", workers_section)
         for forbidden in ("start", "stop", "spawn", "kill", "restart", "delete"):
             self.assertNotIn(f"actionButton('{forbidden}", workers_section.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

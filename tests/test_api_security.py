@@ -8,7 +8,6 @@ import sqlite3
 import tempfile
 import unittest
 from datetime import UTC, datetime
-
 from pathlib import Path
 from unittest.mock import patch
 
@@ -315,6 +314,7 @@ class ApiSecurityTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
                 self.assertEqual(repository.list_security_audit(), ())
+
 
 class WorkerRouteSecurityTests(unittest.TestCase):
     def test_unauthenticated_requests_are_rejected(self) -> None:
