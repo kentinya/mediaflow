@@ -166,6 +166,78 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         self.assertTrue(response.get("created"))
         self.assertEqual(response["status"], "draft")
 
+    def test_api_successor_draft_from_revision_rejects_unknown_revision_id(self) -> None:
+        active = self._activate_initial()
+        before = tuple(revision.revision_id for revision in self.repository.list_revisions())
+        status, response = request(
+            self.api,
+            "/api/v1/configuration/revisions/not-the-active-revision/successor",
+            method="POST",
+            body={},
+            token="admin-token",
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(response["error"]["code"], "configuration_version_conflict")
+        self.assertIn("Active revision does not match", response["error"]["message"])
+        details = response["error"]["details"]
+        self.assertEqual(details["revisionId"], active.revision_id)
+        self.assertEqual(details["durableState"], "active_preserved")
+        self.assertEqual(details["sideEffects"], "none")
+        self.assertTrue(details["retrySafe"])
+        self.assertTrue(details["nextAction"])
+        self.assertEqual(
+            tuple(revision.revision_id for revision in self.repository.list_revisions()),
+            before,
+        )
+        self.assertEqual(self.service.active().revision_id, active.revision_id)
+
+    def test_api_successor_draft_from_revision_rejects_non_active_revision(self) -> None:
+        active = self._activate_initial()
+        draft = self.service.import_draft(self.document, actor="operator")
+        self.assertEqual(draft.status, ManagedConfigurationStatus.DRAFT)
+        self.assertNotEqual(draft.revision_id, active.revision_id)
+        before = tuple(revision.revision_id for revision in self.repository.list_revisions())
+        status, response = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{draft.revision_id}/successor",
+            method="POST",
+            body={},
+            token="admin-token",
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(response["error"]["code"], "configuration_version_conflict")
+        self.assertEqual(response["error"]["details"]["revisionId"], active.revision_id)
+        self.assertEqual(
+            tuple(revision.revision_id for revision in self.repository.list_revisions()),
+            before,
+        )
+
+    def test_api_successor_draft_from_revision_rejects_superseded_revision(self) -> None:
+        first = self._activate_initial()
+        successor = self.service.create_successor_draft(actor="operator")
+        validated = self.service.validate(successor.revision_id, actor="operator")
+        second = self.service.activate(
+            validated.revision_id,
+            expected_version=validated.version,
+            actor="operator",
+        )
+        self.assertNotEqual(second.revision_id, first.revision_id)
+        before = tuple(revision.revision_id for revision in self.repository.list_revisions())
+        status, response = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{first.revision_id}/successor",
+            method="POST",
+            body={},
+            token="admin-token",
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(response["error"]["code"], "configuration_version_conflict")
+        self.assertEqual(response["error"]["details"]["revisionId"], second.revision_id)
+        self.assertEqual(
+            tuple(revision.revision_id for revision in self.repository.list_revisions()),
+            before,
+        )
+
     def test_api_successor_draft_requires_manage_permission(self) -> None:
         self._activate_initial()
         status, _ = request(
