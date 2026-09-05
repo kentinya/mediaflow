@@ -416,6 +416,109 @@ class ManagedConfigurationService:
         self._record_audit(audit)
         return created
 
+    def create_successor_draft(
+        self,
+        *,
+        actor: str,
+        expected_active_revision_id: str | None = None,
+        expected_active_version: int | None = None,
+        expected_active_digest: str | None = None,
+    ) -> ManagedConfigurationRevision:
+        """Create a successor Draft seeded by the immutable Active document.
+
+        The Active revision must be readable and verifiable; missing,
+        schema-unsupported or digest-corrupt Active fails closed and never
+        falls back to a stale JSON bootstrap.  Optimistic checks on
+        ``expectedActiveRevisionId`` / ``expectedActiveVersion`` /
+        ``expectedActiveDigest`` (when supplied) detect a stale writer
+        before a new Draft is published.
+        """
+
+        active = self.active()
+        if active is None:
+            if self._has_managed_activation():
+                marker = self._last_known_active() or {}
+                raise RuntimeSnapshotUnavailable(
+                    "managed Active configuration is unavailable; cannot create successor Draft",
+                    revision_id=marker.get("revisionId"),
+                    version=marker.get("revisionSequence", marker.get("version")),
+                    digest=marker.get("digest"),
+                    reason="managed_active_unavailable",
+                )
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists; create the first setup Draft instead",
+                reason="active_missing",
+            )
+        self.verify_integrity(active)
+        current_revision_id = active.revision_id
+        current_version = active.revision_sequence or active.version
+        current_digest = active.digest
+        if expected_active_revision_id and expected_active_revision_id != current_revision_id:
+            raise ConfigurationVersionConflict(
+                "Active revision does not match expectedActiveRevisionId; reload before creating successor Draft",
+                revision_id=current_revision_id,
+                current_version=current_version,
+                current_digest=current_digest,
+                durable_state="active_preserved",
+                next_action="reload configuration status, then create the successor Draft again",
+            )
+        if expected_active_version is not None and expected_active_version != current_version:
+            raise ConfigurationVersionConflict(
+                "Active version does not match expectedActiveVersion; reload before creating successor Draft",
+                revision_id=current_revision_id,
+                current_version=current_version,
+                current_digest=current_digest,
+                durable_state="active_preserved",
+                next_action="reload configuration status, then create the successor Draft again",
+            )
+        if expected_active_digest and expected_active_digest != current_digest:
+            raise ConfigurationVersionConflict(
+                "Active digest does not match expectedActiveDigest; reload before creating successor Draft",
+                revision_id=current_revision_id,
+                current_version=current_version,
+                current_digest=current_digest,
+                durable_state="active_preserved",
+                next_action="reload configuration status, then create the successor Draft again",
+            )
+        normalized = _canonical_document(copy.deepcopy(active.document))
+        _reject_literal_secrets(normalized)
+        now = self._clock()
+        revision = ManagedConfigurationRevision(
+            str(uuid4()),
+            1,
+            ManagedConfigurationStatus.DRAFT,
+            MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+            _digest(normalized),
+            normalized,
+            now,
+            now,
+            base_active_revision_id=current_revision_id,
+        )
+        audit = self._audit(
+            revision,
+            "successor_draft_create",
+            actor,
+            {
+                **_document_evidence(revision),
+                "source": "active",
+                "baseActiveRevisionId": current_revision_id,
+                "baseActiveVersion": current_version,
+                "baseActiveDigest": current_digest,
+            },
+            before={
+                "authority": ConfigurationAuthority.MANAGED.value,
+                "revisionId": current_revision_id,
+                "version": current_version,
+                "digest": current_digest,
+            },
+        )
+        create = getattr(self._repository, "create_revision_with_audit", None)
+        if callable(create):
+            return create(revision, audit)
+        created = self._repository.create_revision(revision)
+        self._record_audit(audit)
+        return created
+
     def _first_setup_draft(
         self,
         revisions: tuple[ManagedConfigurationRevision, ...] | None = None,

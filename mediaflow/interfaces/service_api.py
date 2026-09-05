@@ -1784,6 +1784,48 @@ class MediaFlowApi:
                 "open the setup Draft and complete guided setup before validation and activation"
             )
             return self._response(start_response, 201, response)
+        if parts == ["api", "v1", "configuration", "drafts", "successor"]:
+            if method != "POST":
+                return self._error(start_response, 405, "method_not_allowed", "POST required")
+            self._require_empty_query(environ, "successor Draft")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            allowed = {"expectedActiveRevisionId", "expectedActiveVersion", "expectedActiveDigest"}
+            if set(document).difference(allowed):
+                raise ValueError(
+                    "successor Draft accepts optional expectedActiveRevisionId, "
+                    "expectedActiveVersion, and expectedActiveDigest only"
+                )
+            expected_revision_id = document.get("expectedActiveRevisionId")
+            if expected_revision_id is not None and not isinstance(expected_revision_id, str):
+                raise ValueError("expectedActiveRevisionId must be a string")
+            expected_version = document.get("expectedActiveVersion")
+            if expected_version is not None and (
+                isinstance(expected_version, bool) or not isinstance(expected_version, int)
+            ):
+                raise ValueError("expectedActiveVersion must be an integer")
+            expected_digest = document.get("expectedActiveDigest")
+            if expected_digest is not None and not isinstance(expected_digest, str):
+                raise ValueError("expectedActiveDigest must be a string")
+            revision = self._configuration_service.create_successor_draft(
+                actor=principal.principal_id,
+                expected_active_revision_id=expected_revision_id,
+                expected_active_version=expected_version,
+                expected_active_digest=expected_digest,
+            )
+            response = revision.summary()
+            response["created"] = True
+            response["nextAction"] = (
+                "open the successor Draft, edit configuration objects, validate, and activate"
+            )
+            return self._response(start_response, 201, response)
         if parts == ["api", "v1", "configuration"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -2473,7 +2515,6 @@ class MediaFlowApi:
             and parts[:3] == ["api", "v1", "configuration"]
             and parts[3] == "revisions"
             and parts[5] == "objects"
-            and parts[6] in {"automationTaskDefinitions", "storages"}
             and parts[8] in {"copy", "enable", "disable"}
             and method == "POST"
         ):
@@ -2485,13 +2526,13 @@ class MediaFlowApi:
                     "service_unavailable",
                     "managed configuration service is unavailable",
                 )
+            kind = self._configuration_object_kind(parts[6])
             document = self._document(environ)
             expected = document.get("expectedVersion")
             if isinstance(expected, bool) or not isinstance(expected, int):
                 raise ValueError("configuration expectedVersion must be an integer")
             action = parts[8]
-            is_storage = parts[6] == "storages"
-            label = "Storage" if is_storage else "Automation Task Definition"
+            label = parts[6][:-1] if parts[6].endswith("s") else parts[6]
             if action == "copy":
                 allowed = {"expectedVersion", "newId", "id", "newName", "name"}
                 if set(document).difference(allowed):
@@ -2502,71 +2543,45 @@ class MediaFlowApi:
                     raise ValueError(f"{label} copied id must be a string")
                 if new_name is not None and not isinstance(new_name, str):
                     raise ValueError(f"{label} copied name must be a string")
-                if is_storage:
-                    revision = self._configuration_objects.copy_storage(
-                        parts[4],
-                        object_id=parts[7],
-                        new_object_id=new_id,
-                        new_name=new_name,
-                        expected_version=expected,
-                        actor=principal.principal_id,
-                    )
-                else:
-                    revision = self._configuration_objects.copy_definition(
-                        parts[4],
-                        object_id=parts[7],
-                        new_object_id=new_id,
-                        new_name=new_name,
-                        expected_version=expected,
-                        actor=principal.principal_id,
-                    )
+                revision = self._configuration_objects.copy_object(
+                    parts[4],
+                    kind,
+                    object_id=parts[7],
+                    new_object_id=new_id,
+                    new_name=new_name,
+                    expected_version=expected,
+                    actor=principal.principal_id,
+                )
             else:
                 if set(document) != {"expectedVersion"}:
                     raise ValueError(f"{label} enable/disable requires expectedVersion")
-                if is_storage:
-                    revision = self._configuration_objects.set_storage_enabled(
-                        parts[4],
-                        object_id=parts[7],
-                        enabled=action == "enable",
-                        expected_version=expected,
-                        actor=principal.principal_id,
-                    )
-                else:
-                    revision = self._configuration_objects.set_definition_enabled(
-                        parts[4],
-                        object_id=parts[7],
-                        enabled=action == "enable",
-                        expected_version=expected,
-                        actor=principal.principal_id,
-                    )
-            if is_storage:
-                storages = self._configuration_objects.revision_detail(revision.revision_id)[
-                    "objects"
-                ]["storages"]
-                storage = (
-                    storages[-1]
-                    if action == "copy" and storages
-                    else next((item for item in storages if item.get("id") == parts[7]), None)
-                )
-                response = revision.summary()
-                if storage is not None:
-                    response["storage"] = storage
-                return self._response(start_response, 200, response)
-            definitions = revision.document.get("automationTaskDefinitions", [])
-            if action == "copy":
-                definition = definitions[-1] if definitions else None
-            else:
-                definition = next(
-                    (item for item in definitions if item.get("id") == parts[7]),
-                    None,
+                revision = self._configuration_objects.set_object_enabled(
+                    parts[4],
+                    kind,
+                    object_id=parts[7],
+                    enabled=action == "enable",
+                    expected_version=expected,
+                    actor=principal.principal_id,
                 )
             response = revision.summary()
-            if definition is not None:
-                response["automationTaskDefinition"] = definition
-            self._invalidate_automation_previews(
-                parts[7],
-                f"the pinned Automation Task Definition was {action}",
-            )
+            section = ConfigurationObjectService._SECTIONS.get(kind, parts[6])
+            items = revision.document.get(section) if section in revision.document else None
+            updated = None
+            if items:
+                updated = items[-1] if action == "copy" else next(
+                    (item for item in items if item.get("id") == parts[7]), None
+                )
+            if kind is ConfigurationObjectKind.STORAGE:
+                response["storage"] = updated
+            elif kind is ConfigurationObjectKind.SCHEDULE:
+                if updated is not None:
+                    response["automationTaskDefinition"] = updated
+                self._invalidate_automation_previews(
+                    parts[7],
+                    f"the pinned Automation Task Definition was {action}",
+                )
+            elif updated is not None:
+                response["object"] = updated
             return self._response(start_response, 200, response)
         if (
             len(parts) == 8
@@ -2781,7 +2796,7 @@ class MediaFlowApi:
                     "managed configuration service is unavailable",
                 )
             document = self._document(environ)
-            if set(document) == {"source"} and document.get("source") == "current":
+            if set(document) == {"source"} and document.get("source") in {"current", "active", "successor"}:
                 draft_document = self._configuration_service.current_document(
                     self._bootstrap_document
                 )
@@ -2845,6 +2860,33 @@ class MediaFlowApi:
                 )
             self._refresh_configuration_binding()
             return self._response(start_response, 200, revision.summary())
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "successor"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            if document:
+                raise ValueError("successor Draft from a specific revision does not accept request fields")
+            revision = self._configuration_service.create_successor_draft(
+                actor=principal.principal_id,
+            )
+            response = revision.summary()
+            response["created"] = True
+            response["nextAction"] = (
+                "open the successor Draft, edit configuration objects, validate, and activate"
+            )
+            return self._response(start_response, 201, response)
         if parts == ["api", "v1", "system", "status"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")

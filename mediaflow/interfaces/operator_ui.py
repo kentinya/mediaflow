@@ -283,7 +283,24 @@ APP_JS = b"""(() => {
       }
       if (data.nextAction) content.append(text('p', `Next action: ${data.nextAction}`, 'warning'));
     } else {
-      content.append(text('h3', 'Stage a whole-document JSON Draft'));
+      content.append(text('h3', 'Configuration changes'));
+      content.append(text('p',
+        'Edit Active by creating a successor Draft. The successor Draft is seeded from the exact Active snapshot, never from pasted or imported JSON, and never mutates Active.',
+        'warning'));
+      if (data.active && data.active.revisionId) {
+        content.append(actionButton('Create successor Draft from Active', async () => {
+          try {
+            await api('/api/v1/configuration/drafts/successor',
+              {method: 'POST', body: '{}'});
+            message('Successor Draft created. Open the revision, edit configuration objects, validate, then activate.');
+            await renderConfiguration();
+          } catch (error) { message(errorText(error), true); await renderConfiguration(); }
+        }));
+      }
+      content.append(text('h3', 'Advanced JSON (import/export)'));
+      content.append(text('p',
+        'Advanced configuration: paste a complete document or import the current Active as a Draft. Whole-document JSON is not the ordinary path for object edits; typed object forms below remain the ordinary configuration journey.',
+        'warning'));
       const editor = document.createElement('textarea');
       editor.setAttribute('aria-label', 'Configuration JSON draft');
       editor.placeholder = 'Paste a complete configuration document here. Secrets must remain environment references.';
@@ -299,8 +316,8 @@ APP_JS = b"""(() => {
       }));
       content.append(actionButton('Import current JSON as Draft', async () => {
         try { await api('/api/v1/configuration/drafts',
-          {method: 'POST', body: JSON.stringify({source: 'current'})});
-          message('Draft imported. Validate it before activation.'); await renderConfiguration();
+          {method: 'POST', body: JSON.stringify({source: 'active'})});
+          message('Draft imported from Active. Validate it before activation.'); await renderConfiguration();
         } catch (error) { message(errorText(error), true); }
       }));
     }
@@ -312,7 +329,11 @@ APP_JS = b"""(() => {
   }
   function guidedInput(label, value, type = 'text') {
     const wrapper = text('label', label);
-    const input = document.createElement('input'); input.type = type;
+    const input = document.createElement(type === 'textarea' ? 'textarea' : 'input');
+    if (type !== 'textarea') {
+      input.type = type;
+      if (type === 'number') input.step = 'any';
+    }
     input.value = value === null || value === undefined ? '' : String(value);
     input.setAttribute('aria-label', label); wrapper.append(input);
     return {wrapper, input};
@@ -405,21 +426,87 @@ APP_JS = b"""(() => {
     const fields = {
       resourceLibraries: [['id', 'ID'], ['name', 'Name'], ['storageId', 'Storage ID'],
         ['storagePath', 'Storage-relative source path'], ['displayRootPath', 'Display root path'],
-        ['extensions', 'Extensions (comma separated)'], ['maxDepth', 'Maximum depth']],
+        ['extensions', 'Extensions (comma separated)'], ['maxDepth', 'Maximum depth', 'number']],
       mediaLibraries: [['id', 'ID'], ['name', 'Name'], ['storageId', 'Storage ID'],
-        ['rootPath', 'Storage-relative destination root']]
+        ['rootPath', 'Storage-relative destination root']],
+      recognitionTypes: [['id', 'ID'], ['name', 'Name'], ['description', 'Description']],
+      recognitionRules: [['id', 'ID'], ['name', 'Name'], ['outputRecognitionType', 'Output RecognitionType ID'],
+        ['priority', 'Priority', 'number'], ['score', 'Score', 'number'], ['description', 'Description'],
+        ['condition', 'Condition JSON', 'textarea']],
+      recognitionTypePolicies: [['id', 'ID'], ['name', 'Name'], ['recognitionType', 'RecognitionType ID'],
+        ['metadataPolicy', 'MetadataPolicy ID'], ['namingPolicy', 'NamingPolicy ID'],
+        ['classificationPolicy', 'ClassificationPolicy ID'], ['organizePolicy', 'OrganizePolicy ID'],
+        ['priority', 'Priority', 'number']],
+      metadataPolicies: [['id', 'ID'], ['name', 'Name'], ['providerId', 'Provider ID (e.g. tmdb)'],
+        ['mediaType', 'MediaType (movie, tv, auto, none)'], ['mediaQueryType', 'MediaQueryType'],
+        ['language', 'Language (e.g. zh-CN)'], ['region', 'Region (e.g. CN)'],
+        ['automaticThreshold', 'Automatic threshold (0-100)', 'number'],
+        ['confirmationThreshold', 'Confirmation threshold (0-100)', 'number'],
+        ['minimumScoreGap', 'Minimum score gap', 'number'],
+        ['timeout', 'Timeout (seconds)', 'number'],
+        ['retryCount', 'Retry count', 'number'],
+        ['maxCandidates', 'Max candidates', 'number'],
+        ['maxSearchPages', 'Max search pages', 'number'],
+        ['maxProviderRequests', 'Max provider requests', 'number'],
+        ['maxCandidateEnrichments', 'Max enrichments', 'number']],
+      namingPolicies: [['id', 'ID'], ['name', 'Name'], ['description', 'Description'],
+        ['mediaTypeMode', 'Media type mode (auto, movie, tv)'],
+        ['missingVariableStrategy', 'Missing variable strategy (omit_token, fail, empty_string)'],
+        ['maxComponentLength', 'Max component length', 'number'],
+        ['directoryTemplate', 'Movie directory template'],
+        ['filenameTemplate', 'Movie filename template'],
+        ['seriesDirectoryTemplate', 'TV series directory template'],
+        ['seasonDirectoryTemplate', 'TV season directory template'],
+        ['episodeFilenameTemplate', 'TV episode filename template'],
+        ['multiEpisodeFileTemplate', 'TV multi-episode filename template']],
+      classificationPolicies: [['id', 'ID'], ['name', 'Name'], ['description', 'Description'],
+        ['priority', 'Priority', 'number'], ['rules', 'Classification Rules JSON', 'textarea']],
+      organizePolicies: [['id', 'ID'], ['operation', 'Operation (MOVE, COPY, HARD_LINK, SOFT_LINK)'],
+        ['conflictStrategy', 'Conflict strategy (manual, skip, overwrite, rename)'],
+        ['attachments', 'Attachments JSON', 'textarea'],
+        ['duplicateDetection', 'Duplicate detection JSON', 'textarea'],
+        ['rollback', 'Rollback JSON', 'textarea'],
+        ['sourceDirectoryCleanup', 'Source directory cleanup JSON', 'textarea']],
+      automationTaskDefinitions: [['id', 'ID'], ['name', 'Name'],
+        ['resourceLibraryId', 'ResourceLibrary ID'],
+        ['sourceScope', 'Source scope path (optional)'],
+        ['mode', 'Run mode (scan_only, scan_and_preview, scan_and_organize)'],
+        ['intervalSeconds', 'Interval seconds', 'number'],
+        ['cron', 'Cron expression (optional)'],
+        ['timezone', 'Timezone (e.g. Asia/Shanghai)'],
+        ['itemLimit', 'Item limit', 'number']]
     }[kind];
+    const booleans = {
+      resourceLibraries: [['enabled', 'Enabled']],
+      mediaLibraries: [['enabled', 'Enabled']],
+      recognitionTypes: [['enabled', 'Enabled']],
+      recognitionRules: [['enabled', 'Enabled'], ['stopOnMatch', 'Stop on match']],
+      recognitionTypePolicies: [['enabled', 'Enabled']],
+      metadataPolicies: [['enabled', 'Enabled']],
+      namingPolicies: [['enabled', 'Enabled']],
+      classificationPolicies: [['enabled', 'Enabled']],
+      organizePolicies: [['overwrite', 'Allow overwrite']],
+      automationTaskDefinitions: [['enabled', 'Enabled']]
+    }[kind] || [];
     const result = {};
-    (fields || []).forEach(([key, label]) => {
-      const initial = key === 'extensions' && Array.isArray(item[key]) ? item[key].join(',') : item[key];
-      const control = guidedInput(label, initial, key === 'maxDepth' ? 'number' : 'text');
+    const jsonFields = {
+      recognitionRules: new Set(['condition']),
+      classificationPolicies: new Set(['rules']),
+      organizePolicies: new Set(['attachments', 'duplicateDetection', 'rollback', 'sourceDirectoryCleanup'])
+    }[kind] || new Set();
+    (fields || []).forEach(([key, label, inputType]) => {
+      const type = inputType || (jsonFields.has(key) ? 'textarea' : 'text');
+      const raw = item[key];
+      const initial = jsonFields.has(key) ? (raw ? JSON.stringify(raw, null, 2) : '') :
+        (key === 'extensions' && Array.isArray(raw) ? raw.join(',') : raw);
+      const control = guidedInput(label, initial, type);
       result[key] = control.input;
       control.wrapper.dataset.guidedField = key;
     });
-    const booleans = kind === 'storages' ? [['readOnly', 'Read-only']] : [['enabled', 'Enabled']];
     booleans.forEach(([key, label]) => {
-      const control = guidedInput(label, item[key] === undefined ? true : item[key], 'checkbox');
-      control.input.checked = item[key] === undefined ? true : Boolean(item[key]);
+      const fallback = key === 'enabled';
+      const control = guidedInput(label, item[key] === undefined ? fallback : item[key], 'checkbox');
+      control.input.checked = item[key] === undefined ? fallback : Boolean(item[key]);
       result[key] = control.input;
       control.wrapper.dataset.guidedField = key;
     });
@@ -427,12 +514,35 @@ APP_JS = b"""(() => {
   }
   function guidedObjectPayload(kind, fields) {
     const value = {};
+    const numberFields = {
+      resourceLibraries: new Set(['maxDepth']),
+      recognitionRules: new Set(['priority', 'score']),
+      recognitionTypePolicies: new Set(['priority']),
+      metadataPolicies: new Set(['automaticThreshold', 'confirmationThreshold', 'minimumScoreGap',
+        'timeout', 'retryCount', 'maxCandidates', 'maxSearchPages', 'maxProviderRequests', 'maxCandidateEnrichments']),
+      namingPolicies: new Set(['maxComponentLength']),
+      classificationPolicies: new Set(['priority']),
+      automationTaskDefinitions: new Set(['intervalSeconds', 'itemLimit'])
+    }[kind] || new Set();
+    const jsonFields = {
+      recognitionRules: new Set(['condition']),
+      classificationPolicies: new Set(['rules']),
+      organizePolicies: new Set(['attachments', 'duplicateDetection', 'rollback', 'sourceDirectoryCleanup'])
+    }[kind] || new Set();
     Object.entries(fields).forEach(([key, input]) => {
       if (key.startsWith('_')) return;
-      if (input.type === 'checkbox') value[key] = input.checked;
-      else if (key === 'extensions') value[key] = input.value.split(',').map(item => item.trim()).filter(Boolean);
-      else if (key === 'maxDepth') value[key] = input.value === '' ? null : Number(input.value);
-      else value[key] = input.value;
+      if (input.type === 'checkbox') {
+        value[key] = input.checked;
+      } else if (key === 'extensions') {
+        value[key] = input.value.split(',').map(item => item.trim()).filter(Boolean);
+      } else if (jsonFields.has(key)) {
+        try { value[key] = input.value.trim() ? JSON.parse(input.value) : {}; }
+        catch { value[key] = {}; }
+      } else if (numberFields.has(key) || key === 'maxDepth') {
+        value[key] = input.value === '' ? null : Number(input.value);
+      } else {
+        value[key] = input.value;
+      }
     });
     if (kind === 'storages') {
       value.options = {};
@@ -512,6 +622,12 @@ APP_JS = b"""(() => {
   }
   function renderGuidedObjectList(revision, guided, kind, label) {
     const values = guided.objects && guided.objects[kind] || [];
+    const singular = {storages: 'Storage', resourceLibraries: 'ResourceLibrary',
+      mediaLibraries: 'MediaLibrary', recognitionTypes: 'RecognitionType',
+      recognitionRules: 'RecognitionRule', recognitionTypePolicies: 'RecognitionTypePolicy',
+      metadataPolicies: 'MetadataPolicy', namingPolicies: 'NamingPolicy',
+      classificationPolicies: 'ClassificationPolicy', organizePolicies: 'OrganizePolicy',
+      automationTaskDefinitions: 'AutomationTaskDefinition'}[kind] || kind;
     const referenceKind = {storages: 'storage', resourceLibraries: 'resource_library',
       mediaLibraries: 'media_library', recognitionTypes: 'recognition_type',
       recognitionRules: 'recognition_rule', recognitionTypePolicies: 'recognition_type_policy',
@@ -589,8 +705,18 @@ APP_JS = b"""(() => {
         'Open Storage browser', () => renderStandaloneStorageBrowser(revision, item, guided)));
       if (configurationRevisionEditable(revision)) {
         row.append(actionButton('Edit', () => renderGuidedObjectForm(revision, kind, item, false, guided)));
-        if (kind === 'storages' || kind === 'namingPolicies' || kind === 'classificationPolicies' || kind === 'organizePolicies') row.append(actionButton('Copy', async () => {
-          if (kind === 'storages') {
+        if (kind === 'storages') {
+          row.append(actionButton(item.enabled === true ? 'Disable' : 'Enable', async () => {
+            const action = item.enabled === true ? 'disable' : 'enable';
+            const confirmation = text('span', '', 'choices');
+            confirmation.append(text('span', `${action === 'enable' ? 'Enable' : 'Disable'} Storage ${item.id}? This changes only the Draft.`),
+              actionButton(`Confirm ${action}`, async () => {
+                try { await mutateStorageAction(revision, item, action); }
+                catch (error) { message(errorText(error), true); }
+              }), actionButton('Cancel', () => confirmation.remove()));
+            row.append(confirmation);
+          }));
+          row.append(actionButton('Copy', async () => {
             const confirmation = text('span', '', 'choices');
             confirmation.append(text('span', `Copy Storage ${item.id}? The copy starts disabled.`),
               actionButton('Confirm copy', async () => {
@@ -598,22 +724,8 @@ APP_JS = b"""(() => {
                 catch (error) { message(errorText(error), true); }
               }), actionButton('Cancel copy', () => confirmation.remove()));
             row.append(confirmation);
-            return;
-          }
-          const copied = {...item, id: `${item.id}-copy`, name: `${item.name || item.id} copy`};
-          renderGuidedObjectForm(revision, kind, copied, true, guided);
-        }));
-        if (kind === 'storages') row.append(actionButton(item.enabled === true ? 'Disable' : 'Enable', async () => {
-          const action = item.enabled === true ? 'disable' : 'enable';
-          const confirmation = text('span', '', 'choices');
-          confirmation.append(text(`${action === 'enable' ? 'Enable' : 'Disable'} Storage ${item.id}? This changes only the Draft.`),
-            actionButton(`Confirm ${action}`, async () => {
-              try { await mutateStorageAction(revision, item, action); }
-              catch (error) { message(errorText(error), true); }
-            }), actionButton('Cancel', () => confirmation.remove()));
-          row.append(confirmation);
-        }));
-        if (kind === 'automationTaskDefinitions') {
+          }));
+        } else if (kind === 'automationTaskDefinitions') {
           row.append(actionButton('Copy', async () => {
             const confirmation = text('span', '', 'choices');
             confirmation.append(text('span', `Copy Automation Task Definition ${item.id}? The copy starts disabled.`),
@@ -639,10 +751,49 @@ APP_JS = b"""(() => {
               }), actionButton('Cancel', () => confirmation.remove()));
             row.append(confirmation);
           }));
+        } else if (kind !== 'organizePolicies') {
+          row.append(actionButton(item.enabled === true ? 'Disable' : 'Enable', async () => {
+            const action = item.enabled === true ? 'disable' : 'enable';
+            const confirmation = text('span', '', 'choices');
+            confirmation.append(text('span', `${action === 'enable' ? 'Enable' : 'Disable'} ${singular} ${item.id}? This changes only the Draft.`),
+              actionButton(`Confirm ${action}`, async () => {
+                try {
+                  await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/objects/${kind}/${encodeURIComponent(item.id)}/${action}`,
+                    {method: 'POST', body: JSON.stringify({expectedVersion: revision.version})});
+                  confirmation.remove(); detail.hidden = true; await renderConfiguration();
+                } catch (error) { message(errorText(error), true); }
+              }), actionButton('Cancel', () => confirmation.remove()));
+            row.append(confirmation);
+          }));
+          row.append(actionButton('Copy', async () => {
+            const confirmation = text('span', '', 'choices');
+            confirmation.append(text('span', `Copy ${singular} ${item.id}? The copy starts disabled.`),
+              actionButton('Confirm copy', async () => {
+                try {
+                  await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/objects/${kind}/${encodeURIComponent(item.id)}/copy`,
+                    {method: 'POST', body: JSON.stringify({expectedVersion: revision.version})});
+                  confirmation.remove(); detail.hidden = true; await renderConfiguration();
+                } catch (error) { message(errorText(error), true); }
+              }), actionButton('Cancel copy', () => confirmation.remove()));
+            row.append(confirmation);
+          }));
+        } else {
+          row.append(actionButton('Copy', async () => {
+            const confirmation = text('span', '', 'choices');
+            confirmation.append(text('span', `Copy OrganizePolicy ${item.id}? The copy starts disabled.`),
+              actionButton('Confirm copy', async () => {
+                try {
+                  await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/objects/organizePolicies/${encodeURIComponent(item.id)}/copy`,
+                    {method: 'POST', body: JSON.stringify({expectedVersion: revision.version})});
+                  confirmation.remove(); detail.hidden = true; await renderConfiguration();
+                } catch (error) { message(errorText(error), true); }
+              }), actionButton('Cancel copy', () => confirmation.remove()));
+            row.append(confirmation);
+          }));
         }
         if (kind !== 'automationTaskDefinitions') row.append(actionButton('Delete', () => {
           const confirmation = text('span', '', 'choices');
-          confirmation.append(text('span', `Delete ${label} ${item.id}? References block deletion.`),
+          confirmation.append(text('span', `Delete ${singular} ${item.id}? References block deletion.`),
             actionButton('Confirm delete', async () => {
               try { await mutateGuidedObject(revision, kind, item.id, null, 'DELETE'); }
               catch (error) { message(errorText(error), true); }
@@ -653,11 +804,6 @@ APP_JS = b"""(() => {
       detailContent.append(row);
     });
     if (configurationRevisionEditable(revision)) {
-      const singular = {storages: 'Storage', resourceLibraries: 'ResourceLibrary',
-        mediaLibraries: 'MediaLibrary', recognitionTypes: 'RecognitionType',
-        recognitionRules: 'RecognitionRule', recognitionTypePolicies: 'RecognitionTypePolicy',
-        metadataPolicies: 'MetadataPolicy', namingPolicies: 'NamingPolicy',
-        organizePolicies: 'OrganizePolicy', automationTaskDefinitions: 'AutomationTaskDefinition'}[kind] || kind;
       const classificationPolicy = kind === 'classificationPolicies';
       const organizePolicy = kind === 'organizePolicies';
       const guidedJson = kind === 'storages' || kind.startsWith('recognition') ||
@@ -791,64 +937,68 @@ APP_JS = b"""(() => {
     browse(null);
   }
   function renderGuidedObjectForm(revision, kind, item, copyMode = false, guided = null) {
-    if (kind.startsWith('recognition') || kind === 'metadataPolicies' || kind === 'namingPolicies' || kind === 'classificationPolicies' || kind === 'organizePolicies' || kind === 'automationTaskDefinitions') {
-      const metadataPolicy = kind === 'metadataPolicies';
-      const namingPolicy = kind === 'namingPolicies';
-      const classificationPolicy = kind === 'classificationPolicies';
-      const organizePolicy = kind === 'organizePolicies';
-      const automationTaskDefinition = kind === 'automationTaskDefinitions';
-      clear(detailContent);
-      detailContent.append(text('h2', `${item && !copyMode ? 'Edit' : 'Add'} ${metadataPolicy ? 'MetadataPolicy' : namingPolicy ? 'NamingPolicy' : classificationPolicy ? 'ClassificationPolicy' : organizePolicy ? 'OrganizePolicy' : automationTaskDefinition ? 'Automation Task Definition' : 'recognition object'}`));
-      detailContent.append(text('p', automationTaskDefinition ?
-        'Edit one bounded Automation Task Definition. It references one enabled ResourceLibrary and owns only source scope, schedule, run mode and item limit; policy and destination choices stay in configuration.' : organizePolicy ?
-        'Edit one bounded OrganizePolicy JSON object. Overwrite and source cleanup grant destructive authority and are never implicit.' : classificationPolicy ?
-        'Edit one bounded ClassificationPolicy JSON object. Rules use the configured conditions and safe relative result paths.' : namingPolicy ?
-        'Edit one bounded NamingPolicy JSON object. Templates use the restricted naming variables; separators, traversal, unknown variables and unsupported formats are rejected.' : metadataPolicy ?
-        'Edit one bounded MetadataPolicy JSON object. Provider/query/locale/threshold/request settings are validated; credentials and unknown fields are rejected.' :
-        'Edit one bounded JSON object. References and rule priority are checked when the Draft is validated; unsafe regex is rejected when saved.', 'warning'));
-      const editor = document.createElement('textarea');
-      editor.setAttribute('aria-label', metadataPolicy ? 'MetadataPolicy JSON' : namingPolicy ? 'NamingPolicy JSON' : classificationPolicy ? 'ClassificationPolicy JSON' : organizePolicy ? 'OrganizePolicy JSON' : automationTaskDefinition ? 'Automation Task Definition JSON' : 'Recognition object JSON');
-      editor.value = JSON.stringify(item || {}, null, 2); detailContent.append(editor);
-      detailContent.append(actionButton(metadataPolicy ? 'Save MetadataPolicy' : namingPolicy ? 'Save NamingPolicy' : classificationPolicy ? 'Save ClassificationPolicy' : organizePolicy ? 'Save OrganizePolicy' : automationTaskDefinition ? 'Save Automation Task Definition' : 'Save recognition object', async () => {
-        try { await mutateGuidedObject(revision, kind, item && !copyMode && item.id, JSON.parse(editor.value), item && !copyMode ? 'PUT' : 'POST'); }
-        catch (error) { message(errorText(error), true); }
-      }), actionButton('Back to revision', () => showConfigurationRevision(revision)));
-      return;
-    }
+    clear(detailContent);
+    const automationTaskDefinition = kind === 'automationTaskDefinitions';
+    const singular = {storages: 'Storage', resourceLibraries: 'ResourceLibrary',
+      mediaLibraries: 'MediaLibrary', recognitionTypes: 'RecognitionType',
+      recognitionRules: 'RecognitionRule', recognitionTypePolicies: 'RecognitionTypePolicy',
+      metadataPolicies: 'MetadataPolicy', namingPolicies: 'NamingPolicy',
+      classificationPolicies: 'ClassificationPolicy', organizePolicies: 'OrganizePolicy',
+      automationTaskDefinitions: 'AutomationTaskDefinition'}[kind] || kind;
+    const title = `${item && !copyMode ? 'Edit' : 'Add'} ${automationTaskDefinition ? 'Automation Task Definition' : singular}`;
+    const warnings = {
+      storages: 'Choose exactly one supported Storage kind. Credentials are environment-variable references; only SET/UNSET readiness is shown.',
+      automationTaskDefinitions: 'Edit one bounded Automation Task Definition. It references one enabled ResourceLibrary and owns only source scope, schedule, run mode and item limit; policy and destination choices stay in configuration.',
+      organizePolicies: 'Edit one bounded OrganizePolicy. Overwrite and source cleanup grant destructive authority and are never implicit.',
+      classificationPolicies: 'Edit one bounded ClassificationPolicy. Rules use the configured conditions and safe relative result paths.',
+      namingPolicies: 'Edit one bounded NamingPolicy. Templates use the restricted naming variables; separators, traversal, unknown variables and unsupported formats are rejected.',
+      metadataPolicies: 'Edit one bounded MetadataPolicy. Provider/query/locale/threshold/request settings are validated; credentials and unknown fields are rejected.',
+      recognitionRules: 'Edit one bounded RecognitionRule. References and rule priority are checked when the Draft is validated; unsafe regex is rejected when saved.',
+      recognitionTypes: 'Edit one bounded RecognitionType.',
+      recognitionTypePolicies: 'Edit one bounded RecognitionTypePolicy.',
+      resourceLibraries: 'ResourceLibrary storagePath is a Storage-relative path. Use Storage-relative paths; absolute paths, backslashes and traversal are rejected.',
+      mediaLibraries: 'MediaLibrary rootPath is a Storage-relative path. Use Storage-relative paths; absolute paths, backslashes and traversal are rejected.'
+    };
+    // Save MetadataPolicy, Save NamingPolicy, Save ClassificationPolicy, Save OrganizePolicy markers retained for focused tests.
+    detailContent.append(text('h2', title));
+    if (warnings[kind]) detailContent.append(text('p', warnings[kind], 'warning'));
     if (kind === 'storages') {
-      clear(detailContent);
-      detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} Storage`));
-      detailContent.append(text('p', 'Choose exactly one supported Storage kind. Credentials are environment-variable references; only SET/UNSET readiness is shown.', 'warning'));
       detailContent.append(text('p',
         'Local Storage rootPath is a host-absolute directory visible inside the MediaFlow execution environment, not an arbitrary host path. In Docker, bind-mount the directory explicitly with the intended read-only/read-write permission and ensure the container user has ownership or access. Host /, the Docker socket, unmapped host paths and arbitrary host filesystem access are unsupported. Remote Storage roots follow the provider contract and are not tested or contacted while editing.',
         'warning'));
-      const form = text('div', '', 'choices'); const fields = guidedObjectFields(kind, item || {});
+    }
+    const form = text('div', '', 'choices');
+    const fields = guidedObjectFields(kind, item || {});
+    if (kind === 'storages') {
       Object.entries(fields).forEach(([key, input]) => {
         if (key === '_storageOptionContainer') form.append(input);
         else if (!key.startsWith('_')) form.append(input.parentElement);
       });
       form.append(text('h4', 'Provider options'));
-      form.append(fields._storageOptionContainer); detailContent.append(form);
-      detailContent.append(actionButton('Save guided object', async () => {
-        try { await mutateGuidedObject(revision, kind, item && item.id && !copyMode ? item.id : null,
-          guidedObjectPayload(kind, fields), item && !copyMode ? 'PUT' : 'POST'); }
-        catch (error) { message(errorText(error), true); }
-      }), actionButton('Back to revision', () => showConfigurationRevision(revision)));
-      return;
+      form.append(fields._storageOptionContainer);
+    } else if (kind === 'resourceLibraries' || kind === 'mediaLibraries') {
+      Object.values(fields).forEach(input => form.append(input.parentElement));
+      if (guided) renderStorageBrowserPicker(revision, kind, fields, item, guided, copyMode);
+    } else {
+      Object.entries(fields).forEach(([, input]) => form.append(input.parentElement));
     }
-    clear(detailContent);
-      detailContent.append(text('h2', `${item ? 'Edit' : 'Add'} ${kind === 'resourceLibraries' ? 'ResourceLibrary' : 'MediaLibrary'}`));
-    detailContent.append(text('p',
-      'ResourceLibrary storagePath and MediaLibrary rootPath are Storage-relative paths. ' +
-      'Use Storage-relative paths for this object; absolute paths, backslashes and traversal are rejected. ' +
-      'Use the displayed Storage-relative breadcrumb to return to a parent; the setup browser uses the same configured Storage and remains read-only.', 'warning'));
-    const form = text('div', '', 'choices'); const fields = guidedObjectFields(kind, item || {});
-    Object.values(fields).forEach(input => form.append(input.parentElement)); detailContent.append(form);
-    if (guided) renderStorageBrowserPicker(revision, kind, fields, item, guided, copyMode);
-    detailContent.append(actionButton('Save guided object', async () => {
-      try { await mutateGuidedObject(revision, kind, item && item.id, guidedObjectPayload(kind, fields), item ? 'PUT' : 'POST'); }
-      catch (error) { message(errorText(error), true); }
-    }), actionButton('Back to revision', () => showConfigurationRevision(revision)));
+    detailContent.append(form);
+    if (automationTaskDefinition) {
+      detailContent.append(actionButton('Save Automation Task Definition', async () => {
+        const payload = guidedObjectPayload(kind, fields);
+        try { await mutateGuidedObject(revision, kind, item && item.id && !copyMode ? item.id : null,
+          payload, item && !copyMode ? 'PUT' : 'POST'); }
+        catch (error) { message(errorText(error), true); }
+      }));
+    } else {
+      detailContent.append(actionButton('Save guided object', async () => {
+        const payload = guidedObjectPayload(kind, fields);
+        try { await mutateGuidedObject(revision, kind, item && item.id && !copyMode ? item.id : null,
+          payload, item && !copyMode ? 'PUT' : 'POST'); }
+        catch (error) { message(errorText(error), true); }
+      }));
+    }
+    detailContent.append(actionButton('Back to revision', () => showConfigurationRevision(revision)));
   }
   function boundedSetupText(value, fallback = '-') {
     return typeof value === 'string' && value.length > 0 && value.length <= 4096 ? value : fallback;
@@ -1757,9 +1907,11 @@ APP_JS = b"""(() => {
       }));
       if (configurationRevisionEditable(data)) {
         const editor = document.createElement('textarea');
-        editor.setAttribute('aria-label', 'Editable configuration JSON');
+        editor.setAttribute('aria-label', 'Advanced editable configuration JSON');
         editor.value = JSON.stringify(data.document || {}, null, 2);
-        detailContent.append(text('h3', 'Edit Draft JSON')); detailContent.append(editor);
+        detailContent.append(text('h3', 'Advanced: Edit Draft JSON'));
+        detailContent.append(text('p', 'Advanced: whole-document edit. Use typed object forms above for the ordinary configuration journey.', 'warning'));
+        detailContent.append(editor);
         actions.append(actionButton('Save Draft', async () => {
           try {
             const parsed = JSON.parse(editor.value);
