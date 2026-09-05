@@ -1,10 +1,186 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 28.1 — Forms-first Successor Draft and Configuration Object Lifecycle
 
-Current Slice: 28 — Web-first Configuration and Operations Administration
-Slice Status: ACTIVE
+This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
+the current [`SLICE.md`](SLICE.md).
 
-Slice 28 has been activated by A. B must read the committed Slice Contract and plan the first
-coherent implementation Task inside its Required Outcomes and Required Surfaces.
-Task planning must not expand the Slice, weaken its safety invariants or activate Slice 29.
+```text
+Task ID: 28.1
+Parent Slice: 28 — Web-first Configuration and Operations Administration
+Status: PLANNED
+Task Base: 380362e2bd54c4bc3b051c0081bc001c7f39ad50
+Difficulty: High
+Test Level: T4
+Planner / Reviewer: B
+```
 
-Next Action: B PLANS FIRST TASK
+## Goal
+
+Complete the first vertical Slice 28 behavior: an authenticated operator can enter the Configuration
+journey from the exact Active revision, create an explicit successor Draft, and manage the existing
+canonical configuration object graph through consistent discoverable Web forms/cards and the same
+versioned API behavior. This advances RO-1 and the exact-authority portions of RO-2 without changing
+the Active snapshot or execution authority.
+
+## Why This Task Exists
+
+The repository already provides managed revisions, object services, reference protection, optimistic
+versioning and many guided controls, but the required day-2 journey remains JSON-first and inconsistent:
+there is no natural `Edit Active by creating Draft` entry path, and the operator must discover object
+forms only after opening a revision. The first Task must establish the shared forms-first lifecycle and
+its API/Web parity before adding the separate System Settings, package exchange or Webhook journeys.
+
+This is the largest reasonable first unit because it crosses the existing configuration domain,
+persistence/audit behavior, Application services, versioned API and Operator Web while preserving one
+coherent user outcome. It is high risk because it touches Active configuration authority, optimistic
+concurrency, permissions, redaction and activation gating.
+
+## Implementation Scope
+
+```text
+Domain / configuration contracts
+→ managed Draft successor and object lifecycle behavior
+→ persistence of exact revision/version/digest, references and redacted audit
+→ Application service behavior and bounded failure/recovery projections
+→ versioned API routes and RBAC
+→ Operator Web Configuration entry, forms/cards and Advanced JSON boundary
+→ focused, integration and full regression tests
+```
+
+The Task may update only the implementation needed for the following behavior:
+
+- Add or complete an explicit Active-to-successor-Draft action using the immutable Active document as
+  the only source after managed activation. Missing, corrupt or unavailable Active state fails closed
+  with an actionable recovery result.
+- Provide a consistent forms-first Web/API lifecycle for the existing managed graph: Storage,
+  ResourceLibrary, MediaLibrary, RecognitionType, RecognitionRule, RecognitionTypePolicy,
+  MetadataPolicy, NamingPolicy, ClassificationPolicy, OrganizePolicy and Automation Task Definition.
+  The applicable create, edit, copy, enable, disable, delete, reference-impact and safe-test actions
+  must use shared application behavior.
+- Make reference/dependent impact visible and preserve the existing rule that referenced deletion is
+  blocked while a valid unreferenced object can be deleted. Invalid edits and failed operations must
+  leave the current Draft, Active revision and prior evidence in a recoverable durable state.
+- Make the ordinary Web Configuration entry discoverable through typed forms/cards. Keep whole-document
+  JSON explicitly labelled as Advanced JSON/support behavior and route it through the same validation,
+  concurrency, audit, redaction and revision authority as forms.
+- Preserve exact revision ID/version/digest checks, stale-writer conflicts, validation/evidence
+  invalidation and checked-activation gates. This Task must not make Active mutable or make a Draft,
+  JSON payload or stale process state appear Active.
+- Expose bounded, secret-free success, failure and recovery state in both API and Web, including
+  permission failures, validation errors, reference conflicts, stale concurrency and unavailable
+  Active/Draft recovery.
+
+Files and areas explicitly frozen unless a directly required compatibility adjustment is proven:
+
+- `SLICE.md`, `docs/roadmap.md`, `docs/progress.md`, product requirements, Product Experience and
+  Architecture contracts.
+- System Settings consumption and editing, versioned configuration/result package import/export,
+  Webhook definition/test/delivery management and recovery; those are later Slice 28 Tasks.
+- Slice 29 Docker/Compose release and every Explicitly Deferred item in `SLICE.md`.
+- The Storage mutation boundary, OrganizerExecutor, media-processing pipeline, Worker/Scheduler
+  authority and existing Slice 26/27 behavior.
+
+## Acceptance Criteria
+
+- [ ] An authenticated Web operator can select the current Active revision and create a clearly
+      labelled successor Draft without editing JSON or touching SQLite directly; the API exposes the
+      same action and returns the exact new revision identity.
+- [ ] Active and Superseded revisions remain immutable; a failed/missing/corrupt Active or invalid
+      successor request fails closed, preserves the prior durable authority and gives an actionable
+      recovery path.
+- [ ] The required existing configuration object families are reachable through consistent typed
+      Web forms/cards and versioned API operations, including create/edit/copy/enable/disable/delete
+      where applicable, with reference impact visible and referenced deletion blocked.
+- [ ] Web and API use one Application behavior for validation, permissions, optimistic concurrency,
+      audit, redaction, bounds, state transitions and errors; stale writers cannot silently replace a
+      newer Draft.
+- [ ] Advanced JSON is explicitly labelled, is not required for the ordinary object journey, and
+      cannot silently activate or bypass validation, reference protection, audit or concurrency rules.
+- [ ] Every edit invalidates prior exact-revision evidence as required; checked activation continues to
+      require current validation, Strategy Test, Storage checks and destination precheck evidence from
+      the same revision, and activation itself starts no media work.
+- [ ] Success, invalid input, permission denial, reference conflict, stale revision, unavailable
+      Active and recovery paths are visible and bounded in both Web/API responses without secret
+      leakage.
+- [ ] No Scanner, Parser, Recognition, Metadata, Naming, Classification or Planner mutation is
+      introduced; no OrganizerExecutor, Storage, Task, Job, Worker or Scheduler authority is widened.
+- [ ] Required tests and the assigned T4 validation pass, with any pre-existing/unrelated failures
+      identified by reproducible evidence rather than hidden or reclassified.
+- [ ] The checkpoint contains only this Task's coherent implementation and tests; no private config,
+      credentials, media, `config/alist.json` or unrelated user work is included.
+
+## Required Tests
+
+Focused and related tests:
+
+```bash
+python -m unittest \
+  tests.test_configuration_management \
+  tests.test_configuration_objects \
+  tests.test_configuration_status \
+  tests.test_storage_configuration_management \
+  tests.test_operator_ui
+```
+
+T4 quality and regression gates:
+
+```bash
+python scripts/check_governance.py
+python -m unittest discover -s tests
+ruff format --check .
+ruff check .
+python -m compileall -q mediaflow tests scripts
+python -m pip check
+git diff --check
+```
+
+The Developer must also add or update focused tests for the successor-Draft Web/API journey, forms/API
+parity, reference impact, stale concurrency, failure/recovery, redaction and Active immutability.
+Tests must use fakes/local services and temporary paths; production Storage, TMDB, Webhook endpoints,
+credentials and real media are not permitted. Any external-service skip must remain explicit and be
+reported with its reason.
+
+## Non-goals
+
+- Work outside the Slice 28 Contract or any change to its Required Outcomes, Required Surfaces,
+  Safety Invariants, Base SHA or Explicitly Deferred scope.
+- System Settings consumption/editing, configuration/result package import/export, Webhook definition
+  management/test/delivery recovery or Slice 29 Docker release.
+- Provider switching, built-in identity/OIDC, general Secret Store, automatic uncertain-mutation
+  replay, historical rollback, distributed workers or new Storage providers.
+- Media scanning, parsing, recognition, organization, Storage mutation, Worker/Scheduler redesign or
+  a second configuration/notification engine.
+- Optional copy polish, extra test-only micro-Tasks, broad refactors or changes to stable requirement
+  documents.
+
+## Developer Completion Report
+
+### Changed Files
+
+### Implemented
+
+### Tests and Results
+
+### Decisions
+
+### Remaining In-Slice Work
+
+### Risks / Deviations
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: [full SHA]
+```
+
+## B Review Result
+
+```text
+Reviewed: [Head SHA or Task Base..Head]
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
+```
+
+If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
+finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
