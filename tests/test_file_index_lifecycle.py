@@ -30,7 +30,7 @@ from mediaflow.domain.task_persistence import (
 from mediaflow.domain.tasks import TaskStatus
 from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.operator_ui import ASSETS
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_scanner import FakeStorage
@@ -632,7 +632,7 @@ class FileIndexLifecycleTests(unittest.TestCase):
                     (31,),
                 )
             with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(32, repository.schema_version)
+                self.assertEqual(SCHEMA_VERSION, repository.schema_version)
                 self.assertIsNotNone(repository.get_task("task-legacy"))
                 self.assertEqual("movie.mkv", repository.get_item("item-legacy").source_path)
                 self.assertEqual(1, len(repository.list_results("task-legacy")))

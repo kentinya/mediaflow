@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 import copy
+import dataclasses
 import io
 import json
 import tempfile
@@ -135,6 +134,72 @@ class StaleJobVisibilityTests(unittest.TestCase):
         for forbidden in ("requeue", "cancel", "retry", "execute"):
             self.assertNotIn(f"actionButton('{forbidden}", stale_section.lower())
 
+    def test_running_job_projects_worker_ownership_and_last_alive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                # Register worker
+                repository.register_worker(
+                    worker_id="w-123",
+                    label="worker-node-1",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("scan",),
+                    configuration_snapshot_id="cfg-1",
+                    configuration_snapshot_digest="sha256:test",
+                    runtime_schema_version=33,
+                    now=NOW,
+                )
+                # Create running job owned by w-123
+                job = dataclasses.replace(
+                    self._job("running-job", NOW, AutomationJobStatus.RUNNING),
+                    worker_id="w-123",
+                )
+                repository.create_job(job)
+                # Query via API
+                api = self._api(repository)
+                statuses: list[str] = []
+                environ = {
+                    "REQUEST_METHOD": "GET",
+                    "PATH_INFO": "/api/v1/jobs/running-job",
+                    "QUERY_STRING": "",
+                    "CONTENT_LENGTH": "0",
+                    "REMOTE_ADDR": "127.0.0.1",
+                    "HTTP_AUTHORIZATION": "Bearer viewer-token",
+                    "wsgi.input": io.BytesIO(),
+                }
+                body = b"".join(api(environ, lambda status, headers: statuses.append(status)))
+                self.assertEqual(int(statuses[0].split()[0]), 200)
+                doc = json.loads(body)
+                self.assertEqual(doc["workerId"], "w-123")
+                self.assertEqual(doc["ownerLastHeartbeatAt"], NOW.isoformat())
+                # No secrets or claim token exposed
+                self.assertNotIn("claim_token", doc)
+                self.assertNotIn("claimToken", doc)
+
+    def test_pending_job_with_no_worker_projects_operational_condition(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                # No worker registered
+                job = self._job("pending-job", NOW - timedelta(minutes=10), AutomationJobStatus.PENDING)
+                repository.create_job(job)
+                api = self._api(repository)
+                statuses: list[str] = []
+                environ = {
+                    "REQUEST_METHOD": "GET",
+                    "PATH_INFO": "/api/v1/jobs/pending-job",
+                    "QUERY_STRING": "",
+                    "CONTENT_LENGTH": "0",
+                    "REMOTE_ADDR": "127.0.0.1",
+                    "HTTP_AUTHORIZATION": "Bearer viewer-token",
+                    "wsgi.input": io.BytesIO(),
+                }
+                body = b"".join(api(environ, lambda status, headers: statuses.append(status)))
+                self.assertEqual(int(statuses[0].split()[0]), 200)
+                doc = json.loads(body)
+                condition = doc.get("operationalCondition")
+                self.assertIsNotNone(condition)
+                self.assertEqual(condition["condition"], "no_worker")
+                self.assertEqual(condition["sideEffects"], "none")
+                self.assertTrue(condition["retrySafe"])
     @staticmethod
     def _api(repository):
         principal = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))

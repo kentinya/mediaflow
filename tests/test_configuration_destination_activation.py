@@ -889,7 +889,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 self.assertEqual(activated.status.value, "active")
                 self._assert_runtime_empty(runtime_database)
                 self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 10)
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 32)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 33)
 
     def test_api_blocked_and_satisfied_use_existing_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

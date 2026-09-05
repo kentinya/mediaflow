@@ -10,7 +10,7 @@ from enum import Enum
 from urllib.parse import parse_qs
 from uuid import uuid4
 
-from mediaflow.application.automation import AutomationJobService
+from mediaflow.application.automation import AutomationJobService, ProcessingWorkerService
 from mediaflow.application.automation_definition_occurrence import (
     AutomationDefinitionOccurrenceService,
 )
@@ -58,6 +58,8 @@ from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationQueueFull,
     AutomationTaskDefinition,
+    WorkerReadiness,
+    ProcessingWorker,
 )
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
@@ -198,6 +200,7 @@ class MediaFlowApi:
         manual_scan_service: ManualScanService | None = None,
         automation_preview_service: AutomationTaskDefinitionPreviewService | None = None,
         management_only: bool = False,
+        worker_service: ProcessingWorkerService | None = None,
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -338,6 +341,18 @@ class MediaFlowApi:
             continuation_service=self._recovery_continuation,
             admission_service=self._recovery_admission,
         )
+        self._worker_service = worker_service
+        if self._worker_service is None:
+            try:
+                has_worker = hasattr(repository, "register_worker")
+            except AssertionError:
+                has_worker = False
+            if has_worker:
+                self._worker_service = ProcessingWorkerService(
+                    repository,
+                    active_configuration_snapshot_id=configuration_snapshot_id,
+                    active_configuration_snapshot_digest=configuration_snapshot_digest,
+                )
         self._runtime_binding_lock = threading.RLock()
         self._runtime_binding = self._build_runtime_binding(
             snapshot_id=configuration_snapshot_id,
@@ -1005,6 +1020,7 @@ class MediaFlowApi:
         ]
         management_readiness_route = parts == ["api", "v1", "management", "readiness"]
         task_read_route = parts[:3] == ["api", "v1", "tasks"] and method == "GET"
+        worker_route = parts[:3] == ["api", "v1", "workers"]
         if self._is_management_only_setup() and self._is_workflow_producing_route(method, parts):
             raise RuntimeConfigurationNotConfigured()
         binding = self._runtime_binding
@@ -1013,6 +1029,7 @@ class MediaFlowApi:
             and not management_readiness_route
             and not automation_definition_route
             and not task_read_route
+            and not worker_route
         ):
             binding = self._refresh_configuration_binding()
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
@@ -1685,6 +1702,49 @@ class MediaFlowApi:
                 start_response,
                 200,
                 self._management_readiness_document(principal),
+            )
+        if parts == ["api", "v1", "workers", "readiness"]:
+            if method != "GET":
+                return self._error(
+                    start_response, 405, "method_not_allowed", "GET required"
+                )
+            self._require_empty_query(environ, "worker readiness")
+            self._require(principal, ApiPermission.READ)
+            if self._worker_service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "processing worker service is unavailable",
+                )
+            return self._response(
+                start_response,
+                200,
+                self._worker_readiness_document(principal),
+            )
+        if parts == ["api", "v1", "workers"]:
+            if method != "GET":
+                return self._error(
+                    start_response, 405, "method_not_allowed", "GET required"
+                )
+            limit = self._parse_bounded_limit(
+                parse_qs(
+                    str(environ.get("QUERY_STRING", "")), keep_blank_values=True
+                ).get("limit", ["50"])[0],
+                "worker",
+            )
+            self._require(principal, ApiPermission.READ)
+            if self._worker_service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "processing worker service is unavailable",
+                )
+            return self._response(
+                start_response,
+                200,
+                self._workers_document(principal, limit=limit),
             )
         if parts == ["api", "v1", "configuration", "status"]:
             if method != "GET":
@@ -4425,7 +4485,7 @@ class MediaFlowApi:
                 else None
             )
             manual_scan = None
-            if binding.manual_scans is not None:
+            if binding is not None and binding.manual_scans is not None:
                 try:
                     scan_after = (
                         item_cursor.position
@@ -4728,7 +4788,7 @@ class MediaFlowApi:
                     start_response,
                     200,
                     {
-                        "items": [self._value(item) for item in page],
+                        "items": [self._job_document(item) for item in page],
                         "limit": limit,
                         "truncated": has_next,
                         "previous_cursor": self._page_cursor(
@@ -4767,19 +4827,19 @@ class MediaFlowApi:
                     if unsupported:
                         raise ValueError(f"unsupported DryRun job field {sorted(unsupported)[0]!r}")
                     job = binding.jobs.submit(command, limit=document.get("limit"))
-                return self._response(start_response, 202, self._value(job))
+                return self._response(start_response, 202, self._job_document(job))
         if len(parts) == 4 and parts[:3] == ["api", "v1", "jobs"] and method == "GET":
             job = self._repository.get_job(parts[3])
             if job is None:
                 raise LookupError(f"automation job {parts[3]!r} was not found")
-            return self._response(start_response, 200, self._value(job))
+            return self._response(start_response, 200, self._job_document(job))
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
             if method != "POST":
                 return self._error(start_response, 405, "method_not_allowed", "POST required")
             self._require(principal, ApiPermission.CANCEL_JOB)
             self._require_empty_query(environ, "job cancellation")
             self._require_empty_body(environ, "job cancellation")
-            return self._response(start_response, 200, self._value(binding.jobs.cancel(parts[3])))
+            return self._response(start_response, 200, self._job_document(binding.jobs.cancel(parts[3])))
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "requeue-stale":
             if method != "POST":
                 return self._error(start_response, 405, "method_not_allowed", "POST required")
@@ -4796,7 +4856,7 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 200,
-                self._value(
+                self._job_document(
                     binding.jobs.requeue_stale(
                         parts[3],
                         age_seconds=binding.stale_job_age_seconds,
@@ -4914,6 +4974,59 @@ class MediaFlowApi:
             "nextAction": status.get("nextAction"),
             "canManageConfiguration": status.get("canManageConfiguration", False),
             "canActivateConfiguration": status.get("canActivateConfiguration", False),
+        }
+
+    def _worker_readiness_document(
+        self,
+        principal: ResolvedApiPrincipal,
+    ) -> dict[str, object]:
+        """Worker readiness document (GET /api/v1/workers/readiness)."""
+        self._require(principal, ApiPermission.READ)
+        if self._worker_service is None:
+            return {
+                "ready": False,
+                "condition": WorkerReadiness.NO_WORKER.value,
+                "category": WorkerReadiness.NO_WORKER.value,
+                "durableState": "processing worker service is unavailable",
+                "sideEffects": "none",
+                "retrySafe": True,
+                "nextAction": "contact system administrator",
+                "activeWorkersCount": 0,
+                "activeSnapshotId": None,
+                "activeSnapshotDigest": None,
+            }
+        readiness = self._worker_service.evaluate_readiness()
+        return redact_manual_value({
+            "ready": readiness.get("ready", False),
+            "condition": readiness.get("condition", WorkerReadiness.NO_WORKER.value),
+            "category": readiness.get("condition", None) if not readiness.get("ready") else None,
+            "durableState": readiness.get("durableState", ""),
+            "sideEffects": readiness.get("sideEffects", "none"),
+            "retrySafe": readiness.get("retrySafe", True),
+            "nextAction": readiness.get("nextAction", ""),
+            "activeWorkersCount": readiness.get("liveWorkers", 0),
+            "activeSnapshotId": None,
+            "activeSnapshotDigest": None,
+        })
+
+    def _workers_document(
+        self,
+        principal: ResolvedApiPrincipal,
+        limit: int = 50,
+    ) -> dict[str, object]:
+        """Workers list document (GET /api/v1/workers)."""
+        self._require(principal, ApiPermission.READ)
+        if self._worker_service is None:
+            return {
+                "workers": [],
+                "count": 0,
+            }
+        workers = self._worker_service.list_workers()
+        # Apply limit to the list (repository list_workers returns all, we slice)
+        limited_workers = workers[:limit]
+        return {
+            "workers": [self._value(worker) for worker in limited_workers],
+            "count": len(workers),
         }
 
     @staticmethod
@@ -6692,6 +6805,37 @@ class MediaFlowApi:
             headers.append(("WWW-Authenticate", 'Bearer realm="mediaflow"'))
         start_response(f"{status} {labels[status]}", headers)
         return [body]
+    def _job_document(self, job) -> dict[str, object]:
+        """Project a Job for API responses, including worker ownership evidence
+        (workerId, ownerLastHeartbeatAt) for RUNNING Jobs and operational
+        condition (no-worker / stale-worker) for PENDING Jobs that have waited
+        beyond the bounded threshold.
+        """
+        document = self._value(job)
+        status_value = document.get("status")
+        if status_value == "running":
+            worker_id = document.get("worker_id") or document.get("workerId")
+            if worker_id and self._worker_service is not None:
+                worker = self._worker_service.get_worker(worker_id)
+                if worker is not None:
+                    document["workerId"] = worker_id
+                    document["ownerLastHeartbeatAt"] = worker.last_heartbeat_at.isoformat()
+                else:
+                    document["workerId"] = worker_id
+                    document["ownerLastHeartbeatAt"] = None
+        elif status_value == "pending":
+            if self._worker_service is not None:
+                readiness = self._worker_service.evaluate_readiness()
+                if not readiness.get("ready"):
+                    document["operationalCondition"] = {
+                        "condition": readiness.get("condition"),
+                        "stage": "pending",
+                        "durableState": readiness.get("durableState"),
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": readiness.get("nextAction"),
+                    }
+        return document
 
     @classmethod
     def _error(

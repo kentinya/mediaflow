@@ -22,14 +22,18 @@ from mediaflow.domain.automation import (
     AutomationTaskRunMode,
     CronSchedule,
     IntervalSchedule,
+    ProcessingWorker,
+    ProcessingWorkerRepository,
     ScheduleDefinition,
     SchedulerConfigurationSnapshot,
+    WorkerReadiness,
+    WorkerStatus,
+    validate_worker_label,
 )
 from mediaflow.domain.cron import CronExpression
 from mediaflow.domain.notification import NotificationEvent, NotificationEventType
 
 MAX_AUTOMATION_JOB_LIMIT = 10_000
-
 
 class AutomationCancelled(RuntimeError):
     def __init__(self, task_id: str | None = None) -> None:
@@ -152,6 +156,187 @@ class AutomationJobService:
         return self._repository.requeue_stale_job(job_id, now - timedelta(seconds=age_seconds), now)
 
 
+class ProcessingWorkerService:
+    """Manages worker registration, heartbeats, clean stops, and fail-closed readiness."""
+
+    def __init__(
+        self,
+        repository: ProcessingWorkerRepository,
+        *,
+        active_configuration_snapshot_id: str | None = None,
+        active_configuration_snapshot_digest: str | None = None,
+        runtime_schema_version: int = 33,
+        stale_threshold_multiplier: float = 3.0,
+        minimum_stale_threshold_seconds: float = 10.0,
+    ) -> None:
+        self._repository = repository
+        self._active_configuration_snapshot_id = active_configuration_snapshot_id
+        self._active_configuration_snapshot_digest = active_configuration_snapshot_digest
+        self._runtime_schema_version = runtime_schema_version
+        self._stale_threshold_multiplier = stale_threshold_multiplier
+        self._minimum_stale_threshold_seconds = minimum_stale_threshold_seconds
+
+    def register_worker(
+        self,
+        worker_id: str,
+        label: str,
+        heartbeat_interval_seconds: float,
+        supported_commands: tuple[str, ...],
+        configuration_snapshot_id: str | None = None,
+        configuration_snapshot_digest: str | None = None,
+        runtime_schema_version: int | None = None,
+        now: datetime | None = None,
+    ) -> ProcessingWorker:
+        validated_label = validate_worker_label(label)
+        schema_version = (
+            runtime_schema_version
+            if runtime_schema_version is not None
+            else self._runtime_schema_version
+        )
+        current_now = now or datetime.now(UTC)
+        return self._repository.register_worker(
+            worker_id=worker_id,
+            label=validated_label,
+            heartbeat_interval_seconds=float(heartbeat_interval_seconds),
+            supported_commands=supported_commands,
+            configuration_snapshot_id=configuration_snapshot_id,
+            configuration_snapshot_digest=configuration_snapshot_digest,
+            runtime_schema_version=schema_version,
+            now=current_now,
+        )
+
+    def heartbeat_worker(self, worker_id: str, now: datetime | None = None) -> bool:
+        current_now = now or datetime.now(UTC)
+        return self._repository.heartbeat_worker(worker_id, current_now)
+
+    def stop_worker(self, worker_id: str, now: datetime | None = None) -> ProcessingWorker:
+        current_now = now or datetime.now(UTC)
+        return self._repository.stop_worker(worker_id, current_now)
+
+    def get_worker(self, worker_id: str) -> ProcessingWorker | None:
+        return self._repository.get_worker(worker_id)
+
+    def list_workers(self, now: datetime | None = None) -> tuple[ProcessingWorker, ...]:
+        current_now = now or datetime.now(UTC)
+        raw_workers = self._repository.list_workers()
+        evaluated: list[ProcessingWorker] = []
+        for worker in raw_workers:
+            if worker.status == WorkerStatus.STOPPED:
+                evaluated.append(worker)
+            else:
+                threshold = max(
+                    worker.heartbeat_interval_seconds * self._stale_threshold_multiplier,
+                    self._minimum_stale_threshold_seconds,
+                )
+                if (current_now - worker.last_heartbeat_at).total_seconds() > threshold:
+                    evaluated.append(replace(worker, status=WorkerStatus.STALE))
+                else:
+                    evaluated.append(worker)
+        return tuple(evaluated)
+
+    def evaluate_readiness(
+        self,
+        now: datetime | None = None,
+        *,
+        active_snapshot_id: str | None = None,
+        active_snapshot_digest: str | None = None,
+        runtime_schema_version: int | None = None,
+    ) -> dict[str, object]:
+        current_now = now or datetime.now(UTC)
+        workers = self.list_workers(current_now)
+        expected_snapshot_id = (
+            active_snapshot_id
+            if active_snapshot_id is not None
+            else self._active_configuration_snapshot_id
+        )
+        expected_snapshot_digest = (
+            active_snapshot_digest
+            if active_snapshot_digest is not None
+            else self._active_configuration_snapshot_digest
+        )
+        expected_schema_version = (
+            runtime_schema_version
+            if runtime_schema_version is not None
+            else self._runtime_schema_version
+        )
+
+        live_workers = [w for w in workers if w.status == WorkerStatus.LIVE]
+        stale_workers = [w for w in workers if w.status == WorkerStatus.STALE]
+        stopped_workers = [w for w in workers if w.status == WorkerStatus.STOPPED]
+
+        if not live_workers:
+            if stale_workers:
+                condition = WorkerReadiness.STALE_WORKER.value
+                durable_state = "all registered processing workers have stale heartbeats"
+                next_action = "restart the resident worker process to resume queue consumption"
+            else:
+                condition = WorkerReadiness.NO_WORKER.value
+                durable_state = "no processing worker is registered"
+                next_action = "start a resident worker with the active configuration"
+            ready = False
+        else:
+            matching = [
+                w
+                for w in live_workers
+                if (
+                    expected_snapshot_id is None
+                    or w.configuration_snapshot_id == expected_snapshot_id
+                )
+                and (
+                    expected_snapshot_digest is None
+                    or w.configuration_snapshot_digest == expected_snapshot_digest
+                )
+                and (
+                    expected_schema_version is None
+                    or w.runtime_schema_version == expected_schema_version
+                )
+            ]
+            if not matching:
+                condition = WorkerReadiness.SNAPSHOT_MISMATCH.value
+                durable_state = (
+                    "registered workers are bound to mismatched configuration snapshots"
+                )
+                next_action = (
+                    "restart resident workers with the active configuration snapshot"
+                )
+                ready = False
+            else:
+                condition = WorkerReadiness.READY.value
+                durable_state = "resident processing worker is live and ready"
+                next_action = "none"
+                ready = True
+
+        return {
+            "ready": ready,
+            "condition": condition,
+            "category": condition if not ready else None,
+            "durableState": durable_state,
+            "sideEffects": "none",
+            "retrySafe": True,
+            "nextAction": next_action,
+            "asOf": current_now.isoformat(),
+            "liveWorkers": len(live_workers),
+            "staleWorkers": len(stale_workers),
+            "stoppedWorkers": len(stopped_workers),
+            "totalWorkers": len(workers),
+        }
+
+
+def evaluate_pending_job_operational_condition(
+    readiness: dict[str, object],
+) -> dict[str, object] | None:
+    if readiness.get("ready"):
+        return None
+    return {
+        "condition": readiness.get("condition"),
+        "stage": "pending",
+        "durableState": readiness.get("durableState"),
+        "sideEffects": "none",
+        "retrySafe": True,
+        "nextAction": readiness.get("nextAction"),
+    }
+
+
 class AutomationWorker:
     """Claims one durable job and delegates the existing workflow to its injected handler."""
 
@@ -160,13 +345,75 @@ class AutomationWorker:
         repository: AutomationJobRepository,
         handler: Callable[[AutomationJob, Callable[[], bool]], str | None],
         notifications: NotificationPublisher | None = None,
+        *,
+        worker_id: str | None = None,
+        label: str | None = None,
+        heartbeat_interval_seconds: float = 5.0,
+        supported_commands: tuple[str, ...] | None = None,
+        configuration_snapshot_id: str | None = None,
+        configuration_snapshot_digest: str | None = None,
+        runtime_schema_version: int = 33,
     ) -> None:
         self._repository = repository
         self._handler = handler
         self._notifications = notifications
+        self._worker_id = worker_id or f"worker-{uuid4().hex[:12]}"
+        self._label = validate_worker_label(label or f"worker-{self._worker_id[-6:]}")
+        self._heartbeat_interval_seconds = max(0.1, float(heartbeat_interval_seconds))
+        self._supported_commands = (
+            supported_commands
+            if supported_commands is not None
+            else tuple(c.value for c in AutomationCommand)
+        )
+        self._configuration_snapshot_id = configuration_snapshot_id
+        self._configuration_snapshot_digest = configuration_snapshot_digest
+        self._runtime_schema_version = runtime_schema_version
+        self._registered = False
+
+    @property
+    def worker_id(self) -> str:
+        return self._worker_id
+
+    @property
+    def label(self) -> str:
+        return self._label
+
+    def register(self, now: datetime | None = None) -> ProcessingWorker | None:
+        if not hasattr(self._repository, "register_worker"):
+            return None
+        current_now = now or datetime.now(UTC)
+        worker = self._repository.register_worker(
+            worker_id=self._worker_id,
+            label=self._label,
+            heartbeat_interval_seconds=self._heartbeat_interval_seconds,
+            supported_commands=self._supported_commands,
+            configuration_snapshot_id=self._configuration_snapshot_id,
+            configuration_snapshot_digest=self._configuration_snapshot_digest,
+            runtime_schema_version=self._runtime_schema_version,
+            now=current_now,
+        )
+        self._registered = True
+        return worker
+
+    def heartbeat(self, now: datetime | None = None) -> bool:
+        if not hasattr(self._repository, "heartbeat_worker"):
+            return True
+        current_now = now or datetime.now(UTC)
+        return self._repository.heartbeat_worker(self._worker_id, current_now)
+
+    def stop(self, now: datetime | None = None) -> ProcessingWorker | None:
+        if not hasattr(self._repository, "stop_worker"):
+            return None
+        current_now = now or datetime.now(UTC)
+        return self._repository.stop_worker(self._worker_id, current_now)
 
     def run_next(self) -> AutomationJob | None:
-        job = self._repository.claim_next_job(datetime.now(UTC))
+        if not self._registered and hasattr(self._repository, "register_worker"):
+            self.register()
+        job = self._repository.claim_next_job(
+            datetime.now(UTC),
+            worker_id=self._worker_id if hasattr(self._repository, "register_worker") else None,
+        )
         if job is None:
             return None
         try:
@@ -274,7 +521,10 @@ class AutomationWorker:
                 raise AutomationClaimLost(
                     "automation Job disappeared after claim ownership was lost"
                 )
-            return current
+            raise AutomationClaimLost(
+                f"automation Job {job.job_id!r} claim ownership was lost; "
+                "stale terminal commit refused"
+            )
         persisted = self._repository.get_job(job.job_id)
         if persisted is None:
             raise AutomationClaimLost("automation Job disappeared after terminal commit")
@@ -313,12 +563,23 @@ class AutomationWorker:
     ) -> int:
         if poll_seconds <= 0:
             raise ValueError("worker poll interval must be positive")
+        self.register()
         processed = 0
-        while not stop_requested():
-            if self.run_next() is None:
-                sleep(poll_seconds)
-            else:
-                processed += 1
+        try:
+            while not stop_requested():
+                if not self.heartbeat():
+                    raise RuntimeError(
+                        f"processing worker {self._worker_id!r} lost registration or was stopped"
+                    )
+                if self.run_next() is None:
+                    sleep(poll_seconds)
+                else:
+                    processed += 1
+        finally:
+            try:
+                self.stop()
+            except Exception:
+                pass
         return processed
 
 
