@@ -1414,6 +1414,26 @@ class CurrentSourcePreviewWebTests(unittest.TestCase):
         self.assertIn("Open blocker resolution", execution_body)
         self.assertIn("showCheckpointBlocker(blocker.resolution_path)", execution_body)
 
+    def test_manual_recovery_link_controls_are_served_and_bounded(self) -> None:
+        script = APP_JS.decode("utf-8")
+        item_body = _js_function_body(script, "showTaskItem")
+        self.assertIn("Continued manual Organize authority", item_body)
+        self.assertIn("recoveryLink.status === 'authorized'", item_body)
+        self.assertIn("confirmManualRecoveryExecute(taskId, itemId, recoveryLink)", item_body)
+        self.assertIn("continuation.status === 'completed'", item_body)
+        self.assertIn(
+            "confirmManualRecoveryAuthorize(taskId, itemId, data.checkpoint_version)", item_body
+        )
+        authorize = _js_function_body(script, "confirmManualRecoveryAuthorize")
+        self.assertIn("`/api/v1/tasks/${encodeURIComponent(taskId)}/items/` +", authorize)
+        self.assertIn("`${encodeURIComponent(itemId)}/recovery/authorize-organize`", authorize)
+        self.assertIn("confirmation: true", authorize)
+        execute = _js_function_body(script, "confirmManualRecoveryExecute")
+        self.assertIn("/api/v1/manual-recovery-links/", execute)
+        self.assertIn("encodeURIComponent(link.link_id)", execute)
+        self.assertIn("confirmation: true", execute)
+        self.assertIn("actionButton('Do not execute', () => confirmation.remove())", execute)
+
 
 if __name__ == "__main__":
     unittest.main()

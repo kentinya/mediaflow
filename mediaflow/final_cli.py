@@ -3232,7 +3232,7 @@ def _run_recovery_continuation(
         try:
             if cancellation_check():
                 raise AutomationCancelled()
-            prepared = continuation_service.prepare(job.job_id)
+            prepared = continuation_service.prepare(job.job_id, file_index=file_index)
             continuation_service.started(job.job_id)
             started = True
             if cancellation_check():
@@ -3257,6 +3257,71 @@ def _run_recovery_continuation(
                 raise ValueError(
                     "task item references missing ResourceLibrary "
                     f"{prepared.source_item.resource_library_id!r}"
+                )
+            stored = prepared.source_item
+            source_key = (stored.storage_id, stored.source_path)
+            conflict_decisions = {
+                (value.source_storage_id, value.source_path): value
+                for value in repository.list_confirmations(status=ConfirmationStatus.RESOLVED)
+                if value.item_id == stored.item_id
+            }
+            metadata_selections = {}
+            metadata_review = repository.get_metadata_review_for_item(stored.item_id)
+            if (
+                metadata_review is not None
+                and metadata_review.status is MetadataReviewStatus.RESOLVED
+                and metadata_review.selected_provider is not None
+                and metadata_review.selected_provider_id is not None
+                and metadata_review.selected_media_type is not None
+            ):
+                metadata_selections[source_key] = MetadataSelection(
+                    metadata_review.recognition_type,
+                    metadata_review.metadata_policy_id,
+                    metadata_review.selected_provider,
+                    metadata_review.selected_provider_id,
+                    metadata_review.selected_media_type,
+                )
+            metadata_corrections = {}
+            correction = repository.get_metadata_correction_for_item(stored.item_id)
+            if (
+                correction is not None
+                and correction.status is MetadataCorrectionStatus.RESOLVED
+                and correction.corrected_media_type is not None
+            ):
+                metadata_corrections[source_key] = MetadataCorrectionSelection(
+                    correction.recognition_type,
+                    correction.metadata_policy_id,
+                    correction.provider_id,
+                    correction.corrected_query,
+                    correction.corrected_year,
+                    correction.corrected_media_type,
+                    correction.direct_provider_id,
+                )
+            classification_selections = {}
+            classification_review = repository.get_classification_review_for_item(stored.item_id)
+            if (
+                classification_review is not None
+                and classification_review.status is ClassificationReviewStatus.RESOLVED
+                and classification_review.selected_rule_id is not None
+                and classification_review.selected_media_library_id is not None
+                and classification_review.selected_relative_path is not None
+            ):
+                classification_selections[source_key] = ClassificationSelection(
+                    classification_review.recognition_type,
+                    classification_review.classification_policy_id,
+                    classification_review.selected_rule_id,
+                    classification_review.selected_media_library_id,
+                    classification_review.selected_relative_path,
+                )
+            recognition_selections = {}
+            recognition_review = repository.get_recognition_review_for_item(stored.item_id)
+            if (
+                recognition_review is not None
+                and recognition_review.status is RecognitionReviewStatus.RESOLVED
+                and recognition_review.selected_recognition_type is not None
+            ):
+                recognition_selections[source_key] = RecognitionSelection(
+                    recognition_review.selected_recognition_type
                 )
             provider_ids = tuple(
                 dict.fromkeys(
@@ -3307,6 +3372,11 @@ def _run_recovery_continuation(
                 logger=operational_logger,
                 task_coordinator=coordinator,
                 task_id=task.task_id,
+                conflict_decisions=conflict_decisions,
+                metadata_selections=metadata_selections,
+                metadata_corrections=metadata_corrections,
+                classification_selections=classification_selections,
+                recognition_selections=recognition_selections,
                 retry_policy=configuration.workflow_retry_policy,
                 retry_cancellation_check=workflow_stop,
                 secret_free_errors=True,

@@ -31,6 +31,9 @@ from mediaflow.application.file_replan_request import FileReplanRequestService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_recovery_continuation import (
+    ManualRecoveryContinuationService,
+)
 from mediaflow.application.manual_scan import ManualScanError, ManualScanService
 from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_correction_continuation import (
@@ -191,6 +194,7 @@ class MediaFlowApi:
         manual_intent_service: ManualOrganizeIntentService | None = None,
         manual_preview_service: ManualOrganizePreviewService | None = None,
         manual_execution_service: ManualOrganizeExecutionService | None = None,
+        manual_recovery_service: ManualRecoveryContinuationService | None = None,
         manual_scan_service: ManualScanService | None = None,
         automation_preview_service: AutomationTaskDefinitionPreviewService | None = None,
         management_only: bool = False,
@@ -285,6 +289,20 @@ class MediaFlowApi:
                 repository,
                 self._manual_previews,
                 self._manual_intents,
+                checkpoint_service=self._checkpoint_service,
+            )
+        self._manual_recovery = manual_recovery_service
+        if (
+            self._manual_recovery is None
+            and self._manual_intents is not None
+            and self._manual_previews is not None
+            and self._manual_execution is not None
+        ):
+            self._manual_recovery = ManualRecoveryContinuationService(
+                repository,
+                intent_service=self._manual_intents,
+                preview_service=self._manual_previews,
+                execution_service=self._manual_execution,
                 checkpoint_service=self._checkpoint_service,
             )
         self._automation_previews = automation_preview_service
@@ -4103,6 +4121,10 @@ class MediaFlowApi:
                 value["manualExecutionDiscovery"] = self._manual_execution.discovery_for_task_item(
                     parts[3], parts[5]
                 )
+            if self._manual_recovery is not None:
+                value["manualRecoveryLink"] = self._manual_recovery.discovery_for_source_item(
+                    parts[3], parts[5]
+                )
             return self._response(start_response, 200, value)
         if (
             len(parts) == 7
@@ -4194,6 +4216,100 @@ class MediaFlowApi:
                     "executionMode": "dry_run",
                     "sideEffects": "none",
                 },
+            )
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6:8] == ["recovery", "authorize-organize"]
+            and method == "POST"
+        ):
+            self._require_manual_execution(principal)
+            if self._manual_recovery is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual recovery continuation service is unavailable",
+                )
+            self._require_empty_query(environ, "manual recovery continuation authorization")
+            document = self._document(environ)
+            allowed = {
+                "expectedCheckpointVersion",
+                "confirmation",
+                "allowOverwrite",
+                "allowSourceCleanup",
+                "ttlSeconds",
+                "note",
+            }
+            if set(document).difference(allowed):
+                raise ValueError("manual recovery continuation fields are invalid")
+            expected = document.get("expectedCheckpointVersion")
+            if not isinstance(expected, str) or not expected.strip():
+                raise ValueError("expectedCheckpointVersion is required")
+            if document.get("confirmation") is not True:
+                raise ValueError(
+                    "manual recovery continuation authorization requires confirmation=true"
+                )
+            if (
+                "note" in document
+                and document["note"] is not None
+                and not isinstance(document["note"], str)
+            ):
+                raise ValueError("manual recovery continuation note must be a string")
+            link = self._manual_recovery.authorize_continued(
+                parts[3],
+                parts[5],
+                expected_checkpoint_version=expected,
+                actor=principal.principal_id,
+                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                confirmation=document["confirmation"],
+                allow_overwrite=bool(document.get("allowOverwrite", False)),
+                allow_source_cleanup=bool(document.get("allowSourceCleanup", False)),
+                ttl_seconds=document.get("ttlSeconds"),
+                note=document.get("note"),
+            )
+            return self._response(
+                start_response,
+                201,
+                {
+                    **link.document(),
+                    "sourceTaskId": parts[3],
+                    "sourceItemId": parts[5],
+                    "sideEffects": "none",
+                    "executionMode": "not_authorized_yet",
+                },
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-recovery-links"]
+            and parts[4] == "execute"
+            and method == "POST"
+        ):
+            self._require_manual_execution(principal)
+            if self._manual_recovery is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual recovery continuation service is unavailable",
+                )
+            self._require_empty_query(environ, "manual recovery continuation execution")
+            document = self._document(environ)
+            if set(document) != {"confirmation"} or document["confirmation"] is not True:
+                raise ValueError(
+                    "manual recovery continuation execution requires confirmation=true"
+                )
+            link = self._manual_recovery.execute_continued(
+                parts[3],
+                actor=principal.principal_id,
+                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                confirmation=document["confirmation"],
+            )
+            return self._response(
+                start_response,
+                200,
+                link.document(),
             )
         if (
             len(parts) == 6
@@ -4842,6 +4958,7 @@ class MediaFlowApi:
             ("api", "v1", "manual-previews"),
             ("api", "v1", "manual-executions"),
             ("api", "v1", "manual-execution-authorizations"),
+            ("api", "v1", "manual-recovery-links"),
             ("api", "v1", "resource-libraries"),
             ("api", "v1", "automation"),
             ("api", "v1", "schedules"),
@@ -5159,6 +5276,13 @@ class MediaFlowApi:
             and parts[6:8] == ["recovery", "continue"]
         ):
             return "/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue"
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6:8] == ["recovery", "authorize-organize"]
+        ):
+            return "/api/v1/tasks/{task_id}/items/{item_id}/recovery/authorize-organize"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"]:
             return "/api/v1/recovery-batches/{id}"
         if (
@@ -5226,6 +5350,12 @@ class MediaFlowApi:
             and parts[4] == "reconcile"
         ):
             return "/api/v1/manual-executions/{id}/reconcile"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-recovery-links"]
+            and parts[4] == "execute"
+        ):
+            return "/api/v1/manual-recovery-links/{id}/execute"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "metadata-reviews"]
