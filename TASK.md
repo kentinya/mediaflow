@@ -1517,3 +1517,50 @@ re-analysis consumed:
 Status: READY FOR B REVIEW
 Head SHA: 307ba699189bfc8a31db2272d08e6c3e78f7bb89
 ```
+
+## B Review Result
+
+```text
+Reviewed: e2c048da99858fe1eb504359a1f1ee0e3abc1d1e..307ba699189bfc8a31db2272d08e6c3e78f7bb89
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+### Blockers
+
+1. **AC2/AC4/AC5/AC6/AC8 未满足：linked Recognition decision 未被 continuation Preview/authority
+   使用，导致 continuation 可以执行一个与已审阅 re-analysis plan 不同的 RecognitionType。**
+   - 代码证据：`ManualOrganizePreviewService._run_item()` 在
+     `mediaflow/application/manual_organize_preview.py:1362-1373` 只绑定 Metadata、Metadata
+     Correction、Classification decision，并始终以
+     `forced_recognition_type_id=item.choice.recognition_type_id` 强制原 manual intent 的
+     RecognitionType。虽然 `_bound_source_decisions()` 已收集 `recognition_review`
+     (`mediaflow/application/manual_organize_preview.py:1735-1741`)，但该 decision 没有进入
+     Preview analysis。`final_cli._run_recovery_continuation()` 反而会消费同一 Recognition
+     decision (`mediaflow/final_cli.py:3304-3307`)，因此 Worker 的 linked re-analysis 与
+     continuation Preview 的 plan 可能不一致。
+   - 实际复现：使用临时 LocalStorage root + `DetailCountingProvider`，从真实 manual Organize
+     failure → recovery admission → Worker re-analysis 开始；在 linked `RecognitionReview` 上
+     选择 `C`（原 manual intent 的 choice 为 `A`），第二次 Worker re-analysis 成功并持久化
+     `Result.recognition_type == "C"`。随后调用真实
+     `POST /api/v1/tasks/{task_id}/items/{item_id}/recovery/authorize-organize`，返回 `201`；
+     读取新建 Preview 得到 `choice.recognition_type_id == "A"`、plan
+     `recognitionType == "A"`、`recognitionTypePolicyId == "type-A"`，再调用真实
+     `POST /api/v1/manual-recovery-links/{id}/execute` 成功，最终 continued Result 的
+     `recognition_type == "A"`。也就是说已审阅的 linked `C` plan 被忽略，未审阅的原 manual
+     `A` plan 被授权并执行；现有
+     `test_manual_recovery_re_analysis_consumes_recognition_decision_saved_on_linked_item`
+     只选择 `A`，无法覆盖该 mismatch。
+   - 修正方向：Fork A 必须继续执行 linked re-analysis 已审阅的 exact persisted plan，或在创建
+     continuation authority 前显式、受界地把 linked Recognition decision 与其对应的
+     RecognitionTypePolicy/Metadata/Naming/Classification/Organize policy 一起绑定到同一
+     continuation Preview；不得静默忽略已解决 Recognition decision 并回退到原 manual choice。
+     仍需重新验证 current source occurrence/fingerprint、pinned snapshot、capability、conflict
+     和 destructive-operation authority。补 T4 回归：linked Recognition review 选择与原
+     manual choice 不同的类型后，必须证明 authorize/execute 使用该 exact reviewed plan，或在
+     计划/策略不兼容时 fail closed（无 authority、无 link、零 Storage mutation、源文件完整）；
+     同时保留现有 Metadata/Metadata-Correction/Classification/Conflict/Recognition 成功链路和
+     sibling/uncertain-effect 隔离证据。
+
+Task ID、Task Base、Goal、Implementation Scope 保持不变；修正继续留在本 Task，不关闭 Slice，也不更新 Roadmap。
