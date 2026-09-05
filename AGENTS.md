@@ -729,6 +729,12 @@ This file defines permanent principles only and does not define a competing stat
 
 # Scope Control
 
+Before Task planning or implementation, run `scripts/check_governance.py`. It uses committed
+`HEAD:SLICE.md` as Slice authority and fails when the working-tree Contract is not checkpointed or
+the active Task/Roadmap relationship is invalid. Preserve all pre-existing dirty files; never use
+reset, restore, checkout, clean, or stash/drop to make unrelated work disappear. Detailed lifecycle
+semantics remain solely in `docs/development-workflow.md`.
+
 Do NOT implement work outside the active `SLICE.md` and `TASK.md`.
 
 Do NOT perform large unrelated refactors.
