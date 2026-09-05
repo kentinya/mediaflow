@@ -57,6 +57,7 @@ from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.recognition_review import RecognitionReviewService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_continuation import RecoveryContinuationWorkerService
+from mediaflow.application.recovery_decisions import collect_resolved_continuation_decisions
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_retry import TaskRetryRequestService
@@ -3259,92 +3260,51 @@ def _run_recovery_continuation(
                     f"{prepared.source_item.resource_library_id!r}"
                 )
             stored = prepared.source_item
-            source_key = (stored.storage_id, stored.source_path)
             # Resolved decisions live on the original item and on the analysis items
             # of every prior single-item re-analysis of the same source (the ones an
-            # operator resolves blockers on); the newest decision wins.
-            decision_item_ids = [stored.item_id]
-            continuation_reader = getattr(repository, "list_recovery_continuations", None)
-            prior_continuations = (
-                continuation_reader(stored.item_id, limit=32)
-                if callable(continuation_reader)
-                else ()
+            # operator resolves blockers on); the newest decision wins.  The shared
+            # collector is also used by the continuation Preview so both surfaces
+            # consume exactly the same saved evidence for the same source.
+            decisions = collect_resolved_continuation_decisions(
+                repository, source_item_id=stored.item_id
             )
-            for prior in reversed(prior_continuations):
-                if not prior.new_task_id:
-                    continue
-                decision_item_ids.extend(
-                    value.item_id for value in repository.list_items(prior.new_task_id)
+            conflict_decisions = dict(decisions.confirmations)
+            metadata_selections = {
+                key: MetadataSelection(
+                    review.recognition_type,
+                    review.metadata_policy_id,
+                    review.selected_provider,
+                    review.selected_provider_id,
+                    review.selected_media_type,
                 )
-            conflict_decisions = {
-                (value.source_storage_id, value.source_path): value
-                for value in repository.list_confirmations(status=ConfirmationStatus.RESOLVED)
-                if value.item_id in decision_item_ids
+                for key, review in decisions.metadata_reviews.items()
             }
-            metadata_selections = {}
-            for decision_item_id in decision_item_ids:
-                metadata_review = repository.get_metadata_review_for_item(decision_item_id)
-                if (
-                    metadata_review is not None
-                    and metadata_review.status is MetadataReviewStatus.RESOLVED
-                    and metadata_review.selected_provider is not None
-                    and metadata_review.selected_provider_id is not None
-                    and metadata_review.selected_media_type is not None
-                ):
-                    metadata_selections[source_key] = MetadataSelection(
-                        metadata_review.recognition_type,
-                        metadata_review.metadata_policy_id,
-                        metadata_review.selected_provider,
-                        metadata_review.selected_provider_id,
-                        metadata_review.selected_media_type,
-                    )
-            metadata_corrections = {}
-            for decision_item_id in decision_item_ids:
-                correction = repository.get_metadata_correction_for_item(decision_item_id)
-                if (
-                    correction is not None
-                    and correction.status is MetadataCorrectionStatus.RESOLVED
-                    and correction.corrected_media_type is not None
-                ):
-                    metadata_corrections[source_key] = MetadataCorrectionSelection(
-                        correction.recognition_type,
-                        correction.metadata_policy_id,
-                        correction.provider_id,
-                        correction.corrected_query,
-                        correction.corrected_year,
-                        correction.corrected_media_type,
-                        correction.direct_provider_id,
-                    )
-            classification_selections = {}
-            for decision_item_id in decision_item_ids:
-                classification_review = repository.get_classification_review_for_item(
-                    decision_item_id
+            metadata_corrections = {
+                key: MetadataCorrectionSelection(
+                    review.recognition_type,
+                    review.metadata_policy_id,
+                    review.provider_id,
+                    review.corrected_query,
+                    review.corrected_year,
+                    review.corrected_media_type,
+                    review.direct_provider_id,
                 )
-                if (
-                    classification_review is not None
-                    and classification_review.status is ClassificationReviewStatus.RESOLVED
-                    and classification_review.selected_rule_id is not None
-                    and classification_review.selected_media_library_id is not None
-                    and classification_review.selected_relative_path is not None
-                ):
-                    classification_selections[source_key] = ClassificationSelection(
-                        classification_review.recognition_type,
-                        classification_review.classification_policy_id,
-                        classification_review.selected_rule_id,
-                        classification_review.selected_media_library_id,
-                        classification_review.selected_relative_path,
-                    )
-            recognition_selections = {}
-            for decision_item_id in decision_item_ids:
-                recognition_review = repository.get_recognition_review_for_item(decision_item_id)
-                if (
-                    recognition_review is not None
-                    and recognition_review.status is RecognitionReviewStatus.RESOLVED
-                    and recognition_review.selected_recognition_type is not None
-                ):
-                    recognition_selections[source_key] = RecognitionSelection(
-                        recognition_review.selected_recognition_type
-                    )
+                for key, review in decisions.metadata_corrections.items()
+            }
+            classification_selections = {
+                key: ClassificationSelection(
+                    review.recognition_type,
+                    review.classification_policy_id,
+                    review.selected_rule_id,
+                    review.selected_media_library_id,
+                    review.selected_relative_path,
+                )
+                for key, review in decisions.classification_reviews.items()
+            }
+            recognition_selections = {
+                key: RecognitionSelection(review.selected_recognition_type)
+                for key, review in decisions.recognition_reviews.items()
+            }
             provider_ids = tuple(
                 dict.fromkeys(
                     policy.provider_id

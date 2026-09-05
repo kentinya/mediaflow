@@ -632,6 +632,71 @@ class RecoveryContinuationTests(unittest.TestCase):
             token=token,
         )
 
+    def _authorize_and_execute_continued(
+        self,
+        environment,
+        services,
+        run,
+        *,
+        expected_destination=None,
+        collision=None,
+    ):
+        """Drive the full continuation journey after a completed linked re-analysis.
+
+        Asserts that ``authorize-organize`` succeeds (the round-4 blocker), that no
+        Storage mutation happens before the explicit one-shot execute, that execute
+        moves the source to the reviewed destination and consumes the authority, and
+        that a repeated execute is refused.
+        """
+
+        recovery, api = self._recovery_api(environment, services)
+        checkpoint = recovery._checkpoint_service.get(
+            run.items[0].task_item_id, task_id=run.task_id
+        )
+        status, link = self._authorize_continuation(api, run, checkpoint.checkpoint_version)
+        self.assertEqual(201, status, f"{link}")
+        self.assertEqual("authorized", link["status"])
+        # The reviewed decision was persistence-only: nothing moved or was created
+        # before the operator's explicit execute.
+        self.assertTrue(environment["source_file"].exists())
+        if collision is None:
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+        else:
+            self.assertTrue(collision.exists())
+        execute_path = f"/api/v1/manual-recovery-links/{link['link_id']}/execute"
+        status, completed = api_request(
+            api,
+            execute_path,
+            method="POST",
+            body={"confirmation": True},
+            token="operator-token",
+        )
+        self.assertEqual(200, status, f"{completed}")
+        self.assertEqual("consumed", completed["status"])
+        self.assertFalse(environment["source_file"].exists())
+        if expected_destination is not None:
+            moved = next(
+                (
+                    value
+                    for value in Path(environment["target_root"]).rglob("*.mkv")
+                    if value.relative_to(environment["target_root"]).as_posix()
+                    == expected_destination
+                ),
+                None,
+            )
+            self.assertIsNotNone(moved, f"{expected_destination} was not produced")
+        if collision is not None:
+            self.assertEqual(b"existing-destination", collision.read_bytes())
+        status, repeated = api_request(
+            api,
+            execute_path,
+            method="POST",
+            body={"confirmation": True},
+            token="operator-token",
+        )
+        self.assertEqual(409, status)
+        self.assertEqual("authorization_not_active", repeated["error"]["code"])
+
     def _completed_continuation_item(self, environment, job_id, status):
         """Run the worker once and return the linked single-item analysis state."""
         with SQLiteTaskRepository(environment["database"]) as repository:
@@ -1990,6 +2055,17 @@ class RecoveryContinuationTests(unittest.TestCase):
                 self.assertEqual("42", results[-1].provider_id)
             self.assertTrue(environment["source_file"].exists())
             self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            # The saved metadata identity decision must survive into the explicit
+            # continuation authority: authorize-organize used to block on a fresh
+            # ambiguous live search, so the resolved decision could never execute.
+            services = self._manual_services(environment, provider)
+            self.addCleanup(self._close_manual_services, services)
+            self._authorize_and_execute_continued(
+                environment,
+                services,
+                run,
+                expected_destination=results[-1].destination_path,
+            )
 
     def test_manual_recovery_re_analysis_consumes_recognition_decision_saved_on_linked_item(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2050,6 +2126,16 @@ class RecoveryContinuationTests(unittest.TestCase):
                 self.assertEqual("A", results[-1].recognition_type)
             self.assertTrue(environment["source_file"].exists())
             self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            # The resolved RecognitionType decision is honored by the Worker re-analysis
+            # and the continuation authority must complete the original manual journey.
+            services = self._manual_services(environment, provider)
+            self.addCleanup(self._close_manual_services, services)
+            self._authorize_and_execute_continued(
+                environment,
+                services,
+                run,
+                expected_destination=results[-1].destination_path,
+            )
 
     def test_manual_recovery_re_analysis_consumes_metadata_correction_decision(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2110,6 +2196,16 @@ class RecoveryContinuationTests(unittest.TestCase):
                 self.assertEqual("42", results[-1].provider_id)
             self.assertTrue(environment["source_file"].exists())
             self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            # The saved Metadata Correction identity must survive into the explicit
+            # continuation authority and complete the original manual journey.
+            services = self._manual_services(environment, provider)
+            self.addCleanup(self._close_manual_services, services)
+            self._authorize_and_execute_continued(
+                environment,
+                services,
+                run,
+                expected_destination=results[-1].destination_path,
+            )
 
     def test_manual_recovery_re_analysis_consumes_classification_decision(self):
         def drop_movie_fallback(document):
@@ -2186,6 +2282,16 @@ class RecoveryContinuationTests(unittest.TestCase):
                 self.assertIn("外语电影", results[-1].destination_path)
             self.assertTrue(environment["source_file"].exists())
             self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            # The saved Classification rule decision must survive into the explicit
+            # continuation authority and complete the original manual journey.
+            services = self._manual_services(environment, provider)
+            self.addCleanup(self._close_manual_services, services)
+            self._authorize_and_execute_continued(
+                environment,
+                services,
+                run,
+                expected_destination=results[-1].destination_path,
+            )
 
     def test_manual_recovery_re_analysis_consumes_conflict_decision_saved_on_linked_item(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2260,6 +2366,18 @@ class RecoveryContinuationTests(unittest.TestCase):
             self.assertEqual([collision], target_files)
             self.assertEqual(b"existing-destination", collision.read_bytes())
             self.assertTrue(environment["source_file"].exists())
+            # The saved RENAME conflict decision must survive into the explicit
+            # continuation authority and complete the original manual journey without
+            # touching the colliding destination.
+            services = self._manual_services(environment, provider)
+            self.addCleanup(self._close_manual_services, services)
+            self._authorize_and_execute_continued(
+                environment,
+                services,
+                run,
+                expected_destination=results[-1].destination_path,
+                collision=collision,
+            )
 
 
 def _ambiguous_identification() -> MetadataIdentificationResult:
