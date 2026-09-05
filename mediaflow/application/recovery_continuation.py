@@ -291,7 +291,7 @@ class RecoveryContinuationWorkerService:
     def __init__(self, repository) -> None:
         self._repository = repository
 
-    def prepare(self, job_id: str) -> PreparedRecoveryContinuation:
+    def prepare(self, job_id: str, *, file_index=None) -> PreparedRecoveryContinuation:
         self._job_identifier(job_id)
         job = self._repository.get_job(job_id)
         if job is None:
@@ -329,6 +329,31 @@ class RecoveryContinuationWorkerService:
             or item.stage != "task_retry_requested"
         ):
             raise ValueError("recovery continuation source eligibility changed")
+        if file_index is not None and item.source_occurrence_id and item.source_fingerprint:
+            record = file_index.find_by_path(
+                item.storage_id,
+                item.resource_library_id,
+                item.source_path,
+            )
+            if record is None:
+                raise ValueError("recovery continuation current FileIndex source is missing")
+            occurrence_state = getattr(
+                getattr(record, "occurrence_state", None),
+                "value",
+                getattr(record, "occurrence_state", None),
+            )
+            scan_status = getattr(
+                getattr(record, "scan_status", None),
+                "value",
+                getattr(record, "scan_status", None),
+            )
+            if (
+                occurrence_state != "verified"
+                or scan_status != "ready"
+                or getattr(record, "occurrence_id", None) != item.source_occurrence_id
+                or getattr(record, "fingerprint", None) != item.source_fingerprint
+            ):
+                raise ValueError("recovery continuation source occurrence is stale or replaced")
         if (
             task.configuration_snapshot_id != continuation.configuration_snapshot_id
             or task.configuration_snapshot_digest != continuation.configuration_snapshot_digest

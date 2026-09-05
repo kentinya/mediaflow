@@ -13,23 +13,38 @@ from unittest.mock import Mock, patch
 from mediaflow.application.automation import AutomationJobService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.file_catalog import FileCatalogService
+from mediaflow.application.manual_organize import ManualOrganizeIntentService
+from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
+from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_recovery_continuation import (
+    ManualRecoveryContinuationService,
+)
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_continuation import (
     RecoveryContinuationService,
 )
+from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
+from mediaflow.domain.library import ResourceLibrary
 from mediaflow.domain.metadata import (
     MediaCandidate,
     MediaType,
     MetadataError,
     MetadataErrorCode,
 )
+from mediaflow.domain.organizer import (
+    ExecutionEffectCertainty,
+    ExecutionResult,
+    ExecutionStatus,
+)
 from mediaflow.domain.recovery_continuation import RecoveryContinuationStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentResultRecord, TaskItemStatus
 from mediaflow.final_cli import final_main
+from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
@@ -90,6 +105,29 @@ class ExplodingSearchProvider(DetailCountingProvider):
 
     def search_movie(self, query, policy=None, **kwargs):
         raise RuntimeError("provider exception marker")
+
+
+class SelectiveManualExecutor:
+    """Fail one named source once; later instances may use the real executor."""
+
+    def __init__(self, failed_name: str | None = None, real=None):
+        self.failed_name = failed_name
+        self.real = real or OrganizerExecutor()
+        self.calls: list[str] = []
+
+    def execute(self, plan, storages, **kwargs):
+        self.calls.append(plan.source)
+        if self.failed_name and plan.source.endswith(self.failed_name):
+            return ExecutionResult(
+                ExecutionStatus.FAILED,
+                plan.operation,
+                plan.source,
+                plan.target,
+                errors=("injected pre-mutation failure",),
+                plan_id=plan.plan_id,
+                effect_certainty=ExecutionEffectCertainty.NONE,
+            )
+        return self.real.execute(plan, storages, **kwargs)
 
 
 class RecoveryContinuationTests(unittest.TestCase):
@@ -280,6 +318,73 @@ class RecoveryContinuationTests(unittest.TestCase):
             ]
         )
         return api
+
+    def _manual_services(self, environment, provider, *, executor=None):
+        database = environment["database"]
+        task_repository = SQLiteTaskRepository(database)
+        file_index = SQLiteFileIndexRepository(database)
+        configuration_repository = SQLiteConfigurationRepository(database)
+        configuration_service = ManagedConfigurationService(
+            configuration_repository,
+            bootstrap_database_path=str(database),
+        )
+        catalog = FileCatalogService(
+            file_index,
+            ("source",),
+            ("source-storage",),
+            task_repository=task_repository,
+        )
+        intents = ManualOrganizeIntentService(
+            task_repository,
+            catalog,
+            configuration_service=configuration_service,
+        )
+        previews = ManualOrganizePreviewService(
+            task_repository,
+            intents,
+            configuration_service=configuration_service,
+            providers=MetadataProviderRegistry((provider,)),
+        )
+        execution = ManualOrganizeExecutionService(
+            task_repository,
+            previews,
+            executor=executor or OrganizerExecutor(),
+        )
+        return {
+            "task_repository": task_repository,
+            "file_index": file_index,
+            "configuration_repository": configuration_repository,
+            "configuration_service": configuration_service,
+            "catalog": catalog,
+            "intents": intents,
+            "previews": previews,
+            "execution": execution,
+        }
+
+    def _scan_manual_source(self, environment, *, names=("Correct.2024.mkv",)):
+        source_root = Path(environment["root"]) / "Incoming"
+        media_root = source_root / "Media" / "C"
+        media_root.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            path = Path(media_root, name)
+            if not path.exists():
+                path.write_bytes((name.encode("utf-8") + b"x" * 200)[:123])
+        database = environment["database"]
+        with (
+            SQLiteFileIndexRepository(database) as file_index,
+        ):
+            scanner = StorageScanner(
+                {"source-storage": LocalStorage("source-storage", source_root)},
+                file_index,
+            )
+            library = ResourceLibrary("source", "Source", "source-storage", "Media")
+            scanner.scan(library)
+            records = tuple(
+                value
+                for value in file_index.list_by_resource_library("source")
+                if Path(value.path).name in names
+            )
+        return records
 
     def _admit(self, environment, task, item, api=None):
         with SQLiteTaskRepository(environment["database"]) as repository:
@@ -1096,6 +1201,239 @@ class RecoveryContinuationTests(unittest.TestCase):
                 )
                 self.assertNotIn(source_task.task_id, json.dumps(audit_routes))
                 self.assertNotIn(source_item.item_id, json.dumps(audit_routes))
+
+    def test_manual_organize_failure_analysis_continuation_and_exact_execution_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            records = self._scan_manual_source(environment)
+            record = records[0]
+
+            services = self._manual_services(
+                environment,
+                provider,
+                executor=SelectiveManualExecutor("Correct.2024.mkv"),
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                preview = services["previews"].create_current(
+                    scope_kind="file",
+                    actor="operator",
+                    file_id=record.file_id,
+                    resource_library_id=record.resource_library_id,
+                    occurrence_id=record.occurrence_id,
+                    fingerprint=record.fingerprint,
+                )
+                item = preview.items[0]
+                authority = services["execution"].authorize(
+                    preview.preview_id,
+                    [item.item_id],
+                    expected_intent_version=preview.intent_version,
+                    expected_item_versions={item.item_id: item.item_version},
+                    snapshot_id=preview.configuration_snapshot_id,
+                    snapshot_digest=preview.configuration_snapshot_digest,
+                    actor="operator",
+                    confirmation=True,
+                )
+                run = services["execution"].execute(
+                    authority.authorization_id, actor="operator", confirmation=True
+                )
+                self.assertEqual("failed", run.items[0].status.value)
+                self.assertTrue(environment["source_file"].exists())
+
+                # Admit and continue one exact failed manual item as DryRun.
+                checkpoint = services["execution"]._checkpoint_service.get(
+                    run.items[0].task_item_id, task_id=run.task_id
+                )
+                admitted = RecoveryAdmissionService(
+                    repository,
+                    snapshot_validator=services["execution"]._validate_checkpoint_snapshot,
+                    checkpoint_service=services["execution"]._checkpoint_service,
+                ).admit(
+                    run.task_id,
+                    run.items[0].task_item_id,
+                    action_id="retry",
+                    expected_checkpoint_version=checkpoint.checkpoint_version,
+                    actor="operator",
+                )
+                refreshed = services["execution"]._checkpoint_service.get(
+                    run.items[0].task_item_id, task_id=run.task_id
+                )
+                submission = RecoveryContinuationService(
+                    repository,
+                    snapshot_validator=services["execution"]._validate_checkpoint_snapshot,
+                    checkpoint_service=services["execution"]._checkpoint_service,
+                ).submit(
+                    run.task_id,
+                    run.items[0].task_item_id,
+                    expected_checkpoint_version=refreshed.checkpoint_version,
+                    actor="operator",
+                    maximum_active_jobs=10,
+                )
+                self.assertIsNotNone(admitted.request_id)
+                self.assertFalse(submission.job.execute_authorized)
+
+            services["task_repository"].close()
+            services["file_index"].close()
+            services["configuration_repository"].close()
+            self._run_worker(environment, provider)
+
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation = repository.get_recovery_continuation_for_job(submission.job.job_id)
+                assert continuation is not None
+                self.assertEqual(RecoveryContinuationStatus.COMPLETED, continuation.status)
+                self.assertIsNotNone(continuation.new_task_id)
+                source_before = repository.get_item(run.items[0].task_item_id)
+                self.assertIsNotNone(source_before)
+                self.assertEqual(TaskItemStatus.PENDING.value, source_before.status.value)
+
+            # The completed DryRun unlocks one exact continued execution authority.
+            continued_services = self._manual_services(environment, provider)
+            self.addCleanup(
+                lambda: [
+                    value.close()
+                    for value in (
+                        continued_services["task_repository"],
+                        continued_services["file_index"],
+                        continued_services["configuration_repository"],
+                    )
+                ]
+            )
+            recovery_service = ManualRecoveryContinuationService(
+                continued_services["task_repository"],
+                intent_service=continued_services["intents"],
+                preview_service=continued_services["previews"],
+                execution_service=continued_services["execution"],
+                checkpoint_service=continued_services["execution"]._checkpoint_service,
+            )
+            checkpoint_after = recovery_service._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            operator = ResolvedApiPrincipal(
+                "operator",
+                "operator-token",
+                frozenset(ApiPermission),
+            )
+            viewer = ResolvedApiPrincipal(
+                "viewer",
+                "viewer-token",
+                frozenset({ApiPermission.READ}),
+            )
+            api = MediaFlowApi(
+                continued_services["task_repository"],
+                None,
+                principals=(operator, viewer),
+                file_catalog=continued_services["catalog"],
+                configuration_service=continued_services["configuration_service"],
+                configuration_snapshot_id=environment["snapshot"][0],
+                configuration_snapshot_digest=environment["snapshot"][1],
+                manual_intent_service=continued_services["intents"],
+                manual_preview_service=continued_services["previews"],
+                manual_execution_service=continued_services["execution"],
+                manual_recovery_service=recovery_service,
+            )
+            authorize_path = (
+                f"/api/v1/tasks/{run.task_id}/items/"
+                f"{run.items[0].task_item_id}/recovery/authorize-organize"
+            )
+            status, denied = api_request(
+                api,
+                authorize_path,
+                method="POST",
+                body={
+                    "expectedCheckpointVersion": checkpoint_after.checkpoint_version,
+                    "confirmation": True,
+                },
+                token="viewer-token",
+            )
+            self.assertEqual(403, status)
+            self.assertEqual("forbidden", denied["error"]["code"])
+            status, authorized = api_request(
+                api,
+                authorize_path,
+                method="POST",
+                body={
+                    "expectedCheckpointVersion": checkpoint_after.checkpoint_version,
+                    "confirmation": True,
+                },
+                token="operator-token",
+            )
+            self.assertEqual(201, status)
+            link = authorized
+            self.assertIn("link_id", link)
+            self.assertEqual(link["source_task_id"], run.task_id)
+            self.assertEqual(link["source_item_id"], run.items[0].task_item_id)
+            self.assertEqual(link["analysis_task_id"], continuation.new_task_id)
+
+            self.assertTrue(environment["source_file"].exists())
+            status, item_before_execution = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}",
+                token="operator-token",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual("authorized", item_before_execution["manualRecoveryLink"]["status"])
+            execute_path = f"/api/v1/manual-recovery-links/{link['link_id']}/execute"
+            status, completed = api_request(
+                api,
+                execute_path,
+                method="POST",
+                body={"confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual("consumed", completed["status"])
+            self.assertIsNotNone(completed["execution_id"])
+            self.assertFalse(environment["source_file"].exists())
+            target_files = tuple(Path(environment["target_root"]).rglob("*.mkv"))
+            self.assertEqual(1, len(target_files))
+            status, reloaded = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}",
+                token="operator-token",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual(
+                "consumed",
+                reloaded["manualRecoveryLink"]["status"],
+            )
+            self.assertEqual(
+                completed["execution_id"],
+                reloaded["manualRecoveryLink"]["execution_id"],
+            )
+            status, repeated = api_request(
+                api,
+                execute_path,
+                method="POST",
+                body={"confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(409, status)
+            self.assertEqual("authorization_not_active", repeated["error"]["code"])
+            audit_routes = [
+                value.route for value in continued_services["task_repository"].list_security_audit()
+            ]
+            self.assertIn(
+                "/api/v1/tasks/{task_id}/items/{item_id}/recovery/authorize-organize",
+                audit_routes,
+            )
+            self.assertIn("/api/v1/manual-recovery-links/{id}/execute", audit_routes)
+            self.assertNotIn(run.task_id, json.dumps(audit_routes))
+            self.assertNotIn(run.items[0].task_item_id, json.dumps(audit_routes))
+
+            persisted_link = continued_services["task_repository"].get_manual_recovery_link(
+                link["link_id"]
+            )
+            self.assertIsNotNone(persisted_link)
+            self.assertEqual("consumed", persisted_link.status.value)
+            self.assertEqual(completed["execution_id"], persisted_link.execution_id)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                authorization = repository.get_manual_execution_authorization(
+                    link["authorization_id"]
+                )
+                self.assertEqual("consumed", authorization.status.value)
+                self.assertEqual(completed["execution_id"], authorization.execution_id)
 
 
 def _coordinator(repository):

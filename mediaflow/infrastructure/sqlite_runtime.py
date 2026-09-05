@@ -95,6 +95,10 @@ from mediaflow.domain.manual_organize_preview import (
     ManualPreviewStatus,
     ManualPreviewUnavailable,
 )
+from mediaflow.domain.manual_recovery import (
+    ManualRecoveryLink,
+    ManualRecoveryLinkStatus,
+)
 from mediaflow.domain.manual_safety import (
     redact_evidence_text,
     redact_manual_text,
@@ -1191,6 +1195,123 @@ class SQLiteTaskRepository:
                 (item_id, limit),
             ).fetchall()
         return tuple(self._recovery_continuation(row) for row in rows)
+
+    def create_manual_recovery_link(self, link: ManualRecoveryLink) -> None:
+        if link.status is not ManualRecoveryLinkStatus.AUTHORIZED:
+            raise ValueError("manual recovery link must start authorized")
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO manual_recovery_links (
+                    link_id, source_task_id, source_item_id,
+                    analysis_continuation_id, analysis_task_id, analysis_result_id,
+                    intent_id, preview_id, authorization_id, actor, status,
+                    created_at, updated_at, execution_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                self._manual_recovery_link_values(link),
+            )
+
+    def get_manual_recovery_link(self, link_id: str) -> ManualRecoveryLink | None:
+        if not isinstance(link_id, str) or not link_id.strip():
+            raise ValueError("manual recovery link ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM manual_recovery_links WHERE link_id=?", (link_id,)
+            ).fetchone()
+        return self._manual_recovery_link(row) if row else None
+
+    def get_manual_recovery_link_by_source(
+        self, source_task_id: str, source_item_id: str
+    ) -> ManualRecoveryLink | None:
+        if not isinstance(source_task_id, str) or not source_task_id.strip():
+            raise ValueError("manual recovery source Task ID is required")
+        if not isinstance(source_item_id, str) or not source_item_id.strip():
+            raise ValueError("manual recovery source TaskItem ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM manual_recovery_links
+                WHERE source_task_id=? AND source_item_id=?
+                ORDER BY created_at DESC, link_id DESC LIMIT 1""",
+                (source_task_id, source_item_id),
+            ).fetchone()
+        return self._manual_recovery_link(row) if row else None
+
+    def get_manual_recovery_link_by_authorization(
+        self, authorization_id: str
+    ) -> ManualRecoveryLink | None:
+        if not isinstance(authorization_id, str) or not authorization_id.strip():
+            raise ValueError("manual recovery authorization ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM manual_recovery_links
+                WHERE authorization_id=? ORDER BY created_at DESC, link_id DESC LIMIT 1""",
+                (authorization_id,),
+            ).fetchone()
+        return self._manual_recovery_link(row) if row else None
+
+    def complete_manual_recovery_link(
+        self,
+        link_id: str,
+        *,
+        execution_id: str,
+        now: datetime,
+    ) -> ManualRecoveryLink:
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("manual recovery execution ID is required")
+        if now.tzinfo is None:
+            raise ValueError("manual recovery completion timestamp needs timezone")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE manual_recovery_links
+                SET status=?, execution_id=?, updated_at=?
+                WHERE link_id=? AND status=?""",
+                (
+                    ManualRecoveryLinkStatus.CONSUMED.value,
+                    execution_id,
+                    now.isoformat(),
+                    link_id,
+                    ManualRecoveryLinkStatus.AUTHORIZED.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                value = self.get_manual_recovery_link(link_id)
+                if value is None:
+                    raise LookupError(f"manual recovery link {link_id!r} was not found")
+                if value.status is ManualRecoveryLinkStatus.CONSUMED:
+                    return value
+                raise ValueError("manual recovery link is no longer authorized")
+        value = self.get_manual_recovery_link(link_id)
+        if value is None:
+            raise LookupError(f"manual recovery link {link_id!r} was not found")
+        return value
+
+    def mark_manual_recovery_link_stale(
+        self,
+        link_id: str,
+        *,
+        now: datetime,
+    ) -> ManualRecoveryLink:
+        if now.tzinfo is None:
+            raise ValueError("manual recovery stale timestamp needs timezone")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE manual_recovery_links SET status=?, updated_at=?
+                WHERE link_id=? AND status=?""",
+                (
+                    ManualRecoveryLinkStatus.STALE.value,
+                    now.isoformat(),
+                    link_id,
+                    ManualRecoveryLinkStatus.AUTHORIZED.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                value = self.get_manual_recovery_link(link_id)
+                if value is None:
+                    raise LookupError(f"manual recovery link {link_id!r} was not found")
+                return value
+        value = self.get_manual_recovery_link(link_id)
+        if value is None:
+            raise LookupError(f"manual recovery link {link_id!r} was not found")
+        return value
 
     def create_recovery_batch(self, batch: RecoveryBatch) -> None:
         if not batch.items or len(batch.items) > 100:
@@ -8123,6 +8244,32 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS manual_execution_effects_item_order
                     ON manual_execution_effects(execution_item_id, sequence, effect_id);
+                CREATE TABLE IF NOT EXISTS manual_recovery_links (
+                    link_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL,
+                    source_item_id TEXT NOT NULL,
+                    analysis_continuation_id TEXT NOT NULL,
+                    analysis_task_id TEXT NOT NULL,
+                    analysis_result_id TEXT NOT NULL,
+                    intent_id TEXT NOT NULL, preview_id TEXT NOT NULL UNIQUE,
+                    authorization_id TEXT NOT NULL UNIQUE,
+                    actor TEXT NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    execution_id TEXT,
+                    UNIQUE(source_task_id, source_item_id),
+                    FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(source_item_id) REFERENCES task_items(item_id),
+                    FOREIGN KEY(analysis_continuation_id)
+                        REFERENCES recovery_continuations(continuation_id),
+                    FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id),
+                    FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
+                    FOREIGN KEY(authorization_id)
+                        REFERENCES manual_execution_authorizations(authorization_id),
+                    FOREIGN KEY(execution_id) REFERENCES manual_executions(execution_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_recovery_links_source
+                    ON manual_recovery_links(source_task_id, source_item_id, link_id);
+                CREATE INDEX IF NOT EXISTS manual_recovery_links_authorization
+                    ON manual_recovery_links(authorization_id);
                 CREATE TABLE IF NOT EXISTS file_locks (
                     storage_id TEXT NOT NULL, path TEXT NOT NULL, task_id TEXT NOT NULL,
                     acquired_at TEXT NOT NULL, PRIMARY KEY(storage_id, path)
@@ -9493,6 +9640,48 @@ class SQLiteTaskRepository:
             row["error"],
             row["recovery"],
             row["authority_statement"],
+        )
+
+    @staticmethod
+    def _manual_recovery_link_values(link: ManualRecoveryLink) -> tuple[object, ...]:
+        return (
+            link.link_id,
+            link.source_task_id,
+            link.source_item_id,
+            link.analysis_continuation_id,
+            link.analysis_task_id,
+            link.analysis_result_id,
+            link.intent_id,
+            link.preview_id,
+            link.authorization_id,
+            link.actor,
+            link.status.value,
+            link.created_at.isoformat(),
+            link.updated_at.isoformat(),
+            link.execution_id,
+        )
+
+    @staticmethod
+    def _manual_recovery_link(row: sqlite3.Row) -> ManualRecoveryLink:
+        try:
+            status = ManualRecoveryLinkStatus(row["status"])
+        except ValueError:
+            status = ManualRecoveryLinkStatus.STALE
+        return ManualRecoveryLink(
+            row["link_id"],
+            row["source_task_id"],
+            row["source_item_id"],
+            row["analysis_continuation_id"],
+            row["analysis_task_id"],
+            row["analysis_result_id"],
+            row["intent_id"],
+            row["preview_id"],
+            row["authorization_id"],
+            row["actor"],
+            status,
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["execution_id"],
         )
 
     @staticmethod

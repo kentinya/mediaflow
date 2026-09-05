@@ -3470,6 +3470,42 @@ APP_JS = b"""(() => {
         if (continuationLinks.childNodes.length) continuationSection.append(continuationLinks);
         detailContent.append(continuationSection);
       }
+      const recoveryLink = data.manualRecoveryLink &&
+        typeof data.manualRecoveryLink === 'object' ? data.manualRecoveryLink : null;
+      if (recoveryLink) {
+        const linkSection = text('div', '', 'choices');
+        linkSection.append(text('h3', 'Continued manual Organize authority'), cards([
+          ['Status', recoveryLink.status], ['Link', recoveryLink.link_id],
+          ['Exact Preview', recoveryLink.preview_id],
+          ['One-shot authorization', recoveryLink.authorization_id],
+          ['Analysis Task', recoveryLink.analysis_task_id || '-']
+        ]));
+        linkSection.append(text('p', recoveryLink.next_action || '-', 'warning'));
+        const linkButtons = text('div', '', 'choices');
+        if (recoveryLink.authorizationPath) {
+          linkButtons.append(actionButton('Open exact Preview / authorization',
+            () => showManualAuthorization(recoveryLink.authorization_id)));
+        }
+        if (recoveryLink.status === 'authorized') {
+          linkButtons.append(actionButton('Execute continued manual organize',
+            () => confirmManualRecoveryExecute(taskId, itemId, recoveryLink)));
+        }
+        if (recoveryLink.execution_id) {
+          linkButtons.append(actionButton('Open continued execution',
+            () => showManualExecution(recoveryLink.execution_id)));
+        }
+        linkSection.append(linkButtons);
+        detailContent.append(linkSection);
+      } else if (continuation && continuation.status === 'completed') {
+        const controls = text('div', '', 'choices');
+        controls.append(actionButton('Authorize continued manual organize',
+          () => confirmManualRecoveryAuthorize(taskId, itemId, data.checkpoint_version)));
+        detailContent.append(text('p',
+          'A completed DryRun re-analysis is linked. Authorizing continued manual organize ' +
+          'creates a fresh exact Preview and a separate one-shot execution authority; it ' +
+          'performs no media mutation until the authority is explicitly executed.',
+          'warning'), controls);
+      }
       const results = Array.isArray(data.prior_results) ? data.prior_results.slice() : [];
       if (data.latest_result) results.unshift(data.latest_result);
       if (results.length) {
@@ -3636,6 +3672,42 @@ APP_JS = b"""(() => {
           await showTaskItem(taskId, itemId); message('Recovery continuation admitted.');
         } catch (error) { message(errorText(error), true); }
       }), actionButton('Keep item unchanged', () => confirmation.remove()));
+    detailContent.append(confirmation);
+  }
+  function confirmManualRecoveryAuthorize(taskId, itemId, checkpointVersion) {
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p',
+      'Authorize continued manual organize for this exact original item? This creates a ' +
+      'fresh current-source Preview and one separate one-shot execution authority. ' +
+      'Storage remains unchanged until that authority is explicitly executed.'),
+      actionButton('Confirm authorization', async () => {
+        try {
+          const link = await api(`/api/v1/tasks/${encodeURIComponent(taskId)}/items/` +
+            `${encodeURIComponent(itemId)}/recovery/authorize-organize`, {
+              method: 'POST',
+              body: JSON.stringify({expectedCheckpointVersion: checkpointVersion,
+                confirmation: true})
+          });
+          await showTaskItem(taskId, itemId);
+          message(`Continued manual Organize authorized: ${link.link_id}`);
+        } catch (error) { message(errorText(error), true); }
+      }), actionButton('Keep source unchanged', () => confirmation.remove()));
+    detailContent.append(confirmation);
+  }
+  function confirmManualRecoveryExecute(taskId, itemId, link) {
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p',
+      'Execute the continued exact manual Organize authority exactly once? The persisted ' +
+      'plan and current source will be revalidated; results and effects are recorded per item.'),
+      actionButton('Confirm continued execution', async () => {
+        try {
+          await api(`/api/v1/manual-recovery-links/${encodeURIComponent(link.link_id)}/execute`, {
+            method: 'POST', body: JSON.stringify({confirmation: true})
+          });
+          await showTaskItem(taskId, itemId);
+          message('Continued manual execution completed or recorded per item.');
+        } catch (error) { message(errorText(error), true); }
+      }), actionButton('Do not execute', () => confirmation.remove()));
     detailContent.append(confirmation);
   }
   function confirmTaskRecovery(taskId, itemId, checkpointVersion, action) {
