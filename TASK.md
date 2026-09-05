@@ -1141,3 +1141,208 @@ Next: SAME TASK FIX LOOP
      `service_api.py` 条目中如实描述 `maximum_active_jobs` override 语义。
 
 Task ID、Task Base、Goal、Implementation Scope 保持不变；修正继续留在本 Task，不关闭 Slice，也不更新 Roadmap。
+
+## Developer Completion Report (Correction Round 3)
+
+### Resolution of B Review Blockers
+
+**Blocker 1 (AC1/AC5 — authority expiry dead-ended the recovery path):** An EXPIRED or REVOKED
+one-shot continuation authority no longer permanently blocks the original item.
+`ManualRecoveryContinuationService.authorize_continued()` now marks the link stale and falls
+through to re-run every existing gate (checkpoint version, `task_retry_requested` stage, no active
+recovery request, completed linked re-analysis without blockers, current occurrence/fingerprint,
+pinned snapshot, fresh exact Preview, one-shot authority preflight) and then supersedes the stale
+link in place with the fresh authority via the new
+`SQLiteTaskRepository.supersede_manual_recovery_link()`. The `UNIQUE(source_task_id, source_item_id)`
+anchor is preserved (no schema change; the expired authorization stays auditable in its own table),
+`get_manual_recovery_link_by_source` returns the fresh `authorized` link, and the STALE
+`next_action()` now describes the now-executable re-authorization action. B's exact reproduction
+(normal TTL expiry via `expire_manual_execution_authorizations`, no execution, source intact) is
+pinned by `test_manual_recovery_authority_ttl_expiry_allows_fresh_continuation_authority`: after
+expiry, execute is refused `409 authorization_inactive`, the same authorize-organize route returns
+`201` with the same `link_id` and a fresh `authorization_id`, zero Storage mutation occurs during
+re-acquisition, and the fresh authority executes exactly once afterwards.
+
+**Blocker 2 (AC2/AC4 — decisions saved on the linked item were not consumed):** The single-item
+production re-analysis in `final_cli._run_recovery_continuation()` now resolves Conflict,
+Recognition, Metadata, Metadata Correction and Classification decisions from the original manual
+item AND from the analysis items of every prior single-item continuation of the same source
+(`list_recovery_continuations`, bounded limit 32, newest decision wins). This is exactly the state
+the system itself directs the operator to ("resolve the blocker on the linked TaskItem, then request
+a fresh re-analysis and return here"): the first re-analysis ends WAITING with the blocker on the
+linked item, the operator saves a persistence-only decision there, and the next real re-analysis now
+consumes it instead of re-creating the same review. Pinned by
+`test_manual_recovery_re_analysis_consumes_metadata_decision_saved_on_linked_item` (review produced
+by real worker re-analysis → resolved on the linked item → second worker re-analysis completes
+DRY_RUN, no review re-created, result carries the selected provider id 42, source intact) and by the
+recognition/metadata-correction/classification/conflict variants below.
+
+**Blocker 3 (AC8 — fail-closed branches, `prepare` occurrence validation and decision passing were
+untested):** Ten focused T4 regressions added to `tests/test_recovery_continuation.py`, all driven
+through the real manual Organize failure → admission → Worker → API journey on temporary
+LocalStorage roots with fake providers:
+- `test_manual_recovery_authority_ttl_expiry_allows_fresh_continuation_authority` — Blocker 1.
+- `test_manual_recovery_re_analysis_consumes_metadata_decision_saved_on_linked_item` — Blocker 2.
+- `test_manual_recovery_re_analysis_consumes_recognition_decision_saved_on_linked_item` — real
+  re-analysis hits UNRECOGNIZED under the pinned snapshot, review resolved on the linked item, next
+  re-analysis completes with recognition type "A" and no review re-created.
+- `test_manual_recovery_re_analysis_consumes_metadata_correction_decision` — real re-analysis hits
+  NOT_FOUND, direct-provider correction resolved on the linked item, next re-analysis completes with
+  provider id 42 and no correction re-created.
+- `test_manual_recovery_re_analysis_consumes_classification_decision` — real re-analysis hits
+  UNCLASSIFIED (config without the movie fallback rule), rule choice resolved on the linked item,
+  next re-analysis completes with the selected classification destination.
+- `test_manual_recovery_re_analysis_consumes_conflict_decision_saved_on_linked_item` — real
+  re-analysis hits the live destination collision (manual strategy), RENAME decision resolved
+  persistence-only on the linked item, next re-analysis completes with a renamed target while the
+  collision file is never overwritten and no pending confirmation re-appears.
+- `test_manual_recovery_authorize_refuses_fail_closed_before_authority` — `recovery_request_active`
+  while the admitted request is open and `analysis_not_completed` while the linked re-analysis is
+  uncompleted/waiting.
+- `test_manual_recovery_authorize_refuses_when_linked_item_still_has_blocker` — `review_pending`
+  with `blockerKind` when the linked item re-enters analysis and a real pending review exists.
+- `test_manual_recovery_authorize_refuses_replaced_source_fail_closed` — `source_stale` when the
+  live source no longer matches the FileIndex occurrence.
+- `test_worker_continuation_preflight_rejects_stale_occurrence_before_pipeline` — the Worker's
+  `prepare(..., file_index=...)` stale/replaced occurrence validation fails the continuation before
+  any Provider or Storage construction (both factories asserted never called), `new_task_id` stays
+  unset.
+Every fail-closed case asserts no recovery link, no new manual execution, zero Storage mutation and
+the source file intact. One minimal in-scope adjustment was required to make the review-specific
+refusal observable: the `review_pending` gate now runs before `analysis_result_invalid` in
+`authorize_continued`, so a diverging linked item is reported with the actionable review refusal
+instead of the generic invalid-result message. Both branches remain fail-closed refusals; no gate
+was removed or weakened.
+
+**Blocker 4 (round-1 report requirement — `### Changed Files` did not match the diff):** Recorded
+below under "Changed Files — cumulative Task Base..Head range": the round-2 omission of
+`tests/test_automation_admission.py` (+93 lines, the two `maximum_active_jobs` override regressions)
+is corrected, and the `service_api.py` entry now states the retained `maximum_active_jobs: int | None
+= None` constructor default and `_maximum_active_jobs_override` semantics (an explicitly supplied
+ceiling is honoured and sticky while the constructor-pinned snapshot stays Active; it is cleared when
+a different snapshot is activated, whose own `automation_maximum_active_jobs` then governs), matching
+the code and the "Decisions" section instead of contradicting it.
+
+### Changed Files
+- `mediaflow/application/manual_recovery_continuation.py` — EXPIRED/REVOKED authority re-acquisition
+  with in-place link supersede; `review_pending` gate reordered before `analysis_result_invalid`;
+  stale/`authorization_inactive` next actions now point at re-authorization.
+- `mediaflow/domain/manual_recovery.py` — supersede method on the repository protocol; STALE
+  `next_action()` wording updated to the executable action.
+- `mediaflow/infrastructure/sqlite_runtime.py` — new `supersede_manual_recovery_link()` repository
+  method (guarded UPDATE on the stale row; no schema change).
+- `mediaflow/final_cli.py` — re-analysis decision resolution covers prior linked analysis items for
+  all five decision kinds (newest wins).
+- `tests/test_recovery_continuation.py` — ten new T4 regressions (journey helpers
+  `_fail_manual_organize`/`_submit_continuation`/`_recovery_api`/fail-closed assertions and a
+  phase-swappable fake provider; `_environment`/`_scan_manual_source` gained backward-compatible
+  `source_subdir`/`document_patch` parameters).
+
+### Changed Files — cumulative Task Base..Head range (e2c048d..54833e2, for review)
+- `mediaflow/application/manual_recovery_continuation.py` — new ManualRecoveryContinuationService
+  (exact one-shot continuation authority, link persistence, re-acquisition after expiry/revocation).
+- `mediaflow/application/recovery_continuation.py` — Worker `prepare(..., file_index=...)` current
+  FileIndex occurrence/fingerprint validation before the pipeline.
+- `mediaflow/domain/manual_recovery.py` — new ManualRecoveryLink contract and repository protocol.
+- `mediaflow/final_cli.py` — real single-item production re-analysis (resolved decisions carried
+  into the MediaOrganizerService dry-run, FileIndex occurrence validator passed, linked Task/Result).
+- `mediaflow/infrastructure/sqlite_runtime.py` — additive `manual_recovery_links` table with
+  `UNIQUE(source_task_id, source_item_id)` and repository methods (create/get/complete/mark-stale/
+  supersede).
+- `mediaflow/interfaces/service_api.py` — `authorize-organize` and manual-recovery-link execute
+  routes, task-item link projection, RBAC and templated audit handling. This file also retains the
+  round-1 `maximum_active_jobs: int | None = None` constructor default and
+  `_maximum_active_jobs_override` behaviour: an explicitly supplied ceiling is honoured and stays
+  sticky while the constructor-pinned snapshot remains Active, and it is cleared when a different
+  snapshot is activated so the new snapshot's own `automation_maximum_active_jobs` governs (both
+  halves pinned by the two `tests/test_automation_admission.py` regressions below).
+- `mediaflow/interfaces/operator_ui.py` — continued-manual-authority controls on the TaskItem
+  checkpoint page.
+- `tests/test_automation_admission.py` — +93 lines: `test_maximum_active_jobs_override_is_sticky_on_same_snapshot`
+  and `test_maximum_active_jobs_override_resets_on_snapshot_change` (omitted from the round-2
+  report; corrected per Blocker 4).
+- `tests/test_manual_organize_execution.py` — round-1 end-to-end manual-failure continuation,
+  sibling-isolation and uncertain-effect regressions.
+- `tests/test_operator_ui.py` — served blocker section strings, templated recovery-continue audit
+  route and continued-manual-authority Web controls.
+- `tests/test_recovery_continuation.py` — round-2 real manual-failure → Worker re-analysis →
+  authorize/execute/RBAC/audit journey plus this round's ten new regressions.
+- `TASK.md` — completion reports (this document).
+
+### Tests and Results
+- `PASS` — `.venv/bin/python -m unittest tests.test_manual_organize_execution
+  tests.test_manual_organize_intent tests.test_manual_preview tests.test_conflict_resolution
+  tests.test_recognition_review tests.test_metadata_review tests.test_classification_review
+  tests.test_processing_recovery_admission tests.test_recovery_continuation
+  tests.test_recovery_batch tests.test_api_security tests.test_operator_ui` — 217 tests OK
+  (including the ten new regressions; `tests.test_recovery_continuation` alone is 27 tests).
+- `PASS` — `.venv/bin/python -m unittest tests.test_migration_rehearsal tests.test_sqlite_backup
+  tests.test_sqlite_restore tests.test_task_persistence tests.test_processing_checkpoint` —
+  33 tests OK.
+- `FAIL / PRE-EXISTING / UNRELATED` — `.venv/bin/python -m unittest discover -s tests` —
+  1242 tests, 6 failures, 7 skips. The failing modules, reconfirmed by re-running them together
+  after the full suite: `test_api_credentials` ×2, `test_final_integration` ×1,
+  `test_resource_library_pipeline` ×1, `test_runtime_storage_configuration` ×2. They are the same
+  environment set recorded at prior checkpoints and verified by B in earlier rounds (CLI/storage
+  tests reading this workspace's real `HDD_2`/private configuration instead of temp fixtures); none
+  of them imports or exercises this Task's diff.
+- `PASS` — `.venv/bin/ruff format --check mediaflow tests` — 248 files already formatted.
+- `PASS` — `.venv/bin/ruff check mediaflow tests`.
+- `PASS` — `.venv/bin/python -m compileall -q mediaflow tests`.
+- `PASS` — `.venv/bin/pip check` — no broken requirements found.
+- `PASS` — `.venv/bin/mediaflow --config config/strategy.example.json config validate` and
+  `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`.
+- `PASS` — Markdown local-link validation over tracked Markdown — 150 files, 38 local links,
+  0 broken.
+- `PASS` — `git diff --check` (working tree and staged checkpoint).
+- `PASS` — `git check-ignore -v config/alist.json config/strategy.json .mediaflow config/.mediaflow`
+  plus staging check — private configuration remains ignored, untracked and unstaged; secret scan
+  over the product diff found no credentials (matches were code identifiers only).
+- `PASS` — forbidden FFprobe/FFmpeg scan over `mediaflow` and `pyproject.toml` — 0 matches.
+- `SKIP / UNAVAILABLE` — production SMB, OpenList, AWS S3/Cloudflare R2, live TMDB and
+  multi-process/concurrency gates; no production services or credentials were available or
+  authorized, so validation used temporary LocalStorage roots and fake/local providers only.
+
+### Decisions
+- Re-acquisition supersedes the stale link in place instead of appending a second row: the
+  `UNIQUE(source_task_id, source_item_id)` anchor and every existing foreign key stay valid with no
+  schema migration, `get_manual_recovery_link_by_source` keeps returning the single current link, and
+  the expired/revoked authorization remains fully auditable in `manual_execution_authorizations`.
+  A concurrent re-authorization that loses the supersede guard re-reads and returns the winning
+  link, and the loser's unused authority simply expires.
+- Decision resolution covers all prior linked analysis items (not only COMPLETED continuations):
+  the blocker an operator resolves lives on the FAILED continuation's analysis item, so restricting
+  to COMPLETED would have re-created the very review Blocker 2 describes. Only RESOLVED decisions
+  are consumed, keyed to the same source occurrence, and the newest decision wins; the current
+  continuation has no `new_task_id` yet at collection time, so it is naturally excluded.
+- `review_pending` was reordered before `analysis_result_invalid` so the review-specific, actionable
+  refusal wins when the linked item diverges from its completed continuation record. Both are
+  fail-closed refusals that run before any Preview or authority creation; nothing was weakened. The
+  regression drives the divergence through real services (item re-enters PROCESSING, the real
+  MetadataReviewService records the pending decision); in normal production flow a completed
+  continuation's analysis item stays DRY_RUN, so the gate is defensive-in-depth with the test
+  pinning its refusal contract.
+- The recognition/metadata-correction/classification scenarios swap the fake provider's search or
+  identity payload between the manual journey and the re-analysis phases, mirroring the existing
+  `FailingSearchProvider` pattern; candidate details always resolve so enrichment never diverges
+  from a real provider contract.
+
+### Remaining In-Slice Work
+- RO-7 Processing Worker registration/readiness and ownership/fencing remains outside this Task.
+
+### Risks / Deviations
+- Full regression remains `FAIL / PRE-EXISTING / UNRELATED` with the six CLI/credential/storage
+  environment failures listed above; no failure is introduced by this correction.
+- The `review_pending` gate is reachable only in the divergent state the new test constructs
+  (production flows cannot leave a pending blocker on a completed-DryRun analysis item because the
+  review services require a non-completed item); it is retained as fail-closed depth with its
+  contract pinned rather than removed, and the reordering keeps its message actionable.
+- `SLICE.md`, `docs/roadmap.md`, `nohup.out` and `worker.log` keep their pre-existing uncommitted/
+  untracked state and are not part of this checkpoint; `config/alist.json` was not staged or read.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: 54833e26d0ad8137a2ae0c5bd0a6378d54859ec0
+```
