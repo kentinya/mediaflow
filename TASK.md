@@ -1,12 +1,10 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Current Slice: 27 — Manual Operations and File Lifecycle
-Slice Status: PASS / CLOSED
+Current Slice: 28 — Web-first Configuration and Operations Administration
+Slice Status: ACTIVE
 
-Task 27.7 — Processing Worker Registration, Readiness and Fenced Ownership
-Reviewed Head: 34365121342557b0f40eacc7ad9bbb74499cc4cb
-Decision: PASS
+Slice 28 has been activated by A. B must read the committed Slice Contract and plan the first
+coherent implementation Task inside its Required Outcomes and Required Surfaces.
+Task planning must not expand the Slice, weaken its safety invariants or activate Slice 29.
 
-The Task history, Developer completion reports and B review records remain available in Git
-history. Slice Closure Packet: `SLICE.md`.
-Next Action: A SELECTS THE NEXT LARGE SLICE
+Next Action: B PLANS FIRST TASK
