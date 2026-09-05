@@ -534,7 +534,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 27.6
 Parent Slice: 27 - Manual Operations and File Lifecycle
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: e2c048da99858fe1eb504359a1f1ee0e3abc1d1e
 Difficulty: High
 Test Level: T4
@@ -1045,3 +1045,99 @@ authorize-continued and execute-continued manual organize.
 Status: READY FOR B REVIEW
 Head SHA: 6c6fc7e0840d9109e47cf1ff99dd28163c572ee2
 ```
+
+## B Review Result
+
+```text
+Reviewed: e2c048da99858fe1eb504359a1f1ee0e3abc1d1e..6c6fc7e0840d9109e47cf1ff99dd28163c572ee2
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+### Blockers
+
+1. **AC1/AC5 未满足：continuation authority 正常过期后，同一 source item 永久无法再取得
+   continuation authority（RO-6 恢复路径死锁）。**
+   - 证据：用真实 API 在临时 LocalStorage root + fake provider 上复现：manual Organize 失败 →
+     `admit(action_id="retry")` → 真实 Worker 单项 re-analysis `COMPLETED` →
+     `POST /api/v1/tasks/{task_id}/items/{item_id}/recovery/authorize-organize` 返回 `201` 与 link。
+     随后**不发起任何执行**、源文件完整，仅让该一次性 authority 按 `ttlSeconds` 正常过期
+     （`expire_manual_execution_authorizations` 返回 1）；再次调用同一 route，连续三次均为
+     `409 authorization_inactive`，`details.nextAction` 为
+     "inspect the authorization audit and request a fresh continuation"，而
+     `get_manual_recovery_link_by_source` 返回的 link 已变为 `stale`。
+     `mediaflow/application/manual_recovery_continuation.py:220-244` 在 authority 非 ACTIVE/CONSUMED
+     时无条件 `mark_manual_recovery_link_stale` 并抛错，而 `get_manual_recovery_link_by_source`
+     始终返回该 stale 行，`manual_recovery_links` 又带
+     `UNIQUE(source_task_id, source_item_id)`（`mediaflow/infrastructure/sqlite_runtime.py:8247-8266`），
+     因此之后永远无法为该 item 创建新的 link/authority。
+     `ManualRecoveryLink.next_action()` 对 stale 提示 "request a fresh current-source Preview before
+     authorizing execution"（`mediaflow/domain/manual_recovery.py:54-57`），但系统无法执行该动作。
+   - 修正方向：在既有全部 gate（checkpoint version、`task_retry_requested`、无 active recovery
+     request、re-analysis `COMPLETED` 且 linked item 无 blocker、当前 occurrence/fingerprint、
+     pinned snapshot、fresh exact Preview）仍然成立的前提下，允许上一份 authority 处于
+     `EXPIRED`/`REVOKED` 时为同一 source item 重新取得一次性 continuation authority（例如把 link
+     建模为可追加历史，或让 stale link 可被新 link 取代），并用 T4 回归固定"正常 TTL 过期后仍可
+     继续原 journey，且期间无任何 Storage mutation"。
+
+2. **AC2/AC4 未满足：在 linked re-analysis item 上保存的 decision 不会被下一次 re-analysis 消费。**
+   - 证据：`mediaflow/final_cli.py:3262-3325` 以 `stored = prepared.source_item`、
+     `value.item_id == stored.item_id` 和 `repository.get_*_review_for_item(stored.item_id)` 读取
+     决策，即只读**原** manual TaskItem 的 review/confirmation。但每次 continuation 都通过
+     `coordinator.create(...)` + `service.process_file(...)` 新建 Task 与新 item
+     （`mediaflow/final_cli.py:3347-3385`），re-analysis 产生的 review 记录绑定在**新的** analysis
+     item 上，而 `get_metadata_review_for_item` 等查询严格按 `item_id` 过滤
+     （`mediaflow/infrastructure/sqlite_runtime.py:3836-3841`）。同时 `review_pending` 给出的恢复
+     动作明确是 "resolve the blocker on the linked TaskItem, then request a fresh re-analysis and
+     return here"（`mediaflow/application/manual_recovery_continuation.py:195-218`）。因此操作员按
+     系统自己给出的动作在 linked item 上解决 blocker 后，下一次真实 re-analysis 读不到该决策，会
+     重新产生同一个 review；AC2 的 "blockers link to the exact review/decision evidence" 与 AC4 的
+     "After a permitted decision/repair ... can be re-analyzed" 无法闭合，Correction Round 2 中
+     "a saved decision is actually consumed by the next real re-analysis" 的结论不成立。
+   - 修正方向：让 continuation 的决策解析覆盖 linked analysis item（或按 source
+     occurrence/文件维度解析已解决决策），使在 linked item 上保存的 Conflict、Recognition、
+     Metadata、Metadata Correction、Classification 决策能被下一次真实 re-analysis 消费；并补 T4
+     回归：re-analysis 产生 review → 在 linked item 上解决 → 再次 continuation → 该 review 不再
+     出现且新 plan 反映该决策。
+
+3. **AC8 未满足：新增的 fail-closed 分支、`prepare` occurrence 校验与 decision 传递代码没有任何
+   测试固定。**
+   - 证据：
+     - `RecoveryContinuationWorkerService.prepare(..., file_index=...)` 新增的
+       stale/replaced/missing occurrence 校验无测试覆盖：`grep -rn "\.prepare(" tests/*.py` 只有
+       `tests/test_manual_organize_execution.py:2134`（未传 `file_index`，新分支不执行）与
+       `tests/test_metadata_correction_continuation.py:911`（`MetadataCorrectionContinuationWorkerService`，
+       另一个服务）。
+     - `ManualRecoveryContinuationError` 的新 code 在 `tests/` 中一个都没有断言：
+       `analysis_not_completed`、`review_pending`、`recovery_stage_invalid`、
+       `recovery_request_active`、`stale_checkpoint`、`analysis_result_invalid`、
+       `analysis_scope_invalid`、`analysis_unavailable`、`preview_blocked`、`intent_unavailable`、
+       `manual_item_not_found`、`link_not_found`、`authorization_inactive`、
+       `confirmation_required`、`invalid_permission`。仅 happy path 与
+       `authorization_not_active` 被覆盖。
+     - `mediaflow/final_cli.py:3262-3325` 的决策传递代码在测试中完全未执行：
+       `tests/test_recovery_continuation.py` 没有任何 `ConfirmationStatus.RESOLVED` 或
+       metadata/recognition/classification/metadata-correction 选择。
+     - 我用一次性探针确认其中两个 refusal 行为本身正确：re-analysis 完成前调用
+       authorize-organize → `409 recovery_request_active`，无 link、无 mutation；re-analysis 完成后
+       替换源文件 → `409 source_stale`，无 link、源文件保留、target 0 个文件。行为正确但未被测试
+       固定，AC8 要求的 "stale/replaced source, re-analysis success/failure, uncertain-effect
+       refusal" 仍缺证据。
+   - 修正方向：为上述 fail-closed 分支与 `prepare(..., file_index=...)` 校验补 T4 回归，至少覆盖
+     stale/replaced source、re-analysis 未完成、linked item 仍有 blocker、authority 非 ACTIVE、
+     每种 review kind 与 conflict decision 被真实 re-analysis 消费；断言必须包含"无 link、无
+     authority、无 Storage mutation、源文件完整"。
+
+4. **Round 1 Blocker 3 的报告要求未完成：`### Changed Files` 与实际 diff 不符。**
+   - 证据：`git diff --stat e2c048d..6c6fc7e` 为 12 个文件，Correction Round 2 的
+     `### Changed Files` 只描述了 11 个：缺 `tests/test_automation_admission.py`（实际 +93 行），
+     且 `service_api.py` 条目未提到仍然保留的 `maximum_active_jobs: int | None = None` 与
+     `_maximum_active_jobs_override` sticky-per-snapshot 行为。Round 1 Blocker 3 明确要求"补回归
+     并修正反向的 Changed Files 说明，否则回退"。回归本身已补齐并通过
+     （`tests/test_automation_admission.py` 的两个新测试分别固定 same-snapshot sticky 与 snapshot
+     变更后 override 清空）。
+   - 修正方向：更新 `### Changed Files`，列出 `tests/test_automation_admission.py`，并在
+     `service_api.py` 条目中如实描述 `maximum_active_jobs` override 语义。
+
+Task ID、Task Base、Goal、Implementation Scope 保持不变；修正继续留在本 Task，不关闭 Slice，也不更新 Roadmap。
