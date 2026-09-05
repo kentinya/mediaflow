@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 import copy
 import hashlib
 import json
 import math
 import posixpath
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -415,6 +415,7 @@ def validate_worker_label(label: str) -> str:
 @dataclass(frozen=True)
 class ProcessingWorker:
     """A durable processing-Worker registration record."""
+
     worker_id: str
     label: str
     registered_at: datetime
@@ -436,18 +437,23 @@ class ProcessingWorker:
             if isinstance(maximum, int) and len(value) > maximum:
                 raise ValueError(f"{label_} must not exceed {maximum} characters")
         validate_worker_label(self.label)
-        if isinstance(self.heartbeat_interval_seconds, bool) or not isinstance(
-            self.heartbeat_interval_seconds, (int, float)
-        ) or self.heartbeat_interval_seconds <= 0:
+        if (
+            isinstance(self.heartbeat_interval_seconds, bool)
+            or not isinstance(self.heartbeat_interval_seconds, (int, float))
+            or self.heartbeat_interval_seconds <= 0
+        ):
             raise ValueError("heartbeat interval must be a positive number")
-        if isinstance(self.runtime_schema_version, bool) or not isinstance(
-            self.runtime_schema_version, int
-        ) or self.runtime_schema_version < 0:
+        if (
+            isinstance(self.runtime_schema_version, bool)
+            or not isinstance(self.runtime_schema_version, int)
+            or self.runtime_schema_version < 0
+        ):
             raise ValueError("runtime schema version must be a non-negative integer")
         if not isinstance(self.supported_commands, tuple) or not all(
             isinstance(c, str) and c.strip() for c in self.supported_commands
         ):
             raise ValueError("supported commands must be a tuple of non-empty strings")
+
 
 class ProcessingWorkerRepository(Protocol):
     """Persistence contract for processing-Worker registration."""

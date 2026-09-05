@@ -20,11 +20,10 @@ from mediaflow.domain.automation import (
     AutomationJobStatus,
     AutomationQueueFull,
     AutomationTaskRunMode,
+    ProcessingWorker,
     ScheduleAuditRecord,
     ScheduleState,
-    ProcessingWorker,
     WorkerStatus,
-    WorkerReadiness,
 )
 from mediaflow.domain.automation_task_definition_preview import (
     AutomationPreviewSource,
@@ -4831,7 +4830,8 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE automation_jobs SET status=?, updated_at=?, started_at=NULL, "
                 "completed_at=NULL, task_id=NULL, error='explicitly requeued stale job', "
-                "cancellation_requested=0, claim_token=NULL, worker_id=NULL, failure_category=NULL, "
+                "cancellation_requested=0, claim_token=NULL, worker_id=NULL, "
+                "failure_category=NULL, "
                 "failure_durable_state=NULL, failure_side_effects=NULL, "
                 "failure_retry_safe=NULL, failure_next_action=NULL "
                 "WHERE job_id=? AND status=? AND updated_at<?",
@@ -4963,8 +4963,7 @@ class SQLiteTaskRepository:
     def stop_worker(self, worker_id: str, now: datetime) -> ProcessingWorker:
         with self._lock, self._connection:
             cursor = self._connection.execute(
-                "UPDATE processing_workers SET status=?, last_heartbeat_at=? "
-                "WHERE worker_id=?",
+                "UPDATE processing_workers SET status=?, last_heartbeat_at=? WHERE worker_id=?",
                 (WorkerStatus.STOPPED.value, now.isoformat(), worker_id),
             )
             if cursor.rowcount != 1:
@@ -10172,7 +10171,8 @@ class SQLiteTaskRepository:
             "occurrence_at, run_mode, resource_library_id, source_scope, "
             "configuration_snapshot_version) "
             "VALUES ("
-            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
             ")",
             self._job_values(job),
         )

@@ -179,7 +179,9 @@ class StaleJobVisibilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 # No worker registered
-                job = self._job("pending-job", NOW - timedelta(minutes=10), AutomationJobStatus.PENDING)
+                job = self._job(
+                    "pending-job", NOW - timedelta(minutes=10), AutomationJobStatus.PENDING
+                )
                 repository.create_job(job)
                 api = self._api(repository)
                 statuses: list[str] = []
@@ -200,6 +202,7 @@ class StaleJobVisibilityTests(unittest.TestCase):
                 self.assertEqual(condition["condition"], "no_worker")
                 self.assertEqual(condition["sideEffects"], "none")
                 self.assertTrue(condition["retrySafe"])
+
     @staticmethod
     def _api(repository):
         principal = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))

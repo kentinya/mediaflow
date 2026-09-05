@@ -117,7 +117,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.upgrade_preflight import UpgradePreflightService
 
 
@@ -1274,6 +1274,7 @@ def final_main(
                     )
             return 0
         if arguments.command == "worker":
+            worker_snapshot = _managed_snapshot_reference(arguments.config)
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 worker_service = AutomationWorker(
                     repository,
@@ -1286,6 +1287,9 @@ def final_main(
                         if hasattr(configuration, "resolve_webhook_targets")
                         else {},
                     ),
+                    configuration_snapshot_id=(worker_snapshot[0] if worker_snapshot else None),
+                    configuration_snapshot_digest=(worker_snapshot[1] if worker_snapshot else None),
+                    runtime_schema_version=SCHEMA_VERSION,
                 )
                 if arguments.worker_command == "run-next":
                     job = worker_service.run_next()
@@ -3820,6 +3824,24 @@ def _managed_snapshot_identity(path: str | None) -> tuple[str, str] | None:
                 digest=active.digest,
                 reason="runtime_invalid",
             ) from error
+        return active.revision_id, active.digest
+
+
+def _managed_snapshot_reference(path: str | None) -> tuple[str, str] | None:
+    """Read the current managed identity without validating its workflow document.
+
+    A Worker must bind its registration to the persisted Active identity, but it
+    must still be able to finish an already pinned Job when a newer Active
+    document is unhealthy.  The claimed Job remains responsible for loading
+    and validating the exact snapshot it consumes.
+    """
+
+    document = _configuration_document(path)
+    database_path = _bootstrap_database_path(document)
+    with SQLiteConfigurationRepository(database_path) as repository:
+        active = repository.get_active_revision()
+        if active is None:
+            return None
         return active.revision_id, active.digest
 
 

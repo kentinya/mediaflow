@@ -59,7 +59,6 @@ from mediaflow.domain.automation import (
     AutomationQueueFull,
     AutomationTaskDefinition,
     WorkerReadiness,
-    ProcessingWorker,
 )
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
@@ -1705,9 +1704,7 @@ class MediaFlowApi:
             )
         if parts == ["api", "v1", "workers", "readiness"]:
             if method != "GET":
-                return self._error(
-                    start_response, 405, "method_not_allowed", "GET required"
-                )
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
             self._require_empty_query(environ, "worker readiness")
             self._require(principal, ApiPermission.READ)
             if self._worker_service is None:
@@ -1724,13 +1721,11 @@ class MediaFlowApi:
             )
         if parts == ["api", "v1", "workers"]:
             if method != "GET":
-                return self._error(
-                    start_response, 405, "method_not_allowed", "GET required"
-                )
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
             limit = self._parse_bounded_limit(
-                parse_qs(
-                    str(environ.get("QUERY_STRING", "")), keep_blank_values=True
-                ).get("limit", ["50"])[0],
+                parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True).get(
+                    "limit", ["50"]
+                )[0],
                 "worker",
             )
             self._require(principal, ApiPermission.READ)
@@ -4839,7 +4834,9 @@ class MediaFlowApi:
             self._require(principal, ApiPermission.CANCEL_JOB)
             self._require_empty_query(environ, "job cancellation")
             self._require_empty_body(environ, "job cancellation")
-            return self._response(start_response, 200, self._job_document(binding.jobs.cancel(parts[3])))
+            return self._response(
+                start_response, 200, self._job_document(binding.jobs.cancel(parts[3]))
+            )
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "requeue-stale":
             if method != "POST":
                 return self._error(start_response, 405, "method_not_allowed", "POST required")
@@ -4996,18 +4993,22 @@ class MediaFlowApi:
                 "activeSnapshotDigest": None,
             }
         readiness = self._worker_service.evaluate_readiness()
-        return redact_manual_value({
-            "ready": readiness.get("ready", False),
-            "condition": readiness.get("condition", WorkerReadiness.NO_WORKER.value),
-            "category": readiness.get("condition", None) if not readiness.get("ready") else None,
-            "durableState": readiness.get("durableState", ""),
-            "sideEffects": readiness.get("sideEffects", "none"),
-            "retrySafe": readiness.get("retrySafe", True),
-            "nextAction": readiness.get("nextAction", ""),
-            "activeWorkersCount": readiness.get("liveWorkers", 0),
-            "activeSnapshotId": None,
-            "activeSnapshotDigest": None,
-        })
+        return redact_manual_value(
+            {
+                "ready": readiness.get("ready", False),
+                "condition": readiness.get("condition", WorkerReadiness.NO_WORKER.value),
+                "category": readiness.get("condition", None)
+                if not readiness.get("ready")
+                else None,
+                "durableState": readiness.get("durableState", ""),
+                "sideEffects": readiness.get("sideEffects", "none"),
+                "retrySafe": readiness.get("retrySafe", True),
+                "nextAction": readiness.get("nextAction", ""),
+                "activeWorkersCount": readiness.get("liveWorkers", 0),
+                "activeSnapshotId": None,
+                "activeSnapshotDigest": None,
+            }
+        )
 
     def _workers_document(
         self,
@@ -6805,6 +6806,7 @@ class MediaFlowApi:
             headers.append(("WWW-Authenticate", 'Bearer realm="mediaflow"'))
         start_response(f"{status} {labels[status]}", headers)
         return [body]
+
     def _job_document(self, job) -> dict[str, object]:
         """Project a Job for API responses, including worker ownership evidence
         (workerId, ownerLastHeartbeatAt) for RUNNING Jobs and operational
