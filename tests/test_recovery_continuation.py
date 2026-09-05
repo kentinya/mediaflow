@@ -2137,6 +2137,92 @@ class RecoveryContinuationTests(unittest.TestCase):
                 expected_destination=results[-1].destination_path,
             )
 
+    def test_manual_recovery_refuses_incompatible_linked_recognition_decision(self):
+        """A linked RecognitionType change cannot silently execute the old manual plan."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory, source_subdir="X")
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(
+                environment, provider, source_subdir="X"
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider, expected_code=1)
+            _continuation, analysis = self._completed_continuation_item(
+                environment, submission.job.job_id, RecoveryContinuationStatus.FAILED
+            )
+            assert analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                linked = repository.get_item(analysis.item_id)
+                assert linked is not None
+                self.assertEqual(TaskItemStatus.WAITING_RECOGNITION, linked.status)
+                review = repository.get_recognition_review_for_item(linked.item_id)
+                assert review is not None
+                RecognitionReviewService(
+                    repository,
+                    (
+                        RecognitionType("A", "A"),
+                        RecognitionType("B", "B"),
+                        RecognitionType("C", "C"),
+                    ),
+                ).resolve(review.review_id, "C", actor="operator")
+                resolved = repository.get_recognition_review_for_item(linked.item_id)
+                assert resolved is not None
+                self.assertEqual(RecognitionReviewStatus.RESOLVED, resolved.status)
+                self.assertEqual("C", resolved.selected_recognition_type)
+
+            services = self._manual_services(environment, provider)
+            self.addCleanup(self._close_manual_services, services)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                resubmission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider)
+            _retried, retried_analysis = self._completed_continuation_item(
+                environment, resubmission.job.job_id, RecoveryContinuationStatus.COMPLETED
+            )
+            assert retried_analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                results = repository.list_results(retried_analysis.task_id)
+                self.assertEqual("C", results[-1].recognition_type)
+
+            continued_services = self._manual_services(environment, provider)
+            self.addCleanup(self._close_manual_services, continued_services)
+            recovery, api = self._recovery_api(environment, continued_services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, refused = self._authorize_continuation(api, run, checkpoint.checkpoint_version)
+            self.assertEqual(409, status)
+            self.assertEqual("recognition_plan_mismatch", refused["error"]["code"])
+            self.assertEqual("C", refused["error"]["details"]["reviewedRecognitionType"])
+            self.assertEqual("A", refused["error"]["details"]["manualRecognitionType"])
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual(
+                (),
+                tuple(
+                    value
+                    for value in Path(environment["target_root"]).rglob("*")
+                    if value.is_file()
+                ),
+            )
+            self.assertIsNone(
+                continued_services["task_repository"].get_manual_recovery_link_by_source(
+                    run.task_id, run.items[0].task_item_id
+                )
+            )
+            self.assertEqual(
+                1,
+                len(
+                    continued_services["task_repository"].list_manual_executions_for_task_item(
+                        run.task_id, run.items[0].task_item_id
+                    )
+                ),
+            )
+
     def test_manual_recovery_re_analysis_consumes_metadata_correction_decision(self):
         with tempfile.TemporaryDirectory() as directory:
             environment = self._environment(directory)

@@ -928,6 +928,67 @@ Next: SAME TASK FIX LOOP
 
 Task ID、Task Base、Goal、Implementation Scope 保持不变；修正继续留在本 Task，不关闭 Slice，也不更新 Roadmap。
 
+## Developer Completion Report (Correction Round 5)
+
+### Changed Files
+- `mediaflow/application/manual_recovery_continuation.py` — reject a linked resolved
+  RecognitionType decision when it differs from the original manual intent choice, before creating
+  a continuation Preview or execution authority.
+- `tests/test_recovery_continuation.py` — add a real temporary-LocalStorage/fake-provider regression
+  covering linked RecognitionType mismatch, fail-closed authorization, no link/authority creation,
+  zero Storage mutation and intact source.
+- `TASK.md` — this Developer Completion Report.
+
+### Implemented
+- A linked Recognition review decision that selects a different RecognitionType from the original
+  manual intent now returns `409 recognition_plan_mismatch` with both reviewed and manual type IDs.
+- The refusal occurs before fresh Preview creation and before manual execution authorization, so an
+  incompatible linked plan cannot silently fall back to the original manual RecognitionType.
+- Existing current-source, pinned-snapshot, capability, conflict, destructive-policy and
+  OrganizerExecutor-only checks remain unchanged for compatible continuation paths.
+
+### Tests and Results
+- `PASS` — `.venv/bin/python -m unittest tests.test_recovery_continuation.RecoveryContinuationTests.test_manual_recovery_refuses_incompatible_linked_recognition_decision tests.test_recovery_continuation.RecoveryContinuationTests.test_manual_recovery_re_analysis_consumes_recognition_decision_saved_on_linked_item` — 2 tests OK.
+- `PASS` — `.venv/bin/python -m unittest tests.test_manual_organize_execution tests.test_manual_organize_intent tests.test_manual_preview tests.test_conflict_resolution tests.test_recognition_review tests.test_metadata_review tests.test_classification_review tests.test_processing_recovery_admission tests.test_recovery_continuation tests.test_recovery_batch tests.test_api_security tests.test_operator_ui` — 219 tests OK.
+- `PASS` — `.venv/bin/python -m unittest tests.test_migration_rehearsal tests.test_sqlite_backup tests.test_sqlite_restore tests.test_task_persistence tests.test_processing_checkpoint` — 33 tests OK.
+- `FAIL / PRE-EXISTING / UNRELATED` — `.venv/bin/python -m unittest discover -s tests` — 1244 tests, 6 failures, 7 skips. The failing tests are the existing `test_api_credentials` x2, `test_final_integration` x1, `test_resource_library_pipeline` x1 and `test_runtime_storage_configuration` x2 environment failures; no failure imports or exercises this correction.
+- `PASS` — `.venv/bin/ruff format --check mediaflow tests` — 249 files already formatted.
+- `PASS` — `.venv/bin/ruff check mediaflow tests`.
+- `PASS` — `.venv/bin/python -m compileall -q mediaflow tests`.
+- `PASS` — `.venv/bin/pip check` — no broken requirements found.
+- `PASS` — both required example configuration validation commands.
+- `PASS` — `git diff --check`.
+- `PASS` — Markdown local-link validation over tracked Markdown — 123 files, 40 local links, 0 broken.
+- `PASS` — private-config/secret scan and forbidden FFprobe/FFmpeg scan; private configuration remains ignored and no credentials were staged.
+- `SKIP / UNAVAILABLE` — production SMB, OpenList, AWS S3/Cloudflare R2, live TMDB and multi-process/concurrency gates; no production services or credentials were available or authorized.
+
+### Decisions
+- This correction uses fail-closed compatibility validation rather than silently changing the
+  original manual intent. A different linked RecognitionType implies a different policy graph and
+  therefore cannot be represented by the original intent's one-shot execution authority.
+- The refusal is persistence-neutral: it does not create a Preview, continuation link, manual
+  execution authority or Storage effect. The operator must create a compatible manual intent/Preview
+  before executing that reviewed RecognitionType.
+
+### Remaining In-Slice Work
+- RO-7 Processing Worker registration/readiness and ownership/fencing remains outside this Task.
+
+### Risks / Deviations
+- Full regression remains `FAIL / PRE-EXISTING / UNRELATED` with the six CLI/credential/storage
+  environment failures listed above. ResourceWarning messages from pre-existing SQLite teardown
+  remain non-fatal and unrelated to this correction.
+- The compatible Recognition decision path remains covered by the existing A→A continuation test;
+  this round adds the required mismatched-type fail-closed proof.
+- `SLICE.md`, `docs/roadmap.md`, `nohup.out` and `worker.log` retain their pre-existing state and
+  are not included in this checkpoint.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: PENDING COMMIT
+```
+
 ## Developer Completion Report (Correction Round 2)
 
 ### Resolution of B Review Blockers
