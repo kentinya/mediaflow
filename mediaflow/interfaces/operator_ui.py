@@ -32,6 +32,7 @@ INDEX_HTML = b"""<!doctype html>
     <button data-view="classification-reviews">Classification</button>
     <button data-view="configuration">Configuration</button>
     <button data-view="system">System</button>
+    <button data-view="workers">Workers</button>
   </nav>
   <main>
     <div id="notice" role="status" aria-live="polite">Enter an API token to connect.</div>
@@ -201,6 +202,37 @@ APP_JS = b"""(() => {
       content.append(table(fields, items.map(item => fields.map(fieldName => item[fieldName]))));
     });
   }
+  async function renderWorkers() {
+    const [readiness, list] = await Promise.all([
+      api('/api/v1/workers/readiness'),
+      api('/api/v1/workers?limit=50')
+    ]);
+    clear(content); content.append(text('h2', 'Processing workers'));
+    content.append(text('p', 'Read-only projection of registered Processing Workers. The Operator UI never supervises, starts, or stops a Worker.', 'hint'));
+    content.append(cards([
+      ['Ready', readiness.ready],
+      ['Condition', readiness.condition],
+      ['Active workers', readiness.activeWorkersCount],
+      ['Side effects', readiness.sideEffects],
+      ['Retry safe', readiness.retrySafe],
+      ['Next action', readiness.nextAction],
+      ['Durable state', readiness.durableState]
+    ]));
+    const items = (list && list.workers) || [];
+    content.append(text('h3', `Registered workers (${list ? list.count : 0})`));
+    if (items.length === 0) {
+      content.append(text('p', 'No workers are registered. Start a resident worker with the active configuration to enable processing.', 'warning'));
+      return;
+    }
+    content.append(table(
+      ['worker_id', 'label', 'status', 'registered_at', 'last_heartbeat_at', 'configuration_snapshot_id', 'runtime_schema_version'],
+      items.map(w => [
+        w.worker_id, w.label, w.status, w.registered_at, w.last_heartbeat_at,
+        w.configuration_snapshot_id, w.runtime_schema_version
+      ])
+    ));
+  }
+
   async function renderConfiguration() {
     const data = await api('/api/v1/configuration');
     canManageConfiguration = data.canManageConfiguration !== false;
@@ -3964,6 +3996,7 @@ APP_JS = b"""(() => {
       else if (view === 'notifications') await renderNotifications();
       else if (view === 'logs') await renderLogs();
       else if (view === 'system') await renderSystem();
+      else if (view === 'workers') await renderWorkers();
       else if (view === 'configuration') await renderConfiguration();
       else if (view === 'files') await renderFiles();
       else if (view === 'file-index') await renderFileIndex();

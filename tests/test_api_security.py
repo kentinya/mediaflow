@@ -7,6 +7,8 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from datetime import UTC, datetime
+
 from pathlib import Path
 from unittest.mock import patch
 
@@ -313,6 +315,89 @@ class ApiSecurityTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
                 self.assertEqual(repository.list_security_audit(), ())
+
+class WorkerRouteSecurityTests(unittest.TestCase):
+    def test_unauthenticated_requests_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=principals(),
+                )
+                for path in ("/api/v1/workers", "/api/v1/workers/readiness"):
+                    for method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+                        with self.subTest(path=path, method=method):
+                            status, _ = request(api, method, path, token=None)
+                            self.assertEqual(status, 401)
+
+    def test_only_get_is_allowed_and_mutation_methods_return_405(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=principals(),
+                )
+                for path in ("/api/v1/workers", "/api/v1/workers/readiness"):
+                    for method in ("POST", "PUT", "PATCH", "DELETE"):
+                        with self.subTest(path=path, method=method):
+                            status, _ = request(api, method, path, token="viewer-token")
+                            self.assertEqual(status, 405)
+
+    def test_worker_routes_redact_secrets_in_projections(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                now = datetime.now(UTC)
+                repository.register_worker(
+                    worker_id="w-1",
+                    label="node-1",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("scan",),
+                    configuration_snapshot_id="cfg-1",
+                    configuration_snapshot_digest="sha256:test",
+                    runtime_schema_version=33,
+                    now=now,
+                )
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=principals(),
+                )
+                status, doc = request(api, "GET", "/api/v1/workers", token="viewer-token")
+                self.assertEqual(status, 200)
+                self.assertEqual(doc["count"], 1)
+                serialized = json.dumps(doc)
+                self.assertIn("cfg-1", serialized)
+                self.assertNotIn("token", serialized.lower())
+                status, readiness = request(
+                    api, "GET", "/api/v1/workers/readiness", token="viewer-token"
+                )
+                self.assertEqual(status, 200)
+                self.assertIn("ready", readiness)
+                self.assertIn("condition", readiness)
+
+    def test_label_validation_for_paths_and_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                for bad_label in (
+                    "/etc/passwd",
+                    "C:\\\\secrets",
+                    "https://x/token",
+                    "password=hunter2",
+                ):
+                    with self.subTest(label=bad_label):
+                        with self.assertRaises(ValueError):
+                            repository.register_worker(
+                                worker_id="w-bad",
+                                label=bad_label,
+                                heartbeat_interval_seconds=5.0,
+                                supported_commands=("scan",),
+                                configuration_snapshot_id="cfg-1",
+                                configuration_snapshot_digest="sha256:test",
+                                runtime_schema_version=33,
+                                now=datetime.now(UTC),
+                            )
 
 
 class AutomationPreviewSecurityTests(unittest.TestCase):

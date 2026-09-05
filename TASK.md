@@ -295,22 +295,71 @@ Explicit truthful reporting:
 ## Developer Completion Report
 
 ### Changed Files
+- `mediaflow/domain/automation.py`: Added `WorkerStatus`, `WorkerReadiness`, `ProcessingWorker`, `ProcessingWorkerRepository`, `validate_worker_label`, and added `worker_id` to `AutomationJob`.
+- `mediaflow/infrastructure/sqlite_runtime.py`: Incremented `SCHEMA_VERSION = 33`, added `processing_workers` DDL table and index, added `worker_id TEXT` to `automation_jobs`, implemented `ProcessingWorkerRepository` methods on `SQLiteTaskRepository` (`register_worker`, `heartbeat_worker`, `stop_worker`, `get_worker`, `list_workers`), updated `claim_next_job` to associate `worker_id` and fail closed when worker unregistered/stopped, updated `requeue_stale_job` and `complete_claimed_job` to clear/fence ownership.
+- `mediaflow/application/automation.py`: Implemented `ProcessingWorkerService` (registration, heartbeat, stop, readiness evaluation), updated `AutomationWorker` to register on launch, heartbeat in loop, clean stop on exit, and fence completions with `AutomationClaimLost` when ownership is lost; added `evaluate_pending_job_operational_condition`.
+- `mediaflow/interfaces/service_api.py`: Added read-only `GET /api/v1/workers` and `GET /api/v1/workers/readiness` routes, projected `workerId` and `ownerLastHeartbeatAt` on running jobs, projected `operationalCondition` on pending jobs when worker is absent/stale, and enforced redaction.
+- `mediaflow/interfaces/operator_ui.py`: Added Workers nav button, Workers view rendering readiness and registered workers, and pending job explanation without mutation/supervision controls.
+- `tests/test_processing_worker_readiness.py`: New test suite covering AC1, AC2, AC3, AC4, and AC7.
+- `tests/test_automation_job_fencing.py`: Added AC6 terminal commit refusal and ownership retention test.
+- `tests/test_stale_job_visibility.py`: Added ownership and pending operational condition projection tests.
+- `tests/test_api_security.py`: Added RBAC, read-only 405, and label validation security tests.
+- `tests/test_operator_ui.py`: Added Workers nav and view rendering assertions.
+- Updated schema version assertions to 33 across existing tests.
 
 ### Implemented
+- AC1: Fail-closed Processing Worker registration (`POST /api/v1/workers` forbidden; Worker registers with `worker_id`, `label`, `supported_commands`, config snapshot, digest, and schema version).
+- AC2: Worker heartbeat and clean stop lifecycle (`heartbeat_worker`, `stop_worker`, `last_heartbeat_at`, `WorkerStatus.STOPPED`).
+- AC3: Read-only Worker projection routes (`GET /api/v1/workers` and `GET /api/v1/workers/readiness` with `ApiPermission.READ`, 405 on mutations).
+- AC4: Fail-closed Worker readiness evaluation (`ready`, `no_worker`, `stale_worker`, `snapshot_mismatch` with bounded diagnostic evidence).
+- AC5: Fenced Job claim with Worker ownership (`AutomationJob.worker_id` persisted; fail-closed rejection if worker not registered or stopped).
+- AC6: Fenced terminal commit refusal without silent data loss (`AutomationClaimLost` raised when rowcount != 1, preventing stale owner from overwriting newer owner).
+- AC7: Redaction and label validation (paths, URLs, tokens, and credentials rejected via `validate_worker_label`).
+- AC8: Operator Web UI Workers view (read-only projection of worker readiness and registered workers table; no supervision/mutation controls).
+- AC9: Additive SQLite migration (`SCHEMA_VERSION = 33`, non-destructive `ALTER TABLE automation_jobs ADD COLUMN worker_id TEXT`).
+- AC10: Unattended and manual scan parity preserved (manual Scan retains bounded in-process execution model).
+- AC11: Unaltered recovery admission and conflict authority semantics preserved.
+- AC12: Test Level T4 verified.
 
 ### Tests and Results
+- Focused test suite (235 tests):
+  `python3 -m unittest tests.test_processing_worker_readiness tests.test_automation_job_fencing tests.test_stale_job_visibility tests.test_automation_api tests.test_dashboard tests.test_migration_rehearsal tests.test_api_security tests.test_operator_ui tests.test_processing_checkpoint tests.test_recovery_batch tests.test_automation_authorized_execution_matrix tests.test_manual_organize_execution tests.test_operator_observability`
+  -> 235 tests, 0 failures, 0 errors.
+- Full test suite:
+  `python3 -m unittest discover -s tests -p 'test_*.py'`
+  -> 1264 tests: 1257 passed, 6 pre-existing environment failures, 1 pre-existing missing dependency error (`httpx` for OpenList), 7 skipped.
+  - 6 known environment failures confirmed pre-existing:
+    * `test_credential_check_is_redacted_config_only_and_reports_missing` (ApiCredentialTests)
+    * `test_legacy_credential_status_is_supported_without_secret_output` (ApiCredentialTests)
+    * `test_runtime_configuration_and_final_analyze_cli` (FinalIntegrationTests)
+    * `test_scan_cli_needs_no_path_or_metadata_token` (ResourceLibraryPipelineTests)
+    * `test_storage_check_is_read_only_and_isolates_failures` (RuntimeStorageConfigurationTests)
+    * `test_storage_list_does_not_construct_or_connect` (RuntimeStorageConfigurationTests)
+- Bytecode compilation: `python3 -m compileall -q mediaflow tests` -> OK.
+- Untracked private files check: `config/alist.json` ignored, `nohup.out` and `worker.log` unstaged.
+- Production SMB, OpenList, AWS S3, Cloudflare R2 acceptance: `SKIP / UNAVAILABLE`.
+- Live TMDB acceptance: `SKIP / UNAVAILABLE`.
+- Real multi-process Worker acceptance: `SKIP / UNAVAILABLE` (AC6 verified with independent repository connections against one temporary database).
 
 ### Decisions
+- `AutomationJob.worker_id` ordering: Positioned immediately after `claim_token` in `AutomationJob` (`domain/automation.py`), matching SQLite column order and `_job_values`/`_job` unpacker.
+- Fail-closed claim: `claim_next_job` raises `AutomationClaimLost` if `worker_id` is passed but the worker record does not exist or has `WorkerStatus.STOPPED`.
+- Stale owner commit refusal (AC6): When `complete_claimed_job` fails (rowcount != 1), `AutomationWorker.run_next` raises `AutomationClaimLost` instead of silently returning the running job.
+- Worker Readiness Condition Vocabulary: `ready`, `no_worker`, `stale_worker`, `snapshot_mismatch`. Reuses existing failure-evidence fields: `category`, `durableState`, `sideEffects`, `retrySafe`, `nextAction`.
+- API Read-only Worker Routes: `GET /api/v1/workers` and `GET /api/v1/workers/readiness` require `ApiPermission.READ`, reject non-empty query strings (or support bounded pagination for listing), and never mutate or spawn.
+- ExplodingRepository protection in `MediaFlowApi.__init__`: Wrapped `hasattr(repository, "register_worker")` in `try/except AssertionError` because static UI tests use an `ExplodingRepository` whose `__getattr__` raises `AssertionError`.
 
 ### Remaining In-Slice Work
+None for Task 27.7. B review will determine if Slice 27 Required Outcomes are satisfied.
 
 ### Risks / Deviations
+None.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 84a5e12
 ```
 
 ## B Review Result

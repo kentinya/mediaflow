@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import copy
 import hashlib
 import json
 import math
 import posixpath
-from collections.abc import Iterable, Mapping
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -371,6 +372,115 @@ class AutomationClaimLost(RuntimeError):
     pass
 
 
+class WorkerStatus(StrEnum):
+    LIVE = "live"
+    STALE = "stale"
+    STOPPED = "stopped"
+
+
+class WorkerReadiness(StrEnum):
+    READY = "ready"
+    NO_WORKER = "no_worker"
+    STALE_WORKER = "stale_worker"
+    SNAPSHOT_MISMATCH = "snapshot_mismatch"
+
+
+_WORKER_SECRET_PATTERN = re.compile(
+    r"(?i)(?:bearer\s+\S+|(?:password|passwd|secret|token|api[_-]?key|authorization|cookie)\s*[:=]\s*\S+)"
+)
+_WORKER_ENDPOINT_PATTERN = re.compile(r"(?i)(?:https?|s3|file|smb|tcp|udp)://[^\s]+")
+_WORKER_PATH_PATTERN = re.compile(
+    r"(?<![\w])(?:/[a-zA-Z0-9_.~-]+(?:/[a-zA-Z0-9_.~+-]+)+|[A-Za-z]:[\\/][^\s]+)"
+)
+_WORKER_ENV_PATTERN = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\}")
+
+
+def validate_worker_label(label: str) -> str:
+    if not isinstance(label, str) or not label.strip():
+        raise ValueError("worker label must be a non-empty string")
+    normalized = label.strip()
+    if len(normalized) > 256:
+        raise ValueError("worker label must not exceed 256 characters")
+    if _WORKER_SECRET_PATTERN.search(normalized):
+        raise ValueError("worker label must not contain secrets, tokens, or credentials")
+    if _WORKER_ENDPOINT_PATTERN.search(normalized):
+        raise ValueError("worker label must not contain URLs or endpoints")
+    if _WORKER_PATH_PATTERN.search(normalized) or normalized.startswith(("/", "\\")):
+        raise ValueError("worker label must not contain filesystem paths")
+    if _WORKER_ENV_PATTERN.search(normalized):
+        raise ValueError("worker label must not contain environment variable references")
+    return normalized
+
+
+@dataclass(frozen=True)
+class ProcessingWorker:
+    """A durable processing-Worker registration record."""
+    worker_id: str
+    label: str
+    registered_at: datetime
+    heartbeat_interval_seconds: float
+    supported_commands: tuple[str, ...]
+    configuration_snapshot_id: str | None
+    configuration_snapshot_digest: str | None
+    runtime_schema_version: int
+    last_heartbeat_at: datetime
+    status: WorkerStatus
+
+    def __post_init__(self) -> None:
+        for label_, value, maximum in (
+            ("Worker ID", self.worker_id, 128),
+            ("label", self.label, 256),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{label_} must be a non-empty string")
+            if isinstance(maximum, int) and len(value) > maximum:
+                raise ValueError(f"{label_} must not exceed {maximum} characters")
+        validate_worker_label(self.label)
+        if isinstance(self.heartbeat_interval_seconds, bool) or not isinstance(
+            self.heartbeat_interval_seconds, (int, float)
+        ) or self.heartbeat_interval_seconds <= 0:
+            raise ValueError("heartbeat interval must be a positive number")
+        if isinstance(self.runtime_schema_version, bool) or not isinstance(
+            self.runtime_schema_version, int
+        ) or self.runtime_schema_version < 0:
+            raise ValueError("runtime schema version must be a non-negative integer")
+        if not isinstance(self.supported_commands, tuple) or not all(
+            isinstance(c, str) and c.strip() for c in self.supported_commands
+        ):
+            raise ValueError("supported commands must be a tuple of non-empty strings")
+
+class ProcessingWorkerRepository(Protocol):
+    """Persistence contract for processing-Worker registration."""
+
+    def register_worker(
+        self,
+        worker_id: str,
+        label: str,
+        heartbeat_interval_seconds: float,
+        supported_commands: tuple[str, ...],
+        configuration_snapshot_id: str | None,
+        configuration_snapshot_digest: str | None,
+        runtime_schema_version: int,
+        now: datetime,
+    ) -> ProcessingWorker: ...
+
+    def heartbeat_worker(
+        self,
+        worker_id: str,
+        now: datetime,
+    ) -> bool: ...
+
+    def stop_worker(
+        self,
+        worker_id: str,
+        now: datetime,
+    ) -> ProcessingWorker: ...
+
+    def list_workers(self) -> tuple[ProcessingWorker, ...]: ...
+
+    def get_worker(self, worker_id: str) -> ProcessingWorker | None: ...
+
+
 @dataclass(frozen=True)
 class AutomationFailureEvidence:
     """Bounded operator-facing evidence for a trusted pre-work failure."""
@@ -581,6 +691,7 @@ class AutomationJob:
     schedule_id: str | None = None
     execute_authorized: bool = False
     claim_token: str | None = None
+    worker_id: str | None = None
     configuration_snapshot_id: str | None = None
     configuration_snapshot_digest: str | None = None
     failure_category: str | None = None

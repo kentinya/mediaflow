@@ -22,6 +22,9 @@ from mediaflow.domain.automation import (
     AutomationTaskRunMode,
     ScheduleAuditRecord,
     ScheduleState,
+    ProcessingWorker,
+    WorkerStatus,
+    WorkerReadiness,
 )
 from mediaflow.domain.automation_task_definition_preview import (
     AutomationPreviewSource,
@@ -194,7 +197,7 @@ from mediaflow.infrastructure.file_index_schema import (
 # Preview tables are additive migrations on the runtime schema.  The table
 # creation below is idempotent and upgrades older runtime databases without
 # rewriting existing rows.
-SCHEMA_VERSION = 32
+SCHEMA_VERSION = 33
 
 _ATTENTION_TASK_ITEM_STATUSES = (
     TaskItemStatus.WAITING_CONFIRM.value,
@@ -4482,9 +4485,19 @@ class SQLiteTaskRepository:
         values = tuple(self._job(row) for row in rows)
         return tuple(reversed(values)) if reverse else values
 
-    def claim_next_job(self, now: datetime) -> AutomationJob | None:
+    def claim_next_job(
+        self, now: datetime, *, worker_id: str | None = None
+    ) -> AutomationJob | None:
         claim_token = secrets.token_urlsafe(32)
         with self._lock, self._connection:
+            if worker_id is not None:
+                worker_row = self._connection.execute(
+                    "SELECT status FROM processing_workers WHERE worker_id=?", (worker_id,)
+                ).fetchone()
+                if worker_row is None or worker_row["status"] == WorkerStatus.STOPPED.value:
+                    raise AutomationClaimLost(
+                        f"worker {worker_id!r} is not registered or is stopped"
+                    )
             row = self._connection.execute(
                 "SELECT job_id FROM automation_jobs WHERE status=? "
                 "ORDER BY created_at, job_id LIMIT 1",
@@ -4493,13 +4506,15 @@ class SQLiteTaskRepository:
             if row is None:
                 return None
             cursor = self._connection.execute(
-                "UPDATE automation_jobs SET status=?, updated_at=?, started_at=?, claim_token=? "
+                "UPDATE automation_jobs SET status=?, updated_at=?, started_at=?, "
+                "claim_token=?, worker_id=? "
                 "WHERE job_id=? AND status=?",
                 (
                     AutomationJobStatus.RUNNING.value,
                     now.isoformat(),
                     now.isoformat(),
                     claim_token,
+                    worker_id,
                     row["job_id"],
                     AutomationJobStatus.PENDING.value,
                 ),
@@ -4517,6 +4532,7 @@ class SQLiteTaskRepository:
                 "UPDATE automation_jobs SET command=?, status=?, created_at=?, updated_at=?, "
                 "limit_value=?, started_at=?, completed_at=?, task_id=?, error=?, "
                 "cancellation_requested=?, schedule_id=?, execute_authorized=?, claim_token=?, "
+                "worker_id=?, "
                 "configuration_snapshot_id=?, configuration_snapshot_digest=?, "
                 "failure_category=?, failure_durable_state=?, failure_side_effects=?, "
                 "failure_retry_safe=?, failure_next_action=?, definition_id=?, "
@@ -4664,6 +4680,7 @@ class SQLiteTaskRepository:
                 "UPDATE automation_jobs SET command=?, status=?, created_at=?, updated_at=?, "
                 "limit_value=?, started_at=?, completed_at=?, task_id=?, error=?, "
                 "cancellation_requested=?, schedule_id=?, execute_authorized=?, claim_token=NULL, "
+                "worker_id=?, "
                 "configuration_snapshot_id=?, configuration_snapshot_digest=?, "
                 "failure_category=?, failure_durable_state=?, failure_side_effects=?, "
                 "failure_retry_safe=?, failure_next_action=?, definition_id=?, "
@@ -4672,7 +4689,8 @@ class SQLiteTaskRepository:
                 "WHERE job_id=? AND status=? AND claim_token=?",
                 (
                     *self._job_values(job)[1:13],
-                    *self._job_values(job)[14:],
+                    job.worker_id,
+                    *self._job_values(job)[15:],
                     job.job_id,
                     AutomationJobStatus.RUNNING.value,
                     job.claim_token,
@@ -4813,7 +4831,7 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE automation_jobs SET status=?, updated_at=?, started_at=NULL, "
                 "completed_at=NULL, task_id=NULL, error='explicitly requeued stale job', "
-                "cancellation_requested=0, claim_token=NULL, failure_category=NULL, "
+                "cancellation_requested=0, claim_token=NULL, worker_id=NULL, failure_category=NULL, "
                 "failure_durable_state=NULL, failure_side_effects=NULL, "
                 "failure_retry_safe=NULL, failure_next_action=NULL "
                 "WHERE job_id=? AND status=? AND updated_at<?",
@@ -4865,6 +4883,125 @@ class SQLiteTaskRepository:
                 "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
             ).fetchone()
         return self._job(row)
+
+    def register_worker(
+        self,
+        worker_id: str,
+        label: str,
+        heartbeat_interval_seconds: float,
+        supported_commands: tuple[str, ...],
+        configuration_snapshot_id: str | None,
+        configuration_snapshot_digest: str | None,
+        runtime_schema_version: int,
+        now: datetime,
+    ) -> ProcessingWorker:
+        with self._lock, self._connection:
+            existing = self._connection.execute(
+                "SELECT registered_at FROM processing_workers WHERE worker_id=?", (worker_id,)
+            ).fetchone()
+            if existing is None:
+                self._connection.execute(
+                    "INSERT INTO processing_workers ("
+                    "worker_id, label, registered_at, heartbeat_interval_seconds, "
+                    "supported_commands, configuration_snapshot_id, configuration_snapshot_digest, "
+                    "runtime_schema_version, last_heartbeat_at, status) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        worker_id,
+                        label,
+                        now.isoformat(),
+                        heartbeat_interval_seconds,
+                        json.dumps(list(supported_commands)),
+                        configuration_snapshot_id,
+                        configuration_snapshot_digest,
+                        runtime_schema_version,
+                        now.isoformat(),
+                        WorkerStatus.LIVE.value,
+                    ),
+                )
+            else:
+                # Preserve registered_at on re-registration (idempotent, no history loss)
+                self._connection.execute(
+                    "UPDATE processing_workers SET "
+                    "label=?, heartbeat_interval_seconds=?, supported_commands=?, "
+                    "configuration_snapshot_id=?, configuration_snapshot_digest=?, "
+                    "runtime_schema_version=?, last_heartbeat_at=?, status=? "
+                    "WHERE worker_id=?",
+                    (
+                        label,
+                        heartbeat_interval_seconds,
+                        json.dumps(list(supported_commands)),
+                        configuration_snapshot_id,
+                        configuration_snapshot_digest,
+                        runtime_schema_version,
+                        now.isoformat(),
+                        WorkerStatus.LIVE.value,
+                        worker_id,
+                    ),
+                )
+            row = self._connection.execute(
+                "SELECT * FROM processing_workers WHERE worker_id=?", (worker_id,)
+            ).fetchone()
+        return self._processing_worker(row)
+
+    def heartbeat_worker(self, worker_id: str, now: datetime) -> bool:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE processing_workers SET last_heartbeat_at=?, "
+                "status=CASE WHEN status=? THEN ? ELSE status END "
+                "WHERE worker_id=? AND status!=?",
+                (
+                    now.isoformat(),
+                    WorkerStatus.STALE.value,
+                    WorkerStatus.LIVE.value,
+                    worker_id,
+                    WorkerStatus.STOPPED.value,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def stop_worker(self, worker_id: str, now: datetime) -> ProcessingWorker:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE processing_workers SET status=?, last_heartbeat_at=? "
+                "WHERE worker_id=?",
+                (WorkerStatus.STOPPED.value, now.isoformat(), worker_id),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"processing worker {worker_id!r} was not found")
+            row = self._connection.execute(
+                "SELECT * FROM processing_workers WHERE worker_id=?", (worker_id,)
+            ).fetchone()
+        return self._processing_worker(row)
+
+    def get_worker(self, worker_id: str) -> ProcessingWorker | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM processing_workers WHERE worker_id=?", (worker_id,)
+            ).fetchone()
+        return self._processing_worker(row) if row else None
+
+    def list_workers(self) -> tuple[ProcessingWorker, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM processing_workers ORDER BY registered_at DESC, worker_id ASC"
+            ).fetchall()
+        return tuple(self._processing_worker(row) for row in rows)
+
+    @staticmethod
+    def _processing_worker(row: sqlite3.Row) -> ProcessingWorker:
+        return ProcessingWorker(
+            worker_id=row["worker_id"],
+            label=row["label"],
+            registered_at=datetime.fromisoformat(row["registered_at"]),
+            heartbeat_interval_seconds=float(row["heartbeat_interval_seconds"]),
+            supported_commands=tuple(json.loads(row["supported_commands"])),
+            configuration_snapshot_id=row["configuration_snapshot_id"],
+            configuration_snapshot_digest=row["configuration_snapshot_digest"],
+            runtime_schema_version=int(row["runtime_schema_version"]),
+            last_heartbeat_at=datetime.fromisoformat(row["last_heartbeat_at"]),
+            status=WorkerStatus(row["status"]),
+        )
 
     def get_schedule_state(self, schedule_id: str) -> ScheduleState | None:
         with self._lock:
@@ -8488,6 +8625,7 @@ class SQLiteTaskRepository:
                     started_at TEXT, completed_at TEXT, task_id TEXT, error TEXT,
                     cancellation_requested INTEGER NOT NULL DEFAULT 0, schedule_id TEXT,
                     execute_authorized INTEGER NOT NULL DEFAULT 0, claim_token TEXT,
+                    worker_id TEXT,
                     configuration_snapshot_id TEXT, configuration_snapshot_digest TEXT,
                     failure_category TEXT, failure_durable_state TEXT,
                     failure_side_effects TEXT, failure_retry_safe INTEGER,
@@ -8499,6 +8637,20 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS automation_jobs_status_created
                     ON automation_jobs(status, created_at, job_id);
+                CREATE TABLE IF NOT EXISTS processing_workers (
+                    worker_id TEXT PRIMARY KEY,
+                    label TEXT NOT NULL,
+                    registered_at TEXT NOT NULL,
+                    heartbeat_interval_seconds REAL NOT NULL,
+                    supported_commands TEXT NOT NULL,
+                    configuration_snapshot_id TEXT,
+                    configuration_snapshot_digest TEXT,
+                    runtime_schema_version INTEGER NOT NULL,
+                    last_heartbeat_at TEXT NOT NULL,
+                    status TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS processing_workers_status_heartbeat
+                    ON processing_workers(status, last_heartbeat_at);
                 CREATE TABLE IF NOT EXISTS automation_definition_due_state (
                     definition_id TEXT PRIMARY KEY, next_run_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL, last_occurrence_at TEXT,
@@ -8737,6 +8889,8 @@ class SQLiteTaskRepository:
                 )
             if "claim_token" not in job_columns:
                 self._connection.execute("ALTER TABLE automation_jobs ADD COLUMN claim_token TEXT")
+            if "worker_id" not in job_columns:
+                self._connection.execute("ALTER TABLE automation_jobs ADD COLUMN worker_id TEXT")
             for column, definition in (
                 ("definition_id", "TEXT"),
                 ("definition_fingerprint", "TEXT"),
@@ -9981,6 +10135,7 @@ class SQLiteTaskRepository:
             job.schedule_id,
             int(job.execute_authorized),
             job.claim_token,
+            job.worker_id,
             job.configuration_snapshot_id,
             job.configuration_snapshot_digest,
             job.failure_category,
@@ -10010,14 +10165,14 @@ class SQLiteTaskRepository:
             "INSERT INTO automation_jobs "
             "(job_id, command, status, created_at, updated_at, limit_value, "
             "started_at, completed_at, task_id, error, cancellation_requested, "
-            "schedule_id, execute_authorized, claim_token, "
+            "schedule_id, execute_authorized, claim_token, worker_id, "
             "configuration_snapshot_id, configuration_snapshot_digest, failure_category, "
             "failure_durable_state, failure_side_effects, failure_retry_safe, "
             "failure_next_action, definition_id, definition_fingerprint, definition_version, "
             "occurrence_at, run_mode, resource_library_id, source_scope, "
             "configuration_snapshot_version) "
             "VALUES ("
-            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
             ")",
             self._job_values(job),
         )
@@ -10039,6 +10194,7 @@ class SQLiteTaskRepository:
             row["schedule_id"],
             bool(row["execute_authorized"]),
             row["claim_token"],
+            row["worker_id"] if "worker_id" in row.keys() else None,
             row["configuration_snapshot_id"],
             row["configuration_snapshot_digest"],
             row["failure_category"],

@@ -119,8 +119,7 @@ class AutomationJobFencingTests(unittest.TestCase):
     def test_worker_losing_claim_does_not_publish_or_overwrite_new_claim(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                service = AutomationJobService(repository)
-                service.submit("preview")
+                first = AutomationJobService(repository).submit("preview")
                 notifications = RecordingNotifications()
 
                 def handler(job, cancelled):
@@ -130,10 +129,72 @@ class AutomationJobFencingTests(unittest.TestCase):
                     repository.claim_next_job(NOW)
                     return "stale-task"
 
-                result = AutomationWorker(repository, handler, notifications).run_next()
-                self.assertEqual(result.status, AutomationJobStatus.RUNNING)
-                self.assertIsNone(result.task_id)
+                service = AutomationJobService(repository)
+                with self.assertRaises(AutomationClaimLost):
+                    AutomationWorker(repository, handler, notifications).run_next()
+
                 self.assertEqual(notifications.events, [])
+                persisted = repository.get_job(first.job_id)
+                self.assertEqual(persisted.status, AutomationJobStatus.RUNNING)
+                self.assertNotEqual(persisted.claim_token, first.claim_token)
+
+    def test_worker_a_aging_requeue_and_worker_b_completion_preserves_b_ownership(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                service = AutomationJobService(repository)
+                service.submit("preview")
+                repository.register_worker(
+                    worker_id="worker-a",
+                    label="worker-a",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("scan", "preview"),
+                    configuration_snapshot_id=None,
+                    configuration_snapshot_digest=None,
+                    runtime_schema_version=33,
+                    now=NOW - timedelta(hours=3),
+                )
+                repository.register_worker(
+                    worker_id="worker-b",
+                    label="worker-b",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("scan", "preview"),
+                    configuration_snapshot_id=None,
+                    configuration_snapshot_digest=None,
+                    runtime_schema_version=33,
+                    now=NOW,
+                )
+                first_claimed = repository.claim_next_job(
+                    NOW - timedelta(hours=2), worker_id="worker-a"
+                )
+                first_token = first_claimed.claim_token
+                requeued = service.requeue_stale(first_claimed.job_id, age_seconds=3600)
+                self.assertEqual(requeued.status, AutomationJobStatus.PENDING)
+                self.assertIsNone(requeued.worker_id)
+                self.assertIsNone(requeued.claim_token)
+                second_claimed = repository.claim_next_job(NOW, worker_id="worker-b")
+                self.assertNotEqual(second_claimed.claim_token, first_token)
+                self.assertEqual(second_claimed.worker_id, "worker-b")
+                finished = replace(
+                    second_claimed,
+                    status=AutomationJobStatus.COMPLETED,
+                    updated_at=NOW,
+                    completed_at=NOW,
+                    task_id="task-b",
+                )
+                self.assertTrue(repository.complete_claimed_job(finished))
+                stale_attempt = replace(
+                    first_claimed,
+                    status=AutomationJobStatus.COMPLETED,
+                    updated_at=NOW,
+                    completed_at=NOW,
+                    task_id="task-a",
+                )
+                self.assertFalse(repository.complete_claimed_job(stale_attempt))
+                persisted = repository.get_job(first_claimed.job_id)
+                self.assertEqual(persisted.status, AutomationJobStatus.COMPLETED)
+                self.assertEqual(persisted.task_id, "task-b")
+                self.assertEqual(persisted.worker_id, "worker-b")
+                self.assertIsNone(persisted.claim_token)
 
     def test_success_clears_token_and_cli_notification_output_is_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
