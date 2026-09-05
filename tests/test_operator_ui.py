@@ -1452,6 +1452,8 @@ class ProcessingWorkersWebTests(unittest.TestCase):
             : workers_section.index("async function renderConfiguration")
         ]
         self.assertIn("Read-only projection of registered Processing Workers", workers_section)
+        self.assertIn("supported_commands", workers_section)
+        self.assertIn("(w.supported_commands || []).join(', ')", workers_section)
         for forbidden in ("start", "stop", "spawn", "kill", "restart", "delete"):
             self.assertNotIn(f"actionButton('{forbidden}", workers_section.lower())
 

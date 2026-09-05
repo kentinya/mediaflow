@@ -1290,6 +1290,7 @@ def final_main(
                     configuration_snapshot_id=(worker_snapshot[0] if worker_snapshot else None),
                     configuration_snapshot_digest=(worker_snapshot[1] if worker_snapshot else None),
                     runtime_schema_version=SCHEMA_VERSION,
+                    allow_pinned_snapshot_mismatch=True,
                 )
                 if arguments.worker_command == "run-next":
                     job = worker_service.run_next()
