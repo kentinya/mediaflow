@@ -6,12 +6,14 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from mediaflow.application.automation import AutomationJobService
+from mediaflow.application.classification_review import ClassificationReviewService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
@@ -20,7 +22,10 @@ from mediaflow.application.manual_recovery_continuation import (
     ManualRecoveryContinuationService,
 )
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.metadata_correction import MetadataCorrectionService
+from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.organizer import OrganizerExecutor
+from mediaflow.application.recognition_review import RecognitionReviewService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_continuation import (
     RecoveryContinuationService,
@@ -28,27 +33,43 @@ from mediaflow.application.recovery_continuation import (
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
+from mediaflow.domain.classification_review import ClassificationReviewStatus
 from mediaflow.domain.library import ResourceLibrary
 from mediaflow.domain.metadata import (
+    CandidateMatchResult,
+    CandidateMatchStatus,
+    CandidateScore,
     MediaCandidate,
     MediaType,
     MetadataError,
     MetadataErrorCode,
+    MetadataIdentificationResult,
+    MetadataIdentificationStatus,
+    ScoreComponent,
 )
+from mediaflow.domain.metadata_review import MetadataReviewStatus
 from mediaflow.domain.organizer import (
+    ConflictStrategy,
     ExecutionEffectCertainty,
     ExecutionResult,
     ExecutionStatus,
 )
+from mediaflow.domain.recognition import RecognitionType
+from mediaflow.domain.recognition_review import RecognitionReviewStatus
 from mediaflow.domain.recovery_continuation import RecoveryContinuationStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.domain.task_persistence import PersistentResultRecord, TaskItemStatus
+from mediaflow.domain.task_persistence import (
+    ConfirmationStatus,
+    PersistentResultRecord,
+    TaskItemStatus,
+)
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_metadata_correction import CapturingProvider
 
@@ -130,12 +151,39 @@ class SelectiveManualExecutor:
         return self.real.execute(plan, storages, **kwargs)
 
 
+class PhaseCandidatesProvider(DetailCountingProvider):
+    """Fake provider whose search and detail results tests swap between phases.
+
+    ``replace`` lets a test pin one analysis outcome for the manual journey and a
+    different one for the later single-item re-analysis, without changing the
+    provider identity pinned in the configuration snapshot.
+    """
+
+    def __init__(self, candidates):
+        super().__init__(tuple(candidates))
+        self.search_candidates = tuple(candidates)
+
+    def replace(self, *, candidates=None, search=None):
+        if candidates is not None:
+            self._candidates = tuple(candidates)
+        if search is not None:
+            self.search_candidates = tuple(search)
+
+    def search_movie(self, query, policy=None, **kwargs):
+        self.movie_queries.append((query.title_candidate, query.year))
+        return self.search_candidates
+
+    def search_tv(self, query, policy=None, **kwargs):
+        self.tv_queries.append((query.title_candidate, query.year))
+        return self.search_candidates
+
+
 class RecoveryContinuationTests(unittest.TestCase):
-    def _environment(self, directory: str | Path):
+    def _environment(self, directory: str | Path, *, source_subdir: str = "C", document_patch=None):
         root = Path(directory)
         source_root = root / "Incoming"
         target_root = root / "Target"
-        media_root = source_root / "Media" / "C"
+        media_root = source_root / "Media" / source_subdir
         media_root.mkdir(parents=True)
         target_root.mkdir()
         source_file = media_root / "Correct.2024.mkv"
@@ -145,6 +193,8 @@ class RecoveryContinuationTests(unittest.TestCase):
         document["storages"][0]["rootPath"] = str(source_root)
         document["storages"][1]["rootPath"] = str(target_root)
         document["resourceLibraries"][0]["displayRootPath"] = str(source_root)
+        if document_patch is not None:
+            document_patch(document)
         document["persistence"] = {"databasePath": str(database)}
         document["historyPath"] = str(root / "history.jsonl")
         config_path = root / "config.json"
@@ -168,8 +218,8 @@ class RecoveryContinuationTests(unittest.TestCase):
             "config": config_path,
             "document": document,
             "snapshot": snapshot,
-            "storage_path": "Media/C/Correct.2024.mkv",
-            "display_source": str(source_root / "C" / "Correct.2024.mkv"),
+            "storage_path": f"Media/{source_subdir}/Correct.2024.mkv",
+            "display_source": str(source_root / source_subdir / "Correct.2024.mkv"),
         }
 
     def _seed_failed_item(
@@ -361,9 +411,11 @@ class RecoveryContinuationTests(unittest.TestCase):
             "execution": execution,
         }
 
-    def _scan_manual_source(self, environment, *, names=("Correct.2024.mkv",)):
+    def _scan_manual_source(
+        self, environment, *, names=("Correct.2024.mkv",), source_subdir: str = "C"
+    ):
         source_root = Path(environment["root"]) / "Incoming"
-        media_root = source_root / "Media" / "C"
+        media_root = source_root / "Media" / source_subdir
         media_root.mkdir(parents=True, exist_ok=True)
         for name in names:
             path = Path(media_root, name)
@@ -441,6 +493,443 @@ class RecoveryContinuationTests(unittest.TestCase):
             )
         self.assertEqual(code, expected_code, f"{errors.getvalue()}\n{output.getvalue()}")
         return storage_construction
+
+    def _fail_manual_organize(self, environment, provider, *, executor=None, source_subdir="C"):
+        """Run a real manual organize that fails at the executor for the one source."""
+        records = self._scan_manual_source(environment, source_subdir=source_subdir)
+        record = records[0]
+        services = self._manual_services(
+            environment,
+            provider,
+            executor=executor or SelectiveManualExecutor("Correct.2024.mkv"),
+        )
+        with SQLiteTaskRepository(environment["database"]):
+            preview = services["previews"].create_current(
+                scope_kind="file",
+                actor="operator",
+                file_id=record.file_id,
+                resource_library_id=record.resource_library_id,
+                occurrence_id=record.occurrence_id,
+                fingerprint=record.fingerprint,
+            )
+            item = preview.items[0]
+            authority = services["execution"].authorize(
+                preview.preview_id,
+                [item.item_id],
+                expected_intent_version=preview.intent_version,
+                expected_item_versions={item.item_id: item.item_version},
+                snapshot_id=preview.configuration_snapshot_id,
+                snapshot_digest=preview.configuration_snapshot_digest,
+                actor="operator",
+                confirmation=True,
+            )
+            run = services["execution"].execute(
+                authority.authorization_id, actor="operator", confirmation=True
+            )
+            self.assertEqual("failed", run.items[0].status.value)
+            self.assertTrue(environment["source_file"].exists())
+        return services, run, record, preview
+
+    @staticmethod
+    def _close_manual_services(services):
+        for key in ("task_repository", "file_index", "configuration_repository"):
+            value = services.get(key)
+            if value is not None:
+                value.close()
+
+    def _submit_continuation(self, services, run, repository):
+        """Submit the continuation for the item's already-active recovery request."""
+        refreshed = services["execution"]._checkpoint_service.get(
+            run.items[0].task_item_id, task_id=run.task_id
+        )
+        return RecoveryContinuationService(
+            repository,
+            snapshot_validator=services["execution"]._validate_checkpoint_snapshot,
+            checkpoint_service=services["execution"]._checkpoint_service,
+        ).submit(
+            run.task_id,
+            run.items[0].task_item_id,
+            expected_checkpoint_version=refreshed.checkpoint_version,
+            actor="operator",
+            maximum_active_jobs=10,
+        )
+
+    def _admit_and_continue(self, services, run, repository):
+        """Admit retry for the failed manual item and submit its continuation."""
+        checkpoint = services["execution"]._checkpoint_service.get(
+            run.items[0].task_item_id, task_id=run.task_id
+        )
+        RecoveryAdmissionService(
+            repository,
+            snapshot_validator=services["execution"]._validate_checkpoint_snapshot,
+            checkpoint_service=services["execution"]._checkpoint_service,
+        ).admit(
+            run.task_id,
+            run.items[0].task_item_id,
+            action_id="retry",
+            expected_checkpoint_version=checkpoint.checkpoint_version,
+            actor="operator",
+        )
+        return self._submit_continuation(services, run, repository)
+
+    def _recovery_api(self, environment, services):
+        """Expose the manual recovery continuation journey over the real API."""
+        recovery = ManualRecoveryContinuationService(
+            services["task_repository"],
+            intent_service=services["intents"],
+            preview_service=services["previews"],
+            execution_service=services["execution"],
+            checkpoint_service=services["execution"]._checkpoint_service,
+        )
+        operator = ResolvedApiPrincipal("operator", "operator-token", frozenset(ApiPermission))
+        viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
+        api = MediaFlowApi(
+            services["task_repository"],
+            None,
+            principals=(operator, viewer),
+            file_catalog=services["catalog"],
+            configuration_service=services["configuration_service"],
+            configuration_snapshot_id=environment["snapshot"][0],
+            configuration_snapshot_digest=environment["snapshot"][1],
+            manual_intent_service=services["intents"],
+            manual_preview_service=services["previews"],
+            manual_execution_service=services["execution"],
+            manual_recovery_service=recovery,
+        )
+        return recovery, api
+
+    def _assert_no_link_authority_or_mutation(self, environment, run, executions_before):
+        """Fail-closed evidence: source intact, zero target files, no link, no new run."""
+        self.assertTrue(environment["source_file"].exists())
+        self.assertEqual(
+            (),
+            tuple(
+                value for value in Path(environment["target_root"]).rglob("*") if value.is_file()
+            ),
+        )
+        with SQLiteTaskRepository(environment["database"]) as repository:
+            self.assertIsNone(
+                repository.get_manual_recovery_link_by_source(
+                    run.task_id, run.items[0].task_item_id
+                )
+            )
+            self.assertEqual(
+                executions_before,
+                len(
+                    repository.list_manual_executions_for_task_item(
+                        run.task_id, run.items[0].task_item_id
+                    )
+                ),
+            )
+
+    def _authorize_continuation(self, api, run, checkpoint_version, token="operator-token"):
+        return api_request(
+            api,
+            f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+            "/recovery/authorize-organize",
+            method="POST",
+            body={"expectedCheckpointVersion": checkpoint_version, "confirmation": True},
+            token=token,
+        )
+
+    def _completed_continuation_item(self, environment, job_id, status):
+        """Run the worker once and return the linked single-item analysis state."""
+        with SQLiteTaskRepository(environment["database"]) as repository:
+            continuation = repository.get_recovery_continuation_for_job(job_id)
+            assert continuation is not None
+            self.assertEqual(status, continuation.status)
+            items = (
+                repository.list_items(continuation.new_task_id) if continuation.new_task_id else ()
+            )
+            return continuation, (items[0] if items else None)
+
+    def test_manual_recovery_authority_ttl_expiry_allows_fresh_continuation_authority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider)
+            continuation, _analysis = self._completed_continuation_item(
+                environment, submission.job.job_id, RecoveryContinuationStatus.COMPLETED
+            )
+            self.assertIsNotNone(continuation.new_result_id)
+
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, first = self._authorize_continuation(api, run, checkpoint.checkpoint_version)
+            self.assertEqual(201, status)
+            self.assertEqual("authorized", first["status"])
+            first_authorization_id = first["authorization_id"]
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+            # The unused one-shot authority expires normally while the operator is
+            # away; expiry itself never touches Storage.
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                self.assertEqual(
+                    1,
+                    repository.expire_manual_execution_authorizations(
+                        datetime.now(UTC) + timedelta(seconds=3600)
+                    ),
+                )
+            status, refused = api_request(
+                api,
+                f"/api/v1/manual-recovery-links/{first['link_id']}/execute",
+                method="POST",
+                body={"confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(409, status)
+            self.assertEqual("authorization_inactive", refused["error"]["code"])
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+            # A fresh explicit authorization supersedes the stale link: the original
+            # item is not dead-ended by the expired authority.
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, second = self._authorize_continuation(api, run, checkpoint.checkpoint_version)
+            self.assertEqual(201, status)
+            self.assertEqual("authorized", second["status"])
+            self.assertEqual(first["link_id"], second["link_id"])
+            self.assertNotEqual(first_authorization_id, second["authorization_id"])
+            self.assertEqual(continuation.continuation_id, second["analysis_continuation_id"])
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                persisted = repository.get_manual_recovery_link(first["link_id"])
+                assert persisted is not None
+                self.assertEqual("authorized", persisted.status.value)
+                self.assertEqual(second["authorization_id"], persisted.authorization_id)
+                self.assertIsNone(persisted.execution_id)
+                by_source = repository.get_manual_recovery_link_by_source(
+                    run.task_id, run.items[0].task_item_id
+                )
+                assert by_source is not None
+                self.assertEqual(second["authorization_id"], by_source.authorization_id)
+                expired = repository.get_manual_execution_authorization(first_authorization_id)
+                self.assertEqual("expired", expired.status.value)
+
+            status, completed = api_request(
+                api,
+                f"/api/v1/manual-recovery-links/{second['link_id']}/execute",
+                method="POST",
+                body={"confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual("consumed", completed["status"])
+            self.assertFalse(environment["source_file"].exists())
+            self.assertEqual(1, len(tuple(Path(environment["target_root"]).rglob("*.mkv"))))
+            self._close_manual_services(services)
+
+    def test_manual_recovery_authorize_refuses_fail_closed_before_authority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = PhaseCandidatesProvider(
+                (
+                    MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),
+                    MediaCandidate("tmdb", "43", MediaType.MOVIE, "Correct", year=2024),
+                )
+            )
+            provider.replace(
+                search=(MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                RecoveryAdmissionService(
+                    repository,
+                    snapshot_validator=services["execution"]._validate_checkpoint_snapshot,
+                    checkpoint_service=services["execution"]._checkpoint_service,
+                ).admit(
+                    run.task_id,
+                    run.items[0].task_item_id,
+                    action_id="retry",
+                    expected_checkpoint_version=checkpoint.checkpoint_version,
+                    actor="operator",
+                )
+
+            # (a) The admitted recovery request is still active: no authority, no link.
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, refused = self._authorize_continuation(api, run, checkpoint.checkpoint_version)
+            self.assertEqual(409, status)
+            self.assertEqual("recovery_request_active", refused["error"]["code"])
+            self._assert_no_link_authority_or_mutation(environment, run, 1)
+
+            # (b) The single re-analysis ended waiting on a human decision, so no
+            # completed linked analysis exists and no authority is issued.
+            provider.replace(
+                search=(
+                    MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),
+                    MediaCandidate("tmdb", "43", MediaType.MOVIE, "Correct", year=2024),
+                )
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._submit_continuation(services, run, repository)
+            self._close_manual_services(services)
+            # The waiting re-analysis is a failed continuation run: the worker exits 1.
+            self._run_worker(environment, provider, expected_code=1)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation = repository.get_recovery_continuation_for_job(submission.job.job_id)
+                assert continuation is not None
+                self.assertEqual(RecoveryContinuationStatus.FAILED, continuation.status)
+                self.assertIn("human decision", continuation.error or "")
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, refused = self._authorize_continuation(api, run, checkpoint.checkpoint_version)
+            self.assertEqual(409, status)
+            self.assertEqual("analysis_not_completed", refused["error"]["code"])
+            self._assert_no_link_authority_or_mutation(environment, run, 1)
+            self._close_manual_services(services)
+
+    def test_manual_recovery_authorize_refuses_when_linked_item_still_has_blocker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider)
+            _continuation, analysis = self._completed_continuation_item(
+                environment, submission.job.job_id, RecoveryContinuationStatus.COMPLETED
+            )
+            assert analysis is not None
+
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                linked = repository.get_item(analysis.item_id)
+                assert linked is not None
+                # The linked item re-enters analysis under the same evidence and the
+                # real review service records that it requires a metadata decision
+                # while the source item still points at the completed continuation.
+                processing = replace(linked, status=TaskItemStatus.PROCESSING, stage="processing")
+                repository.upsert_item(processing)
+                review = MetadataReviewService(repository).create(
+                    processing, _ambiguous_identification(), "A"
+                )
+                self.assertEqual(MetadataReviewStatus.PENDING, review.status)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, refused = self._authorize_continuation(api, run, checkpoint.checkpoint_version)
+            self.assertEqual(409, status)
+            self.assertEqual("review_pending", refused["error"]["code"])
+            self.assertEqual("metadata", refused["error"]["details"]["blockerKind"])
+            self._assert_no_link_authority_or_mutation(environment, run, 1)
+            self._close_manual_services(services)
+
+    def test_manual_recovery_authorize_refuses_replaced_source_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider)
+            self._completed_continuation_item(
+                environment, submission.job.job_id, RecoveryContinuationStatus.COMPLETED
+            )
+
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            # Replace the source without re-scanning: the live file no longer matches
+            # the FileIndex occurrence the reviewed plan was built on.
+            environment["source_file"].write_bytes(b"replaced-after-analysis")
+            status, refused = self._authorize_continuation(api, run, checkpoint.checkpoint_version)
+            self.assertEqual(409, status)
+            self.assertEqual("source_stale", refused["error"]["code"])
+            self._assert_no_link_authority_or_mutation(environment, run, 1)
+            self.assertEqual(b"replaced-after-analysis", environment["source_file"].read_bytes())
+            self._close_manual_services(services)
+
+    def test_worker_continuation_preflight_rejects_stale_occurrence_before_pipeline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+            checkpoint = services["execution"]._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                RecoveryAdmissionService(
+                    repository,
+                    snapshot_validator=services["execution"]._validate_checkpoint_snapshot,
+                    checkpoint_service=services["execution"]._checkpoint_service,
+                ).admit(
+                    run.task_id,
+                    run.items[0].task_item_id,
+                    action_id="retry",
+                    expected_checkpoint_version=checkpoint.checkpoint_version,
+                    actor="operator",
+                )
+            # Replace the source and rescan so the FileIndex reconciles a new
+            # current occurrence for the same path.
+            environment["source_file"].write_bytes(b"replaced-before-worker")
+            source_root = Path(environment["root"]) / "Incoming"
+            with SQLiteFileIndexRepository(environment["database"]) as file_index:
+                StorageScanner(
+                    {"source-storage": LocalStorage("source-storage", source_root)},
+                    file_index,
+                ).scan(ResourceLibrary("source", "Source", "source-storage", "Media"))
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._submit_continuation(services, run, repository)
+            self._close_manual_services(services)
+            provider_factory = Mock(side_effect=AssertionError("worker reached Provider"))
+            storage_factory = Mock(side_effect=AssertionError("worker reached Storage"))
+            with (
+                patch(
+                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                    provider_factory,
+                ),
+                patch.object(RuntimeConfiguration, "create_storages", storage_factory),
+            ):
+                code = final_main(
+                    ["--config", str(environment["config"]), "worker", "run-next"],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                )
+            self.assertEqual(1, code)
+            self.assertEqual(0, provider_factory.call_count)
+            self.assertEqual(0, storage_factory.call_count)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation = repository.get_recovery_continuation_for_job(submission.job.job_id)
+                assert continuation is not None
+                self.assertEqual(RecoveryContinuationStatus.FAILED, continuation.status)
+                self.assertIsNone(continuation.new_task_id)
+                self.assertIn("eligibility", continuation.error or "")
+            self.assertEqual(b"replaced-before-worker", environment["source_file"].read_bytes())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            self._assert_no_link_authority_or_mutation(environment, run, 1)
 
     def test_continuation_is_single_item_pinned_dryrun_and_durable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1434,6 +1923,363 @@ class RecoveryContinuationTests(unittest.TestCase):
                 )
                 self.assertEqual("consumed", authorization.status.value)
                 self.assertEqual(completed["execution_id"], authorization.execution_id)
+
+    def test_manual_recovery_re_analysis_consumes_metadata_decision_saved_on_linked_item(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = PhaseCandidatesProvider(
+                (
+                    MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),
+                    MediaCandidate("tmdb", "43", MediaType.MOVIE, "Correct", year=2024),
+                )
+            )
+            # The manual journey resolves one candidate; the later search swap makes
+            # the production re-analysis ambiguous instead.
+            provider.replace(
+                search=(MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+            # The re-analysis now sees two equal candidates: ambiguous metadata.
+            provider.replace(
+                search=(
+                    MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),
+                    MediaCandidate("tmdb", "43", MediaType.MOVIE, "Correct", year=2024),
+                )
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider, expected_code=1)
+            _continuation, analysis = self._completed_continuation_item(
+                environment, submission.job.job_id, RecoveryContinuationStatus.FAILED
+            )
+            assert analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                linked = repository.get_item(analysis.item_id)
+                assert linked is not None
+                self.assertEqual(TaskItemStatus.WAITING_METADATA, linked.status)
+                review = repository.get_metadata_review_for_item(linked.item_id)
+                assert review is not None
+                self.assertEqual(MetadataReviewStatus.PENDING, review.status)
+
+            # Persistence-only decision saved on the linked analysis item.
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                MetadataReviewService(repository).resolve(review.review_id, 1, actor="operator")
+                resolved = repository.get_metadata_review_for_item(linked.item_id)
+                assert resolved is not None
+                self.assertEqual(MetadataReviewStatus.RESOLVED, resolved.status)
+                self.assertEqual("42", resolved.selected_provider_id)
+
+            services = self._manual_services(environment, provider)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                resubmission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider)
+            _retried, retried_analysis = self._completed_continuation_item(
+                environment, resubmission.job.job_id, RecoveryContinuationStatus.COMPLETED
+            )
+            assert retried_analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                retried_item = repository.get_item(retried_analysis.item_id)
+                assert retried_item is not None
+                self.assertEqual(TaskItemStatus.DRY_RUN, retried_item.status)
+                # The resolved review is consumed, not re-created, by the fresh
+                # production re-analysis of the original item.
+                self.assertIsNone(repository.get_metadata_review_for_item(retried_analysis.item_id))
+                results = repository.list_results(retried_analysis.task_id)
+                self.assertEqual("42", results[-1].provider_id)
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_manual_recovery_re_analysis_consumes_recognition_decision_saved_on_linked_item(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory, source_subdir="X")
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(
+                environment, provider, source_subdir="X"
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider, expected_code=1)
+            _continuation, analysis = self._completed_continuation_item(
+                environment, submission.job.job_id, RecoveryContinuationStatus.FAILED
+            )
+            assert analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                linked = repository.get_item(analysis.item_id)
+                assert linked is not None
+                self.assertEqual(TaskItemStatus.WAITING_RECOGNITION, linked.status)
+                review = repository.get_recognition_review_for_item(linked.item_id)
+                assert review is not None
+                self.assertEqual(RecognitionReviewStatus.PENDING, review.status)
+
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                RecognitionReviewService(
+                    repository,
+                    (
+                        RecognitionType("A", "A"),
+                        RecognitionType("B", "B"),
+                        RecognitionType("C", "C"),
+                    ),
+                ).resolve(review.review_id, "A", actor="operator")
+                resolved = repository.get_recognition_review_for_item(linked.item_id)
+                assert resolved is not None
+                self.assertEqual(RecognitionReviewStatus.RESOLVED, resolved.status)
+                self.assertEqual("A", resolved.selected_recognition_type)
+
+            services = self._manual_services(environment, provider)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                resubmission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider)
+            _retried, retried_analysis = self._completed_continuation_item(
+                environment, resubmission.job.job_id, RecoveryContinuationStatus.COMPLETED
+            )
+            assert retried_analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                retried_item = repository.get_item(retried_analysis.item_id)
+                assert retried_item is not None
+                self.assertEqual(TaskItemStatus.DRY_RUN, retried_item.status)
+                self.assertIsNone(
+                    repository.get_recognition_review_for_item(retried_analysis.item_id)
+                )
+                results = repository.list_results(retried_analysis.task_id)
+                self.assertEqual("A", results[-1].recognition_type)
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_manual_recovery_re_analysis_consumes_metadata_correction_decision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = PhaseCandidatesProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+            # The re-analysis search now finds nothing, so the production path asks
+            # for a metadata correction instead of an identity.
+            provider.replace(search=())
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider, expected_code=1)
+            _continuation, analysis = self._completed_continuation_item(
+                environment, submission.job.job_id, RecoveryContinuationStatus.FAILED
+            )
+            assert analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                linked = repository.get_item(analysis.item_id)
+                assert linked is not None
+                self.assertEqual(TaskItemStatus.WAITING_METADATA_CORRECTION, linked.status)
+                review = repository.get_metadata_correction_for_item(linked.item_id)
+                assert review is not None
+
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                MetadataCorrectionService(
+                    repository, development_strategy_configuration().metadata_policies
+                ).resolve(
+                    review.review_id,
+                    query=None,
+                    year=None,
+                    media_type="movie",
+                    provider_id="42",
+                    actor="operator",
+                )
+                resolved = repository.get_metadata_correction_for_item(linked.item_id)
+                assert resolved is not None
+
+            services = self._manual_services(environment, provider)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                resubmission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider)
+            _retried, retried_analysis = self._completed_continuation_item(
+                environment, resubmission.job.job_id, RecoveryContinuationStatus.COMPLETED
+            )
+            assert retried_analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                retried_item = repository.get_item(retried_analysis.item_id)
+                assert retried_item is not None
+                self.assertEqual(TaskItemStatus.DRY_RUN, retried_item.status)
+                self.assertIsNone(
+                    repository.get_metadata_correction_for_item(retried_analysis.item_id)
+                )
+                results = repository.list_results(retried_analysis.task_id)
+                self.assertEqual("42", results[-1].provider_id)
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_manual_recovery_re_analysis_consumes_classification_decision(self):
+        def drop_movie_fallback(document):
+            for policy in document["classificationPolicies"]:
+                if policy["id"] == "A":
+                    policy["rules"] = [
+                        rule for rule in policy["rules"] if rule["id"] != "other-movie"
+                    ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory, document_patch=drop_movie_fallback)
+            provider = PhaseCandidatesProvider(
+                (
+                    MediaCandidate(
+                        "tmdb",
+                        "42",
+                        MediaType.MOVIE,
+                        "Correct",
+                        year=2024,
+                        genres=("Action",),
+                    ),
+                )
+            )
+            services, run, _record, preview = self._fail_manual_organize(environment, provider)
+            # The re-analysis identity carries no genre, so no classification rule
+            # matches under the pinned snapshot.
+            provider.replace(
+                candidates=(MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),),
+                search=(MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),),
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider, expected_code=1)
+            _continuation, analysis = self._completed_continuation_item(
+                environment, submission.job.job_id, RecoveryContinuationStatus.FAILED
+            )
+            assert analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                linked = repository.get_item(analysis.item_id)
+                assert linked is not None
+                self.assertEqual(TaskItemStatus.WAITING_CLASSIFICATION, linked.status)
+                review = repository.get_classification_review_for_item(linked.item_id)
+                assert review is not None
+                choices = repository.list_classification_review_choices(review.review_id)
+                foreign = next(value for value in choices if value.rule_id == "foreign-movie")
+
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                ClassificationReviewService(repository).resolve(
+                    review.review_id, foreign.rank, actor="operator"
+                )
+                resolved = repository.get_classification_review_for_item(linked.item_id)
+                assert resolved is not None
+                self.assertEqual(ClassificationReviewStatus.RESOLVED, resolved.status)
+
+            services = self._manual_services(environment, provider)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                resubmission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider)
+            _retried, retried_analysis = self._completed_continuation_item(
+                environment, resubmission.job.job_id, RecoveryContinuationStatus.COMPLETED
+            )
+            assert retried_analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                retried_item = repository.get_item(retried_analysis.item_id)
+                assert retried_item is not None
+                self.assertEqual(TaskItemStatus.DRY_RUN, retried_item.status)
+                self.assertIsNone(
+                    repository.get_classification_review_for_item(retried_analysis.item_id)
+                )
+                results = repository.list_results(retried_analysis.task_id)
+                self.assertIsNotNone(results[-1].destination_path)
+                self.assertIn("外语电影", results[-1].destination_path)
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_manual_recovery_re_analysis_consumes_conflict_decision_saved_on_linked_item(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, preview = self._fail_manual_organize(environment, provider)
+            item_plan = preview.items[0].plan
+            assert item_plan is not None
+            destination = item_plan["destination"]["path"]
+            # A live destination collision exists before the first re-analysis.
+            collision = Path(environment["target_root"], destination)
+            collision.parent.mkdir(parents=True, exist_ok=True)
+            collision.write_bytes(b"existing-destination")
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider, expected_code=1)
+            _continuation, analysis = self._completed_continuation_item(
+                environment, submission.job.job_id, RecoveryContinuationStatus.FAILED
+            )
+            assert analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                linked = repository.get_item(analysis.item_id)
+                assert linked is not None
+                self.assertEqual(TaskItemStatus.WAITING_CONFIRM, linked.status)
+                pending = tuple(
+                    value
+                    for value in repository.list_confirmations(status=ConfirmationStatus.PENDING)
+                    if value.item_id == linked.item_id
+                )
+                self.assertEqual(1, len(pending))
+
+            # Persistence-only conflict decision: rename, never overwrite.
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                ConfirmationService(repository).resolve(
+                    pending[0].confirmation_id, ConflictStrategy.RENAME, actor="operator"
+                )
+
+            services = self._manual_services(environment, provider)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                resubmission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider)
+            _retried, retried_analysis = self._completed_continuation_item(
+                environment, resubmission.job.job_id, RecoveryContinuationStatus.COMPLETED
+            )
+            assert retried_analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                retried_item = repository.get_item(retried_analysis.item_id)
+                assert retried_item is not None
+                self.assertEqual(TaskItemStatus.DRY_RUN, retried_item.status)
+                results = repository.list_results(retried_analysis.task_id)
+                self.assertIsNotNone(results[-1].destination_path)
+                self.assertNotEqual(destination, results[-1].destination_path)
+                self.assertEqual(
+                    (),
+                    tuple(
+                        value
+                        for value in repository.list_confirmations(
+                            status=ConfirmationStatus.PENDING
+                        )
+                        if value.item_id == retried_analysis.item_id
+                    ),
+                )
+            # The colliding destination was never overwritten, no renamed target file
+            # was created by the DryRun, and the source is intact.
+            target_files = [
+                value for value in Path(environment["target_root"]).rglob("*") if value.is_file()
+            ]
+            self.assertEqual([collision], target_files)
+            self.assertEqual(b"existing-destination", collision.read_bytes())
+            self.assertTrue(environment["source_file"].exists())
+
+
+def _ambiguous_identification() -> MetadataIdentificationResult:
+    candidates = (
+        MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),
+        MediaCandidate("tmdb", "43", MediaType.MOVIE, "Correct", year=2024),
+    )
+    scores = tuple(
+        CandidateScore(candidate, 80.0 - rank, (ScoreComponent("title", 65.0, "matched"),))
+        for rank, candidate in enumerate(candidates)
+    )
+    match = CandidateMatchResult(
+        CandidateMatchStatus.AMBIGUOUS, candidates[0], scores[0].total_score, scores
+    )
+    return MetadataIdentificationResult(
+        MetadataIdentificationStatus.AMBIGUOUS,
+        RecognitionType("A", "A"),
+        match=match,
+        query="Correct",
+    )
 
 
 def _coordinator(repository):
