@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 28.2
 Parent Slice: 28
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: fe8b97ac52824a9ffdf7eeb85ba0143a57b25aa2
 Difficulty: High
 Test Level: T4
@@ -204,13 +204,19 @@ explicit and report its reason.
   preserving the existing Active/pinned snapshot identity binding.
 - Added a discoverable Web Settings view with typed controls for boolean, numeric, enum and string
   settings, explicit boundary labels, immutable bootstrap controls and successor-Draft save behavior.
+- Corrected checkpoint evidence and added runtime binding evidence: System Settings consumption now
+  requires matching Active snapshot ID/digest and matching values for all hot-consumed fields.
+- Reclassified locale and timezone as explicit restart-required settings because this runtime does
+  not hot-consume them.
+- Preserved the Web Settings revision identity after save, reopened the returned Draft, and sent
+  exact Active/Draft optimistic identity data on subsequent edits.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS.
-- `python3 -m unittest tests.test_system_settings_management` — PASS, 14 tests.
+- `python3 -m unittest tests.test_system_settings_management` — PASS, 17 tests.
 - `python3 -m unittest tests.test_configuration_snapshot tests.test_configuration_management tests.test_configuration_status tests.test_runtime_strategy_configuration tests.test_automation_admission tests.test_stale_job_visibility tests.test_operational_logging tests.test_operator_ui` — FAIL, 126 tests run: 125 passed, 1 error. The error is `test_openlist_storage_uses_environment_owned_token`, blocked by missing optional `httpx`.
-- `python3 -m unittest discover -s tests` — FAIL, 1308 tests run: 7 failures, 1 error, 7 skips. The 7 failures are the existing credential/runtime/storage/UI failures in the repository baseline; the 1 error is the optional OpenList `httpx` dependency absence. No failure was introduced by the System Settings focused tests.
+- `python3 -m unittest discover -s tests` — FAIL, 1312 tests run: 7 failures, 1 error, 7 skips. The 7 failures are the existing credential/runtime/storage/UI failures in the repository baseline; the 1 error is the optional OpenList `httpx` dependency absence. No new failure was introduced by this correction.
 - `python3 -m compileall -q mediaflow tests scripts` — PASS.
 - `git diff --check` — PASS.
 - `ruff format --check .` / `ruff check .` — UNAVAILABLE; `ruff` is not installed in this environment.
@@ -244,17 +250,43 @@ explicit and report its reason.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 035e834c0bc792dd34601583691e4e77e6c3b12d
+Head SHA: [pending correction commit]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: fe8b97ac52824a9ffdf7eeb85ba0143a57b25aa2..035e834134394b82e63a91759d1986f7db5adf90
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+Blockers:
+
+- The Developer Completion Report records `035e834c0bc792dd34601583691e4e77e6c3b12d`, but that
+  object does not exist in Git (`git cat-file -e` fails). The actual implementation checkpoint is
+  `035e834134394b82e63a91759d1986f7db5adf90`; update the report to the real full SHA and keep the
+  review range anchored to that checkpoint.
+- `SystemSettingsService.consumption_evidence()` returns `consumed: true` after only validating the
+  Active revision digest (`mediaflow/application/system_settings.py:278-322`). The newly exposed
+  `cachePath`, `logPath`, `exportPath`, `locale` and `timezone` values are only parsed into
+  `RuntimeConfiguration` (`mediaflow/infrastructure/runtime_configuration.py:82-87,1081-1126`) and
+  have no runtime consumer or binding evidence. The API runtime binding refresh passes existing
+  admission fields but does not bind these settings (`mediaflow/interfaces/service_api.py:5389-5479`).
+  Bind each applicable setting to the exact Active/pinned runtime consumer, or classify every
+  non-consumed field as restart/deployment-required or unavailable and make readiness/evidence
+  fail closed; add tests proving the exact identity and values.
+- The Web Settings journey does not provide Draft lifecycle continuity: `renderSettings()` always
+  reads `/api/v1/system/settings`, which is the Active revision by default, and after saving it
+  rerenders that Active view without retaining or opening the returned successor Draft. This does
+  not satisfy the typed Web Draft edit/read journey or expose the exact new Draft identity for the
+  next validate/activate action. Make Web use the shared Draft read/edit route and preserve the
+  returned revision/version/digest with an explicit next action.
+- Required tests for exact Active/Draft/pinned identity, runtime consumer binding, missing/corrupt
+  Active, runtime incompatibility, restart-required recovery and Web/API parity are absent. Add
+  focused tests that exercise the behavior through both surfaces; static string checks for the Web
+  asset do not prove the required parity or recovery semantics.
+
+If `FIX REQUIRED`, fixes remain in this Task. This result does not close the Slice or update
+Roadmap.

@@ -117,14 +117,14 @@ SYSTEM_SETTINGS_FIELDS: tuple[SystemSettingsField, ...] = tuple(
                 "locale",
                 "System locale",
                 "Localization",
-                SystemSettingsBoundary.HOT_CONSUMED,
+                SystemSettingsBoundary.RESTART_REQUIRED,
                 "string",
             ),
             SystemSettingsField(
                 "timezone",
                 "System timezone",
                 "Localization",
-                SystemSettingsBoundary.HOT_CONSUMED,
+                SystemSettingsBoundary.RESTART_REQUIRED,
                 "string",
             ),
             # Automation

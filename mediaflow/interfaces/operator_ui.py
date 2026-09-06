@@ -203,8 +203,11 @@ APP_JS = b"""(() => {
       content.append(table(fields, items.map(item => fields.map(fieldName => item[fieldName]))));
     });
   }
-  async function renderSettings() {
-    const data = await api('/api/v1/system/settings');
+  let settingsRevisionId = null;
+  async function renderSettings(revisionId = settingsRevisionId) {
+    const query = revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : '';
+    const data = await api(`/api/v1/system/settings${query}`);
+    settingsRevisionId = data.revisionId || settingsRevisionId;
     clear(content);
     content.append(text('h2', 'System Settings'));
     content.append(text('p',
@@ -221,6 +224,7 @@ APP_JS = b"""(() => {
       ['Authority', data.authority || '-'],
       ['Consumed', consumption.consumed !== false ? 'Yes' : 'No'],
       ['Bootstrap DB', data.bootstrapDatabasePath || '-'],
+      ['Next action', data.isActive ? 'Edit to create a successor Draft' : 'Validate and activate this Draft'],
     ]));
     const pendingEdits = [];
     const pendingByPath = new Map();
@@ -286,9 +290,25 @@ APP_JS = b"""(() => {
           message('Add at least one setting edit before saving.', true);
           return;
         }
-        await api('/api/v1/system/settings', {method: 'PUT', body: JSON.stringify(body)});
-        message('Settings Draft created. Open the successor Draft, validate, and activate.');
-        await renderSettings();
+        const updated = await api('/api/v1/system/settings', {
+          method: 'PUT',
+          body: JSON.stringify({
+            ...body,
+            ...(data.isActive ? {
+              expectedActiveRevisionId: data.revisionId,
+              expectedActiveVersion: data.revisionVersion,
+              expectedActiveDigest: data.revisionDigest
+            } : {
+              revisionId: data.revisionId,
+              expectedVersion: data.revisionVersion
+            })
+          })
+        });
+        settingsRevisionId = updated.revisionId;
+        message(data.isActive
+          ? 'Settings Draft created. Review, validate, and activate this Draft.'
+          : 'Settings Draft updated. Review, validate, and activate this Draft.');
+        await renderSettings(settingsRevisionId);
       } catch (error) { message(errorText(error), true); }
     }));
     content.append(actionButton('Refresh settings', renderSettings));
