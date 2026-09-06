@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from mediaflow.application.configuration_snapshot import (
@@ -38,8 +39,11 @@ class SystemSettingsService:
     def __init__(
         self,
         configuration_service: ManagedConfigurationService,
+        *,
+        runtime_snapshot_provider: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         self._config = configuration_service
+        self._runtime_snapshot_provider = runtime_snapshot_provider
 
     # ------------------------------------------------------------------
     # Read
@@ -276,7 +280,7 @@ class SystemSettingsService:
     # ------------------------------------------------------------------
 
     def consumption_evidence(self) -> dict[str, Any]:
-        """Return the exact Active snapshot identity consumed by runtime."""
+        """Return the exact Active snapshot identity and values consumed by runtime."""
 
         active = self._config.active()
         if active is None:
@@ -302,11 +306,61 @@ class SystemSettingsService:
             is_active=True,
             bootstrap_database_path=self._config.bootstrap_database_path,
         )
+        runtime_snapshot = (
+            self._runtime_snapshot_provider() if self._runtime_snapshot_provider else None
+        )
+        if runtime_snapshot is None:
+            return {
+                "consumed": False,
+                "reason": "runtime_binding_unavailable",
+                "revisionId": active.revision_id,
+                "revisionVersion": active.revision_sequence or active.version,
+                "digest": active.digest,
+                "nextAction": "restore the Active runtime binding and refresh readiness",
+            }
+        if (
+            runtime_snapshot.get("snapshotId") != active.revision_id
+            or runtime_snapshot.get("digest") != active.digest
+        ):
+            return {
+                "consumed": False,
+                "reason": "runtime_snapshot_mismatch",
+                "revisionId": active.revision_id,
+                "revisionVersion": active.revision_sequence or active.version,
+                "digest": active.digest,
+                "runtimeSnapshotId": runtime_snapshot.get("snapshotId"),
+                "runtimeSnapshotDigest": runtime_snapshot.get("digest"),
+                "nextAction": "refresh the runtime binding before treating settings as consumed",
+            }
+        runtime_values = runtime_snapshot.get("settings") or {}
+        expected_values = {
+            field_path: settings.as_projection()["settings"][field_path]
+            for field_path, boundary in settings.field_boundaries.items()
+            if boundary == SystemSettingsBoundary.HOT_CONSUMED
+        }
+        mismatches = sorted(
+            field_path
+            for field_path, expected in expected_values.items()
+            if runtime_values.get(field_path) != expected
+        )
+        if mismatches:
+            return {
+                "consumed": False,
+                "reason": "runtime_settings_mismatch",
+                "revisionId": active.revision_id,
+                "revisionVersion": active.revision_sequence or active.version,
+                "digest": active.digest,
+                "mismatchedFields": mismatches,
+                "nextAction": "reload the exact Active snapshot before reporting readiness",
+            }
         return {
             "consumed": True,
             "revisionId": active.revision_id,
             "revisionVersion": active.revision_sequence or active.version,
             "digest": active.digest,
+            "runtimeSnapshotId": runtime_snapshot["snapshotId"],
+            "runtimeSnapshotDigest": runtime_snapshot["digest"],
+            "consumedFields": sorted(expected_values),
             "settingsSections": sorted(settings.field_boundaries.keys()),
             "bootstrapDatabasePath": settings.bootstrap_database_path,
             "restartRequiredFields": sorted(

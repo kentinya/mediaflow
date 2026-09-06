@@ -4,7 +4,9 @@ import io
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.configuration_management import (
@@ -192,6 +194,11 @@ class SystemSettingsManagementTests(unittest.TestCase):
             self.assertEqual(data["consumption"]["revisionId"], active.revision_id)
             self.assertIn("persistence.databasePath", data["settings"])
             self.assertIn("automation.maximumActiveJobs", data["settings"])
+            self.assertEqual(data["consumption"]["runtimeSnapshotId"], active.revision_id)
+            self.assertEqual(data["consumption"]["runtimeSnapshotDigest"], active.digest)
+            self.assertIn(
+                "automation.maximumActiveJobs", data["consumption"]["consumedFields"]
+            )
 
     def test_api_read_draft_settings_via_query_and_revision_route(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -267,6 +274,55 @@ class SystemSettingsManagementTests(unittest.TestCase):
                 updated_draft.document.get("automation", {}).get("staleJobAgeSeconds"), 7200
             )
             self.assertEqual(updated_draft.version, draft.version + 1)
+
+    def test_api_edit_response_can_continue_draft_journey(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api, service, active, repo = setup_test_api(directory)
+            create_body = json.dumps(
+                {"edits": [{"fieldPath": "automation.maximumActiveJobs", "value": 75}]}
+            ).encode("utf-8")
+            status, created = request(
+                api, "/api/v1/system/settings", method="PUT", body=create_body
+            )
+            self.assertEqual(status, 201)
+            draft_id = created["revisionId"]
+            status, draft_view = request(api, f"/api/v1/system/settings?revisionId={draft_id}")
+            self.assertEqual(status, 200)
+            self.assertEqual(draft_view["revisionId"], draft_id)
+            self.assertFalse(draft_view["isActive"])
+            update_body = json.dumps(
+                {
+                    "revisionId": draft_id,
+                    "expectedVersion": draft_view["revisionVersion"],
+                    "edits": [{"fieldPath": "automation.maximumActiveJobs", "value": 80}],
+                }
+            ).encode("utf-8")
+            status, updated = request(
+                api, "/api/v1/system/settings", method="PUT", body=update_body
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(updated["revisionId"], draft_id)
+            self.assertEqual(updated["settings"]["automation.maximumActiveJobs"], 80)
+
+    def test_consumption_evidence_fails_closed_on_runtime_snapshot_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api, service, active, repo = setup_test_api(directory)
+            stale_binding = replace(
+                api._runtime_binding,
+                runtime_settings={
+                    "snapshotId": "stale-revision",
+                    "digest": "stale-digest",
+                    "settings": {},
+                },
+            )
+            with patch.object(api, "_refresh_configuration_binding", return_value=stale_binding), patch.object(
+                api, "_runtime_binding", stale_binding
+            ):
+                status, data = request(api, "/api/v1/system/settings")
+            self.assertEqual(status, 200)
+            self.assertFalse(data["consumption"]["consumed"])
+            self.assertEqual(data["consumption"]["reason"], "runtime_snapshot_mismatch")
+            self.assertEqual(data["consumption"]["revisionId"], active.revision_id)
 
     def test_api_stale_concurrency_returns_conflict(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -356,6 +412,9 @@ class SystemSettingsManagementTests(unittest.TestCase):
         self.assertIn("input.type = 'number'", script)
         self.assertIn("meta.valueType === 'enum'", script)
         self.assertIn("pendingByPath", script)
+        self.assertIn("settingsRevisionId", script)
+        self.assertIn("expectedActiveRevisionId", script)
+        self.assertIn("Validate and activate this Draft", script)
         self.assertIn("Add at least one setting edit before saving.", script)
 
     def test_runtime_projection_preserves_extended_settings(self) -> None:
@@ -375,6 +434,18 @@ class SystemSettingsManagementTests(unittest.TestCase):
         self.assertEqual(runtime.export_path, ".mediaflow/exports")
         self.assertEqual(runtime.locale, "zh-CN")
         self.assertEqual(runtime.timezone, "Asia/Shanghai")
+
+    def test_locale_and_timezone_are_explicit_restart_required(self) -> None:
+        doc = example_document()
+        projection = SystemSettings.from_document(doc).as_projection()
+        self.assertEqual(
+            projection["sections"]["Localization"]["locale"]["boundary"],
+            "restart_required",
+        )
+        self.assertEqual(
+            projection["sections"]["Localization"]["timezone"]["boundary"],
+            "restart_required",
+        )
 
 
 if __name__ == "__main__":

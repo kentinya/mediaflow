@@ -169,6 +169,7 @@ class _ApiRuntimeBinding:
     dashboard: DashboardService
     files_browser: RuntimeFilesBrowserService | None = None
     manual_scans: ManualScanService | None = None
+    runtime_settings: dict[str, object] | None = None
 
 
 class MediaFlowApi:
@@ -268,7 +269,10 @@ class MediaFlowApi:
             else None
         )
         self._system_settings = (
-            SystemSettingsService(configuration_service)
+            SystemSettingsService(
+                configuration_service,
+                runtime_snapshot_provider=lambda: self._runtime_settings_evidence(),
+            )
             if configuration_service is not None
             else None
         )
@@ -5336,6 +5340,10 @@ class MediaFlowApi:
         with self._runtime_binding_lock:
             return self._refresh_configuration_binding_locked()
 
+    def _runtime_settings_evidence(self) -> dict[str, object] | None:
+        binding = getattr(self, "_runtime_binding", None)
+        return binding.runtime_settings if binding is not None else None
+
     def _is_management_only_setup(self) -> bool:
         if not self._management_only:
             return False
@@ -5529,6 +5537,48 @@ class MediaFlowApi:
                 configuration_snapshot_id=snapshot_id,
                 configuration_snapshot_digest=snapshot_digest,
             )
+        runtime_settings = None
+        if runtime_configuration is not None:
+            retry = runtime_configuration.workflow_retry_policy
+            runtime_settings = {
+                "snapshotId": snapshot_id,
+                "digest": snapshot_digest,
+                "settings": {
+                    "automation.workerPollSeconds": runtime_configuration.worker_poll_seconds,
+                    "automation.schedulerPollSeconds": (
+                        runtime_configuration.scheduler_poll_seconds
+                    ),
+                    "automation.maximumActiveJobs": (
+                        runtime_configuration.automation_maximum_active_jobs
+                    ),
+                    "automation.staleJobAgeSeconds": (
+                        runtime_configuration.automation_stale_job_age_seconds
+                    ),
+                    "operationalLogging.enabled": runtime_configuration.operational_logging_enabled,
+                    "operationalLogging.minimumLevel": (
+                        runtime_configuration.operational_logging_minimum_level.name
+                    ),
+                    "operationalLogging.retentionDays": (
+                        runtime_configuration.operational_logging_retention_days
+                    ),
+                    "operationalLogging.maximumRecords": (
+                        runtime_configuration.operational_logging_maximum_records
+                    ),
+                    "workflowRetry.enabled": retry.enabled,
+                    "workflowRetry.maxAttempts": retry.max_attempts,
+                    "workflowRetry.baseDelaySeconds": retry.base_delay_seconds,
+                    "workflowRetry.maxDelaySeconds": retry.max_delay_seconds,
+                    "workflowRetry.jitterRatio": retry.jitter_ratio,
+                    "notifications.pollSeconds": runtime_configuration.notification_poll_seconds,
+                    "notifications.deliveryLeaseSeconds": (
+                        runtime_configuration.notification_delivery_lease_seconds
+                    ),
+                    "api.remoteExecution.enabled": runtime_configuration.remote_execution_enabled,
+                    "api.remoteExecution.maximumTtlSeconds": (
+                        runtime_configuration.remote_execution_maximum_ttl_seconds
+                    ),
+                },
+            }
         return _ApiRuntimeBinding(
             snapshot_id,
             snapshot_digest,
@@ -5558,6 +5608,7 @@ class MediaFlowApi:
             ),
             files_browser,
             manual_scans,
+            runtime_settings,
         )
 
     def _audit(
