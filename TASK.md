@@ -320,7 +320,7 @@ result and evidence that it is unrelated to this Task.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [pending commit]
+Head SHA: 697be37e22934206993866cd4eba6f53995a5a69
 ```
 
 ## B Review Result
