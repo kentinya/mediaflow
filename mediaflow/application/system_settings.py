@@ -74,6 +74,7 @@ class SystemSettingsService:
             revision_id=active.revision_id,
             revision_version=active.revision_sequence or active.version,
             revision_digest=active.digest,
+            draft_version=active.version,
             is_active=True,
             bootstrap_database_path=bootstrap_db,
         )
@@ -92,6 +93,7 @@ class SystemSettingsService:
                 revision_id=active.revision_id,
                 revision_version=active.revision_sequence or active.version,
                 revision_digest=active.digest,
+                draft_version=active.version,
                 is_active=True,
                 bootstrap_database_path=self._config.bootstrap_database_path,
             )
@@ -116,6 +118,7 @@ class SystemSettingsService:
             revision_id=revision.revision_id,
             revision_version=revision.revision_sequence or revision.version,
             revision_digest=revision.digest,
+            draft_version=revision.version,
             is_active=False,
             bootstrap_database_path=bootstrap_db,
         )
@@ -207,6 +210,7 @@ class SystemSettingsService:
             revision_id=edited.revision_id,
             revision_version=edited.revision_sequence or edited.version,
             revision_digest=edited.digest,
+            draft_version=edited.version,
             is_active=False,
             bootstrap_database_path=bootstrap_db,
         )
@@ -271,6 +275,7 @@ class SystemSettingsService:
             revision_id=edited.revision_id,
             revision_version=edited.revision_sequence or edited.version,
             revision_digest=edited.digest,
+            draft_version=edited.version,
             is_active=False,
             bootstrap_database_path=bootstrap_db,
         )
@@ -303,6 +308,7 @@ class SystemSettingsService:
             revision_id=active.revision_id,
             revision_version=active.revision_sequence or active.version,
             revision_digest=active.digest,
+            draft_version=active.version,
             is_active=True,
             bootstrap_database_path=self._config.bootstrap_database_path,
         )

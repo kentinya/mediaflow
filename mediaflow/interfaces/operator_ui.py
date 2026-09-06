@@ -218,7 +218,8 @@ APP_JS = b"""(() => {
     content.append(text('h3', 'Configuration snapshot'));
     content.append(cards([
       ['Revision', data.revisionId || '-'],
-      ['Version', data.revisionVersion || '-'],
+      ['Revision version', data.revisionVersion || '-'],
+      ['Draft version', data.draftVersion || '-'],
       ['Digest', data.revisionDigest || '-'],
       ['Status', data.isActive ? 'Active' : 'Draft'],
       ['Authority', data.authority || '-'],
@@ -300,7 +301,7 @@ APP_JS = b"""(() => {
               expectedActiveDigest: data.revisionDigest
             } : {
               revisionId: data.revisionId,
-              expectedVersion: data.revisionVersion
+              expectedVersion: data.draftVersion
             })
           })
         });

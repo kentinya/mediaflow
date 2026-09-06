@@ -271,6 +271,10 @@ class SystemSettings:
     revision_id: str | None
     revision_version: int | None
     revision_digest: str | None
+    # Mutable Draft optimistic-edit token (``ManagedConfigurationRevision.version``).
+    # ``revision_version`` stays the immutable revision-sequence identity evidence;
+    # this value is the one Draft edits must send as ``expectedVersion``.
+    draft_version: int | None
     is_active: bool
 
     # Database & storage paths
@@ -324,6 +328,7 @@ class SystemSettings:
         revision_id: str | None = None,
         revision_version: int | None = None,
         revision_digest: str | None = None,
+        draft_version: int | None = None,
         is_active: bool = False,
         bootstrap_database_path: str | None = None,
     ) -> SystemSettings:
@@ -351,6 +356,7 @@ class SystemSettings:
             revision_id=revision_id,
             revision_version=revision_version,
             revision_digest=revision_digest,
+            draft_version=draft_version,
             is_active=is_active,
             database_path=persistence.get("databasePath"),
             history_path=document.get("historyPath"),
@@ -391,6 +397,9 @@ class SystemSettings:
             "revisionId": self.revision_id,
             "revisionVersion": self.revision_version,
             "revisionDigest": self.revision_digest,
+            # Mutable Draft edit token for optimistic ``expectedVersion`` checks;
+            # ``revisionVersion`` remains the immutable revision-sequence identity.
+            "draftVersion": self.draft_version,
             "isActive": self.is_active,
             "sections": {},
             "settings": {},
