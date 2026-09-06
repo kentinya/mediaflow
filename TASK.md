@@ -244,7 +244,7 @@ explicit and report its reason.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [pending commit]
+Head SHA: 035e834c0bc792dd34601583691e4e77e6c3b12d
 ```
 
 ## B Review Result
