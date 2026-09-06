@@ -41,6 +41,7 @@ from mediaflow.application.metadata_correction_continuation import (
     MetadataCorrectionContinuationConflict,
 )
 from mediaflow.application.metadata_review import MetadataReviewService
+from mediaflow.application.package_exchange import PackageExchangeService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
@@ -87,6 +88,10 @@ from mediaflow.domain.metadata_correction import (
 )
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
+from mediaflow.domain.package_exchange import (
+    MAX_CONFIGURATION_PACKAGE_BYTES,
+    PackageExchangeError,
+)
 from mediaflow.domain.recovery import RecoveryAdmissionError, RecoveryAdmissionReason
 from mediaflow.domain.recovery_continuation import (
     RecoveryContinuationError,
@@ -273,6 +278,11 @@ class MediaFlowApi:
                 configuration_service,
                 runtime_snapshot_provider=lambda: self._runtime_settings_evidence(),
             )
+            if configuration_service is not None
+            else None
+        )
+        self._package_exchange = (
+            PackageExchangeService(configuration_service, self._repository)
             if configuration_service is not None
             else None
         )
@@ -874,6 +884,24 @@ class MediaFlowApi:
                 "configuration_unavailable",
                 str(error),
                 details=details,
+            )
+        except PackageExchangeError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "package-exchange",
+                "denied" if error.status < 500 else "error",
+                error.status,
+            )
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                error.message,
+                details=error.document(),
             )
         except ManualIntentError as error:
             self._safe_audit(
@@ -1880,6 +1908,83 @@ class MediaFlowApi:
             return self._response(
                 start_response, 200, self._configuration_status_document(principal)
             )
+        if parts[:4] == ["api", "v1", "configuration", "packages"]:
+            if self._package_exchange is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "configuration package exchange service is unavailable",
+                    details={
+                        "durableState": "no_package_state_changed",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": ("restore the managed configuration service, then retry"),
+                    },
+                )
+            if parts == ["api", "v1", "configuration", "packages"]:
+                if method == "GET":
+                    self._require_empty_query(environ, "package exchange status")
+                    self._require(principal, ApiPermission.READ)
+                    return self._response(
+                        start_response,
+                        200,
+                        self._package_exchange.status_document(),
+                    )
+                if method == "POST":
+                    self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+                    package_value, recovery = self._package_import_request(environ)
+                    result = self._package_exchange.import_configuration(
+                        package_value,
+                        actor=principal.principal_id,
+                        recovery=recovery,
+                    )
+                    return self._response(
+                        start_response,
+                        201 if result.get("action") == "created" else 200,
+                        result,
+                    )
+                return self._error(
+                    start_response, 405, "method_not_allowed", "GET or POST required"
+                )
+            if len(parts) == 6 and parts[4:6] == ["export", "configuration"] and method == "GET":
+                self._require(principal, ApiPermission.READ)
+                values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+                if set(values).difference({"revisionId"}) or any(
+                    len(value) != 1 for value in values.values()
+                ):
+                    raise ValueError("configuration package export accepts one optional revisionId")
+                revision_id = values.get("revisionId", [None])[0]
+                if revision_id is not None and (
+                    not isinstance(revision_id, str) or not revision_id.strip()
+                ):
+                    raise ValueError("configuration package revisionId must be non-empty")
+                package = self._package_exchange.export_configuration(
+                    actor=principal.principal_id,
+                    revision_id=revision_id,
+                )
+                return self._response(start_response, 200, package)
+            if len(parts) == 6 and parts[4:6] == ["export", "results"] and method == "GET":
+                self._require(principal, ApiPermission.READ)
+                values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+                if set(values).difference({"taskId", "limit"}) or any(
+                    len(value) != 1 for value in values.values()
+                ):
+                    raise ValueError("result package export accepts taskId and one limit field")
+                task_id = values.get("taskId", [None])[0]
+                if not isinstance(task_id, str) or not task_id.strip():
+                    raise ValueError("result package export requires a non-empty taskId")
+                try:
+                    limit = int(values.get("limit", ["100"])[0])
+                except ValueError as error:
+                    raise ValueError("result package limit must be an integer") from error
+                package = self._package_exchange.export_results(
+                    actor=principal.principal_id,
+                    task_id=task_id,
+                    limit=limit,
+                )
+                return self._response(start_response, 200, package)
+            return self._error(start_response, 404, "not_found", "package route was not found")
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "configuration"]
@@ -5654,6 +5759,9 @@ class MediaFlowApi:
             ("api", "v1", "security-audit"),
             ("api", "v1", "dashboard"),
             ("api", "v1", "system", "status"),
+            ("api", "v1", "configuration", "packages"),
+            ("api", "v1", "configuration", "packages", "export", "configuration"),
+            ("api", "v1", "configuration", "packages", "export", "results"),
             ("api", "v1", "metadata-reviews"),
             ("api", "v1", "classification-reviews"),
             ("api", "v1", "recognition-reviews"),
@@ -6492,6 +6600,81 @@ class MediaFlowApi:
         if not isinstance(value, dict):
             raise ValueError("request JSON must be an object")
         return value
+
+    @staticmethod
+    def _package_import_request(
+        environ: dict,
+    ) -> tuple[object, dict[str, object] | None]:
+        raw_length = environ.get("CONTENT_LENGTH", "0") or "0"
+        try:
+            length = int(raw_length)
+        except ValueError as error:
+            raise PackageExchangeError(
+                "package import Content-Length is invalid",
+                code="invalid_request",
+                status=400,
+                durable_state="no_configuration_changed",
+                next_action="resend the package with a valid Content-Length",
+            ) from error
+        if length <= 0 or length > MAX_CONFIGURATION_PACKAGE_BYTES:
+            raise PackageExchangeError(
+                "package import body exceeds the bounded package size",
+                code="package_too_large",
+                status=413,
+                durable_state="no_configuration_changed",
+                next_action="import a supported bounded configuration package",
+            )
+        raw = environ["wsgi.input"].read(length)
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise PackageExchangeError(
+                "package import body is not valid JSON",
+                code="invalid_schema",
+                status=422,
+                durable_state="no_configuration_changed",
+                next_action="import an unmodified JSON configuration package",
+            ) from error
+        if not isinstance(value, dict):
+            raise PackageExchangeError(
+                "package import body must be a JSON object",
+                code="invalid_schema",
+                status=422,
+                durable_state="no_configuration_changed",
+                next_action="import an unmodified JSON configuration package",
+            )
+        if "package" in value:
+            allowed = {"package", "recovery"}
+            if set(value).difference(allowed):
+                raise PackageExchangeError(
+                    "package import request contains unsupported fields",
+                    code="invalid_request",
+                    status=422,
+                    durable_state="no_configuration_changed",
+                    next_action="send only the package and optional recovery authority",
+                )
+            package_value = value["package"]
+            recovery = value.get("recovery")
+        else:
+            package_value = value
+            recovery = None
+        if not isinstance(package_value, dict):
+            raise PackageExchangeError(
+                "configuration package must be an object",
+                code="invalid_schema",
+                status=422,
+                durable_state="no_configuration_changed",
+                next_action="import a supported configuration package",
+            )
+        if recovery is not None and not isinstance(recovery, dict):
+            raise PackageExchangeError(
+                "package import recovery authority must be an object",
+                code="invalid_request",
+                status=422,
+                durable_state="no_configuration_changed",
+                next_action="omit recovery or supply the exact current Draft identity",
+            )
+        return package_value, recovery
 
     @staticmethod
     def _optional_document(environ: dict) -> dict:
