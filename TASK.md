@@ -250,7 +250,7 @@ explicit and report its reason.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [pending correction commit]
+Head SHA: c760c26ff9adc004ffed3e448339cc88025eb521
 ```
 
 ## B Review Result
