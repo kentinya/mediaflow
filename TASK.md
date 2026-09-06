@@ -1,13 +1,13 @@
-# Task 28.2 — Consumed System Settings Lifecycle
+# Task 28.3 — Versioned Configuration and Result Package Exchange
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 28.2
+Task ID: 28.3
 Parent Slice: 28
-Status: IN PROGRESS
-Task Base: fe8b97ac52824a9ffdf7eeb85ba0143a57b25aa2
+Status: PLANNED
+Task Base: 4db4be7cdf0211541e1f0470387d5239330431c5
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,108 +15,114 @@ Planner / Reviewer: B
 
 ## Goal
 
-Complete the consumed System Settings journey for Slice 28 RO-3: an authenticated operator can
-inspect and edit the supported system-level settings through typed Web/API surfaces, with exact
-Draft/Active/pinned identity, validation, audit, permission checks and explicit restart or
-bootstrap-owned boundaries. Every setting claimed as Active is the immutable snapshot actually
-consumed by the applicable runtime components; unavailable or not-yet-consumed settings fail closed
-and expose recovery state instead of reporting false readiness.
+Complete the versioned, secret-free configuration and result package exchange journey for Slice 28
+RO-4: an authenticated operator can export bounded configuration and result packages, import a
+supported configuration package as a Draft/recovery candidate, inspect schema/version/validation
+state, and recover from stale or invalid imports without exposing secrets, changing Active, changing
+completed media work or requiring direct SQLite/raw JSON knowledge.
 
 ## Why This Task Exists
 
-Slice 28.1 completes the forms-first managed configuration object lifecycle, but the current System
-surface is status-only. System-level values are distributed across the existing configuration document
-and runtime binding (`persistence`, `historyPath`, operational logging, automation concurrency and
-workflow retry), with no dedicated typed Web/API editing journey, no complete consumption evidence,
-and no clear distinction between bootstrap-owned, hot-consumed and restart/deployment-bound values.
+Tasks 28.1 and 28.2 complete the forms-first configuration object lifecycle and consumed System
+Settings journey, but Slice 28 still lacks the required Web/API package exchange surface. The current
+code has managed revision import/bootstrap mechanics and persisted Task/Result records, yet there is
+no coherent operator journey for versioned package export/import, no package schema/currentness
+projection, no secret-free result export boundary, and no recovery path that proves import failures
+leave Active, the current Draft and completed media work intact.
 
-This is the largest reasonable next unit because it crosses the existing managed revision authority,
-runtime normalization/binding, application validation and audit, versioned API, operator Web and
-regression tests as one coherent user outcome. It must reuse the existing revision, activation,
-runtime binding, RBAC and audit authorities rather than create a parallel settings store or runtime.
+This is the largest reasonable next unit because RO-4 crosses the managed configuration authority,
+Task/Result read models, redaction, import validation, application/API behavior, Web controls and
+regression tests as one operator-visible package exchange workflow. It is independent of the
+remaining Webhook definition/test and delivery recovery outcomes (RO-5/RO-6), which stay out of
+scope for later Tasks.
 
 ## Implementation Scope
 
 ```text
-Domain / canonical settings projection
-→ managed Draft validation, persistence and redacted audit
-→ exact Active/pinned runtime consumption and readiness evidence
-→ Application service behavior and bounded failure/recovery projections
-→ versioned API and RBAC
-→ Operator Web Settings view, typed forms and recovery state
-→ focused, integration and full regression tests
+Domain package contract / redaction
+→ Application export/import services
+→ managed Draft/recovery-candidate persistence and audit
+→ versioned API with permissions and bounded errors
+→ Operator Web import/export controls and recovery state
+→ focused, parity, regression and safety tests
 ```
 
 The Task may update only the implementation needed for the following behavior:
 
-- Define one canonical, typed System Settings projection over the existing managed configuration
-  document and `RuntimeConfiguration`. Supported settings must cover the Slice contract's database,
-  work/history, cache, log and export locations where the current product supports them, locale and
-  timezone, log level and retention, applicable concurrency controls, and workflow retry policy.
-  Existing document compatibility must be preserved through one normalized path; no second settings
-  authority may be introduced.
-- Provide read and edit behavior for a Draft through a versioned API and a discoverable Web Settings
-  view. The response must identify authority, revision ID, version, digest, lifecycle status,
-  consumed/pinned snapshot identity, currentness and any restart/deployment requirement.
-- Route Web and API reads/edits through the same Application behavior, permissions, validation,
-  optimistic expected-version/digest checks, redaction and audit rules. A successful edit changes
-  only the Draft, invalidates applicable evidence and never mutates Active or starts media work.
-- Validate bounded types, ranges, enum values, paths, locale/timezone and retry/concurrency
-  relationships before persistence. Reject unknown fields, literal secrets and unsafe or unsupported
-  changes with actionable, bounded recovery details.
-- Keep the bootstrap-owned database location immutable and clearly labelled. Settings that are
-  accepted only for a future restart/deployment boundary must be represented as pending/restart
-  required and must not be presented as consumed by the current process. If a setting cannot be
-  consumed safely, activation/runtime readiness must fail closed rather than claim success.
-- Bind every applicable runtime consumer, including API admission, Worker/Scheduler/Notification
-  behavior, operational logging and pinned work, to the exact Active or pinned snapshot identity.
-  Existing active revision activation and pinned-work semantics remain authoritative.
-- Expose permission denial, stale writer conflict, invalid value, missing/corrupt Active, runtime
-  incompatibility and restart-required outcomes with durable state, known effects, retry safety and
-  explicit next action. Prior Active, completed media work and existing Task/Result history remain
-  intact after failure.
+- Define a deterministic, bounded package contract for configuration export/import and result export.
+  The package must include explicit package kind, schema/package version, generated timestamp,
+  producer identity, source revision/result scope, digest/currentness evidence and bounded warnings
+  where applicable.
+- Configuration export must support at least Active and explicit Draft/Validated/Superseded revision
+  sources through the managed configuration authority. It must not expose literal secret values,
+  authorization material, cookies, passwords, bearer tokens or unrestricted private credentials.
+  Deployment-owned secret references may appear only as references (for example environment-variable
+  names) with clear redaction/ownership evidence.
+- Result export must read persisted Task/Result evidence through repository/application interfaces,
+  support bounded task/result scope and pagination or explicit limits, preserve the required result
+  identity fields, and redact secret-bearing or unsafe text while retaining enough evidence for
+  audit/recovery. Export must not read media files or require Storage/TMDB/Webhook connectivity.
+- Configuration import must accept only supported configuration package versions and payload shapes,
+  validate schema/version/digest and managed configuration rules, then create or update an explicit
+  Draft/recovery candidate through the existing revision authority. It must never silently activate,
+  overwrite the current Draft, change Active, change completed media work, start a Scan/Preview/
+  Organize/Job/Task/scheduled occurrence, or mutate Storage.
+- Import failure, stale currentness, unsupported package version, invalid schema, corrupt package,
+  secret-containing payload and validation errors must return bounded recovery details that identify
+  durable state, side effects, retry safety, exact revision/current Draft where relevant and next
+  action. Prior Active and completed Task/Result history must remain intact.
+- Web and API surfaces must use the same application behavior, permissions, validation, redaction,
+  state transitions and audit rules. The Web Configuration/Settings administration area may expose
+  package exchange as explicit Advanced/support controls, but ordinary forms-first object/settings
+  editing must remain the primary path.
+- Add durable, redacted audit evidence for export/import attempts and outcomes. Audit/log/error/Web
+  responses must not contain recoverable secrets or raw secret payloads.
 
-Files and areas explicitly frozen unless a directly required compatibility adjustment is proven:
+Files/areas explicitly frozen unless compatibility glue is strictly required:
 
 - `SLICE.md`, `docs/roadmap.md`, `docs/progress.md`, product requirements, Product Experience and
   Architecture contracts.
-- Slice 28.1 object lifecycle behavior except compatibility changes needed to expose Settings through
-  the same revision authority.
-- Configuration/result package exchange, Webhook definition/test/delivery management and recovery,
-  and every Slice 29 or Explicitly Deferred item.
+- Completed Slice 28.1 forms/object lifecycle and Task 28.2 System Settings semantics, except shared
+  package-entry links or compatibility reuse.
+- Webhook definition management, explicit tests, delivery operations and delivery recovery.
 - Storage mutation, OrganizerExecutor, Scanner/Parser/Recognition/Metadata/Naming/Classification/
-  Planner behavior, Worker/Scheduler ownership protocol and the existing Task/Result model.
-- A parallel settings database, direct SQLite/JSON management path, built-in identity/secret store,
-  provider switching or any redesign of the closed processing pipeline.
+  Planner behavior, Worker/Scheduler ownership protocol and mutation authority.
+- Built-in identity, general Secret Store, Docker/Compose production packaging, Provider switching,
+  new Storage providers and any redesign of the closed media-processing pipeline.
 
 ## Acceptance Criteria
 
-- [ ] An authenticated operator can enter a discoverable Web Settings view and the versioned API can
-      return the same typed settings projection, exact authority, revision ID/version/digest,
-      lifecycle status and consumed/pinned identity without exposing secrets or unrestricted paths.
-- [ ] A permitted operator can edit supported settings in a Draft through typed controls without
-      editing SQLite or relying on whole-document JSON; the API and Web use one application behavior
-      and return the exact new Draft identity and bounded audit evidence.
-- [ ] Active and Superseded revisions remain immutable. Draft edits use optimistic version/digest
-      checks, invalidate stale evidence, preserve the prior Active on failure and cannot start a
-      Scan, Preview, Organize, Job, Task, scheduled occurrence or Storage mutation.
-- [ ] Database location and other bootstrap/deployment-owned values are explicitly classified and
-      protected. A setting that the running process has not consumed is visibly restart/deployment
-      required or unavailable and is never represented as Active-consumed readiness.
-- [ ] Supported settings are validated for type, bounds, enum/locale/timezone, safe path semantics,
-      cross-field constraints, unknown fields and literal-secret rejection. Invalid input produces a
-      durable, actionable recovery result without corrupting Draft or Active state.
-- [ ] The exact Active or pinned snapshot consumed by each applicable runtime component includes the
-      settings identity and values used for API admission, workers/schedulers/notifications,
-      operational logging, concurrency and workflow retry. Missing, corrupt, stale or incompatible
-      snapshots fail closed with bounded recovery evidence.
-- [ ] Read/manage permission behavior, stale-concurrency behavior, audit projection and redaction
-      are parity-tested between Web and API. Permission denial and runtime-unavailable states do not
-      leak secret values, authorization material or private credentials.
-- [ ] The existing Slice 26/27 configuration authority, Storage/FileIndex, OrganizerExecutor,
-      Task/Result, Worker, Scheduler, RBAC and safety regressions remain intact.
+- [ ] Authenticated API users can export a bounded versioned configuration package for the Active
+      revision and an explicit managed revision, including package kind/version, source revision ID,
+      revision status, revision version/sequence/digest, generated timestamp, currentness evidence,
+      redaction evidence and validation/recovery metadata.
+- [ ] Authenticated API users can export bounded persisted result data by supported task/result scope,
+      including required result identity/effect fields and deterministic limits/cursors or explicit
+      truncation evidence; export reads only durable repository state and never media/Storage.
+- [ ] Actual secret values, bearer tokens, authorization headers, cookies, passwords, access keys,
+      `secretEnv` values and equivalent credentials never appear in configuration packages, result
+      packages, import validation errors, audit records, logs or Web/API responses. Secret references
+      remain references only when allowed.
+- [ ] Configuration import accepts a supported package, validates schema/version/digest/content and
+      creates or updates only an explicit Draft/recovery candidate through the managed revision
+      authority. Imported content remains inactive until the normal exact validation and checked
+      activation path succeeds.
+- [ ] Import does not silently overwrite the current Draft. Stale currentness, existing Draft
+      conflicts, unsupported version, invalid schema, digest mismatch, validation errors and secret
+      payloads fail closed with bounded recovery details: durable state, side effects `none`, retry
+      safety, exact current revision/Draft evidence where relevant and next action.
+- [ ] Active and Superseded revisions remain immutable. Export/import never starts Scan, Preview,
+      Organize, Job, Task or scheduled occurrences and never mutates Storage or completed media work.
+- [ ] Web controls expose configuration/result export and configuration import as explicit
+      Advanced/support actions with package schema/version/currentness/recovery state. Web and API
+      parity tests prove both surfaces use the same application behavior for success, permission
+      denial, stale/invalid import, audit and redaction.
+- [ ] Existing Slice 26/27 and Tasks 28.1/28.2 authority, forms-first editing, System Settings,
+      Storage/FileIndex, OrganizerExecutor, Task/Result, Worker, Scheduler, RBAC and safety
+      regressions remain intact.
 - [ ] Required focused tests, full supported offline regression, governance, formatting/lint,
-      compile, dependency and diff checks pass; external-service skips remain explicit and truthful.
+      compile, dependency and diff checks pass; unavailable optional/external gates are reported
+      explicitly and truthfully.
 - [ ] The checkpoint contains only this Task's coherent implementation/tests and no private
       configuration, `config/alist.json`, credentials, media or unrelated user work.
 
@@ -126,26 +132,30 @@ Focused and related tests:
 
 ```bash
 python3 -m unittest \
-  tests.test_system_settings_management \
+  tests.test_configuration_package_exchange \
   tests.test_configuration_snapshot \
   tests.test_configuration_management \
-  tests.test_configuration_status \
-  tests.test_runtime_strategy_configuration \
-  tests.test_automation_admission \
-  tests.test_stale_job_visibility \
-  tests.test_operational_logging \
-  tests.test_operator_ui
+  tests.test_configuration_objects \
+  tests.test_system_settings_management \
+  tests.test_api_credentials \
+  tests.test_operator_ui \
+  tests.test_final_integration \
+  tests.test_processing_recovery_admission \
+  tests.test_recovery_continuation
 ```
 
-The Developer must add or update focused tests for:
+The Developer must add focused package exchange tests covering:
 
-- typed Web/API read and edit parity, RBAC and exact Active/Draft/pinned identity;
-- valid, invalid, unknown-field, path-boundary, locale/timezone, retry/concurrency and
-  bootstrap-owned database settings;
-- stale version/digest, missing/corrupt Active, runtime incompatibility and restart-required
-  recovery;
-- audit/redaction, no secret leakage, no media/workflow side effects and exact runtime consumer
-  binding, including pinned work.
+- configuration export of Active and explicit Draft/Validated/Superseded revisions;
+- result export for bounded Task/Result scope, deterministic ordering/limits and truncation or
+  cursor evidence;
+- secret-free package payloads, validation errors, audit records, logs and Web/API responses;
+- supported import as Draft/recovery candidate, unsupported version, invalid schema, digest mismatch,
+  literal-secret rejection and stale/existing-Draft conflicts;
+- no Active mutation, no current Draft overwrite without explicit authority, no completed media-work
+  changes, no Task/Job/scheduled occurrence creation and no Storage mutation;
+- API/Web parity for package export/import success, permission denial, stale/invalid failure and
+  recovery details.
 
 T4 quality and regression gates:
 
@@ -159,161 +169,165 @@ python3 -m pip check
 git diff --check
 ```
 
-Tests must use fakes, local servers and temporary paths. Production Storage, TMDB, Webhook
-endpoints, credentials and real media are not permitted. Any external-service skip must remain
-explicit and report its reason.
+Tests must use fakes, local repositories and temporary paths. Production Storage, TMDB, Webhook
+endpoints, credentials, private paths and real media are not permitted. Any unavailable optional
+external dependency or pre-existing local-environment failure must be reported with exact command,
+result and evidence that it is unrelated to this Task.
 
 ## Non-goals
 
 - Work outside the Slice 28 Contract or any change to its Required Outcomes, Required Surfaces,
   Safety Invariants, Base SHA or Explicitly Deferred scope.
-- Re-implementing Slice 28.1 configuration object CRUD/forms, except required shared-authority
-  compatibility changes.
-- Versioned configuration/result package import/export.
-- Webhook definition management, explicit tests, delivery operations or delivery recovery.
+- Re-implementing completed Task 28.1 forms-first configuration object CRUD/cards or Task 28.2
+  consumed System Settings, except package-entry links and shared application reuse required by
+  this Task.
+- Webhook definition management, explicit Webhook connection tests, delivery list/detail changes,
+  retry/requeue/dead-letter recovery or notification-channel expansion.
 - Docker/Compose production packaging, production serving, restart/upgrade migration E2E, Provider
   switching, built-in identity/OIDC, a general Secret Store or new Storage providers.
-- Automatic replay of uncertain media mutations, historical rollback, distributed worker
-  coordination, Storage mutation or media-processing pipeline redesign.
-- Optional copy polish, extra test-only micro-Tasks, broad refactors or direct SQLite/JSON editing.
+- CSV export, bulk historical archive packaging, arbitrary media file export, direct SQLite/raw JSON
+  management as the primary user path, automatic activation of imported packages or automatic replay
+  of uncertain media mutations.
+- Optional copy polish, extra test-only micro-Tasks, broad refactors or any Storage/OrganizerExecutor
+  mutation behavior.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-- `mediaflow/domain/system_settings.py`
-- `mediaflow/application/system_settings.py`
+- `mediaflow/domain/package_exchange.py` (new)
+- `mediaflow/application/package_exchange.py` (new)
+- `mediaflow/interfaces/service_api.py`
 - `mediaflow/interfaces/operator_ui.py`
-- `tests/test_system_settings_management.py`
-- `TASK.md` (fix-round status and this report)
+- `tests/test_configuration_package_exchange.py` (new)
+- `TASK.md` (this Developer Completion Report)
 
 ### Implemented
 
-Blocker 1 — Web/Draft optimistic version:
-
-- `SystemSettings` now exposes the mutable Draft optimistic-edit token separately from the
-  immutable revision sequence: a new `draft_version` identity field is populated from
-  `ManagedConfigurationRevision.version`, while `revision_version` continues to carry the
-  immutable `revision_sequence`. `as_projection()` returns it as `draftVersion`.
-- All revision-backed reads (`read_active`, `read_draft_or_active`, `read_draft`) and both edit
-  paths (`edit`, `edit_draft`) populate the field, so every settings response carries the exact
-  current Draft edit token (verified: create → `draftVersion` 2, edits advance 3 → 4 → 5 while
-  `revisionVersion` stays 2, no further 409).
-- The Web Settings view shows `Revision version` and `Draft version` as separate identity cards
-  and sends `expectedVersion: data.draftVersion` for Draft edits. The Active branch keeps pinning
-  `expectedActiveRevisionId` / `expectedActiveVersion` / `expectedActiveDigest` to the exact
-  Active identity, matching `create_successor_draft` semantics.
-
-Blocker 2 — settings recovery/parity tests:
-
-- Missing Active (after managed activation): read and edit fail closed with 503
-  `configuration_unavailable`, `reason: active_missing`, durable last-known Active identity,
-  `sideEffects: none`, `retrySafe: true` and a Draft-staging next action; no settings Draft is
-  created.
-- Corrupt Active: 503 with `reason: digest_corrupt` naming the exact revision; the corrupt
-  payload contents never leak into the failure projection; revision set unchanged.
-- Runtime-invalid Active (bootstrap locator mismatch): 503 with `reason: runtime_invalid`; edit
-  fails closed and the Active payload is preserved byte-for-byte.
-- Restart-required recovery: restart-required values move only through the normal exact
-  validate/checked-activate path; consumption evidence names the exact new snapshot but never
-  lists restart-required fields in `consumedFields` — only in `restartRequiredFields` — while hot
-  fields stay consumed; the prior Active remains superseded and intact.
-- Real Web/API parity path: the served client's `renderSettings` request contract is parsed from
-  the served asset (Draft edits must use `data.draftVersion`, successor creation must pin the
-  exact Active identity, the returned Draft is reopened), and that exact request sequence is
-  replayed through the same WSGI API: read Active → successor create → reopen Draft → first Draft
-  edit → independent stale-writer edit → stale replay 409 with `draft_preserved` /
-  `sideEffects: none` / `retrySafe` / refresh next action → refresh-and-retry recovery with the
-  stale writer's independent edit preserved. Prior Active, its values and the revision set remain
-  intact; the journey creates exactly one settings Draft and starts no media work.
-- Updated the existing Draft-continuation test to consume `draftVersion` (the reviewed 409
-  reproduction) and pinned the corrected Web request contract in the asset test.
+- Added a versioned, deterministic package contract for configuration and
+  result exchange (`mediaflow.configuration.v1` / `mediaflow.results.v1`,
+  schema/package version, producer, generated timestamp, source revision or
+  result scope, digest/currentness evidence, bounded warnings and redaction
+  evidence).
+- Configuration export supports the Active revision and explicit
+  Draft/Validated/Superseded revisions through the managed configuration
+  authority. Exports preserve deployment-owned `*Env` references while
+  redacting literal secret fields/text, and carry bounded redaction/ownership
+  evidence plus current Active identity.
+- Result export reads durable Task/Result repository state only, uses an
+  explicit Task scope with deterministic ordering and limits, reports
+  truncation, and applies the existing persistent-result redaction boundary.
+- Configuration import validates package kind/schema/version, document and
+  package digests, secret-bearing content and package currentness. It then
+  creates a new Draft/recovery candidate through the existing revision
+  authority, or updates the exact current Draft only with an explicit
+  `replaceDraft` recovery identity. Stale packages, existing-Draft conflicts,
+  unsupported versions, invalid shapes, digest mismatches and secret payloads
+  fail closed with bounded recovery details and no Active/Draft/Work changes.
+- Added the shared WSGI API surface (`/api/v1/configuration/packages`,
+  `/export/configuration`, `/export/results`, and package import) with RBAC,
+  bounded request bodies and audit records.
+- Added Advanced/support Web controls in the Configuration view for package
+  status/currentness, Active/explicit-revision export, import, result export
+  and recovery-state display. Web and API use the same endpoints and shared
+  application behavior.
+- Added focused package exchange tests covering Active/Draft/Validated/
+  Superseded export, result bounds/truncation, redaction, supported import,
+  recovery-identity update, stale/conflict/invalid/secret failures, RBAC,
+  audit, no-workflow side effects and Web/API parity.
 
 ### Tests and Results
 
+- `python3 -m unittest tests.test_configuration_package_exchange` — PASS
+  (12 tests) using the system `python3`.
+- Required focused/related modules
+  (`tests.test_configuration_package_exchange`,
+  `tests.test_configuration_snapshot`, `tests.test_configuration_management`,
+  `tests.test_configuration_objects`, `tests.test_system_settings_management`,
+  `tests.test_api_credentials`, `tests.test_operator_ui`,
+  `tests.test_final_integration`,
+  `tests.test_processing_recovery_admission`,
+  `tests.test_recovery_continuation`) — 248 tests under `.venv/bin/python`;
+  245 passed, 3 failed as `PRE-EXISTING / UNRELATED` because this repository
+  working directory contains an existing `.mediaflow/mediaflow.sqlite3` Active
+  store that makes raw-JSON credential/CLI tests resolve managed state instead
+  of their temporary documents. The same three tests pass in a clean HEAD
+  worktree without that local state.
+- `python3 -m unittest discover -s tests` (with system `python3`) — the
+  environment lacks optional `httpx`; the full supported offline regression
+  was therefore run with `.venv/bin/python` so optional dependencies were
+  available.
+- `.venv/bin/python -m unittest discover -s tests` — 1329 tests: 7 failures
+  and 7 skips. All 7 failures are pre-existing/unrelated: two credential CLI
+  and four CLI/runtime tests are affected by the local `.mediaflow` store; one
+  Storage-browser Web asset assertion also fails on the unmodified Task Base.
+  No failure touches package exchange or is introduced by this checkpoint.
 - `python3 scripts/check_governance.py` — PASS.
-- `python3 -m unittest tests.test_system_settings_management` — PASS, 22 tests (17 prior + 5 new).
-- Required focused/related modules (the 9 modules listed above) — 148 tests: 147 passed, 1 error
-  (`test_openlist_storage_uses_environment_owned_token`, blocked by the absent optional `httpx`
-  dependency; UNAVAILABLE, pre-existing).
-- `python3 -m unittest discover -s tests` — 1317 tests: 7 failures, 1 error, 7 skips. The 7
-  failures are the same pre-existing baseline failures (2 credential, 2 runtime/CLI, 2 storage,
-  1 UI/browser) that depend on this machine's local state; the 1 error is the OpenList `httpx`
-  absence. None touch the System Settings, configuration or settings-UI modules and no new failure
-  was introduced by this correction.
-- `python3 -m compileall -q mediaflow tests scripts` — PASS.
-- `git diff --check` — PASS.
-- `ruff format --check .` / `ruff check .` — UNAVAILABLE; `ruff` is not installed in this
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/ruff check` on all changed files — PASS.
+- `.venv/bin/ruff format --check` on all changed files — PASS.
+- `.venv/bin/ruff check .` — FAIL (pre-existing on Task Base):
+  `tests/test_system_settings_management.py:347` was already unformatted/
+  unlinted at `4db4be7`; not touched by this Task.
+- `.venv/bin/ruff format --check .` — FAIL (pre-existing on Task Base): the
+  same `tests/test_system_settings_management.py` file is already flagged at
+  HEAD; not touched by this Task.
+- `.venv/bin/python -m pip check` — PASS. System `python3` has no `pip`
+  module, so `pip check` was run from the available project virtual
   environment.
-- `python3 -m pip check` — UNAVAILABLE; this Python installation has no `pip` module.
+- `git diff --check` — PASS after this report is committed.
 
 ### Decisions
 
-- `revisionVersion` stays the immutable revision-sequence identity evidence everywhere; the new
-  `draftVersion` is the only token Draft edits send as `expectedVersion`, matching `edit_draft`'s
-  comparison against the mutable `version`. No route, repository or authority change was needed:
-  the API contract was already correct; only the settings projection and the Web client were.
-- For the Web/API parity requirement, the served client's request contract is parsed from the
-  served asset and the exact request sequence is replayed against the shared WSGI API. There is
-  no JavaScript runtime in this environment, so parity is proven by driving the one shared
-  application behavior both surfaces use, not by executing browser JS.
-- Restart-required evidence is asserted against the consumption projection after real
-  validate/activate, proving no false Active-consumed readiness for values this runtime does not
-  hot-consume.
+- Package exchange is layered as a new Domain contract plus one shared
+  Application service used by both API and Web, keeping the existing managed
+  revision authority as the only Draft/Active mutation path.
+- Configuration export preserves deployment-owned environment references and
+  records them in redaction evidence; literal secret fields and secret-shaped
+  text are replaced and recorded instead of silently retained.
+- Import refuses a package whose `currentness` no longer matches the current
+  Active revision. An existing current Draft is preserved unless the caller
+  supplies the exact current Draft revision/version/digest with
+  `replaceDraft: true`.
+- Result export is scoped by Task ID with a deterministic ascending
+  `created_at,result_id` order, explicit limit and truncation evidence. It
+  reads only the durable Task/Result repository and never Storage/media.
+- Durable export/import audit uses the existing Security Audit record
+  boundary plus API request audit, avoiding a new package schema migration
+  while preserving actor/action/outcome/time evidence.
+- Web/API parity is tested by replaying the served client's exact package
+  endpoint/request contract through the shared WSGI API, matching the
+  established no-JavaScript-runtime parity approach in this repository.
 
 ### Remaining In-Slice Work
 
-- Versioned, secret-free configuration/result package exchange.
-- Managed Webhook definition management, explicit tests and delivery recovery.
+- Managed Webhook definition management/explicit test (RO-5) and independent
+  delivery operations/recovery (RO-6) remain Slice 28 work outside this Task.
 
 ### Risks / Deviations
 
-- Full quality gates cannot be completed because `ruff` and `pip` are unavailable in the
-  environment.
-- Full regression is not clean: the optional OpenList integration requires `httpx` (1 error) and
-  the same seven pre-existing baseline failures (credential/runtime/storage/UI, dependent on this
-  machine's local state) fail. They were not hidden, skipped or reclassified, and this correction
-  does not touch them.
-- Environment deviation: the repository filesystem was mounted read-only at session start and was
-  remounted read-write (`mount -o remount,rw /root`) to perform this Task. No repository content
-  was discarded or overwritten by the remount.
-- Test execution emits existing SQLite `ResourceWarning` messages; no production data or
-  credentials were used.
+- The full quality gates and regression are not clean in this working
+  directory for pre-existing local-state and baseline reasons listed above.
+  They were not hidden, skipped, reclassified or fixed out of scope; evidence
+  from a clean HEAD worktree confirms they exist independently of this Task.
+- The repository contains existing ignored local `.mediaflow` state and emits
+  existing SQLite `ResourceWarning` messages during tests. No production data
+  or credentials were used.
+- `ruff`/`pip` are unavailable to the bare system `python3`; the available
+  `.venv` binaries were used and reported truthfully.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: ab8a90e98c4518716ad153044b6785a669071f57
+Head SHA: [pending commit]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: fe8b97ac52824a9ffdf7eeb85ba0143a57b25aa2..c760c26ff9adc004ffed3e448339cc88025eb521
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: PENDING
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
-
-Blockers:
-
-- The Web/Draft optimistic version is still incorrect after the first edit. `SystemSettings`
-  exposes only `revisionVersion`, which is populated from immutable `revision_sequence` rather than
-  the mutable Draft `version` (`mediaflow/domain/system_settings.py:390-397`,
-  `mediaflow/application/system_settings.py:265-273`). The Web then sends that value as
-  `expectedVersion` (`mediaflow/interfaces/operator_ui.py:297-304`). Reproduction against the
-  reviewed checkpoint: successor creation returned `revisionVersion=2` with Draft `version=2`;
-  editing to 80 returned HTTP 200 and advanced Draft `version=3` while still returning
-  `revisionVersion=2`; the next edit to 85 with `expectedVersion=2` returned HTTP 409
-  `configuration_version_conflict`. Expose the mutable Draft version separately and use it for
-  Draft edits, while retaining revision sequence as separate identity evidence.
-- The required settings recovery/parity tests are still incomplete. The focused suite passes
-  17 tests, but it does not exercise System Settings behavior for missing Active, corrupt Active,
-  runtime-invalid Active, restart-required recovery, or a real Web/API parity path; the Web checks
-  remain static asset string assertions (`tests/test_system_settings_management.py:401-418`).
-  Add focused tests that drive both surfaces through the same success, failure and recovery
-  semantics and verify bounded durable recovery evidence without side effects.
-
-If `FIX REQUIRED`, fixes remain in this Task. This result does not close the Slice or update
-Roadmap.

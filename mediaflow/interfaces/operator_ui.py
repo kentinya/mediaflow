@@ -106,6 +106,16 @@ APP_JS = b"""(() => {
       fragments.push(`Continuation: ${details.continuationId} ` +
         `(Job ${details.jobId || '-'}; status ${details.status || '-'})`);
     }
+    if (details && details.currentDraft) {
+      fragments.push(`Current Draft: ${details.currentDraft.revisionId || '-'} ` +
+        `(version ${details.currentDraft.version || '-'}; digest ` +
+        `${details.currentDraft.digest || '-'})`);
+    }
+    if (details && details.currentActive) {
+      fragments.push(`Current Active: ${details.currentActive.revisionId || '-'} ` +
+        `(version ${details.currentActive.revisionSequence || details.currentActive.version || '-'}; ` +
+        `digest ${details.currentActive.digest || '-'})`);
+    }
     if (details && details.durableState) fragments.push(`State: ${details.durableState}`);
     if (details && details.sideEffects) fragments.push(`Side effects: ${details.sideEffects}`);
     if (details && details.stage) fragments.push(`Stage: ${details.stage}`);
@@ -430,6 +440,92 @@ APP_JS = b"""(() => {
         try { await api('/api/v1/configuration/drafts',
           {method: 'POST', body: JSON.stringify({source: 'active'})});
           message('Draft imported from Active. Validate it before activation.'); await renderConfiguration();
+        } catch (error) { message(errorText(error), true); }
+      }));
+    }
+    content.append(text('h3', 'Package exchange (Advanced/support)'));
+    let packageStatus = null;
+    try {
+      packageStatus = await api('/api/v1/configuration/packages');
+    } catch (error) {
+      message(`Package status unavailable: ${errorText(error)}`, true);
+    }
+    if (packageStatus) {
+      const packageState = document.createElement('dl');
+      field(packageState, 'Configuration schema version',
+        packageStatus.configurationPackageSchemaVersion || '-');
+      field(packageState, 'Result schema version',
+        packageStatus.resultPackageSchemaVersion || '-');
+      field(packageState, 'Supported statuses',
+        (packageStatus.supportedRevisionStatuses || []).join(', ') || '-');
+      const activeSummary = packageStatus.currentActive || {};
+      const draftSummary = packageStatus.currentDraft || {};
+      field(packageState, 'Current Active',
+        `${activeSummary.revisionId || '-'} / v${activeSummary.version || '-'} / ` +
+        `${activeSummary.digest || '-'}`);
+      field(packageState, 'Current Draft',
+        draftSummary.revisionId ?
+          `${draftSummary.revisionId} / v${draftSummary.version} / ${draftSummary.digest}` :
+          'none');
+      field(packageState, 'Import behavior',
+        'Creates a Draft; never activates; never overwrites the current Draft without exact identity.');
+      content.append(packageState);
+      const revisionPicker = document.createElement('select');
+      revisionPicker.setAttribute('aria-label', 'Configuration package revision');
+      const activeOption = document.createElement('option');
+      activeOption.value = '';
+      activeOption.textContent = 'Active revision';
+      revisionPicker.append(activeOption);
+      (data.revisions || []).forEach(revision => {
+        const option = document.createElement('option');
+        option.value = revision.revisionId;
+        option.textContent = `${revision.revisionId} (${revision.status} v${revision.version})`;
+        revisionPicker.append(option);
+      });
+      const packageOutput = document.createElement('textarea');
+      packageOutput.setAttribute('aria-label', 'Configuration package JSON');
+      packageOutput.placeholder =
+        'Exported package appears here, or paste a supported configuration package to import.';
+      content.append(revisionPicker, packageOutput);
+      content.append(actionButton('Export selected configuration package', async () => {
+        try {
+          const query = revisionPicker.value ?
+            `?revisionId=${encodeURIComponent(revisionPicker.value)}` : '';
+          const exported = await api('/api/v1/configuration/packages/export/configuration' + query);
+          packageOutput.value = JSON.stringify(exported, null, 2);
+          message('Configuration package exported. It is secret-free and remains inactive until import/validate/activate.');
+        } catch (error) { message(errorText(error), true); }
+      }));
+      if (canManageConfiguration) {
+        content.append(actionButton('Import package as Draft/recovery candidate', async () => {
+          try {
+            const parsed = JSON.parse(packageOutput.value);
+            const result = await api('/api/v1/configuration/packages',
+              {method: 'POST', body: JSON.stringify({package: parsed})});
+            message(`${result.action === 'updated' ? 'Draft updated' : 'Draft imported'}. ` +
+              `${result.nextAction || 'Open the Draft, validate, then activate.'}`);
+            await renderConfiguration();
+          } catch (error) { message(errorText(error), true); }
+        }));
+      }
+      const resultTaskId = document.createElement('input');
+      resultTaskId.setAttribute('aria-label', 'Task ID for result package export');
+      resultTaskId.placeholder = 'Task ID';
+      content.append(text('p', 'Result package export reads durable Task/Result state only ' +
+        'and never media, Storage, Provider or Webhook state.', 'warning'));
+      content.append(resultTaskId);
+      content.append(actionButton('Export result package', async () => {
+        try {
+          if (!resultTaskId.value.trim()) {
+            message('Enter a Task ID for result package export.', true);
+            return;
+          }
+          const exported = await api('/api/v1/configuration/packages/export/results?limit=100' +
+            `&taskId=${encodeURIComponent(resultTaskId.value.trim())}`);
+          packageOutput.value = JSON.stringify(exported, null, 2);
+          message(exported.truncated ?
+            'Result package exported; the result scope was truncated.' :
+            'Result package exported.');
         } catch (error) { message(errorText(error), true); }
       }));
     }
