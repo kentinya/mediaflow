@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import copy
-import io
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,9 +7,6 @@ from pathlib import Path
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.configuration_management import (
-    ConfigurationActivationConflict,
-    ConfigurationObjectKind,
-    ConfigurationObjectReferenced,
     ConfigurationVersionConflict,
     ManagedConfigurationStatus,
     RuntimeSnapshotUnavailable,
@@ -250,7 +244,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         self.assertEqual(status, 403)
 
     def test_api_successor_draft_rejects_stale_active_identity(self) -> None:
-        active = self._activate_initial()
+        self._activate_initial()
         status, response = request(
             self.api,
             "/api/v1/configuration/drafts/successor",
@@ -397,15 +391,24 @@ class SuccessorDraftWebUITests(unittest.TestCase):
             script = f.read()
         # guidedObjectFields must be referenced for every kind
         for kind in (
-            "storages", "resourceLibraries", "mediaLibraries",
-            "recognitionTypes", "recognitionRules", "recognitionTypePolicies",
-            "metadataPolicies", "namingPolicies", "classificationPolicies",
-            "organizePolicies", "automationTaskDefinitions",
+            "storages",
+            "resourceLibraries",
+            "mediaLibraries",
+            "recognitionTypes",
+            "recognitionRules",
+            "recognitionTypePolicies",
+            "metadataPolicies",
+            "namingPolicies",
+            "classificationPolicies",
+            "organizePolicies",
+            "automationTaskDefinitions",
         ):
             with self.subTest(kind=kind):
-                self.assertIn(f"guidedObjectFields(kind, item", script)
+                self.assertIn("guidedObjectFields(kind, item", script)
 
-    def test_render_guided_object_list_has_copy_enable_disable_for_all_applicable_kinds(self) -> None:
+    def test_render_guided_object_list_has_copy_enable_disable_for_all_applicable_kinds(
+        self,
+    ) -> None:
         with open("mediaflow/interfaces/operator_ui.py", encoding="utf-8") as f:
             script = f.read()
         # Copy endpoint must be reachable for every kind (organizePolicies has copy too)
