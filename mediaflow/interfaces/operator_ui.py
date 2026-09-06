@@ -31,6 +31,7 @@ INDEX_HTML = b"""<!doctype html>
     <button data-view="metadata-corrections">Metadata correction</button>
     <button data-view="classification-reviews">Classification</button>
     <button data-view="configuration">Configuration</button>
+    <button data-view="settings">Settings</button>
     <button data-view="system">System</button>
     <button data-view="workers">Workers</button>
   </nav>
@@ -201,6 +202,96 @@ APP_JS = b"""(() => {
       const items = section.items || [];
       content.append(table(fields, items.map(item => fields.map(fieldName => item[fieldName]))));
     });
+  }
+  async function renderSettings() {
+    const data = await api('/api/v1/system/settings');
+    clear(content);
+    content.append(text('h2', 'System Settings'));
+    content.append(text('p',
+      'Settings are read from the Active configuration. Edit creates a successor Draft; validate and activate to apply. Bootstrap-owned fields cannot be changed.',
+      'hint'));
+    // Revision identity cards
+    const consumption = data.consumption || {};
+    content.append(text('h3', 'Configuration snapshot'));
+    content.append(cards([
+      ['Revision', data.revisionId || '-'],
+      ['Version', data.revisionVersion || '-'],
+      ['Digest', data.revisionDigest || '-'],
+      ['Status', data.isActive ? 'Active' : 'Draft'],
+      ['Authority', data.authority || '-'],
+      ['Consumed', consumption.consumed !== false ? 'Yes' : 'No'],
+      ['Bootstrap DB', data.bootstrapDatabasePath || '-'],
+    ]));
+    const pendingEdits = [];
+    const pendingByPath = new Map();
+    function queueSettingEdit(fieldPath, value) {
+      pendingByPath.set(fieldPath, value);
+      const existing = pendingEdits.find(item => item.fieldPath === fieldPath);
+      if (existing) existing.value = value;
+      else pendingEdits.push({fieldPath, value});
+    }
+    function typedSettingControl(fieldPath, meta) {
+      const input = document.createElement(meta.valueType === 'enum' ? 'select' : 'input');
+      input.dataset.settingsPath = fieldPath;
+      input.className = 'setting-input';
+      if (meta.valueType === 'boolean') input.type = 'checkbox';
+      else if (meta.valueType === 'integer' || meta.valueType === 'number') input.type = 'number';
+      else input.type = 'text';
+      if (meta.valueType === 'enum' && fieldPath === 'operationalLogging.minimumLevel') {
+        ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR'].forEach(level => {
+          const option = document.createElement('option');
+          option.value = level; option.textContent = level; input.append(option);
+        });
+      }
+      if (meta.valueType === 'boolean') input.checked = meta.value === true;
+      else if (meta.value !== null && meta.value !== undefined) input.value = meta.value;
+      input.disabled = meta.boundary === 'bootstrap_immutable';
+      input.addEventListener('change', () => {
+        let value;
+        if (meta.valueType === 'boolean') value = input.checked;
+        else if (meta.valueType === 'integer') value = Number.parseInt(input.value, 10);
+        else if (meta.valueType === 'number') value = Number(input.value);
+        else value = input.value;
+        queueSettingEdit(fieldPath, value);
+      });
+      return input;
+    }
+    // Section per setting group
+    const sections = data.sections || {};
+    for (const [sectionName, fields] of Object.entries(sections)) {
+      content.append(text('h3', sectionName));
+      const sectionDiv = text('div', '', 'setting-section');
+      for (const [fieldPath, meta] of Object.entries(fields)) {
+        const row = text('div', '', 'setting-row');
+        row.append(text('span', meta.label || fieldPath));
+        row.append(typedSettingControl(fieldPath, meta));
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        const boundary = meta.boundary || 'hot_consumed';
+        badge.textContent = boundary.replace(/_/g, ' ');
+        badge.style.cssText = 'margin-left:auto;font-size:0.75em;padding:1px 6px;border-radius:3px;background:' +
+          (boundary === 'bootstrap_immutable' ? '#ff7b72' :
+           boundary === 'restart_required' ? '#ffd166' : '#b7f26c') +
+          ';color:#101512';
+        row.append(badge);
+        sectionDiv.append(row);
+      }
+      content.append(sectionDiv);
+    }
+    content.append(actionButton('Save settings', async () => {
+      message('Creating successor Draft and applying edits...');
+      try {
+        const body = {edits: Array.from(pendingByPath, ([fieldPath, value]) => ({fieldPath, value}))};
+        if (!body.edits.length) {
+          message('Add at least one setting edit before saving.', true);
+          return;
+        }
+        await api('/api/v1/system/settings', {method: 'PUT', body: JSON.stringify(body)});
+        message('Settings Draft created. Open the successor Draft, validate, and activate.');
+        await renderSettings();
+      } catch (error) { message(errorText(error), true); }
+    }));
+    content.append(actionButton('Refresh settings', renderSettings));
   }
   async function renderWorkers() {
     const [readiness, list] = await Promise.all([
@@ -4156,6 +4247,7 @@ APP_JS = b"""(() => {
       else if (view === 'automation') await renderAutomation();
       else if (view === 'notifications') await renderNotifications();
       else if (view === 'logs') await renderLogs();
+      else if (view === 'settings') await renderSettings();
       else if (view === 'system') await renderSystem();
       else if (view === 'workers') await renderWorkers();
       else if (view === 'configuration') await renderConfiguration();
