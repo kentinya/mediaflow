@@ -2568,8 +2568,10 @@ class MediaFlowApi:
             items = revision.document.get(section) if section in revision.document else None
             updated = None
             if items:
-                updated = items[-1] if action == "copy" else next(
-                    (item for item in items if item.get("id") == parts[7]), None
+                updated = (
+                    items[-1]
+                    if action == "copy"
+                    else next((item for item in items if item.get("id") == parts[7]), None)
                 )
             if kind is ConfigurationObjectKind.STORAGE:
                 response["storage"] = updated
@@ -2796,10 +2798,11 @@ class MediaFlowApi:
                     "managed configuration service is unavailable",
                 )
             document = self._document(environ)
-            if (
-                set(document) == {"source"}
-                and document.get("source") in {"current", "active", "successor"}
-            ):
+            if set(document) == {"source"} and document.get("source") in {
+                "current",
+                "active",
+                "successor",
+            }:
                 draft_document = self._configuration_service.current_document(
                     self._bootstrap_document
                 )

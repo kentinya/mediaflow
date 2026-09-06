@@ -455,7 +455,8 @@ class ManagedConfigurationService:
         current_digest = active.digest
         if expected_active_revision_id and expected_active_revision_id != current_revision_id:
             raise ConfigurationVersionConflict(
-                "Active revision does not match expectedActiveRevisionId; reload before creating successor Draft",
+                "Active revision does not match expectedActiveRevisionId; "
+                "reload before creating successor Draft",
                 revision_id=current_revision_id,
                 current_version=current_version,
                 current_digest=current_digest,
@@ -464,7 +465,8 @@ class ManagedConfigurationService:
             )
         if expected_active_version is not None and expected_active_version != current_version:
             raise ConfigurationVersionConflict(
-                "Active version does not match expectedActiveVersion; reload before creating successor Draft",
+                "Active version does not match expectedActiveVersion; "
+                "reload before creating successor Draft",
                 revision_id=current_revision_id,
                 current_version=current_version,
                 current_digest=current_digest,
@@ -473,7 +475,8 @@ class ManagedConfigurationService:
             )
         if expected_active_digest and expected_active_digest != current_digest:
             raise ConfigurationVersionConflict(
-                "Active digest does not match expectedActiveDigest; reload before creating successor Draft",
+                "Active digest does not match expectedActiveDigest; "
+                "reload before creating successor Draft",
                 revision_id=current_revision_id,
                 current_version=current_version,
                 current_digest=current_digest,
