@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 28.1
 Parent Slice: 28
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: 380362e2bd54c4bc3b051c0081bc001c7f39ad50
 Difficulty: High
 Test Level: T4
@@ -156,11 +156,11 @@ reported with its reason.
 
 ### Changed Files
 
-- `mediaflow/application/configuration_snapshot.py` — Added `create_successor_draft()` to `ManagedConfigurationService`.
+- `mediaflow/application/configuration_snapshot.py` — Added `create_successor_draft()` to `ManagedConfigurationService`. Fix round 2: wrapped the three successor-Draft `ConfigurationVersionConflict` messages with implicit string concatenation to satisfy E501; runtime message values are unchanged.
 - `mediaflow/application/configuration_objects.py` — Added generic `copy_object()` / `set_object_enabled()` / `mutate_object()`. Removed `ConfigurationObjectKind.SCHEDULE` block in `mutate()` so unreferenced `AutomationTaskDefinition` deletion is now possible via service; Web UI still does not expose delete for automationTaskDefinitions.
-- `mediaflow/interfaces/service_api.py` — Added `POST /api/v1/configuration/drafts/successor` and `POST /api/v1/configuration/revisions/{revision_id}/successor`. Extended `POST /api/v1/configuration/revisions/{revision_id}/objects/{kind}/{object_id}/{action}` (copy/enable/disable) for all 11 object kinds. Restored correct response key (`storage`/`automationTaskDefinition`) for backward parity. Fixed `POST /api/v1/configuration/revisions/{revision_id}/successor` to require that `{revision_id}` matches the current Active revision ID, rejecting mismatches with HTTP 409 `configuration_version_conflict` and structured recovery evidence.
+- `mediaflow/interfaces/service_api.py` — Added `POST /api/v1/configuration/drafts/successor` and `POST /api/v1/configuration/revisions/{revision_id}/successor`. Extended `POST /api/v1/configuration/revisions/{revision_id}/objects/{kind}/{object_id}/{action}` (copy/enable/disable) for all 11 object kinds. Restored correct response key (`storage`/`automationTaskDefinition`) for backward parity. Fixed `POST /api/v1/configuration/revisions/{revision_id}/successor` to require that `{revision_id}` matches the current Active revision ID, rejecting mismatches with HTTP 409 `configuration_version_conflict` and structured recovery evidence. Fix round 2: `ruff format` reflow of two expressions only (one conditional expression parenthesized, one set-literal membership test rewrapped); no behavioral change.
 - `mediaflow/interfaces/operator_ui.py` — Updated `renderConfiguration()` to show "Create successor Draft from Active" primary action and "Advanced JSON (import/export)" secondary section when Active exists. Relabelled revision-detail JSON editor as "Advanced: Edit Draft JSON". Extended `guidedObjectFields()` / `guidedObjectPayload()` / `renderGuidedObjectForm()` to support typed forms for all 11 object families. Restored `automationTaskDefinition`-specific UI branch to satisfy Slice 27 contract.
-- `tests/test_configuration_successor_draft.py` — Added 18 tests covering successor-Draft creation (service + API), optimistic conflict checks, Active immutability, object copy/enable/disable lifecycle for all kinds, reference-blocked deletion, UI presence checks, and regression tests verifying that `POST /api/v1/configuration/revisions/{revision_id}/successor` rejects unknown, non-active draft, and superseded revision IDs with 409 and creates no Draft.
+- `tests/test_configuration_successor_draft.py` — Added 18 tests covering successor-Draft creation (service + API), optimistic conflict checks, Active immutability, object copy/enable/disable lifecycle for all kinds, reference-blocked deletion, UI presence checks, and regression tests verifying that `POST /api/v1/configuration/revisions/{revision_id}/successor` rejects unknown, non-active draft, and superseded revision IDs with 409 and creates no Draft. Fix round 2: removed six unused imports (`copy`, `io`, `json`, `ConfigurationActivationConflict`, `ConfigurationObjectKind`, `ConfigurationObjectReferenced`), the unused local `active` (F841), and one placeholder-less `f` prefix (F541); applied `ruff format` (kind tuple reflow, long def signature wrap). No assertion value changed.
 
 ### Implemented
 
@@ -175,11 +175,14 @@ reported with its reason.
 
 4. **Web UI** (`operator_ui.py`): Primary action "Create successor Draft from Active" when Active is present. Secondary "Advanced JSON (import/export)" section with warning. "Advanced: Edit Draft JSON" label in revision detail. Typed forms for all 11 object families via `guidedObjectFields()` / `guidedObjectPayload()` / `renderGuidedObjectForm()`. Copy/Enable/Disable/Delete buttons consistent across all applicable kinds.
 
+5. **Fix round 2 (this checkpoint)**: Reproduced B's single blocker (Ruff quality gate) exactly, then fixed all of it behavior-preserving. `ruff format --check .` had reported 2 unformatted files and `ruff check .` had reported 12 errors: 3 E501 long conflict-message lines in `configuration_snapshot.py`, and 9 in the successor test module (6 F401 unused imports, 1 F841 unused local, 1 F541 f-string without placeholders, 1 E501 long def line). All 12 were fixed and both flagged files were formatted; both Ruff gates now pass repo-wide. No route, validation, redaction, concurrency, audit or safety behavior changed; conflict messages, request URLs and test assertion values remain byte-identical.
+
 ### Tests and Results
 
-Focused test suite (164 tests):
+Focused test suite (Task Required Tests plus this Task's modules):
+
 ```
-python3 -m unittest \
+python -m unittest \
   tests.test_configuration_management \
   tests.test_configuration_objects \
   tests.test_configuration_status \
@@ -187,26 +190,43 @@ python3 -m unittest \
   tests.test_operator_ui \
   tests.test_automation_task_definition \
   tests.test_configuration_successor_draft
-→ 164 tests, OK
+→ Ran 164 tests — OK (PASS)
 ```
 
-T4 gates:
+T4 quality and regression gates (rerun after the fix, in Task-required order):
+
 ```
-python3 scripts/check_governance.py          → PASS
-python3 -m compileall -q mediaflow tests scripts → OK
-git diff --check                            → OK
-/root/mediaflow/.venv/bin/ruff check mediaflow/interfaces/service_api.py → All checks passed!
+python scripts/check_governance.py              → governance check: PASS
+python -m unittest discover -s tests            → Ran 1295 tests: FAILED (failures=7, skipped=7)
+ruff format --check .                           → 377 files already formatted (PASS)
+ruff check .                                    → All checks passed! (PASS)
+python -m compileall -q mediaflow tests scripts → OK (PASS)
+python -m pip check                             → No broken requirements found. (PASS)
+git diff --check                                → clean (PASS)
 ```
 
-Pre-existing environment failures (unrelated to this Task; reproduced at Task Base SHA `380362e`):
-- `test_credential_check_is_redacted_config_only_and_reports_missing` — fails because `.mediaflow/mediaflow.sqlite3` exists in the working directory from prior test runs; the test should use a temporary path.
-- `test_legacy_credential_status_is_supported_without_secret_output` — same root cause.
-- `test_openlist_storage_uses_environment_owned_token` — requires `httpx` (OpenList extra) not installed in environment.
-- `test_runtime_configuration_and_final_analyze_cli` — exit code 2, likely due to local `.mediaflow/` state.
-- `test_scan_cli_needs_no_path_or_metadata_token` — same local state dependency.
-- `test_storage_check_is_read_only_and_isolates_failures` — pre-existing at Base SHA.
-- `test_storage_list_does_not_construct_or_connect` — pre-existing at Base SHA.
-- `test_setup_picker_and_execution_environment_guidance_are_present` — pre-existing at Base SHA.
+Full-regression skips (7, all explicit UNAVAILABLE external gates, none added or hidden by this
+round): `test_real_adapter_and_transfer_matrix` (real OpenList acceptance), `test_real_s3_matrix` /
+`test_real_smb_matrix` (real S3/SMB acceptance), and the Local/OpenList/S3/SMB endurance profiles —
+each self-reports `BLOCKED: dedicated real ... environment is absent`.
+
+Full-regression failures (7, all `FAIL / PRE-EXISTING / UNRELATED`, none introduced by this round;
+fresh reproducible evidence gathered at the reviewed checkpoint `7d883f8` in a clean temporary
+worktree plus the previous round's Task Base `380362e` reproduction):
+
+- `test_setup_picker_and_execution_environment_guidance_are_present` — reproduced identically in the
+  clean `7d883f8` worktree (`AssertionError: 'Storage-relative breadcrumb' not found`); this round
+  does not touch `operator_ui.py` or that test.
+- `test_credential_check_is_redacted_config_only_and_reports_missing`,
+  `test_legacy_credential_status_is_supported_without_secret_output`,
+  `test_runtime_configuration_and_final_analyze_cli`,
+  `test_scan_cli_needs_no_path_or_metadata_token`,
+  `test_storage_check_is_read_only_and_isolates_failures`,
+  `test_storage_list_does_not_construct_or_connect` — caused by pre-existing local `.mediaflow/`
+  state (`mediaflow.sqlite3`, `history.jsonl`) in the repository working directory; all six pass in
+  the clean `7d883f8` worktree and are a subset of the previous round's documented pre-existing
+  list at Task Base `380362e` (`test_openlist_storage_uses_environment_owned_token` passes in this
+  environment now). Today's failure set adds no new failure.
 
 ### Decisions
 
@@ -216,6 +236,13 @@ Pre-existing environment failures (unrelated to this Task; reproduced at Task Ba
 - Typed form field support added to `guidedInput()`, `guidedObjectFields()`, and `guidedObjectPayload()` for all 11 kinds, including `type === 'textarea'` for multi-line fields and `type === 'number'` for numeric fields, without removing the JSON fallback path.
 - In `POST /api/v1/configuration/revisions/{revision_id}/successor`, pass `expected_active_revision_id=parts[4]` to `create_successor_draft()` and enforce query-string emptiness via `_require_empty_query`. Mismatches raise `ConfigurationVersionConflict`, which the API maps to HTTP 409 with structured recovery details (`revisionId`, `currentVersion`, `currentDigest`, `durableState: active_preserved`, `sideEffects: none`, `retrySafe: true`, `nextAction`).
 
+Fix round 2 decisions:
+
+- Fixed E501 via implicit string concatenation instead of shortening messages, so the runtime conflict messages (including the API error text asserted by tests, e.g. "Active revision does not match") stay byte-identical.
+- Let `ruff format` handle the long def signature and tuple reflow instead of renaming tests or restructuring code, keeping test identity and semantics unchanged.
+- Removed the F841 dead binding (`active = self._activate_initial()` → `self._activate_initial()`) rather than adding an assertion, staying inside B's blocker scope.
+- Recorded the pre-existing failures with fresh reproducible evidence (clean-worktree reproduction at the reviewed checkpoint `7d883f8`, plus the previous round's Task Base reproduction) instead of relying only on the earlier Base-SHA notes; the classification itself is left for B to confirm.
+
 ### Remaining In-Slice Work
 
 - System Settings consumption and editing (Task 28.x — separate).
@@ -224,19 +251,22 @@ Pre-existing environment failures (unrelated to this Task; reproduced at Task Ba
 
 ### Risks / Deviations
 
-- None. B blocker resolved. Governance check passes. All 164 focused tests pass. Pre-existing environment failures are not introduced by this Task.
+- The 7 full-regression failures above are reported as `FAIL / PRE-EXISTING / UNRELATED` with reproducible evidence; B decides whether that classification holds.
+- The 7 full-regression skips are external-service acceptance gates reported as UNAVAILABLE with their self-reported reasons; no skip was added, hidden or reclassified by this round.
+- Local `.mediaflow/` state in the repository working directory remains the trigger for six of the pre-existing failures; it is untracked local state and was not modified, committed or deleted.
+- The code correction commit is followed by one `docs(task)` commit that carries this report and the checkpoint SHA (same pattern as the previous fix round).
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: b1a57ca3dfcfaea34963b136dd405e45f8e1ee6a
+Head SHA: fa02ae6fd6d82cf98d6804536b7baa2b3591a0fb
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 380362e2bd54c4bc3b051c0081bc001c7f39ad50..1f29f739bf21d0f742b2717bc5aecea98498c7b6
+Reviewed: 380362e2bd54c4bc3b051c0081bc001c7f39ad50..7d883f8f72be590dbab4ff0f4749be014e1ee8d6
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
@@ -244,13 +274,16 @@ Next: SAME TASK FIX LOOP
 
 Blockers:
 
-- The API route `POST /api/v1/configuration/revisions/{revision_id}/successor` ignores the
-  `{revision_id}` path value and always calls `create_successor_draft()` against the current Active
-  revision. Evidence: a direct API probe against Head `1f29f739bf21d0f742b2717bc5aecea98498c7b6`
-  posted to `/api/v1/configuration/revisions/not-the-active-revision/successor` and received `201`
-  with a new Draft instead of a bounded stale/not-found conflict. Fix the route to require that the
-  requested revision is the exact current Active revision, or remove the route and its advertised
-  contract; mismatches must fail closed with structured recovery evidence. Add a regression test for
-  a non-Active revision ID and verify that no Draft is created.
+- The Task checkpoint does not pass the required Ruff quality gate. Evidence: `ruff format --check
+  .` reports two unformatted files (`mediaflow/interfaces/service_api.py` and
+  `tests/test_configuration_successor_draft.py`), and `ruff check .` reports 12 errors in
+  `mediaflow/application/configuration_snapshot.py` and
+  `tests/test_configuration_successor_draft.py` (including E501, unused imports/variable and an
+  f-string without placeholders). Format and lint the Task-owned changes, then rerun the required
+  focused suite and T4 quality gates.
+
+The previous successor-revision blocker is resolved: `POST
+/api/v1/configuration/revisions/{revision_id}/successor` now rejects unknown, non-Active Draft and
+Superseded revision IDs with 409 and no new Draft, covered by focused regression tests.
 
 Fixes remain in Task 28.1. This result does not close the Slice or update Roadmap.
