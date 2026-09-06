@@ -1,13 +1,13 @@
-# Task 28.1 — Forms-first Successor Draft and Configuration Object Lifecycle
+# Task 28.2 — Consumed System Settings Lifecycle
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 28.1
+Task ID: 28.2
 Parent Slice: 28
-Status: READY FOR B REVIEW
-Task Base: 380362e2bd54c4bc3b051c0081bc001c7f39ad50
+Status: PLANNED
+Task Base: fe8b97ac52824a9ffdf7eeb85ba0143a57b25aa2
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,275 +15,246 @@ Planner / Reviewer: B
 
 ## Goal
 
-Complete the first vertical Slice 28 behavior: an authenticated operator can enter the Configuration
-journey from the exact Active revision, create an explicit successor Draft, and manage the existing
-canonical configuration object graph through consistent discoverable Web forms/cards and the same
-versioned API behavior. This advances RO-1 and the exact-authority portions of RO-2 without changing
-the Active snapshot or execution authority.
+Complete the consumed System Settings journey for Slice 28 RO-3: an authenticated operator can
+inspect and edit the supported system-level settings through typed Web/API surfaces, with exact
+Draft/Active/pinned identity, validation, audit, permission checks and explicit restart or
+bootstrap-owned boundaries. Every setting claimed as Active is the immutable snapshot actually
+consumed by the applicable runtime components; unavailable or not-yet-consumed settings fail closed
+and expose recovery state instead of reporting false readiness.
 
 ## Why This Task Exists
 
-The repository already provides managed revisions, object services, reference protection, optimistic
-versioning and many guided controls, but the required day-2 journey remains JSON-first and inconsistent:
-there is no natural `Edit Active by creating Draft` entry path, and the operator must discover object
-forms only after opening a revision. The first Task must establish the shared forms-first lifecycle and
-its API/Web parity before adding the separate System Settings, package exchange or Webhook journeys.
+Slice 28.1 completes the forms-first managed configuration object lifecycle, but the current System
+surface is status-only. System-level values are distributed across the existing configuration document
+and runtime binding (`persistence`, `historyPath`, operational logging, automation concurrency and
+workflow retry), with no dedicated typed Web/API editing journey, no complete consumption evidence,
+and no clear distinction between bootstrap-owned, hot-consumed and restart/deployment-bound values.
 
-This is the largest reasonable first unit because it crosses the existing configuration domain,
-persistence/audit behavior, Application services, versioned API and Operator Web while preserving one
-coherent user outcome. It is high risk because it touches Active configuration authority, optimistic
-concurrency, permissions, redaction and activation gating.
+This is the largest reasonable next unit because it crosses the existing managed revision authority,
+runtime normalization/binding, application validation and audit, versioned API, operator Web and
+regression tests as one coherent user outcome. It must reuse the existing revision, activation,
+runtime binding, RBAC and audit authorities rather than create a parallel settings store or runtime.
 
 ## Implementation Scope
 
 ```text
-Domain / configuration contracts
-→ managed Draft successor and object lifecycle behavior
-→ persistence of exact revision/version/digest, references and redacted audit
+Domain / canonical settings projection
+→ managed Draft validation, persistence and redacted audit
+→ exact Active/pinned runtime consumption and readiness evidence
 → Application service behavior and bounded failure/recovery projections
-→ versioned API routes and RBAC
-→ Operator Web Configuration entry, forms/cards and Advanced JSON boundary
+→ versioned API and RBAC
+→ Operator Web Settings view, typed forms and recovery state
 → focused, integration and full regression tests
 ```
 
 The Task may update only the implementation needed for the following behavior:
 
-- Add or complete an explicit Active-to-successor-Draft action using the immutable Active document as
-  the only source after managed activation. Missing, corrupt or unavailable Active state fails closed
-  with an actionable recovery result.
-- Provide a consistent forms-first Web/API lifecycle for the existing managed graph: Storage,
-  ResourceLibrary, MediaLibrary, RecognitionType, RecognitionRule, RecognitionTypePolicy,
-  MetadataPolicy, NamingPolicy, ClassificationPolicy, OrganizePolicy and Automation Task Definition.
-  The applicable create, edit, copy, enable, disable, delete, reference-impact and safe-test actions
-  must use shared application behavior.
-- Make reference/dependent impact visible and preserve the existing rule that referenced deletion is
-  blocked while a valid unreferenced object can be deleted. Invalid edits and failed operations must
-  leave the current Draft, Active revision and prior evidence in a recoverable durable state.
-- Make the ordinary Web Configuration entry discoverable through typed forms/cards. Keep whole-document
-  JSON explicitly labelled as Advanced JSON/support behavior and route it through the same validation,
-  concurrency, audit, redaction and revision authority as forms.
-- Preserve exact revision ID/version/digest checks, stale-writer conflicts, validation/evidence
-  invalidation and checked-activation gates. This Task must not make Active mutable or make a Draft,
-  JSON payload or stale process state appear Active.
-- Expose bounded, secret-free success, failure and recovery state in both API and Web, including
-  permission failures, validation errors, reference conflicts, stale concurrency and unavailable
-  Active/Draft recovery.
+- Define one canonical, typed System Settings projection over the existing managed configuration
+  document and `RuntimeConfiguration`. Supported settings must cover the Slice contract's database,
+  work/history, cache, log and export locations where the current product supports them, locale and
+  timezone, log level and retention, applicable concurrency controls, and workflow retry policy.
+  Existing document compatibility must be preserved through one normalized path; no second settings
+  authority may be introduced.
+- Provide read and edit behavior for a Draft through a versioned API and a discoverable Web Settings
+  view. The response must identify authority, revision ID, version, digest, lifecycle status,
+  consumed/pinned snapshot identity, currentness and any restart/deployment requirement.
+- Route Web and API reads/edits through the same Application behavior, permissions, validation,
+  optimistic expected-version/digest checks, redaction and audit rules. A successful edit changes
+  only the Draft, invalidates applicable evidence and never mutates Active or starts media work.
+- Validate bounded types, ranges, enum values, paths, locale/timezone and retry/concurrency
+  relationships before persistence. Reject unknown fields, literal secrets and unsafe or unsupported
+  changes with actionable, bounded recovery details.
+- Keep the bootstrap-owned database location immutable and clearly labelled. Settings that are
+  accepted only for a future restart/deployment boundary must be represented as pending/restart
+  required and must not be presented as consumed by the current process. If a setting cannot be
+  consumed safely, activation/runtime readiness must fail closed rather than claim success.
+- Bind every applicable runtime consumer, including API admission, Worker/Scheduler/Notification
+  behavior, operational logging and pinned work, to the exact Active or pinned snapshot identity.
+  Existing active revision activation and pinned-work semantics remain authoritative.
+- Expose permission denial, stale writer conflict, invalid value, missing/corrupt Active, runtime
+  incompatibility and restart-required outcomes with durable state, known effects, retry safety and
+  explicit next action. Prior Active, completed media work and existing Task/Result history remain
+  intact after failure.
 
 Files and areas explicitly frozen unless a directly required compatibility adjustment is proven:
 
 - `SLICE.md`, `docs/roadmap.md`, `docs/progress.md`, product requirements, Product Experience and
   Architecture contracts.
-- System Settings consumption and editing, versioned configuration/result package import/export,
-  Webhook definition/test/delivery management and recovery; those are later Slice 28 Tasks.
-- Slice 29 Docker/Compose release and every Explicitly Deferred item in `SLICE.md`.
-- The Storage mutation boundary, OrganizerExecutor, media-processing pipeline, Worker/Scheduler
-  authority and existing Slice 26/27 behavior.
+- Slice 28.1 object lifecycle behavior except compatibility changes needed to expose Settings through
+  the same revision authority.
+- Configuration/result package exchange, Webhook definition/test/delivery management and recovery,
+  and every Slice 29 or Explicitly Deferred item.
+- Storage mutation, OrganizerExecutor, Scanner/Parser/Recognition/Metadata/Naming/Classification/
+  Planner behavior, Worker/Scheduler ownership protocol and the existing Task/Result model.
+- A parallel settings database, direct SQLite/JSON management path, built-in identity/secret store,
+  provider switching or any redesign of the closed processing pipeline.
 
 ## Acceptance Criteria
 
-- [ ] An authenticated Web operator can select the current Active revision and create a clearly
-      labelled successor Draft without editing JSON or touching SQLite directly; the API exposes the
-      same action and returns the exact new revision identity.
-- [ ] Active and Superseded revisions remain immutable; a failed/missing/corrupt Active or invalid
-      successor request fails closed, preserves the prior durable authority and gives an actionable
-      recovery path.
-- [ ] The required existing configuration object families are reachable through consistent typed
-      Web forms/cards and versioned API operations, including create/edit/copy/enable/disable/delete
-      where applicable, with reference impact visible and referenced deletion blocked.
-- [ ] Web and API use one Application behavior for validation, permissions, optimistic concurrency,
-      audit, redaction, bounds, state transitions and errors; stale writers cannot silently replace a
-      newer Draft.
-- [ ] Advanced JSON is explicitly labelled, is not required for the ordinary object journey, and
-      cannot silently activate or bypass validation, reference protection, audit or concurrency rules.
-- [ ] Every edit invalidates prior exact-revision evidence as required; checked activation continues to
-      require current validation, Strategy Test, Storage checks and destination precheck evidence from
-      the same revision, and activation itself starts no media work.
-- [ ] Success, invalid input, permission denial, reference conflict, stale revision, unavailable
-      Active and recovery paths are visible and bounded in both Web/API responses without secret
-      leakage.
-- [ ] No Scanner, Parser, Recognition, Metadata, Naming, Classification or Planner mutation is
-      introduced; no OrganizerExecutor, Storage, Task, Job, Worker or Scheduler authority is widened.
-- [ ] Required tests and the assigned T4 validation pass, with any pre-existing/unrelated failures
-      identified by reproducible evidence rather than hidden or reclassified.
-- [ ] The checkpoint contains only this Task's coherent implementation and tests; no private config,
-      credentials, media, `config/alist.json` or unrelated user work is included.
+- [ ] An authenticated operator can enter a discoverable Web Settings view and the versioned API can
+      return the same typed settings projection, exact authority, revision ID/version/digest,
+      lifecycle status and consumed/pinned identity without exposing secrets or unrestricted paths.
+- [ ] A permitted operator can edit supported settings in a Draft through typed controls without
+      editing SQLite or relying on whole-document JSON; the API and Web use one application behavior
+      and return the exact new Draft identity and bounded audit evidence.
+- [ ] Active and Superseded revisions remain immutable. Draft edits use optimistic version/digest
+      checks, invalidate stale evidence, preserve the prior Active on failure and cannot start a
+      Scan, Preview, Organize, Job, Task, scheduled occurrence or Storage mutation.
+- [ ] Database location and other bootstrap/deployment-owned values are explicitly classified and
+      protected. A setting that the running process has not consumed is visibly restart/deployment
+      required or unavailable and is never represented as Active-consumed readiness.
+- [ ] Supported settings are validated for type, bounds, enum/locale/timezone, safe path semantics,
+      cross-field constraints, unknown fields and literal-secret rejection. Invalid input produces a
+      durable, actionable recovery result without corrupting Draft or Active state.
+- [ ] The exact Active or pinned snapshot consumed by each applicable runtime component includes the
+      settings identity and values used for API admission, workers/schedulers/notifications,
+      operational logging, concurrency and workflow retry. Missing, corrupt, stale or incompatible
+      snapshots fail closed with bounded recovery evidence.
+- [ ] Read/manage permission behavior, stale-concurrency behavior, audit projection and redaction
+      are parity-tested between Web and API. Permission denial and runtime-unavailable states do not
+      leak secret values, authorization material or private credentials.
+- [ ] The existing Slice 26/27 configuration authority, Storage/FileIndex, OrganizerExecutor,
+      Task/Result, Worker, Scheduler, RBAC and safety regressions remain intact.
+- [ ] Required focused tests, full supported offline regression, governance, formatting/lint,
+      compile, dependency and diff checks pass; external-service skips remain explicit and truthful.
+- [ ] The checkpoint contains only this Task's coherent implementation/tests and no private
+      configuration, `config/alist.json`, credentials, media or unrelated user work.
 
 ## Required Tests
 
 Focused and related tests:
 
 ```bash
-python -m unittest \
+python3 -m unittest \
+  tests.test_system_settings_management \
+  tests.test_configuration_snapshot \
   tests.test_configuration_management \
-  tests.test_configuration_objects \
   tests.test_configuration_status \
-  tests.test_storage_configuration_management \
+  tests.test_runtime_strategy_configuration \
+  tests.test_automation_admission \
+  tests.test_stale_job_visibility \
+  tests.test_operational_logging \
   tests.test_operator_ui
 ```
+
+The Developer must add or update focused tests for:
+
+- typed Web/API read and edit parity, RBAC and exact Active/Draft/pinned identity;
+- valid, invalid, unknown-field, path-boundary, locale/timezone, retry/concurrency and
+  bootstrap-owned database settings;
+- stale version/digest, missing/corrupt Active, runtime incompatibility and restart-required
+  recovery;
+- audit/redaction, no secret leakage, no media/workflow side effects and exact runtime consumer
+  binding, including pinned work.
 
 T4 quality and regression gates:
 
 ```bash
-python scripts/check_governance.py
-python -m unittest discover -s tests
+python3 scripts/check_governance.py
+python3 -m unittest discover -s tests
 ruff format --check .
 ruff check .
-python -m compileall -q mediaflow tests scripts
-python -m pip check
+python3 -m compileall -q mediaflow tests scripts
+python3 -m pip check
 git diff --check
 ```
 
-The Developer must also add or update focused tests for the successor-Draft Web/API journey, forms/API
-parity, reference impact, stale concurrency, failure/recovery, redaction and Active immutability.
-Tests must use fakes/local services and temporary paths; production Storage, TMDB, Webhook endpoints,
-credentials and real media are not permitted. Any external-service skip must remain explicit and be
-reported with its reason.
+Tests must use fakes, local servers and temporary paths. Production Storage, TMDB, Webhook
+endpoints, credentials and real media are not permitted. Any external-service skip must remain
+explicit and report its reason.
 
 ## Non-goals
 
 - Work outside the Slice 28 Contract or any change to its Required Outcomes, Required Surfaces,
   Safety Invariants, Base SHA or Explicitly Deferred scope.
-- System Settings consumption/editing, configuration/result package import/export, Webhook definition
-  management/test/delivery recovery or Slice 29 Docker release.
-- Provider switching, built-in identity/OIDC, general Secret Store, automatic uncertain-mutation
-  replay, historical rollback, distributed workers or new Storage providers.
-- Media scanning, parsing, recognition, organization, Storage mutation, Worker/Scheduler redesign or
-  a second configuration/notification engine.
-- Optional copy polish, extra test-only micro-Tasks, broad refactors or changes to stable requirement
-  documents.
+- Re-implementing Slice 28.1 configuration object CRUD/forms, except required shared-authority
+  compatibility changes.
+- Versioned configuration/result package import/export.
+- Webhook definition management, explicit tests, delivery operations or delivery recovery.
+- Docker/Compose production packaging, production serving, restart/upgrade migration E2E, Provider
+  switching, built-in identity/OIDC, a general Secret Store or new Storage providers.
+- Automatic replay of uncertain media mutations, historical rollback, distributed worker
+  coordination, Storage mutation or media-processing pipeline redesign.
+- Optional copy polish, extra test-only micro-Tasks, broad refactors or direct SQLite/JSON editing.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-- `mediaflow/application/configuration_snapshot.py` — Added `create_successor_draft()` to `ManagedConfigurationService`. Fix round 2: wrapped the three successor-Draft `ConfigurationVersionConflict` messages with implicit string concatenation to satisfy E501; runtime message values are unchanged.
-- `mediaflow/application/configuration_objects.py` — Added generic `copy_object()` / `set_object_enabled()` / `mutate_object()`. Removed `ConfigurationObjectKind.SCHEDULE` block in `mutate()` so unreferenced `AutomationTaskDefinition` deletion is now possible via service; Web UI still does not expose delete for automationTaskDefinitions.
-- `mediaflow/interfaces/service_api.py` — Added `POST /api/v1/configuration/drafts/successor` and `POST /api/v1/configuration/revisions/{revision_id}/successor`. Extended `POST /api/v1/configuration/revisions/{revision_id}/objects/{kind}/{object_id}/{action}` (copy/enable/disable) for all 11 object kinds. Restored correct response key (`storage`/`automationTaskDefinition`) for backward parity. Fixed `POST /api/v1/configuration/revisions/{revision_id}/successor` to require that `{revision_id}` matches the current Active revision ID, rejecting mismatches with HTTP 409 `configuration_version_conflict` and structured recovery evidence. Fix round 2: `ruff format` reflow of two expressions only (one conditional expression parenthesized, one set-literal membership test rewrapped); no behavioral change.
-- `mediaflow/interfaces/operator_ui.py` — Updated `renderConfiguration()` to show "Create successor Draft from Active" primary action and "Advanced JSON (import/export)" secondary section when Active exists. Relabelled revision-detail JSON editor as "Advanced: Edit Draft JSON". Extended `guidedObjectFields()` / `guidedObjectPayload()` / `renderGuidedObjectForm()` to support typed forms for all 11 object families. Restored `automationTaskDefinition`-specific UI branch to satisfy Slice 27 contract.
-- `tests/test_configuration_successor_draft.py` — Added 18 tests covering successor-Draft creation (service + API), optimistic conflict checks, Active immutability, object copy/enable/disable lifecycle for all kinds, reference-blocked deletion, UI presence checks, and regression tests verifying that `POST /api/v1/configuration/revisions/{revision_id}/successor` rejects unknown, non-active draft, and superseded revision IDs with 409 and creates no Draft. Fix round 2: removed six unused imports (`copy`, `io`, `json`, `ConfigurationActivationConflict`, `ConfigurationObjectKind`, `ConfigurationObjectReferenced`), the unused local `active` (F841), and one placeholder-less `f` prefix (F541); applied `ruff format` (kind tuple reflow, long def signature wrap). No assertion value changed.
+- `mediaflow/domain/system_settings.py`
+- `mediaflow/application/system_settings.py`
+- `mediaflow/infrastructure/runtime_configuration.py`
+- `mediaflow/interfaces/service_api.py`
+- `mediaflow/interfaces/operator_ui.py`
+- `tests/test_system_settings_management.py`
 
 ### Implemented
 
-1. **Successor Draft from Active** (`ManagedConfigurationService.create_successor_draft()`): Fails closed with `RuntimeSnapshotUnavailable` if Active is missing or corrupt. Accepts optional `expected_active_revision_id`, `expected_active_version`, `expected_active_digest` for optimistic concurrency. Seeds new Draft (version 1, status DRAFT) from the immutable Active document snapshot.
-
-2. **API endpoints** (`service_api.py`):
-   - `POST /api/v1/configuration/drafts/successor`: accepts optional `expectedActiveRevisionId`, `expectedActiveVersion`, `expectedActiveDigest`. Returns 201 on success, 409 on conflict.
-   - `POST /api/v1/configuration/revisions/{revision_id}/successor`: requires `{revision_id}` to be the exact current Active revision ID (passed as `expected_active_revision_id=parts[4]`). Mismatches fail closed with HTTP 409 `configuration_version_conflict` and structured recovery evidence (`durableState: active_preserved`, `sideEffects: none`, `retrySafe: true`, `nextAction`). Accepts optional `expectedActiveVersion` and `expectedActiveDigest`. Rejects query parameters with `_require_empty_query`.
-   - `POST /api/v1/configuration/drafts`: accepts `{"source": "active"}` and `{"source": "successor"}`.
-
-3. **Generic object lifecycle** (`ConfigurationObjectService`): `copy_object(kind, revision_id, object_id, ...)` and `set_object_enabled(kind, revision_id, object_id, enabled, ...)` delegate from all 11 kinds. `mutate_object()` handles create/update/delete generically. `ConfigurationObjectKind.SCHEDULE` deletion restriction removed from service (AutomationTaskDefinition deletion is allowed at the service level).
-
-4. **Web UI** (`operator_ui.py`): Primary action "Create successor Draft from Active" when Active is present. Secondary "Advanced JSON (import/export)" section with warning. "Advanced: Edit Draft JSON" label in revision detail. Typed forms for all 11 object families via `guidedObjectFields()` / `guidedObjectPayload()` / `renderGuidedObjectForm()`. Copy/Enable/Disable/Delete buttons consistent across all applicable kinds.
-
-5. **Fix round 2 (this checkpoint)**: Reproduced B's single blocker (Ruff quality gate) exactly, then fixed all of it behavior-preserving. `ruff format --check .` had reported 2 unformatted files and `ruff check .` had reported 12 errors: 3 E501 long conflict-message lines in `configuration_snapshot.py`, and 9 in the successor test module (6 F401 unused imports, 1 F841 unused local, 1 F541 f-string without placeholders, 1 E501 long def line). All 12 were fixed and both flagged files were formatted; both Ruff gates now pass repo-wide. No route, validation, redaction, concurrency, audit or safety behavior changed; conflict messages, request URLs and test assertion values remain byte-identical.
+- Added a canonical typed System Settings projection over managed configuration revisions,
+  including revision identity, field metadata, bootstrap-owned, restart-required and hot-consumed
+  boundaries.
+- Added shared application read/edit behavior for Active, Draft and Validated revisions using the
+  existing managed revision authority, optimistic version checks, redacted audit and fail-closed
+  Active integrity handling.
+- Added validation for supported setting types, bounds, paths, locale/timezone, log levels,
+  retry relationships, unknown fields, literal secrets and immutable bootstrap database location.
+- Added versioned API read/edit routes for current Active, selected revisions and exact Draft edits,
+  with RBAC, bounded validation/conflict/unavailable recovery details and consumption evidence.
+- Extended runtime configuration normalization with cache/log/export paths and locale/timezone while
+  preserving the existing Active/pinned snapshot identity binding.
+- Added a discoverable Web Settings view with typed controls for boolean, numeric, enum and string
+  settings, explicit boundary labels, immutable bootstrap controls and successor-Draft save behavior.
 
 ### Tests and Results
 
-Focused test suite (Task Required Tests plus this Task's modules):
-
-```
-python -m unittest \
-  tests.test_configuration_management \
-  tests.test_configuration_objects \
-  tests.test_configuration_status \
-  tests.test_storage_configuration_management \
-  tests.test_operator_ui \
-  tests.test_automation_task_definition \
-  tests.test_configuration_successor_draft
-→ Ran 164 tests — OK (PASS)
-```
-
-T4 quality and regression gates (rerun after the fix, in Task-required order):
-
-```
-python scripts/check_governance.py              → governance check: PASS
-python -m unittest discover -s tests            → Ran 1295 tests: FAILED (failures=7, skipped=7)
-ruff format --check .                           → 377 files already formatted (PASS)
-ruff check .                                    → All checks passed! (PASS)
-python -m compileall -q mediaflow tests scripts → OK (PASS)
-python -m pip check                             → No broken requirements found. (PASS)
-git diff --check                                → clean (PASS)
-```
-
-Full-regression skips (7, all explicit UNAVAILABLE external gates, none added or hidden by this
-round): `test_real_adapter_and_transfer_matrix` (real OpenList acceptance), `test_real_s3_matrix` /
-`test_real_smb_matrix` (real S3/SMB acceptance), and the Local/OpenList/S3/SMB endurance profiles —
-each self-reports `BLOCKED: dedicated real ... environment is absent`.
-
-Full-regression failures (7, all `FAIL / PRE-EXISTING / UNRELATED`, none introduced by this round;
-fresh reproducible evidence gathered at the reviewed checkpoint `7d883f8` in a clean temporary
-worktree plus the previous round's Task Base `380362e` reproduction):
-
-- `test_setup_picker_and_execution_environment_guidance_are_present` — reproduced identically in the
-  clean `7d883f8` worktree (`AssertionError: 'Storage-relative breadcrumb' not found`); this round
-  does not touch `operator_ui.py` or that test.
-- `test_credential_check_is_redacted_config_only_and_reports_missing`,
-  `test_legacy_credential_status_is_supported_without_secret_output`,
-  `test_runtime_configuration_and_final_analyze_cli`,
-  `test_scan_cli_needs_no_path_or_metadata_token`,
-  `test_storage_check_is_read_only_and_isolates_failures`,
-  `test_storage_list_does_not_construct_or_connect` — caused by pre-existing local `.mediaflow/`
-  state (`mediaflow.sqlite3`, `history.jsonl`) in the repository working directory; all six pass in
-  the clean `7d883f8` worktree and are a subset of the previous round's documented pre-existing
-  list at Task Base `380362e` (`test_openlist_storage_uses_environment_owned_token` passes in this
-  environment now). Today's failure set adds no new failure.
+- `python3 scripts/check_governance.py` — PASS.
+- `python3 -m unittest tests.test_system_settings_management` — PASS, 14 tests.
+- `python3 -m unittest tests.test_configuration_snapshot tests.test_configuration_management tests.test_configuration_status tests.test_runtime_strategy_configuration tests.test_automation_admission tests.test_stale_job_visibility tests.test_operational_logging tests.test_operator_ui` — FAIL, 126 tests run: 125 passed, 1 error. The error is `test_openlist_storage_uses_environment_owned_token`, blocked by missing optional `httpx`.
+- `python3 -m unittest discover -s tests` — FAIL, 1308 tests run: 7 failures, 1 error, 7 skips. The 7 failures are the existing credential/runtime/storage/UI failures in the repository baseline; the 1 error is the optional OpenList `httpx` dependency absence. No failure was introduced by the System Settings focused tests.
+- `python3 -m compileall -q mediaflow tests scripts` — PASS.
+- `git diff --check` — PASS.
+- `ruff format --check .` / `ruff check .` — UNAVAILABLE; `ruff` is not installed in this environment.
+- `python3 -m pip check` — UNAVAILABLE; this Python installation has no `pip` module.
 
 ### Decisions
 
-- Reinstated `automationTaskDefinitions`-specific UI branch and `AutomationTaskDefinition` deletion restriction in `mutate()` to preserve Slice 27 contract (automation task definition deletion remains out of scope for Slice 28 per "where applicable").
-- Restored correct API response key (`storage`/`automationTaskDefinition`) for copy/enable/disable actions to maintain backward compatibility with existing automation task definition tests.
-- Used conditional rendering for the Save button in `renderGuidedObjectForm` to satisfy both `test_automation_task_definition.py` (which asserts the literal `'Save Automation Task Definition'` string) and `test_operator_ui.py` (which asserts the literal `'Save guided object'` string).
-- Typed form field support added to `guidedInput()`, `guidedObjectFields()`, and `guidedObjectPayload()` for all 11 kinds, including `type === 'textarea'` for multi-line fields and `type === 'number'` for numeric fields, without removing the JSON fallback path.
-- In `POST /api/v1/configuration/revisions/{revision_id}/successor`, pass `expected_active_revision_id=parts[4]` to `create_successor_draft()` and enforce query-string emptiness via `_require_empty_query`. Mismatches raise `ConfigurationVersionConflict`, which the API maps to HTTP 409 with structured recovery details (`revisionId`, `currentVersion`, `currentDigest`, `durableState: active_preserved`, `sideEffects: none`, `retrySafe: true`, `nextAction`).
-
-Fix round 2 decisions:
-
-- Fixed E501 via implicit string concatenation instead of shortening messages, so the runtime conflict messages (including the API error text asserted by tests, e.g. "Active revision does not match") stay byte-identical.
-- Let `ruff format` handle the long def signature and tuple reflow instead of renaming tests or restructuring code, keeping test identity and semantics unchanged.
-- Removed the F841 dead binding (`active = self._activate_initial()` → `self._activate_initial()`) rather than adding an assertion, staying inside B's blocker scope.
-- Recorded the pre-existing failures with fresh reproducible evidence (clean-worktree reproduction at the reviewed checkpoint `7d883f8`, plus the previous round's Task Base reproduction) instead of relying only on the earlier Base-SHA notes; the classification itself is left for B to confirm.
+- Reused the managed configuration revision as the sole System Settings authority; no parallel
+  settings store or runtime snapshot was introduced.
+- Kept bootstrap database location immutable and surfaced restart-required locations as boundary
+  metadata rather than claiming current-process consumption.
+- Used the existing runtime binding's Active/pinned snapshot identity for runtime consumers.
+- Kept package exchange and Webhook management out of this Task as required by the Task scope.
 
 ### Remaining In-Slice Work
 
-- System Settings consumption and editing (Task 28.x — separate).
-- Configuration/result package import/export (Task 28.x — separate).
-- Webhook definition/test/delivery management (Task 28.x — separate).
+- Versioned, secret-free configuration/result package exchange.
+- Managed Webhook definition management, explicit tests and delivery recovery.
 
 ### Risks / Deviations
 
-- The 7 full-regression failures above are reported as `FAIL / PRE-EXISTING / UNRELATED` with reproducible evidence; B decides whether that classification holds.
-- The 7 full-regression skips are external-service acceptance gates reported as UNAVAILABLE with their self-reported reasons; no skip was added, hidden or reclassified by this round.
-- Local `.mediaflow/` state in the repository working directory remains the trigger for six of the pre-existing failures; it is untracked local state and was not modified, committed or deleted.
-- The code correction commit is followed by one `docs(task)` commit that carries this report and the checkpoint SHA (same pattern as the previous fix round).
+- Full quality gates cannot be fully completed because `ruff` and `pip` are unavailable in the
+  environment.
+- Related/full regression is not clean: optional OpenList integration requires `httpx`; seven
+  unrelated pre-existing tests fail against the current repository/local-state baseline. The
+  failures were not hidden, skipped or reclassified as passes.
+- Test execution emits existing SQLite `ResourceWarning` messages; no production data or
+  credentials were used.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: fa02ae6fd6d82cf98d6804536b7baa2b3591a0fb
+Head SHA: [pending commit]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 380362e2bd54c4bc3b051c0081bc001c7f39ad50..7d883f8f72be590dbab4ff0f4749be014e1ee8d6
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: [Head SHA or Task Base..Head]
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
 
-Blockers:
-
-- The Task checkpoint does not pass the required Ruff quality gate. Evidence: `ruff format --check
-  .` reports two unformatted files (`mediaflow/interfaces/service_api.py` and
-  `tests/test_configuration_successor_draft.py`), and `ruff check .` reports 12 errors in
-  `mediaflow/application/configuration_snapshot.py` and
-  `tests/test_configuration_successor_draft.py` (including E501, unused imports/variable and an
-  f-string without placeholders). Format and lint the Task-owned changes, then rerun the required
-  focused suite and T4 quality gates.
-
-The previous successor-revision blocker is resolved: `POST
-/api/v1/configuration/revisions/{revision_id}/successor` now rejects unknown, non-Active Draft and
-Superseded revision IDs with 409 and no new Draft, covered by focused regression tests.
-
-Fixes remain in Task 28.1. This result does not close the Slice or update Roadmap.
+If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
+finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.

@@ -79,6 +79,12 @@ class RuntimeConfiguration:
     configuration_snapshot_digest: str | None = None
     configuration_snapshot_version: int | None = None
     automation_task_definitions: tuple[AutomationTaskDefinition, ...] = ()
+    # Extended system settings
+    cache_path: str | None = None
+    log_path: str | None = None
+    export_path: str | None = None
+    locale: str | None = None
+    timezone: str | None = None
 
     def create_storages(
         self,
@@ -507,6 +513,8 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         if isinstance(value, bool) or not isinstance(value, int) or value < 1 or value > maximum:
             raise ValueError(f"operationalLogging {name} must be between 1 and {maximum}")
     retry = _workflow_retry(document.get("workflowRetry", {}))
+    # Extended system settings
+    extended_settings = _extended_system_settings(document)
     return RuntimeConfiguration(
         loaded.strategy,
         storage_definitions,
@@ -533,6 +541,7 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         stale_job_age_seconds,
         retry,
         automation_task_definitions=automation_task_definitions,
+        **extended_settings,
     )
 
 
@@ -1067,3 +1076,52 @@ def _validate_strategy_references(strategy: StrategyTestConfiguration) -> None:
                     f"RecognitionTypePolicy {policy.policy_id!r} references unknown "
                     f"{label} {value!r}"
                 )
+
+
+def _extended_system_settings(document: dict) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, field_name in (
+        ("cachePath", "cache_path"),
+        ("logPath", "log_path"),
+        ("exportPath", "export_path"),
+    ):
+        val = document.get(key)
+        if val is not None:
+            if not isinstance(val, str) or not val.strip() or "\x00" in val:
+                raise ValueError(f"{key} must be a non-empty path string")
+            norm = posixpath.normpath(val)
+            if (
+                val.startswith(("/", "\\"))
+                or "\\" in val
+                or norm in {".", ".."}
+                or norm.startswith("../")
+            ):
+                raise ValueError(f"{key} must be a safe relative path")
+            result[field_name] = norm
+    locale = document.get("locale")
+    if locale is not None:
+        if (
+            not isinstance(locale, str)
+            or not locale.strip()
+            or len(locale) > 35
+            or not re.fullmatch(r"^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$", locale)
+        ):
+            raise ValueError("locale must be a valid BCP 47 locale tag")
+        result["locale"] = locale.strip()
+    timezone = document.get("timezone")
+    if timezone is not None:
+        if (
+            not isinstance(timezone, str)
+            or not timezone.strip()
+            or len(timezone) > 128
+            or "\x00" in timezone
+        ):
+            raise ValueError("timezone must be a valid IANA timezone string")
+        import zoneinfo
+
+        try:
+            zoneinfo.ZoneInfo(timezone.strip())
+        except Exception as error:
+            raise ValueError(f"unknown timezone {timezone!r}") from error
+        result["timezone"] = timezone.strip()
+    return result

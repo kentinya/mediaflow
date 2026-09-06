@@ -50,6 +50,10 @@ from mediaflow.application.storage_browser import (
     RuntimeFilesBrowserService,
     StorageBrowserError,
 )
+from mediaflow.application.system_settings import (
+    SystemSettingsService,
+    SystemSettingsValidationError,
+)
 from mediaflow.application.unattended_execution import (
     UnattendedExecutionGrantError,
     UnattendedExecutionGrantService,
@@ -90,6 +94,9 @@ from mediaflow.domain.recovery_continuation import (
 )
 from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
+from mediaflow.domain.system_settings import (
+    SystemSettingsEdit,
+)
 from mediaflow.domain.task_persistence import ConfirmationStatus
 from mediaflow.interfaces.operator_ui import ASSETS as OPERATOR_UI_ASSETS
 from mediaflow.interfaces.pagination import (
@@ -257,6 +264,11 @@ class MediaFlowApi:
                 storage_adapters=storage_adapters,
                 storage_browser_cursor_secret=storage_browser_cursor_secret,
             )
+            if configuration_service is not None
+            else None
+        )
+        self._system_settings = (
+            SystemSettingsService(configuration_service)
             if configuration_service is not None
             else None
         )
@@ -763,6 +775,30 @@ class MediaFlowApi:
                         "create or resume the first setup Draft, complete guided setup, "
                         "validate it, and activate it"
                     ),
+                },
+            )
+        except SystemSettingsValidationError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "system-settings",
+                "validation_failed",
+                422,
+            )
+            return self._error(
+                start_response,
+                422,
+                "system_settings_invalid",
+                str(error),
+                details={
+                    "errors": error.errors,
+                    "durableState": "draft_preserved_or_not_created",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": "correct invalid settings values and submit again",
                 },
             )
         except ConfigurationObjectReferenced as error:
@@ -2938,6 +2974,172 @@ class MediaFlowApi:
                     start_response, 503, "service_unavailable", "system status is unavailable"
                 )
             return self._response(start_response, 200, binding.system_status.as_document())
+        # GET /api/v1/system/settings
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "v1", "system"]
+            and parts[3] == "settings"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._system_settings is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "system settings service is unavailable",
+                )
+            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            revision_id = query.get("revisionId", [None])[0]
+            try:
+                settings = self._system_settings.read_draft_or_active(revision_id)
+            except RuntimeSnapshotUnavailable as error:
+                return self._error(
+                    start_response,
+                    503,
+                    "system_settings_unavailable",
+                    str(error),
+                    details={
+                        "durableState": "system_settings_not_available",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": "activate a managed configuration to access system settings",
+                    },
+                )
+            projection = settings.as_projection()
+            projection["authority"] = (
+                "MANAGED"
+                if settings.is_active
+                else ("MANAGEMENT_BOOTSTRAP" if self._management_only else "MANAGED")
+            )
+            # Include consumption evidence.
+            evidence = self._system_settings.consumption_evidence()
+            projection["consumption"] = evidence
+            return self._response(start_response, 200, projection)
+
+        # PUT /api/v1/system/settings
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "v1", "system"]
+            and parts[3] == "settings"
+            and method == "PUT"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._system_settings is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "system settings service is unavailable",
+                )
+            document = self._document(environ)
+            expected_version = document.get("expectedVersion")
+            if expected_version is not None and (
+                isinstance(expected_version, bool) or not isinstance(expected_version, int)
+            ):
+                raise ValueError("expectedVersion must be an integer")
+            edits = self._extract_system_settings_edits(document)
+            if expected_version is not None:
+                # Edit an existing Draft by revision ID.
+                revision_id = document.get("revisionId")
+                if not isinstance(revision_id, str) or not revision_id:
+                    raise ValueError("revisionId is required when expectedVersion is provided")
+                updated = self._system_settings.edit_draft(
+                    revision_id,
+                    edits=edits,
+                    expected_version=expected_version,
+                    actor=principal.principal_id,
+                )
+                status_code = 200
+            else:
+                # Create successor Draft from Active and apply edits.
+                updated = self._system_settings.edit(
+                    edits=edits,
+                    actor=principal.principal_id,
+                    expected_active_revision_id=document.get("expectedActiveRevisionId"),
+                    expected_active_version=(
+                        int(document["expectedActiveVersion"])
+                        if document.get("expectedActiveVersion") is not None
+                        else None
+                    ),
+                    expected_active_digest=document.get("expectedActiveDigest"),
+                )
+                status_code = 201
+            response = updated.as_projection()
+            response["authority"] = "MANAGED"
+            response["created"] = expected_version is None
+            response["consumption"] = self._system_settings.consumption_evidence()
+            return self._response(start_response, status_code, response)
+
+        # GET /api/v1/configuration/revisions/<revision_id>/settings
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "settings"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._system_settings is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "system settings service is unavailable",
+                )
+            revision_id = parts[4]
+            try:
+                settings = self._system_settings.read_draft_or_active(revision_id)
+            except RuntimeSnapshotUnavailable as error:
+                return self._error(
+                    start_response,
+                    404 if "not found" in str(error).lower() else 503,
+                    "system_settings_unavailable",
+                    str(error),
+                    details={
+                        "durableState": "revision_not_available",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": "check the revision ID and try again",
+                    },
+                )
+            projection = settings.as_projection()
+            projection["authority"] = "MANAGED"
+            projection["consumption"] = self._system_settings.consumption_evidence()
+            return self._response(start_response, 200, projection)
+
+        # PUT /api/v1/configuration/revisions/<revision_id>/settings
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5] == "settings"
+            and method == "PUT"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._system_settings is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "system settings service is unavailable",
+                )
+            document = self._document(environ)
+            expected_version = document.get("expectedVersion")
+            if isinstance(expected_version, bool) or not isinstance(expected_version, int):
+                raise ValueError("expectedVersion must be an integer")
+            edits = self._extract_system_settings_edits(document)
+            updated = self._system_settings.edit_draft(
+                parts[4],
+                edits=edits,
+                expected_version=expected_version,
+                actor=principal.principal_id,
+            )
+            response = updated.as_projection()
+            response["authority"] = "MANAGED"
+            response["consumption"] = self._system_settings.consumption_evidence()
+            return self._response(start_response, 200, response)
+
         if parts == ["api", "v1", "scans"] and method == "POST":
             self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
             self._require_empty_query(environ, "manual Scan")
@@ -5154,6 +5356,8 @@ class MediaFlowApi:
             return False
         if parts[:3] == ["api", "v1", "configuration"]:
             return False
+        if parts[:3] == ["api", "v1", "system"]:
+            return False
         if parts == ["api", "v1", "management", "readiness"]:
             return False
         if len(parts) == 5 and parts[:3] == ["api", "v1", "files"] and parts[4] == "reprocess":
@@ -6269,6 +6473,58 @@ class MediaFlowApi:
         except KeyError as error:
             raise ValueError("unsupported guided configuration object kind") from error
 
+    @staticmethod
+    def _extract_system_settings_edits(
+        document: dict[str, object],
+    ) -> tuple[SystemSettingsEdit, ...]:
+        if not isinstance(document, dict):
+            raise ValueError("request body must be a JSON object")
+
+        if "edits" in document:
+            raw_edits = document["edits"]
+            if not isinstance(raw_edits, list) or not raw_edits:
+                raise ValueError("'edits' must be a non-empty array of objects")
+            edits = []
+            for item in raw_edits:
+                if not isinstance(item, dict):
+                    raise ValueError("each edit must be an object")
+                field_path = item.get("fieldPath") or item.get("field")
+                if not isinstance(field_path, str) or not field_path:
+                    raise ValueError("edit fieldPath is required")
+                edits.append(SystemSettingsEdit(field_path, item.get("value")))
+            return tuple(edits)
+
+        raw_settings = document.get("settings") if "settings" in document else document
+        if not isinstance(raw_settings, dict):
+            raise ValueError("'settings' must be an object")
+
+        meta_keys = {
+            "expectedVersion",
+            "expectedActiveVersion",
+            "expectedActiveRevisionId",
+            "expectedActiveDigest",
+            "revisionId",
+            "fromActive",
+            "settings",
+        }
+
+        edits = []
+
+        def _flatten(d: dict[str, object], prefix: str = "") -> None:
+            for key, val in d.items():
+                if prefix == "" and key in meta_keys:
+                    continue
+                path = f"{prefix}.{key}" if prefix else key
+                if isinstance(val, dict):
+                    _flatten(val, path)
+                else:
+                    edits.append(SystemSettingsEdit(path, val))
+
+        _flatten(raw_settings)
+        if not edits:
+            raise ValueError("at least one system setting edit is required")
+        return tuple(edits)
+
     def _automation_revision(self, environ: dict):
         """Resolve one explicit managed revision for Automation inspection."""
 
@@ -6887,6 +7143,7 @@ class MediaFlowApi:
             404: "Not Found",
             405: "Method Not Allowed",
             409: "Conflict",
+            422: "Unprocessable Entity",
             500: "Internal Server Error",
             503: "Service Unavailable",
         }
