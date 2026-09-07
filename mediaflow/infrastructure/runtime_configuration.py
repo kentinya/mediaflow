@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import posixpath
 import re
-import urllib.parse
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -20,7 +19,7 @@ from mediaflow.domain.automation import (
 )
 from mediaflow.domain.library import DEFAULT_MEDIA_EXTENSIONS, MediaLibrary, ResourceLibrary
 from mediaflow.domain.logging import LogLevel
-from mediaflow.domain.notification import NotificationEventType, WebhookDefinition
+from mediaflow.domain.notification import WebhookDefinition
 from mediaflow.domain.security import (
     ApiCredentialStatus,
     ApiPrincipalDefinition,
@@ -482,7 +481,19 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
         notifications.get("deliveryLeaseSeconds", 300),
         "notification deliveryLeaseSeconds",
     )
-    raw_webhooks = notifications.get("webhooks", [])
+    # Managed Webhook definitions live in the root ``webhooks`` section of the
+    # canonical configuration document.  Legacy JSON bootstrap documents keep
+    # the historical ``notifications.webhooks`` spelling; the two must never be
+    # combined because that would make the Active definition ambiguous.
+    root_webhooks_present = "webhooks" in document
+    nested_webhooks_present = "webhooks" in notifications
+    if root_webhooks_present and nested_webhooks_present:
+        raise ValueError(
+            "runtime configuration cannot define both webhooks and notifications.webhooks"
+        )
+    raw_webhooks = (
+        document["webhooks"] if root_webhooks_present else notifications.get("webhooks", [])
+    )
     if not isinstance(raw_webhooks, list) or not all(
         isinstance(item, dict) for item in raw_webhooks
     ):
@@ -982,56 +993,12 @@ def _schedule(value: dict) -> IntervalSchedule | CronSchedule:
 
 
 def _webhook(value: dict) -> WebhookDefinition:
-    webhook_id = _required(value, "id")
-    url = _required(value, "url")
-    parsed = urllib.parse.urlsplit(url)
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.fragment
-    ):
-        raise ValueError(
-            f"Webhook {webhook_id!r} URL must be HTTPS without credentials or fragment"
-        )
-    secret_env = _required(value, "secretEnv")
-    if not _ENV_NAME.fullmatch(secret_env):
-        raise ValueError("Webhook secretEnv must be a valid environment variable name")
-    raw_events = value.get("events")
-    if not isinstance(raw_events, list) or not raw_events:
-        raise ValueError("Webhook events must be a non-empty array")
+    """Parse one Webhook definition with the shared domain validator."""
+
     try:
-        events = tuple(NotificationEventType(item) for item in raw_events)
-    except (TypeError, ValueError) as error:
-        raise ValueError("Webhook contains an unsupported event") from error
-    if len(events) != len(set(events)):
-        raise ValueError("Webhook events must be unique")
-    enabled = value.get("enabled", True)
-    if not isinstance(enabled, bool):
-        raise ValueError("Webhook enabled must be boolean")
-    timeout = _positive_number(value.get("timeoutSeconds", 10), "Webhook timeoutSeconds")
-    max_attempts = value.get("maxAttempts", 5)
-    if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
-        raise ValueError("Webhook maxAttempts must be a positive integer")
-    base_retry = _positive_number(value.get("baseRetrySeconds", 5), "Webhook baseRetrySeconds")
-    max_retry = _positive_number(value.get("maxRetrySeconds", 300), "Webhook maxRetrySeconds")
-    if max_retry < base_retry:
-        raise ValueError("Webhook maxRetrySeconds must be at least baseRetrySeconds")
-    forbidden = {"secret", "token", "authorization", "execute"}.intersection(value)
-    if forbidden:
-        raise ValueError(f"Webhook field {sorted(forbidden)[0]!r} is forbidden")
-    return WebhookDefinition(
-        webhook_id,
-        url,
-        secret_env,
-        events,
-        enabled,
-        timeout,
-        max_attempts,
-        base_retry,
-        max_retry,
-    )
+        return WebhookDefinition.from_document(value)
+    except ValueError as error:
+        raise ValueError(str(error)) from error
 
 
 def _reference(value: str, available: set[str], label: str) -> None:

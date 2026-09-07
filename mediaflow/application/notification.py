@@ -12,6 +12,7 @@ from mediaflow.domain.notification import (
     NotificationDelivery,
     NotificationDeliveryStatus,
     NotificationEvent,
+    NotificationEventType,
     NotificationRepository,
     WebhookDefinition,
     WebhookRequest,
@@ -21,6 +22,44 @@ from mediaflow.domain.notification import (
 
 class WebhookTransportError(RuntimeError):
     pass
+
+
+def webhook_signature(secret: str, timestamp: str, body: bytes) -> str:
+    """Return the sha256 signature used by signed MediaFlow webhook requests."""
+
+    return hmac.new(
+        secret.encode("utf-8"),
+        timestamp.encode("ascii") + b"." + body,
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def build_signed_request(
+    definition: WebhookDefinition,
+    secret: str,
+    *,
+    body: bytes,
+    delivery_id: str,
+    event_type: NotificationEventType,
+    event_id: str,
+    timestamp: str,
+) -> WebhookRequest:
+    """Build one bounded signed webhook request using the shared transport semantics."""
+
+    signature = webhook_signature(secret, timestamp, body)
+    return WebhookRequest(
+        definition.url,
+        body,
+        {
+            "Content-Type": "application/json; charset=utf-8",
+            "X-MediaFlow-Delivery": delivery_id,
+            "X-MediaFlow-Event": event_type.value,
+            "X-MediaFlow-Event-ID": event_id,
+            "X-MediaFlow-Signature": f"sha256={signature}",
+            "X-MediaFlow-Timestamp": timestamp,
+        },
+        definition.timeout_seconds,
+    )
 
 
 class NotificationPublisher:
@@ -101,21 +140,14 @@ class NotificationWorker:
         definition, secret = target
         timestamp = str(int(self._clock().timestamp()))
         body = delivery.body.encode("utf-8")
-        signature = hmac.new(
-            secret.encode("utf-8"), timestamp.encode("ascii") + b"." + body, hashlib.sha256
-        ).hexdigest()
-        request = WebhookRequest(
-            definition.url,
-            body,
-            {
-                "Content-Type": "application/json; charset=utf-8",
-                "X-MediaFlow-Delivery": delivery.delivery_id,
-                "X-MediaFlow-Event": delivery.event_type.value,
-                "X-MediaFlow-Event-ID": delivery.event_id,
-                "X-MediaFlow-Signature": f"sha256={signature}",
-                "X-MediaFlow-Timestamp": timestamp,
-            },
-            definition.timeout_seconds,
+        request = build_signed_request(
+            definition,
+            secret,
+            body=body,
+            delivery_id=delivery.delivery_id,
+            event_type=delivery.event_type,
+            event_id=delivery.event_id,
+            timestamp=timestamp,
         )
         try:
             status = self._transport.send(request)

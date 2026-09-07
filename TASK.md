@@ -1,13 +1,13 @@
-# Task 28.3 — Versioned Configuration and Result Package Exchange
+# Task 28.4 — Managed Webhook Definitions and Explicit Test
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 28.3
+Task ID: 28.4
 Parent Slice: 28
-Status: FIX REQUIRED
-Task Base: 4db4be7cdf0211541e1f0470387d5239330431c5
+Status: PLANNED
+Task Base: ec8e57b25fa51f0e6583b17d752fcfdba101fe64
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,111 +15,114 @@ Planner / Reviewer: B
 
 ## Goal
 
-Complete the versioned, secret-free configuration and result package exchange journey for Slice 28
-RO-4: an authenticated operator can export bounded configuration and result packages, import a
-supported configuration package as a Draft/recovery candidate, inspect schema/version/validation
-state, and recover from stale or invalid imports without exposing secrets, changing Active, changing
-completed media work or requiring direct SQLite/raw JSON knowledge.
+Complete Slice 28 RO-5: an authenticated operator can manage the canonical Webhook definitions
+through the shared Web/API configuration journey, inspect validation/reference/readiness state, and
+run an explicit bounded test against the exact intended revision without exposing secret material or
+creating an unrequested notification delivery.
 
 ## Why This Task Exists
 
-Tasks 28.1 and 28.2 complete the forms-first configuration object lifecycle and consumed System
-Settings journey, but Slice 28 still lacks the required Web/API package exchange surface. The current
-code has managed revision import/bootstrap mechanics and persisted Task/Result records, yet there is
-no coherent operator journey for versioned package export/import, no package schema/currentness
-projection, no secret-free result export boundary, and no recovery path that proves import failures
-leave Active, the current Draft and completed media work intact.
+Slice 28 already has the signed HTTPS Outbox, delivery worker, durable delivery state and read-only
+notification list foundation, but Webhook definitions are still supplied by lower-level runtime
+configuration rather than managed through the day-2 Web/API administration journey. An operator
+cannot yet create or edit a definition in a successor Draft, see whether its deployment-owned
+secret reference is ready, or explicitly test the intended endpoint with the same validation,
+permission and exact-revision authority used by the rest of Configuration.
 
-This is the largest reasonable next unit because RO-4 crosses the managed configuration authority,
-Task/Result read models, redaction, import validation, application/API behavior, Web controls and
-regression tests as one operator-visible package exchange workflow. It is independent of the
-remaining Webhook definition/test and delivery recovery outcomes (RO-5/RO-6), which stay out of
-scope for later Tasks.
+This is the largest reasonable next unit because RO-5 crosses the managed configuration graph,
+typed Web/API object management, secret-reference readiness, bounded outbound test semantics,
+redacted audit and operator recovery as one user-visible behavior. RO-6 delivery list/detail and
+retry/requeue/dead-letter recovery remains a separate unit because it operates on durable delivery
+state rather than on Webhook definition configuration.
 
 ## Implementation Scope
 
 ```text
-Domain package contract / redaction
-→ Application export/import services
-→ managed Draft/recovery-candidate persistence and audit
-→ versioned API with permissions and bounded errors
-→ Operator Web import/export controls and recovery state
-→ focused, parity, regression and safety tests
+Managed Webhook definition model/validation
+→ configuration persistence and reference/readiness projection
+→ application lifecycle and exact-revision test service
+→ permission-aware API routes
+→ Configuration/Notifications Web forms/cards and recovery state
+→ redacted audit, parity, safety and regression tests
 ```
 
 The Task may update only the implementation needed for the following behavior:
 
-- Define a deterministic, bounded package contract for configuration export/import and result export.
-  The package must include explicit package kind, schema/package version, generated timestamp,
-  producer identity, source revision/result scope, digest/currentness evidence and bounded warnings
-  where applicable.
-- Configuration export must support at least Active and explicit Draft/Validated/Superseded revision
-  sources through the managed configuration authority. It must not expose literal secret values,
-  authorization material, cookies, passwords, bearer tokens or unrestricted private credentials.
-  Deployment-owned secret references may appear only as references (for example environment-variable
-  names) with clear redaction/ownership evidence.
-- Result export must read persisted Task/Result evidence through repository/application interfaces,
-  support bounded task/result scope and pagination or explicit limits, preserve the required result
-  identity fields, and redact secret-bearing or unsafe text while retaining enough evidence for
-  audit/recovery. Export must not read media files or require Storage/TMDB/Webhook connectivity.
-- Configuration import must accept only supported configuration package versions and payload shapes,
-  validate schema/version/digest and managed configuration rules, then create or update an explicit
-  Draft/recovery candidate through the existing revision authority. It must never silently activate,
-  overwrite the current Draft, change Active, change completed media work, start a Scan/Preview/
-  Organize/Job/Task/scheduled occurrence, or mutate Storage.
-- Import failure, stale currentness, unsupported package version, invalid schema, corrupt package,
-  secret-containing payload and validation errors must return bounded recovery details that identify
-  durable state, side effects, retry safety, exact revision/current Draft where relevant and next
-  action. Prior Active and completed Task/Result history must remain intact.
-- Web and API surfaces must use the same application behavior, permissions, validation, redaction,
-  state transitions and audit rules. The Web Configuration/Settings administration area may expose
-  package exchange as explicit Advanced/support controls, but ordinary forms-first object/settings
-  editing must remain the primary path.
-- Add durable, redacted audit evidence for export/import attempts and outcomes. Audit/log/error/Web
-  responses must not contain recoverable secrets or raw secret payloads.
+- Add Webhook definitions to the canonical managed configuration graph using the existing Draft,
+  optimistic-concurrency, validation, checked-activation and immutable Active authorities. Support
+  discoverable list/detail forms/cards and create, edit, copy where applicable, enable, disable and
+  delete actions with shared application behavior for API and Web.
+- Validate and project only supported Webhook configuration: HTTPS endpoint without credentials or
+  fragment, valid unique identifier, non-empty unique supported event selection, bounded timeout
+  and retry settings, and a deployment-owned environment-variable secret reference. Literal
+  secrets, token fields, authorization material and arbitrary execution fields are rejected.
+- Expose bounded reference impact and readiness state. Readiness may report whether the referenced
+  environment variable is present and whether the definition is structurally valid, but must never
+  return the secret value or equivalent recoverable credential. Referenced deletion remains blocked
+  or requires the existing explicit safe recovery path; it must not silently remove durable
+  configuration or delivery history.
+- Provide an explicit, permission-aware Web/API test action for one selected Webhook definition and
+  exact revision identity (revision ID/version/digest). The test sends at most one bounded HTTPS
+  request using the existing signed transport semantics, has no automatic retry or scheduler
+  admission, does not enqueue a durable notification delivery, does not start media work and does
+  not mutate Storage or completed Task/Result history.
+- Return bounded success/failure/recovery evidence for the test, including target identity,
+  response category/status when safe, timeout or transport category, exact revision evidence,
+  durable state, side effects, retry safety and next action. Remote response bodies and exception
+  text must be redacted or reduced to safe categories.
+- Add redacted audit evidence for create/edit/copy/enable/disable/delete/readiness/test attempts and
+  outcomes. API errors, Web messages, logs and audit records must not contain secret values,
+  bearer tokens, authorization headers, cookies or private credentials.
+- Keep the ordinary Configuration journey forms-first. Any Advanced JSON representation remains
+  explicitly labelled and uses the same validation, permission, concurrency, redaction and exact
+  revision rules.
+- Preserve the existing signed Outbox/Worker delivery behavior and make no changes to delivery
+  retry, requeue, dead-letter or delivery-detail operations beyond compatibility required for the
+  managed definition and explicit test path.
 
 Files/areas explicitly frozen unless compatibility glue is strictly required:
 
 - `SLICE.md`, `docs/roadmap.md`, `docs/progress.md`, product requirements, Product Experience and
   Architecture contracts.
-- Completed Slice 28.1 forms/object lifecycle and Task 28.2 System Settings semantics, except shared
-  package-entry links or compatibility reuse.
-- Webhook definition management, explicit tests, delivery operations and delivery recovery.
+- Completed Tasks 28.1–28.3 and their configuration, System Settings, package exchange and exact
+  Active snapshot authorities, except shared object-management integration required here.
+- Durable delivery retry/requeue/dead-letter semantics and RO-6 list/detail/recovery workflow.
 - Storage mutation, OrganizerExecutor, Scanner/Parser/Recognition/Metadata/Naming/Classification/
-  Planner behavior, Worker/Scheduler ownership protocol and mutation authority.
-- Built-in identity, general Secret Store, Docker/Compose production packaging, Provider switching,
-  new Storage providers and any redesign of the closed media-processing pipeline.
+  Planner behavior, Worker/Scheduler ownership protocol and completed media-processing work.
+- Built-in identity, general Secret Store, Docker/Compose release, Provider switching and new
+  Storage providers.
 
 ## Acceptance Criteria
 
-- [ ] Authenticated API users can export a bounded versioned configuration package for the Active
-      revision and an explicit managed revision, including package kind/version, source revision ID,
-      revision status, revision version/sequence/digest, generated timestamp, currentness evidence,
-      redaction evidence and validation/recovery metadata.
-- [ ] Authenticated API users can export bounded persisted result data by supported task/result scope,
-      including required result identity/effect fields and deterministic limits/cursors or explicit
-      truncation evidence; export reads only durable repository state and never media/Storage.
-- [ ] Actual secret values, bearer tokens, authorization headers, cookies, passwords, access keys,
-      `secretEnv` values and equivalent credentials never appear in configuration packages, result
-      packages, import validation errors, audit records, logs or Web/API responses. Secret references
-      remain references only when allowed.
-- [ ] Configuration import accepts a supported package, validates schema/version/digest/content and
-      creates or updates only an explicit Draft/recovery candidate through the managed revision
-      authority. Imported content remains inactive until the normal exact validation and checked
-      activation path succeeds.
-- [ ] Import does not silently overwrite the current Draft. Stale currentness, existing Draft
-      conflicts, unsupported version, invalid schema, digest mismatch, validation errors and secret
-      payloads fail closed with bounded recovery details: durable state, side effects `none`, retry
-      safety, exact current revision/Draft evidence where relevant and next action.
-- [ ] Active and Superseded revisions remain immutable. Export/import never starts Scan, Preview,
-      Organize, Job, Task or scheduled occurrences and never mutates Storage or completed media work.
-- [ ] Web controls expose configuration/result export and configuration import as explicit
-      Advanced/support actions with package schema/version/currentness/recovery state. Web and API
-      parity tests prove both surfaces use the same application behavior for success, permission
-      denial, stale/invalid import, audit and redaction.
-- [ ] Existing Slice 26/27 and Tasks 28.1/28.2 authority, forms-first editing, System Settings,
-      Storage/FileIndex, OrganizerExecutor, Task/Result, Worker, Scheduler, RBAC and safety
-      regressions remain intact.
+- [ ] Authenticated API users with the required configuration permission can list, inspect, create,
+      edit, copy where applicable, enable, disable and delete managed Webhook definitions through
+      typed object operations. Unauthorized users receive the existing bounded permission response.
+- [ ] Web users can reach the same Webhook definition lifecycle from the Configuration/Notifications
+      administration surface, with visible current Draft/Active status, validation state, reference
+      impact, readiness and explicit recovery actions. Viewing or refreshing never sends a test or
+      creates a delivery.
+- [ ] Webhook changes are Draft-only until normal exact checked activation; optimistic concurrency,
+      exact revision ID/version/digest evidence, immutable Active/Superseded behavior and stale
+      recovery remain intact.
+- [ ] Validation fails closed for non-HTTPS or credential-bearing URLs, invalid identifiers or
+      environment names, empty/duplicate/unsupported events, invalid bounds and literal secret or
+      authorization fields. The returned state identifies the durable Draft/revision and next
+      action without revealing secret material.
+- [ ] Readiness exposes only structural validity and deployment-owned secret-reference readiness.
+      No secret value, token, header, cookie or equivalent credential appears in configuration
+      documents, API/Web responses, audit records, logs or exception text.
+- [ ] An explicit Web/API test action is available only with the required permission and exact
+      revision identity, sends no more than one bounded signed request, performs no automatic retry,
+      does not enqueue a durable delivery or start any media/workflow/Storage mutation, and returns
+      bounded redacted outcome and recovery details.
+- [ ] Test success, timeout, transport failure, non-2xx response, missing secret reference, invalid
+      definition and stale revision all have deterministic failure/recovery semantics, including
+      durable state, side effects, retry safety, exact revision evidence and next action.
+- [ ] API and Web use the same application behavior and permissions for lifecycle, validation,
+      readiness, exact-revision test, failure recovery and redaction; focused parity tests prove
+      this.
+- [ ] Existing signed Webhook Outbox/Worker behavior, notification persistence and Slice 26/27 plus
+      Tasks 28.1–28.3 regressions remain intact.
 - [ ] Required focused tests, full supported offline regression, governance, formatting/lint,
       compile, dependency and diff checks pass; unavailable optional/external gates are reported
       explicitly and truthfully.
@@ -132,30 +135,29 @@ Focused and related tests:
 
 ```bash
 python3 -m unittest \
-  tests.test_configuration_package_exchange \
+  tests.test_webhook_management \
+  tests.test_notifications \
   tests.test_configuration_snapshot \
   tests.test_configuration_management \
   tests.test_configuration_objects \
   tests.test_system_settings_management \
+  tests.test_configuration_package_exchange \
   tests.test_api_credentials \
   tests.test_operator_ui \
-  tests.test_final_integration \
-  tests.test_processing_recovery_admission \
-  tests.test_recovery_continuation
+  tests.test_final_integration
 ```
 
-The Developer must add focused package exchange tests covering:
+The Developer must add focused Webhook management tests covering:
 
-- configuration export of Active and explicit Draft/Validated/Superseded revisions;
-- result export for bounded Task/Result scope, deterministic ordering/limits and truncation or
-  cursor evidence;
-- secret-free package payloads, validation errors, audit records, logs and Web/API responses;
-- supported import as Draft/recovery candidate, unsupported version, invalid schema, digest mismatch,
-  literal-secret rejection and stale/existing-Draft conflicts;
-- no Active mutation, no current Draft overwrite without explicit authority, no completed media-work
-  changes, no Task/Job/scheduled occurrence creation and no Storage mutation;
-- API/Web parity for package export/import success, permission denial, stale/invalid failure and
-  recovery details.
+- typed API/Web lifecycle for create, edit, copy, enable, disable, delete, reference impact and
+  permission denial;
+- exact Draft/Active/Superseded revision authority, optimistic stale update/test rejection and
+  immutable Active preservation;
+- HTTPS/event/bounds/secret-reference validation, missing-secret readiness and secret-free
+  documents, errors, audit, logs and Web/API responses;
+- explicit bounded test success, timeout/transport failure/non-2xx failure, no retry, no Outbox
+  delivery, no Task/Job/scheduled occurrence creation and no Storage mutation;
+- API/Web parity for lifecycle, readiness, exact-revision test, failure recovery and redaction.
 
 T4 quality and regression gates:
 
@@ -169,157 +171,165 @@ python3 -m pip check
 git diff --check
 ```
 
-Tests must use fakes, local repositories and temporary paths. Production Storage, TMDB, Webhook
-endpoints, credentials, private paths and real media are not permitted. Any unavailable optional
-external dependency or pre-existing local-environment failure must be reported with exact command,
-result and evidence that it is unrelated to this Task.
+Tests must use fakes, local repositories and a local HTTPS-capable or transport-fake test boundary.
+Production Webhook endpoints, credentials, private paths and real media are not permitted. Any
+unavailable optional external dependency or pre-existing local-environment failure must be reported
+with the exact command, result and evidence that it is unrelated to this Task.
 
 ## Non-goals
 
 - Work outside the Slice 28 Contract or any change to its Required Outcomes, Required Surfaces,
   Safety Invariants, Base SHA or Explicitly Deferred scope.
-- Re-implementing completed Task 28.1 forms-first configuration object CRUD/cards or Task 28.2
-  consumed System Settings, except package-entry links and shared application reuse required by
-  this Task.
-- Webhook definition management, explicit Webhook connection tests, delivery list/detail changes,
-  retry/requeue/dead-letter recovery or notification-channel expansion.
-- Docker/Compose production packaging, production serving, restart/upgrade migration E2E, Provider
-  switching, built-in identity/OIDC, a general Secret Store or new Storage providers.
-- CSV export, bulk historical archive packaging, arbitrary media file export, direct SQLite/raw JSON
-  management as the primary user path, automatic activation of imported packages or automatic replay
-  of uncertain media mutations.
-- Optional copy polish, extra test-only micro-Tasks, broad refactors or any Storage/OrganizerExecutor
-  mutation behavior.
+- Re-implementing the completed forms-first configuration lifecycle, System Settings semantics or
+  package exchange, except shared Webhook object integration required by RO-5.
+- RO-6 delivery list/detail enrichment, retry/requeue/dead-letter recovery, lease repair or
+  notification-channel expansion.
+- Automatic scheduled delivery, bulk Webhook testing, arbitrary HTTP methods, redirect following,
+  secret rotation or a general Secret Store.
+- Docker/Compose production packaging, production serving, Provider switching, built-in identity/
+  OIDC, new Storage providers or changes to OrganizerExecutor/media mutation behavior.
+- Optional copy polish, extra test-only micro-Tasks, broad refactors or changes to closed processing
+  pipelines.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-- `mediaflow/application/package_exchange.py`
-- `tests/test_configuration_package_exchange.py`
-- `TASK.md` (fix-round status and this report)
+- `mediaflow/domain/notification.py` — canonical `WebhookDefinition` validation/normalization
+  (`from_document`/`document`), bounded retry/timeout constants, HTTPS and secret-reference rules.
+- `mediaflow/domain/configuration_management.py` — new `ConfigurationObjectKind.WEBHOOK_DEFINITION`.
+- `mediaflow/infrastructure/runtime_configuration.py` — runtime loader accepts the canonical root
+  `webhooks` section (and still reads legacy `notifications.webhooks`); Webhook parsing delegated to
+  the shared domain validator.
+- `mediaflow/application/configuration_objects.py` — Webhook definitions are managed objects in the
+  Draft document (create/edit/copy/enable/disable/delete), with legacy-nested → canonical-root
+  migration on edit, reference handling and a secret-free readiness/structural-validity projection.
+- `mediaflow/application/notification.py` — shared signed-request helpers reused by the worker;
+  delivery behavior unchanged.
+- `mediaflow/application/webhook_test.py` (new) — exact-revision bounded Webhook test service:
+  one signed request, no retry, no Outbox/Task/Job/schedule/Storage side effects, redacted audit.
+- `mediaflow/interfaces/service_api.py` — `webhooks` guided object kind, webhook test route
+  `POST /api/v1/configuration/revisions/{id}/objects/webhooks/{webhookId}/test`, projection-field
+  stripping and injectable webhook transport.
+- `mediaflow/interfaces/operator_ui.py` — Webhook guided forms/list in the Configuration journey and
+  an Active Webhook definition surface with readiness and explicit test in the Notifications view.
+- `tests/test_webhook_management.py` (new) — focused lifecycle, authority, validation/redaction,
+  explicit-test, parity and audit tests.
+- `tests/test_configuration_management.py` — expected managed object-kind set now includes the new
+  Webhook kind.
 
 ### Implemented
 
-B blocker — result package digest computed before final secret redaction:
-
-- `PackageExchangeService.export_results` no longer computes `packageDigest`
-  from a pre-sweep `results`/`source` payload. The package now runs the final
-  `package_redaction_sweep` first and `packageDigest` is recomputed last from
-  the exact secret-free `results`/`source` fields returned to the caller:
-  `canonical_digest({"results": package["results"], "source": package["source"]})`.
-  Every field covered by the digest is byte-for-byte the field present in the
-  returned package, so verifying the returned package reproduces the digest.
-- Because the sweep can redact the durable Task command embedded in the
-  digest-covered `source`, a changed `source.taskCommand` is now recorded in
-  the package's bounded `redaction` evidence (`field: source.taskCommand`,
-  `kind: redacted_text`) with `entryCount` updated to match, so the returned
-  evidence truthfully accounts for the redaction the caller can observe. The
-  evidence list remains capped at `REDACTION_EVIDENCE_LIMIT`.
-- Added the regression test B requested: a Task whose command is
-  `preview password=hunter2` exports HTTP 200 with `source.taskCommand`
-  returned as `preview password=[redacted]`, no secret text anywhere in the
-  package, `packageDigest` equal to
-  `canonical_digest({"results": package["results"], "source": package["source"]})`
-  over the returned package, and `redaction` evidence containing the
-  `source.taskCommand` entry.
+- Webhook definitions are first-class typed objects in the canonical managed configuration graph
+  (root `webhooks` section). Legacy `notifications.webhooks` documents remain readable and migrate
+  to the canonical spelling on the first typed edit.
+- Validation is shared between the runtime loader and the managed object graph: HTTPS URL without
+  credentials/fragment, bounded ids and environment-variable names, non-empty unique supported
+  events, bounded timeout/retry settings, and rejection of literal secret, authorization or
+  arbitrary execution fields.
+- Web/API surfaces expose the same Draft-only lifecycle (create/edit/copy/enable/disable/delete),
+  optimistic exact-version concurrency, immutable Active/Superseded behavior, per-object reference
+  impact, and a readiness projection reporting only env-var SET/UNSET state plus structural
+  validity — never secret values.
+- A permission-aware exact-revision test action (`expectedVersion` + `expectedDigest`) sends one
+  bounded signed request using the existing signature/transport semantics. It never retries, never
+  enqueues a durable delivery, never creates Tasks/Jobs/scheduled occurrences and never mutates
+  Storage. Deterministic failure/recovery evidence includes durable state, side effects `none`,
+  retry safety, exact revision identity and next action; remote bodies and exception text are
+  reduced to safe categories.
+- Redacted audit coverage: CRUD flows record Draft-edit object-change audits through the managed
+  revision authority; test outcomes append a redacted security audit record; every request is also
+  audited by the API boundary.
+- Notifications view shows Active Webhook definitions bound to the exact Active revision with
+  readiness and an explicit test action; the Configuration view provides the typed forms lifecycle.
 
 ### Tests and Results
 
-- Reproduction of the reviewed blocker against `697be37` before the fix:
-  exporting a Task whose command is `preview password=hunter2` returned HTTP
-  200 with `source.taskCommand` redacted but a stale `packageDigest` that did
-  not equal
-  `canonical_digest({"results": package["results"], "source": package["source"]})`.
-  After the fix the digest matches and the redaction evidence records the
-  command redaction.
-- `.venv/bin/python -m unittest tests.test_configuration_package_exchange` —
-  PASS, 13 tests (12 prior + the new
-  `test_result_export_digest_covers_secret_redacted_task_command`).
-- Required focused/related modules
-  (`tests.test_configuration_package_exchange`,
-  `tests.test_configuration_snapshot`, `tests.test_configuration_management`,
-  `tests.test_configuration_objects`, `tests.test_system_settings_management`,
-  `tests.test_api_credentials`, `tests.test_operator_ui`,
-  `tests.test_final_integration`,
-  `tests.test_processing_recovery_admission`,
-  `tests.test_recovery_continuation`) — 249 tests: 246 passed, 3 failed as
-  `PRE-EXISTING / UNRELATED` (the same local-`.mediaflow`-store credential/CLI
-  failures reported for the first round; each passes in a clean worktree at
-  the reviewed checkpoint without that store).
-- `.venv/bin/python -m unittest discover -s tests` — 1330 tests: 7 failures
-  and 7 skips. All 7 failures are pre-existing/unrelated to this fix: six
-  credential/CLI/storage tests pass in a clean worktree at the reviewed
-  checkpoint without the local `.mediaflow` store, and one Storage-browser Web
-  asset assertion fails identically at the reviewed checkpoint. No failure
-  touches package exchange or is introduced by this correction.
-- `python3 scripts/check_governance.py` — PASS.
-- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/ruff check` and `.venv/bin/ruff format --check` on the two
-  changed source files — PASS.
-- `.venv/bin/ruff check .` — FAIL (pre-existing on Task Base, unchanged):
-  `tests/test_system_settings_management.py:347` is already flagged and is not
-  touched by this Task.
-- `.venv/bin/ruff format --check .` — FAIL (pre-existing on Task Base,
-  unchanged): the same `tests/test_system_settings_management.py` file would
-  be reformatted.
-- `.venv/bin/python -m pip check` — PASS (system `python3` has no `pip`;
-  `pip check` was run from the project virtual environment).
-- `git diff --check` — PASS after this report is committed.
+```text
+python3 -m unittest tests.test_webhook_management            -> PASS (7 tests)
+python3 -m unittest tests.test_notifications                 -> PASS
+python3 -m unittest tests.test_configuration_snapshot        -> PASS
+python3 -m unittest tests.test_configuration_management      -> PASS
+python3 -m unittest tests.test_configuration_objects         -> PASS
+python3 -m unittest tests.test_system_settings_management    -> PASS
+python3 -m unittest tests.test_configuration_package_exchange -> PASS
+python3 -m unittest tests.test_api_credentials               -> PASS (clean workspace)
+python3 -m unittest tests.test_operator_ui                   -> PASS
+python3 -m unittest tests.test_final_integration             -> PASS (clean workspace)
+python3 -m unittest <all 10 focused modules above>           -> PASS (228 tests)
+python3 -m unittest discover -s tests                        -> 1337 run; 1 FAIL
+  PRE-EXISTING / UNRELATED (tests.test_storage_browser); 7 SKIP (external profiles absent)
+python3 scripts/check_governance.py                          -> PASS
+ruff format --check .                                        -> FAIL / PRE-EXISTING
+  (only tests/test_system_settings_management.py, already unformatted at Task Base)
+ruff check .                                                 -> FAIL / PRE-EXISTING
+  (only E501 in tests/test_system_settings_management.py, present at Task Base)
+python3 -m compileall -q mediaflow tests scripts             -> PASS
+python3 -m pip check                                         -> PASS
+git diff --check                                             -> PASS
+node --check on the served operator app.js                   -> PASS
+```
+
+Note on the full-suite gate: the full regression and CLI-based focused tests were executed from a
+workspace without the pre-existing ignored `.mediaflow/mediaflow.sqlite3` runtime artifact. That
+stale DB (left by earlier sessions in this workspace) makes CLI commands resolve an old managed
+Active configuration and caused environment-only failures in `test_api_credentials`,
+`test_final_integration`, `test_resource_library_pipeline` and `test_runtime_storage_configuration`;
+from a clean workspace state (equivalent to a fresh checkout) those modules pass. The artifact was
+preserved and restored afterwards and is not part of this checkpoint.
 
 ### Decisions
 
-- The digest is the last field computed in result export, from the exact
-  post-sweep `results`/`source` the caller receives; no digest-covered field is
-  mutated afterwards.
-- The final redaction sweep may alter digest-covered `source` fields, so when
-  it redacts the Task command that change is reflected in the bounded redaction
-  evidence rather than remaining invisible to the operator.
-- Result export still reads only the durable Task/Result repository, performs
-  no Storage/workflow mutation, and the redaction evidence list stays capped at
-  `REDACTION_EVIDENCE_LIMIT`.
+- Managed Webhook definitions are stored in a canonical root `webhooks` section of the Draft
+  document, mirroring the existing `automationTaskDefinitions` pattern. The runtime loader accepts
+  the canonical root and the legacy `notifications.webhooks` spelling, but rejects a document that
+  defines both, keeping the Active definition unambiguous.
+- Webhook validation/normalization lives in the domain (`WebhookDefinition.from_document`) so the
+  JSON runtime loader, typed object edits and the readiness projection cannot disagree.
+- Bounds were tightened for timeout/attempts/retry to fail closed as required; the shipped example
+  and all existing fixtures stay inside the new bounds.
+- The explicit test uses the same signature/transport scheme as the delivery worker but sends its
+  own bounded `webhook.test` payload and never touches the durable delivery repository, so a test
+  cannot be mistaken for a real delivery by a receiver.
+- Exact-revision enforcement (version + digest) happens in the application service before any
+  request is sent; stale or corrupt identities fail closed with bounded recovery details.
+- Webhook deletion is allowed (RO-5 requires it). Delivery history is never cascade-deleted and the
+  UI states that unresolved deliveries then fail closed as configuration dead-letters.
 
 ### Remaining In-Slice Work
 
-- Managed Webhook definition management/explicit test (RO-5) and independent
-  delivery operations/recovery (RO-6) remain Slice 28 work outside this Task.
+- RO-6 delivery list/detail enrichment and retry/requeue/dead-letter recovery operate on durable
+  delivery state and remain a separate unit outside this Task's scope.
 
 ### Risks / Deviations
 
-- Full regression and repo-wide lint are not clean in this working directory
-  for the same pre-existing reasons reported in the first round: the ignored
-  local `.mediaflow` store intercepts six raw-JSON credential/CLI/storage
-  tests (each passes in a clean worktree without it), and one Storage-browser
-  Web asset assertion fails identically at the reviewed checkpoint. Nothing
-  was hidden, skipped, reclassified or fixed out of scope.
-- `ruff`/`pip` are unavailable to the bare system `python3`; the available
-  `.venv` binaries were used and reported truthfully.
-- Test execution emits existing SQLite `ResourceWarning` messages; no
-  production data or credentials were used.
+- `tests/test_storage_browser.test_setup_picker_and_execution_environment_guidance_are_present`
+  fails at the Task Base (verified on a clean `ec8e57b` checkout) and is unrelated to this Task; it
+  asserts an operator-asset phrase that is not present in the shipped UI.
+- `ruff format --check` and `ruff check` each report one pre-existing issue in
+  `tests/test_system_settings_management.py` (line 216 formatting / line 347 E501) present at the
+  Task Base; that file was intentionally left untouched.
+- A stale ignored `.mediaflow` runtime database in this workspace causes environment-only CLI test
+  failures; the full suite passes from a clean workspace state (evidence above).
+- No optional external gates are available (real OpenList/SMB/S3/endurance acceptance); the 7
+  affected tests skip with their standard "BLOCKED: ... environment absent" reasons.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 0e750a46584696563d86861828c2cc0a6908cbe4
+Head SHA: [pending commit]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 697be37e22934206993866cd4eba6f53995a5a69
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: PENDING
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
 
-- Result package integrity is not preserved after secret redaction. `PackageExchangeService.export_results`
-  computes `packageDigest` from the unredacted `results`/`source` payload and then applies
-  `package_redaction_sweep` to the returned package (`mediaflow/application/package_exchange.py:263-299`).
-  Reproduction against the reviewed checkpoint: exporting a Task whose command is
-  `preview password=hunter2` returns HTTP 200 with `source.taskCommand` changed to
-  `preview password=[redacted]`, but `packageDigest` does not equal
-  `canonical_digest({"results": package["results"], "source": package["source"]})`.
-  Recompute the digest only after the final secret-free projection, ensure every field included in
-  the digest is the exact field returned to the caller, and add a regression test covering a
-  secret-shaped Task command plus redaction evidence.
+If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
+finds a genuinely independent business goal. This result does not close the Slice or update
+Roadmap.
