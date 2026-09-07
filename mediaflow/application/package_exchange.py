@@ -14,6 +14,7 @@ from mediaflow.domain.package_exchange import (
     CONFIGURATION_PACKAGE_KIND,
     CONFIGURATION_PACKAGE_SCHEMA_VERSION,
     MAX_RESULT_EXPORT_LIMIT,
+    REDACTION_EVIDENCE_LIMIT,
     RESULT_PACKAGE_KIND,
     RESULT_PACKAGE_SCHEMA_VERSION,
     PackageExchangeError,
@@ -294,9 +295,24 @@ class PackageExchangeService:
                 else []
             ),
         }
-        payload = {"results": rows, "source": package["source"]}
-        package["packageDigest"] = canonical_digest(payload)
+        # Run the final secret-free projection before computing the digest so
+        # packageDigest covers exactly the results/source returned to the
+        # caller. A secret-shaped Task command is redacted by this sweep, so
+        # record that change in the bounded redaction evidence as well.
         package = package_redaction_sweep(package)
+        if package["source"]["taskCommand"] != task.command:
+            entries = [
+                *package["redaction"]["entries"],
+                {"field": "source.taskCommand", "kind": "redacted_text"},
+            ][:REDACTION_EVIDENCE_LIMIT]
+            package["redaction"] = {
+                "scope": package["redaction"]["scope"],
+                "entryCount": len(entries),
+                "entries": entries,
+            }
+        package["packageDigest"] = canonical_digest(
+            {"results": package["results"], "source": package["source"]}
+        )
         self._audit(
             actor=actor,
             action="result_package_export",
