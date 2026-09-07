@@ -30,6 +30,7 @@ class ConfigurationObjectKind(StrEnum):
     # enum value so older consumers iterating this enum remain compatible.
     AUTOMATION_TASK_DEFINITION = "schedule"
     SYSTEM_SETTINGS = "system_settings"
+    WEBHOOK_DEFINITION = "webhook_definition"
 
 
 CONFIGURATION_REFERENCE_EVIDENCE_LIMIT = 32

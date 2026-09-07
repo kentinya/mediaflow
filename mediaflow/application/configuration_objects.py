@@ -104,6 +104,7 @@ from mediaflow.domain.naming import (
     NamingPolicy,
     NamingResult,
 )
+from mediaflow.domain.notification import WebhookDefinition
 from mediaflow.domain.organizer import (
     ConflictStrategy,
     ConflictType,
@@ -273,6 +274,7 @@ class ConfigurationObjectService:
         ConfigurationObjectKind.CLASSIFICATION_POLICY: "classificationPolicies",
         ConfigurationObjectKind.ORGANIZE_POLICY: "organizePolicies",
         ConfigurationObjectKind.SCHEDULE: "automationTaskDefinitions",
+        ConfigurationObjectKind.WEBHOOK_DEFINITION: "webhooks",
     }
     _MAX_OBJECT_BYTES = 64 * 1024
     _SETUP_CHECK_TIMEOUT_SECONDS = 10.0
@@ -464,6 +466,17 @@ class ConfigurationObjectService:
         "limit",
         "schedule",
     }
+    _WEBHOOK_FIELDS = {
+        "id",
+        "url",
+        "secretEnv",
+        "events",
+        "enabled",
+        "timeoutSeconds",
+        "maxAttempts",
+        "baseRetrySeconds",
+        "maxRetrySeconds",
+    }
 
     def __init__(
         self,
@@ -569,6 +582,7 @@ class ConfigurationObjectService:
                     else []
                 ),
                 "automationTaskDefinitions": self._automation_definition_objects(document),
+                "webhooks": self._webhooks_projection(document),
             },
             # Keep every versioned projection on the same immutable revision read.
             # Calling the public helpers here would re-read the repository and could
@@ -714,11 +728,16 @@ class ConfigurationObjectService:
         for kind, section in cls._SECTIONS.items():
             # Historical lightweight repository doubles may omit newly editable
             # sections; canonical managed runtime documents still require them.
-            if section not in document and kind is not ConfigurationObjectKind.SCHEDULE:
+            if section not in document and kind not in {
+                ConfigurationObjectKind.SCHEDULE,
+                ConfigurationObjectKind.WEBHOOK_DEFINITION,
+            }:
                 continue
             values = (
                 cls._automation_definition_objects(document)
                 if kind is ConfigurationObjectKind.SCHEDULE
+                else cls._webhook_definition_objects(document)
+                if kind is ConfigurationObjectKind.WEBHOOK_DEFINITION
                 else cls._canonical_objects(document, section)
             )
             for value in values:
@@ -763,6 +782,8 @@ class ConfigurationObjectService:
         current_values = (
             self._automation_definition_objects(revision.document)
             if kind is ConfigurationObjectKind.SCHEDULE
+            else self._webhook_definition_objects(revision.document)
+            if kind is ConfigurationObjectKind.WEBHOOK_DEFINITION
             else self._canonical_objects(revision.document, section)
         )
         current_by_id = {str(item.get("id", "")): item for item in current_values}
@@ -821,6 +842,13 @@ class ConfigurationObjectService:
             automation = next_document.get("automation")
             if isinstance(automation, dict):
                 automation.pop("taskDefinitions", None)
+        if kind is ConfigurationObjectKind.WEBHOOK_DEFINITION:
+            # Canonical managed Webhook definitions always live at the root
+            # ``webhooks`` section.  Editing moves any legacy nested spelling
+            # (``notifications.webhooks``) into the canonical location.
+            notifications = next_document.get("notifications")
+            if isinstance(notifications, dict):
+                notifications.pop("webhooks", None)
         next_document[section] = next_values
         return self._managed.edit_draft(
             revision_id,
@@ -855,6 +883,8 @@ class ConfigurationObjectService:
         values = (
             self._automation_definition_objects(revision.document)
             if kind is ConfigurationObjectKind.SCHEDULE
+            else self._webhook_definition_objects(revision.document)
+            if kind is ConfigurationObjectKind.WEBHOOK_DEFINITION
             else self._canonical_objects(revision.document, section)
         )
         source = next((item for item in values if item.get("id") == object_id), None)
@@ -917,6 +947,8 @@ class ConfigurationObjectService:
         values = (
             self._automation_definition_objects(revision.document)
             if kind is ConfigurationObjectKind.SCHEDULE
+            else self._webhook_definition_objects(revision.document)
+            if kind is ConfigurationObjectKind.WEBHOOK_DEFINITION
             else self._canonical_objects(revision.document, section)
         )
         source = next((item for item in values if item.get("id") == object_id), None)
@@ -5386,6 +5418,54 @@ class ConfigurationObjectService:
         return []
 
     @classmethod
+    def _webhook_definition_objects(cls, document: Mapping[str, object]) -> list[dict[str, object]]:
+        """Read the canonical Webhook section, accepting the legacy nested spelling."""
+
+        if "webhooks" in document:
+            return cls._objects(document, "webhooks")
+        notifications = document.get("notifications")
+        if isinstance(notifications, Mapping) and "webhooks" in notifications:
+            nested = {"webhooks": notifications["webhooks"]}
+            return cls._objects(nested, "webhooks")
+        return []
+
+    @classmethod
+    def _webhooks_projection(cls, document: Mapping[str, object]) -> list[dict[str, object]]:
+        """Project managed Webhook definitions with deployment readiness.
+
+        The projection is deliberately separate from the canonical document:
+        readiness reflects the current process environment without becoming
+        persisted configuration.  Only the deployment-owned environment
+        variable name and a SET/UNSET state are returned, never a secret value.
+        """
+
+        projected = []
+        for item in cls._webhook_definition_objects(document):
+            candidate = copy.deepcopy(dict(item))
+            structural_valid = True
+            validation_error: str | None = None
+            try:
+                WebhookDefinition.from_document(candidate)
+            except ValueError as error:
+                structural_valid = False
+                validation_error = cls._bounded_utf8(str(error), 384)
+            env_name = candidate.get("secretEnv")
+            readiness = []
+            if isinstance(env_name, str) and env_name:
+                readiness.append(
+                    {
+                        "field": "secretEnv",
+                        "env": env_name,
+                        "state": "SET" if os.environ.get(env_name) else "UNSET",
+                    }
+                )
+            candidate["secretReadiness"] = readiness
+            candidate["structuralValid"] = structural_valid
+            candidate["validationError"] = validation_error
+            projected.append(candidate)
+        return projected
+
+    @classmethod
     def _normalize(
         cls, kind: ConfigurationObjectKind, value: Mapping[str, object]
     ) -> dict[str, object]:
@@ -5402,6 +5482,7 @@ class ConfigurationObjectService:
             ConfigurationObjectKind.CLASSIFICATION_POLICY: cls._CLASSIFICATION_POLICY_FIELDS,
             ConfigurationObjectKind.ORGANIZE_POLICY: cls._ORGANIZE_POLICY_FIELDS,
             ConfigurationObjectKind.SCHEDULE: cls._AUTOMATION_TASK_DEFINITION_FIELDS,
+            ConfigurationObjectKind.WEBHOOK_DEFINITION: cls._WEBHOOK_FIELDS,
         }[kind]
         if kind is ConfigurationObjectKind.STORAGE:
             allowed = allowed | cls._STORAGE_LEGACY_OPTION_FIELDS
@@ -5415,6 +5496,15 @@ class ConfigurationObjectService:
             raise ValueError(f"{section} id contains an invalid character")
         if kind is ConfigurationObjectKind.SCHEDULE:
             definition = AutomationTaskDefinition.from_document(value)
+            return cls._bounded_object(section, definition.document())
+        if kind is ConfigurationObjectKind.WEBHOOK_DEFINITION:
+            try:
+                definition = WebhookDefinition.from_document(value)
+            except ValueError as error:
+                # The domain validator messages are bounded and never contain
+                # submitted secret values; keep that property at the API edge.
+                message = cls._bounded_utf8(str(error), 384)
+                raise ValueError(f"Webhook {message}") from error
             return cls._bounded_object(section, definition.document())
         if kind is ConfigurationObjectKind.ORGANIZE_POLICY:
             operation = value.get("operation")

@@ -59,6 +59,7 @@ from mediaflow.application.unattended_execution import (
     UnattendedExecutionGrantError,
     UnattendedExecutionGrantService,
 )
+from mediaflow.application.webhook_test import WebhookTestService
 from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationQueueFull,
@@ -103,6 +104,7 @@ from mediaflow.domain.system_settings import (
     SystemSettingsEdit,
 )
 from mediaflow.domain.task_persistence import ConfirmationStatus
+from mediaflow.infrastructure.webhook import UrllibWebhookTransport
 from mediaflow.interfaces.operator_ui import ASSETS as OPERATOR_UI_ASSETS
 from mediaflow.interfaces.pagination import (
     CursorDirection,
@@ -214,6 +216,7 @@ class MediaFlowApi:
         automation_preview_service: AutomationTaskDefinitionPreviewService | None = None,
         management_only: bool = False,
         worker_service: ProcessingWorkerService | None = None,
+        webhook_transport: object | None = None,
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -283,6 +286,15 @@ class MediaFlowApi:
         )
         self._package_exchange = (
             PackageExchangeService(configuration_service, self._repository)
+            if configuration_service is not None
+            else None
+        )
+        self._webhook_tests = (
+            WebhookTestService(
+                configuration_service,
+                webhook_transport if webhook_transport is not None else UrllibWebhookTransport(),
+                audit_repository=self._repository,
+            )
             if configuration_service is not None
             else None
         )
@@ -2628,6 +2640,19 @@ class MediaFlowApi:
                     for key, item in value.items()
                     if key not in {"editability", "secretReadiness"}
                 }
+            elif kind is ConfigurationObjectKind.WEBHOOK_DEFINITION:
+                # Readiness and structural-validity are projection metadata that
+                # reflect the current process environment; they are never input.
+                value = {
+                    key: item
+                    for key, item in value.items()
+                    if key
+                    not in {
+                        "secretReadiness",
+                        "structuralValid",
+                        "validationError",
+                    }
+                }
             revision = self._configuration_objects.mutate(
                 parts[4],
                 kind,
@@ -2654,6 +2679,10 @@ class MediaFlowApi:
                         value["id"],
                         "the pinned Automation Task Definition was created or replaced",
                     )
+            elif kind is ConfigurationObjectKind.WEBHOOK_DEFINITION:
+                values = revision.document.get("webhooks", [])
+                if values:
+                    response["webhook"] = values[-1]
             return self._response(start_response, 200, response)
         if (
             len(parts) == 9
@@ -2761,6 +2790,17 @@ class MediaFlowApi:
                     for key, item in value.items()
                     if key not in {"editability", "secretReadiness"}
                 }
+            elif kind is ConfigurationObjectKind.WEBHOOK_DEFINITION:
+                value = {
+                    key: item
+                    for key, item in value.items()
+                    if key
+                    not in {
+                        "secretReadiness",
+                        "structuralValid",
+                        "validationError",
+                    }
+                }
             revision = self._configuration_objects.mutate(
                 parts[4],
                 kind,
@@ -2790,6 +2830,15 @@ class MediaFlowApi:
                 self._invalidate_automation_previews(
                     parts[7],
                     "the pinned Automation Task Definition was edited",
+                )
+            elif kind is ConfigurationObjectKind.WEBHOOK_DEFINITION:
+                response["webhook"] = next(
+                    (
+                        item
+                        for item in revision.document.get("webhooks", [])
+                        if item.get("id") == parts[7]
+                    ),
+                    None,
                 )
             return self._response(start_response, 200, response)
         if (
@@ -2824,6 +2873,41 @@ class MediaFlowApi:
                 delete=True,
             )
             return self._response(start_response, 200, revision.summary())
+        if (
+            len(parts) == 9
+            and parts[:3] == ["api", "v1", "configuration"]
+            and parts[3] == "revisions"
+            and parts[5:7] == ["objects", "webhooks"]
+            and parts[8] == "test"
+            and method == "POST"
+        ):
+            # Explicit bounded Webhook test against the exact managed revision.
+            # It sends one signed request, never enqueues a delivery, never
+            # retries and never mutates configuration, Storage or media work.
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._webhook_tests is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed Webhook test service is unavailable",
+                )
+            document = self._document(environ)
+            if set(document) != {"expectedVersion", "expectedDigest"}:
+                raise ValueError("Webhook test requires expectedVersion and expectedDigest")
+            expected = document["expectedVersion"]
+            if isinstance(expected, bool) or not isinstance(expected, int):
+                raise ValueError("Webhook test expectedVersion must be an integer")
+            if not isinstance(document["expectedDigest"], str):
+                raise ValueError("Webhook test expectedDigest is required")
+            result = self._webhook_tests.test(
+                parts[4],
+                parts[7],
+                expected_version=expected,
+                expected_digest=document["expectedDigest"],
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 200, result)
         if (
             len(parts) == 6
             and parts[:3] == ["api", "v1", "configuration"]
@@ -6701,6 +6785,7 @@ class MediaFlowApi:
             "classificationPolicies": ConfigurationObjectKind.CLASSIFICATION_POLICY,
             "organizePolicies": ConfigurationObjectKind.ORGANIZE_POLICY,
             "automationTaskDefinitions": ConfigurationObjectKind.SCHEDULE,
+            "webhooks": ConfigurationObjectKind.WEBHOOK_DEFINITION,
         }
         try:
             return mapping[value]

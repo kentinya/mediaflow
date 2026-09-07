@@ -26,6 +26,7 @@ class ConfigurationManagementTests(unittest.TestCase):
             "organize_policy",
             "schedule",
             "system_settings",
+            "webhook_definition",
         }
         self.assertEqual({item.value for item in ConfigurationObjectKind}, expected)
 

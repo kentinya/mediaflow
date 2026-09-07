@@ -682,7 +682,14 @@ APP_JS = b"""(() => {
         ['intervalSeconds', 'Interval seconds', 'number'],
         ['cron', 'Cron expression (optional)'],
         ['timezone', 'Timezone (e.g. Asia/Shanghai)'],
-        ['itemLimit', 'Item limit', 'number']]
+        ['itemLimit', 'Item limit', 'number']],
+      webhooks: [['id', 'ID'], ['url', 'HTTPS endpoint URL'],
+        ['secretEnv', 'Secret environment variable name'],
+        ['events', 'Events (comma separated; job.completed, job.failed, job.cancelled, schedule.emitted)'],
+        ['timeoutSeconds', 'Timeout (seconds)', 'number'],
+        ['maxAttempts', 'Max attempts', 'number'],
+        ['baseRetrySeconds', 'Base retry (seconds)', 'number'],
+        ['maxRetrySeconds', 'Max retry (seconds)', 'number']]
     }[kind];
     const booleans = {
       resourceLibraries: [['enabled', 'Enabled']],
@@ -694,7 +701,8 @@ APP_JS = b"""(() => {
       namingPolicies: [['enabled', 'Enabled']],
       classificationPolicies: [['enabled', 'Enabled']],
       organizePolicies: [['overwrite', 'Allow overwrite']],
-      automationTaskDefinitions: [['enabled', 'Enabled']]
+      automationTaskDefinitions: [['enabled', 'Enabled']],
+      webhooks: [['enabled', 'Enabled']]
     }[kind] || [];
     const result = {};
     const jsonFields = {
@@ -706,7 +714,7 @@ APP_JS = b"""(() => {
       const type = inputType || (jsonFields.has(key) ? 'textarea' : 'text');
       const raw = item[key];
       const initial = jsonFields.has(key) ? (raw ? JSON.stringify(raw, null, 2) : '') :
-        (key === 'extensions' && Array.isArray(raw) ? raw.join(',') : raw);
+        ((key === 'extensions' || key === 'events') && Array.isArray(raw) ? raw.join(',') : raw);
       const control = guidedInput(label, initial, type);
       result[key] = control.input;
       control.wrapper.dataset.guidedField = key;
@@ -730,7 +738,8 @@ APP_JS = b"""(() => {
         'timeout', 'retryCount', 'maxCandidates', 'maxSearchPages', 'maxProviderRequests', 'maxCandidateEnrichments']),
       namingPolicies: new Set(['maxComponentLength']),
       classificationPolicies: new Set(['priority']),
-      automationTaskDefinitions: new Set(['intervalSeconds', 'itemLimit'])
+      automationTaskDefinitions: new Set(['intervalSeconds', 'itemLimit']),
+      webhooks: new Set(['timeoutSeconds', 'maxAttempts', 'baseRetrySeconds', 'maxRetrySeconds'])
     }[kind] || new Set();
     const jsonFields = {
       recognitionRules: new Set(['condition']),
@@ -741,7 +750,7 @@ APP_JS = b"""(() => {
       if (key.startsWith('_')) return;
       if (input.type === 'checkbox') {
         value[key] = input.checked;
-      } else if (key === 'extensions') {
+      } else if (key === 'extensions' || key === 'events') {
         value[key] = input.value.split(',').map(item => item.trim()).filter(Boolean);
       } else if (jsonFields.has(key)) {
         try { value[key] = input.value.trim() ? JSON.parse(input.value) : {}; }
@@ -835,13 +844,14 @@ APP_JS = b"""(() => {
       recognitionRules: 'RecognitionRule', recognitionTypePolicies: 'RecognitionTypePolicy',
       metadataPolicies: 'MetadataPolicy', namingPolicies: 'NamingPolicy',
       classificationPolicies: 'ClassificationPolicy', organizePolicies: 'OrganizePolicy',
-      automationTaskDefinitions: 'AutomationTaskDefinition'}[kind] || kind;
+      automationTaskDefinitions: 'AutomationTaskDefinition',
+      webhooks: 'Webhook'}[kind] || kind;
     const referenceKind = {storages: 'storage', resourceLibraries: 'resource_library',
       mediaLibraries: 'media_library', recognitionTypes: 'recognition_type',
       recognitionRules: 'recognition_rule', recognitionTypePolicies: 'recognition_type_policy',
       metadataPolicies: 'metadata_policy', namingPolicies: 'naming_policy',
       classificationPolicies: 'classification_policy', organizePolicies: 'organize_policy',
-      automationTaskDefinitions: 'schedule'}[kind] || kind;
+      automationTaskDefinitions: 'schedule', webhooks: 'webhook_definition'}[kind] || kind;
     detailContent.append(text('h3', `${label} (${values.length})`));
     values.forEach(item => {
       const row = text('div', '', 'choice');
@@ -881,6 +891,23 @@ APP_JS = b"""(() => {
         row.append(text('span', `${item.resourceLibraryId || '-'} / ${item.sourceScope || '<root>'}; ` +
           `${item.mode || item.runMode || '-'}; ${timing}; limit ${item.itemLimit || item.limit || '-'}; ` +
           `${item.enabled === true ? 'enabled' : 'disabled'}`));
+      }
+      if (kind === 'webhooks') {
+        const readiness = Array.isArray(item.secretReadiness) ?
+          item.secretReadiness.map(entry => `${entry.env || entry.field || '-'}: ${entry.state || '-'}`).join(', ') :
+          '-';
+        const validity = item.structuralValid === false ?
+          `invalid: ${item.validationError || 'unknown error'}` : 'structurally valid';
+        row.append(text('span', `${item.url || '-'}; events: ${(item.events || []).join(', ') || '-'}; ` +
+          `timeout ${item.timeoutSeconds ?? '-'}s; maxAttempts ${item.maxAttempts ?? '-'}; ` +
+          `${item.enabled === true ? 'enabled' : 'disabled'}`));
+        row.append(text('span', `Secret readiness: ${readiness}`, item.structuralValid === false ? 'error' :
+          (readiness.includes(': UNSET') ? 'warning' : '')));
+        row.append(text('span', validity, item.structuralValid === false ? 'error' : ''));
+        row.append(text('span',
+          'Reference impact: none in the managed graph. Deleting a Webhook keeps prior ' +
+          'durable delivery history; unresolved deliveries for it fail closed as ' +
+          'configuration dead-letters.', 'warning'));
       }
       const referenceEvidence = guided.references && guided.references[`${referenceKind}:${item.id}`] ||
         {total: 0, items: [], truncated: false};
@@ -1009,6 +1036,37 @@ APP_JS = b"""(() => {
           row.append(confirmation);
         }));
       }
+      if (kind === 'webhooks') {
+        if (canManageConfiguration) {
+          row.append(actionButton('Test signed endpoint', async () => {
+            const resultBox = text('span', '', 'choices');
+            resultBox.append(text('span', 'Testing sends one signed HTTPS request to the exact ' +
+              `revision ${revision.revisionId} / v${revision.version} / ${revision.digest}. ` +
+              'It never enqueues a delivery, never retries and never mutates configuration or media.', 'warning'));
+            resultBox.append(text('span', 'Sending...'));
+            row.append(resultBox);
+            try {
+              const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(revision.revisionId)}/objects/webhooks/${encodeURIComponent(item.id)}/test`,
+                {method: 'POST', body: JSON.stringify({expectedVersion: revision.version,
+                  expectedDigest: revision.digest})});
+              clear(resultBox);
+              resultBox.append(text('span', `Outcome: ${result.outcome || '-'}; category: ${result.category || '-'}; ` +
+                `HTTP: ${result.responseStatus === null || result.responseStatus === undefined ? 'none' : result.responseStatus}; ` +
+                `message: ${result.message || '-'}`,
+                result.outcome === 'success' ? '' : 'error'));
+              resultBox.append(text('span', `Side effects: ${result.sideEffects || 'none'}; ` +
+                `retry safe: ${result.retrySafe === true ? 'yes' : 'no'}`));
+              resultBox.append(text('span', `Next action: ${result.nextAction || '-'}`));
+            } catch (error) {
+              clear(resultBox);
+              resultBox.append(text('span', `Webhook test could not run: ${errorText(error)}`, 'error'));
+            }
+          }));
+        } else {
+          row.append(text('span',
+            'Testing requires the configuration permission.', 'warning'));
+        }
+      }
       detailContent.append(row);
     });
     if (configurationRevisionEditable(revision)) {
@@ -1016,7 +1074,7 @@ APP_JS = b"""(() => {
       const organizePolicy = kind === 'organizePolicies';
       const guidedJson = kind === 'storages' || kind.startsWith('recognition') ||
         kind === 'metadataPolicies' || kind === 'namingPolicies' || classificationPolicy || organizePolicy ||
-        kind === 'automationTaskDefinitions';
+        kind === 'automationTaskDefinitions' || kind === 'webhooks';
       const objectLabel = classificationPolicy ? 'ClassificationPolicy' : organizePolicy ? 'OrganizePolicy' : singular;
       detailContent.append(actionButton(`${guidedJson ? 'Add' : 'Add Local'} ${objectLabel}`,
         () => renderGuidedObjectForm(revision, kind, null, false, guided)));
@@ -1147,16 +1205,21 @@ APP_JS = b"""(() => {
   function renderGuidedObjectForm(revision, kind, item, copyMode = false, guided = null) {
     clear(detailContent);
     const automationTaskDefinition = kind === 'automationTaskDefinitions';
+    const webhookDefinition = kind === 'webhooks';
     const singular = {storages: 'Storage', resourceLibraries: 'ResourceLibrary',
       mediaLibraries: 'MediaLibrary', recognitionTypes: 'RecognitionType',
       recognitionRules: 'RecognitionRule', recognitionTypePolicies: 'RecognitionTypePolicy',
       metadataPolicies: 'MetadataPolicy', namingPolicies: 'NamingPolicy',
       classificationPolicies: 'ClassificationPolicy', organizePolicies: 'OrganizePolicy',
-      automationTaskDefinitions: 'AutomationTaskDefinition'}[kind] || kind;
-    const title = `${item && !copyMode ? 'Edit' : 'Add'} ${automationTaskDefinition ? 'Automation Task Definition' : singular}`;
+      automationTaskDefinitions: 'AutomationTaskDefinition',
+      webhooks: 'Webhook'}[kind] || kind;
+    const title = `${item && !copyMode ? 'Edit' : 'Add'} ` +
+      (automationTaskDefinition ? 'Automation Task Definition' :
+        webhookDefinition ? 'Webhook Definition' : singular);
     const warnings = {
       storages: 'Choose exactly one supported Storage kind. Credentials are environment-variable references; only SET/UNSET readiness is shown.',
       automationTaskDefinitions: 'Edit one bounded Automation Task Definition. It references one enabled ResourceLibrary and owns only source scope, schedule, run mode and item limit; policy and destination choices stay in configuration.',
+      webhooks: 'Edit one bounded Webhook definition. Only HTTPS endpoints without credentials are accepted; events must be supported and unique; the secret is a deployment-owned environment-variable reference and is never returned.',
       organizePolicies: 'Edit one bounded OrganizePolicy. Overwrite and source cleanup grant destructive authority and are never implicit.',
       classificationPolicies: 'Edit one bounded ClassificationPolicy. Rules use the configured conditions and safe relative result paths.',
       namingPolicies: 'Edit one bounded NamingPolicy. Templates use the restricted naming variables; separators, traversal, unknown variables and unsupported formats are rejected.',
@@ -1191,8 +1254,9 @@ APP_JS = b"""(() => {
       Object.entries(fields).forEach(([, input]) => form.append(input.parentElement));
     }
     detailContent.append(form);
-    if (automationTaskDefinition) {
-      detailContent.append(actionButton('Save Automation Task Definition', async () => {
+    if (automationTaskDefinition || webhookDefinition) {
+      detailContent.append(actionButton(automationTaskDefinition ?
+        'Save Automation Task Definition' : 'Save Webhook Definition', async () => {
         const payload = guidedObjectPayload(kind, fields);
         try { await mutateGuidedObject(revision, kind, item && item.id && !copyMode ? item.id : null,
           payload, item && !copyMode ? 'PUT' : 'POST'); }
@@ -2098,6 +2162,7 @@ APP_JS = b"""(() => {
         renderGuidedObjectList(data, guided, 'classificationPolicies', 'ClassificationPolicies');
         renderGuidedObjectList(data, guided, 'organizePolicies', 'OrganizePolicies');
         renderGuidedObjectList(data, guided, 'automationTaskDefinitions', 'Automation Task Definitions');
+        renderGuidedObjectList(data, guided, 'webhooks', 'Webhook Definitions');
         renderLocalSetupEvidence(data, guided);
         renderLocalSetupActions(data, guided);
         renderRecognitionStrategyTest(data, guided);
@@ -3509,9 +3574,79 @@ APP_JS = b"""(() => {
     });
     const refresh = actionButton('Refresh notifications', () => renderNotifications(selector.value));
     const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    clear(content); content.append(text('h2', 'Notifications'));
+    content.append(text('h3', 'Active Webhook definitions'));
+    content.append(text('p',
+      'Webhook definitions are managed through the exact configuration revision. ' +
+      'Viewing or refreshing never sends a test and never creates a delivery.', 'warning'));
+    let activeWebhookTarget = null;
+    try {
+      const configuration = await api('/api/v1/configuration');
+      const canTestWebhooks = configuration.canManageConfiguration !== false;
+      const active = configuration.active || {};
+      if (active.revisionId) {
+        const detail = await api(`/api/v1/configuration/revisions/${encodeURIComponent(active.revisionId)}/objects`);
+        const webhooks = (detail.objects && detail.objects.webhooks) || [];
+        activeWebhookTarget = {
+          revisionId: detail.revisionId, version: detail.version, digest: detail.digest
+        };
+        content.append(text('p',
+          `Bound to the exact Active revision ${activeWebhookTarget.revisionId} / ` +
+          `v${activeWebhookTarget.version} / ${activeWebhookTarget.digest}.`, 'warning'));
+        if (!webhooks.length) content.append(text('p',
+          'No Active Webhook definitions are configured. Add one through the managed Configuration surface.'));
+        webhooks.forEach(item => {
+          const row = text('div', '', 'choice');
+          const readiness = Array.isArray(item.secretReadiness) ?
+            item.secretReadiness.map(entry => `${entry.env || entry.field || '-'}: ${entry.state || '-'}`).join(', ') :
+            '-';
+          row.append(text('span', `${item.id || '-'} - ${item.url || '-'}; events: ` +
+            `${(item.events || []).join(', ') || '-'}; ${item.enabled === true ? 'enabled' : 'disabled'}; ` +
+            `secret readiness: ${readiness}`,
+            item.structuralValid === false ? 'error' :
+              (readiness.includes(': UNSET') ? 'warning' : '')));
+          if (item.structuralValid === false) {
+            row.append(text('span', `Invalid: ${item.validationError || 'unknown error'}`, 'error'));
+          }
+          if (canTestWebhooks) {
+            row.append(actionButton('Test signed endpoint', async () => {
+              const resultBox = text('span', '', 'choices');
+              resultBox.append(text('span', 'Sending one bounded signed request...'));
+              row.append(resultBox);
+              try {
+                const result = await api(`/api/v1/configuration/revisions/${encodeURIComponent(activeWebhookTarget.revisionId)}/objects/webhooks/${encodeURIComponent(item.id)}/test`,
+                  {method: 'POST', body: JSON.stringify({expectedVersion: activeWebhookTarget.version,
+                    expectedDigest: activeWebhookTarget.digest})});
+                clear(resultBox);
+                resultBox.append(text('span', `Outcome: ${result.outcome || '-'}; category: ${result.category || '-'}; ` +
+                  `HTTP: ${result.responseStatus === null || result.responseStatus === undefined ? 'none' : result.responseStatus}; ` +
+                  `message: ${result.message || '-'}`, result.outcome === 'success' ? '' : 'error'));
+                resultBox.append(text('span', `Side effects: ${result.sideEffects || 'none'}; ` +
+                  `retry safe: ${result.retrySafe === true ? 'yes' : 'no'}`));
+                resultBox.append(text('span', `Next action: ${result.nextAction || '-'}`));
+              } catch (error) {
+                clear(resultBox);
+                resultBox.append(text('span', `Webhook test could not run: ${errorText(error)}`, 'error'));
+              }
+            }));
+          } else {
+            row.append(text('span', 'Testing requires the configuration permission.', 'warning'));
+          }
+          row.append(actionButton('Open managed Configuration', renderConfiguration));
+          content.append(row);
+        });
+      } else {
+        content.append(text('p',
+          'No Active configuration exists yet. Activate a managed revision first, then ' +
+          'manage Webhook definitions through Configuration.'));
+        content.append(actionButton('Open managed Configuration', renderConfiguration));
+      }
+    } catch (error) {
+      content.append(text('p', `Webhook definitions are unavailable: ${errorText(error)}`, 'error'));
+    }
+    content.append(text('h3', 'Notification deliveries'), selector, refresh);
     const data = await api(`/api/v1/notifications?limit=100&status=${encodeURIComponent(status)}` +
       suffix);
-    clear(content); content.append(text('h2', 'Notification deliveries'), selector, refresh);
     const rows = (data.items || []).map(item => [item.deliveryId, item.webhookId, item.eventType,
       item.status, item.attempts, item.nextAttemptAt, item.updatedAt, item.failureCategory || '-',
       item.responseStatus || '-']);
