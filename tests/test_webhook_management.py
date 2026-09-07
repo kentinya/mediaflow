@@ -8,8 +8,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.configuration_management import (
+    ConfigurationObjectKind,
     ManagedConfigurationStatus,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
@@ -57,6 +59,33 @@ class FakeTransport:
         if isinstance(result, Exception):
             raise result
         return result
+
+
+class MutatingTransport:
+    """Fake transport that edits the same Draft revision while sending."""
+
+    def __init__(self):
+        self.configuration = None
+        self.revision_id = None
+        self.requests = []
+
+    def send(self, request):
+        self.requests.append(request)
+        if self.configuration is None or self.revision_id is None:
+            return 204
+        revision = self.configuration.require(self.revision_id)
+        objects = ConfigurationObjectService(self.configuration)
+        value = webhook_document()
+        value["events"] = ["job.completed", "job.failed", "schedule.emitted"]
+        objects.mutate(
+            self.revision_id,
+            ConfigurationObjectKind.WEBHOOK_DEFINITION,
+            object_id=value["id"],
+            value=value,
+            expected_version=revision.version,
+            actor="concurrent-transport",
+        )
+        return 204
 
 
 def webhook_document(**changes):
@@ -469,6 +498,65 @@ class WebhookManagementTests(unittest.TestCase):
                 self.assertEqual(harness.repository.list_jobs(), jobs_before)
                 self.assertEqual(harness.repository.list_tasks(), tasks_before)
                 self.assertEqual(harness.repository.list_schedule_states(), ())
+            finally:
+                harness.close()
+
+    def test_test_result_preserves_exact_revision_identity_when_draft_mutates_during_send(
+        self,
+    ) -> None:
+        transport = MutatingTransport()
+        with tempfile.TemporaryDirectory() as directory:
+            harness = WebhookManagementHarness(directory, transport=transport)
+            revision_id = harness.draft.revision_id
+            try:
+                status, created = request(
+                    harness.api,
+                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    method="POST",
+                    body=json.dumps({"object": webhook_document(), "expectedVersion": 1}).encode(),
+                )
+                self.assertEqual(status, 200)
+                # The tested identity is the immutable revision 2 snapshot.
+                revision = harness.configuration.require(revision_id)
+                self.assertEqual(revision.version, 2)
+                expected_digest = revision.digest
+                transport.configuration = harness.configuration
+                transport.revision_id = revision_id
+
+                with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "top-secret-value"}):
+                    status, result = request(
+                        harness.api,
+                        f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
+                        method="POST",
+                        body=json.dumps(
+                            {
+                                "expectedVersion": revision.version,
+                                "expectedDigest": revision.digest,
+                            }
+                        ).encode(),
+                    )
+                self.assertEqual(status, 200)
+                self.assertEqual(result["outcome"], "success")
+                # The Draft was mutated to version 3 while the fake transport sent.
+                self.assertEqual(harness.configuration.require(revision_id).version, 3)
+                self.assertNotEqual(
+                    harness.configuration.require(revision_id).digest,
+                    expected_digest,
+                )
+                # Evidence stays bound to the exact revision that was validated and sent.
+                self.assertEqual(
+                    result["revision"],
+                    {
+                        "revisionId": revision_id,
+                        "version": 2,
+                        "digest": expected_digest,
+                        "status": "draft",
+                    },
+                )
+                audits = harness.repository.list_security_audit(limit=50)
+                webhook_audit = next(item for item in audits if item.action == "webhook-test")
+                self.assertIn(f"version=2&digest={expected_digest}", webhook_audit.route)
+                self.assertNotIn("version=3", webhook_audit.route)
             finally:
                 harness.close()
 
