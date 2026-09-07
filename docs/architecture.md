@@ -24,11 +24,10 @@ provider SDK APIs directly. It uses domain interfaces and application services.
 
 ## V1 order and architecture decisions
 
-Slices 26 and 27 are PASS / CLOSED. Remaining V1 business capabilities are:
+Slices 26, 27 and 28 are PASS / CLOSED. The remaining V1 business capability is:
 
 ```text
-Slice 28 — Web-first configuration and operations administration
-    → Slice 29 — Docker production self-hosted release
+Slice 29 — Docker production self-hosted release
 ```
 
 These are vertical product slices. They do not authorize a rewrite of the closed processing engine
@@ -249,8 +248,9 @@ start, supervise or register a Worker subprocess implicitly.
 
 The notification layer contains a signed HTTPS Webhook transport, durable delivery Outbox, bounded
 retry, delivery leases, dead-letter state and explicit requeue/replay actions. The current Web/API
-surface can inspect delivery state, but Webhook definition management, configuration readiness and
-delivery recovery as a complete operator journey are Slice 28 work.
+surface manages Webhook definitions, event selection, deployment-owned secret references, exact-
+revision bounded tests, delivery detail and per-delivery retry/requeue recovery without exposing
+secret values or changing completed media work.
 
 Operational logs use bounded redacted records with TRACE/DEBUG/INFO/WARN/ERROR semantics. Security
 and configuration audits are separate durable projections. Secret values, authorization headers,
@@ -292,16 +292,16 @@ Processing Worker readiness and fenced ownership across the shared Application, 
 Operator Web boundaries. These capabilities reuse the existing Storage abstraction, immutable Active
 snapshot authority, Task/TaskItem/Result model and OrganizerExecutor mutation boundary.
 
+## Current Slice 28 delivery
+
+Slice 28 delivered the day-2 managed-configuration lifecycle and object-management IA, including a
+natural Active-to-successor-Draft edit path, consistent create/copy/edit/enable/disable/delete and
+reference recovery, forms-first editing with Advanced JSON/import/export as explicit support paths,
+consumed System Settings, versioned secret-free configuration/result exchange and managed Webhook
+definition/test/delivery recovery. These capabilities reuse the existing revision authority, RBAC,
+redaction and immutable snapshot rules.
+
 ## TARGET architecture
-
-### Slice 28 target
-
-Complete the day-2 managed-configuration lifecycle and object-management IA, including a natural
-Active-to-new-Draft edit path, consistent create/copy/edit/enable/disable/delete/reference recovery,
-forms-first editing and Advanced JSON/import/export. Add consumed System Settings, versioned
-secret-free configuration/result import-export and complete managed Webhook
-definition/test/delivery recovery. Reuse the current revision authority, RBAC, redaction and
-immutable snapshot rules.
 
 ### Slice 29 target
 

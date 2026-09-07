@@ -61,9 +61,9 @@
 
 ## V1 final scope decisions
 
-The 2026-09-03 A architecture/roadmap reconciliation retains the 2026-09-02 scope decisions below
-and adds the missing manual-operations/file-lifecycle capability without weakening safety or the
-closed processing foundations:
+The 2026-09-07 A architecture/roadmap reconciliation retains the 2026-09-02 scope decisions below,
+keeps the closed manual-operations/file-lifecycle foundation and records the completed day-2
+configuration/operations administration capability without weakening safety:
 
 - V1 retains the `MetadataProvider` abstraction and the current TMDB production Provider. Provider
   switching, additional production Providers and arbitrary Provider plugins move to V1.x/post-V1;
@@ -79,8 +79,8 @@ closed processing foundations:
 - Environment-variable references plus deployment-owned secret injection are the V1 secret boundary.
   Full Secret Store and Docker Secrets-specific ingestion are post-V1 unless separately approved.
 
-These decisions are represented by the closed Slices 26 and 27 and the planned Slices 28 and 29; they
-do not create implementation Tasks.
+These decisions are represented by the closed Slices 26, 27 and 28 and the planned Slice 29; they do
+not create implementation Tasks.
 
 ## General product requirements
 

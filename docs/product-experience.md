@@ -33,15 +33,13 @@ All journeys share these rules:
 
 ### Current
 
-The authenticated Configuration view and API expose whole-document Draft import/edit, validation,
-revision detail and explicit activation. The current managed object journey also exposes guided
-Local, SMB, OpenList, AWS S3, Cloudflare R2 and generic S3-compatible Storage, ResourceLibrary,
-MediaLibrary and policy-graph editing, exact-revision previews and reference protection. The top-level Web entry is still framed around staging a whole-document JSON
-Draft, guided controls appear only after opening a revision, several policy editors remain bounded
-JSON-object editors, and the existing Active-to-Draft action is labelled as importing current JSON
-rather than editing by creating a new Draft. The minimal management-only bootstrap is the current
-fresh-instance entry path. The compatibility JSON bootstrap remains supported for legacy, migration
-and compatibility operation.
+The authenticated Configuration view and API now expose the managed lifecycle as a forms-first
+journey. Operators can create a successor Draft from the exact Active snapshot, inspect revision
+identity/version/digest, manage the canonical configuration object graph through typed cards and
+forms, review reference impact, run exact-revision validations/tests/previews, and checked-activate
+only the intended immutable snapshot. Whole-document JSON remains available only as an explicitly
+labelled Advanced/import/export/support path, not the ordinary editing authority. The compatibility
+JSON bootstrap remains supported for legacy, migration and compatibility operation.
 
 The visible states are:
 
@@ -284,7 +282,9 @@ boundary.
 
 ## Operations administration
 
-### Slice 28 target
+### Current
+
+Slice 28 delivered this day-2 operations administration journey.
 
 - **Goal:** administer the running installation after first setup.
 - **Entry:** Configuration, Settings, configuration/result import-export or Notifications.
@@ -320,7 +320,7 @@ boundary.
 
 ## V1 and post-V1 boundary
 
-Slices 26 and 27 are PASS / CLOSED. Remaining V1 work is Slice 28 followed by Slice 29. Provider
+Slices 26, 27 and 28 are PASS / CLOSED. Remaining V1 work is Slice 29. Provider
 switching and additional production Providers, built-in username/password or OIDC identity, a
 general Secret Store, automatic uncertain-mutation replay, historical rollback and specialized
 email/chat/media-server notifications remain V1.x/V2 or deployment-specific work.
