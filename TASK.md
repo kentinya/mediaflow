@@ -322,7 +322,7 @@ Notifications Web/API journey; other Slice 28 units remain separate Tasks.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 0b96b3f92a666a345aac8fc07f326150ce248a8e
 ```
 
 ## B Review Result
