@@ -468,6 +468,67 @@ class PackageExchangeApiTests(unittest.TestCase):
         self.assertEqual(code, 404)
         self.assertEqual(missing["error"]["code"], "task_not_found")
 
+    def test_result_export_digest_covers_secret_redacted_task_command(self) -> None:
+        api, service, repository, active = self._bootstrap()
+        coordinator = PersistentTaskCoordinator(repository, repository)
+        task = coordinator.create(
+            "preview password=hunter2",
+            execute_authorized=False,
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+        )
+        base = datetime.now(UTC)
+        item = coordinator.record_discovered(
+            task.task_id,
+            "source",
+            "source-library",
+            "movie.mkv",
+            "movie.mkv",
+        )
+        repository.append_result(
+            PersistentResultRecord(
+                "result-0",
+                task.task_id,
+                item.item_id,
+                "source",
+                "movie.mkv",
+                "target",
+                "Movies/movie.mkv",
+                "C",
+                "tmdb",
+                "101",
+                "C",
+                "A",
+                "A",
+                "A",
+                "MOVE",
+                "dry_run",
+                base,
+                title="Movie 0",
+            )
+        )
+
+        code, package = request(
+            api,
+            "/api/v1/configuration/packages/export/results",
+            query=f"taskId={task.task_id}&limit=10",
+        )
+        self.assertEqual(code, 200)
+        self.assertEqual(
+            package["source"]["taskCommand"],
+            "preview password=[redacted]",
+        )
+        self.assertNotIn("hunter2", json.dumps(package, ensure_ascii=False))
+        self.assertEqual(
+            package["packageDigest"],
+            canonical_digest({"results": package["results"], "source": package["source"]}),
+        )
+        self.assertIn(
+            {"field": "source.taskCommand", "kind": "redacted_text"},
+            package["redaction"]["entries"],
+        )
+        self.assertGreaterEqual(package["redaction"]["entryCount"], 1)
+
     def test_permissions_audit_and_no_workflow_side_effects(self) -> None:
         api, service, repository, active = self._bootstrap()
         code, package = request(api, "/api/v1/configuration/packages/export/configuration")

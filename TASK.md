@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 28.3
 Parent Slice: 28
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 4db4be7cdf0211541e1f0470387d5239330431c5
 Difficulty: High
 Test Level: T4
@@ -195,51 +195,47 @@ result and evidence that it is unrelated to this Task.
 
 ### Changed Files
 
-- `mediaflow/domain/package_exchange.py` (new)
-- `mediaflow/application/package_exchange.py` (new)
-- `mediaflow/interfaces/service_api.py`
-- `mediaflow/interfaces/operator_ui.py`
-- `tests/test_configuration_package_exchange.py` (new)
-- `TASK.md` (this Developer Completion Report)
+- `mediaflow/application/package_exchange.py`
+- `tests/test_configuration_package_exchange.py`
+- `TASK.md` (fix-round status and this report)
 
 ### Implemented
 
-- Added a versioned, deterministic package contract for configuration and
-  result exchange (`mediaflow.configuration.v1` / `mediaflow.results.v1`,
-  schema/package version, producer, generated timestamp, source revision or
-  result scope, digest/currentness evidence, bounded warnings and redaction
-  evidence).
-- Configuration export supports the Active revision and explicit
-  Draft/Validated/Superseded revisions through the managed configuration
-  authority. Exports preserve deployment-owned `*Env` references while
-  redacting literal secret fields/text, and carry bounded redaction/ownership
-  evidence plus current Active identity.
-- Result export reads durable Task/Result repository state only, uses an
-  explicit Task scope with deterministic ordering and limits, reports
-  truncation, and applies the existing persistent-result redaction boundary.
-- Configuration import validates package kind/schema/version, document and
-  package digests, secret-bearing content and package currentness. It then
-  creates a new Draft/recovery candidate through the existing revision
-  authority, or updates the exact current Draft only with an explicit
-  `replaceDraft` recovery identity. Stale packages, existing-Draft conflicts,
-  unsupported versions, invalid shapes, digest mismatches and secret payloads
-  fail closed with bounded recovery details and no Active/Draft/Work changes.
-- Added the shared WSGI API surface (`/api/v1/configuration/packages`,
-  `/export/configuration`, `/export/results`, and package import) with RBAC,
-  bounded request bodies and audit records.
-- Added Advanced/support Web controls in the Configuration view for package
-  status/currentness, Active/explicit-revision export, import, result export
-  and recovery-state display. Web and API use the same endpoints and shared
-  application behavior.
-- Added focused package exchange tests covering Active/Draft/Validated/
-  Superseded export, result bounds/truncation, redaction, supported import,
-  recovery-identity update, stale/conflict/invalid/secret failures, RBAC,
-  audit, no-workflow side effects and Web/API parity.
+B blocker — result package digest computed before final secret redaction:
+
+- `PackageExchangeService.export_results` no longer computes `packageDigest`
+  from a pre-sweep `results`/`source` payload. The package now runs the final
+  `package_redaction_sweep` first and `packageDigest` is recomputed last from
+  the exact secret-free `results`/`source` fields returned to the caller:
+  `canonical_digest({"results": package["results"], "source": package["source"]})`.
+  Every field covered by the digest is byte-for-byte the field present in the
+  returned package, so verifying the returned package reproduces the digest.
+- Because the sweep can redact the durable Task command embedded in the
+  digest-covered `source`, a changed `source.taskCommand` is now recorded in
+  the package's bounded `redaction` evidence (`field: source.taskCommand`,
+  `kind: redacted_text`) with `entryCount` updated to match, so the returned
+  evidence truthfully accounts for the redaction the caller can observe. The
+  evidence list remains capped at `REDACTION_EVIDENCE_LIMIT`.
+- Added the regression test B requested: a Task whose command is
+  `preview password=hunter2` exports HTTP 200 with `source.taskCommand`
+  returned as `preview password=[redacted]`, no secret text anywhere in the
+  package, `packageDigest` equal to
+  `canonical_digest({"results": package["results"], "source": package["source"]})`
+  over the returned package, and `redaction` evidence containing the
+  `source.taskCommand` entry.
 
 ### Tests and Results
 
-- `python3 -m unittest tests.test_configuration_package_exchange` — PASS
-  (12 tests) using the system `python3`.
+- Reproduction of the reviewed blocker against `697be37` before the fix:
+  exporting a Task whose command is `preview password=hunter2` returned HTTP
+  200 with `source.taskCommand` redacted but a stale `packageDigest` that did
+  not equal
+  `canonical_digest({"results": package["results"], "source": package["source"]})`.
+  After the fix the digest matches and the redaction evidence records the
+  command redaction.
+- `.venv/bin/python -m unittest tests.test_configuration_package_exchange` —
+  PASS, 13 tests (12 prior + the new
+  `test_result_export_digest_covers_secret_redacted_task_command`).
 - Required focused/related modules
   (`tests.test_configuration_package_exchange`,
   `tests.test_configuration_snapshot`, `tests.test_configuration_management`,
@@ -247,57 +243,41 @@ result and evidence that it is unrelated to this Task.
   `tests.test_api_credentials`, `tests.test_operator_ui`,
   `tests.test_final_integration`,
   `tests.test_processing_recovery_admission`,
-  `tests.test_recovery_continuation`) — 248 tests under `.venv/bin/python`;
-  245 passed, 3 failed as `PRE-EXISTING / UNRELATED` because this repository
-  working directory contains an existing `.mediaflow/mediaflow.sqlite3` Active
-  store that makes raw-JSON credential/CLI tests resolve managed state instead
-  of their temporary documents. The same three tests pass in a clean HEAD
-  worktree without that local state.
-- `python3 -m unittest discover -s tests` (with system `python3`) — the
-  environment lacks optional `httpx`; the full supported offline regression
-  was therefore run with `.venv/bin/python` so optional dependencies were
-  available.
-- `.venv/bin/python -m unittest discover -s tests` — 1329 tests: 7 failures
-  and 7 skips. All 7 failures are pre-existing/unrelated: two credential CLI
-  and four CLI/runtime tests are affected by the local `.mediaflow` store; one
-  Storage-browser Web asset assertion also fails on the unmodified Task Base.
-  No failure touches package exchange or is introduced by this checkpoint.
+  `tests.test_recovery_continuation`) — 249 tests: 246 passed, 3 failed as
+  `PRE-EXISTING / UNRELATED` (the same local-`.mediaflow`-store credential/CLI
+  failures reported for the first round; each passes in a clean worktree at
+  the reviewed checkpoint without that store).
+- `.venv/bin/python -m unittest discover -s tests` — 1330 tests: 7 failures
+  and 7 skips. All 7 failures are pre-existing/unrelated to this fix: six
+  credential/CLI/storage tests pass in a clean worktree at the reviewed
+  checkpoint without the local `.mediaflow` store, and one Storage-browser Web
+  asset assertion fails identically at the reviewed checkpoint. No failure
+  touches package exchange or is introduced by this correction.
 - `python3 scripts/check_governance.py` — PASS.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/ruff check` on all changed files — PASS.
-- `.venv/bin/ruff format --check` on all changed files — PASS.
-- `.venv/bin/ruff check .` — FAIL (pre-existing on Task Base):
-  `tests/test_system_settings_management.py:347` was already unformatted/
-  unlinted at `4db4be7`; not touched by this Task.
-- `.venv/bin/ruff format --check .` — FAIL (pre-existing on Task Base): the
-  same `tests/test_system_settings_management.py` file is already flagged at
-  HEAD; not touched by this Task.
-- `.venv/bin/python -m pip check` — PASS. System `python3` has no `pip`
-  module, so `pip check` was run from the available project virtual
-  environment.
+- `.venv/bin/ruff check` and `.venv/bin/ruff format --check` on the two
+  changed source files — PASS.
+- `.venv/bin/ruff check .` — FAIL (pre-existing on Task Base, unchanged):
+  `tests/test_system_settings_management.py:347` is already flagged and is not
+  touched by this Task.
+- `.venv/bin/ruff format --check .` — FAIL (pre-existing on Task Base,
+  unchanged): the same `tests/test_system_settings_management.py` file would
+  be reformatted.
+- `.venv/bin/python -m pip check` — PASS (system `python3` has no `pip`;
+  `pip check` was run from the project virtual environment).
 - `git diff --check` — PASS after this report is committed.
 
 ### Decisions
 
-- Package exchange is layered as a new Domain contract plus one shared
-  Application service used by both API and Web, keeping the existing managed
-  revision authority as the only Draft/Active mutation path.
-- Configuration export preserves deployment-owned environment references and
-  records them in redaction evidence; literal secret fields and secret-shaped
-  text are replaced and recorded instead of silently retained.
-- Import refuses a package whose `currentness` no longer matches the current
-  Active revision. An existing current Draft is preserved unless the caller
-  supplies the exact current Draft revision/version/digest with
-  `replaceDraft: true`.
-- Result export is scoped by Task ID with a deterministic ascending
-  `created_at,result_id` order, explicit limit and truncation evidence. It
-  reads only the durable Task/Result repository and never Storage/media.
-- Durable export/import audit uses the existing Security Audit record
-  boundary plus API request audit, avoiding a new package schema migration
-  while preserving actor/action/outcome/time evidence.
-- Web/API parity is tested by replaying the served client's exact package
-  endpoint/request contract through the shared WSGI API, matching the
-  established no-JavaScript-runtime parity approach in this repository.
+- The digest is the last field computed in result export, from the exact
+  post-sweep `results`/`source` the caller receives; no digest-covered field is
+  mutated afterwards.
+- The final redaction sweep may alter digest-covered `source` fields, so when
+  it redacts the Task command that change is reflected in the bounded redaction
+  evidence rather than remaining invisible to the operator.
+- Result export still reads only the durable Task/Result repository, performs
+  no Storage/workflow mutation, and the redaction evidence list stays capped at
+  `REDACTION_EVIDENCE_LIMIT`.
 
 ### Remaining In-Slice Work
 
@@ -306,28 +286,40 @@ result and evidence that it is unrelated to this Task.
 
 ### Risks / Deviations
 
-- The full quality gates and regression are not clean in this working
-  directory for pre-existing local-state and baseline reasons listed above.
-  They were not hidden, skipped, reclassified or fixed out of scope; evidence
-  from a clean HEAD worktree confirms they exist independently of this Task.
-- The repository contains existing ignored local `.mediaflow` state and emits
-  existing SQLite `ResourceWarning` messages during tests. No production data
-  or credentials were used.
+- Full regression and repo-wide lint are not clean in this working directory
+  for the same pre-existing reasons reported in the first round: the ignored
+  local `.mediaflow` store intercepts six raw-JSON credential/CLI/storage
+  tests (each passes in a clean worktree without it), and one Storage-browser
+  Web asset assertion fails identically at the reviewed checkpoint. Nothing
+  was hidden, skipped, reclassified or fixed out of scope.
 - `ruff`/`pip` are unavailable to the bare system `python3`; the available
   `.venv` binaries were used and reported truthfully.
+- Test execution emits existing SQLite `ResourceWarning` messages; no
+  production data or credentials were used.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 697be37e22934206993866cd4eba6f53995a5a69
+Head SHA: [pending correction commit]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 697be37e22934206993866cd4eba6f53995a5a69
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- Result package integrity is not preserved after secret redaction. `PackageExchangeService.export_results`
+  computes `packageDigest` from the unredacted `results`/`source` payload and then applies
+  `package_redaction_sweep` to the returned package (`mediaflow/application/package_exchange.py:263-299`).
+  Reproduction against the reviewed checkpoint: exporting a Task whose command is
+  `preview password=hunter2` returns HTTP 200 with `source.taskCommand` changed to
+  `preview password=[redacted]`, but `packageDigest` does not equal
+  `canonical_digest({"results": package["results"], "source": package["source"]})`.
+  Recompute the digest only after the final secret-free projection, ensure every field included in
+  the digest is the exact field returned to the caller, and add a regression test covering a
+  secret-shaped Task command plus redaction evidence.
