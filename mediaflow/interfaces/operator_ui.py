@@ -214,6 +214,7 @@ APP_JS = b"""(() => {
     });
   }
   let settingsRevisionId = null;
+  let notificationRecoveryAllowed = false;
   async function renderSettings(revisionId = settingsRevisionId) {
     const query = revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : '';
     const data = await api(`/api/v1/system/settings${query}`);
@@ -3583,6 +3584,7 @@ APP_JS = b"""(() => {
     try {
       const configuration = await api('/api/v1/configuration');
       const canTestWebhooks = configuration.canManageConfiguration !== false;
+      notificationRecoveryAllowed = configuration.canManageConfiguration === true;
       const active = configuration.active || {};
       if (active.revisionId) {
         const detail = await api(`/api/v1/configuration/revisions/${encodeURIComponent(active.revisionId)}/objects`);
@@ -3645,16 +3647,105 @@ APP_JS = b"""(() => {
       content.append(text('p', `Webhook definitions are unavailable: ${errorText(error)}`, 'error'));
     }
     content.append(text('h3', 'Notification deliveries'), selector, refresh);
+    content.append(text('p',
+      'Opening a delivery shows its durable state, lease, known effects and the only ' +
+      'explicit recovery action available for it. Refreshing, filtering and opening a ' +
+      'delivery never requeues, never resolves and never creates a delivery.', 'warning'));
     const data = await api(`/api/v1/notifications?limit=100&status=${encodeURIComponent(status)}` +
       suffix);
-    const rows = (data.items || []).map(item => [item.deliveryId, item.webhookId, item.eventType,
-      item.status, item.attempts, item.nextAttemptAt, item.updatedAt, item.failureCategory || '-',
-      item.responseStatus || '-']);
+    const items = data.items || [];
+    const rows = items.map(item => [item.deliveryId, item.webhookId, item.eventType, item.status,
+      item.attempts, item.nextAttemptAt, item.updatedAt, item.failureCategory || '-',
+      item.responseStatus === null || item.responseStatus === undefined ? '-' : item.responseStatus,
+      'Inspect delivery']);
     content.append(table(['Delivery', 'Webhook', 'Event', 'Status', 'Attempts', 'Next attempt',
-      'Updated', 'Failure category', 'HTTP status'], rows));
+      'Updated', 'Failure category', 'HTTP status', 'Action'], rows,
+      index => renderDeliveryDetail(items[index].deliveryId, status)));
     pageNavigation(content, 'notifications', data.previous_cursor, data.next_cursor,
       () => renderNotifications(status, data.previous_cursor),
       () => renderNotifications(status, data.next_cursor));
+  }
+  async function renderDeliveryDetail(deliveryId, status = 'all') {
+    clear(content); content.append(text('h2', 'Notification delivery'),
+      actionButton('Back to notifications', () => renderNotifications(status)));
+    try {
+      const data = await api(`/api/v1/notifications/${encodeURIComponent(deliveryId)}`);
+      const lease = (data.lease && data.lease.state !== 'not_leased') ?
+        `${data.lease.state} (lease ${data.lease.leaseSeconds}s; claimed ${data.lease.claimedAt}; ` +
+        `expires ${data.lease.expiresAt})` : 'not leased';
+      const list = document.createElement('dl');
+      [['Delivery', data.deliveryId], ['Webhook', data.webhookId], ['Event', data.eventId],
+        ['Event type', data.eventType], ['Status', data.status], ['Attempts', data.attempts],
+        ['Created', data.createdAt], ['Updated', data.updatedAt],
+        ['Delivered', data.deliveredAt || '-'], ['Next attempt', data.nextAttemptAt || '-'],
+        ['Failure category', data.failureCategory || '-'],
+        ['HTTP status', data.responseStatus === null || data.responseStatus === undefined ?
+          '-' : data.responseStatus],
+        ['Lease', lease], ['Known effects', data.knownEffects || '-'],
+        ['Retry safe', data.retrySafe === true ? 'yes' : 'no'],
+        ['Next action', data.nextAction || '-']]
+        .forEach(([label, value]) => field(list, label, value));
+      content.append(list);
+      const recovery = data.recovery || {};
+      const actions = Array.isArray(recovery.actions) ? recovery.actions : [];
+      content.append(text('h3', 'Recovery'));
+      if (recovery.reason) content.append(text('p', String(recovery.reason)));
+      if (!actions.length) {
+        content.append(text('p',
+          'No manual recovery action is currently available for this delivery. ' +
+          'The reason above is the explicit next decision point.', 'hint'));
+      }
+      actions.forEach(action => {
+        const row = text('div', '', 'choice');
+        row.append(text('span', `${action.name}: ${action.durableState || ''} ` +
+          `Effects: ${action.sideEffects || 'none'}. ` +
+          `Retry safe: ${action.retrySafe === true ? 'yes' : 'no'}.`));
+        content.append(row);
+        if (notificationRecoveryAllowed) {
+          const recoveryLabels = {
+            'requeue-dead-letter': 'Requeue dead-letter delivery',
+            'resolve-stale': 'Resolve stale delivery'
+          };
+          const label = recoveryLabels[action.name] || action.name;
+          content.append(actionButton(label,
+            () => confirmDeliveryRecovery(deliveryId, status, data, action)));
+        } else {
+          content.append(text('p',
+            'Delivery recovery requires the configuration permission.', 'warning'));
+        }
+      });
+    } catch (error) {
+      content.append(text('p', errorText(error), 'error'));
+    }
+  }
+  function confirmDeliveryRecovery(deliveryId, status, detail, action) {
+    const confirmation = text('div', '', 'choices');
+    confirmation.append(text('p',
+      `Apply ${action.name} to delivery ${detail.deliveryId}? ` +
+      `Current state: ${detail.status} (attempts ${detail.attempts}). ` +
+      `${action.durableState || ''}. Duplicate implication: ` +
+      `${action.duplicateImplication || 'none'}. Next action: ${action.nextAction || '-'}`));
+    confirmation.append(actionButton('Confirm recovery', async () => {
+      try {
+        const result = await api(
+          `/api/v1/notifications/${encodeURIComponent(deliveryId)}/${action.name}`, {
+            method: 'POST',
+            body: JSON.stringify({
+              expectedStatus: detail.status,
+              expectedUpdatedAt: detail.updatedAt
+            })
+          });
+        message(`Recovery ${result.action || action.name} succeeded; delivery ${result.deliveryId} ` +
+          `is now ${result.status || '-'} (attempts ${result.attempts || '-'}).`);
+        await renderDeliveryDetail(deliveryId, status);
+      } catch (error) {
+        message(errorText(error), true);
+        // Refresh the same delivery so the current durable state, ineligibility
+        // reason and next action are visible after a rejected/conflicting action.
+        await renderDeliveryDetail(deliveryId, status);
+      }
+    }), actionButton('Cancel', () => confirmation.remove()));
+    content.append(confirmation);
   }
   async function renderLogs(level = 'all', cursor = null) {
     const selector = document.createElement('select'); selector.setAttribute('aria-label', 'Log level');

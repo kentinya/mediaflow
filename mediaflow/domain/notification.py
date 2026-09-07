@@ -17,6 +17,35 @@ WEBHOOK_TIMEOUT_MAX = 120.0
 WEBHOOK_ATTEMPTS_MAX = 20
 WEBHOOK_RETRY_MIN = 0.1
 WEBHOOK_RETRY_MAX = 86400.0
+# Default delivery-lease window used when no managed runtime configuration is
+# available to an operator surface.  The signed Notification Worker uses the
+# same 300-second default when the runtime document does not override it.
+DELIVERY_LEASE_DEFAULT_SECONDS = 300.0
+
+
+class NotificationDeliveryConflict(RuntimeError):
+    """One delivery recovery/state conflict with bounded durable evidence.
+
+    Raised when an operator action cannot be applied because the delivery is
+    missing, its durable state no longer matches the exact state the operator
+    observed, the lease has not expired yet, or the delivery is not eligible
+    for the requested action.  ``delivery`` carries the current durable row so
+    API/Web can show the actual state and a safe next action without exposing
+    the delivery body or any secret material.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        delivery: NotificationDelivery | None = None,
+        action: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.delivery = delivery
+        self.action = action
+        self.reason = reason
 
 
 class NotificationEventType(StrEnum):
@@ -239,7 +268,21 @@ class NotificationRepository(Protocol):
         self, stale_before: datetime, *, limit: int | None = None
     ) -> tuple[NotificationDelivery, ...]: ...
     def update_delivery(self, delivery: NotificationDelivery) -> None: ...
-    def requeue_dead_letter(self, delivery_id: str, now: datetime) -> NotificationDelivery: ...
+    def requeue_dead_letter(
+        self,
+        delivery_id: str,
+        now: datetime,
+        *,
+        expected_updated_at: datetime | None = None,
+    ) -> NotificationDelivery: ...
+    def resolve_stale_delivery(
+        self,
+        delivery_id: str,
+        *,
+        stale_before: datetime,
+        now: datetime,
+        expected_updated_at: datetime,
+    ) -> NotificationDelivery: ...
 
 
 @dataclass(frozen=True)
