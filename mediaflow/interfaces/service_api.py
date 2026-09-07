@@ -41,6 +41,10 @@ from mediaflow.application.metadata_correction_continuation import (
     MetadataCorrectionContinuationConflict,
 )
 from mediaflow.application.metadata_review import MetadataReviewService
+from mediaflow.application.notification_delivery import (
+    DELIVERY_LEASE_DEFAULT_SECONDS,
+    NotificationDeliveryService,
+)
 from mediaflow.application.package_exchange import PackageExchangeService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recognition_retry import RecognitionRetryService
@@ -87,7 +91,10 @@ from mediaflow.domain.metadata_correction import (
     MetadataCorrectionContinuation,
     MetadataCorrectionContinuationStatus,
 )
-from mediaflow.domain.notification import NotificationDeliveryStatus
+from mediaflow.domain.notification import (
+    NotificationDeliveryConflict,
+    NotificationDeliveryStatus,
+)
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.package_exchange import (
     MAX_CONFIGURATION_PACKAGE_BYTES,
@@ -297,6 +304,10 @@ class MediaFlowApi:
             )
             if configuration_service is not None
             else None
+        )
+        self._notification_deliveries = NotificationDeliveryService(
+            self._repository,
+            audit_repository=self._repository,
         )
         self._bootstrap_document = bootstrap_document
         from mediaflow.infrastructure.runtime_configuration import (
@@ -770,6 +781,41 @@ class MediaFlowApi:
                 start_response,
                 409,
                 "configuration_version_conflict",
+                str(error),
+                details=details,
+            )
+        except NotificationDeliveryConflict as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "notification-recovery",
+                "denied",
+                409,
+            )
+            details: dict[str, object] = {
+                "deliveryId": (error.delivery.delivery_id if error.delivery is not None else None),
+                "action": error.action,
+                "durableState": "delivery_preserved_no_change",
+                "sideEffects": "none",
+                "retrySafe": True,
+                "nextAction": (
+                    "reload the delivery and inspect its current durable state before "
+                    "choosing a recovery action"
+                ),
+            }
+            if error.delivery is not None:
+                details["delivery"] = self._notification_deliveries.delivery_document(
+                    error.delivery,
+                    now=datetime.now(UTC),
+                    lease_seconds=self._notification_delivery_lease_seconds(),
+                )
+            return self._error(
+                start_response,
+                409,
+                "notification_delivery_conflict",
                 str(error),
                 details=details,
             )
@@ -5140,6 +5186,53 @@ class MediaFlowApi:
                     ],
                 },
             )
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "notifications"] and method == "GET":
+            # One bounded delivery detail projection.  The application service
+            # derives lease/staleness, known effects, retry safety and the
+            # explicitly available recovery actions; viewing never mutates.
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "notification delivery detail")
+            return self._response(
+                start_response,
+                200,
+                self._notification_deliveries.detail(
+                    parts[3],
+                    lease_seconds=self._notification_delivery_lease_seconds(),
+                ),
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "notifications"]
+            and parts[4] in {"requeue", "resolve-stale"}
+            and method == "POST"
+        ):
+            # Explicit delivery recovery actions (dead-letter requeue and
+            # expired-lease stale recovery).  Both are optimistic-concurrency
+            # state transitions scoped to the exact delivery identity; they
+            # never create a second row, never touch siblings and never mutate
+            # Webhook definitions, configuration, Storage or media work.
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require_empty_query(environ, "notification delivery recovery")
+            document = self._document(environ)
+            if set(document) != {"expectedStatus", "expectedUpdatedAt"}:
+                raise ValueError("delivery recovery requires expectedStatus and expectedUpdatedAt")
+            if parts[4] == "requeue":
+                result = self._notification_deliveries.requeue_dead_letter(
+                    parts[3],
+                    expected_status=document["expectedStatus"],
+                    expected_updated_at=document["expectedUpdatedAt"],
+                    lease_seconds=self._notification_delivery_lease_seconds(),
+                    actor=principal.principal_id,
+                )
+            else:
+                result = self._notification_deliveries.resolve_stale(
+                    parts[3],
+                    expected_status=document["expectedStatus"],
+                    expected_updated_at=document["expectedUpdatedAt"],
+                    lease_seconds=self._notification_delivery_lease_seconds(),
+                    actor=principal.principal_id,
+                )
+            return self._response(start_response, 200, result)
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "schedules"]
@@ -6185,6 +6278,22 @@ class MediaFlowApi:
             else None
         )
         return limit, cursor
+
+    def _notification_delivery_lease_seconds(self) -> float:
+        """Return the signed delivery lease window used for staleness evidence.
+
+        Prefer the lease actually consumed by the Notification Worker from the
+        current managed Active runtime configuration; fall back to the shared
+        domain default when no Active runtime snapshot is available to this
+        surface (for example the management-only harness).
+        """
+
+        settings = getattr(self._runtime_binding, "runtime_settings", None)
+        if isinstance(settings, dict):
+            value = settings.get("settings", {}).get("notifications.deliveryLeaseSeconds")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
+        return DELIVERY_LEASE_DEFAULT_SECONDS
 
     @staticmethod
     def _notification_query(

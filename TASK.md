@@ -1,13 +1,13 @@
-# Task 28.4 — Managed Webhook Definitions and Explicit Test
+# Task 28.5 — Independent Webhook Delivery Operations and Recovery
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 28.4
+Task ID: 28.5
 Parent Slice: 28
-Status: FIX REQUIRED
-Task Base: ec8e57b25fa51f0e6583b17d752fcfdba101fe64
+Status: PLANNED
+Task Base: a053905b538d832cebe64a7db192d24ca7c53f0b
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,114 +15,108 @@ Planner / Reviewer: B
 
 ## Goal
 
-Complete Slice 28 RO-5: an authenticated operator can manage the canonical Webhook definitions
-through the shared Web/API configuration journey, inspect validation/reference/readiness state, and
-run an explicit bounded test against the exact intended revision without exposing secret material or
-creating an unrequested notification delivery.
+Complete Slice 28 RO-6: an authenticated operator can inspect each Webhook delivery through the
+Web/API Notifications surface and explicitly recover the affected delivery through the permitted
+dead-letter requeue or stale-delivery recovery action, with durable lease/staleness, attempt,
+response/failure, effect certainty, audit and next-action evidence. Successful and unrelated
+deliveries remain independently visible and completed media work is unchanged.
 
 ## Why This Task Exists
 
-Slice 28 already has the signed HTTPS Outbox, delivery worker, durable delivery state and read-only
-notification list foundation, but Webhook definitions are still supplied by lower-level runtime
-configuration rather than managed through the day-2 Web/API administration journey. An operator
-cannot yet create or edit a definition in a successor Draft, see whether its deployment-owned
-secret reference is ready, or explicitly test the intended endpoint with the same validation,
-permission and exact-revision authority used by the rest of Configuration.
+Task 28.4 completed managed Webhook definitions and the explicit bounded definition test, while the
+existing Outbox/Worker already persists delivery state and supports internal dead-letter requeue.
+The current operator surface still exposes only a bounded delivery list and a status filter. It does
+not provide a delivery-specific detail/recovery journey, does not expose stale lease state as an
+operator decision, and does not provide shared permission-aware Web/API actions for safely resolving
+one affected delivery.
 
-This is the largest reasonable next unit because RO-5 crosses the managed configuration graph,
-typed Web/API object management, secret-reference readiness, bounded outbound test semantics,
-redacted audit and operator recovery as one user-visible behavior. RO-6 delivery list/detail and
-retry/requeue/dead-letter recovery remains a separate unit because it operates on durable delivery
-state rather than on Webhook definition configuration.
+This is the largest remaining coherent unit for RO-6 because delivery recovery crosses the existing
+durable notification repository, application recovery semantics, API authorization/audit and the
+Notifications Web view. It must reuse the existing Outbox/Worker and preserve at-least-once and
+duplicate-delivery implications; it must not be split into isolated route, label or test Tasks.
 
 ## Implementation Scope
 
 ```text
-Managed Webhook definition model/validation
-→ configuration persistence and reference/readiness projection
-→ application lifecycle and exact-revision test service
-→ permission-aware API routes
-→ Configuration/Notifications Web forms/cards and recovery state
-→ redacted audit, parity, safety and regression tests
+Delivery detail/recovery model and durable state projection
+→ application delivery-operations/recovery service
+→ permission-aware API detail and action routes
+→ Notifications Web list/detail/recovery journey
+→ redacted audit, parity, concurrency, recovery and regression tests
 ```
 
 The Task may update only the implementation needed for the following behavior:
 
-- Add Webhook definitions to the canonical managed configuration graph using the existing Draft,
-  optimistic-concurrency, validation, checked-activation and immutable Active authorities. Support
-  discoverable list/detail forms/cards and create, edit, copy where applicable, enable, disable and
-  delete actions with shared application behavior for API and Web.
-- Validate and project only supported Webhook configuration: HTTPS endpoint without credentials or
-  fragment, valid unique identifier, non-empty unique supported event selection, bounded timeout
-  and retry settings, and a deployment-owned environment-variable secret reference. Literal
-  secrets, token fields, authorization material and arbitrary execution fields are rejected.
-- Expose bounded reference impact and readiness state. Readiness may report whether the referenced
-  environment variable is present and whether the definition is structurally valid, but must never
-  return the secret value or equivalent recoverable credential. Referenced deletion remains blocked
-  or requires the existing explicit safe recovery path; it must not silently remove durable
-  configuration or delivery history.
-- Provide an explicit, permission-aware Web/API test action for one selected Webhook definition and
-  exact revision identity (revision ID/version/digest). The test sends at most one bounded HTTPS
-  request using the existing signed transport semantics, has no automatic retry or scheduler
-  admission, does not enqueue a durable notification delivery, does not start media work and does
-  not mutate Storage or completed Task/Result history.
-- Return bounded success/failure/recovery evidence for the test, including target identity,
-  response category/status when safe, timeout or transport category, exact revision evidence,
-  durable state, side effects, retry safety and next action. Remote response bodies and exception
-  text must be redacted or reduced to safe categories.
-- Add redacted audit evidence for create/edit/copy/enable/disable/delete/readiness/test attempts and
-  outcomes. API errors, Web messages, logs and audit records must not contain secret values,
-  bearer tokens, authorization headers, cookies or private credentials.
-- Keep the ordinary Configuration journey forms-first. Any Advanced JSON representation remains
-  explicitly labelled and uses the same validation, permission, concurrency, redaction and exact
-  revision rules.
-- Preserve the existing signed Outbox/Worker delivery behavior and make no changes to delivery
-  retry, requeue, dead-letter or delivery-detail operations beyond compatibility required for the
-  managed definition and explicit test path.
+- Expose a bounded delivery detail projection for one delivery, including delivery identity,
+  Webhook/event identity, status, attempts, timestamps, response status, failure category, lease
+  ownership/staleness, effect certainty or known-effect statement, retry safety and explicit next
+  action. The projection must not expose delivery body credentials, secrets, authorization headers,
+  cookies or remote response bodies.
+- Provide one shared application authority for delivery operations. It must validate the selected
+  delivery's current durable version/state under concurrency before mutating it, preserve all
+  unrelated delivery rows, and return bounded durable recovery evidence when the requested state is
+  stale, already resolved, missing or otherwise not eligible.
+- Provide explicit Web/API operations authorized through the existing API permission model for the
+  supported operator recovery paths: requeue an eligible dead-letter delivery, and resolve an
+  eligible stale/in-progress delivery only through an explicitly named action whose
+  at-least-once/duplicate-delivery implication is visible. Do not turn ordinary refresh, list,
+  detail or status filtering into a mutation. Do not silently retry a delivery, silently reset
+  attempts, or silently convert a non-eligible state.
+- Keep automatic Worker retry behavior intact. Manual recovery must not enqueue a second delivery
+  identity, alter the Webhook definition, activate a Draft, start a Task/Job/Scheduler occurrence,
+  mutate Storage or change completed Task/Result/media history.
+- Make API and Web use the same application validation, authorization, state transition, audit,
+  redaction and recovery semantics. The Web journey must show the selected delivery's durable state,
+  known effects, retry/requeue safety and next action before a duplicate-prone recovery action, then
+  refresh the same delivery and keep sibling outcomes visible.
+- Record redacted audit evidence for detail access where required by the existing security boundary,
+  denied actions, successful recovery, rejected/stale recovery and resulting durable state. Audit,
+  API errors, Web messages and logs must use bounded categories and never include secret material or
+  remote response content.
+- Preserve bounded pagination/filter behavior and deterministic ordering for the delivery list.
+  Detail and recovery must be scoped to the exact delivery identity and may not use a bulk or
+  unbounded mutation path.
 
 Files/areas explicitly frozen unless compatibility glue is strictly required:
 
 - `SLICE.md`, `docs/roadmap.md`, `docs/progress.md`, product requirements, Product Experience and
   Architecture contracts.
-- Completed Tasks 28.1–28.3 and their configuration, System Settings, package exchange and exact
-  Active snapshot authorities, except shared object-management integration required here.
-- Durable delivery retry/requeue/dead-letter semantics and RO-6 list/detail/recovery workflow.
-- Storage mutation, OrganizerExecutor, Scanner/Parser/Recognition/Metadata/Naming/Classification/
-  Planner behavior, Worker/Scheduler ownership protocol and completed media-processing work.
-- Built-in identity, general Secret Store, Docker/Compose release, Provider switching and new
+- Completed Tasks 28.1–28.4, managed configuration/Settings/package/Webhook-definition authorities
+  and exact Active revision semantics.
+- Webhook definition lifecycle and explicit definition-test semantics; definition tests remain
+  separate from durable delivery records.
+- OrganizerExecutor, Storage mutation, Scanner/Parser/Recognition/Metadata/Naming/Classification/
+  Planner behavior, Worker/Scheduler ownership protocol and completed media-processing history.
+- Docker/Compose release, built-in identity/OIDC, general Secret Store, Provider switching and new
   Storage providers.
 
 ## Acceptance Criteria
 
-- [ ] Authenticated API users with the required configuration permission can list, inspect, create,
-      edit, copy where applicable, enable, disable and delete managed Webhook definitions through
-      typed object operations. Unauthorized users receive the existing bounded permission response.
-- [ ] Web users can reach the same Webhook definition lifecycle from the Configuration/Notifications
-      administration surface, with visible current Draft/Active status, validation state, reference
-      impact, readiness and explicit recovery actions. Viewing or refreshing never sends a test or
-      creates a delivery.
-- [ ] Webhook changes are Draft-only until normal exact checked activation; optimistic concurrency,
-      exact revision ID/version/digest evidence, immutable Active/Superseded behavior and stale
-      recovery remain intact.
-- [ ] Validation fails closed for non-HTTPS or credential-bearing URLs, invalid identifiers or
-      environment names, empty/duplicate/unsupported events, invalid bounds and literal secret or
-      authorization fields. The returned state identifies the durable Draft/revision and next
-      action without revealing secret material.
-- [ ] Readiness exposes only structural validity and deployment-owned secret-reference readiness.
-      No secret value, token, header, cookie or equivalent credential appears in configuration
-      documents, API/Web responses, audit records, logs or exception text.
-- [ ] An explicit Web/API test action is available only with the required permission and exact
-      revision identity, sends no more than one bounded signed request, performs no automatic retry,
-      does not enqueue a durable delivery or start any media/workflow/Storage mutation, and returns
-      bounded redacted outcome and recovery details.
-- [ ] Test success, timeout, transport failure, non-2xx response, missing secret reference, invalid
-      definition and stale revision all have deterministic failure/recovery semantics, including
-      durable state, side effects, retry safety, exact revision evidence and next action.
-- [ ] API and Web use the same application behavior and permissions for lifecycle, validation,
-      readiness, exact-revision test, failure recovery and redaction; focused parity tests prove
-      this.
-- [ ] Existing signed Webhook Outbox/Worker behavior, notification persistence and Slice 26/27 plus
-      Tasks 28.1–28.3 regressions remain intact.
+- [ ] Authenticated API users with the existing applicable read authority can retrieve one
+      bounded delivery detail and see identity, event, state, attempts, lease/staleness,
+      response/failure category, known effects, retry safety and next action. Missing or malformed
+      delivery IDs return the existing bounded error/recovery shape.
+- [ ] Authenticated API users with the existing applicable explicit recovery authority can perform
+      each supported recovery action on one eligible delivery. The action is authorized,
+      state-checked and durable; ineligible, stale-version, already-resolved and concurrent
+      requests fail closed without changing the delivery or siblings.
+- [ ] The Notifications Web view provides a discoverable list-to-detail journey and shows the same
+      durable delivery evidence and recovery actions as the API. Refreshing, filtering and opening
+      detail perform no mutation; recovery requires an explicit user action and visibly reports
+      durable state, side effects, duplicate-delivery implication and next action.
+- [ ] Manual recovery preserves the stable delivery identity and at-least-once semantics, does not
+      create a second delivery row, does not hide or overwrite successful/unrelated deliveries, and
+      does not change Webhook definitions, Active/Draft configuration, Task/Job/Scheduler records,
+      Storage or completed media work.
+- [ ] Automatic Worker retry, lease claim fencing, stale detection and dead-letter behavior remain
+      compatible with the new operator operations. A delivery that is not eligible for manual
+      recovery remains visibly actionable with an explicit reason rather than being silently reset.
+- [ ] API/Web permissions, validation, concurrency, state transitions, audit, redaction and
+      recovery evidence are parity-tested through the shared application behavior. No required
+      RO-6 path depends on CLI-only knowledge, direct SQLite access or raw JSON editing.
+- [ ] Secret safety is preserved in delivery detail, recovery responses, audit, logs, Web messages
+      and tests: no secret values, bearer tokens, authorization headers, cookies, private endpoint
+      credentials or remote response bodies are returned or persisted.
 - [ ] Required focused tests, full supported offline regression, governance, formatting/lint,
       compile, dependency and diff checks pass; unavailable optional/external gates are reported
       explicitly and truthfully.
@@ -135,8 +129,9 @@ Focused and related tests:
 
 ```bash
 python3 -m unittest \
-  tests.test_webhook_management \
+  tests.test_notification_delivery_management \
   tests.test_notifications \
+  tests.test_webhook_management \
   tests.test_configuration_snapshot \
   tests.test_configuration_management \
   tests.test_configuration_objects \
@@ -147,17 +142,21 @@ python3 -m unittest \
   tests.test_final_integration
 ```
 
-The Developer must add focused Webhook management tests covering:
+The Developer must add focused delivery-operations tests covering:
 
-- typed API/Web lifecycle for create, edit, copy, enable, disable, delete, reference impact and
-  permission denial;
-- exact Draft/Active/Superseded revision authority, optimistic stale update/test rejection and
-  immutable Active preservation;
-- HTTPS/event/bounds/secret-reference validation, missing-secret readiness and secret-free
-  documents, errors, audit, logs and Web/API responses;
-- explicit bounded test success, timeout/transport failure/non-2xx failure, no retry, no Outbox
-  delivery, no Task/Job/scheduled occurrence creation and no Storage mutation;
-- API/Web parity for lifecycle, readiness, exact-revision test, failure recovery and redaction.
+- bounded API/Web delivery detail projection and deterministic list/detail identity;
+- permission denial for detail and each recovery action;
+- delivered, pending, retry, delivering, stale and dead-letter visibility;
+- explicit dead-letter requeue and stale-delivery recovery, including ineligible-state rejection;
+- optimistic/concurrent recovery rejection, durable state preservation and independent sibling
+  delivery outcomes;
+- stable delivery identity, attempt/effect evidence, at-least-once and duplicate-delivery wording;
+- audit success/denial/conflict and secret/response-body redaction;
+- no new delivery, Task, Job, schedule occurrence, Storage mutation or completed media-history
+  change from detail or manual recovery;
+- API/Web parity using the same application service and exact recovery payloads;
+- compatibility regressions for Worker retry, lease/stale claim fencing and existing definition-test
+  isolation.
 
 T4 quality and regression gates:
 
@@ -171,21 +170,22 @@ python3 -m pip check
 git diff --check
 ```
 
-Tests must use fakes, local repositories and a local HTTPS-capable or transport-fake test boundary.
-Production Webhook endpoints, credentials, private paths and real media are not permitted. Any
-unavailable optional external dependency or pre-existing local-environment failure must be reported
-with the exact command, result and evidence that it is unrelated to this Task.
+Tests must use temporary SQLite repositories, fakes and local transports. Production Webhook
+endpoints, credentials, private paths and real media are not permitted. Any unavailable optional
+external dependency or pre-existing local-environment failure must be reported with the exact
+command, result and evidence that it is unrelated to this Task.
 
 ## Non-goals
 
 - Work outside the Slice 28 Contract or any change to its Required Outcomes, Required Surfaces,
   Safety Invariants, Base SHA or Explicitly Deferred scope.
-- Re-implementing the completed forms-first configuration lifecycle, System Settings semantics or
-  package exchange, except shared Webhook object integration required by RO-5.
-- RO-6 delivery list/detail enrichment, retry/requeue/dead-letter recovery, lease repair or
-  notification-channel expansion.
-- Automatic scheduled delivery, bulk Webhook testing, arbitrary HTTP methods, redirect following,
-  secret rotation or a general Secret Store.
+- Re-implementing managed Webhook definition lifecycle or explicit bounded definition testing from
+  Task 28.4.
+- Creating a new notification engine, delivery queue, delivery identity scheme or replacement for
+  the existing Outbox/Worker/repository authorities.
+- Automatic replay beyond the existing Worker retry policy, bulk recovery, arbitrary delivery-body
+  editing, event regeneration, secret rotation or general Secret Store behavior.
+- Changing Webhook event selection, endpoint validation, signature format or definition activation.
 - Docker/Compose production packaging, production serving, Provider switching, built-in identity/
   OIDC, new Storage providers or changes to OrganizerExecutor/media mutation behavior.
 - Optional copy polish, extra test-only micro-Tasks, broad refactors or changes to closed processing
@@ -195,191 +195,145 @@ with the exact command, result and evidence that it is unrelated to this Task.
 
 ### Changed Files
 
-- `mediaflow/domain/notification.py` — canonical `WebhookDefinition` validation/normalization
-  (`from_document`/`document`), bounded retry/timeout constants, HTTPS and secret-reference rules.
-- `mediaflow/domain/configuration_management.py` — new `ConfigurationObjectKind.WEBHOOK_DEFINITION`.
-- `mediaflow/infrastructure/runtime_configuration.py` — runtime loader accepts the canonical root
-  `webhooks` section (and still reads legacy `notifications.webhooks`); Webhook parsing delegated to
-  the shared domain validator.
-- `mediaflow/application/configuration_objects.py` — Webhook definitions are managed objects in the
-  Draft document (create/edit/copy/enable/disable/delete), with legacy-nested → canonical-root
-  migration on edit, reference handling and a secret-free readiness/structural-validity projection.
-- `mediaflow/application/notification.py` — shared signed-request helpers reused by the worker;
-  delivery behavior unchanged.
-- `mediaflow/application/webhook_test.py` (new) — exact-revision bounded Webhook test service:
-  one signed request, no retry, no Outbox/Task/Job/schedule/Storage side effects, redacted audit.
-- `mediaflow/interfaces/service_api.py` — `webhooks` guided object kind, webhook test route
-  `POST /api/v1/configuration/revisions/{id}/objects/webhooks/{webhookId}/test`, projection-field
-  stripping and injectable webhook transport.
-- `mediaflow/interfaces/operator_ui.py` — Webhook guided forms/list in the Configuration journey and
-  an Active Webhook definition surface with readiness and explicit test in the Notifications view.
-- `tests/test_webhook_management.py` (new) — focused lifecycle, authority, validation/redaction,
-  explicit-test, parity and audit tests.
-- `tests/test_configuration_management.py` — expected managed object-kind set now includes the new
-  Webhook kind.
+- `mediaflow/domain/notification.py` — delivery recovery domain: `NotificationDeliveryConflict`
+  exception carrying bounded current-row evidence, `resolve_stale_delivery` repository authority and
+  the optional `expected_updated_at` concurrency guard on dead-letter requeue in the
+  `NotificationRepository` protocol; shared `DELIVERY_LEASE_DEFAULT_SECONDS`.
+- `mediaflow/infrastructure/sqlite_runtime.py` — `requeue_dead_letter` now optionally guards on the
+  exact durable `updated_at`; new atomic `resolve_stale_delivery` transition (delivering +
+  expired-lease boundary + exact observed timestamp → pending, attempts preserved).
+- `mediaflow/application/notification_delivery.py` (new) — shared `NotificationDeliveryService`:
+  bounded delivery detail projection (lease/staleness, known effects, retry safety, next action,
+  available recovery actions) and the two recovery authorities (dead-letter requeue, stale resolve)
+  with optimistic concurrency, redacted service audit and no body/secret exposure.
+- `mediaflow/interfaces/service_api.py` — delivery detail route
+  `GET /api/v1/notifications/{deliveryId}` (READ); explicit recovery routes
+  `POST /api/v1/notifications/{deliveryId}/requeue` and
+  `POST /api/v1/notifications/{deliveryId}/resolve-stale` (MANAGE_CONFIGURATION); the shared
+  service instance; a `notification_delivery_conflict` 409 handler carrying the current durable
+  delivery projection; and the lease-window resolver (managed runtime config with domain default).
+- `mediaflow/interfaces/operator_ui.py` — Notifications deliveries list is a discoverable
+  list-to-detail journey (clickable rows), with a delivery detail view showing durable state, lease,
+  known effects, retry safety, next action and the explicit recovery action, plus a confirmation
+  showing the at-least-once / duplicate-delivery implication before submitting the exact
+  `expectedStatus`/`expectedUpdatedAt` payload; after recovery the same delivery is refreshed and
+  the sibling list stays reachable.
+- `tests/test_notification_delivery_management.py` (new) — focused delivery detail, permission,
+  status/lease visibility, recovery success/ineligible/stale/conflict, concurrency, audit,
+  redaction, no-side-effect, Worker-compat and API/Web parity tests.
+- `tests/test_operator_ui.py` — the scheduler/notification bounded-view test now also asserts the
+  delivery detail + explicit per-delivery recovery surface and exact recovery payloads.
 
 ### Implemented
 
-- Webhook definitions are first-class typed objects in the canonical managed configuration graph
-  (root `webhooks` section). Legacy `notifications.webhooks` documents remain readable and migrate
-  to the canonical spelling on the first typed edit.
-- Validation is shared between the runtime loader and the managed object graph: HTTPS URL without
-  credentials/fragment, bounded ids and environment-variable names, non-empty unique supported
-  events, bounded timeout/retry settings, and rejection of literal secret, authorization or
-  arbitrary execution fields.
-- Web/API surfaces expose the same Draft-only lifecycle (create/edit/copy/enable/disable/delete),
-  optimistic exact-version concurrency, immutable Active/Superseded behavior, per-object reference
-  impact, and a readiness projection reporting only env-var SET/UNSET state plus structural
-  validity — never secret values.
-- A permission-aware exact-revision test action (`expectedVersion` + `expectedDigest`) sends one
-  bounded signed request using the existing signature/transport semantics. It never retries, never
-  enqueues a durable delivery, never creates Tasks/Jobs/scheduled occurrences and never mutates
-  Storage. Deterministic failure/recovery evidence includes durable state, side effects `none`,
-  retry safety, exact revision identity and next action; remote bodies and exception text are
-  reduced to safe categories.
-- Redacted audit coverage: CRUD flows record Draft-edit object-change audits through the managed
-  revision authority; test outcomes append a redacted security audit record; every request is also
-  audited by the API boundary.
-- Notifications view shows Active Webhook definitions bound to the exact Active revision with
-  readiness and an explicit test action; the Configuration view provides the typed forms lifecycle.
+- One bounded delivery detail projection per exact delivery identity. It exposes deliveryId,
+  Webhook/event identity, status, attempts, created/updated/delivered/next-attempt timestamps,
+  failure category, response status, lease/staleness evidence (claimedAt, lease window, expiry,
+  active/expired state), a known-effects statement, retry safety, a deterministic next action and
+  the explicitly available recovery actions with per-action durable state, side effects, retry
+  safety, duplicate-delivery implication and next action. Delivery bodies, event payloads, secrets,
+  authorization material and remote response content are never projected; unknown or malformed
+  delivery ids return the existing bounded 404 shape.
+- One shared application authority (`NotificationDeliveryService`) used by the API and, through the
+  same endpoints, by the Web for every read and recovery. Recovery is optimistic-concurrency bound
+  to the exact durable `status` + `updatedAt` the operator observed and is applied atomically in the
+  repository (status + timestamp guarded SQL), so ineligible, already-resolved, stale-version and
+  concurrent requests fail closed with a 409 carrying the current durable delivery projection and a
+  next action, without changing the delivery or any sibling row.
+- Two explicit Web/API recovery operations: `requeue-dead-letter` (dead-letter → pending, attempts
+  reset, Worker sends again) and `resolve-stale` (expired-lease delivering → pending, attempts
+  deliberately preserved, never silently reset). Both keep the same delivery identity and row,
+  never create a second delivery, never touch unrelated deliveries and never alter Webhook
+  definitions, Draft/Active configuration, Jobs, schedules, Storage or completed Task/Result/media
+  history. Automatic Worker retry, lease claim fencing and stale reclamation remain untouched and
+  compatible (verified by Worker-compat tests that deliver after each manual recovery).
+- Redacted audit: successful recovery appends a bounded `notification-recovery` security audit with
+  delivery identity/action/status transition; denied (403) and conflicting (409) actions are
+  audited by the API security boundary. Detail reads are covered by the existing per-request API
+  audit; notification route identity is path-redacted like the rest of the API audit.
+- Web parity: the Notifications view lists deliveries, opens the exact delivery detail, shows the
+  same durable evidence and recovery action before an explicit confirmation (including the
+  duplicate-delivery implication), posts the exact `expectedStatus`/`expectedUpdatedAt` payload used
+  by the API, refreshes the same delivery afterwards and keeps sibling outcomes visible through the
+  list. Refreshing, filtering and opening detail perform no mutation.
 
 ### Tests and Results
 
 ```text
-python3 -m unittest tests.test_webhook_management            -> PASS (7 tests)
-python3 -m unittest tests.test_notifications                 -> PASS
-python3 -m unittest tests.test_configuration_snapshot        -> PASS
-python3 -m unittest tests.test_configuration_management      -> PASS
-python3 -m unittest tests.test_configuration_objects         -> PASS
-python3 -m unittest tests.test_system_settings_management    -> PASS
-python3 -m unittest tests.test_configuration_package_exchange -> PASS
-python3 -m unittest tests.test_api_credentials               -> PASS (clean workspace)
-python3 -m unittest tests.test_operator_ui                   -> PASS
-python3 -m unittest tests.test_final_integration             -> PASS (clean workspace)
-python3 -m unittest <all 10 focused modules above>           -> PASS (228 tests)
-python3 -m unittest discover -s tests                        -> 1337 run; 1 FAIL
+python3 -m unittest tests.test_notification_delivery_management       -> PASS (10 tests)
+python3 -m unittest <all 11 Task focused modules>                     -> PASS (239 tests)
+python3 -m unittest discover -s tests (project venv python)           -> 1348 run; 1 FAIL
   PRE-EXISTING / UNRELATED (tests.test_storage_browser); 7 SKIP (external profiles absent)
-python3 scripts/check_governance.py                          -> PASS
-ruff format --check .                                        -> FAIL / PRE-EXISTING
-  (only tests/test_system_settings_management.py, already unformatted at Task Base)
-ruff check .                                                 -> FAIL / PRE-EXISTING
+python3 scripts/check_governance.py                                   -> PASS
+ruff format --check .                                                 -> FAIL / PRE-EXISTING
+  (only tests/test_system_settings_management.py, unformatted at Task Base)
+ruff check .                                                          -> FAIL / PRE-EXISTING
   (only E501 in tests/test_system_settings_management.py, present at Task Base)
-python3 -m compileall -q mediaflow tests scripts             -> PASS
-python3 -m pip check                                         -> PASS
-git diff --check                                             -> PASS
-node --check on the served operator app.js                   -> PASS
+python3 -m compileall -q mediaflow tests scripts                      -> PASS
+python3 -m pip check                                                  -> PASS
+git diff --check                                                      -> PASS
+node --check on the served operator app.js                            -> PASS
 ```
-
-Note on the full-suite gate: the full regression and CLI-based focused tests were executed from a
-workspace without the pre-existing ignored `.mediaflow/mediaflow.sqlite3` runtime artifact. That
-stale DB (left by earlier sessions in this workspace) makes CLI commands resolve an old managed
-Active configuration and caused environment-only failures in `test_api_credentials`,
-`test_final_integration`, `test_resource_library_pipeline` and `test_runtime_storage_configuration`;
-from a clean workspace state (equivalent to a fresh checkout) those modules pass. The artifact was
-preserved and restored afterwards and is not part of this checkpoint.
 
 ### Decisions
 
-- Managed Webhook definitions are stored in a canonical root `webhooks` section of the Draft
-  document, mirroring the existing `automationTaskDefinitions` pattern. The runtime loader accepts
-  the canonical root and the legacy `notifications.webhooks` spelling, but rejects a document that
-  defines both, keeping the Active definition unambiguous.
-- Webhook validation/normalization lives in the domain (`WebhookDefinition.from_document`) so the
-  JSON runtime loader, typed object edits and the readiness projection cannot disagree.
-- Bounds were tightened for timeout/attempts/retry to fail closed as required; the shipped example
-  and all existing fixtures stay inside the new bounds.
-- The explicit test uses the same signature/transport scheme as the delivery worker but sends its
-  own bounded `webhook.test` payload and never touches the durable delivery repository, so a test
-  cannot be mistaken for a real delivery by a receiver.
-- Exact-revision enforcement (version + digest) happens in the application service before any
-  request is sent; stale or corrupt identities fail closed with bounded recovery details.
-- Webhook deletion is allowed (RO-5 requires it). Delivery history is never cascade-deleted and the
-  UI states that unresolved deliveries then fail closed as configuration dead-letters.
+- Manual recovery is gated by the existing `manage_configuration` permission, the same applicable
+  authority the Webhook definition/test action already uses (Task 28.4), rather than a new
+  permission; read detail is gated by the `read` authority shared with the delivery list.
+- The durable concurrency token is the row's `status` + `updatedAt` (the schema's persisted change
+  marker) instead of a new numeric column: the delivery schema has no version column and the runtime
+  `SCHEMA_VERSION` marker is shared with the frozen Worker claim-fencing protocol whose tests bind
+  registered workers to the current marker. The repository applies both guards atomically in SQL so
+  worker-vs-operator and operator-vs-operator races fail closed without a schema migration.
+- Recovery is strictly per-delivery and per-state: dead-letter requeue resets attempts (existing
+  requeue semantics), while stale-delivery recovery returns the row to pending and deliberately
+  preserves attempts so an operator action never silently resets the attempt budget. Both paths
+  preserve the delivery identity/row and surface the at-least-once/duplicate-delivery implication.
+- Staleness uses the delivery lease window consumed by the Notification Worker (managed Active
+  runtime `notifications.deliveryLeaseSeconds`, falling back to the shared 300 s default when no
+  Active snapshot is available to the surface), so the operator projection agrees with Worker claim
+  fencing.
+- Detail reads do not add a second application audit record: the existing per-request API security
+  audit already covers delivery detail access (the file/scan read-only suppression does not apply to
+  notifications), matching the read-only notification list boundary.
 
 ### Remaining In-Slice Work
 
-- RO-6 delivery list/detail enrichment and retry/requeue/dead-letter recovery operate on durable
-  delivery state and remain a separate unit outside this Task's scope.
-
-### Fix Round — B Review Result (FIX REQUIRED)
-
-#### Changed Files (this round)
-
-- `mediaflow/application/webhook_test.py` — the explicit test now carries the immutable
-  `ManagedConfigurationRevision` snapshot that was validated before the request through every
-  result and audit path; `_result` no longer re-reads the mutable revision after `transport.send`.
-  The audit route records the exact sent identity (`version` and `digest`).
-- `tests/test_webhook_management.py` — added the B-specified regression test: a fake transport
-  mutates the same Draft from version 2 to version 3 while `send` runs and then returns HTTP 204;
-  the returned evidence and audit stay bound to the exact version 2 revision identity.
-
-#### Implemented (this round)
-
-- Fixed the exact-revision evidence defect: the test validates the requested
-  `expectedVersion`/`expectedDigest` against one immutable revision snapshot, sends the request,
-  and reports that same revision identity in `revision.revisionId` / `revision.version` /
-  `revision.digest` / `revision.status` regardless of any Draft mutation that happens during the
-  outbound request.
-- The redacted security audit for a test outcome now also carries the sent revision identity
-  (`version` and `digest`) so the audit record is bound to the exact revision that was tested.
-
-#### Tests and Results (this round)
-
-```text
-python3 -m unittest tests.test_webhook_management             -> PASS (8 tests)
-python3 -m unittest <all 10 Task focused modules>             -> PASS (229 tests)
-python3 scripts/check_governance.py                           -> PASS
-python3 -m compileall -q mediaflow tests scripts              -> PASS
-python3 -m pip check                                          -> PASS
-ruff check . / ruff format --check .                          -> only the same
-  pre-existing tests/test_system_settings_management.py issues present at Task Base
-git diff --check                                              -> PASS
-```
-
-The new regression test fails against the previous checkpoint (it reproduces B's reported
-reproduction) and passes with this fix.
+None inside this Task. RO-6 delivery detail/recovery is implemented through the shared
+Notifications Web/API journey; other Slice 28 units remain separate Tasks.
 
 ### Risks / Deviations
 
-- `tests/test_storage_browser.test_setup_picker_and_execution_environment_guidance_are_present`
-  fails at the Task Base (verified on a clean `ec8e57b` checkout) and is unrelated to this Task; it
-  asserts an operator-asset phrase that is not present in the shipped UI.
-- `ruff format --check` and `ruff check` each report one pre-existing issue in
-  `tests/test_system_settings_management.py` (line 216 formatting / line 347 E501) present at the
-  Task Base; that file was intentionally left untouched.
-- A stale ignored `.mediaflow` runtime database in this workspace causes environment-only CLI test
-  failures; the full suite passes from a clean workspace state (evidence above).
-- No optional external gates are available (real OpenList/SMB/S3/endurance acceptance); the 7
-  affected tests skip with their standard "BLOCKED: ... environment absent" reasons.
+- `tests.test_storage_browser.test_setup_picker_and_execution_environment_guidance_are_present`
+  fails at the Task Base (verified on `HEAD:mediaflow/interfaces/operator_ui.py`, where the asserted
+  phrase is absent too) and is unrelated to this Task.
+- `ruff format --check .` and `ruff check .` each report the same pre-existing issue in
+  `tests/test_system_settings_management.py` present at the Task Base; that file was left untouched.
+- The full suite must be run with the project venv (optional extras such as `httpx`). With the
+  system interpreter, `test_runtime_strategy_configuration...openlist...` additionally errors with
+  `ModuleNotFoundError: No module named 'httpx'`; with the venv that module passes and only the
+  pre-existing storage-browser failure remains.
+- Seven optional external acceptance tests skip with their standard environment-absent reasons (no
+  real SMB/OpenList/S3/TMDB endpoints).
+- No schema migration was performed and `SCHEMA_VERSION` was not bumped; the recovery concurrency
+  token is the durable `status` + `updatedAt` (see Decisions).
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 3f0e89ee9a96a9cc5af61cd2614f1fbef3a0da3c
+Head SHA: [full SHA]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: ec8e57b25fa51f0e6583b17d752fcfdba101fe64..4df224cf23aa508cee0feb68f0d1424bbf644304
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: [Head SHA or Task Base..Head]
+Decision: PENDING | PASS | FIX REQUIRED
+Slice Required Outcomes all satisfied: PENDING | YES | NO
+Next: PENDING | SAME TASK FIX LOOP | NEXT TASK | SLICE READY FOR A REVIEW
 ```
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update
 Roadmap.
-
-- The explicit Webhook test does not preserve the exact revision identity that was validated and
-  sent. `WebhookTestService.test` reads and validates the revision before the request, but
-  `_result` reads the mutable revision again after `transport.send` and reports that later
-  version/digest. Reproduction: a transport that edits the same Draft from version 2 to version 3
-  during `send` and then returns HTTP 204 produces a successful result reporting version 3 and a
-  digest different from the version 2 request identity. This fails the exact-revision evidence
-  requirement in the Task and Slice RO-2.
-  Correction direction: carry the immutable revision identity/snapshot used for the request through
-  every result and audit path instead of rereading the revision after I/O, and add a regression test
-  that mutates the same Draft during the fake send and asserts the returned revision ID/version/
-  digest remain the exact expected request identity.

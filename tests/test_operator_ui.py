@@ -135,6 +135,12 @@ class OperatorUiTests(unittest.TestCase):
         )
         self.assertIn("failureCategory", script)
         self.assertNotIn("notification-worker", script)
+        # Delivery recovery is an explicit per-delivery action on the detail
+        # surface; ordinary list refresh/filter never posts.
+        self.assertIn("/api/v1/notifications/${encodeURIComponent(deliveryId)}", script)
+        self.assertIn("expectedUpdatedAt: detail.updatedAt", script)
+        self.assertIn("requeue-dead-letter", script)
+        self.assertIn("resolve-stale", script)
         self.assertNotIn("notifications/requeue", script)
         self.assertNotIn("scheduler tick", script)
         self.assertNotIn("webhook" + "Url", script)

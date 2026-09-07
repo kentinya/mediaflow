@@ -6128,25 +6128,78 @@ class SQLiteTaskRepository:
             if cursor.rowcount != 1:
                 raise LookupError(f"notification delivery {delivery.delivery_id!r} was not found")
 
-    def requeue_dead_letter(self, delivery_id: str, now: datetime) -> NotificationDelivery:
+    def requeue_dead_letter(
+        self,
+        delivery_id: str,
+        now: datetime,
+        *,
+        expected_updated_at: datetime | None = None,
+    ) -> NotificationDelivery:
+        updated_guard = ""
+        parameters: list[object] = [
+            NotificationDeliveryStatus.PENDING.value,
+            now.isoformat(),
+            now.isoformat(),
+            delivery_id,
+            NotificationDeliveryStatus.DEAD_LETTER.value,
+        ]
+        if expected_updated_at is not None:
+            updated_guard = " AND updated_at=?"
+            parameters.append(expected_updated_at.isoformat())
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 "UPDATE notification_deliveries SET status=?, attempts=0, next_attempt_at=?, "
                 "updated_at=?, delivered_at=NULL, failure_category=NULL, response_status=NULL "
-                "WHERE delivery_id=? AND status=?",
-                (
-                    NotificationDeliveryStatus.PENDING.value,
-                    now.isoformat(),
-                    now.isoformat(),
-                    delivery_id,
-                    NotificationDeliveryStatus.DEAD_LETTER.value,
-                ),
+                "WHERE delivery_id=? AND status=?" + updated_guard,
+                tuple(parameters),
             )
             if cursor.rowcount != 1:
                 existing = self.get_delivery(delivery_id)
                 if existing is None:
                     raise LookupError(f"notification delivery {delivery_id!r} was not found")
                 raise ValueError("only a dead-letter notification can be requeued")
+            row = self._connection.execute(
+                "SELECT * FROM notification_deliveries WHERE delivery_id=?", (delivery_id,)
+            ).fetchone()
+        return self._delivery(row)
+
+    def resolve_stale_delivery(
+        self,
+        delivery_id: str,
+        *,
+        stale_before: datetime,
+        now: datetime,
+        expected_updated_at: datetime,
+    ) -> NotificationDelivery:
+        """Explicitly return one expired-lease delivery to the pending queue.
+
+        The transition is guarded atomically on the durable delivering status,
+        the stale lease boundary and the exact ``updated_at`` the operator
+        observed, so a concurrent worker reclaim or operator action fails
+        closed instead of stealing or duplicating an active lease.  Attempts
+        are deliberately preserved (never silently reset) and the delivery
+        identity/body stay unchanged; only the durable queue state moves.
+        """
+
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE notification_deliveries SET status=?, next_attempt_at=?, updated_at=? "
+                "WHERE delivery_id=? AND status=? AND updated_at<=? AND updated_at=?",
+                (
+                    NotificationDeliveryStatus.PENDING.value,
+                    now.isoformat(),
+                    now.isoformat(),
+                    delivery_id,
+                    NotificationDeliveryStatus.DELIVERING.value,
+                    stale_before.isoformat(),
+                    expected_updated_at.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                existing = self.get_delivery(delivery_id)
+                if existing is None:
+                    raise LookupError(f"notification delivery {delivery_id!r} was not found")
+                raise ValueError("only an expired-lease delivering notification can be resolved")
             row = self._connection.execute(
                 "SELECT * FROM notification_deliveries WHERE delivery_id=?", (delivery_id,)
             ).fetchone()
