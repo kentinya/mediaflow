@@ -318,7 +318,7 @@ preserved and restored afterwards and is not part of this checkpoint.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [pending commit]
+Head SHA: 4df224cf23aa508cee0feb68f0d1424bbf644304
 ```
 
 ## B Review Result
