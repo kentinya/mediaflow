@@ -356,7 +356,7 @@ reproduction) and passes with this fix.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [pending commit]
+Head SHA: 3f0e89ee9a96a9cc5af61cd2614f1fbef3a0da3c
 ```
 
 ## B Review Result
