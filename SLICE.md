@@ -6,9 +6,9 @@ rules are defined only in [`docs/development-workflow.md`](docs/development-work
 ```text
 Slice ID: 28
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: FIX REQUIRED
+Status: READY FOR A REVIEW
 Base SHA: 957a4ebcb0fde03e64be9c406fbcdfed9a12501d
-Implementation Head: 0b96b3f92a666a345aac8fc07f326150ce248a8e
+Implementation Head: 8546ff8fe15386dfbbb5fefb29a66b936ed4613f
 ```
 
 The Base is the Slice 27 closure/documentation-reconciliation checkpoint and the real repository
@@ -218,7 +218,7 @@ Slice 28 is complete only when all of the following are true:
 ```text
 Slice: 28 — Web-first Configuration and Operations Administration
 Base SHA: 957a4ebcb0fde03e64be9c406fbcdfed9a12501d
-Head SHA: 0b96b3f92a666a345aac8fc07f326150ce248a8e
+Head SHA: 8546ff8fe15386dfbbb5fefb29a66b936ed4613f
 
 Required Outcomes:
 - RO-1 COMPLETE — Forms-first successor Draft and managed object lifecycle are available through
@@ -246,7 +246,8 @@ Implemented:
 - Forms-first managed successor Draft and canonical configuration object lifecycle.
 - Consumed System Settings with exact Active snapshot evidence and recovery boundaries.
 - Versioned secret-free configuration and result package exchange.
-- Managed Webhook definition lifecycle, readiness projection and exact-revision signed test.
+- Managed Webhook definition lifecycle, readiness projection, exact-revision signed test and
+  fail-closed endpoint query credential hardening.
 - Independent notification delivery detail, stale/dead-letter recovery, API/Web parity and
   redacted audit evidence.
 
@@ -256,24 +257,28 @@ Tasks completed:
 - Task 28.3 — final implementation head 0e750a46584696563d86861828c2cc0a6908cbe4.
 - Task 28.4 — final implementation head 3f0e89ee9a96a9cc5af61cd2614f1fbef3a0da3c.
 - Task 28.5 — B PASS at implementation head 0b96b3f92a666a345aac8fc07f326150ce248a8e.
+- Task 28.6 — B PASS at implementation head 8546ff8fe15386dfbbb5fefb29a66b936ed4613f.
 
 Final Tests:
-- `.venv/bin/python -m unittest` focused Slice 28 modules — PASS, 239 tests.
-- `.venv/bin/python -m unittest discover -s tests` in a clean worktree — 1348 tests, 1
-  pre-existing/unrelated Storage Browser文案 failure, 7 optional external-profile skips, 0 errors.
-- `python3 scripts/check_governance.py` — PASS.
-- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/python -m pip check` — PASS.
+- Prior Slice 28 final focused modules at the original closure checkpoint — PASS, 239 tests.
+- `.venv/bin/python -m unittest tests.test_webhook_url_security ... tests.test_final_integration`
+  for Task 28.6 focused/related modules — PASS, 220 tests.
+- `.venv/bin/python -W ignore -m unittest discover -s tests` during Task 28.6 review — 1361 tests,
+  2 failures limited to the correction-loop governance state and a pre-existing Storage Browser UI
+  wording assertion, 7 optional external-profile skips, 0 errors.
+- `.venv/bin/python scripts/check_governance.py` during Task 28.6 review — FAIL only because the
+  repository was in the A `FIX REQUIRED` correction loop with an active Task; the governance script
+  itself was unchanged and this handback restores the no-active-Task `READY FOR A REVIEW` state.
 - `.venv/bin/ruff format --check .` — only pre-existing formatting findings in
   `tests/test_system_settings_management.py`.
 - `.venv/bin/ruff check .` — only pre-existing E501 in
   `tests/test_system_settings_management.py`.
-- `git diff --check` for the Slice range — PASS.
-- Both shipped configuration examples validate — PASS.
-- Forbidden FFmpeg/FFprobe dependency audit — PASS; no matches.
-- Local Markdown/link check — PASS, 37 local links checked and 0 missing.
-- Wheel build and isolated `scripts/wheel_smoke_test.py` — PASS; schema 33, migration rehearsal
-  and restore checks passed.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS.
+- `git diff --check` — PASS.
+- `node --check` on the served operator `APP_JS` asset — PASS.
+- Previously recorded package/build/link/FFprobe audits remain unchanged by Task 28.6 and are not
+  expanded here; A should re-run any desired Slice-final packaging checks during re-review.
 
 Safety Evidence:
 - Configuration, settings, package, Webhook definition and delivery recovery reads/analysis do
@@ -286,6 +291,9 @@ Safety Evidence:
   protects against stale/concurrent state changes, and leaves sibling deliveries unchanged.
 - Delivery/API/Web projections omit bodies, secrets, authorization material, cookies and remote
   response content; `config/alist.json` is ignored, untracked and unstaged.
+- Webhook endpoint configuration now fails closed for userinfo, query-string and fragment
+  credential channels; already-persisted unsafe URLs are redacted in revision detail, Web/API,
+  export and audit projections while remaining explicitly correctable.
 
 Known Non-blocking Issues:
 - One pre-existing unrelated `tests.test_storage_browser` UI wording failure remains.
@@ -325,8 +333,8 @@ P0/P1 Blockers:
 ## Review State
 
 ```text
-Slice Status: FIX REQUIRED
-Implementation Head: 0b96b3f92a666a345aac8fc07f326150ce248a8e
-P0/P1 Defects: ONE P0 SECURITY BLOCKER
-Decision: FIX REQUIRED — B PLANS FOCUSED CORRECTION TASK
+Slice Status: READY FOR A REVIEW
+Implementation Head: 8546ff8fe15386dfbbb5fefb29a66b936ed4613f
+P0/P1 Defects: A P0 CORRECTION IMPLEMENTED BY TASK 28.6; READY FOR A RE-REVIEW
+Decision: RETURNED TO A FINAL REVIEW
 ```
