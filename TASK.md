@@ -301,7 +301,7 @@ B blocker — result package digest computed before final secret redaction:
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [pending correction commit]
+Head SHA: 0e750a46584696563d86861828c2cc0a6908cbe4
 ```
 
 ## B Review Result
