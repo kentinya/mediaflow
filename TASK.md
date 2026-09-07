@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 28.4
 Parent Slice: 28
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: ec8e57b25fa51f0e6583b17d752fcfdba101fe64
 Difficulty: High
 Test Level: T4
@@ -301,6 +301,44 @@ preserved and restored afterwards and is not part of this checkpoint.
 - RO-6 delivery list/detail enrichment and retry/requeue/dead-letter recovery operate on durable
   delivery state and remain a separate unit outside this Task's scope.
 
+### Fix Round — B Review Result (FIX REQUIRED)
+
+#### Changed Files (this round)
+
+- `mediaflow/application/webhook_test.py` — the explicit test now carries the immutable
+  `ManagedConfigurationRevision` snapshot that was validated before the request through every
+  result and audit path; `_result` no longer re-reads the mutable revision after `transport.send`.
+  The audit route records the exact sent identity (`version` and `digest`).
+- `tests/test_webhook_management.py` — added the B-specified regression test: a fake transport
+  mutates the same Draft from version 2 to version 3 while `send` runs and then returns HTTP 204;
+  the returned evidence and audit stay bound to the exact version 2 revision identity.
+
+#### Implemented (this round)
+
+- Fixed the exact-revision evidence defect: the test validates the requested
+  `expectedVersion`/`expectedDigest` against one immutable revision snapshot, sends the request,
+  and reports that same revision identity in `revision.revisionId` / `revision.version` /
+  `revision.digest` / `revision.status` regardless of any Draft mutation that happens during the
+  outbound request.
+- The redacted security audit for a test outcome now also carries the sent revision identity
+  (`version` and `digest`) so the audit record is bound to the exact revision that was tested.
+
+#### Tests and Results (this round)
+
+```text
+python3 -m unittest tests.test_webhook_management             -> PASS (8 tests)
+python3 -m unittest <all 10 Task focused modules>             -> PASS (229 tests)
+python3 scripts/check_governance.py                           -> PASS
+python3 -m compileall -q mediaflow tests scripts              -> PASS
+python3 -m pip check                                          -> PASS
+ruff check . / ruff format --check .                          -> only the same
+  pre-existing tests/test_system_settings_management.py issues present at Task Base
+git diff --check                                              -> PASS
+```
+
+The new regression test fails against the previous checkpoint (it reproduces B's reported
+reproduction) and passes with this fix.
+
 ### Risks / Deviations
 
 - `tests/test_storage_browser.test_setup_picker_and_execution_environment_guidance_are_present`
@@ -318,18 +356,30 @@ preserved and restored afterwards and is not part of this checkpoint.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 4df224cf23aa508cee0feb68f0d1424bbf644304
+Head SHA: [pending commit]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: ec8e57b25fa51f0e6583b17d752fcfdba101fe64..4df224cf23aa508cee0feb68f0d1424bbf644304
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update
 Roadmap.
+
+- The explicit Webhook test does not preserve the exact revision identity that was validated and
+  sent. `WebhookTestService.test` reads and validates the revision before the request, but
+  `_result` reads the mutable revision again after `transport.send` and reports that later
+  version/digest. Reproduction: a transport that edits the same Draft from version 2 to version 3
+  during `send` and then returns HTTP 204 produces a successful result reporting version 3 and a
+  digest different from the version 2 request identity. This fails the exact-revision evidence
+  requirement in the Task and Slice RO-2.
+  Correction direction: carry the immutable revision identity/snapshot used for the request through
+  every result and audit path instead of rereading the revision after I/O, and add a regression test
+  that mutates the same Draft during the fake send and asserts the returned revision ID/version/
+  digest remain the exact expected request identity.

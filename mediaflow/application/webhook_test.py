@@ -11,6 +11,7 @@ from mediaflow.application.configuration_snapshot import ManagedConfigurationSer
 from mediaflow.application.notification import WebhookTransportError, webhook_signature
 from mediaflow.domain.configuration_management import (
     ConfigurationVersionConflict,
+    ManagedConfigurationRevision,
 )
 from mediaflow.domain.notification import NotificationEventType, WebhookDefinition, WebhookRequest
 from mediaflow.domain.security import SecurityAuditRecord
@@ -81,7 +82,7 @@ class WebhookTestService:
             definition = WebhookDefinition.from_document(raw)
         except ValueError as error:
             return self._result(
-                revision_id=revision_id,
+                revision=revision,
                 webhook_id=webhook_id,
                 definition=None,
                 actor=actor,
@@ -93,7 +94,7 @@ class WebhookTestService:
         secret = os.environ.get(secret_env)
         if not secret:
             return self._result(
-                revision_id=revision_id,
+                revision=revision,
                 webhook_id=webhook_id,
                 definition=definition,
                 actor=actor,
@@ -133,7 +134,7 @@ class WebhookTestService:
             status = self._transport.send(request)
         except TimeoutError:
             return self._result(
-                revision_id=revision_id,
+                revision=revision,
                 webhook_id=webhook_id,
                 definition=definition,
                 actor=actor,
@@ -147,7 +148,7 @@ class WebhookTestService:
             if isinstance(error, WebhookTransportError):
                 message = "the Webhook transport could not send the signed test request"
             return self._result(
-                revision_id=revision_id,
+                revision=revision,
                 webhook_id=webhook_id,
                 definition=definition,
                 actor=actor,
@@ -171,7 +172,7 @@ class WebhookTestService:
             category = f"http_{status}"
             message = f"the Webhook endpoint rejected the signed test with HTTP {status}"
         return self._result(
-            revision_id=revision_id,
+            revision=revision,
             webhook_id=webhook_id,
             definition=definition,
             actor=actor,
@@ -187,7 +188,7 @@ class WebhookTestService:
     def _result(
         self,
         *,
-        revision_id: str,
+        revision: ManagedConfigurationRevision,
         webhook_id: str,
         definition: WebhookDefinition | None,
         actor: str,
@@ -197,7 +198,6 @@ class WebhookTestService:
         outcome: str = "failure",
         test_id: str | None = None,
     ) -> dict[str, object]:
-        revision = self._configuration.require(revision_id)
         webhook_document = (
             {
                 "id": definition.webhook_id,
@@ -263,7 +263,7 @@ class WebhookTestService:
         }
         self._audit(
             actor=actor,
-            revision_id=revision.revision_id,
+            revision=revision,
             webhook_id=webhook_id,
             category=category,
             outcome=outcome,
@@ -299,7 +299,7 @@ class WebhookTestService:
         self,
         *,
         actor: str,
-        revision_id: str,
+        revision: ManagedConfigurationRevision,
         webhook_id: str,
         category: str,
         outcome: str,
@@ -315,8 +315,9 @@ class WebhookTestService:
                     actor,
                     "POST",
                     (
-                        f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/"
-                        f"{webhook_id}/test?category={category}"
+                        f"/api/v1/configuration/revisions/{revision.revision_id}/objects/webhooks/"
+                        f"{webhook_id}/test?version={revision.version}&digest={revision.digest}"
+                        f"&category={category}"
                     )[:500],
                     "webhook-test",
                     outcome,
