@@ -902,6 +902,12 @@ APP_JS = b"""(() => {
         row.append(text('span', `${item.url || '-'}; events: ${(item.events || []).join(', ') || '-'}; ` +
           `timeout ${item.timeoutSeconds ?? '-'}s; maxAttempts ${item.maxAttempts ?? '-'}; ` +
           `${item.enabled === true ? 'enabled' : 'disabled'}`));
+        if (item.url === '***REDACTED***') {
+          row.append(text('span',
+            'Endpoint URL is hidden because the stored URL carries credentials or a ' +
+            'query string. Edit this Webhook and enter a clean HTTPS endpoint URL to correct it.',
+            'error'));
+        }
         row.append(text('span', `Secret readiness: ${readiness}`, item.structuralValid === false ? 'error' :
           (readiness.includes(': UNSET') ? 'warning' : '')));
         row.append(text('span', validity, item.structuralValid === false ? 'error' : ''));
@@ -3609,6 +3615,12 @@ APP_JS = b"""(() => {
               (readiness.includes(': UNSET') ? 'warning' : '')));
           if (item.structuralValid === false) {
             row.append(text('span', `Invalid: ${item.validationError || 'unknown error'}`, 'error'));
+            if (item.url === '***REDACTED***') {
+              row.append(text('span',
+                'The stored endpoint URL is hidden because it carries credentials or a ' +
+                'query string; edit the Webhook in Configuration and enter a clean HTTPS URL.',
+                'error'));
+            }
           }
           if (canTestWebhooks) {
             row.append(actionButton('Test signed endpoint', async () => {

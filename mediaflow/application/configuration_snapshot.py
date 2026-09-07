@@ -20,6 +20,11 @@ from mediaflow.domain.configuration_management import (
     ManagedConfigurationStatus,
     RuntimeSnapshotUnavailable,
 )
+from mediaflow.domain.notification import (
+    redact_webhook_urls,
+    unsafe_webhook_url_items,
+    webhook_url_items,
+)
 from mediaflow.infrastructure.runtime_configuration import (
     is_minimal_management_bootstrap,
     load_managed_runtime_configuration,
@@ -289,6 +294,7 @@ class ManagedConfigurationService:
     ) -> ManagedConfigurationRevision:
         normalized = _canonical_document(document)
         _reject_literal_secrets(normalized)
+        _reject_unsafe_webhook_urls(normalized, current=None)
         now = self._clock()
         try:
             active = self._repository.get_active_revision()
@@ -630,6 +636,7 @@ class ManagedConfigurationService:
             )
         normalized = _canonical_document(document)
         _reject_literal_secrets(normalized)
+        _reject_unsafe_webhook_urls(normalized, current=revision.document)
         now = self._clock()
         edited = ManagedConfigurationRevision(
             revision.revision_id,
@@ -1012,6 +1019,36 @@ def _reject_literal_secrets(value: object, path: str = "configuration") -> None:
             _reject_literal_secrets(child, f"{path}[{index}]")
 
 
+def _reject_unsafe_webhook_urls(
+    document: dict[str, object],
+    *,
+    current: dict[str, object] | None,
+) -> None:
+    """Reject credential-bearing Webhook URLs before a Draft is persisted.
+
+    ``current`` is the revision being edited, or None for a brand-new import.
+    A URL that is unsafe but already persisted unchanged in that exact current
+    revision stays correctable (a legacy Draft may be opened and its Webhook
+    edited/deleted); any newly introduced or changed unsafe Webhook URL fails
+    closed with a bounded message that never echoes the URL or its values.
+    """
+
+    current_urls = set(webhook_url_items(current)) if current is not None else set()
+    for webhook_id, _url in unsafe_webhook_url_items(document):
+        if (webhook_id, _url) in current_urls:
+            continue
+        message = (
+            f"Webhook {webhook_id} URL must not include credentials, a query or a "
+            "fragment; correct the endpoint URL before saving"
+            if webhook_id
+            else (
+                "Webhook URL must not include credentials, a query or a fragment; "
+                "correct the endpoint URL before saving"
+            )
+        )
+        raise ValueError(message)
+
+
 def _redact_document(document: dict[str, object]) -> dict[str, object]:
     forbidden = {re.sub(r"[^a-z0-9]", "", item) for item in _SECRET_KEYS}
 
@@ -1027,7 +1064,12 @@ def _redact_document(document: dict[str, object]) -> dict[str, object]:
             return [redact(child) for child in value]
         return copy.deepcopy(value)
 
-    return redact(document)  # type: ignore[return-value]
+    safe = redact(document)
+    if isinstance(safe, dict):
+        # Suppress already-persisted/legacy unsafe Webhook endpoint URLs in the
+        # whole-document projection the same way every other projection does.
+        redact_webhook_urls(safe)
+    return safe  # type: ignore[return-value]
 
 
 def _audit_document(audit: ConfigurationChangeAudit) -> dict[str, object]:

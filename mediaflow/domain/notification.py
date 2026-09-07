@@ -21,6 +21,130 @@ WEBHOOK_RETRY_MAX = 86400.0
 # available to an operator surface.  The signed Notification Worker uses the
 # same 300-second default when the runtime document does not override it.
 DELIVERY_LEASE_DEFAULT_SECONDS = 300.0
+# The bounded value used to replace an already-persisted Webhook endpoint URL
+# that carries a credential channel (userinfo, query or fragment) whenever it
+# is projected.  It matches the existing managed-document secret redaction
+# marker so operators can recognise a suppressed value, and it can never be
+# mistaken for a real endpoint.
+WEBHOOK_URL_REDACTED_VALUE = "***REDACTED***"
+
+
+def webhook_url_validation_error(url: str) -> str | None:
+    """Return one bounded reason an HTTPS Webhook URL is unsafe, else None.
+
+    This is the single canonical endpoint rule shared by the domain validator,
+    the runtime loader, managed typed-object validation and every projection
+    decision.  The returned messages are constant and never echo the URL or
+    any value it carries.  The query component is an unbounded
+    credential-smuggling channel (names such as ``token``, ``api_key``,
+    ``access_token``, ``client_secret``, ``secret``, ``password``,
+    ``authorization``, ``credential``, ``signature``, ``access_key`` and
+    ``secret_key``, in any casing/separator spelling, cannot be proven absent),
+    so any query fails closed entirely instead of retaining a bypass.
+    """
+
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return "Webhook URL must be HTTPS without userinfo, query or fragment"
+    if parsed.scheme != "https" or not parsed.hostname:
+        return "Webhook URL must be HTTPS with a hostname"
+    if parsed.username is not None or parsed.password is not None:
+        return "Webhook URL must not include userinfo credentials"
+    if parsed.query:
+        return "Webhook URL must not include a query string"
+    if parsed.fragment:
+        return "Webhook URL must not include a fragment"
+    return None
+
+
+def webhook_url_hides_value(url: object) -> bool:
+    """Return True when a persisted Webhook URL value must never be serialized.
+
+    Already-persisted/legacy Webhook definitions may predate the canonical
+    endpoint rule.  Whenever such a stored URL carries a credential channel
+    (userinfo, query or fragment) it must be suppressed or replaced by the
+    bounded redaction marker on every projection, export, audit and error
+    surface while the revision stays explicitly correctable.
+    """
+
+    if not isinstance(url, str) or not url:
+        return False
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    return bool(parsed.username or parsed.password or parsed.query or parsed.fragment)
+
+
+def redact_webhook_url_value(url: object) -> object:
+    """Return the bounded marker for a stored Webhook URL that must be hidden."""
+
+    return WEBHOOK_URL_REDACTED_VALUE if webhook_url_hides_value(url) else url
+
+
+def _webhook_item_lists(document: Mapping[str, object]):
+    """Yield each mutable Webhook item list in a configuration document.
+
+    The canonical managed spelling is the root ``webhooks`` section; the
+    historical ``notifications.webhooks`` spelling is accepted for legacy
+    documents.  Lists are yielded by reference so callers that own a deep copy
+    can redact items in place.
+    """
+
+    root = document.get("webhooks")
+    if isinstance(root, list):
+        yield root
+    notifications = document.get("notifications")
+    if isinstance(notifications, Mapping):
+        nested = notifications.get("webhooks")
+        if isinstance(nested, list):
+            yield nested
+
+
+def redact_webhook_urls(document: Mapping[str, object]) -> int:
+    """Replace unsafe Webhook ``url`` values in place on a mutable copy.
+
+    Returns the number of values replaced.  Callers must only pass a document
+    they own (a deep copy); persisted revisions are never mutated here.
+    """
+
+    count = 0
+    for section in _webhook_item_lists(document):
+        for item in section:
+            if not isinstance(item, dict) or "url" not in item:
+                continue
+            original = item["url"]
+            item["url"] = redact_webhook_url_value(original)
+            if item["url"] != original:
+                count += 1
+    return count
+
+
+def webhook_url_items(document: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
+    """Return every (webhook id, raw url) pair in a configuration document."""
+
+    values: list[tuple[str, object]] = []
+    for section in _webhook_item_lists(document):
+        for item in section:
+            if not isinstance(item, Mapping) or "url" not in item:
+                continue
+            webhook_id = item.get("id")
+            identifier = str(webhook_id) if isinstance(webhook_id, str) and webhook_id else ""
+            values.append((identifier, item["url"]))
+    return tuple(values)
+
+
+def unsafe_webhook_url_items(
+    document: Mapping[str, object],
+) -> tuple[tuple[str, object], ...]:
+    """Return the (webhook id, url) pairs whose URL must never be serialized."""
+
+    return tuple(
+        (identifier, url)
+        for identifier, url in webhook_url_items(document)
+        if webhook_url_hides_value(url)
+    )
 
 
 class NotificationDeliveryConflict(RuntimeError):
@@ -90,15 +214,9 @@ class WebhookDefinition:
             or "\x00" in self.url
         ):
             raise ValueError("Webhook URL must be bounded text")
-        parsed = urlsplit(self.url)
-        if (
-            parsed.scheme != "https"
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.fragment
-        ):
-            raise ValueError("Webhook URL must be HTTPS without credentials or fragment")
+        url_problem = webhook_url_validation_error(self.url)
+        if url_problem is not None:
+            raise ValueError(url_problem)
         if not isinstance(self.secret_env, str) or not WEBHOOK_ENV_NAME.fullmatch(self.secret_env):
             raise ValueError("Webhook secretEnv must be a valid environment variable name")
         if (

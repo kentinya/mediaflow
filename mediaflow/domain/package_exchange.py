@@ -11,6 +11,10 @@ from mediaflow.domain.manual_safety import (
     redact_evidence_text,
     redact_evidence_value,
 )
+from mediaflow.domain.notification import (
+    redact_webhook_urls,
+    unsafe_webhook_url_items,
+)
 from mediaflow.domain.task_persistence import PersistentResultRecord, redact_persistent_result
 
 CONFIGURATION_PACKAGE_KIND = "mediaflow.configuration.v1"
@@ -196,7 +200,18 @@ def redact_configuration_document(
             return redact_evidence_text(value)
         return copy.deepcopy(value)
 
-    safe = redact(document, "")
+    working = copy.deepcopy(document)
+    unsafe_webhooks = unsafe_webhook_url_items(working)
+    redact_webhook_urls(working)
+    for identifier, _url in unsafe_webhooks:
+        evidence.append(
+            {
+                "field": f"webhooks.{identifier}.url" if identifier else "webhooks.url",
+                "kind": "redacted_webhook_url",
+                "webhookId": identifier or None,
+            }
+        )
+    safe = redact(working, "")
     if not isinstance(safe, dict):
         raise PackageExchangeError(
             "configuration package document must be an object",
@@ -214,6 +229,15 @@ def package_secret_issues(document: object) -> list[dict[str, object]]:
     """Find literal/unsafe secret content in an incoming configuration payload."""
 
     issues: list[dict[str, object]] = []
+
+    if isinstance(document, dict):
+        for identifier, _url in unsafe_webhook_url_items(document):
+            issues.append(
+                {
+                    "field": f"webhooks.{identifier}.url" if identifier else "webhooks.url",
+                    "kind": "webhook_url_credential",
+                }
+            )
 
     def inspect(value: object, path: str) -> None:
         if isinstance(value, dict):
