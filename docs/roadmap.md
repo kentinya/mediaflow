@@ -17,7 +17,7 @@ only in [the development workflow](development-workflow.md).
 | 26 — Web-first fresh setup and Storage completion | Let an authenticated operator start from a minimal fresh-instance bootstrap, create the first complete managed Draft, configure/test all V1 Storage types and libraries, browse bounded Storage directories, and checked-activate the first immutable runtime without hand-authoring a full JSON runtime | PASS / CLOSED | 25 |
 | 27 — Manual operations and file lifecycle | Let an operator browse real configured Storage, distinguish it from FileIndex, run file- or ResourceLibrary-scoped Scan/Preview/Organize with the correct authority, understand current processing disposition, and complete conflict/review/recovery through an explicit safe continuation | PASS / CLOSED | 26 and closed 23–25 foundations |
 | 28 — Web-first configuration and operations administration | Complete the day-2 Web configuration lifecycle and object-management experience, consumed System Settings, versioned secret-free configuration/result import-export, and managed Webhook delivery configuration/test/recovery | PASS / CLOSED | 27 |
-| 29 — Docker production self-hosted release | Deliver and verify the one-image, multi-service Docker Compose product journey with production HTTP serving, local durable `/data`, explicit media mounts, non-root operation, lifecycle health, restart persistence and fail-closed upgrade/migration | PLANNED | 27 and 28 |
+| 29 — Docker production self-hosted release | Deliver and verify the one-image, multi-service Docker Compose product journey with production HTTP serving, local durable `/data`, explicit media mounts, non-root operation, lifecycle health, restart persistence and fail-closed upgrade/migration | ACTIVE | 27 and 28 |
 
 ## Current boundary
 
@@ -30,7 +30,7 @@ the current V1 product covers fresh setup, real Storage/FileIndex operations, ma
 scheduled unattended organization, exact Active runtime authority and day-2 administration without
 redesigning the processing engine.
 
-The remaining V1 Slice is Slice 29 Docker production self-hosted release. V1 retains
+The remaining V1 Slice is the active Slice 29 Docker production self-hosted release. V1 retains
 environment-owned API-principal bearer authentication, deployment-owned secret injection and the TMDB
 production Provider. Built-in user/session identity, OIDC, Metadata Provider switching, full Secret
 Store integration, mutation-based Storage capability probes, distributed workers and uncertain media-
