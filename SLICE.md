@@ -263,12 +263,10 @@ Final Tests:
 - Prior Slice 28 final focused modules at the original closure checkpoint — PASS, 239 tests.
 - `.venv/bin/python -m unittest tests.test_webhook_url_security ... tests.test_final_integration`
   for Task 28.6 focused/related modules — PASS, 220 tests.
-- `.venv/bin/python -W ignore -m unittest discover -s tests` during Task 28.6 review — 1361 tests,
-  2 failures limited to the correction-loop governance state and a pre-existing Storage Browser UI
-  wording assertion, 7 optional external-profile skips, 0 errors.
-- `.venv/bin/python scripts/check_governance.py` during Task 28.6 review — FAIL only because the
-  repository was in the A `FIX REQUIRED` correction loop with an active Task; the governance script
-  itself was unchanged and this handback restores the no-active-Task `READY FOR A REVIEW` state.
+- `.venv/bin/python -W ignore -m unittest discover -s tests` after the Task 28.6 handback —
+  1361 tests, 1 pre-existing/unrelated Storage Browser UI wording failure, 7 optional
+  external-profile skips, 0 errors.
+- `.venv/bin/python scripts/check_governance.py` after the Task 28.6 handback — PASS.
 - `.venv/bin/ruff format --check .` — only pre-existing formatting findings in
   `tests/test_system_settings_management.py`.
 - `.venv/bin/ruff check .` — only pre-existing E501 in
