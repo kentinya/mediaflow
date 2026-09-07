@@ -44,7 +44,7 @@ export MEDIAFLOW_WEBHOOK_SECRET="<independent-random-webhook-secret>"
 
 ## V1 self-hosted release status
 
-Slices 26, 27 and 28 are PASS / CLOSED. The remaining V1 roadmap is now:
+Slices 26, 27 and 28 are PASS / CLOSED. The current active V1 Slice is:
 
 ```text
 Slice 29 — Docker Production Self-hosted Release
@@ -191,17 +191,18 @@ execute admission, schedules/status, and Job pins cannot mix revisions. A queued
 published revision is unavailable fails before workflow construction and exposes actionable,
 secret-free recovery evidence in API/Web detail.
 
-The Configuration tab in the authenticated Operator UI exposes status, whole-document import/edit,
-validation, diff, activation, and replacement recovery actions through the bootstrap database
-locator. Guided Draft editing currently covers Local, SMB, OpenList, AWS S3, Cloudflare R2 and generic
-S3-compatible Storage, ResourceLibrary, MediaLibrary,
-RecognitionType, RecognitionRule, RecognitionTypePolicy, MetadataPolicy, NamingPolicy,
-ClassificationPolicy, and OrganizePolicy. It shows direct reference impact, blocks referenced
-deletion, keeps remote Storage read projections and evidence redacted while Draft definitions and
-deployment-owned secret references remain editable (actual secret values are never persisted or
-exposed), and provides exact-revision recognition, metadata, naming, classification,
+The Configuration tab in the authenticated Operator UI is forms-first. Editing Active explicitly
+creates a successor Draft from the exact immutable snapshot; typed cards and forms provide the
+applicable create, copy, edit, enable, disable and delete actions for the managed object graph,
+including Local, SMB, OpenList, AWS S3, Cloudflare R2 and generic S3-compatible Storage, libraries,
+Recognition, MetadataPolicy, Naming, Classification, Organize, Automation Task Definitions and
+Webhooks. It shows reference impact and blocks referenced deletion. Advanced JSON and versioned
+secret-free configuration package import/export plus bounded result package export remain
+compatibility and support paths.
+Remote Storage and Webhook secret references remain editable while actual secret values are never
+persisted or exposed. Exact-revision recognition, metadata, naming, classification,
 organize-authority, destination-preview, Storage Browser/path selection, per-Storage read-only checks
-and provider-neutral destination-precheck actions.
+and provider-neutral destination-precheck actions remain available.
 Checked activation consumes current evidence for the exact revision and atomically publishes an
 immutable runtime snapshot; queued and in-flight work retains its pinned revision identity even after
 a later activation.
@@ -304,12 +305,15 @@ macros, shell commands, or catch-up backlog. Nonexistent DST wall times are skip
 wall time fires once. Every emission is appended to SQLite schedule audit.
 
 Notifications use an asynchronous Outbox for terminal Automation Job and Scheduler emission events.
-Enable a configured HTTPS Webhook, set its `secretEnv`, then run
+Web/API manages HTTPS Webhook definitions, event selection, enable/disable state and deployment-owned
+`secretEnv` references, and can send one bounded signed test pinned to the exact configuration
+revision. After enabling a configured Webhook, run
 `mediaflow notification-worker run`. Payloads are HMAC-SHA256 signed over
 `timestamp + "." + exact UTF-8 body`; 429/5xx/transport failures retry with bounded backoff and
 other 4xx responses enter dead-letter. Delivery failures never change completed media work.
-The API exposes authenticated read-only `GET /api/v1/notifications` and never returns payload
-bodies or secrets.
+Authenticated Web/API exposes bounded delivery lists and detail, automatic retry state, explicit
+expired-lease recovery and dead-letter requeue. Read projections never return payload bodies or
+secrets, and every recovery action is scoped to one delivery.
 
 Claimed deliveries use the configured `deliveryLeaseSeconds` (300 by default). After a worker
 crash, an expired claim is safely eligible for another attempt; its stable delivery ID lets
@@ -422,7 +426,8 @@ constructs no Storage/provider and never creates or resumes a Task or Job automa
 
 Start the existing loopback API process and open `http://127.0.0.1:8787/ui/`. The dependency-free
 operator page shows the Dashboard and the conflict, metadata, and classification review queues.
-It also provides read-only Task, Automation Job, Scheduler, and Notification delivery views.
+It also provides Task, Automation Job and Scheduler views, plus managed Webhook definitions/tests and
+Notification delivery detail/recovery.
 Schedule occurrence audit and notification delivery pages are bounded to 1–100 rows, support stable
 Previous/Next navigation, and expose no
 webhook URL, body, signature, header, or secret. Task detail shows bounded TaskItems and
@@ -437,10 +442,12 @@ pending/running Automation Jobs through an explicit two-step Job-detail control.
 immediately; running cancellation is cooperative between items, so an in-flight operation may finish
 and completed work is not rolled back. Operator/executor/admin tokens may also record the same
 restricted decisions already supported by the API: conflict Skip/Rename, a persisted metadata
-candidate rank, or a persisted classification choice rank. The UI cannot Overwrite, edit paths or
-IDs, resume/retry/cancel a Task, or execute organization. The Jobs view can queue only `scan` or
-`preview` after a separate review step, with an optional 1–10000 item limit; these jobs are visibly
-marked DRY_RUN and contain no execute authority. Decisions never resume work
+candidate rank, or a persisted classification choice rank. The general Jobs submission view can
+queue only `scan` or `preview` after a separate review step, with an optional 1–10000 item limit;
+these jobs are visibly marked DRY_RUN and contain no execute authority or arbitrary remote organize
+request. Separately, Files/FileIndex offers the bounded manual Preview/Organize journey. Real
+mutation requires explicit confirmation and an exact one-shot authority, and only
+`OrganizerExecutor` can invoke mutating Storage operations. Decisions never resume work
 automatically. The standard-library server has no TLS or production identity provider; keep it on
 trusted loopback or place it behind a correctly configured HTTPS reverse proxy.
 
@@ -563,8 +570,8 @@ production Providers are explicitly V1.x/post-V1, not current V1 release work.
 
 For the current non-container Local guided setup, Storage `rootPath` is host-absolute while ResourceLibrary `storagePath` and
 MediaLibrary `rootPath` are Storage-relative. The Web action never creates roots or calls a Storage
-mutation. The raw JSON editor remains the explicitly labelled compatibility path for configuration
-families without guided forms. In the final Docker contract, Local `rootPath` is an absolute path visible inside the
+mutation. Whole-document JSON remains under Advanced JSON as an import-export, compatibility and
+support path. In the final Docker contract, Local `rootPath` is an absolute path visible inside the
 container, not an arbitrary host path.
 
 The authenticated operator console now includes read-only **System** status and typed **Settings**

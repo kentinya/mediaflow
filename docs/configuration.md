@@ -84,10 +84,12 @@ Draft → Validate → Validated → explicit Activate → Active runtime snapsh
 ```
 
 Editing a Draft increments its optimistic version, recalculates its digest and invalidates prior
-validation/test evidence. Editing an Active or Superseded revision is refused; import a new Draft.
-Activation is atomic. A failed activation leaves the previous Active revision and the candidate Draft
-intact. A missing or invalid Active revision fails media work closed while status and replacement
-Draft recovery remain available through the bootstrap database locator.
+validation/test evidence. Active and Superseded revisions remain immutable. Editing the current
+Active explicitly creates a successor Draft seeded from that exact snapshot; Advanced JSON or package
+import can also create an inactive Draft for compatibility, exchange or recovery. Activation is
+atomic. A failed activation leaves the previous Active revision and the candidate Draft intact. A
+missing or invalid Active revision fails media work closed while status and replacement Draft
+recovery remain available through the bootstrap database locator.
 
 CLI equivalents are:
 
@@ -98,8 +100,9 @@ mediaflow config draft-validate REVISION_ID
 mediaflow config activate REVISION_ID --expected-version VERSION
 ```
 
-The authenticated Web Configuration view exposes the same operations through the API. JSON import
-creates a Draft; it never silently changes Active.
+The authenticated Web Configuration view exposes a forms-first successor-Draft journey through the
+same API. Whole-document JSON is an explicitly labelled Advanced/import-export/support path. Any JSON
+or package import creates an inactive Draft; it never silently changes Active.
 
 ## Immutable runtime snapshot
 
@@ -123,26 +126,30 @@ The canonical managed document and object service preserve references and optimi
 - RecognitionType, RecognitionRule and RecognitionTypePolicy mappings;
 - MetadataPolicy, including the configured TMDB Provider reference;
 - NamingPolicy, ClassificationPolicy and OrganizePolicy;
-- Automation Task Definitions.
+- Automation Task Definitions;
+- managed Webhook definitions and event selection.
 
-The object service rejects unknown fields, validates IDs and references, records bounded redacted
-audits, and blocks deletion while an object is referenced. A valid unreferenced object can be deleted;
-the reference check is not a blanket refusal of all deletion. Any edit is applied to the Draft and
-returns that revision to `Draft`.
+The object service provides create, copy, edit, enable, disable and delete actions where applicable.
+It rejects unknown fields, validates IDs and references, records bounded redacted audits, shows
+reference impact, and blocks deletion while an object is referenced. A valid unreferenced object can
+be deleted; the reference check is not a blanket refusal of all deletion. Every change is applied to
+the Draft and returns that revision to `Draft`.
 
-The current Web guided forms cover Local, SMB, OpenList, AWS S3, Cloudflare R2 and generic
-S3-compatible Storage, ResourceLibrary, MediaLibrary and the policy graph needed by the first-runtime
-journey. The raw whole-document JSON editor remains available as a compatibility path for
-configuration families without a guided form.
+The current Web Configuration page leads with the exact Active identity and the explicit action to
+create a successor Draft. Typed cards and forms cover Local, SMB, OpenList, AWS S3, Cloudflare R2 and
+generic S3-compatible Storage, ResourceLibrary, MediaLibrary, Recognition, MetadataPolicy, Naming,
+Classification, Organize, Automation Task Definition and Webhook management. Some nested rule and
+policy fields use bounded JSON inside their typed object form. The raw whole-document editor remains
+under Advanced JSON for import/export, compatibility and support rather than as the ordinary editing
+entry point.
 Remote Storage definitions and their deployment-owned secret references remain editable in Drafts;
 redaction applies to read projections and evidence, while actual secret values are never persisted or
 exposed.
-The current top-level Configuration page leads with whole-document JSON staging. Guided controls are
-available only after opening a revision; several policy families still use bounded JSON-object
-editors, copy/enable/disable actions are not presented consistently across families, and the existing
-successor-Draft action is labelled `Import current JSON as Draft` rather than a natural
-`Edit Active by creating Draft` flow. These are Web/IA limitations, not permission to make Active
-mutable.
+
+System Settings use the same managed configuration authority. The Settings surface reads the exact
+Active revision and its consumption evidence, creates a successor Draft when Active values are
+edited, validates typed values and preserves bootstrap-owned and restart-required boundaries. It
+fails closed instead of presenting settings from another snapshot as consumed Active state.
 
 ## Storage configuration model
 
@@ -193,7 +200,8 @@ The current exact-revision evidence paths are:
 - Composed destination preview;
 - provider-neutral per-Storage read-only setup checks;
 - provider-neutral destination precheck;
-- the older Local setup check as a bounded Local diagnostic.
+- the older Local setup check as a bounded Local diagnostic;
+- managed Webhook endpoint testing bound to the exact revision/version/digest.
 
 Evidence is bounded, secret-free and tied to exact revision ID/version/digest. It records outcome,
 failure category, side-effect statement, retry safety and next action where applicable. Stale,
@@ -207,7 +215,9 @@ checks and the provider-neutral destination precheck construct a read-only Stora
 bounded read-only operations such as `List`/`Exists`/`Stat`; they do not create directories, write
 files, move, copy, delete, scan recursively or grant execute authority. The older Local setup check
 remains a Local diagnostic with the same read-only boundary. Live Strategy Test is the deliberate
-exception for Provider access, but it still starts no media work and performs no Storage mutation.
+exception for Provider access, and an explicit Webhook test sends one bounded signed request to the
+configured endpoint. Neither starts media work, creates an Outbox delivery nor performs Storage
+mutation.
 
 ### Checked activation
 
@@ -229,11 +239,13 @@ that the guided safety checks passed.
 Current authenticated Web/API surfaces share application services, permission checks and recovery
 semantics. They include:
 
-- Configuration status, revision detail, whole-document Draft import/edit/validate/activate and
-  guided object editing;
+- Configuration status, exact Active-to-successor-Draft creation, forms-first object management,
+  validation and checked activation, with Advanced JSON as an import/export/support path;
+- versioned secret-free configuration package import/export and bounded result package export;
 - exact-revision Strategy Test, Metadata candidate/correction, Naming, Classification, Organize
   authority, destination preview, per-Storage read-only checks, Local diagnostic and
   provider-neutral destination precheck;
+- managed System Settings with exact Active consumption evidence and typed successor-Draft editing;
 - Dashboard, Files list/detail/stats, Task/TaskItem and Job observability;
 - Recognition, Metadata, Classification and conflict review actions;
 - bounded manual Preview and reviewed one-shot manual execution;
@@ -244,12 +256,15 @@ semantics. They include:
 - Processing Worker registration/readiness, heartbeat, ownership and claim-fencing evidence;
 - Automation Task Definition validation/Preview, persistent scoped grant/revoke, occurrences and
   per-item outcome/recovery;
-- schedules, notification deliveries, security audit and redacted operational logs.
+- schedules, managed Webhook definitions/event selection/exact-revision tests, notification delivery
+  detail and per-delivery retry/requeue/dead-letter recovery, security audit and redacted operational
+  logs.
 
-The current UI has a read-only System status view. It reports bounded runtime/configuration status
-and wiring; it does not consume or edit a System Settings object. Webhook delivery exists as an
-engine and read-only operations view, but Web/API Webhook configuration, test and dead-letter
-management are Slice 28 work.
+The read-only System status view remains a bounded runtime/configuration projection. The separate
+System Settings surface is managed and consumed through the immutable configuration lifecycle.
+Webhook definitions and delivery recovery are also managed through Web/API. Delivery failure,
+retry, expired-lease recovery or dead-letter requeue changes only notification delivery state and
+never changes already completed media work.
 
 ## Secret boundary
 
@@ -305,12 +320,11 @@ logic for older databases. Do not infer a product capability from a historical m
 
 ## Current limitations and remaining V1 work
 
-Slices 26 and 27 are `PASS / CLOSED`. The remaining V1 order is:
+Slices 26, 27 and 28 are `PASS / CLOSED`. The remaining V1 work is:
 
 | Status | Capability |
 |---|---|
-| Slice 28 PLANNED | Day-2 forms-first configuration/object lifecycle, consumed System Settings, versioned secret-free configuration/result import-export, and managed Webhook configuration/test/delivery recovery |
-| Slice 29 PLANNED | Docker Compose production release, production WSGI server, `/data` durability, non-root mounts, health, restart persistence and fail-closed upgrade/migration |
+| Slice 29 ACTIVE | Docker Compose production release, production WSGI server, `/data` durability, non-root mounts, health, restart persistence and fail-closed upgrade/migration |
 | V1.x/V2 | Provider switching and additional production Providers, built-in user/session identity, OIDC, general Secret Store and broader recovery such as automatic uncertain-mutation replay or historical rollback |
 
 Arbitrary host-path access and mutation-based capability probes are not current capabilities. The
