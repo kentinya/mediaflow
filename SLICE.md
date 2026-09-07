@@ -6,7 +6,7 @@ rules are defined only in [`docs/development-workflow.md`](docs/development-work
 ```text
 Slice ID: 28
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: FIX REQUIRED
 Base SHA: 957a4ebcb0fde03e64be9c406fbcdfed9a12501d
 Implementation Head: 0b96b3f92a666a345aac8fc07f326150ce248a8e
 ```
@@ -306,17 +306,27 @@ Decision: SLICE READY FOR A REVIEW
 ## A Final Review
 
 ```text
-Reviewed Range: NOT YET REVIEWED
-Decision: NOT YET REVIEWED
-P0/P1 Blockers: NOT YET REVIEWED
-Closure Reconciliation: NOT YET PERFORMED
+Reviewed Range: 957a4ebcb0fde03e64be9c406fbcdfed9a12501d..0b96b3f92a666a345aac8fc07f326150ce248a8e
+Decision: FIX REQUIRED
+P0/P1 Blockers:
+- P0 — RO-5 / secret-free Safety Invariants: managed Webhook validation accepts credential-bearing
+  HTTPS URL query parameters and returns them in configuration/API/Web projections. Evidence:
+  submitting `https://example.invalid/hooks?token=TOP_SECRET_VALUE` and
+  `https://example.invalid/hooks?api_key=TOP_SECRET_VALUE` through the managed Webhook API returned
+  HTTP 200, and the subsequent revision detail returned the same secret value in `url`. The
+  validator at `mediaflow/domain/notification.py:93-101` rejects userinfo and fragments but does not
+  reject credential-bearing queries; `WebhookDefinition.document()` then persists/returns the URL.
+  Correction direction: fail closed on credential-bearing Webhook URL query parameters before
+  persistence/projection, preserve the deployment-owned `secretEnv` reference boundary, and add API,
+  Web, export/audit and runtime-loader regression tests proving the submitted secret never appears
+  in durable configuration or any operator response.
 ```
 
 ## Review State
 
 ```text
-Slice Status: READY FOR A REVIEW
+Slice Status: FIX REQUIRED
 Implementation Head: 0b96b3f92a666a345aac8fc07f326150ce248a8e
-P0/P1 Defects: NONE IDENTIFIED BY B
-Decision: READY FOR A REVIEW — A FINAL REVIEW
+P0/P1 Defects: ONE P0 SECURITY BLOCKER
+Decision: FIX REQUIRED — B PLANS FOCUSED CORRECTION TASK
 ```
