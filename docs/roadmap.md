@@ -16,27 +16,25 @@ only in [the development workflow](development-workflow.md).
 | 25 — Scheduled automation and unattended organization | Complete operator-configured scheduled scanning and unattended organization using RecognitionType-selected policies under explicit bounded execution authority, plus the production-loop hardening required by that journey | PASS / CLOSED | 24 |
 | 26 — Web-first fresh setup and Storage completion | Let an authenticated operator start from a minimal fresh-instance bootstrap, create the first complete managed Draft, configure/test all V1 Storage types and libraries, browse bounded Storage directories, and checked-activate the first immutable runtime without hand-authoring a full JSON runtime | PASS / CLOSED | 25 |
 | 27 — Manual operations and file lifecycle | Let an operator browse real configured Storage, distinguish it from FileIndex, run file- or ResourceLibrary-scoped Scan/Preview/Organize with the correct authority, understand current processing disposition, and complete conflict/review/recovery through an explicit safe continuation | PASS / CLOSED | 26 and closed 23–25 foundations |
-| 28 — Web-first configuration and operations administration | Complete the day-2 Web configuration lifecycle and object-management experience, consumed System Settings, versioned secret-free configuration/result import-export, and managed Webhook delivery configuration/test/recovery | ACTIVE | 27 |
+| 28 — Web-first configuration and operations administration | Complete the day-2 Web configuration lifecycle and object-management experience, consumed System Settings, versioned secret-free configuration/result import-export, and managed Webhook delivery configuration/test/recovery | PASS / CLOSED | 27 |
 | 29 — Docker production self-hosted release | Deliver and verify the one-image, multi-service Docker Compose product journey with production HTTP serving, local durable `/data`, explicit media mounts, non-root operation, lifecycle health, restart persistence and fail-closed upgrade/migration | PLANNED | 27 and 28 |
 
 ## Current boundary
 
-Slice 26 is PASS / CLOSED at Base `3c660d5a1512b5b221b0284bcff9ae6dd00bbf23` and
-Implementation Head `928b727552a2fbb298e694cb0312e082e4662dda`. Slice 27 is now PASS / CLOSED at
-Base `306b77d0aad44ab0a2e233866f8972247b437a7d` and Implementation Head
-`34365121342557b0f40eacc7ad9bbb74499cc4cb`. Together they deliver the fresh-instance setup,
-real Storage/FileIndex distinction, current-source lifecycle, bounded manual Scan/Preview/Organize,
-conflict/review/recovery continuation and Worker readiness/ownership evidence. The closed Slices do
-not own Webhook/System administration, Docker packaging/runtime release, Metadata Provider switching,
-a built-in user database, OIDC, a full Secret Store, mutation-based Storage capability probes or any
-redesign of the closed media-processing engine.
+Slices 26, 27 and 28 are PASS / CLOSED. Slice 28 closed at Base
+`957a4ebcb0fde03e64be9c406fbcdfed9a12501d` and Implementation Head
+`8546ff8fe15386dfbbb5fefb29a66b936ed4613f`, delivering day-2 Web/API configuration
+administration, consumed System Settings, versioned secret-free configuration/result exchange, and
+managed Webhook definition/test/delivery recovery. Together with the closed Slice 26/27 foundations,
+the current V1 product covers fresh setup, real Storage/FileIndex operations, manual organization,
+scheduled unattended organization, exact Active runtime authority and day-2 administration without
+redesigning the processing engine.
 
-The remaining V1 order is intentional. Day-2 configuration/notification administration proceeds from
-the stable Slice 26/27 authorities without redefining the completed processing journey. Slice 28 must
-be stable before the final Docker integration/release Slice.
-V1 retains environment-owned API-principal bearer authentication and the TMDB production Provider.
-Built-in user/session identity and Metadata Provider switching are explicit post-V1 work, not hidden
-Docker Tasks.
+The remaining V1 Slice is Slice 29 Docker production self-hosted release. V1 retains
+environment-owned API-principal bearer authentication, deployment-owned secret injection and the TMDB
+production Provider. Built-in user/session identity, OIDC, Metadata Provider switching, full Secret
+Store integration, mutation-based Storage capability probes, distributed workers and uncertain media-
+mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidden Docker Tasks.
 
 ## Roadmap rules
 

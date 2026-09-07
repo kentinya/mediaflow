@@ -6,7 +6,7 @@ rules are defined only in [`docs/development-workflow.md`](docs/development-work
 ```text
 Slice ID: 28
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: 957a4ebcb0fde03e64be9c406fbcdfed9a12501d
 Implementation Head: 8546ff8fe15386dfbbb5fefb29a66b936ed4613f
 ```
@@ -264,12 +264,13 @@ Final Tests:
 - `.venv/bin/python -m unittest tests.test_webhook_url_security ... tests.test_final_integration`
   for Task 28.6 focused/related modules — PASS, 220 tests.
 - `.venv/bin/python -W ignore -m unittest discover -s tests` after the Task 28.6 handback —
-  1361 tests, 1 pre-existing/unrelated Storage Browser UI wording failure, 7 optional
-  external-profile skips, 0 errors.
+  1361 tests, 1 non-blocking Storage Browser UI wording assertion, 7 optional external-profile
+  skips, 0 errors. A re-review confirmed the actual read-only Storage-relative browser controls,
+  not-FileIndex warning, path display, breadcrumb buttons and recovery guidance remain present.
 - `.venv/bin/python scripts/check_governance.py` after the Task 28.6 handback — PASS.
-- `.venv/bin/ruff format --check .` — only pre-existing formatting findings in
+- `.venv/bin/ruff format --check .` — non-blocking formatter findings in
   `tests/test_system_settings_management.py`.
-- `.venv/bin/ruff check .` — only pre-existing E501 in
+- `.venv/bin/ruff check .` — non-blocking E501 in
   `tests/test_system_settings_management.py`.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `.venv/bin/python -m pip check` — PASS.
@@ -294,9 +295,11 @@ Safety Evidence:
   export and audit projections while remaining explicitly correctable.
 
 Known Non-blocking Issues:
-- One pre-existing unrelated `tests.test_storage_browser` UI wording failure remains.
-- `tests/test_system_settings_management.py` has the same pre-existing formatter and E501 findings
-  recorded at the Task Base.
+- One `tests.test_storage_browser` UI wording assertion still expects the former literal phrase
+  `Storage-relative breadcrumb`; current Web copy still preserves the underlying read-only
+  Storage-relative browser journey and recovery semantics, so this is not a P0/P1 blocker.
+- `tests/test_system_settings_management.py` has non-blocking formatter and E501 findings recorded
+  at the Task 28.6 Base.
 - Seven optional external acceptance profiles are unavailable in this environment and therefore
   remain skipped.
 
@@ -312,27 +315,33 @@ Decision: SLICE READY FOR A REVIEW
 ## A Final Review
 
 ```text
-Reviewed Range: 957a4ebcb0fde03e64be9c406fbcdfed9a12501d..0b96b3f92a666a345aac8fc07f326150ce248a8e
-Decision: FIX REQUIRED
-P0/P1 Blockers:
-- P0 — RO-5 / secret-free Safety Invariants: managed Webhook validation accepts credential-bearing
-  HTTPS URL query parameters and returns them in configuration/API/Web projections. Evidence:
-  submitting `https://example.invalid/hooks?token=TOP_SECRET_VALUE` and
-  `https://example.invalid/hooks?api_key=TOP_SECRET_VALUE` through the managed Webhook API returned
-  HTTP 200, and the subsequent revision detail returned the same secret value in `url`. The
-  validator at `mediaflow/domain/notification.py:93-101` rejects userinfo and fragments but does not
-  reject credential-bearing queries; `WebhookDefinition.document()` then persists/returns the URL.
-  Correction direction: fail closed on credential-bearing Webhook URL query parameters before
-  persistence/projection, preserve the deployment-owned `secretEnv` reference boundary, and add API,
-  Web, export/audit and runtime-loader regression tests proving the submitted secret never appears
-  in durable configuration or any operator response.
+Reviewed Range: 957a4ebcb0fde03e64be9c406fbcdfed9a12501d..8546ff8fe15386dfbbb5fefb29a66b936ed4613f
+Decision: PASS
+P0/P1 Blockers: None
+Closure Reconciliation:
+- RO-1 through RO-6 and all Required Surfaces are complete across the authenticated Web/API
+  management boundary: forms-first successor Draft/object lifecycle, exact revision authority,
+  consumed System Settings, versioned secret-free package exchange, managed Webhook definitions/test
+  and isolated delivery recovery.
+- The prior A P0 on credential-bearing Webhook URL queries was corrected by Task 28.6. Re-review
+  verified fail-closed validation, redacted legacy projections/export/audit/runtime loading, and
+  focused Web/API regression coverage.
+- Safety invariants remain intact: non-execution analysis/configuration paths do not mutate media
+  Storage, only OrganizerExecutor owns media mutation, Active means the exact consumed immutable
+  snapshot, delivery recovery is per-delivery, and `config/alist.json` is ignored/untracked.
+- Validation is credible with focused Slice 28 regressions passing and the full offline suite showing
+  only non-blocking UI wording and formatting/lint cleanup findings. Optional external profiles are
+  truthfully skipped; no production credentials, services or media roots are required.
+- Deferred scope remains explicit: Slice 29 Docker production release, Provider switching, built-in
+  identity, full Secret Store, specialized notification channels, distributed workers and uncertain
+  media-mutation replay are not hidden dependencies.
 ```
 
 ## Review State
 
 ```text
-Slice Status: READY FOR A REVIEW
+Slice Status: PASS / CLOSED
 Implementation Head: 8546ff8fe15386dfbbb5fefb29a66b936ed4613f
-P0/P1 Defects: A P0 CORRECTION IMPLEMENTED BY TASK 28.6; READY FOR A RE-REVIEW
-Decision: RETURNED TO A FINAL REVIEW
+P0/P1 Defects: NONE
+Decision: PASS / CLOSED — 2026-09-07
 ```

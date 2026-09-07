@@ -44,11 +44,10 @@ export MEDIAFLOW_WEBHOOK_SECRET="<independent-random-webhook-secret>"
 
 ## V1 self-hosted release status
 
-Slices 26 and 27 are PASS / CLOSED. The remaining V1 roadmap is now:
+Slices 26, 27 and 28 are PASS / CLOSED. The remaining V1 roadmap is now:
 
 ```text
-Slice 28 — Web-first Configuration and Operations Administration
-→ Slice 29 — Docker Production Self-hosted Release
+Slice 29 — Docker Production Self-hosted Release
 ```
 
 The repository currently provides the Python/CLI development and trusted-loopback WSGI boundary;
@@ -568,19 +567,17 @@ mutation. The raw JSON editor remains the explicitly labelled compatibility path
 families without guided forms. In the final Docker contract, Local `rootPath` is an absolute path visible inside the
 container, not an arbitrary host path.
 
-The authenticated operator console now includes a read-only **System** tab. It is backed by a
-precomputed `GET /api/v1/system/status` snapshot and shows bounded Storage/library/policy wiring plus
-runtime compatibility. Root paths, display paths, scan-rule values, naming templates,
-classification paths, endpoints, environment-variable names, arbitrary adapter options, and secrets
-are intentionally excluded. Reselect **System** or use its explicit refresh button to reload the
-same startup snapshot; changing JSON still requires validation and an API restart. System Settings
-consumption and editing remain Slice 28 work.
+The authenticated operator console now includes read-only **System** status and typed **Settings**
+management. System Settings are edited through the managed configuration authority, expose exact
+Active consumption evidence, preserve bootstrap/restart boundaries, and fail closed instead of
+claiming consumed state when runtime is using another snapshot. Root paths, display paths, scan-rule
+values, naming templates, classification paths, endpoints, environment-variable names, arbitrary
+adapter options, and secrets remain excluded from public status evidence.
 
 The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries,
-persistent scan/preview jobs, Cron schedules, signed Webhook delivery engine, and Slice 27 daily
-manual-operations journey are complete.
-Webhook definition configuration/test and delivery recovery in Web/API remain a Slice 28
-product-completion journey; the existing delivery engine is not being reimplemented. The current
+persistent scan/preview jobs, Cron schedules, signed Webhook delivery engine, Slice 27 daily
+manual-operations journey, and Slice 28 Webhook definition/test/delivery-recovery journey are
+complete. The existing delivery engine is managed through Web/API without being reimplemented. The current
 Files tab browses configured Storage through bounded Storage-relative views, while FileIndex remains
 the separate indexed discovery and processing-disposition surface.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
@@ -594,7 +591,7 @@ state; the newer manual and Automation Definition Previews are analysis-only. Pr
 readiness and ownership are visible through the read-only Operator Web/API projections without
 widening execution authority.
 Database-managed users/login, OIDC, automatic secret rotation, Provider switching, and broader
-recovery beyond the delivered checkpoint journeys are not V1 capabilities. Slice 28 owns day-2
+recovery beyond the delivered checkpoint journeys are not V1 capabilities. Slice 28 delivered day-2
 configuration and operations administration; Slice 29 owns the Docker production release.
 
 The Automation view also manages the bounded scheduled unattended journey: operators can define a
