@@ -6,9 +6,9 @@ rules are defined only in [`docs/development-workflow.md`](docs/development-work
 ```text
 Slice ID: 28
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 957a4ebcb0fde03e64be9c406fbcdfed9a12501d
-Implementation Head: NOT SET
+Implementation Head: 0b96b3f92a666a345aac8fc07f326150ce248a8e
 ```
 
 The Base is the Slice 27 closure/documentation-reconciliation checkpoint and the real repository
@@ -216,16 +216,91 @@ Slice 28 is complete only when all of the following are true:
 ## B Closure Packet
 
 ```text
-Status: NOT SUBMITTED
-Reviewed Implementation Head: NOT SET
-Required Outcomes: NOT REVIEWED
-Required Surfaces: NOT REVIEWED
-Final Tests: NOT RUN
-Safety Evidence: NOT SUBMITTED
-Known Non-blocking Issues: NOT SUBMITTED
+Slice: 28 — Web-first Configuration and Operations Administration
+Base SHA: 957a4ebcb0fde03e64be9c406fbcdfed9a12501d
+Head SHA: 0b96b3f92a666a345aac8fc07f326150ce248a8e
+
+Required Outcomes:
+- RO-1 COMPLETE — Forms-first successor Draft and managed object lifecycle are available through
+  shared Web/API application behavior with reference impact and safe recovery.
+- RO-2 COMPLETE — Exact Active/Draft revision identity, optimistic concurrency, checked activation
+  and exact Webhook-test evidence remain bound to immutable revision snapshots.
+- RO-3 COMPLETE — Supported System Settings have typed Web/API editing, validation, audit and
+  exact Active/pinned runtime consumption evidence with explicit bootstrap/restart boundaries.
+- RO-4 COMPLETE — Versioned bounded configuration/result package export and Draft/recovery import
+  are secret-free, validated and never silently activate or overwrite current work.
+- RO-5 COMPLETE — Managed Webhook definitions, readiness, lifecycle, redaction and explicit
+  bounded exact-revision signed tests are available through Web/API.
+- RO-6 COMPLETE — Notification delivery list/detail and per-delivery dead-letter/stale recovery
+  expose durable state, attempts, lease/staleness, failure/effect evidence, audit and
+  at-least-once implications without changing completed media work.
+
+Required Surfaces:
+- Configuration Web view and versioned API COMPLETE.
+- System Settings Web view and versioned API COMPLETE.
+- Configuration/result exchange surface COMPLETE.
+- Notifications/Webhook Web view and versioned API COMPLETE.
+- Shared application and security boundary COMPLETE.
+
+Implemented:
+- Forms-first managed successor Draft and canonical configuration object lifecycle.
+- Consumed System Settings with exact Active snapshot evidence and recovery boundaries.
+- Versioned secret-free configuration and result package exchange.
+- Managed Webhook definition lifecycle, readiness projection and exact-revision signed test.
+- Independent notification delivery detail, stale/dead-letter recovery, API/Web parity and
+  redacted audit evidence.
+
+Tasks completed:
+- Task 28.1 — final implementation head fa02ae6fd6d82cf98d6804536b7baa2b3591a0fb.
+- Task 28.2 — final implementation head ab8a90e98c4518716ad153044b6785a669071f57.
+- Task 28.3 — final implementation head 0e750a46584696563d86861828c2cc0a6908cbe4.
+- Task 28.4 — final implementation head 3f0e89ee9a96a9cc5af61cd2614f1fbef3a0da3c.
+- Task 28.5 — B PASS at implementation head 0b96b3f92a666a345aac8fc07f326150ce248a8e.
+
+Final Tests:
+- `.venv/bin/python -m unittest` focused Slice 28 modules — PASS, 239 tests.
+- `.venv/bin/python -m unittest discover -s tests` in a clean worktree — 1348 tests, 1
+  pre-existing/unrelated Storage Browser文案 failure, 7 optional external-profile skips, 0 errors.
+- `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS.
+- `.venv/bin/ruff format --check .` — only pre-existing formatting findings in
+  `tests/test_system_settings_management.py`.
+- `.venv/bin/ruff check .` — only pre-existing E501 in
+  `tests/test_system_settings_management.py`.
+- `git diff --check` for the Slice range — PASS.
+- Both shipped configuration examples validate — PASS.
+- Forbidden FFmpeg/FFprobe dependency audit — PASS; no matches.
+- Local Markdown/link check — PASS, 37 local links checked and 0 missing.
+- Wheel build and isolated `scripts/wheel_smoke_test.py` — PASS; schema 33, migration rehearsal
+  and restore checks passed.
+
+Safety Evidence:
+- Configuration, settings, package, Webhook definition and delivery recovery reads/analysis do
+  not invoke media Storage mutation or grant media execution authority.
+- Active/Superseded revisions remain immutable; Draft edits and recovery actions use exact bounded
+  state/revision checks and preserve prior Active and completed media history.
+- Webhook explicit tests send at most one bounded signed request, do not create durable deliveries,
+  and remain separate from media Task/Job/Scheduler and Storage mutation.
+- Delivery recovery is atomic and per-delivery, preserves the stable delivery row/identity,
+  protects against stale/concurrent state changes, and leaves sibling deliveries unchanged.
+- Delivery/API/Web projections omit bodies, secrets, authorization material, cookies and remote
+  response content; `config/alist.json` is ignored, untracked and unstaged.
+
+Known Non-blocking Issues:
+- One pre-existing unrelated `tests.test_storage_browser` UI wording failure remains.
+- `tests/test_system_settings_management.py` has the same pre-existing formatter and E501 findings
+  recorded at the Task Base.
+- Seven optional external acceptance profiles are unavailable in this environment and therefore
+  remain skipped.
+
 Explicitly Deferred: SEE CONTRACT ABOVE
-Documentation Reconciliation Needed: TO BE ASSESSED AFTER IMPLEMENTATION
-Decision: NOT READY FOR A REVIEW
+Documentation Reconciliation Needed:
+- A should reconcile factual Slice 28 completion/status references in `docs/roadmap.md`,
+  `docs/progress.md`, `docs/product-experience.md`, `docs/requirements.md`, `docs/architecture.md`,
+  the Chinese product requirements specification and README as appropriate during A Final Review.
+  This is documentation truthfulness reconciliation only and must not expand scope.
+Decision: SLICE READY FOR A REVIEW
 ```
 
 ## A Final Review
@@ -240,8 +315,8 @@ Closure Reconciliation: NOT YET PERFORMED
 ## Review State
 
 ```text
-Slice Status: ACTIVE
-Implementation Head: NOT SET
-P0/P1 Defects: UNREVIEWED
-Decision: ACTIVE — B PLANS FIRST TASK
+Slice Status: READY FOR A REVIEW
+Implementation Head: 0b96b3f92a666a345aac8fc07f326150ce248a8e
+P0/P1 Defects: NONE IDENTIFIED BY B
+Decision: READY FOR A REVIEW — A FINAL REVIEW
 ```
