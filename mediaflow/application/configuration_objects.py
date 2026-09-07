@@ -104,7 +104,7 @@ from mediaflow.domain.naming import (
     NamingPolicy,
     NamingResult,
 )
-from mediaflow.domain.notification import WebhookDefinition
+from mediaflow.domain.notification import WebhookDefinition, redact_webhook_url_value
 from mediaflow.domain.organizer import (
     ConflictStrategy,
     ConflictType,
@@ -859,11 +859,31 @@ class ConfigurationObjectService:
                 "kind": kind.value,
                 "objectId": object_id or (str(after.get("id")) if after else ""),
                 "action": action,
-                "before": before,
-                "after": after,
+                "before": self._audited_object_value(kind, before),
+                "after": self._audited_object_value(kind, after),
                 **(audit_metadata or {}),
             },
         )
+
+    @staticmethod
+    def _audited_object_value(
+        kind: ConfigurationObjectKind,
+        value: Mapping[str, object] | None,
+    ) -> dict[str, object] | None:
+        """Return an audit-safe copy of one changed object document.
+
+        Webhook object audits must never persist an unsafe endpoint URL (for
+        example when an operator corrects or deletes an already-persisted
+        legacy credential-bearing URL), so the URL value is replaced by the
+        bounded redaction marker before it is stored.
+        """
+
+        if value is None:
+            return None
+        safe = copy.deepcopy(dict(value))
+        if kind is ConfigurationObjectKind.WEBHOOK_DEFINITION:
+            safe["url"] = redact_webhook_url_value(safe.get("url"))
+        return safe
 
     def copy_object(
         self,
@@ -5437,6 +5457,9 @@ class ConfigurationObjectService:
         readiness reflects the current process environment without becoming
         persisted configuration.  Only the deployment-owned environment
         variable name and a SET/UNSET state are returned, never a secret value.
+        Any already-persisted/legacy Webhook URL that carries a credential
+        channel is replaced by the bounded redaction marker on every projection
+        while the item stays visibly invalid and correctable.
         """
 
         projected = []
@@ -5459,6 +5482,8 @@ class ConfigurationObjectService:
                         "state": "SET" if os.environ.get(env_name) else "UNSET",
                     }
                 )
+            if "url" in candidate:
+                candidate["url"] = redact_webhook_url_value(candidate.get("url"))
             candidate["secretReadiness"] = readiness
             candidate["structuralValid"] = structural_valid
             candidate["validationError"] = validation_error
