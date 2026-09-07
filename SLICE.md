@@ -32,7 +32,9 @@ Worker owner or losing the prior durable state.
 
 This Slice is the final V1 deployment and release integration. It packages and operates the existing
 MediaFlow product; it does not redesign the closed media-processing, configuration, Storage, Task,
-Worker, Scheduler, Notification or identity domains.
+Worker, Scheduler, Notification or identity domains. Before production-release acceptance, this
+Contract also includes one narrow execution-boundary completeness correction that integrates the
+existing Jobs/Preview/one-shot execution authorities without replacing any of those domains.
 
 ## Vertical Journey
 
@@ -48,6 +50,22 @@ Deployment owner
 -> upgrade only when the compatibility gate passes
 -> recover from a rejected mount, secret, permission or migration state explicitly
 ```
+
+The pre-release execution-boundary correction is a required gate before Docker release acceptance:
+
+```text
+Jobs -> Queue Job -> choose Scan / Preview / Organize
+  Scan / Preview -> SUBMIT_DRY_RUN -> Worker -> analysis -> findings -> zero mutation
+  Organize -> existing one-shot real-execution authority -> explicit confirmation
+           -> Worker -> existing pipeline -> OrganizerExecutor -> Result/recovery
+Configuration -> Activate exact snapshot -> Queue first DryRun Preview
+Files/FileIndex -> existing Manual Preview regression reference
+```
+
+For every Preview entry point, an organize-plan conflict is an inspectable finding with source,
+destination, operation, conflict type, configured strategy, capability/evidence, status and next
+action. It does not become a mandatory operator backlog item. A real Organize attempt may enter the
+existing ConflictConfirmation/`WAITING_CONFIRM` recovery path after current-state revalidation.
 
 Every deployment-facing path must expose the goal, entry condition, visible state, action, success
 result, failure result and recovery path. Health checks and service startup must not create media
@@ -68,6 +86,11 @@ starting or being probed.
   upgrade-preflight and migration-rehearsal foundations must be reused rather than bypassed.
 - Existing authentication is deployment-owned API-principal Bearer Token plus RBAC. Existing
   configuration stores environment-variable references; secret values must remain deployment-owned.
+- The protected `/api/v1/jobs` organize branch and one-shot execution authorization already exist,
+  but the Jobs Web journey and ordinary Job admission expose only Scan/Preview. The shared queued
+  Preview worker path still routes an unresolved organize-plan conflict through
+  `ConflictConfirmation`/`WAITING_CONFIRM`, unlike the already-correct Files/FileIndex Manual
+  Preview path.
 - The repository currently has no Dockerfile, Compose topology or production WSGI serving artifact.
   The final Docker release must therefore establish the production process and packaging boundary
   without claiming that current development serving is already production-ready.
@@ -81,6 +104,20 @@ Compose service topology, container health model, restart acceptance, or image-t
 migration runbook. The existing backup and migration helpers are not yet integrated into a
 fail-closed production deployment journey.
 
+An A audit also confirms a pre-release V1 execution-boundary gap: Jobs has no Queue Job Organize
+journey even though the protected one-shot organize admission already exists, and queued Job Preview
+(including Configuration's first DryRun Preview, which posts the same `preview` Job) can create a
+real pending conflict confirmation and `WAITING_CONFIRM` TaskItem when planning finds an unresolved
+organize conflict. This contradicts canonical `REQ-ORG-011` and the Files/FileIndex Manual Preview
+semantics. It is a narrow integration correction, not a new Automation model or a Docker-specific
+special case.
+
+## A-owned pre-implementation correction
+
+The Slice is materially respecified before its first implementation Task. The Base remains the
+immutable Slice 29 Base above; `Implementation Head` remains `NOT SET`. The correction must be
+implemented and reviewed before the Docker release can claim V1 production completeness.
+
 ## Required Outcomes
 
 | ID | Required Outcome | Initial State |
@@ -92,6 +129,7 @@ fail-closed production deployment journey.
 | RO-5 | **Restart-safe durable operation.** Compose start, stop and restart preserve configuration, FileIndex, Task/TaskItem/Result, automation, notification, audit and log state; restart does not duplicate scheduled occurrences, allow a stale Worker to commit over a newer owner, or automatically replay uncertain media mutation. | These guarantees exist as application foundations but have no production Compose acceptance proof. |
 | RO-6 | **Backup, upgrade and migration recovery.** An operator can create and verify a local backup, run read-only compatibility/preflight and isolated migration rehearsal against a new image, upgrade only after the gate passes, and recover from migration failure with the live authority and prior backup/artifact retained. | Backup, restore, preflight and rehearsal commands exist, but no image-to-image lifecycle and fail-closed recovery path is delivered. |
 | RO-7 | **Release security and validation.** The image/build context, Compose configuration, runtime output, API/Web projections and exported configuration contain no deployment secret values or private local state; network exposure, API-token authentication, non-root execution and unsupported host access are explicit and verified. | Release validation covers wheels and offline software, not a production container artifact. |
+| RO-8 | **Pre-release execution-boundary completeness.** Before V1 production release acceptance, Jobs exposes one bounded Queue Job journey for Scan, Preview and Organize. Scan and Preview remain `SUBMIT_DRY_RUN`/zero-mutation; Configuration's first DryRun Preview uses the same safe Job Preview semantics; organize-plan conflicts found by any Job Preview are inspectable findings only and create no mandatory ConflictConfirmation backlog or `WAITING_CONFIRM`; Organize reuses the existing separate one-shot real-execution authority, explicit confirmation and mutation warning, and an unresolved real conflict may use the existing `WAITING_CONFIRM` recovery path. Files/FileIndex Manual Preview remains the regression reference, Automation behavior remains unchanged, and OrganizerExecutor remains the sole Storage mutator. | The protected remote organize branch exists, but Jobs UI/admission and shared Job Preview conflict state are not V1-complete. |
 
 ## Required Surfaces
 
@@ -118,6 +156,11 @@ fail-closed production deployment journey.
 7. **Release validation surface.** Automated checks must exercise build, Compose configuration,
    isolated startup/restart, health semantics, data persistence, non-root and secret/private-config
    scans, migration/recovery and the existing offline quality gates.
+8. **Execution-boundary completeness surface.** The Jobs Queue Job/API admission, shared Job Preview
+   orchestration and durable Task/Result evidence, Configuration first DryRun Preview, existing
+   one-shot Organize authority/confirmation, Worker handoff and OrganizerExecutor path are covered
+   as one vertical journey. The Files/FileIndex Manual Preview path is regression-fenced; Dashboard
+   pending-conflict counts and the real Organize conflict continuation are observable.
 
 ## Safety Invariants
 
@@ -127,6 +170,16 @@ fail-closed production deployment journey.
   Storage, call Providers, create Jobs/Tasks, send notifications or mutate media.
 - DryRun/Preview remains zero-mutation, and deployment packaging must not turn a health or restart
   event into implicit organization or execution authority.
+- `SUBMIT_DRY_RUN` admits only Scan and Preview and can never authorize Organize. Organize uses the
+  existing `REMOTE_EXECUTE`/one-shot execution authorization, configuration-snapshot pin, mutation
+  warning and explicit confirmation; no second execution-authority system is introduced.
+- Job Preview retains complete conflict analysis and evidence but never creates a mandatory
+  `ConflictConfirmation`/`WAITING_CONFIRM` backlog solely because planning found an unresolved
+  organize conflict. Only an explicit real Organize attempt may enter the existing conflict recovery
+  path.
+- Real Organize revalidates current source/occurrence, pinned configuration, destination,
+  capabilities, conflict state and live authority. A prior Preview finding or confirmation is not an
+  execution decision; stale or mismatched state fails closed.
 - Active configuration remains the exact immutable snapshot consumed by runtime. A missing, corrupt,
   unsupported or invalid Active/pinned snapshot fails closed; no fallback to a stale file, Draft or
   different Provider is allowed.
@@ -173,6 +226,17 @@ fail-closed production deployment journey.
 - Compatibility certification for external SMB/OpenList/S3/TMDB services that are unavailable in
   the validation environment; those results must be reported as `SKIP` or `UNAVAILABLE`, not
   inferred from local unit tests.
+- Automation Task Definitions, Automation Preview, unattended grants, Scheduler/Cron/interval
+  behavior, scheduled occurrences, definition-scoped Job emission and Automation history remain
+  unchanged in this correction and are regression-fenced only.
+- Configuration lifecycle/forms and Files/FileIndex design are not redesigned here. Configuration's
+  first DryRun Preview is covered only as an entry to the shared Job `preview` behavior; the existing
+  Files/FileIndex Manual Preview remains a regression reference.
+- No global conflict/review queue redesign, new TaskItem state, new execution-authority system or
+  new OrganizerExecutor is authorized. Prefer the existing durable Task/Result state that represents
+  completed analysis with an inspectable finding; any proposed domain-state change requires A review.
+- Docker implementation is not bundled into the execution-boundary correction Task. The correction
+  is a pre-release gate for the remaining Docker outcomes and may not be waived by packaging work.
 
 ## Slice Acceptance Criteria
 
@@ -203,6 +267,45 @@ fail-closed production deployment journey.
    regression-free, with external service limitations reported truthfully and without requiring
    production media, credentials or remote services.
 
+### Pre-release execution-boundary acceptance
+
+The following additional criteria are required for RO-8:
+
+1. **EB-AC-1 — Jobs command surface.** Jobs exposes one Queue Job entry with `Scan`, `Preview` and
+   `Organize`.
+2. **EB-AC-2 — Scan authority.** Jobs Scan remains `SUBMIT_DRY_RUN` and performs zero Storage
+   mutation.
+3. **EB-AC-3 — Jobs Preview authority.** Jobs Preview remains `SUBMIT_DRY_RUN` and performs zero
+   Storage mutation.
+4. **EB-AC-4 — Configuration first Preview.** `Configuration → Activate → Queue first DryRun
+   Preview` uses the same safe Job Preview semantics as Jobs Preview.
+5. **EB-AC-5 — Job Preview conflict finding.** An organize-plan conflict from Job Preview is
+   persisted only as inspectable Preview/Task/Result evidence and creates no `PENDING`
+   `ConflictConfirmation`, no `WAITING_CONFIRM`, and no real Conflicts backlog item.
+6. **EB-AC-6 — Configuration conflict finding and Dashboard.** The same conflict through
+   Configuration first DryRun Preview is visible, performs zero mutation, creates no pending
+   confirmation or `WAITING_CONFIRM`, and does not increase Dashboard Pending conflicts.
+7. **EB-AC-7 — DryRun cannot organize.** `SUBMIT_DRY_RUN` admission passes only Scan/Preview and
+   denies Organize; failed admission performs no unauthorized Storage mutation.
+8. **EB-AC-8 — Separate Organize authority.** Organize requires the existing separate real-execution
+   authority; no valid one-shot authority means denial.
+9. **EB-AC-9 — Mutation warning.** Jobs Organize visibly states `Storage mutation: POSSIBLE` in its
+   review/confirmation surface.
+10. **EB-AC-10 — Explicit confirmation.** Jobs Organize requires explicit confirmation before queueing
+    real work.
+11. **EB-AC-11 — Real conflict continuation.** A real Organize that revalidates into an unresolved
+    conflict may create `PENDING ConflictConfirmation`, `WAITING_CONFIRM` and a visible Conflicts
+    backlog item through the existing recovery path.
+12. **EB-AC-12 — Mutation boundary.** Only OrganizerExecutor may invoke mutating Storage operations.
+13. **EB-AC-13 — Manual Preview regression.** Files/FileIndex Manual Preview retains no review
+    backlog, no execution authority and no Storage mutation semantics.
+14. **EB-AC-14 — Automation regression.** Automation Task Definitions, Automation Preview,
+    validation, unattended grant/revoke, Scheduler, occurrence emission and scheduled automatic
+    organization remain behaviorally unchanged.
+15. **EB-AC-15 — Revalidation.** Organize cannot execute from a stale Preview finding; it revalidates
+    current source/occurrence, configuration snapshot, destination, capability, conflict and live
+    authority and fails closed on mismatch.
+
 ## Final Validation Expectations
 
 - `python3 scripts/check_governance.py` passes with the committed Slice Contract, Roadmap status
@@ -223,6 +326,13 @@ fail-closed production deployment journey.
 - The existing supported offline gates pass: formatting, lint, full unittest discovery, compile,
   dependency consistency, canonical example configuration validation, wheel smoke validation,
   forbidden FFmpeg/FFprobe audit, Markdown/link checks where available and `git diff --check`.
+- Before Docker release acceptance, the correction receives the risk-appropriate high-risk/integration
+  evidence: Jobs API/UI command and authority matrix, shared Job Preview conflict findings,
+  Configuration first Preview, Dashboard pending-conflict invariance, real Organize conflict
+  continuation, Worker handoff, OrganizerExecutor mutation tracing, current-state revalidation,
+  Files/FileIndex Manual Preview regression and Automation regression. Because this touches execution
+  authority, Task state and OrganizerExecutor boundaries, B must assign at least T4 validation when
+  implementation reaches those boundaries.
 - Any Docker engine, external Storage, Provider or reverse-proxy test unavailable in the validation
   environment is recorded as `SKIP` or `UNAVAILABLE` with its boundary; no unsupported deployment
   claim is inferred.
@@ -232,6 +342,6 @@ fail-closed production deployment journey.
 ```text
 Slice Status: ACTIVE
 Implementation Head: NOT SET
-P0/P1 Defects: NONE KNOWN — no implementation has started
+P0/P1 Defects: P1 pre-release Jobs/Preview execution-boundary gap recorded — no implementation has started
 Next Action: B PLANS FIRST TASK
 ```
