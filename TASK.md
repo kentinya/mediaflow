@@ -301,7 +301,7 @@ remaining Slice status/closure steps belong to B/A.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 8546ff8fe15386dfbbb5fefb29a66b936ed4613f
 ```
 
 ## B Review Result
