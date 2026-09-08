@@ -8,7 +8,7 @@ Task ID: 29.6
 Parent Slice: 29
 Parent Slice Name: Docker Production Self-hosted Release
 Parent Required Outcomes: RO-7 — Release security and validation
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 1938a3f79089049ab1f24efb766c54b519c519e7
 Difficulty: High
 Test Level: T4
@@ -207,21 +207,118 @@ must pass with zero failures.
 
 ### Changed Files
 
+- `.dockerignore` — explicit exclusion of SQLite/WAL/SHM/journal, database,
+  backup/export, log/cache, media and other private artifacts from build input.
+- `mediaflow/interfaces/operator_ui.py` — restored the served Storage-browser
+  “Storage-relative breadcrumb” guidance text without changing behavior.
+- `tests/test_system_settings_management.py` — narrow formatter correction for
+  the known whole-repo ruff gate; test intent unchanged.
+- `tests/test_release_security.py` — focused offline release-policy tests for
+  `.dockerignore`, `config/alist.json` ignore/untracked evidence, Compose
+  secret/boundary text and required gate commands.
+- `scripts/docker_release_security_smoke_test.py` — isolated RO-7 Docker
+  release-security acceptance harness.
+- `docs/deployment.md`, `docs/release.md` — documented the release-security
+  validation journey and its required commands.
+
 ### Implemented
+
+- Repaired the two known baseline gates narrowly: the served Operator Web
+  guidance again includes the “Storage-relative breadcrumb” wording, and
+  `tests/test_system_settings_management.py` is ruff-clean/formatted without
+  removing or weakening assertions.
+- Extended `.dockerignore` to cover private SQLite/WAL/SHM/journal, database,
+  backup/export, log/cache, media and archive artifacts explicitly.
+- Added an isolated Docker release-security harness that builds the exact
+  candidate image from a clean `git archive` checkout with harmless
+  private-file/secret canaries, scans image history/configuration/filesystem,
+  validates the rendered Compose topology (four services, one image, one
+  command each, non-root UID/GID, `/data` volume, read-only config/env/source,
+  read-write target, loopback-only API publication), proves non-root mount
+  boundaries and per-service process commands, exercises missing/invalid
+  Bearer denial plus viewer/auditor/operator/executor/admin RBAC with
+  zero-side-effect assertions, scans Web/API/configuration/result/audit/log
+  projections and durable SQLite evidence for every canary class, and verifies
+  host-root rejection fails closed.
+- Added focused offline release-policy regression tests covering
+  `config/alist.json` ignore/untracked/unstaged evidence, private-artifact
+  exclusion patterns, Compose literal-secret/unsupported-boundary text and the
+  required T4 gate commands.
+- Updated deployment/release documentation with the RO-7 release-security
+  runbook and harness.
 
 ### Tests and Results
 
+- `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/python -m unittest tests.test_release_security
+  tests.test_storage_browser tests.test_container_deployment
+  tests.test_api_security tests.test_configuration_package_exchange
+  tests.test_release_validation` — PASS (54 tests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1,393 tests,
+  7 SKIP: real SMB/S3/OpenList and isolated endurance profiles are
+  UNAVAILABLE because those external/profiled environments are not configured).
+- `python3 scripts/docker_release_security_smoke_test.py` — PASS on the
+  committed image, including unsupported-host-root failure.
+- `python3 scripts/docker_smoke_test.py` — PASS.
+- `python3 scripts/docker_health_smoke_test.py` — PASS.
+- `python3 scripts/docker_restart_fault_smoke_test.py` — PASS.
+- `python3 scripts/docker_upgrade_recovery_smoke_test.py` — PASS.
+- `.venv/bin/ruff format --check .` — PASS.
+- `.venv/bin/ruff check .` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS.
+- `.venv/bin/python -m mediaflow.cli --config config/strategy.example.json
+  config validate` — PASS.
+- `.venv/bin/python -m mediaflow.cli --config
+  config/mediaflow.phase13.2.example.json config validate` — PASS.
+- `.venv/bin/python -m pip wheel . --no-deps -w
+  /tmp/mediaflow-wheel-check.NCLBVL` then
+  `.venv/bin/python scripts/wheel_smoke_test.py
+  /tmp/mediaflow-wheel-check.NCLBVL/mediaflow-0.1.0-py3-none-any.whl` — PASS.
+- Forbidden FFmpeg/FFprobe audit
+  (`rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml Dockerfile compose.yaml
+  scripts`) — PASS (no matches).
+- `git diff --check` — PASS.
+- Markdown/link validation — UNAVAILABLE (no repository-supported command
+  exists to run).
+
 ### Decisions
+
+- The smoke harness builds from a temporary clean `git archive HEAD` context
+  with canaries injected only into that disposable context, so no production
+  or repository-private file is read or altered.
+- Canary failures identify only the affected secret class/surface and never
+  echo the canary value; image/DB scans pass canaries through container
+  environment variables rather than source code or failure text.
+- The isolated harness publishes the API on a free loopback port, so the
+  Compose assertion checks loopback host binding and container target 8080
+  rather than a hard-coded host port; the committed Compose default remains
+  `127.0.0.1:8080:8080`.
+- The two baseline gate repairs are intentionally behavior-preserving: a
+  guidance sentence in the served Operator Web and formatter-only changes in
+  one test module.
 
 ### Remaining In-Slice Work
 
+- No remaining Task 29.6 implementation work is known. Slice-level final
+  review/closure remains owned by B/A and is not claimed here.
+
 ### Risks / Deviations
+
+- No supported local/Docker gate failed. Seven full-suite tests remain SKIP
+  for real SMB/S3/OpenList/endurance environments because those dedicated
+  services/profiles are unavailable; no local gate was converted to SKIP.
+- No repository Markdown/link validation command is supported, so that optional
+  external-quality gate is recorded as UNAVAILABLE rather than claimed.
+- The release docs describe the implementation-head artifact validation and do
+  not claim publication, registry signing, CI deployment or final Slice
+  acceptance.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 657f1a3697eec8e1537bee1335d45a06bec35c6f
 ```
 
 ## B Review Result
