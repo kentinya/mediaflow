@@ -12,8 +12,9 @@ process failure/restart boundaries while sharing one local persistent `/data` vo
 `wsgiref.simple_server` API listener remains development/trusted-loopback only; production Compose
 serving uses the explicitly selected Waitress adapter with a documented TLS/reverse-proxy or LAN
 boundary. The Slice health/readiness, restart/fault and upgrade/backup/migration
-recovery Tasks are complete. The remaining final release-security Task is not yet complete, so this
-document is not a full release claim.
+recovery Tasks and the Task 29.6 release-security/artifact validation are complete at the
+repository implementation head. This document is not a publication claim and final release
+acceptance remains owned by the Slice review.
 
 See [docs/deployment.md](deployment.md) for the current executable image/Compose journey.
 
@@ -75,10 +76,12 @@ Docker release acceptance also includes the restart/fault and upgrade/recovery j
 ```bash
 python3 scripts/docker_restart_fault_smoke_test.py
 python3 scripts/docker_upgrade_recovery_smoke_test.py
+python3 scripts/docker_release_security_smoke_test.py
 ```
 
 Each harness builds local images only, uses temporary media and a throwaway named
-volume, and records `SKIP` when no Docker engine is available.
+volume, injects only harmless canary/private material, and records `SKIP` when no
+Docker engine is available.
 
 ## Maintainer review
 
