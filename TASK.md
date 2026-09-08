@@ -325,7 +325,7 @@ deployment runbook explicitly does not claim them.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: a14bf85b361a1909507d9ab54dcb224e2a280a1a
 ```
 
 ## B Review Result
