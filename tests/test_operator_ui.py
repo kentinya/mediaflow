@@ -157,7 +157,7 @@ class OperatorUiTests(unittest.TestCase):
         # Overwrite may only be displayed, never requested: no served path sends the field.
         self.assertNotIn("overwrite:", script)
         self.assertNotIn("overwrite=true", script)
-        self.assertIn("Queue DryRun job", script)
+        self.assertIn("Queue Job", script)
         self.assertIn("'/api/v1/jobs', {method: 'POST'", script)
         self.assertNotIn("/api/v1/tasks/${encodeURIComponent(id)}/resume", script)
         self.assertIn("Admitted recovery request", script)

@@ -244,11 +244,26 @@ class PersistentTaskCoordinator:
             item = persisted_item
         return item
 
-    def complete_item(self, item: PersistentTaskItem, result: MediaOrganizerItemResult) -> None:
+    def complete_item(
+        self,
+        item: PersistentTaskItem,
+        result: MediaOrganizerItemResult,
+        *,
+        analysis_only: bool = False,
+    ) -> None:
         now = datetime.now(UTC)
         execution = result.execution
         if execution is None:
-            status = TaskItemStatus.FAILED if result.error else TaskItemStatus.SKIPPED
+            if result.error:
+                status = TaskItemStatus.FAILED
+            elif analysis_only:
+                # An analysis-only Preview outcome: the full read-only planning
+                # chain completed and persisted its findings, but no executor
+                # operation ran.  DRY_RUN is the accurate existing completion
+                # state (no new TaskItemStatus is authorized).
+                status = TaskItemStatus.DRY_RUN
+            else:
+                status = TaskItemStatus.SKIPPED
         else:
             status = {
                 ExecutionStatus.SUCCESS: TaskItemStatus.SUCCESS,

@@ -142,6 +142,7 @@ class MediaOrganizerService:
         secret_free_errors: bool = False,
         persist_failure_explanations: bool = False,
         mutation_authority: Callable[[OrganizePlan, str], object] | None = None,
+        analysis_only: bool = False,
     ) -> None:
         self._strategy = strategy
         self._scanner = scanner
@@ -168,6 +169,7 @@ class MediaOrganizerService:
         self._secret_free_errors = secret_free_errors
         self._persist_failure_explanations = persist_failure_explanations
         self._mutation_authority = mutation_authority
+        self._analysis_only = bool(analysis_only)
 
     def process_file(
         self,
@@ -387,14 +389,23 @@ class MediaOrganizerService:
                     )
                 item = MediaOrganizerItemResult(source, strategy, plan, retry_events=retry_events)
                 item = self._attach_evidence(item, tracked_item)
-                self._record(item, tracked_item, persist_evidence=False)
                 if self._task_coordinator and tracked_item:
+                    if self._analysis_only:
+                        # An analysis-only Preview must keep the organize-plan
+                        # conflict as an inspectable durable finding.  It never
+                        # creates a PENDING ConflictConfirmation, a WAITING_CONFIRM
+                        # TaskItem or a real Conflicts backlog item; the operator
+                        # must use the explicit real Organize journey for that.
+                        return self._complete(item, tracked_item, analysis_only=True)
+                    self._record(item, tracked_item, persist_evidence=False)
                     self._task_coordinator.wait_for_confirmation(
                         tracked_item,
                         plan,
                         type_policy.organize_policy,
                         evidence=item.evidence,
                     )
+                else:
+                    self._record(item, tracked_item, persist_evidence=False)
                 return item
             plan = replacement
             execution = self._executor.execute(
@@ -666,11 +677,13 @@ class MediaOrganizerService:
         self,
         item: MediaOrganizerItemResult,
         tracked_item: PersistentTaskItem | None,
+        *,
+        analysis_only: bool = False,
     ) -> MediaOrganizerItemResult:
         item = self._attach_evidence(item, tracked_item)
         self._record(item, tracked_item, persist_evidence=False)
         if self._task_coordinator and tracked_item:
-            self._task_coordinator.complete_item(tracked_item, item)
+            self._task_coordinator.complete_item(tracked_item, item, analysis_only=analysis_only)
         return item
 
     def _log(self, level: LogLevel, message: str, **context: object) -> None:
@@ -725,6 +738,8 @@ class MediaOrganizerService:
                     if item.strategy
                     and item.strategy.recognition.status is RecognitionStatus.UNRECOGNIZED
                     and not item.error
+                    else "DRY_RUN"
+                    if self._analysis_only and item.plan and item.plan.conflicts and not item.error
                     else "WAITING_CONFIRM"
                     if item.plan and item.plan.conflicts and not item.error
                     else "FAILED"
@@ -745,6 +760,11 @@ class MediaOrganizerService:
         task = self._task_coordinator.repository.get_task(tracked_item.task_id)
         if task is None:
             return item
+        organize_policy = None
+        if item.strategy is not None and item.strategy.policy is not None:
+            resolved = self._type_policies.get(item.strategy.policy.type_policy_id)
+            if resolved is not None:
+                organize_policy = resolved.organize_policy
         evidence = build_pipeline_evidence(
             task,
             tracked_item,
@@ -754,6 +774,10 @@ class MediaOrganizerService:
             error=item.error,
             outcome=self._evidence_outcome(item),
             storages=self._storages,
+            organize_policy=organize_policy,
+            conflict_finding=bool(
+                self._analysis_only and item.plan is not None and bool(item.plan.conflicts)
+            ),
         )
         return replace(item, evidence=evidence)
 
@@ -782,7 +806,7 @@ class MediaOrganizerService:
                 return "waiting_classification"
         if item.plan is not None:
             if item.plan.conflicts or item.plan.status.value in {"conflict", "invalid"}:
-                return "waiting_confirm"
+                return "dry_run" if self._analysis_only else "waiting_confirm"
             if item.plan.operation in {PlanOperation.NOOP, PlanOperation.SKIP}:
                 return "skipped"
         return "processing"

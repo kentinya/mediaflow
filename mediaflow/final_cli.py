@@ -128,6 +128,7 @@ def final_main(
     stderr: TextIO,
     cancellation_check: Callable[[], bool] | None = None,
     _resolved_configuration: RuntimeConfiguration | None = None,
+    _analysis_only_preview: bool = False,
 ) -> int:
     parser = argparse.ArgumentParser(prog="mediaflow")
     parser.add_argument("--config", help="runtime JSON configuration")
@@ -1658,6 +1659,12 @@ def final_main(
                     or coordinator.pause_requested(task.task_id)
                 )
 
+            # A queued non-definition Job Preview is an analysis-only Preview:
+            # an unresolved organize-plan conflict is a durable inspectable
+            # finding, never a PENDING ConflictConfirmation / WAITING_CONFIRM
+            # continuation.  Direct CLI previews, recovery continuations and
+            # definition-scoped execution keep their existing behavior.
+            analysis_only = bool(_analysis_only_preview and arguments.command == "preview")
             service = MediaOrganizerService(
                 strategy,
                 StorageScanner(storages, file_index, logger=operational_logger),
@@ -1732,6 +1739,7 @@ def final_main(
                 },
                 retry_policy=configuration.workflow_retry_policy,
                 retry_cancellation_check=workflow_stop,
+                analysis_only=analysis_only,
             )
             if retry_items is not None:
                 libraries = {item.library_id: item for item in configuration.resource_libraries}
@@ -2979,6 +2987,12 @@ def _run_queued_workflow(
         stderr=errors,
         cancellation_check=cancellation_check,
         _resolved_configuration=resolved_configuration,
+        # The shared queued Job Preview (including Configuration's first DryRun
+        # Preview, which posts the same command=preview Job) is analysis-only:
+        # organize-plan conflicts become durable findings, never confirmation
+        # backlog.  Real organize Jobs are unaffected and keep revalidation and
+        # the WAITING_CONFIRM recovery path.
+        _analysis_only_preview=(job.command is AutomationCommand.PREVIEW),
     )
     task_id = None
     for line in output.getvalue().splitlines():

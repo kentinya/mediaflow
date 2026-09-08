@@ -111,12 +111,14 @@ class OperatorJobCancellationTests(unittest.TestCase):
         self.assertNotIn("window.confirm", script)
         self.assertNotIn("innerHTML", script)
         self.assertNotIn("/api/v1/tasks/${encodeURIComponent(id)}/resume", script)
-        self.assertNotIn("execute: true", script)
-        # The job detail and cancellation journey must never name overwrite authority; the
-        # guided OrganizePolicy configuration section legitimately displays it read-only.
+        # The job detail and cancellation journey must never request execution or
+        # name overwrite authority; the guided OrganizePolicy configuration section
+        # and the explicit Queue Job Organize review (validated separately) may.
         cancellation = "".join(
-            _js_function_body(script, name) for name in ("showJob", "confirmJobCancellation")
+            _js_function_body(script, name)
+            for name in ("showJob", "confirmJobCancellation", "cancelJob")
         )
+        self.assertNotIn("execute", cancellation.casefold())
         self.assertNotIn("overwrite", cancellation.casefold())
         self.assertNotIn("overwrite:", script)
 

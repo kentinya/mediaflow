@@ -3244,7 +3244,7 @@ APP_JS = b"""(() => {
     const data = await api(`/api/v1/${kind}?limit=100${suffix}`); const items = data.items || [];
     clear(content); content.append(text('h2', kind === 'tasks' ? 'Tasks' : 'Automation jobs'));
     if (kind === 'jobs') {
-      content.append(actionButton('Queue DryRun job', showDryRunJobForm));
+      content.append(actionButton('Queue Job', showQueueJobForm));
       content.append(actionButton('Show stale running jobs', renderStaleJobs));
     }
     if (kind === 'tasks') {
@@ -3282,35 +3282,53 @@ APP_JS = b"""(() => {
       index => showJob(items[index].job_id)));
     content.append(actionButton('Back to automation jobs', () => renderObservability('jobs')));
   }
-  function showDryRunJobForm() {
-    clear(detailContent); detailContent.append(text('h2', 'Queue DryRun automation job'));
-    const command = document.createElement('select'); command.setAttribute('aria-label', 'DryRun command');
-    ['scan', 'preview'].forEach(value => { const option = text('option', value); option.value = value;
+  function showQueueJobForm() {
+    clear(detailContent); detailContent.append(text('h2', 'Queue Job'));
+    const command = document.createElement('select'); command.setAttribute('aria-label', 'Job command');
+    ['scan', 'preview', 'organize'].forEach(value => { const option = text('option', value); option.value = value;
       command.append(option); });
     const limit = document.createElement('input'); limit.type = 'number'; limit.min = '1';
     limit.max = '10000'; limit.step = '1'; limit.placeholder = 'Optional limit';
     limit.setAttribute('aria-label', 'Optional item limit');
     const controls = text('div', '', 'choices'); controls.append(command, limit,
-      actionButton('Review DryRun job', () => {
+      actionButton('Review Job', () => {
         if (limit.value && !limit.reportValidity()) return;
-        reviewDryRunJob(command.value, limit.value ? Number(limit.value) : null);
+        reviewQueueJob(command.value, limit.value ? Number(limit.value) : null);
       }), actionButton('Keep jobs unchanged', () => { detail.hidden = true; }));
-    detailContent.append(text('p', 'This queues scan or preview only. It grants no execution authority.'),
-      controls); detail.hidden = false;
+    detailContent.append(text('p', 'Scan and Preview are DryRun-only and grant no execution authority. ' +
+      'Organize requires the separate one-shot execution authority and an explicit final confirmation.',
+      'warning'), controls); detail.hidden = false;
   }
-  function reviewDryRunJob(command, limit) {
-    const payload = Object.freeze(limit === null ? {command} : {command, limit});
-    clear(detailContent); detailContent.append(text('h2', 'Review DryRun job'), cards([
-      ['Command', payload.command], ['Limit', payload.limit || 'No explicit limit'],
-      ['Authority', 'DRY_RUN'], ['Storage mutation', 'NONE']
-    ]), text('p', 'A Worker may read configured Storage and metadata providers. No organization is executed.',
-      'warning'), actionButton('Confirm queueing', () => submitDryRunJob(payload)),
-      actionButton('Back without queueing', showDryRunJobForm)); detail.hidden = false;
+  function reviewQueueJob(command, limit) {
+    const base = limit === null ? {command} : {command, limit};
+    const payload = Object.freeze(command === 'organize' ? {...base, execute: true} : base);
+    clear(detailContent); detailContent.append(text('h2', 'Review Queue Job'));
+    if (command === 'organize') {
+      detailContent.append(cards([
+        ['Command', payload.command], ['Limit', payload.limit || 'No explicit limit'],
+        ['Authority', 'REMOTE_EXECUTE (one-shot)'], ['Storage mutation', 'POSSIBLE']
+      ]), text('p', 'This queues a real Organize Job that may mutate Storage only after ' +
+        'the Worker revalidates current source, destination, pinned configuration, capability and live ' +
+        'execution authority. A normal login token is not execution authority; the separate one-shot ' +
+        'execution authorization is presented out of band and remains out of browser JavaScript.',
+        'warning'), actionButton('Confirm Organize', () => submitQueueJob(payload)),
+        actionButton('Back without queueing', showQueueJobForm));
+    } else {
+      detailContent.append(cards([
+        ['Command', payload.command], ['Limit', payload.limit || 'No explicit limit'],
+        ['Authority', 'DRY_RUN'], ['Storage mutation', 'NONE']
+      ]), text('p', 'A Worker may read configured Storage and metadata providers. No organization is executed.',
+        'warning'), actionButton('Confirm queueing', () => submitQueueJob(payload)),
+        actionButton('Back without queueing', showQueueJobForm));
+    }
+    detail.hidden = false;
   }
-  async function submitDryRunJob(payload) {
+  async function submitQueueJob(payload) {
     try {
       const created = await api('/api/v1/jobs', {method: 'POST', body: JSON.stringify(payload)});
-      await renderObservability('jobs'); await showJob(created.job_id); message('DryRun job queued.');
+      await renderObservability('jobs'); await showJob(created.job_id);
+      message(payload.command === 'organize' ? 'Real Organize Job queued under one-shot authority.' :
+        'Job queued.');
           } catch (error) { message(errorText(error), true); }
   }
   async function renderSchedules() {
