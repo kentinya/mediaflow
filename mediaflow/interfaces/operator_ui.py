@@ -1135,6 +1135,7 @@ APP_JS = b"""(() => {
     panel.append(text('h3', 'Storage directory browser'));
     panel.append(text('p',
       'This bounded setup browser reads the configured Storage directly; it is not the File Catalog. ' +
+      'Use the displayed Storage-relative breadcrumb to return to a parent directory. ' +
       'Directories can be selected after the read-only listing succeeds. Files and symbolic links are not selectable.',
       'warning'));
     const storageChoices = storages.map(storage => [storage.id, `${storage.id} - ${storage.name || storage.id}`]);

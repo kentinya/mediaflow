@@ -24,3 +24,27 @@ media
 deploy
 *.md
 .ruff_cache
+
+# Private developer/runtime artifacts that must never enter the build context,
+# even when a future Dockerfile change copies more than pyproject.toml and
+# the mediaflow package.
+*.sqlite
+*.sqlite-*
+*.sqlite3*
+*.db
+*.backup
+*.bak
+*.export
+*.log
+*.jsonl
+*.cache
+*.whl
+*.tar
+*.tar.gz
+*.zip
+backup
+backups
+exports
+export
+logs
+.DS_Store

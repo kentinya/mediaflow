@@ -213,9 +213,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             self.assertIn("automation.maximumActiveJobs", data["settings"])
             self.assertEqual(data["consumption"]["runtimeSnapshotId"], active.revision_id)
             self.assertEqual(data["consumption"]["runtimeSnapshotDigest"], active.digest)
-            self.assertIn(
-                "automation.maximumActiveJobs", data["consumption"]["consumedFields"]
-            )
+            self.assertIn("automation.maximumActiveJobs", data["consumption"]["consumedFields"])
 
     def test_api_read_draft_settings_via_query_and_revision_route(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -344,8 +342,9 @@ class SystemSettingsManagementTests(unittest.TestCase):
                     "settings": {},
                 },
             )
-            with patch.object(api, "_refresh_configuration_binding", return_value=stale_binding), patch.object(
-                api, "_runtime_binding", stale_binding
+            with (
+                patch.object(api, "_refresh_configuration_binding", return_value=stale_binding),
+                patch.object(api, "_runtime_binding", stale_binding),
             ):
                 status, data = request(api, "/api/v1/system/settings")
             self.assertEqual(status, 200)
@@ -454,9 +453,9 @@ class SystemSettingsManagementTests(unittest.TestCase):
             self.assertEqual(details["digest"], active.digest)
 
             # Edit fails closed as well: no settings Draft is created.
-            body = json.dumps(
-                {"edits": [{"fieldPath": "locale", "value": "en-US"}]}
-            ).encode("utf-8")
+            body = json.dumps({"edits": [{"fieldPath": "locale", "value": "en-US"}]}).encode(
+                "utf-8"
+            )
             status, _ = request(api, "/api/v1/system/settings", method="PUT", body=body)
             self.assertEqual(status, 503)
             self.assertEqual(len(repo.list_revisions(limit=100)), rows_after_delete)
@@ -488,9 +487,9 @@ class SystemSettingsManagementTests(unittest.TestCase):
                 api,
                 "/api/v1/system/settings",
                 method="PUT",
-                body=json.dumps(
-                    {"edits": [{"fieldPath": "locale", "value": "en-US"}]}
-                ).encode("utf-8"),
+                body=json.dumps({"edits": [{"fieldPath": "locale", "value": "en-US"}]}).encode(
+                    "utf-8"
+                ),
             )
             self.assertEqual(status, 503)
             self.assertEqual(len(repo.list_revisions(limit=100)), revisions_before)
@@ -532,9 +531,9 @@ class SystemSettingsManagementTests(unittest.TestCase):
                 api,
                 "/api/v1/system/settings",
                 method="PUT",
-                body=json.dumps(
-                    {"edits": [{"fieldPath": "locale", "value": "en-US"}]}
-                ).encode("utf-8"),
+                body=json.dumps({"edits": [{"fieldPath": "locale", "value": "en-US"}]}).encode(
+                    "utf-8"
+                ),
             )
             self.assertEqual(status, 503)
             self.assertEqual(len(repo.list_revisions(limit=100)), revisions_before)
@@ -646,9 +645,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
 
             # 3. Web reopens the returned Draft; consumption stays bound to the
             #    Active, never to the Draft being edited.
-            status, draft_view = request(
-                api, f"/api/v1/system/settings?revisionId={draft_id}"
-            )
+            status, draft_view = request(api, f"/api/v1/system/settings?revisionId={draft_id}")
             self.assertEqual(status, 200)
             self.assertFalse(draft_view["isActive"])
             self.assertEqual(draft_view["consumption"]["revisionId"], active.revision_id)
@@ -659,9 +656,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                     {
                         "revisionId": draft_id,
                         "expectedVersion": token,
-                        "edits": [
-                            {"fieldPath": "automation.maximumActiveJobs", "value": value}
-                        ],
+                        "edits": [{"fieldPath": "automation.maximumActiveJobs", "value": value}],
                     }
                 ).encode("utf-8")
 
@@ -684,9 +679,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                     {
                         "revisionId": draft_id,
                         "expectedVersion": updated["draftVersion"],
-                        "edits": [
-                            {"fieldPath": "automation.staleJobAgeSeconds", "value": 7200}
-                        ],
+                        "edits": [{"fieldPath": "automation.staleJobAgeSeconds", "value": 7200}],
                     }
                 ).encode("utf-8"),
             )
@@ -704,9 +697,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             self.assertIn("refresh", details["nextAction"])
 
             # 6. Recovery: refresh the Draft and retry with the current token.
-            status, refreshed = request(
-                api, f"/api/v1/system/settings?revisionId={draft_id}"
-            )
+            status, refreshed = request(api, f"/api/v1/system/settings?revisionId={draft_id}")
             self.assertEqual(status, 200)
             self.assertNotEqual(refreshed["draftVersion"], first_token)
             status, recovered = request(
@@ -724,9 +715,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             # whole journey created exactly one settings Draft and started no
             # media work.
             self.assertEqual(service.active().revision_id, active.revision_id)
-            self.assertEqual(
-                service.active().document["automation"]["maximumActiveJobs"], 100
-            )
+            self.assertEqual(service.active().document["automation"]["maximumActiveJobs"], 100)
             self.assertEqual(len(repo.list_revisions(limit=100)), revisions_before + 1)
 
     def test_web_ui_assets_expose_system_settings(self) -> None:

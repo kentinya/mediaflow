@@ -2,15 +2,14 @@
 
 This document covers the Task 29.2 deployment boundary, the Task 29.3
 health/readiness model, the Task 29.4 restart/fault matrix and the Task 29.5
-backup/upgrade/migration recovery journey: one installable image, four
+backup/upgrade/migration recovery journey, and the Task 29.6 release-security
+validation: one installable image, four
 independent Compose services, production WSGI serving, a persistent local
 `/data` volume, explicit container-visible media mounts, distinct liveness,
 management/API readiness and processing-Worker readiness signals, durable
-restart/fencing guarantees, and verified preflight/rehearsal/restore recovery.
-
-The release-security acceptance is a separate later Task. The restart/fault
-matrix and backup/upgrade/migration recovery journey are covered below; this
-runbook does not claim that later release Task.
+restart/fencing guarantees, verified preflight/rehearsal/restore recovery, and
+verified absence of deployment secret values and private local state from the
+image, Compose topology, runtime output and authenticated projections.
 
 ## Boundary
 
@@ -255,6 +254,53 @@ python3 scripts/docker_upgrade_recovery_smoke_test.py
 It prints `SKIP` when no Docker engine is available and never contacts a
 registry, remote Storage/Provider service or production path.
 
+## Release security and artifact validation
+
+The release-security boundary is validated against the exact candidate image
+before any release claim:
+
+- The build context is a clean committed checkout into which the harness
+  injects harmless private-file canaries (`config/alist.json`,
+  environment/configuration files, SQLite/WAL/SHM/journal files, backups,
+  exports, logs, caches, media, Git metadata, tests and deployment docs) and
+  unique canary values for API-principal, TMDB, Storage/Webhook,
+  authorization and cookie secret classes.
+- The image is built without cache and inspected through history,
+  configuration and filesystem scans. The installed `mediaflow` runtime and the
+  Waitress production WSGI dependency must be present and usable, while no
+  canary value or private file may appear in any image surface.
+- Rendered Compose is asserted to contain exactly `api`, `worker`,
+  `scheduler` and `notification-worker`, one immutable image identity, one
+  command per service, non-root UID/GID `10001:10001`, a named `/data` volume,
+  read-only config/environment/source mounts, a read-write media target mount,
+  no host root/Docker socket/privileged/host-network mode, and no supervisor.
+- Only the API service publishes a port and the default host bind is
+  `127.0.0.1`. MediaFlow does not provide TLS or reverse-proxy identity;
+  deliberate LAN or HTTPS reverse-proxy exposure remains a deployment-owned
+  boundary documented below.
+- The running stack is probed as UID/GID `10001`, with writable `/data` and
+  media target and read-only config/environment/source mounts. A container
+  whose Local Storage root is host `/` fails closed before starting with a
+  bounded message and no fallback.
+- The production API/Web is exercised with deployment-owned viewer, auditor,
+  operator, executor and admin Bearer principals. Missing/invalid credentials
+  are denied, least-privilege RBAC separation holds, and denied/read-only
+  requests create no Job, Task, notification, execution authority or Storage
+  mutation.
+- Bounded response/export scans cover Web assets, configuration status,
+  managed configuration and result exports, audit/log projections, dashboard
+  and service logs. Durable SQLite evidence is scanned directly. Failures
+  identify only the affected canary class or surface and never echo the value
+  being sought.
+
+```bash
+python3 scripts/docker_release_security_smoke_test.py
+```
+
+The harness prints `SKIP` when no Docker engine is available, uses only
+temporary paths and a throwaway project, and never reads production
+configuration, media, credentials, Storage or Providers.
+
 ## Verify
 
 ```bash
@@ -359,3 +405,11 @@ durable state, creates and verifies a backup, runs read-only preflight and
 rehearsal, injects a migration failure, proves restore/recovery boundaries and
 successfully upgrades the four-service Compose project on temporary isolated
 paths.
+
+The Task 29.6 release-security harness adds image/build-context,
+Compose-topology, non-root/mount, API-token/RBAC and canary redaction
+acceptance on the exact candidate image:
+
+```bash
+python3 scripts/docker_release_security_smoke_test.py
+```
