@@ -337,11 +337,110 @@ The following additional criteria are required for RO-8:
   environment is recorded as `SKIP` or `UNAVAILABLE` with its boundary; no unsupported deployment
   claim is inferred.
 
+## Closure Packet
+
+```text
+Slice: 29 — Docker Production Self-hosted Release
+Base SHA: b57db5a28ee944bc121b69608bb6475d8ae555a7
+Head SHA: 657f1a3697eec8e1537bee1335d45a06bec35c6f
+
+Required Outcomes:
+- RO-1 Reproducible image and independent service topology — COMPLETE
+- RO-2 Production HTTP and lifecycle boundary — COMPLETE
+- RO-3 Durable /data and explicit media mounts — COMPLETE
+- RO-4 Distinct operational health and recovery visibility — COMPLETE
+- RO-5 Restart-safe durable operation — COMPLETE
+- RO-6 Backup, upgrade and migration recovery — COMPLETE
+- RO-7 Release security and validation — COMPLETE
+- RO-8 Pre-release execution-boundary completeness — COMPLETE
+
+Required Surfaces:
+- Container artifact surface — COMPLETE
+- Compose runtime surface — COMPLETE
+- Production Web/API surface — COMPLETE
+- Storage and filesystem boundary surface — COMPLETE
+- Operations lifecycle surface — COMPLETE
+- Upgrade and recovery surface — COMPLETE
+- Release validation surface — COMPLETE
+- Execution-boundary completeness surface — COMPLETE
+
+Implemented:
+- Task 29.1 completed the Jobs/Preview/Organize execution-boundary correction,
+  including zero-mutation Preview, explicit Organize authority/confirmation,
+  conflict finding semantics and OrganizerExecutor-only mutation.
+- Tasks 29.2–29.4 delivered the immutable image, four-service Compose topology,
+  production WSGI serving, local /data and media-mount boundary, distinct
+  health/readiness signals, and restart/fencing/notification durability.
+- Task 29.5 delivered isolated old/new image backup, preflight, migration
+  rehearsal, fail-closed migration failure and non-overwriting recovery proof.
+- Task 29.6 delivered image/build-context/private-state/secret scans,
+  non-root/network/RBAC validation, API/Web/export redaction checks and the
+  complete supported offline release gates.
+
+Tasks completed:
+- 29.1 — execution-boundary correction
+- 29.2 — production container boundary
+- 29.3 — health/readiness and fail-closed diagnostics
+- 29.4 — restart-safe durable operation and fault fencing
+- 29.5 — image upgrade, backup and migration recovery
+- 29.6 — release security and production artifact validation
+
+Final Tests:
+- `python3 scripts/check_governance.py` — PASS.
+- Focused Task 29.6 regression — 54 tests, PASS.
+- `python3 scripts/docker_smoke_test.py` — PASS.
+- `python3 scripts/docker_health_smoke_test.py` — PASS.
+- `python3 scripts/docker_restart_fault_smoke_test.py` — PASS.
+- `python3 scripts/docker_upgrade_recovery_smoke_test.py` — PASS.
+- `python3 scripts/docker_release_security_smoke_test.py` — PASS.
+- Full unittest discovery — 1393 tests, PASS; 7 SKIP for unavailable real
+  SMB/S3/OpenList and isolated endurance profiles.
+- `ruff format --check .` and `ruff check .` — PASS.
+- compileall, pip check and both canonical configuration validations — PASS.
+- Wheel build and `scripts/wheel_smoke_test.py` — PASS.
+- Forbidden FFmpeg/FFprobe audit — PASS (no matches).
+- `git diff --check` — PASS.
+- Markdown/link validation — UNAVAILABLE (no supported repository command).
+
+Safety Evidence:
+- All health, readiness, preflight, rehearsal, status, API/Web read and export
+  paths were verified to avoid Storage scans, Provider calls, work creation,
+  notification delivery and media mutation.
+- Docker acceptance verified non-root UID/GID, confined explicit mounts,
+  read-only source/config/secret inputs, loopback-only API publication and no
+  host root/Docker socket/privileged fallback.
+- Restart/fencing tests preserved newer Worker ownership, suppressed duplicate
+  scheduler occurrences, retained notification delivery identities and refused
+  automatic uncertain-mutation replay.
+- Upgrade/security harnesses verified source/backup immutability, explicit
+  non-overwriting restore, secret-free image/Compose/runtime/API/Web/log/audit/
+  export surfaces and least-privilege Bearer-token RBAC.
+
+Known Non-blocking Issues:
+- None. External-service and Markdown/link limitations are recorded as
+  SKIP/UNAVAILABLE above and do not represent supported local-gate failures.
+
+Explicitly Deferred:
+- Maintain the Contract's existing Explicitly Deferred items, including
+  built-in identity/OIDC, TLS/certificate/reverse-proxy implementation, full
+  Secret Store/Docker Secrets integration, Provider switching, remote durable
+  databases, distributed workers, automatic uncertain-mutation replay,
+  historical rollback and specialized notification channels.
+
+Documentation Reconciliation Needed:
+- A to reconcile factual CURRENT/TARGET statements in authoritative docs,
+  update the large-Slice closure ledger/Roadmap status as appropriate, and
+  record the final A review decision without changing the reviewed
+  Base..Head product range.
+
+Decision: SLICE READY FOR A REVIEW
+```
+
 ## Review State
 
 ```text
-Slice Status: ACTIVE
-Implementation Head: NOT SET
-P0/P1 Defects: P1 pre-release Jobs/Preview execution-boundary gap recorded — no implementation has started
-Next Action: B PLANS FIRST TASK
+Slice Status: READY FOR A REVIEW
+Implementation Head: 657f1a3697eec8e1537bee1335d45a06bec35c6f
+P0/P1 Defects: None known after B Task review and Slice-final validation
+Next Action: A FINAL REVIEW
 ```
