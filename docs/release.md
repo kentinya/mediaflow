@@ -11,9 +11,9 @@ independent API/Worker/Scheduler/Notification Worker services. The services reta
 process failure/restart boundaries while sharing one local persistent `/data` volume. The
 `wsgiref.simple_server` API listener remains development/trusted-loopback only; production Compose
 serving uses the explicitly selected Waitress adapter with a documented TLS/reverse-proxy or LAN
-boundary. The Slice health/readiness and restart/fault Tasks are complete. The remaining
-upgrade/migration rehearsal and final release-security Tasks are not yet complete, so this document
-is not a full release claim.
+boundary. The Slice health/readiness, restart/fault and upgrade/backup/migration
+recovery Tasks are complete. The remaining final release-security Task is not yet complete, so this
+document is not a full release claim.
 
 See [docs/deployment.md](deployment.md) for the current executable image/Compose journey.
 
@@ -69,6 +69,16 @@ python scripts/wheel_smoke_test.py "$release_dir"/mediaflow-*.whl
 The smoke validator checks wheel contents, installs without runtime extras in a new venv outside the
 checkout, validates both canonical example configurations, and performs a temporary SQLite database
 backup/verify round trip. It never reads configured production Storage or credentials.
+
+Docker release acceptance also includes the restart/fault and upgrade/recovery journeys:
+
+```bash
+python3 scripts/docker_restart_fault_smoke_test.py
+python3 scripts/docker_upgrade_recovery_smoke_test.py
+```
+
+Each harness builds local images only, uses temporary media and a throwaway named
+volume, and records `SKIP` when no Docker engine is available.
 
 ## Maintainer review
 

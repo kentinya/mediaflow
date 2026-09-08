@@ -1,15 +1,16 @@
 # MediaFlow Docker deployment
 
 This document covers the Task 29.2 deployment boundary, the Task 29.3
-health/readiness model and the Task 29.4 restart/fault matrix: one installable
-image, four independent Compose services, production WSGI serving, a persistent
-local `/data` volume, explicit container-visible media mounts, distinct
-liveness, management/API readiness and processing-Worker readiness signals, and
-durable restart/fencing guarantees.
+health/readiness model, the Task 29.4 restart/fault matrix and the Task 29.5
+backup/upgrade/migration recovery journey: one installable image, four
+independent Compose services, production WSGI serving, a persistent local
+`/data` volume, explicit container-visible media mounts, distinct liveness,
+management/API readiness and processing-Worker readiness signals, durable
+restart/fencing guarantees, and verified preflight/rehearsal/restore recovery.
 
-The backup/upgrade migration rehearsal and release-security acceptance are
-separate later Tasks. The restart/fault matrix is covered below; this runbook
-does not claim those later release Tasks.
+The release-security acceptance is a separate later Task. The restart/fault
+matrix and backup/upgrade/migration recovery journey are covered below; this
+runbook does not claim that later release Task.
 
 ## Boundary
 
@@ -190,6 +191,70 @@ python3 scripts/docker_restart_fault_smoke_test.py
 It prints `SKIP` when no Docker engine is available and never reads production
 paths, credentials, Storage or Providers.
 
+## Backup, upgrade and migration recovery
+
+Before changing the MediaFlow image, stop the stack and retain a verified
+backup under the `/data` volume. The backup command is read-only with respect
+to live media and never overwrites an existing destination:
+
+```bash
+docker compose stop
+docker compose run --rm --no-deps api \
+  mediaflow database backup --output /data/upgrade-backup.sqlite3
+docker compose run --rm --no-deps api \
+  mediaflow database verify /data/upgrade-backup.sqlite3
+```
+
+Record the backup's schema, SHA-256 digest and age from the verify output.
+Upgrade preflight and migration rehearsal are read-only and operate only on a
+disposable copy of that backup. Run them with the candidate image identity
+before recreating services:
+
+```bash
+MEDIAFLOW_IMAGE=mediaflow:candidate \
+  docker compose run --rm --no-deps api \
+  mediaflow upgrade check --backup /data/upgrade-backup.sqlite3
+MEDIAFLOW_IMAGE=mediaflow:candidate \
+  docker compose run --rm --no-deps api \
+  mediaflow upgrade rehearse --backup /data/upgrade-backup.sqlite3
+```
+
+`upgrade check` reports `READY` when the live runtime and backup are current or
+`MIGRATION_REQUIRED` for an older mutually matching supported schema. `upgrade
+rehearse` copies the verified backup into a temporary database, runs the
+candidate image's real repository migration path on that copy, preserves
+representative record counts and removes the temporary file. Neither command
+changes the live `/data` database, the verified backup, configuration Active,
+notifications or execution authority.
+
+Only after the compatibility gate passes, recreate the project with the
+candidate image:
+
+```bash
+MEDIAFLOW_IMAGE=mediaflow:candidate docker compose up -d --force-recreate
+docker compose ps
+```
+
+Migration failure fails closed: the live database, prior image/artifact and
+verified backup remain available and no candidate service resumes media work.
+Recovery uses the documented non-overwriting restore procedure: the destination
+must be empty and sidecar-free and the command requires
+`--confirm-empty-destination`. Never delete the failed live database or backup
+until the restored authority is independently verified.
+
+The isolated acceptance harness builds a local old-schema image (runtime marker
+32) and the current candidate image (runtime marker 33), seeds representative
+durable state, verifies a backup, exercises preflight/rehearsal, injects a
+migration failure, probes restore rejection and performs a successful candidate
+upgrade:
+
+```bash
+python3 scripts/docker_upgrade_recovery_smoke_test.py
+```
+
+It prints `SKIP` when no Docker engine is available and never contacts a
+registry, remote Storage/Provider service or production path.
+
 ## Verify
 
 ```bash
@@ -282,3 +347,15 @@ schedule/occurrence, notification, audit and operational-log evidence, restarts
 each service, and verifies scheduler idempotence, stale-owner fencing,
 uncertain-mutation refusal and notification at-least-once behavior on temporary
 isolated paths.
+
+The Task 29.5 upgrade harness adds the image-to-image backup/migration journey:
+
+```bash
+python3 scripts/docker_upgrade_recovery_smoke_test.py
+```
+
+It builds an old-schema and candidate image locally, seeds representative
+durable state, creates and verifies a backup, runs read-only preflight and
+rehearsal, injects a migration failure, proves restore/recovery boundaries and
+successfully upgrades the four-service Compose project on temporary isolated
+paths.
