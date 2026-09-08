@@ -179,21 +179,111 @@ reported as `SKIP`/`UNAVAILABLE`, not converted into a production claim.
 
 ### Changed Files
 
+```text
+TASK.md
+docs/deployment.md
+docs/release.md
+scripts/docker_upgrade_recovery_smoke_test.py
+```
+
 ### Implemented
+
+```text
+- Added an isolated Docker Compose upgrade/backup/migration recovery harness
+  (`scripts/docker_upgrade_recovery_smoke_test.py`). It builds a local
+  synthetic old-schema image (runtime marker 32) and the current candidate
+  image (runtime marker 33), starts the old deployment on temporary `/data` and
+  media mounts, activates managed configuration, seeds representative
+  FileIndex/Job/Task/TaskItem/Result/schedule/notification/audit/log state,
+  creates and verifies a backup, runs candidate upgrade preflight and
+  migration rehearsal only on disposable copies, injects a deterministic
+  schema-30 migration failure, proves the live database/backup/Active identity
+  remain unchanged, probes non-overwriting restore/sidecar rejection, and
+  successfully upgrades and restarts the four-service Compose topology.
+- Updated deployment/release documentation with the backup, preflight,
+  rehearsal, candidate upgrade and fail-closed recovery runbook and with the
+  new acceptance command.
+- No production application code or frozen domain behavior was changed; the
+  existing SQLite backup/verify/restore, upgrade preflight and migration
+  rehearsal boundaries are exercised end-to-end.
+```
 
 ### Tests and Results
 
+```text
+python3 scripts/check_governance.py                                   -> PASS
+.venv/bin/python -m unittest tests.test_sqlite_backup
+  tests.test_sqlite_restore tests.test_upgrade_preflight
+  tests.test_migration_rehearsal -v                                   -> PASS (18 tests)
+.venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py       -> PASS (Docker available)
+.venv/bin/python -m unittest discover -s tests
+  -> 1389 tests, 1 FAIL / PRE-EXISTING / UNRELATED:
+     test_setup_picker_and_execution_environment_guidance_are_present
+     ("Storage-relative breadcrumb" absent from served APP_JS), 7 SKIP
+.venv/bin/python -m compileall -q mediaflow tests scripts             -> PASS
+.venv/bin/python -m pip check                                        -> PASS
+.venv/bin/python -m pip wheel . --no-deps -w <tmp>                   -> PASS
+.venv/bin/python scripts/wheel_smoke_test.py <tmp>/mediaflow-*.whl   -> PASS
+test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml
+  Dockerfile compose.yaml scripts || true)"                           -> PASS
+git diff --check                                                      -> PASS
+```
+
+The 7 skipped tests are the environment-unavailable real SMB/S3/OpenList and
+isolated endurance gates (`SKIP / UNAVAILABLE`). The new harness file is
+ruff-clean and formatted.
+
 ### Decisions
+
+```text
+- The repository has no historical Docker image at runtime schema 32 (the
+  Dockerfile was introduced after the current schema marker became 33).  The
+  isolated harness therefore builds a synthetic old-schema image from the same
+  repository with only the runtime schema marker/defaults pinned to 32; this is
+  a local test fixture, never a repository or production artifact, and lets the
+  candidate image exercise a real 32 -> 33 repository open/migration path.
+- Backup, preflight and rehearsal run through the installed CLI in one-off
+  containers after the old stack is stopped, so the harness follows the
+  documented stop/backup/gate/upgrade boundary and never relies on a live
+  process to mutate the backup.
+- Migration failure is injected with a minimal schema-30 backup containing a
+  duplicate active unattended-execution grant, the same deterministic failure
+  already covered by unit tests; the harness verifies the live database and
+  backup digests remain unchanged.
+- Existing API/Web status surfaces (System schema/version, management and
+  Worker readiness) are used as the read-only upgrade/recovery evidence; no new
+  API behavior or Web mutation was needed for this Task.
+```
 
 ### Remaining In-Slice Work
 
+```text
+Slice 29 RO-7 release security/private-state/network validation and Slice-final
+acceptance evidence are outside this Task. This Task advances RO-6 only and
+does not plan the next Task.
+```
+
 ### Risks / Deviations
+
+```text
+- The full-suite failure is the known pre-existing Storage Browser UI test,
+  reproduced identically at Task Base (`mediaflow/interfaces/operator_ui.py`
+  and `tests/test_storage_browser.py` are unchanged from Task Base); it is
+  unrelated to this Task and is recorded as FAIL / PRE-EXISTING / UNRELATED.
+- Whole-repo `ruff check` retains the same pre-existing
+  `tests/test_system_settings_management.py` line-length issue; the new
+  Task-changed file is clean.
+- The synthetic old-schema image is a harness fixture and does not claim to be
+  a real prior release artifact. Real older-schema migration paths are covered
+  by the existing schema-30 unit tests and by the candidate image's 32 -> 33
+  Compose upgrade in this harness.
+```
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: [full SHA after implementation checkpoint]
 ```
 
 ## B Review Result
