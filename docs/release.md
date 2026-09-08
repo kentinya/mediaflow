@@ -5,12 +5,16 @@ release explicitly.
 
 ## V1 Docker release target
 
-The repository is not yet a Docker release. Slice 29 is the final V1 integration Slice and must
-deliver one immutable MediaFlow image with Compose services for API, Worker, Scheduler and
-Notification Worker. The services must retain independent process failure/restart boundaries while
-sharing one local persistent `/data` volume. The current `wsgiref.simple_server` API listener remains
-development/trusted-loopback only; production serving requires an explicitly selected production
-WSGI server and a documented TLS/reverse-proxy or LAN boundary.
+Slice 29 is the final V1 integration Slice. Task 29.2 now ships the repository's first installable
+Docker image, `compose.yaml`, and Waitress-backed `api serve-production` command for the four
+independent API/Worker/Scheduler/Notification Worker services. The services retain independent
+process failure/restart boundaries while sharing one local persistent `/data` volume. The
+`wsgiref.simple_server` API listener remains development/trusted-loopback only; production Compose
+serving uses the explicitly selected Waitress adapter with a documented TLS/reverse-proxy or LAN
+boundary. The remaining Slice health/readiness, restart fault, upgrade/migration and final release
+security Tasks are not yet complete, so this document is not a full release claim.
+
+See [docs/deployment.md](deployment.md) for the current executable image/Compose journey.
 
 The Docker acceptance contract includes:
 

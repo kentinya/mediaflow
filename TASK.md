@@ -177,15 +177,149 @@ unavailable external-service skips only when reproduced at this Task Base with e
 
 ### Changed Files
 
+```text
+.dockerignore
+.gitignore
+Dockerfile
+compose.yaml
+deploy/mediaflow.env.example
+docs/deployment.md
+docs/release.md
+mediaflow/container_entrypoint.py
+mediaflow/final_cli.py
+mediaflow/production_wsgi.py
+pyproject.toml
+scripts/docker_smoke_test.py
+scripts/make_deployment_config.py
+tests/test_container_deployment.py
+TASK.md
+```
+
 ### Implemented
+
+```text
+Docker artifact:
+- Bounded, non-root Dockerfile/image build: Python 3.13-slim, UID/GID
+  10001:10001, declared Waitress dependency, no config/private/database/log/
+  cache/media files or build residue in the image.
+- .dockerignore keeps the build context to the package and build metadata only.
+
+Production serving:
+- mediaflow/production_wsgi.py selects Waitress as the production WSGI adapter.
+- final_cli.py adds `mediaflow api serve-production --host --port --threads`;
+  it builds the exact existing authenticated MediaFlowApi application and never
+  imports/invokes wsgiref.simple_server. `api serve` remains the documented
+  development/trusted-loopback listener.
+
+Compose/runtime boundary:
+- compose.yaml defines exactly api/worker/scheduler/notification-worker with one
+  MediaFlow command each, unless-stopped restart, non-root user, shared local
+  /data volume, and explicit /media/incoming (ro) and /media/organized (rw)
+  bind mounts with create_host_path=false.
+- Deployment-owned secret values live in a host-mounted environment file loaded
+  by the container entrypoint, so Compose source and rendered output carry only
+  references/paths, never secret values.
+- mediaflow/container_entrypoint.py performs bounded preflight (config, /data,
+  Local Storage media mounts, forbidden host-root/Docker-socket paths, API token
+  reference) and then execs one MediaFlow command.
+
+Journey support:
+- scripts/make_deployment_config.py renders the canonical example with Docker
+  container paths; docs/deployment.md documents build/start/verify/failure/
+  recovery and secret hygiene; docs/release.md reflects the current packaging
+  artifact without claiming full Slice release completion.
+- scripts/docker_smoke_test.py builds the exact image, starts the isolated
+  four-service stack, reaches authenticated API/Web through Waitress, writes a
+  durable Job, restarts the API service, verifies persistence, non-root UID,
+  secret-free logs/Compose output, four running services, and a missing media
+  mount failure.
+```
 
 ### Tests and Results
 
+```text
+python3 scripts/check_governance.py                                    -> PASS
+.venv/bin/python -m unittest tests.test_container_deployment          -> PASS (9 tests)
+.venv/bin/python -m unittest tests.test_api_security tests.test_api_credentials \
+    tests.test_management_setup tests.test_configuration_status \
+    tests.test_automation_api tests.test_release_validation            -> PASS (60 tests)
+.venv/bin/python scripts/docker_smoke_test.py                          -> PASS (Docker engine
+                                                                          available; build + four
+                                                                          services + API restart
+                                                                          persistence + missing
+                                                                          mount failure)
+.venv/bin/python -m unittest discover -s tests                         -> 1375 tests,
+    failures=1 (pre-existing, see Risks), skipped=7 (external real-service gates)
+.venv/bin/python -m unittest tests.test_storage_browser.StorageBrowserWebTests.\
+    test_setup_picker_and_execution_environment_guidance_are_present  -> FAIL / PRE-EXISTING /
+                                                                       UNRELATED (identical at
+                                                                       Task Base a81e960)
+.venv/bin/ruff format --check <all files changed by this Task>        -> PASS
+.venv/bin/ruff check <all files changed by this Task>                 -> PASS
+.venv/bin/ruff format --check .                                       -> FAIL / PRE-EXISTING /
+                                                                        UNRELATED
+.venv/bin/ruff check .                                                -> FAIL / PRE-EXISTING /
+                                                                        UNRELATED
+.venv/bin/python -m compileall -q mediaflow tests scripts             -> PASS
+.venv/bin/python -m pip check                                         -> PASS
+.venv/bin/mediaflow --config config/strategy.example.json config validate \
+                                                                      -> PASS
+.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate \
+                                                                      -> PASS
+.venv/bin/python -m pip wheel . --no-deps -w dist/check               -> PASS
+.venv/bin/python scripts/wheel_smoke_test.py dist/check/mediaflow-0.1.0-py3-none-any.whl \
+                                                                      -> PASS
+test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml Dockerfile \
+    compose.yaml scripts docs/deployment.md || true)"                  -> PASS
+git diff --check                                                       -> PASS
+```
+
 ### Decisions
+
+```text
+- Waitress is the explicitly selected production WSGI server and is declared as
+  the first runtime dependency. The Compose API command is a separate
+  `serve-production` subcommand, leaving the standard-library development
+  listener and its existing tests unchanged.
+- Deployment secret values are supplied through a host-mounted environment file
+  that the container entrypoint loads into the process environment. This keeps
+  values out of `docker compose config` output without introducing in-product
+  Docker Secrets ingestion (which remains deferred).
+- Startup safety is enforced by a bounded entrypoint preflight and by
+  `create_host_path: false` bind mounts; missing mounts are Docker/Compose
+  errors and inaccessible paths are reported before a MediaFlow process starts.
+  Preflight performs no Storage mutation, Provider call, Job/Task creation or
+  notification.
+- /data is a Compose named volume. SQLite/history are configured as absolute
+  paths under /data by the deployment config helper and rejected by preflight
+  if they escape that boundary.
+```
 
 ### Remaining In-Slice Work
 
+```text
+Slice 29 RO-4 (health/readiness model), RO-5 (restart fault/ownership matrix),
+RO-6 (backup/upgrade/migration recovery), the remaining release-security and
+final RO-3/RO-7 evidence are not implemented by this Task and remain ahead. The
+deployment runbook explicitly does not claim them.
+```
+
 ### Risks / Deviations
+
+```text
+- Full regression retains the known pre-existing Storage Browser failure:
+  `test_setup_picker_and_execution_environment_guidance_are_present` fails
+  identically at Task Base a81e960 ("Storage-relative breadcrumb" absent from
+  served APP_JS). It is unrelated to this packaging/serving Task.
+- Whole-repo ruff format/check each report the same pre-existing
+  `tests/test_system_settings_management.py` issue; it reproduces at Task Base.
+  Every file changed by this Task is format- and lint-clean.
+- 7 skipped full-suite tests are real external SMB/S3/OpenList/endurance gates:
+  SKIP / UNAVAILABLE, no inferred pass.
+- This Task intentionally does not implement graceful shutdown semantics beyond
+  the Waitress process boundary; RO-2/RO-4 lifecycle/health treatment is a later
+  Slice 29 Task.
+```
 
 ### Checkpoint
 
