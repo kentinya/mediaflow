@@ -181,10 +181,33 @@ APP_JS = b"""(() => {
     content.append(text('h3', 'Recent failures'), table(['Kind', 'Status', 'Category', 'Time'], failures));
   }
   async function renderSystem() {
-    const data = await api('/api/v1/system/status');
+    const [health, data, management, worker] = await Promise.all([
+      fetch('/health', {cache: 'no-store'}).then(response => response.ok ? response.json() : null).catch(() => null),
+      api('/api/v1/system/status'),
+      api('/api/v1/management/readiness'),
+      api('/api/v1/workers/readiness').catch(() => null)
+    ]);
     clear(content); content.append(text('h2', 'System status'));
     content.append(text('p', 'Paths, templates, endpoints, environment variables, and secrets are intentionally hidden.',
       'warning'));
+    const active = (management && management.active) || {};
+    content.append(text('h3', 'Health and readiness'));
+    content.append(cards([
+      ['Process alive', health ? (health.processAlive ? 'YES' : 'NO') : 'unavailable'],
+      ['Management ready', management ? (management.managementReady ? 'YES' : 'NO') : 'unavailable'],
+      ['Worker ready', worker ? (worker.ready ? 'YES' : 'NO') : 'unavailable'],
+      ['Active revision', active.revisionId || '-'],
+      ['Worker condition', worker ? worker.condition || '-' : 'unavailable']
+    ]));
+    if (management && management.unavailableReason) {
+      content.append(text('p', `${management.unavailableReason}. ` +
+        `${management.nextAction || 'Inspect configuration status and recover explicitly.'}`,
+        'error'));
+    }
+    if (worker && worker.ready === false) {
+      content.append(text('p', `Worker not ready (${worker.condition}). ` +
+        `${worker.durableState || ''} ${worker.nextAction || ''}`.trim(), 'warning'));
+    }
     const system = data.system || {};
     content.append(cards([
       ['Application', system.application_version], ['Python', system.python_version],
@@ -336,6 +359,8 @@ APP_JS = b"""(() => {
       ['Ready', readiness.ready],
       ['Condition', readiness.condition],
       ['Active workers', readiness.activeWorkersCount],
+      ['Active snapshot', readiness.activeSnapshotId || '-'],
+      ['Expected schema', readiness.expectedRuntimeSchemaVersion || '-'],
       ['Side effects', readiness.sideEffects],
       ['Retry safe', readiness.retrySafe],
       ['Next action', readiness.nextAction],

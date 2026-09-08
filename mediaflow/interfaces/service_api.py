@@ -5529,6 +5529,8 @@ class MediaFlowApi:
             "workflowAvailable": status.get("workflowAvailable", False),
             "authority": status.get("authority"),
             "active": status.get("active"),
+            "lastKnownActive": status.get("lastKnownActive"),
+            "managedActivation": status.get("managedActivation", False),
             "setupDraft": status.get("setupDraft"),
             "recoveryRequired": status.get("recoveryRequired", False),
             "health": status.get("health"),
@@ -5578,6 +5580,7 @@ class MediaFlowApi:
                 "activeWorkersCount": readiness.get("liveWorkers", 0),
                 "activeSnapshotId": active_snapshot_id,
                 "activeSnapshotDigest": active_snapshot_digest,
+                "expectedRuntimeSchemaVersion": readiness.get("expectedSchemaVersion"),
             }
         )
 
@@ -6744,6 +6747,12 @@ class MediaFlowApi:
         if ApiPermission.READ not in getattr(principal, "permissions", ()):
             return False
         parts = [part for part in str(path).split("/") if part]
+        if parts in (
+            ["api", "v1", "management", "readiness"],
+            ["api", "v1", "workers", "readiness"],
+            ["api", "v1", "workers"],
+        ):
+            return True
         if parts[:3] == ["api", "v1", "manual-intents"] or (
             len(parts) >= 3
             and parts[:2] == ["api", "v1"]

@@ -293,6 +293,46 @@ class ContainerArtifactTests(unittest.TestCase):
             "scheduler": ["scheduler", "run"],
             "notification-worker": ["notification-worker", "run"],
         }
+        expected_probes = {
+            "api": [
+                "CMD",
+                "python",
+                "-m",
+                "mediaflow.container_probe",
+                "check",
+                "--service",
+                "api",
+                "--url",
+                "http://127.0.0.1:8080/health",
+            ],
+            "worker": [
+                "CMD",
+                "python",
+                "-m",
+                "mediaflow.container_probe",
+                "check",
+                "--service",
+                "worker",
+            ],
+            "scheduler": [
+                "CMD",
+                "python",
+                "-m",
+                "mediaflow.container_probe",
+                "check",
+                "--service",
+                "scheduler",
+            ],
+            "notification-worker": [
+                "CMD",
+                "python",
+                "-m",
+                "mediaflow.container_probe",
+                "check",
+                "--service",
+                "notification-worker",
+            ],
+        }
         for name, definition in services.items():
             with self.subTest(service=name):
                 self.assertEqual(definition["command"], expected_commands[name])
@@ -301,6 +341,13 @@ class ContainerArtifactTests(unittest.TestCase):
                 rendered = json.dumps(definition)
                 self.assertNotIn("wsgiref", rendered)
                 self.assertNotIn("docker.sock", rendered)
+                healthcheck = definition.get("healthcheck")
+                self.assertIsNotNone(healthcheck, f"{name} must declare a healthcheck")
+                self.assertEqual(healthcheck["test"], expected_probes[name])
+                self.assertEqual(healthcheck["retries"], 5)
+                self.assertEqual(healthcheck["timeout"], "3s")
+                self.assertEqual(healthcheck["start_period"], "15s")
+                self.assertEqual(healthcheck["interval"], "10s")
                 targets = {item["target"] for item in definition["volumes"]}
                 self.assertEqual(
                     targets,
