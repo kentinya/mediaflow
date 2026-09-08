@@ -768,6 +768,7 @@ with SQLiteTaskRepository(DATABASE) as repository:
             f"RELEASE_SEED_AUTHORIZATION={authorization}",
             "-e",
             f"RELEASE_SEED_COOKIE={cookie}",
+            "api",
             "python",
             "-",
         ],
@@ -826,6 +827,7 @@ print(" ".join(str(index) for index in found))
                 for index, (_label, value) in enumerate(canaries)
                 for option in ("-e", f"RELEASE_CANARY_{index}={value}")
             ],
+            "api",
             "python",
             "-c",
             code,
