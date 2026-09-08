@@ -3,9 +3,9 @@
 MediaFlow does not publish artifacts automatically. A maintainer must review and perform every
 release explicitly.
 
-## V1 Docker release target
+## V1 Docker release
 
-Slice 29 is the final V1 integration Slice. Task 29.2 now ships the repository's first installable
+Slice 29 is the final V1 integration Slice. It ships the repository's first installable
 Docker image, `compose.yaml`, and Waitress-backed `api serve-production` command for the four
 independent API/Worker/Scheduler/Notification Worker services. The services retain independent
 process failure/restart boundaries while sharing one local persistent `/data` volume. The
@@ -13,8 +13,9 @@ process failure/restart boundaries while sharing one local persistent `/data` vo
 serving uses the explicitly selected Waitress adapter with a documented TLS/reverse-proxy or LAN
 boundary. The Slice health/readiness, restart/fault and upgrade/backup/migration
 recovery Tasks and the Task 29.6 release-security/artifact validation are complete at the
-repository implementation head. This document is not a publication claim and final release
-acceptance remains owned by the Slice review.
+repository implementation head. A Final Review marked Slice 29 `PASS / CLOSED` on 2026-09-08.
+This document is not a publication claim; publication, signing and direct deployment remain
+explicit maintainer actions.
 
 See [docs/deployment.md](deployment.md) for the current executable image/Compose journey.
 
@@ -31,11 +32,12 @@ The Docker acceptance contract includes:
 - no duplicate scheduled occurrence, no stale-owner overwrite and no automatic uncertain-mutation
   replay after restart.
 
-This target does not claim direct Internet exposure, built-in user/password/OIDC identity, SQLite on
+This release does not claim direct Internet exposure, built-in user/password/OIDC identity, SQLite on
 remote Storage, Docker Secrets-specific ingestion, Provider switching, additional Metadata Providers,
 or external-service compatibility that the validation environment cannot run. Those boundaries remain
 explicitly documented as unsupported, post-V1 or `SKIP / UNAVAILABLE` as applicable. The current
-repository is still pre-Docker production release; the target is owned by Slice 29.
+release is validated for the documented isolated Docker journey; publication, signing and direct
+production deployment remain explicit maintainer actions.
 
 ## Quality gate
 

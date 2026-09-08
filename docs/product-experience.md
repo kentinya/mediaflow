@@ -304,7 +304,7 @@ Slice 28 delivered this day-2 operations administration journey.
 
 ## Docker self-hosted operation
 
-### Slice 29 target
+### Current Slice 29 delivery
 
 - **Goal:** deploy and operate MediaFlow as a durable production self-hosted service.
 - **Entry:** prepare deployment-owned secrets and explicit media mounts, then run Docker Compose.
@@ -320,7 +320,7 @@ Slice 28 delivered this day-2 operations administration journey.
 
 ## V1 and post-V1 boundary
 
-Slices 26, 27 and 28 are PASS / CLOSED. Remaining V1 work is Slice 29. Provider
-switching and additional production Providers, built-in username/password or OIDC identity, a
-general Secret Store, automatic uncertain-mutation replay, historical rollback and specialized
+Slices 26, 27, 28 and 29 are PASS / CLOSED. The V1 self-hosted deployment journey is delivered.
+Provider switching and additional production Providers, built-in username/password or OIDC identity,
+a general Secret Store, automatic uncertain-mutation replay, historical rollback and specialized
 email/chat/media-server notifications remain V1.x/V2 or deployment-specific work.

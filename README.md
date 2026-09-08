@@ -44,18 +44,18 @@ export MEDIAFLOW_WEBHOOK_SECRET="<independent-random-webhook-secret>"
 
 ## V1 self-hosted release status
 
-Slices 26, 27 and 28 are PASS / CLOSED. The current active V1 Slice is:
+Slices 26, 27, 28 and 29 are PASS / CLOSED. The V1 self-hosted release is delivered:
 
 ```text
 Slice 29 — Docker Production Self-hosted Release
 ```
 
-The repository currently provides the Python/CLI development and trusted-loopback WSGI boundary;
-it does not yet ship a Dockerfile, Compose topology or production WSGI server. A fresh instance can
+The repository provides the Python/CLI development and trusted-loopback WSGI boundary plus the
+validated Dockerfile/Compose production boundary. `mediaflow api serve-production` uses the Waitress
+WSGI adapter; the `wsgiref.simple_server` listener remains development-only. A fresh instance can
 start from the minimal management-only bootstrap and create its first managed Draft through the
 authenticated Web/API. The compatibility JSON bootstrap remains available for legacy, migration and
-compatibility operation. Do not describe the current `wsgiref.simple_server` listener as production
-serving.
+compatibility operation.
 
 The supported V1 identity boundary is an environment-owned API-principal Bearer token with RBAC.
 This is not a built-in username/password login or OIDC integration. V1 Metadata remains TMDB-backed
@@ -442,12 +442,12 @@ pending/running Automation Jobs through an explicit two-step Job-detail control.
 immediately; running cancellation is cooperative between items, so an in-flight operation may finish
 and completed work is not rolled back. Operator/executor/admin tokens may also record the same
 restricted decisions already supported by the API: conflict Skip/Rename, a persisted metadata
-candidate rank, or a persisted classification choice rank. The general Jobs submission view can
-queue only `scan` or `preview` after a separate review step, with an optional 1–10000 item limit;
-these jobs are visibly marked DRY_RUN and contain no execute authority or arbitrary remote organize
-request. Separately, Files/FileIndex offers the bounded manual Preview/Organize journey. Real
-mutation requires explicit confirmation and an exact one-shot authority, and only
-`OrganizerExecutor` can invoke mutating Storage operations. Decisions never resume work
+candidate rank, or a persisted classification choice rank. The general Jobs submission view can queue
+`scan`, `preview` or `organize` after a separate review step, with an optional 1–10000 item limit.
+Scan and Preview are visibly marked DRY_RUN and contain no execute authority; Organize requires the
+separate one-shot execution token and explicit confirmation. Separately, Files/FileIndex offers the
+bounded manual Preview/Organize journey. Real mutation requires explicit confirmation and an exact
+one-shot authority, and only `OrganizerExecutor` can invoke mutating Storage operations. Decisions never resume work
 automatically. The standard-library server has no TLS or production identity provider; keep it on
 trusted loopback or place it behind a correctly configured HTTPS reverse proxy.
 
@@ -537,9 +537,9 @@ Non-loopback HTTP is rejected by default. A bind intended for a trusted HTTPS re
 explicit `--allow-insecure-remote-http`; this acknowledgement does not add encryption. Prefer
 loopback binding and TLS termination at a trusted proxy.
 
-This is a development transport statement. Slice 29 will add a production WSGI serving contract;
-TLS termination, certificates, proxy policy and public Internet exposure remain deployment
-responsibilities rather than hidden MediaFlow behavior.
+This is a development transport statement. The production Docker path uses the explicit Waitress
+WSGI serving contract; TLS termination, certificates, proxy policy and public Internet exposure
+remain deployment responsibilities rather than hidden MediaFlow behavior.
 
 ## Persistent runtime state
 
@@ -599,7 +599,8 @@ readiness and ownership are visible through the read-only Operator Web/API proje
 widening execution authority.
 Database-managed users/login, OIDC, automatic secret rotation, Provider switching, and broader
 recovery beyond the delivered checkpoint journeys are not V1 capabilities. Slice 28 delivered day-2
-configuration and operations administration; Slice 29 owns the Docker production release.
+configuration and operations administration; Slice 29 delivered the Docker production release and
+the Jobs/Preview/Organize execution-boundary completion.
 
 The Automation view also manages the bounded scheduled unattended journey: operators can define a
 ResourceLibrary scope and schedule, validate and Preview the exact definition, explicitly grant or
