@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated Docker release-security acceptance for Task 29.6.
+"""Isolated Docker release-security acceptance for Task 29.6 and later Tasks.
 
 This script builds the exact candidate image from a clean committed checkout,
 injects harmless private-file and secret canaries into the build context and
@@ -7,7 +7,9 @@ deployment environment, inspects image history/filesystem and the rendered
 Compose topology, starts the four-service stack on temporary paths, verifies
 non-root execution and read-only/read-write mount boundaries, exercises
 Bearer-token/RBAC denial and redaction across authenticated API/Web/export
-projections, and confirms that no canary value reaches an output surface.
+projections, proves the built V2 artifact, its Python static serving, V1/V2
+coexistence and the absence of Node/frontend tooling at runtime, and confirms
+that no canary value reaches an output surface.
 
 It never reads production configuration, media, credentials or Storage and
 never contacts a remote Provider/Storage/registry.  If Docker is unavailable
@@ -20,6 +22,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -99,6 +102,100 @@ def assert_no_canaries(payload: bytes | str, canaries, surface: str) -> None:
 
 def value_bytes(value: str) -> bytes:
     return value.encode("utf-8")
+
+
+V2_SAFE_HEADERS = (
+    ("Cache-Control", "no-store"),
+    (
+        "Content-Security-Policy",
+        "default-src 'self'; connect-src 'self'; "
+        "script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; "
+        "frame-ancestors 'none'; form-action 'none'",
+    ),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+    ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+)
+
+
+def request_full(url: str, *, method: str = "GET") -> tuple[int, dict[str, str], bytes]:
+    """Perform one bounded request and return (status, lower-cased headers, body)."""
+
+    request = urllib.request.Request(url, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            headers = {key.lower(): value for key, value in response.headers.items()}
+            return response.status, headers, response.read()
+    except urllib.error.HTTPError as error:
+        headers = {key.lower(): value for key, value in error.headers.items()}
+        return error.code, headers, error.read()
+
+
+def assert_v2_static_serving(base: str, canaries) -> None:
+    """Prove live V1/V2 static coexistence, safe headers and fail-closed V2 errors."""
+
+    def probe(
+        url: str,
+        *,
+        method: str = "GET",
+        expected: int = 200,
+        content_type: str | None = None,
+        safe_headers: bool = True,
+    ) -> bytes:
+        status, headers, body = request_full(url, method=method)
+        assert_no_canaries(body, canaries, f"static response {url}")
+        if status != expected:
+            raise RuntimeError(f"{url} returned HTTP {status}, expected {expected}")
+        if content_type is not None and content_type not in headers.get("content-type", ""):
+            raise RuntimeError(
+                f"{url} Content-Type is {headers.get('content-type')!r}, expected {content_type!r}"
+            )
+        if safe_headers:
+            for name, value in V2_SAFE_HEADERS:
+                if headers.get(name.lower()) != value:
+                    raise RuntimeError(
+                        f"{url} header {name} is {headers.get(name.lower())!r}, expected {value!r}"
+                    )
+        return body
+
+    entry = probe(f"{base}/ui-v2/", content_type="text/html")
+    for path in ("/ui-v2", "/ui-v2/dashboard", "/ui-v2/unknown-client-route"):
+        if probe(f"{base}{path}", content_type="text/html") != entry:
+            raise RuntimeError(f"{path} did not serve the V2 entry document")
+
+    document = entry.decode("utf-8", errors="replace")
+    references = sorted(set(re.findall(r'(?:src|href)="(/ui-v2/[^"]+)"', document)))
+    asset_kinds = {"js": "text/javascript", "css": "text/css"}
+    javascript = 0
+    styles = 0
+    for reference in references:
+        suffix = reference.rsplit(".", 1)[-1].lower()
+        kind = asset_kinds.get(suffix)
+        if kind is None:
+            continue
+        probe(f"{base}{reference}", content_type=kind)
+        if suffix == "js":
+            javascript += 1
+        elif suffix == "css":
+            styles += 1
+    if not javascript or not styles:
+        raise RuntimeError(
+            f"the V2 entry document does not reference built hashed JS/CSS assets: {references!r}"
+        )
+
+    probe(f"{base}/ui-v2/", method="POST", expected=405, safe_headers=False)
+    probe(f"{base}/ui-v2/missing-asset-abc123.js", expected=404, safe_headers=False)
+    probe(f"{base}/ui-v2/..%2f..%2fetc%2fpasswd", expected=404, safe_headers=False)
+
+    probe(f"{base}/ui/", content_type="text/html")
+    probe(f"{base}/ui/app.js", content_type="text/javascript")
+    probe(f"{base}/ui/style.css", content_type="text/css")
+
+    status, _, _ = request_full(f"{base}/api/v1/dashboard")
+    if status != 401:
+        raise RuntimeError(
+            "unauthenticated /api/v1/dashboard is not denied beside V2 static serving"
+        )
 
 
 def make_canaries() -> list[tuple[str, str]]:
@@ -430,6 +527,44 @@ if not (Path("/usr/local/lib/python3.13/site-packages/mediaflow")).is_dir():
 import importlib.util
 if importlib.util.find_spec("waitress") is None:
     found.append("waitress-dependency-missing")
+
+import shutil
+
+web_root = Path("/opt/mediaflow/web")
+dist = web_root / "dist"
+if not dist.is_dir() or not (dist / "index.html").is_file():
+    found.append("v2-artifact-missing")
+else:
+    built = list(dist.rglob("*"))
+    if not any(path.is_file() and path.suffix == ".js" for path in built):
+        found.append("v2-artifact-javascript-missing")
+    if not any(path.is_file() and path.suffix == ".css" for path in built):
+        found.append("v2-artifact-styles-missing")
+if web_root.is_dir():
+    entries = sorted(path.name for path in web_root.iterdir())
+    if entries != ["dist"]:
+        found.append("unexpected-web-entries")
+for path in Path("/opt/mediaflow").rglob("node_modules"):
+    if path.is_dir():
+        found.append("node_modules-present")
+        break
+for path in Path("/opt/mediaflow").rglob("*"):
+    if path.is_file() and path.suffix in (".ts", ".tsx"):
+        found.append("frontend-source-present")
+        break
+for executable in ("node", "npm", "npx", "vite"):
+    if shutil.which(executable) is not None:
+        found.append("node-tooling-present-" + executable)
+if os.environ.get("MEDIAFLOW_UI_V2_ASSET_ROOT") != "/opt/mediaflow/web/dist":
+    found.append("v2-asset-root-unbound")
+try:
+    from mediaflow.interfaces.v2_ui import v2_ui_assets
+
+    served = v2_ui_assets()
+    if not served or "/ui-v2/" not in served:
+        found.append("v2-serving-map-empty")
+except Exception:
+    found.append("v2-serving-map-error")
 print(json.dumps(found))
 """
 
@@ -439,6 +574,13 @@ def assert_image_clean(image: str, canaries) -> None:
     assert_no_canaries(history.stdout, canaries, "image history")
     inspect = run(["docker", "image", "inspect", image])
     assert_no_canaries(inspect.stdout, canaries, "image configuration")
+    configuration = json.loads(inspect.stdout)
+    image_environment = configuration[0]["Config"].get("Env") or []
+    if "MEDIAFLOW_UI_V2_ASSET_ROOT=/opt/mediaflow/web/dist" not in image_environment:
+        raise RuntimeError(
+            "image configuration does not bind MEDIAFLOW_UI_V2_ASSET_ROOT "
+            "to the built V2 artifact directory"
+        )
     with tempfile.TemporaryDirectory(prefix=f"{RELEASE_PREFIX}-scan-") as directory:
         env_file = Path(directory, "scan.env")
         lines = [
@@ -914,6 +1056,9 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
 
                 print("Verifying non-root execution, mounts and process commands...")
                 assert_runtime_boundaries(command, environment)
+
+                print("Proving V1/V2 static coexistence and safe V2 headers...")
+                assert_v2_static_serving(base, canaries)
 
                 print("Probing authentication, RBAC and zero-side-effect denial...")
                 assert_rbac_and_no_side_effects(base, canaries, token_values)

@@ -57,10 +57,16 @@ Slice 30 is `ACTIVE` under the committed A-owned Contract in [`SLICE.md`](../SLI
 architecture below: the `web/` React/TypeScript/Vite source boundary with TanStack Router and
 TanStack Query, a central typed API client with memory-only Bearer-token auth, the read-only
 Dashboard route, and Python static serving of the built artifact at `/ui-v2/` beside the unchanged
-V1 `/ui`. Vitest, React Testing Library and a minimal Playwright path cover it; final Docker
-image/Compose packaging of the artifact and the remaining Slice 30 outcomes stay open under the
-Contract. The rest of this section remains the adopted Slice architecture for the remaining V2
-work.
+V1 `/ui`. Vitest, React Testing Library and a minimal Playwright path cover it. Task 30.2
+delivered the production packaging boundary of the same architecture: the Docker build is
+multi-stage, running `npm ci` from the committed `web/package-lock.json` and `npm run build` in a
+Node build stage and copying only the built static files into the final Python runtime image at
+`/opt/mediaflow/web/dist`, where `MEDIAFLOW_UI_V2_ASSET_ROOT` binds the exact artifact directory
+consumed by the running Python process. The runtime image keeps no Node executable, npm,
+`node_modules`, frontend source, development server, SSR process, CDN dependency or second HTTP
+service, and the API service serves `/ui-v2/` and hashed assets beside the unchanged V1 `/ui` and
+`/api/v1/*` behavior. The remaining Slice 30 outcomes stay open under the Contract. The rest of
+this section remains the adopted Slice architecture for the remaining V2 work.
 
 The target V2 frontend is a client-side React/TypeScript SPA built with Vite, TanStack Router and
 TanStack Query, organized feature-first with a central typed API boundary and project-owned design

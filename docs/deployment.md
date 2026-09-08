@@ -2,7 +2,8 @@
 
 This document covers the V1.0.0 maintenance deployment boundary delivered by Slice 29. V2 keeps the
 same Python production runtime and deployment authority while its frontend program is developed on
-`main`. This document covers the Task 29.2
+`main`; since Task 30.2 the built V2 static artifact is part of the same one-image deployment. This
+document covers the Task 29.2
 health/readiness model, the Task 29.4 restart/fault matrix and the Task 29.5
 backup/upgrade/migration recovery journey, and the Task 29.6 release-security
 validation: one installable image, four
@@ -33,10 +34,20 @@ image, Compose topology, runtime output and authenticated projections.
 - Deployment secrets are values in a host-owned environment file mounted at
   `/run/mediaflow/deployment.env`. Compose source and rendered Compose output
   contain only the file path and variable references, never secret values.
+- The same image contains the built V2 static artifact at
+  `/opt/mediaflow/web/dist`, bound to the running process through
+  `MEDIAFLOW_UI_V2_ASSET_ROOT`. Node, npm and the frontend source tree exist
+  only in the build stage and never in the runtime image; no host `web/dist`
+  bind mount, Node process, development server, SSR process, CDN dependency or
+  second HTTP service is required.
 
 ## Prerequisites
 
-- Docker Engine with Compose v2.
+- Docker Engine with Compose v2. The image build is multi-stage: it runs the
+  Vite frontend build in a Node build stage using the committed
+  `web/package-lock.json`; no host Node installation is needed. The build
+  requires registry access to pull the base images and install the locked
+  frontend dependencies.
 - A deployment configuration produced from the canonical example:
 
 ```bash
@@ -107,6 +118,38 @@ requests the loopback `/health` endpoint. Healthchecks have a 3-second command
 timeout, run every 10 seconds after a 15-second start period, and mark a
 service unhealthy after five consecutive failures. They never scan Storage,
 call Providers, create work, send notifications or mutate media.
+
+## V2 frontend artifact and serving
+
+The production artifact flow is one image, two stages, one Python runtime:
+
+- The Node build stage installs exactly the committed `web/package-lock.json`
+  with `npm ci` and produces the Vite artifact from `web/`. A missing or failed
+  frontend build input fails the image build explicitly; a produced artifact
+  without `index.html` or without built JS/CSS files also fails the build.
+  Stale or partial assets are never shipped silently.
+- The final Python stage copies only the built static files to
+  `/opt/mediaflow/web/dist` and binds `MEDIAFLOW_UI_V2_ASSET_ROOT` to that
+  exact directory in the image configuration. No Node executable, npm,
+  `node_modules`, frontend source, Vite/dev server, SSR process, CDN runtime
+  or second HTTP service exists in, or is required by, the runtime image.
+- The existing API service serves `/ui-v2/`, the `/ui-v2/dashboard` deep route
+  (unknown client routes fall back to the entry document) and the referenced
+  hashed assets from that directory through the Python static-serving boundary,
+  with deterministic bytes/content types and the existing
+  `Cache-Control: no-store`, CSP, `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy` and `Permissions-Policy` headers. Requests are GET-only;
+  unknown, traversal-like or missing assets fail closed with 404 without
+  exposing paths, credentials or raw exceptions. Static requests never access
+  repositories, Providers, Tasks/Jobs or Storage and never create work.
+- The V1 `/ui`, `/ui/`, `/ui/app.js` and `/ui/style.css` remain available from
+  the same Python process and port, and `/api/v1/*` Bearer authentication and
+  RBAC behavior are unchanged beside V2 static serving.
+- `MEDIAFLOW_UI_V2_ASSET_ROOT` is deployment-owned: a value in the mounted
+  deployment environment file overrides the image default, but the documented
+  layout needs no override and no host mount of `web/dist`. If the configured
+  directory has no built artifact, `/ui-v2/*` fails closed with 404 while the
+  API and V1 `/ui` keep serving.
 
 ## Health and readiness signals
 
@@ -271,7 +314,11 @@ before any release claim:
 - The image is built without cache and inspected through history,
   configuration and filesystem scans. The installed `mediaflow` runtime and the
   Waitress production WSGI dependency must be present and usable, while no
-  canary value or private file may appear in any image surface.
+  canary value or private file may appear in any image surface. The built V2
+  artifact must exist under `/opt/mediaflow/web/dist` with its entry document
+  and built JS/CSS assets, `MEDIAFLOW_UI_V2_ASSET_ROOT` must be bound in the
+  image configuration, and no Node/npm/npx/Vite executable, `node_modules`,
+  frontend source tree or web manifest may exist in the runtime image.
 - Rendered Compose is asserted to contain exactly `api`, `worker`,
   `scheduler` and `notification-worker`, one immutable image identity, one
   command per service, non-root UID/GID `10001:10001`, a named `/data` volume,
@@ -290,6 +337,11 @@ before any release claim:
   are denied, least-privilege RBAC separation holds, and denied/read-only
   requests create no Job, Task, notification, execution authority or Storage
   mutation.
+- The running API service is probed live for V2 static serving: the entry
+  document, the `/ui-v2/dashboard` deep route, every referenced hashed JS/CSS
+  asset and the V1 `/ui` assets with their safe headers; a V2 POST request and
+  missing/traversal-like asset paths fail closed; and an unauthenticated
+  `/api/v1/dashboard` request stays denied beside V2 serving.
 - Bounded response/export scans cover Web assets, configuration status,
   managed configuration and result exports, audit/log projections, dashboard
   and service logs. Durable SQLite evidence is scanned directly. Failures
