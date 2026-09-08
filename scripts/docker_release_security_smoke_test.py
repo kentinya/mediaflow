@@ -359,7 +359,7 @@ def assert_compose_configuration(
     if publishing != ["api"]:
         raise RuntimeError(f"published Compose services are {publishing}, expected ['api']")
     for port in services["api"]["ports"]:
-        if port.get("host_ip") != "127.0.0.1" or port.get("published") != "8080":
+        if port.get("host_ip") != "127.0.0.1" or port.get("target") != 8080:
             raise RuntimeError(f"API port is not loopback by default: {port}")
 
 
