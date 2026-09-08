@@ -1077,6 +1077,16 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 status, body = request(api, "/api/v1/configuration")
                 self.assertEqual(status, 200)
                 self.assertEqual(body["health"], "UNAVAILABLE")
+                status, readiness = request(api, "/api/v1/management/readiness")
+                self.assertEqual(status, 200)
+                self.assertEqual(readiness["health"], "UNAVAILABLE")
+                self.assertTrue(readiness["recoveryRequired"])
+                self.assertIsNone(readiness["active"])
+                self.assertEqual(
+                    readiness["lastKnownActive"]["revisionId"],
+                    active.revision_id,
+                )
+                self.assertEqual(readiness["lastKnownActive"]["digest"], active.digest)
                 replacement = json.loads(json.dumps(document))
                 replacement["historyPath"] = str(root / "replacement.jsonl")
                 status, draft = request(

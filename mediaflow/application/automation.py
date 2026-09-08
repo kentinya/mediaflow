@@ -286,32 +286,60 @@ class ProcessingWorkerService:
                 condition = WorkerReadiness.STALE_WORKER.value
                 durable_state = "all registered processing workers have stale heartbeats"
                 next_action = "restart the resident worker process to resume queue consumption"
+            elif stopped_workers:
+                condition = WorkerReadiness.NO_WORKER.value
+                durable_state = (
+                    "registered processing workers are stopped; restart the resident "
+                    "worker service to resume queue consumption"
+                )
+                next_action = "restart the resident worker service"
             else:
                 condition = WorkerReadiness.NO_WORKER.value
                 durable_state = "no processing worker is registered"
                 next_action = "start a resident worker with the active configuration"
             ready = False
         else:
-            matching = [
-                w
-                for w in live_workers
-                if (
-                    expected_snapshot_id is None
-                    or w.configuration_snapshot_id == expected_snapshot_id
-                )
-                and (
-                    expected_snapshot_digest is None
-                    or w.configuration_snapshot_digest == expected_snapshot_digest
-                )
-                and (
+            matching: list[object] = []
+            snapshot_mismatched: list[object] = []
+            schema_mismatched: list[object] = []
+            for worker in live_workers:
+                schema_ok = (
                     expected_schema_version is None
-                    or w.runtime_schema_version == expected_schema_version
+                    or worker.runtime_schema_version == expected_schema_version
                 )
-            ]
+                snapshot_ok = (
+                    expected_snapshot_id is None
+                    or worker.configuration_snapshot_id == expected_snapshot_id
+                ) and (
+                    expected_snapshot_digest is None
+                    or worker.configuration_snapshot_digest == expected_snapshot_digest
+                )
+                if not snapshot_ok:
+                    snapshot_mismatched.append(worker)
+                elif not schema_ok:
+                    schema_mismatched.append(worker)
+                else:
+                    matching.append(worker)
             if not matching:
-                condition = WorkerReadiness.SNAPSHOT_MISMATCH.value
-                durable_state = "registered workers are bound to mismatched configuration snapshots"
-                next_action = "restart resident workers with the active configuration snapshot"
+                if snapshot_mismatched:
+                    condition = WorkerReadiness.SNAPSHOT_MISMATCH.value
+                    durable_state = (
+                        "registered workers are bound to mismatched configuration snapshots"
+                    )
+                    if schema_mismatched:
+                        durable_state += (
+                            " and at least one worker also reports an unsupported runtime schema"
+                        )
+                    next_action = "restart resident workers with the active configuration snapshot"
+                else:
+                    condition = WorkerReadiness.SCHEMA_MISMATCH.value
+                    durable_state = (
+                        "registered workers are live but report a runtime schema that differs "
+                        "from the active application"
+                    )
+                    next_action = (
+                        "restart resident worker services with the current MediaFlow image"
+                    )
                 ready = False
             else:
                 condition = WorkerReadiness.READY.value
@@ -332,6 +360,9 @@ class ProcessingWorkerService:
             "staleWorkers": len(stale_workers),
             "stoppedWorkers": len(stopped_workers),
             "totalWorkers": len(workers),
+            "expectedSnapshotId": expected_snapshot_id,
+            "expectedSnapshotDigest": expected_snapshot_digest,
+            "expectedSchemaVersion": expected_schema_version,
         }
 
 

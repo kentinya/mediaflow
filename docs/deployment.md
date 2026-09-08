@@ -1,12 +1,14 @@
 # MediaFlow Docker deployment
 
-This document covers the Task 29.2 deployment boundary: one installable image,
-four independent Compose services, production WSGI serving, a persistent local
-`/data` volume, and explicit container-visible media mounts.
+This document covers the Task 29.2 deployment boundary and the Task 29.3
+health/readiness model: one installable image, four independent Compose
+services, production WSGI serving, a persistent local `/data` volume, explicit
+container-visible media mounts, and distinct liveness, management/API
+readiness and processing-Worker readiness signals.
 
-The Slice's full health/readiness model, restart fault matrix, backup/upgrade
-migration rehearsal, and release-security acceptance are separate later Tasks.
-This runbook does not claim them.
+The restart fault matrix, backup/upgrade migration rehearsal, and
+release-security acceptance are separate later Tasks. This runbook does not
+claim them.
 
 ## Boundary
 
@@ -94,6 +96,63 @@ for the API command verifies that the referenced API token environment value is
 present. Preflight never scans media, calls a Provider, creates a Job or Task,
 sends a notification, or mutates Storage.
 
+Each Compose service also declares a bounded healthcheck. The healthcheck runs
+`python -m mediaflow.container_probe check --service <name>` inside the same
+container, repeats the read-only preflight, and only for the API additionally
+requests the loopback `/health` endpoint. Healthchecks have a 3-second command
+timeout, run every 10 seconds after a 15-second start period, and mark a
+service unhealthy after five consecutive failures. They never scan Storage,
+call Providers, create work, send notifications or mutate media.
+
+## Health and readiness signals
+
+MediaFlow exposes three deliberately separate signals. A process can be alive
+while management setup is incomplete or no Worker is ready; a ready result never
+implies the other signals.
+
+1. **Process liveness** — public and unauthenticated:
+
+   ```bash
+   curl -i http://127.0.0.1:8080/health
+   ```
+
+   A `200` with `"processAlive": true` and `"status": "ok"` means the API
+   process is serving. `docker compose ps` shows each service's own container
+   liveness through its bounded healthcheck.
+
+2. **Management/API readiness** — authenticated, read-only:
+
+   ```bash
+   curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
+     http://127.0.0.1:8080/api/v1/management/readiness
+   ```
+
+   The document reports `authority`, `setupRequired`, `runtimeConfigured`,
+   `recoveryRequired`, `health`, and the exact immutable `active`
+   revision/digest when a managed Active snapshot exists. Missing, corrupt,
+   schema-unsupported or runtime-invalid Active state fails closed with
+   `health: "UNAVAILABLE"`, `unavailableReason` and a recovery `nextAction`;
+   it never falls back to a Draft, JSON file or stale runtime.
+
+3. **Business/processing-Worker readiness** — authenticated, read-only:
+
+   ```bash
+   curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
+     http://127.0.0.1:8080/api/v1/workers/readiness
+   ```
+
+   The document reports `ready`, `condition`, `activeWorkersCount`, the exact
+   Active snapshot identity and expected runtime schema. `no_worker`,
+   `stale_worker`, `snapshot_mismatch` and `schema_mismatch` are distinct
+   fail-closed conditions, each with `durableState`, `retrySafe`, and a bounded
+   `nextAction`. A Worker bound to the exact Active snapshot and runtime schema
+   is the only ready result.
+
+The Operator Web's **System** view shows all three signals and their bounded
+diagnostics; **Workers** and **Configuration** show the same Worker and
+management readiness projections. Viewing readiness performs no Storage scan,
+Provider call, Job/Task creation, notification or media mutation.
+
 ## Verify
 
 ```bash
@@ -115,6 +174,13 @@ docker compose ps
 The named `/data` volume survives service restarts. Jobs, Tasks, configuration
 revisions, notification rows, audit and operational state remain durable.
 
+`docker compose ps` health state is service-process liveness plus the bounded
+deployment-boundary recheck. Management and Worker readiness are observed from
+the authenticated API/Web projections above. For example, the API container can
+be `healthy` while `management/readiness` says setup is required or while
+`workers/readiness` reports `no_worker`; those are expected distinct signals,
+not hidden failures.
+
 ## Failure and recovery
 
 - **Missing config or environment file:** Compose reports the bind source path
@@ -128,6 +194,13 @@ revisions, notification rows, audit and operational state remain durable.
 - **Missing API token:** the API preflight names the referenced environment
   variable and tells you to provide it in the mounted deployment environment
   file. Secret values are never echoed.
+- **Healthcheck becomes unhealthy after startup:** correct the named mount,
+  permission or environment-file reference, then `docker compose restart
+  <service>`. Healthcheck output is bounded and never contains secret values.
+- **Worker not ready:** `workers/readiness` reports the exact condition and
+  next action. Start or restart the `worker` service with the current image and
+  Active snapshot; MediaFlow never starts a Worker on the API's behalf and does
+  not automatically replay uncertain work.
 
 ## Secret and output hygiene
 
@@ -148,3 +221,15 @@ python3 scripts/docker_smoke_test.py
 It verifies four services, authenticated API/Web reachability, a durable job
 after an API restart, non-root execution, secret-free output, and a missing
 media-mount failure. If no Docker engine is present it prints `SKIP`.
+
+The Task 29.3 health harness adds the full signal journey:
+
+```bash
+python3 scripts/docker_health_smoke_test.py
+```
+
+It starts an isolated healthy stack, activates the managed runtime through the
+authenticated API, observes healthy/ready signals, stops and restarts the
+Worker, verifies no-Worker/stale and ready transitions, degrades a media mount
+and the API secret reference, and confirms bounded recovery plus secret-free
+output.

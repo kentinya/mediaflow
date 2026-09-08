@@ -383,6 +383,7 @@ class WorkerReadiness(StrEnum):
     NO_WORKER = "no_worker"
     STALE_WORKER = "stale_worker"
     SNAPSHOT_MISMATCH = "snapshot_mismatch"
+    SCHEMA_MISMATCH = "schema_mismatch"
 
 
 _WORKER_SECRET_PATTERN = re.compile(

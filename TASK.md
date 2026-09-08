@@ -162,15 +162,122 @@ unavailable external-service skips when reproduced at this Task Base with exact 
 
 ### Changed Files
 
+```text
+compose.yaml
+docs/deployment.md
+mediaflow/application/automation.py
+mediaflow/container_probe.py
+mediaflow/domain/automation.py
+mediaflow/interfaces/operator_ui.py
+mediaflow/interfaces/service_api.py
+scripts/docker_health_smoke_test.py
+tests/test_container_deployment.py
+tests/test_container_probe.py
+tests/test_configuration_snapshot.py
+tests/test_configuration_status.py
+tests/test_processing_worker_readiness.py
+```
+
 ### Implemented
+
+```text
+- Added a bounded side-effect-free container probe (`mediaflow.container_probe`)
+  and wired Compose healthchecks for API, Worker, Scheduler and
+  Notification Worker with 3s timeout / 10s interval / 15s start period /
+  5 retries. The probe repeats the read-only startup preflight and the API
+  healthcheck additionally performs a loopback-only GET /health.
+- Worker readiness now reports `schema_mismatch` distinctly from
+  `snapshot_mismatch`, gives stopped-worker no-Worker evidence instead of
+  "never registered", and exposes the expected Active snapshot and runtime
+  schema identity.
+- Management readiness now carries `lastKnownActive` and `managedActivation`
+  evidence alongside the exact Active revision/digest; missing/corrupt/
+  unsupported Active remains fail-closed and actionable.
+- Readiness and Worker projections are side-effect free (no durable audit rows
+  are created merely by probing them).
+- Operator Web System view now shows process liveness, management readiness and
+  Worker readiness together; Worker view shows the bound Active snapshot and
+  expected runtime schema.
+- docs/deployment.md documents the three signals, bounded probe semantics,
+  failure meanings and recovery actions.
+- Added focused unit/integration tests plus an isolated Docker health smoke
+  harness that covers healthy start, managed activation, Worker stop/start
+  recovery, missing-secret and media-permission degradation/recovery, and
+  secret-free output.
+```
 
 ### Tests and Results
 
+```text
+python3 scripts/check_governance.py                                   -> PASS
+.venv/bin/python -m unittest tests.test_container_probe
+  tests.test_processing_worker_readiness tests.test_management_setup
+  tests.test_api_security tests.test_configuration_status
+  tests.test_operator_ui tests.test_container_deployment              -> PASS (104 tests)
+.venv/bin/python scripts/docker_health_smoke_test.py                  -> PASS
+.venv/bin/python scripts/docker_smoke_test.py                         -> PASS
+.venv/bin/python -m unittest discover -s tests
+  -> 1384 tests, 1 FAIL / PRE-EXISTING / UNRELATED:
+     test_setup_picker_and_execution_environment_guidance_are_present
+     ("Storage-relative breadcrumb" absent from served APP_JS), 7 SKIP
+.venv/bin/python -m compileall -q mediaflow tests scripts             -> PASS
+.venv/bin/python -m pip check                                        -> PASS
+.venv/bin/python -m pip wheel . --no-deps -w <tmp>                   -> PASS
+.venv/bin/python scripts/wheel_smoke_test.py <tmp>/mediaflow-*.whl   -> PASS
+test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml
+  Dockerfile compose.yaml scripts || true)"                           -> PASS
+git diff --check                                                      -> PASS
+```
+
+The full docs-wide `ffprobe|ffmpeg` audit command from TASK.md also matches
+pre-existing documentation/legacy-history references (`docs/architecture.md`,
+`docs/release.md`, `docs/history/*`), reproduced at Task Base; the product
+source/dependency scan above is clean. Whole-repo `ruff check/format` retains
+the known pre-existing `tests/test_system_settings_management.py` issue; every
+file changed by this Task is ruff-clean and formatted.
+
 ### Decisions
+
+```text
+- The Compose healthcheck is a process/deployment-boundary signal and reuses
+  the existing entrypoint preflight through a small installed probe module, so
+  container health can fail closed when a mount, permission or API secret
+  reference disappears after startup. It never scans Storage contents or
+  contacts external services.
+- Only the API healthcheck performs an HTTP request, and only to the public
+  loopback `/health` route, so liveness remains distinct from authenticated
+  management and Worker readiness.
+- Schema mismatch is added as its own WorkerReadiness value so an old Worker
+  image is not reported as a configuration-snapshot mismatch; readiness is
+  ready only when at least one live Worker matches the Active snapshot and the
+  current runtime schema.
+- Readiness GET projections suppress durable security-audit rows, keeping
+  "viewing readiness" genuinely side-effect free while retaining audit on
+  write/denied paths.
+```
 
 ### Remaining In-Slice Work
 
+```text
+Slice 29 RO-5 (restart fault/ownership matrix), RO-6 (backup/upgrade/migration
+recovery), remaining RO-3/RO-7 release-security and final Compose acceptance
+evidence are not implemented by this Task. This Task covers RO-4.
+```
+
 ### Risks / Deviations
+
+```text
+- The one full-suite failure is the known pre-existing Storage Browser test,
+  reproduced identically at Task Base; it is unrelated to this Task.
+- 7 skipped tests are real external SMB/S3/OpenList/endurance gates:
+  SKIP / UNAVAILABLE.
+- The TASK.md docs-wide FFmpeg/FFprobe command cannot pass in this repository
+  because docs/architecture.md, docs/release.md and legacy history contain the
+  words; product source/package scan is clean and this was already true at
+  Task Base.
+- Whole-repo ruff has the same pre-existing test_system_settings_management.py
+  issue reported by Task 29.2; all Task-changed files are clean.
+```
 
 ### Checkpoint
 

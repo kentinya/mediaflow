@@ -40,24 +40,80 @@ x-mediaflow-service: &mediaflow-service
   environment: *mediaflow-environment
   volumes: *mediaflow-volumes
 
+x-mediaflow-healthcheck: &mediaflow-healthcheck
+  interval: 10s
+  timeout: 3s
+  start_period: 15s
+  retries: 5
+
 services:
   api:
     <<: *mediaflow-service
     command: ["api", "serve-production", "--host", "0.0.0.0", "--port", "8080"]
+    healthcheck:
+      <<: *mediaflow-healthcheck
+      test:
+        [
+          "CMD",
+          "python",
+          "-m",
+          "mediaflow.container_probe",
+          "check",
+          "--service",
+          "api",
+          "--url",
+          "http://127.0.0.1:8080/health",
+        ]
     ports:
       - "${MEDIAFLOW_API_BIND:-127.0.0.1}:${MEDIAFLOW_API_PORT:-8080}:8080"
 
   worker:
     <<: *mediaflow-service
     command: ["worker", "run"]
+    healthcheck:
+      <<: *mediaflow-healthcheck
+      test:
+        [
+          "CMD",
+          "python",
+          "-m",
+          "mediaflow.container_probe",
+          "check",
+          "--service",
+          "worker",
+        ]
 
   scheduler:
     <<: *mediaflow-service
     command: ["scheduler", "run"]
+    healthcheck:
+      <<: *mediaflow-healthcheck
+      test:
+        [
+          "CMD",
+          "python",
+          "-m",
+          "mediaflow.container_probe",
+          "check",
+          "--service",
+          "scheduler",
+        ]
 
   notification-worker:
     <<: *mediaflow-service
     command: ["notification-worker", "run"]
+    healthcheck:
+      <<: *mediaflow-healthcheck
+      test:
+        [
+          "CMD",
+          "python",
+          "-m",
+          "mediaflow.container_probe",
+          "check",
+          "--service",
+          "notification-worker",
+        ]
 
 volumes:
   mediaflow-data:

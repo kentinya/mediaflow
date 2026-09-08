@@ -233,6 +233,17 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
                 changed = json.loads(json.dumps(document))
                 changed["historyPath"] = str(root / "second-history.jsonl")
                 second = activate_document(service, changed)
+                status, management = _request(
+                    api,
+                    "GET",
+                    "/api/v1/management/readiness",
+                    token="admin-token",
+                )
+                self.assertEqual(status, 200, management)
+                self.assertEqual(management["authority"], "MANAGED")
+                self.assertEqual(management["active"]["revisionId"], second.revision_id)
+                self.assertEqual(management["active"]["digest"], second.digest)
+                self.assertEqual(management["lastKnownActive"]["revisionId"], second.revision_id)
                 status, readiness = _request(
                     api,
                     "GET",
@@ -244,6 +255,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
                 self.assertEqual(readiness["activeSnapshotDigest"], second.digest)
                 self.assertFalse(readiness["ready"])
                 self.assertEqual(readiness["condition"], WorkerReadiness.SNAPSHOT_MISMATCH.value)
+                self.assertEqual(readiness["expectedRuntimeSchemaVersion"], 33)
 
     def test_cli_worker_registration_binds_current_active_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -325,6 +337,42 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
         self.assertEqual(readiness["sideEffects"], "none")
         self.assertTrue(readiness["retrySafe"])
 
+    def test_readiness_distinguishes_schema_mismatch_from_snapshot_mismatch(self) -> None:
+        self.service.register_worker(
+            worker_id="worker-2c",
+            label="schema-worker",
+            heartbeat_interval_seconds=1.0,
+            supported_commands=("scan",),
+            configuration_snapshot_id="active-cfg",
+            configuration_snapshot_digest="active-digest",
+            runtime_schema_version=32,
+            now=datetime.now(UTC),
+        )
+        readiness = self.service.evaluate_readiness(
+            now=datetime.now(UTC),
+            active_snapshot_id="active-cfg",
+            active_snapshot_digest="active-digest",
+        )
+        self.assertFalse(readiness["ready"])
+        self.assertEqual(readiness["condition"], WorkerReadiness.SCHEMA_MISMATCH.value)
+        self.assertIn("schema", readiness["durableState"])
+        self.assertEqual(readiness["expectedSchemaVersion"], 33)
+
+    def test_stopped_worker_is_not_reported_as_never_registered(self) -> None:
+        self.service.register_worker(
+            worker_id="worker-2d",
+            label="stopped-worker",
+            heartbeat_interval_seconds=1.0,
+            supported_commands=("scan",),
+            now=datetime.now(UTC),
+        )
+        self.service.stop_worker("worker-2d", now=datetime.now(UTC))
+        readiness = self.service.evaluate_readiness(now=datetime.now(UTC))
+        self.assertFalse(readiness["ready"])
+        self.assertEqual(readiness["condition"], WorkerReadiness.NO_WORKER.value)
+        self.assertIn("stopped", readiness["durableState"])
+        self.assertEqual(readiness["stoppedWorkers"], 1)
+
     # AC3: Separate from API health
     def test_health_payload_unchanged_when_no_live_worker(self) -> None:
         # No live worker; /health must still report alive
@@ -344,6 +392,14 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
         # a worker-readiness field.
         self.assertNotIn("workerReadiness", document)
         self.assertNotIn("workers", document)
+        status, worker = _request(self.api, "GET", "/api/v1/workers/readiness", token="api-secret")
+        self.assertEqual(status, 200, worker)
+        self.assertFalse(worker["ready"])
+        self.assertEqual(
+            self.repository.list_security_audit(),
+            (),
+            "readiness probes must be side-effect free and create no audit rows",
+        )
 
     # AC4: Queued work is explained
     def test_pending_job_operational_condition_when_no_worker(self) -> None:
