@@ -18,10 +18,18 @@ only in [the development workflow](development-workflow.md).
 | 27 — Manual operations and file lifecycle | Let an operator browse real configured Storage, distinguish it from FileIndex, run file- or ResourceLibrary-scoped Scan/Preview/Organize with the correct authority, understand current processing disposition, and complete conflict/review/recovery through an explicit safe continuation | PASS / CLOSED | 26 and closed 23–25 foundations |
 | 28 — Web-first configuration and operations administration | Complete the day-2 Web configuration lifecycle and object-management experience, consumed System Settings, versioned secret-free configuration/result import-export, and managed Webhook delivery configuration/test/recovery | PASS / CLOSED | 27 |
 | 29 — Docker production self-hosted release | Deliver and verify the one-image, multi-service Docker Compose product journey with production HTTP serving, local durable `/data`, explicit media mounts, non-root operation, lifecycle health, restart persistence and fail-closed upgrade/migration | PASS / CLOSED | 27 and 28 |
+| 30 — V2 Frontend Platform & Architecture | Establish the V2 frontend build/runtime boundary and prove it through one typed Dashboard journey without moving production authority out of Python | PLANNED | V1.0.0 release baseline |
+| 31 — Operator Shell & Information Architecture | Deliver the authenticated V2 application shell, navigation, route ownership and shared operator information architecture | PLANNED | 30 |
+| 32 — Library & Files Experience | Migrate bounded Storage Files and FileIndex discovery/detail journeys with their existing read-only and authority boundaries | PLANNED | 31 |
+| 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notification operations into a coherent V2 workspace | PLANNED | 30, 31 |
+| 34 — Review & Recovery Workspace | Migrate per-item review, conflict, checkpoint and safe recovery journeys with independent batch state | PLANNED | 32, 33 |
+| 35 — Configuration Administration | Migrate managed Configuration, Settings, revision evidence and activation administration through shared API/Web behavior | PLANNED | 31, 33 |
+| 36 — V2 Parity, Accessibility & Legacy UI Retirement | Complete parity and accessibility evidence, cut over the supported `/ui` surface, and retire the V1 UI only after migration acceptance | PLANNED | 32, 33, 34, 35 |
 
 ## Current boundary
 
-The released V1 line is version `1.0.0`.
+The released V1 line is version `1.0.0`, maintained on `release/v1` at tag `v1.0.0`. `main` is now
+the active V2 development trunk with package version `2.0.0.dev0`.
 
 Slices 26, 27, 28 and 29 are PASS / CLOSED. Slice 28 closed at Base
 `957a4ebcb0fde03e64be9c406fbcdfed9a12501d` and Implementation Head
@@ -40,6 +48,13 @@ environment-owned API-principal bearer authentication, deployment-owned secret i
 production Provider. Built-in user/session identity, OIDC, Metadata Provider switching, full Secret
 Store integration, mutation-based Storage capability probes, distributed workers and uncertain media-
 mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidden Docker Tasks.
+
+## V2 program boundary
+
+V2 is active development for Operator Web Architecture & UX Modernization. The rows for Slices 30–36
+are the complete current program boundary; they are not a single Slice and must be activated and
+reviewed independently. Slice 30 is the next A-owned contract, with its status changing to `ACTIVE`
+only when that committed contract is established.
 
 ## Roadmap rules
 

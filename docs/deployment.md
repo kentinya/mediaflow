@@ -1,6 +1,8 @@
 # MediaFlow Docker deployment
 
-This document covers the Task 29.2 deployment boundary, the Task 29.3
+This document covers the V1.0.0 maintenance deployment boundary delivered by Slice 29. V2 keeps the
+same Python production runtime and deployment authority while its frontend program is developed on
+`main`. This document covers the Task 29.2
 health/readiness model, the Task 29.4 restart/fault matrix and the Task 29.5
 backup/upgrade/migration recovery journey, and the Task 29.6 release-security
 validation: one installable image, four

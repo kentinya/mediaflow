@@ -3,6 +3,12 @@
 MediaFlow does not publish artifacts automatically. A maintainer must review and perform every
 release explicitly.
 
+## Release lines
+
+`v1.0.0` is the released V1 baseline at `9562b0c9b09b9b2ac9f34b2187c86469a9ab1782`, maintained on
+`release/v1`. The `main` branch is the V2 development trunk and carries package version
+`2.0.0.dev0`; V2 work is not a V1 release or a frontend implementation claim.
+
 ## V1 Docker release
 
 Release version: `1.0.0`.
