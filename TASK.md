@@ -164,21 +164,103 @@ unavailable external-service skips when reproduced at this Task Base with exact 
 
 ### Changed Files
 
+```text
+TASK.md
+docs/deployment.md
+docs/release.md
+scripts/docker_restart_fault_smoke_test.py
+tests/test_restart_fault_boundary.py
+```
+
 ### Implemented
+
+```text
+- Added focused restart/fault regression tests covering Scheduler
+  concurrent/duplicate emission idempotence around repository restart, Worker
+  stale heartbeat/terminal-commit fencing across process restart, uncertain
+  OrganizerExecutor effect durability without automatic replay, notification
+  outbox/lease at-least-once behavior across restart, and read-only API/Web
+  projections after restart.
+- Added an isolated Docker Compose restart/fault harness
+  (`scripts/docker_restart_fault_smoke_test.py`) that builds the exact image,
+  activates a managed scan-only Automation Task Definition, emits one Scheduler
+  occurrence, produces FileIndex/Task evidence through the real Worker, restarts
+  each service, injects controlled stale-owner and uncertain-mutation fixtures
+  through the installed package repository, and verifies durable identities,
+  notification evidence, per-item API/Web recovery projections and secret-free
+  output on temporary isolated paths.
+- Updated deployment/release documentation for the restart/fault matrix and the
+  new acceptance command without changing any application domain behavior.
+```
 
 ### Tests and Results
 
+```text
+python3 scripts/check_governance.py                                   -> PASS
+.venv/bin/python -m unittest tests.test_restart_fault_boundary -v    -> PASS (5 tests)
+.venv/bin/python scripts/docker_restart_fault_smoke_test.py          -> PASS (Docker available)
+.venv/bin/python -m unittest discover -s tests
+  -> 1389 tests, 1 FAIL / PRE-EXISTING / UNRELATED:
+     test_setup_picker_and_execution_environment_guidance_are_present
+     ("Storage-relative breadcrumb" absent from served APP_JS), 7 SKIP
+.venv/bin/python -m compileall -q mediaflow tests scripts             -> PASS
+.venv/bin/python -m pip check                                        -> PASS
+.venv/bin/python -m pip wheel . --no-deps -w <tmp>                   -> PASS
+.venv/bin/python scripts/wheel_smoke_test.py <tmp>/mediaflow-*.whl   -> PASS
+test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml
+  Dockerfile compose.yaml scripts || true)"                           -> PASS
+git diff --check                                                      -> PASS
+```
+
+The 7 skipped tests are the environment-unavailable real SMB/S3/OpenList and
+isolated endurance gates (`SKIP / UNAVAILABLE`). Every Python file changed by
+this Task is ruff-clean and formatted.
+
 ### Decisions
+
+```text
+- The Task reuses the existing durable SQLite, Scheduler occurrence, Worker
+  claim/heartbeat, Processing Checkpoint and Notification lease foundations;
+  the new work proves them across real repository/service stop/start boundaries
+  rather than redesigning any frozen domain boundary.
+- The Docker harness lets the real Scheduler and Worker create representative
+  occurrence/FileIndex/Task state, then uses bounded installed-package
+  repository fixtures only to inject deterministic notification, audit/log and
+  stale-owner/uncertain-effect states that cannot be produced safely through
+  live process timing. It performs no Storage mutation, Provider call or
+  external network delivery.
+- API/Web read projections are asserted to leave durable record counts and
+  identities unchanged while preserving independent per-item success/uncertain/
+  dead-letter evidence.
+```
 
 ### Remaining In-Slice Work
 
+```text
+Slice 29 RO-6 (backup/upgrade/migration recovery), the remaining RO-7 release
+security validation, and Slice-final acceptance evidence are outside this Task.
+This Task advances RO-5 only and does not plan the next Task.
+```
+
 ### Risks / Deviations
+
+```text
+- The full-suite failure is the known pre-existing Storage Browser UI test,
+  reproduced identically at Task Base (`mediaflow/interfaces/operator_ui.py`
+  and `tests/test_storage_browser.py` are unchanged from Task Base); it is
+  unrelated to this Task and is recorded as FAIL / PRE-EXISTING / UNRELATED.
+- Whole-repo `ruff check` retains the same pre-existing
+  `tests/test_system_settings_management.py` line-length issue; every
+  Task-changed file is clean.
+- The Docker acceptance harness was executed in this environment (Docker
+  engine available) and passed end-to-end.
+```
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: [full SHA after implementation checkpoint]
 ```
 
 ## B Review Result
