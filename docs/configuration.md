@@ -318,14 +318,19 @@ These numbers are compatibility facts, not feature-phase labels. Runtime and con
 repositories refuse a newer unsupported schema and run their additive initialization/migration
 logic for older databases. Do not infer a product capability from a historical migration marker.
 
-## Current limitations and remaining V1 work
+## Current limitations and post-V1 / V2 boundaries
 
-Slices 26, 27, 28 and 29 are `PASS / CLOSED`. The V1 self-hosted deployment release is delivered;
-the remaining items are V1.x/V2 boundaries:
+Slices 26, 27, 28 and 29 are `PASS / CLOSED`. The V1 self-hosted deployment release is delivered,
+and the remaining items below are explicit V1.x/post-V1 or V2 boundaries rather than unfinished V1
+release work:
 
 | Status | Capability |
 |---|---|
 | V1.x/V2 | Provider switching and additional production Providers, built-in user/session identity, OIDC, general Secret Store and broader recovery such as automatic uncertain-mutation replay or historical rollback |
+
+Managed configuration remains the current V1 authority. V2 Configuration Administration is a later
+program Slice; this section does not claim that migration or new V2 configuration surfaces are
+implemented.
 
 Arbitrary host-path access and mutation-based capability probes are not current capabilities. The
 setup Storage Browser, read-only setup checks and provider-neutral destination precheck remain bounded

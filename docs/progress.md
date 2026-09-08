@@ -6,6 +6,12 @@ pre-migration Progress log is preserved as
 workflow authority. Closure rules live only in
 [the development workflow](development-workflow.md).
 
+## Current development pointer
+
+V2 / Slice 30 is `ACTIVE` on `main`; no implementation Task is active. The committed A-owned
+Contract, Base SHA and next legal action are maintained in [`SLICE.md`](../SLICE.md) and
+[`roadmap.md`](roadmap.md). This pointer is not a closure-ledger entry.
+
 ## Most Recently Closed Slice
 
 V1 release baseline: `1.0.0`.
