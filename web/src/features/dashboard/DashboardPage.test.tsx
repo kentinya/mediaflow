@@ -99,13 +99,44 @@ describe("DashboardPage", () => {
     ).toBeVisible();
   });
 
-  it("renders categorized transport and shape errors with bounded refresh", async () => {
+  it("renders the transport error state with bounded refresh", async () => {
     stubFetch(async () => new Response("gateway timeout", { status: 504 }));
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/dashboard");
     expect(await screen.findByText("Dashboard unavailable")).toBeVisible();
     expect(screen.getByText(/currently unavailable/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
+  });
+
+  it("renders a malformed successful response as a bounded recoverable state", async () => {
+    const user = userEvent.setup();
+    // HTTP 200 with a body that parses but violates the read-only contract:
+    // the page must show the fixed malformed message, never the payload.
+    const fetchMock = stubFetch(async () =>
+      jsonResponse({ unexpected: "payload shape" }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/dashboard");
+    expect(await screen.findByText("Dashboard unavailable")).toBeVisible();
+    expect(
+      screen.getByText(
+        "The Dashboard response could not be understood as the expected read-only contract.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("payload shape")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
+
+    // Recovery: bounded refresh repeats only the same read-only query.
+    fetchMock.mockImplementation(async () => jsonResponse(dashboardPayload));
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(
+      await screen.findByRole("heading", { name: "Dashboard" }),
+    ).toBeVisible();
+    for (const call of fetchMock.mock.calls) {
+      const [input, init] = call as [string, RequestInit];
+      expect(input).toBe("/api/v1/dashboard?recentLimit=10");
+      expect(init.method).toBe("GET");
+    }
   });
 
   it("refresh repeats only the same read-only Dashboard query", async () => {
