@@ -19,6 +19,9 @@ venv/
 .mediaflow/
 config/strategy.json
 config/alist.json
+config/mediaflow.json
+.env.mediaflow
+media/
 sesion.sh
 .idea/
 .vscode/

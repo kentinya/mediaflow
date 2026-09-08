@@ -1,0 +1,63 @@
+x-mediaflow-environment: &mediaflow-environment
+  MEDIAFLOW_CONFIG: /config/mediaflow.json
+  MEDIAFLOW_DATA_DIR: /data
+  MEDIAFLOW_ENV_FILE: /run/mediaflow/deployment.env
+
+x-mediaflow-volumes: &mediaflow-volumes
+  - mediaflow-data:/data
+  - type: bind
+    source: ${MEDIAFLOW_CONFIG_FILE:-./config/mediaflow.json}
+    target: /config/mediaflow.json
+    read_only: true
+    bind:
+      create_host_path: false
+  - type: bind
+    source: ${MEDIAFLOW_ENV_FILE:-./.env.mediaflow}
+    target: /run/mediaflow/deployment.env
+    read_only: true
+    bind:
+      create_host_path: false
+  - type: bind
+    source: ${MEDIAFLOW_SOURCE_MEDIA_ROOT:-./media/incoming}
+    target: /media/incoming
+    read_only: true
+    bind:
+      create_host_path: false
+  - type: bind
+    source: ${MEDIAFLOW_TARGET_MEDIA_ROOT:-./media/organized}
+    target: /media/organized
+    read_only: false
+    bind:
+      create_host_path: false
+
+x-mediaflow-service: &mediaflow-service
+  image: ${MEDIAFLOW_IMAGE:-mediaflow:local}
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  user: "${MEDIAFLOW_UID:-10001}:${MEDIAFLOW_GID:-10001}"
+  environment: *mediaflow-environment
+  volumes: *mediaflow-volumes
+
+services:
+  api:
+    <<: *mediaflow-service
+    command: ["api", "serve-production", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "${MEDIAFLOW_API_BIND:-127.0.0.1}:${MEDIAFLOW_API_PORT:-8080}:8080"
+
+  worker:
+    <<: *mediaflow-service
+    command: ["worker", "run"]
+
+  scheduler:
+    <<: *mediaflow-service
+    command: ["scheduler", "run"]
+
+  notification-worker:
+    <<: *mediaflow-service
+    command: ["notification-worker", "run"]
+
+volumes:
+  mediaflow-data:

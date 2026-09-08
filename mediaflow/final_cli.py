@@ -467,6 +467,12 @@ def final_main(
     api_serve.add_argument("--host", default="127.0.0.1")
     api_serve.add_argument("--port", type=int, default=8787)
     api_serve.add_argument("--allow-insecure-remote-http", action="store_true")
+    api_production = api_commands.add_parser(
+        "serve-production", help="serve with the production WSGI adapter (Waitress)"
+    )
+    api_production.add_argument("--host", default="0.0.0.0")
+    api_production.add_argument("--port", type=int, default=8080)
+    api_production.add_argument("--threads", type=int, default=4)
     arguments = parser.parse_args(argv)
     if arguments.command == "batch":
         arguments.command = arguments.batch_command
@@ -1382,114 +1388,7 @@ def final_main(
                 stdout.write(f"Scheduler stopped; emitted={emitted}\n")
                 return 0
         if arguments.command == "api":
-            loopback = _validate_api_bind_host(arguments.host)
-            if not loopback and not arguments.allow_insecure_remote_http:
-                raise ValueError(
-                    "non-loopback API bind requires --allow-insecure-remote-http; "
-                    "the development server does not provide TLS"
-                )
-            if not loopback:
-                stderr.write(
-                    "WARNING: serving authenticated traffic over unencrypted non-loopback HTTP; "
-                    "use a trusted TLS reverse proxy\n"
-                )
-            principals = configuration.resolve_api_principals()
-            bootstrap_document = _configuration_document(arguments.config)
-            if not 1 <= arguments.port <= 65535:
-                raise ValueError("API port must be between 1 and 65535")
-            from wsgiref.simple_server import make_server
-
-            from mediaflow.infrastructure.configuration_snapshot import (
-                build_configuration_snapshot,
-            )
-            from mediaflow.interfaces.service_api import MediaFlowApi
-
-            management_only = isinstance(configuration, ManagementBootstrapConfiguration)
-
-            file_index_context = (
-                nullcontext(None)
-                if isinstance(configuration, ManagementBootstrapConfiguration)
-                else SQLiteFileIndexRepository(configuration.database_path)
-            )
-            with (
-                SQLiteTaskRepository(configuration.database_path) as repository,
-                file_index_context as file_index,
-                SQLiteConfigurationRepository(
-                    configuration.database_path
-                ) as configuration_repository,
-            ):
-                configuration_service = ManagedConfigurationService(
-                    configuration_repository,
-                    bootstrap_database_path=configuration.database_path,
-                    bootstrap_document=bootstrap_document,
-                    management_only=management_only,
-                )
-                file_catalog = (
-                    FileCatalogService(
-                        file_index,
-                        tuple(
-                            item.library_id
-                            for item in configuration.resource_libraries
-                            if item.enabled
-                        ),
-                        tuple(item.storage_id for item in configuration.storage_definitions),
-                        task_repository=repository,
-                    )
-                    if file_index is not None
-                    else None
-                )
-                app = MediaFlowApi(
-                    repository,
-                    None,
-                    getattr(configuration, "automation_schedules", ()),
-                    principals=principals,
-                    dashboard_resource_library_count=sum(
-                        item.enabled for item in getattr(configuration, "resource_libraries", ())
-                    ),
-                    dashboard_media_library_count=sum(
-                        item.enabled for item in getattr(configuration, "media_libraries", ())
-                    ),
-                    remote_execution_enabled=getattr(
-                        configuration, "remote_execution_enabled", False
-                    ),
-                    remote_execution_maximum_ttl_seconds=(
-                        getattr(configuration, "remote_execution_maximum_ttl_seconds", 900)
-                    ),
-                    maximum_active_jobs=getattr(
-                        configuration, "automation_maximum_active_jobs", 100
-                    ),
-                    stale_job_age_seconds=getattr(
-                        configuration, "automation_stale_job_age_seconds", 3600
-                    ),
-                    system_status=(
-                        None
-                        if isinstance(configuration, ManagementBootstrapConfiguration)
-                        else build_configuration_snapshot(configuration)
-                    ),
-                    file_catalog=file_catalog,
-                    file_index=file_index,
-                    metadata_policies=getattr(
-                        getattr(configuration, "strategy", None), "metadata_policies", ()
-                    ),
-                    configuration_service=configuration_service,
-                    configuration_snapshot_id=getattr(
-                        configuration, "configuration_snapshot_id", None
-                    ),
-                    configuration_snapshot_digest=getattr(
-                        configuration, "configuration_snapshot_digest", None
-                    ),
-                    bootstrap_document=bootstrap_document,
-                    management_only=management_only,
-                    metadata_provider_registry_factory=(
-                        LazyMetadataProviderRegistryFactory(
-                            metadata_provider_registry_from_environment
-                        )
-                    ),
-                )
-                stdout.write(f"MediaFlow API listening on {arguments.host}:{arguments.port}\n")
-                stdout.flush()
-                with make_server(arguments.host, arguments.port, app) as server:
-                    server.serve_forever()
+            _serve_api(configuration, arguments, stdout=stdout, stderr=stderr)
             return 0
 
         storages = configuration.create_storages()
@@ -3567,6 +3466,131 @@ def render_schedule_audit(values, definitions=()) -> str:
         )
     lines.extend(("", f"Total: {len(values)}", ""))
     return "\n".join(lines)
+
+
+def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> None:
+    """Build and serve the shared WSGI application.
+
+    ``api serve`` remains the standard-library development/trusted-loopback
+    listener.  ``api serve-production`` deliberately selects the declared
+    Waitress adapter and is the command used by the Compose API service.
+    """
+
+    production = getattr(arguments, "api_command", None) == "serve-production"
+    _validate_api_bind_host(arguments.host)
+    if not 1 <= arguments.port <= 65535:
+        raise ValueError("API port must be between 1 and 65535")
+    if production:
+        if (
+            isinstance(arguments.threads, bool)
+            or not isinstance(arguments.threads, int)
+            or not 1 <= arguments.threads <= 64
+        ):
+            raise ValueError("production WSGI threads must be between 1 and 64")
+        stderr.write(
+            "WARNING: production WSGI serves HTTP without TLS; bind the container port "
+            "to a trusted LAN or HTTPS reverse proxy\n"
+        )
+        from mediaflow.production_wsgi import serve as run_server
+    else:
+        loopback = _validate_api_bind_host(arguments.host)
+        if not loopback and not arguments.allow_insecure_remote_http:
+            raise ValueError(
+                "non-loopback API bind requires --allow-insecure-remote-http; "
+                "the development server does not provide TLS"
+            )
+        if not loopback:
+            stderr.write(
+                "WARNING: serving authenticated traffic over unencrypted non-loopback HTTP; "
+                "use a trusted TLS reverse proxy\n"
+            )
+        from wsgiref.simple_server import make_server
+
+    principals = configuration.resolve_api_principals()
+    bootstrap_document = _configuration_document(arguments.config)
+    from mediaflow.infrastructure.configuration_snapshot import (
+        build_configuration_snapshot,
+    )
+    from mediaflow.interfaces.service_api import MediaFlowApi
+
+    management_only = isinstance(configuration, ManagementBootstrapConfiguration)
+    file_index_context = (
+        nullcontext(None)
+        if management_only
+        else SQLiteFileIndexRepository(configuration.database_path)
+    )
+    with (
+        SQLiteTaskRepository(configuration.database_path) as repository,
+        file_index_context as file_index,
+        SQLiteConfigurationRepository(configuration.database_path) as configuration_repository,
+    ):
+        configuration_service = ManagedConfigurationService(
+            configuration_repository,
+            bootstrap_database_path=configuration.database_path,
+            bootstrap_document=bootstrap_document,
+            management_only=management_only,
+        )
+        file_catalog = (
+            FileCatalogService(
+                file_index,
+                tuple(item.library_id for item in configuration.resource_libraries if item.enabled),
+                tuple(item.storage_id for item in configuration.storage_definitions),
+                task_repository=repository,
+            )
+            if file_index is not None
+            else None
+        )
+        app = MediaFlowApi(
+            repository,
+            None,
+            getattr(configuration, "automation_schedules", ()),
+            principals=principals,
+            dashboard_resource_library_count=sum(
+                item.enabled for item in getattr(configuration, "resource_libraries", ())
+            ),
+            dashboard_media_library_count=sum(
+                item.enabled for item in getattr(configuration, "media_libraries", ())
+            ),
+            remote_execution_enabled=getattr(configuration, "remote_execution_enabled", False),
+            remote_execution_maximum_ttl_seconds=getattr(
+                configuration, "remote_execution_maximum_ttl_seconds", 900
+            ),
+            maximum_active_jobs=getattr(configuration, "automation_maximum_active_jobs", 100),
+            stale_job_age_seconds=getattr(configuration, "automation_stale_job_age_seconds", 3600),
+            system_status=(
+                None if management_only else build_configuration_snapshot(configuration)
+            ),
+            file_catalog=file_catalog,
+            file_index=file_index,
+            metadata_policies=getattr(
+                getattr(configuration, "strategy", None), "metadata_policies", ()
+            ),
+            configuration_service=configuration_service,
+            configuration_snapshot_id=getattr(configuration, "configuration_snapshot_id", None),
+            configuration_snapshot_digest=getattr(
+                configuration, "configuration_snapshot_digest", None
+            ),
+            bootstrap_document=bootstrap_document,
+            management_only=management_only,
+            metadata_provider_registry_factory=LazyMetadataProviderRegistryFactory(
+                metadata_provider_registry_from_environment
+            ),
+        )
+        stdout.write(
+            f"MediaFlow {'production ' if production else ''}API listening on "
+            f"{arguments.host}:{arguments.port}\n"
+        )
+        stdout.flush()
+        if production:
+            run_server(
+                app,
+                host=arguments.host,
+                port=arguments.port,
+                threads=arguments.threads,
+            )
+        else:
+            with make_server(arguments.host, arguments.port, app) as server:
+                server.serve_forever()
 
 
 def _run_resident(run: Callable[[Callable[[], bool]], int]) -> int:
