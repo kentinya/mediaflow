@@ -20,6 +20,57 @@ from scripts.make_deployment_config import make_deployment_configuration
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def compose_source_bind_mounts() -> dict[str, dict[str, str]]:
+    """Read the shared bind declarations without depending on Compose normalization."""
+
+    mounts = []
+    current = None
+    in_bind = False
+    in_volumes = False
+    for line in (ROOT / "compose.yaml").read_text(encoding="utf-8").splitlines():
+        stripped = line.lstrip()
+        indentation = len(line) - len(stripped)
+        if indentation == 0:
+            if stripped.startswith("x-mediaflow-volumes:"):
+                in_volumes = True
+                continue
+            if in_volumes:
+                break
+        if not in_volumes or not stripped or stripped.startswith("#"):
+            continue
+        if indentation == 2 and stripped.startswith("- "):
+            if current is not None:
+                mounts.append(current)
+            current = {}
+            in_bind = False
+            key, separator, value = stripped[2:].partition(":")
+            if separator:
+                current[key] = value.split(" #", 1)[0].strip()
+            continue
+        if current is None:
+            continue
+        if indentation == 4:
+            if stripped == "bind:":
+                in_bind = True
+                continue
+            in_bind = False
+            destination = current
+        elif indentation == 6 and in_bind:
+            destination = current.setdefault("bind", {})
+        else:
+            continue
+        key, separator, value = stripped.partition(":")
+        if separator:
+            destination[key] = value.split(" #", 1)[0].strip()
+    if current is not None:
+        mounts.append(current)
+    return {
+        mount["target"]: mount
+        for mount in mounts
+        if mount.get("type") == "bind" and "target" in mount
+    }
+
+
 def request(app, method: str, path: str, *, token: str | None = None):
     body = b""
     statuses = []
@@ -276,6 +327,39 @@ class ContainerArtifactTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("docker"), "Docker engine is not available")
     def test_compose_config_exactly_four_services_with_production_boundaries(self) -> None:
+        self.assertEqual(
+            compose_source_bind_mounts(),
+            {
+                "/config/mediaflow.json": {
+                    "type": "bind",
+                    "source": "${MEDIAFLOW_CONFIG_FILE:-./config/mediaflow.json}",
+                    "target": "/config/mediaflow.json",
+                    "read_only": "true",
+                    "bind": {"create_host_path": "false"},
+                },
+                "/run/mediaflow/deployment.env": {
+                    "type": "bind",
+                    "source": "${MEDIAFLOW_ENV_FILE:-./.env.mediaflow}",
+                    "target": "/run/mediaflow/deployment.env",
+                    "read_only": "true",
+                    "bind": {"create_host_path": "false"},
+                },
+                "/media/incoming": {
+                    "type": "bind",
+                    "source": "${MEDIAFLOW_SOURCE_MEDIA_ROOT:-./media/incoming}",
+                    "target": "/media/incoming",
+                    "read_only": "true",
+                    "bind": {"create_host_path": "false"},
+                },
+                "/media/organized": {
+                    "type": "bind",
+                    "source": "${MEDIAFLOW_TARGET_MEDIA_ROOT:-./media/organized}",
+                    "target": "/media/organized",
+                    "read_only": "false",
+                    "bind": {"create_host_path": "false"},
+                },
+            },
+        )
         result = subprocess.run(
             ["docker", "compose", "-f", str(ROOT / "compose.yaml"), "config", "--format", "json"],
             cwd=ROOT,
@@ -359,9 +443,6 @@ class ContainerArtifactTests(unittest.TestCase):
                         "/media/organized",
                     },
                 )
-                for volume in definition["volumes"]:
-                    if volume["type"] == "bind":
-                        self.assertFalse(volume["bind"]["create_host_path"])
                 if name == "api":
                     self.assertIn("ports", definition)
                 else:
