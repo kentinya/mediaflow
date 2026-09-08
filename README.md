@@ -65,6 +65,27 @@ through the Provider abstraction; Provider switching and additional production P
 V1 scope. Environment-variable references and deployment-owned secret injection are the V1 secret
 boundary.
 
+## V2 development status
+
+The `main` branch is now the active V2 development trunk. The released V1 line remains maintenance-only:
+
+```text
+MediaFlow V1
+Status: RELEASED / MAINTENANCE
+Version line: 1.x
+Maintenance branch: release/v1
+Release tag: v1.0.0
+
+MediaFlow V2
+Status: ACTIVE DEVELOPMENT
+Primary program: Operator Web Architecture & UX Modernization
+Package version on main: 2.0.0.dev0
+```
+
+V2 is organized as independently reviewable large Slices. This transition establishes the program and
+Slice 30 contract boundary; it does not implement a new frontend or change the V1 API, execution,
+authentication, or Storage authority.
+
 ## CLI
 
 ```bash

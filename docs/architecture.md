@@ -38,6 +38,31 @@ Slice 26 — Web-first fresh setup and Storage
 These are vertical product slices. They do not authorize a rewrite of the closed processing engine
 or a split into independent API/database/frontend products.
 
+## V2 program architecture
+
+V2 is a release/program level on `main`, not one mega-Slice. Its independently reviewable roadmap is:
+
+```text
+Slice 30 — V2 Frontend Platform & Architecture
+    → Slice 31 — Operator Shell & Information Architecture
+    → Slice 32 — Library & Files Experience
+    → Slice 33 — Operations Workspace
+    → Slice 34 — Review & Recovery Workspace
+    → Slice 35 — Configuration Administration
+    → Slice 36 — V2 Parity, Accessibility & Legacy UI Retirement
+```
+
+The target V2 frontend is a client-side React/TypeScript SPA built with Vite, TanStack Router and
+TanStack Query, organized feature-first with a central typed API boundary and project-owned design
+system foundation. Vitest and React Testing Library cover unit/component behavior, with a Playwright
+browser-smoke foundation. The Vite output is served by the existing MediaFlow Python application;
+Node is build/development tooling only and is never a production server runtime.
+
+The V2 program preserves the current `/api/v1/*` authority, Python application/domain behavior,
+API-principal Bearer-token model, memory-only browser token handling, RBAC and all explicit execution
+and OrganizerExecutor safety gates. The existing V1 Operator UI remains available during migration;
+its final `/ui` retirement is deferred to Slice 36.
+
 V1 keeps the environment-owned API-principal Bearer-token authentication model and explicit RBAC.
 It does not provide a built-in username/password database, cookie session, OIDC or implicit
 reverse-proxy identity. Token rotation and secret injection are deployment responsibilities.
