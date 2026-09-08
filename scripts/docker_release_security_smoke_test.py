@@ -435,7 +435,7 @@ print(json.dumps(found))
 
 
 def assert_image_clean(image: str, canaries) -> None:
-    history = run(["docker", "history", "--no-trunc", "--no-cache", image])
+    history = run(["docker", "history", "--no-trunc", image])
     assert_no_canaries(history.stdout, canaries, "image history")
     inspect = run(["docker", "image", "inspect", image])
     assert_no_canaries(inspect.stdout, canaries, "image configuration")
