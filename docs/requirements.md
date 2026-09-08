@@ -3,13 +3,15 @@
 本文档把根目录
 [《影视媒体资源自动整理系统需求规格说明书》](../影视媒体资源自动整理系统需求规格说明书.md)
 中的 V1 产品范围整理为稳定、可引用的工程需求 ID。中文规格书负责完整产品定义；本文档只负责
-工程索引、必要的安全推导和验收含义，不替代或缩小中文规格书。
+V1 工程索引、必要的安全推导和验收含义，不替代或缩小中文规格书。当前 V2 的稳定要求另见
+[V2 Requirements](v2-requirements.md)，避免把 V2 迁移约束混入冻结的 V1 编号。
 
 权威关系为：
 
 ```text
 中文规格书
-→ docs/requirements.md
+→ docs/requirements.md（稳定 V1 要求）
+→ docs/v2-requirements.md（V2 稳定要求）
 → SLICE.md
 → TASK.md
 ```
@@ -27,6 +29,14 @@
 
 “可配置”通常表示产品必须提供该配置能力，而不是 OPTIONAL；例如 Hash 模式可以由用户关闭，
 但可选择的重复检测策略本身仍是 REQUIRED。实现是否完成不得改变 Scope。
+
+## V2 requirements boundary
+
+`docs/requirements.md` remains the stable V1 Engineering Requirements Index. V2 requirements are
+kept in the separate [`docs/v2-requirements.md`](v2-requirements.md) layer so V1 IDs and meanings
+remain stable while the active V2 program adds migration and operator-surface acceptance properties.
+The V2 document records durable product and authority boundaries, not transient Task paths,
+package versions, test counts or internal function names.
 
 ## Traceability and derivation rules
 

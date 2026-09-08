@@ -1,9 +1,9 @@
 # MediaFlow Product Experience
 
-This document defines the canonical operator journeys for MediaFlow V1. It describes user-visible
-behavior and completion semantics, not implementation history or frontend styling. Large-Slice order
-and status are maintained in [`roadmap.md`](roadmap.md); the active implementation boundary is in
-[`SLICE.md`](../SLICE.md).
+This document defines the canonical operator journeys for MediaFlow V1 and the explicitly separated
+active V2 migration target. It describes user-visible behavior and completion semantics, not
+implementation history or frontend styling. Large-Slice order and status are maintained in
+[`roadmap.md`](roadmap.md); the active implementation boundary is in [`SLICE.md`](../SLICE.md).
 
 ## Product completion contract
 
@@ -324,3 +324,36 @@ Slices 26, 27, 28 and 29 are PASS / CLOSED. The V1 self-hosted deployment journe
 Provider switching and additional production Providers, built-in username/password or OIDC identity,
 a general Secret Store, automatic uncertain-mutation replay, historical rollback and specialized
 email/chat/media-server notifications remain V1.x/V2 or deployment-specific work.
+
+## V2 Operator Web migration
+
+The V1 `/ui` remains available while the V2 Operator Web is introduced. Slice 30 is the active
+architecture/platform Slice, but its implementation has not started; the journey below is the
+bounded proving target for that Slice, not a claim that it is already delivered.
+
+### ACTIVE V2 TARGET — Dashboard proving journey
+
+- **Goal:** open a read-only V2 Dashboard and understand the current bounded operational state.
+- **Entry:** enter the V2 migration surface at `/ui-v2` (or the repository-selected equivalent) and
+  authenticate with the existing API-principal Bearer token.
+- **Visible state:** the token exists in browser memory only; the route issues a typed query through
+  the central API boundary and shows loading, empty, success, error, unauthorized and forbidden
+  states.
+- **Action:** inspect the bounded Dashboard result or request a bounded refresh. A refresh is a
+  read-only retry of the same query, not a new work request.
+- **Success:** the operator sees the typed Dashboard data and its current permission state without
+  creating a Job/Task, invoking a Metadata Provider or changing Storage.
+- **Failure:** transport, API, invalid/expired token, unauthorized or forbidden responses remain
+  visible as distinct bounded states without exposing secrets or raw internal errors.
+- **Recovery:** re-enter the API principal token in memory or retry the bounded read. Recovery does
+  not replay unknown work because this proving journey creates no backend work.
+
+### Migration coexistence and deferrals
+
+- **CURRENT:** V1 `/ui`, its API behavior and Python execution authority remain available and
+  authoritative. Existing Bearer authentication and RBAC continue to apply.
+- **ACTIVE V2 TARGET:** the V2 entry is separate during migration, with typed routing/query/API
+  boundaries, shared UI foundations and production static serving by the existing Python application.
+- **DEFERRED:** no `/ui` cutover or V1 UI retirement occurs until the later parity, accessibility and
+  retirement acceptance. Shell, Files, Operations, Review/Recovery and Configuration migrations are
+  not described as delivered by Slice 30.

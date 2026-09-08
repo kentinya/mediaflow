@@ -82,9 +82,10 @@ Primary program: Operator Web Architecture & UX Modernization
 Package version on main: 2.0.0.dev0
 ```
 
-V2 is organized as independently reviewable large Slices. This transition establishes the program and
-Slice 30 contract boundary; it does not implement a new frontend or change the V1 API, execution,
-authentication, or Storage authority.
+V2 is organized as independently reviewable large Slices. Slice 30 is `ACTIVE` under the committed
+A-owned Contract; no implementation Task is active yet, and the next legal action is B plans Task
+30.1. This documentation boundary does not implement a new frontend or change the V1 API,
+execution, authentication, or Storage authority.
 
 ## CLI
 
@@ -291,12 +292,12 @@ environment; JSON contains only their environment-variable names and least-privi
 `GET /health` is public. Every `/api/v1` request requires
 `Authorization: Bearer $MEDIAFLOW_API_TOKEN`. Roles are `viewer`, `operator`, `executor`,
 `auditor`, and `admin`; executor permission is necessary but not sufficient for real organization.
-The API can query tasks, jobs, and pending confirmations, and it queues `scan` or `preview` by
-default. Run one queued item with
-`mediaflow worker run-next`; preview is always DryRun. Remote organize is accepted only through the
-later disabled-by-default one-time authorization boundary documented below. Remote overwrite,
-delete, and conflict resolution remain rejected. This standard-library server is for trusted
-loopback development use, not direct Internet exposure.
+The API can query tasks, jobs, and pending confirmations, and it accepts bounded `scan`, `preview`
+and `organize` Job submissions. Run one queued item with `mediaflow worker run-next`; scan and
+preview are always DryRun/zero-mutation. Organize is accepted only through the separate
+disabled-by-default one-time authorization boundary documented below. Remote overwrite, delete, and
+conflict resolution remain rejected. This standard-library server is for trusted loopback
+development use, not direct Internet exposure.
 
 MediaFlow provides a resident Worker and opt-in interval schedules. Example schedules are disabled
 by default. `automation.maximumActiveJobs` defaults to 100 and atomically limits the combined Pending
@@ -615,11 +616,12 @@ Configuration-driven API principals, least-privilege roles, and redacted audit a
 The authenticated Operator UI exposes the operational Dashboard, Files, managed Configuration,
 Task/Job/Scheduler/Notification/Log views, and bounded conflict, Recognition, Metadata, and
 Classification review actions through the same application and permission boundaries as the API.
-General Jobs submit only scan or legacy preview, while bounded Files/FileIndex entry points support
-manual Scan/Preview/Organize and explicit recovery. Legacy preview may create formal review/conflict
-state; the newer manual and Automation Definition Previews are analysis-only. Processing Worker
-readiness and ownership are visible through the read-only Operator Web/API projections without
-widening execution authority.
+General Jobs submit bounded Scan/Preview/Organize work within their respective authority, while
+bounded Files/FileIndex entry points support manual Scan/Preview/Organize and explicit recovery.
+Scan and Preview remain zero-mutation; Organize requires the existing separate one-shot execution
+authority and confirmation. Legacy preview may create formal review/conflict state; the newer manual
+and Automation Definition Previews are analysis-only. Processing Worker readiness and ownership are
+visible through the read-only Operator Web/API projections without widening execution authority.
 Database-managed users/login, OIDC, automatic secret rotation, Provider switching, and broader
 recovery beyond the delivered checkpoint journeys are not V1 capabilities. Slice 28 delivered day-2
 configuration and operations administration; Slice 29 delivered the Docker production release and

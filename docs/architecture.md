@@ -52,6 +52,10 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 36 — V2 Parity, Accessibility & Legacy UI Retirement
 ```
 
+Slice 30 is `ACTIVE` under the committed A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
+`7c7c602c6531c60ddf2d6678857e2ef76c3860b6` and no implementation head yet. The target architecture
+below is therefore an adopted Slice contract, not a claim that V2 frontend code has been delivered.
+
 The target V2 frontend is a client-side React/TypeScript SPA built with Vite, TanStack Router and
 TanStack Query, organized feature-first with a central typed API boundary and project-owned design
 system foundation. Vitest and React Testing Library cover unit/component behavior, with a Playwright
@@ -235,7 +239,10 @@ effect/result/checkpoint independently.
 The current file-level execute endpoint calls that bounded execution service synchronously inside
 the API request, even though durable Task/TaskItem/Result records are created. Files and FileIndex
 provide bounded file/ResourceLibrary Scan, exact Preview and explicit manual Organize entry points;
-the general Job API remains limited to its existing scan/preview automation semantics.
+the general Jobs API also supports bounded `scan`, `preview` and `organize` submission. Scan and
+Preview remain DryRun/zero-mutation operations. Organize requires the existing separate one-shot
+execution authority and explicit confirmation; the existing revalidation, RBAC, conflict and
+capability gates remain in force, and only `OrganizerExecutor` mutates Storage.
 
 ## Automation and unattended execution
 

@@ -53,8 +53,9 @@ mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidd
 
 V2 is active development for Operator Web Architecture & UX Modernization. The rows for Slices 30–36
 are the complete current program boundary; they are not a single Slice and must be activated and
-reviewed independently. Slice 30 is the next A-owned contract, with its status changing to `ACTIVE`
-only when that committed contract is established.
+reviewed independently. Slice 30 is `ACTIVE` under the committed A-owned Contract in
+[`SLICE.md`](../SLICE.md). No implementation Task is active yet; the next legal action is for B to
+plan Task 30.1. This Roadmap does not pre-plan Task details.
 
 ## Roadmap rules
 
