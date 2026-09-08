@@ -1,7 +1,7 @@
 # Architecture
 
 This document describes the architecture implemented at the current repository head and separates
-remaining V1 targets from current behavior. It is organized by component and boundary; development
+remaining V1.x/V2 targets from current behavior. It is organized by component and boundary; development
 Phase, Fix and Task names are historical evidence, not architecture states.
 
 ## Structure and dependency direction
@@ -24,10 +24,13 @@ provider SDK APIs directly. It uses domain interfaces and application services.
 
 ## V1 order and architecture decisions
 
-Slices 26, 27 and 28 are PASS / CLOSED. The remaining V1 business capability is:
+Slices 26, 27, 28 and 29 are PASS / CLOSED. The V1 business-capability sequence is:
 
 ```text
-Slice 29 — Docker production self-hosted release
+Slice 26 — Web-first fresh setup and Storage
+    → Slice 27 — Manual operations and file lifecycle
+    → Slice 28 — Web-first configuration and operations administration
+    → Slice 29 — Docker production self-hosted release
 ```
 
 These are vertical product slices. They do not authorize a rewrite of the closed processing engine
@@ -232,9 +235,10 @@ Dashboard, Files, Tasks, Jobs, Schedules, Automation, Notifications, Logs, confl
 Configuration and a bounded read-only System status view. The current UI holds the API token only in
 browser memory. It does not provide built-in account login.
 
-The current HTTP listener uses `wsgiref.simple_server` and is a development/trusted-loopback
-boundary. It is not a production WSGI server and does not claim TLS termination, certificate
-management or public Internet exposure.
+The `api serve` HTTP listener uses `wsgiref.simple_server` and remains a development/trusted-loopback
+boundary. Production Compose uses the explicitly selected `api serve-production` command with the
+Waitress WSGI adapter. Neither path claims TLS termination, certificate management or public
+Internet exposure; host binding and reverse-proxy trust remain deployment boundaries.
 
 The resident processing Worker durably registers before claiming work, heartbeats while live,
 records clean stop, binds to an immutable runtime snapshot and uses Worker identity plus a per-claim
@@ -301,15 +305,15 @@ consumed System Settings, versioned secret-free configuration/result exchange an
 definition/test/delivery recovery. These capabilities reuse the existing revision authority, RBAC,
 redaction and immutable snapshot rules.
 
+## Current Slice 29 delivery
+
+Slice 29 packages one immutable image with independent Compose API, Worker, Scheduler and
+Notification Worker services, production Waitress WSGI serving, explicit local `/data` persistence,
+media bind mounts, non-root operation, liveness/management/business readiness, restart persistence,
+fenced ownership, fail-closed backup/migration upgrade behavior and release-security validation.
+The Jobs/Preview/Organize execution boundary remains explicit and OrganizerExecutor-only.
+
 ## TARGET architecture
-
-### Slice 29 target
-
-Package one immutable image with independent Compose API, Worker, Scheduler and Notification Worker
-services, a production WSGI server, explicit local `/data` persistence, media bind mounts, non-root
-operation, liveness/readiness/business health, restart persistence and fail-closed backup/migration
-upgrade behavior. Keep TLS, certificates, public exposure policy and proxy trust explicit deployment
-boundaries.
 
 ### V1.x/V2 deferrals
 

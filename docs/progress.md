@@ -8,6 +8,23 @@ workflow authority. Closure rules live only in
 
 ## Most Recently Closed Slice
 
+### Slice 29 — Docker Production Self-hosted Release
+
+```text
+Status: PASS / CLOSED
+Base: b57db5a28ee944bc121b69608bb6475d8ae555a7
+Implementation Head: 657f1a3697eec8e1537bee1335d45a06bec35c6f
+A Final Review: PASS / CLOSED — 2026-09-08
+```
+
+Delivered the one-image Docker Compose self-hosted journey across production WSGI serving, four
+independent non-root services, durable `/data` and explicit media mounts, distinct health/readiness,
+restart-safe task ownership and notification state, fail-closed backup/upgrade/migration recovery,
+release-security validation and the pre-release Jobs/Preview/Organize execution-boundary correction.
+Deferred scope remains built-in identity/OIDC, TLS/proxy termination, full Secret Store/Docker Secrets,
+Provider switching, remote/distributed persistence and workers, uncertain-mutation replay, rollback
+and specialized notification channels.
+
 ### Slice 28 — Web-first Configuration and Operations Administration
 
 ```text
@@ -134,6 +151,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 29 — Docker production self-hosted release | PASS / CLOSED | `b57db5a28ee944bc121b69608bb6475d8ae555a7` | `657f1a3697eec8e1537bee1335d45a06bec35c6f` | A Final Review PASS / CLOSED — 2026-09-08 | One-image four-service Docker Compose production release, durable `/data`, explicit media mounts, health/readiness, restart/fencing, upgrade/recovery, release security and execution-boundary completeness | Built-in identity/OIDC, TLS/proxy, full Secret Store/Docker Secrets, Provider switching, remote/distributed persistence, uncertain-mutation replay, rollback and specialized notifications |
 | 28 — Web-first configuration and operations administration | PASS / CLOSED | `957a4ebcb0fde03e64be9c406fbcdfed9a12501d` | `8546ff8fe15386dfbbb5fefb29a66b936ed4613f` | A Final Review PASS / CLOSED — 2026-09-07 | Day-2 Web/API configuration administration, consumed System Settings, secret-free package exchange and Webhook test/delivery recovery | Slice 29 Docker release, Provider switching, built-in identity, full Secret Store, specialized notifications, distributed workers and uncertain-mutation replay |
 | 22.3 — Local Storage + Library configuration | PASS / CLOSED | LEGACY — not recorded as a Slice Base | `e28a24aff99c073c67b52351a82cb4a29e163de0` | Legacy combined audit PASS — 2026-08-25 | Guided Local managed configuration, checks, activation and immutable pin | Remote setup/capability checks |
 | 22.4 — Recognition configuration | PASS / CLOSED | LEGACY — not recorded as a Slice Base | `d95ea2b64a6fce559341d7eb5824977e07794dff` | Legacy combined audit PASS — 2026-08-26 | Managed recognition, Strategy Test, explanation and activation | Later policy journeys |

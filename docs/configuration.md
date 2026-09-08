@@ -320,15 +320,16 @@ logic for older databases. Do not infer a product capability from a historical m
 
 ## Current limitations and remaining V1 work
 
-Slices 26, 27 and 28 are `PASS / CLOSED`. The remaining V1 work is:
+Slices 26, 27, 28 and 29 are `PASS / CLOSED`. The V1 self-hosted deployment release is delivered;
+the remaining items are V1.x/V2 boundaries:
 
 | Status | Capability |
 |---|---|
-| Slice 29 ACTIVE | Docker Compose production release, production WSGI server, `/data` durability, non-root mounts, health, restart persistence and fail-closed upgrade/migration |
 | V1.x/V2 | Provider switching and additional production Providers, built-in user/session identity, OIDC, general Secret Store and broader recovery such as automatic uncertain-mutation replay or historical rollback |
 
 Arbitrary host-path access and mutation-based capability probes are not current capabilities. The
 setup Storage Browser, read-only setup checks and provider-neutral destination precheck remain bounded
 first-setup evidence; the runtime Files browser and Slice 27 manual operations are separate current
-operator surfaces. The current `wsgiref.simple_server` listener is a development / trusted-loopback
-boundary, not production HTTP serving.
+operator surfaces. The `wsgiref.simple_server` listener remains development / trusted-loopback;
+production Docker serving uses the Waitress-backed `api serve-production` boundary documented in
+`docs/deployment.md`.

@@ -79,9 +79,9 @@ configuration/operations administration capability without weakening safety:
 - Environment-variable references plus deployment-owned secret injection are the V1 secret boundary.
   Full Secret Store and Docker Secrets-specific ingestion are post-V1 unless separately approved.
 
-These decisions are represented by the closed Slices 26, 27 and 28 and the current active Slice 29;
-current Slice status is maintained in [`roadmap.md`](roadmap.md) and [`SLICE.md`](../SLICE.md). They do
-not create implementation Tasks.
+These decisions are represented by the closed Slices 26, 27, 28 and 29; current Slice status is
+maintained in [`roadmap.md`](roadmap.md) and [`SLICE.md`](../SLICE.md). They do not create
+implementation Tasks.
 
 ## General product requirements
 
