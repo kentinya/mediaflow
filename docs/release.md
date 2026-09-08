@@ -11,8 +11,9 @@ independent API/Worker/Scheduler/Notification Worker services. The services reta
 process failure/restart boundaries while sharing one local persistent `/data` volume. The
 `wsgiref.simple_server` API listener remains development/trusted-loopback only; production Compose
 serving uses the explicitly selected Waitress adapter with a documented TLS/reverse-proxy or LAN
-boundary. The remaining Slice health/readiness, restart fault, upgrade/migration and final release
-security Tasks are not yet complete, so this document is not a full release claim.
+boundary. The Slice health/readiness and restart/fault Tasks are complete. The remaining
+upgrade/migration rehearsal and final release-security Tasks are not yet complete, so this document
+is not a full release claim.
 
 See [docs/deployment.md](deployment.md) for the current executable image/Compose journey.
 

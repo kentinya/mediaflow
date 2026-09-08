@@ -1,14 +1,15 @@
 # MediaFlow Docker deployment
 
-This document covers the Task 29.2 deployment boundary and the Task 29.3
-health/readiness model: one installable image, four independent Compose
-services, production WSGI serving, a persistent local `/data` volume, explicit
-container-visible media mounts, and distinct liveness, management/API
-readiness and processing-Worker readiness signals.
+This document covers the Task 29.2 deployment boundary, the Task 29.3
+health/readiness model and the Task 29.4 restart/fault matrix: one installable
+image, four independent Compose services, production WSGI serving, a persistent
+local `/data` volume, explicit container-visible media mounts, distinct
+liveness, management/API readiness and processing-Worker readiness signals, and
+durable restart/fencing guarantees.
 
-The restart fault matrix, backup/upgrade migration rehearsal, and
-release-security acceptance are separate later Tasks. This runbook does not
-claim them.
+The backup/upgrade migration rehearsal and release-security acceptance are
+separate later Tasks. The restart/fault matrix is covered below; this runbook
+does not claim those later release Tasks.
 
 ## Boundary
 
@@ -153,6 +154,42 @@ diagnostics; **Workers** and **Configuration** show the same Worker and
 management readiness projections. Viewing readiness performs no Storage scan,
 Provider call, Job/Task creation, notification or media mutation.
 
+## Restart and fault matrix
+
+Every durable MediaFlow state lives under `/data`. Stopping or restarting the
+API, Worker, Scheduler or Notification Worker service must therefore preserve
+the exact managed Active identity, FileIndex records, Jobs,
+Tasks/TaskItems/Results, schedule states and occurrence history, notification
+deliveries, security audits and operational logs. The application restart
+contract is:
+
+- The Scheduler advances one durable due slot at most once. A restart or a
+  concurrent second tick around the same occurrence cannot create a second
+  occurrence or a second linked Job for that occurrence identity.
+- The Worker claim boundary remains authoritative across process stop/start. A
+  newer Worker owner can heartbeat and commit; an older owner's heartbeat and
+  terminal commit are rejected and the current owner/result is preserved.
+- A media mutation whose effect certainty is unknown stays in an
+  investigation/uncertain state. Service startup and retry never replay the
+  mutation automatically; API/Web Task-item recovery views show the durable
+  known effects, certainty and the explicit investigation action.
+- Notification deliveries remain durable and at-least-once. A restart may
+  reclaim an expired lease and retry the exact same delivery identity, but it
+  never silently deletes a delivery or marks an attempted delivery successful.
+  Failed/retry/dead-letter evidence remains visible in the Notifications view.
+
+The isolated acceptance harness runs the exact image with temporary media and
+a throwaway named volume, writes representative state through the real
+services and bounded installed-package fault fixtures, restarts each service,
+and verifies the identities and per-item dispositions above:
+
+```bash
+python3 scripts/docker_restart_fault_smoke_test.py
+```
+
+It prints `SKIP` when no Docker engine is available and never reads production
+paths, credentials, Storage or Providers.
+
 ## Verify
 
 ```bash
@@ -233,3 +270,15 @@ authenticated API, observes healthy/ready signals, stops and restarts the
 Worker, verifies no-Worker/stale and ready transitions, degrades a media mount
 and the API secret reference, and confirms bounded recovery plus secret-free
 output.
+
+The Task 29.4 restart harness adds the durable restart and fault journey:
+
+```bash
+python3 scripts/docker_restart_fault_smoke_test.py
+```
+
+It records managed configuration, FileIndex, Job/Task/TaskItem/Result,
+schedule/occurrence, notification, audit and operational-log evidence, restarts
+each service, and verifies scheduler idempotence, stale-owner fencing,
+uncertain-mutation refusal and notification at-least-once behavior on temporary
+isolated paths.
