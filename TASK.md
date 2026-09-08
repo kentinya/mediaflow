@@ -405,15 +405,137 @@ unless this Task demonstrably changes its cause.
 
 ### Changed Files
 
+- `mediaflow/application/media_organizer.py` — new `analysis_only` flag on
+  `MediaOrganizerService`. In an analysis-only run an unresolved organize-plan
+  conflict is completed as a durable `DRY_RUN` finding with full evidence instead of
+  calling `wait_for_confirmation`; evidence outcome and operation-history label for
+  that path were adjusted accordingly.
+- `mediaflow/application/task_runtime.py` — `complete_item(..., analysis_only=True)`
+  completes an item that produced no executor operation as `TaskItemStatus.DRY_RUN`
+  (an existing state; no new enum value was added).
+- `mediaflow/application/evidence_capture.py` — the persisted plan evidence section
+  now carries the configured OrganizePolicy (`policyId` + `configuredConflictStrategy`)
+  and, for an analysis-only Preview conflict finding, a bounded `nextAction` stating
+  that the finding is not execution authority.
+- `mediaflow/final_cli.py` — `final_main` accepts a private
+  `_analysis_only_preview` marker, and `_run_queued_workflow` passes it for plain
+  (non-definition) `command=preview` Jobs, so Jobs Preview and Configuration's first
+  DryRun Preview (which posts the same Job) share the analysis-only semantics.
+- `mediaflow/interfaces/operator_ui.py` — the Jobs surface exposes one `Queue Job`
+  entry with exactly `scan`, `preview` and `organize`; each command shows its
+  authority/mutation state (`DRY_RUN`/`NONE` vs `REMOTE_EXECUTE (one-shot)`/`POSSIBLE`);
+  real Organize requires a distinct final `Confirm Organize` action and `execute: true`
+  in the request. No execution token is placed in browser JavaScript.
+- `mediaflow/interfaces/service_api.py` — the protected `/api/v1/jobs` organize branch
+  now rejects unsupported document fields symmetrically with the DryRun branch.
+- `tests/test_operator_job_submission.py`, `tests/test_operator_ui.py`,
+  `tests/test_operator_observability.py`, `tests/test_stale_job_visibility.py`,
+  `tests/test_operator_job_cancellation.py` — updated Jobs-UI string assertions to the
+  single Queue Job surface and scoped the "no execution request" safety assertion to
+  the job detail/cancellation journey.
+- `tests/test_queued_job_execution_boundary.py` (new) — vertical queued Job boundary
+  tests (Configuration first Preview conflict finding, real Organize conflict
+  continuation, stale-source fail-closed, shared worker bridge marker, API command and
+  one-shot authority matrix).
+
 ### Implemented
+
+- Queued Job Preview (Jobs → Preview and Configuration → Activate → Queue first DryRun
+  Preview, which is the same `command=preview` Job) now treats an unresolved
+  organize-plan conflict as an inspectable, durable analysis finding: the TaskItem is
+  completed as `DRY_RUN`, the Result is `dry_run`, evidence records the plan conflict
+  (source, destination, operation, conflict type), the configured policy/strategy,
+  capability verdict and a bounded next action, and no `PENDING ConflictConfirmation`,
+  no `WAITING_CONFIRM` TaskItem and no real Conflicts backlog item is created. Existing
+  pending conflicts and the Dashboard Pending-conflict count are unchanged and zero
+  Storage mutation occurs.
+- Real queued Organize keeps the existing one-shot `REMOTE_EXECUTE`/
+  `ExecutionAuthorizationService` authority, snapshot pin and Worker handoff; an
+  actually-attempted Organize that revalidates into an unresolved current conflict
+  still creates `PENDING ConflictConfirmation` + `WAITING_CONFIRM` and raises the
+  Dashboard pending-conflict count with zero mutation before resolution. Real Organize
+  always re-runs current-state reanalysis; a Preview finding is never execution
+  authority (a source removed after Preview causes the later authorized Organize to
+  fail closed with no mutation).
+- Jobs Web/API command matrix: `SUBMIT_DRY_RUN` accepts only scan/preview and denies
+  organize; organize requires `REMOTE_EXECUTE`, the enabled gate, `execute=true` and a
+  valid single-use one-shot authority (missing/invalid/expired/consumed/in-body/extra
+  field variants fail closed without mutation). No second authority system and no
+  browser-carried execution token.
+- DryRun-only admission and all existing Scan, recovery-continuation, definition-pinned
+  and scheduled/Automation behavior are unchanged (regression-verified). No new
+  `TaskItemStatus`, no new execution-authority subsystem and no new OrganizerExecutor.
 
 ### Tests and Results
 
+```text
+python3 scripts/check_governance.py                                  -> PASS
+python3 -m unittest tests.test_queued_job_execution_boundary         -> PASS (5 tests)
+python3 -m unittest <Task focused command list, 20 modules>          -> PASS (309 tests)
+.venv/bin/python -m unittest discover -s tests                       -> 1365 tests,
+    failures=1 (pre-existing, see Risks), skipped=7 (external real-service gates)
+python3 -m unittest tests.test_final_integration.FinalIntegrationTests.\
+    test_runtime_configuration_and_final_analyze_cli                 -> FAIL / PRE-EXISTING /
+                                                                        UNRELATED (fails identically
+                                                                        at Task Base)
+.venv/bin/python -m ruff format --check <changed files>              -> PASS
+.venv/bin/python -m ruff check <changed files>                       -> PASS
+python3 -m compileall -q mediaflow tests scripts                     -> PASS
+.venv/bin/python -m pip check                                        -> PASS
+.venv/bin/python -m pip wheel . --no-deps -w dist                    -> PASS
+python3 scripts/wheel_smoke_test.py dist/mediaflow-0.1.0-*.whl       -> PASS
+test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml)"      -> PASS
+git diff --check                                                     -> PASS
+```
+
 ### Decisions
+
+- The analysis-only boundary is implemented at the shared queued, non-definition
+  `command=preview` Job (the same Job Configuration's first DryRun Preview posts). This
+  exactly matches the Task's Job journeys and keeps the frozen surfaces unchanged:
+  direct CLI `preview`, recovery/metadata-correction continuations, definition-pinned
+  and scheduled/Automation execution, and real Organize all keep their prior behavior
+  (verified by the unchanged required regression suites).
+- `DRY_RUN` (Result `dry_run`) was chosen as the existing terminal completion state for
+  a Preview finding because it accurately describes a completed read-only analysis;
+  `SKIPPED` remains reserved for actual skip/no-op outcomes. No `TaskItemStatus` was
+  added.
+- The persisted evidence for a finding was enriched with the configured policy/strategy
+  and a bounded next action because the acceptance requires those to be inspectable.
+- The Web Organize review posts the same `/api/v1/jobs` request shape (`command`,
+  `execute`, `limit`) and the API keeps enforcing the out-of-band one-shot authority, so
+  Web and API use identical validation; no token ever lives in browser JavaScript.
 
 ### Remaining In-Slice Work
 
+- Slice 29 Docker production release outcomes (RO-1..RO-7) are not implemented by this
+  Task and remain ahead. Any further Task planning is B's decision.
+
 ### Risks / Deviations
+
+- Scope decision for B: only queued non-definition Job Previews (Jobs and Configuration
+  first Preview) became analysis-only. A direct CLI `preview` still persists an
+  unresolved conflict as `WAITING_CONFIRM` + confirmation. This reading follows the
+  Task's Operator Journey Contract and keeps the frozen continuation/definition
+  surfaces regression-safe; if B reads REQ-ORG-011 as requiring every DryRun surface to
+  change, that is a broader change that would also affect the frozen
+  scheduled/continuation flows and needs B's explicit decision.
+- Pre-existing, unrelated failures reproduced at Task Base:
+  `FinalIntegrationTests.test_runtime_configuration_and_final_analyze_cli` (analyze CLI
+  returns 2 with "path is not inside a configured ResourceLibrary") and
+  `StorageBrowserWebTests.test_setup_picker_and_execution_environment_guidance_are_present`
+  ("Storage-relative breadcrumb" is absent from the served APP_JS at Base too). Both are
+  kept separate from this Task's RO-8 evidence.
+- Environment-dependent (not code-caused) full-suite failures occur when a leftover
+  managed-configuration SQLite DB exists at the repo-local relative `.mediaflow`
+  database path (tests that resolve managed Active instead of their temp JSON fail;
+  verified they pass when that ignored state directory is absent). Recorded as
+  `FAIL / PRE-EXISTING / ENVIRONMENT`.
+- Whole-repo ruff reports one pre-existing unformatted file and one pre-existing lint
+  error (`tests/test_system_settings_management.py`), present at Task Base; every file
+  changed by this Task is format- and lint-clean.
+- The 7 skipped full-suite tests are real-service/endurance gates (real SMB/S3/OpenList
+  and isolated endurance profiles): reported `SKIP / UNAVAILABLE`, no inference of PASS.
 
 ### Checkpoint
 

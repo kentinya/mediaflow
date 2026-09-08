@@ -134,7 +134,7 @@ class StaleJobVisibilityTests(unittest.TestCase):
         self.assertIn("MUTATION_AUTHORIZED \\u2014 MANUAL RECOVERY ONLY", script)
         self.assertIn("system.stale_job_age_seconds", script)
         stale_section = script[script.index("async function renderStaleJobs") :]
-        stale_section = stale_section[: stale_section.index("function showDryRunJobForm")]
+        stale_section = stale_section[: stale_section.index("function showQueueJobForm")]
         self.assertIn("Owner", stale_section)
         self.assertIn("Next action", stale_section)
         self.assertIn("operationalCondition", stale_section)

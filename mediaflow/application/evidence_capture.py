@@ -15,6 +15,7 @@ from mediaflow.domain.media_evidence import (
 from mediaflow.domain.organizer import (
     ExecutionResult,
     OrganizePlan,
+    OrganizePolicy,
     PlanOperation,
 )
 from mediaflow.domain.recognition import RecognitionStatus
@@ -24,6 +25,12 @@ _MAX_ITEM_TEXT = 256
 _MAX_ERROR = 1000
 _MAX_ITEMS = 64
 _MAX_SCORE_COMPONENTS = 16
+
+PREVIEW_CONFLICT_NEXT_ACTION = (
+    "this analysis-only finding is not execution authority; run the explicit real "
+    "Organize journey under fresh one-shot authority and current-state revalidation "
+    "when organization is desired"
+)
 
 
 def build_pipeline_evidence(
@@ -37,6 +44,8 @@ def build_pipeline_evidence(
     outcome: str | None = None,
     storages: Mapping[str, Any] | None = None,
     captured_at: datetime | None = None,
+    organize_policy: OrganizePolicy | None = None,
+    conflict_finding: bool = False,
 ) -> PipelineEvidence:
     """Capture one immutable evidence record for a TaskItem attempt.
 
@@ -56,7 +65,11 @@ def build_pipeline_evidence(
         "policies": _policies_section(strategy),
         "naming": _naming_section(strategy),
         "classification": _classification_section(strategy),
-        "plan": _plan_section(plan),
+        "plan": _plan_section(
+            plan,
+            organize_policy=organize_policy,
+            conflict_finding=conflict_finding,
+        ),
         "operation": _operation_section(execution),
         "capabilities": _capability_section(plan, storages),
     }
@@ -414,13 +427,26 @@ def _classification_section(strategy) -> EvidenceSection:
     )
 
 
-def _plan_section(plan: OrganizePlan | None) -> EvidenceSection:
+def _plan_section(
+    plan: OrganizePlan | None,
+    *,
+    organize_policy: OrganizePolicy | None = None,
+    conflict_finding: bool = False,
+) -> EvidenceSection:
     if plan is None:
         return EvidenceSection(
             False,
             unavailable_reason="organize plan was not reached",
         )
     duplicate = plan.duplicate_comparison
+    if organize_policy is not None:
+        policy_value = {
+            "policyId": _bounded(organize_policy.policy_id),
+            "configuredConflictStrategy": _bounded(organize_policy.conflict_strategy.value),
+        }
+    else:
+        policy_value = None
+    next_action = PREVIEW_CONFLICT_NEXT_ACTION if conflict_finding and plan.conflicts else None
     value: dict[str, Any] = {
         "planId": _bounded(plan.plan_id),
         "sourceStorageId": _bounded(plan.source_storage_id),
@@ -431,6 +457,8 @@ def _plan_section(plan: OrganizePlan | None) -> EvidenceSection:
         "status": _bounded(plan.status.value),
         "mediaLibraryRoot": _bounded(plan.media_library_root, _MAX_ITEM_TEXT),
         "overwriteAuthorized": plan.overwrite_authorized,
+        "configuredPolicy": policy_value,
+        "nextAction": next_action,
         "warnings": _bounded_items(plan.warnings),
         "conflicts": [
             {

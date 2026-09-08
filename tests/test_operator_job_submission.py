@@ -102,31 +102,38 @@ class OperatorJobSubmissionTests(unittest.TestCase):
         self.assertEqual(request(self.api, None, raw_body=b"{")[0], 400)
         self.assertEqual(self.repository.list_jobs(), ())
 
-    def test_ui_has_three_steps_and_only_dryrun_request_shape(self) -> None:
+    def test_ui_has_one_queue_job_surface_with_organize_review(self) -> None:
         script = APP_JS.decode()
-        self.assertIn("Queue DryRun job", script)
-        self.assertIn("['scan', 'preview']", script)
-        self.assertIn("Review DryRun job", script)
+        self.assertIn("Queue Job", script)
+        self.assertNotIn("Queue DryRun job", script)
+        self.assertIn("['scan', 'preview', 'organize']", script)
+        self.assertIn("Review Job", script)
+        self.assertNotIn("Review DryRun job", script)
         self.assertIn("Confirm queueing", script)
+        self.assertIn("Confirm Organize", script)
         self.assertIn("Back without queueing", script)
         self.assertIn("Keep jobs unchanged", script)
         self.assertIn("Object.freeze", script)
         self.assertIn("['Authority', 'DRY_RUN']", script)
         self.assertIn("['Storage mutation', 'NONE']", script)
+        self.assertIn("['Authority', 'REMOTE_EXECUTE (one-shot)']", script)
+        self.assertIn("['Storage mutation', 'POSSIBLE']", script)
+        self.assertIn("execute: true", script)
         self.assertIn("limit.max = '10000'", script)
         self.assertIn("body: JSON.stringify(payload)", script)
         self.assertIn("await renderObservability('jobs'); await showJob(created.job_id)", script)
         self.assertNotIn("window.confirm", script)
         self.assertNotIn("HTTP_X_MEDIAFLOW_EXECUTION_TOKEN", script)
-        self.assertNotIn("execute: true", script)
-        self.assertNotIn("'organize'", script)
-        # The DryRun submission journey itself must never name overwrite authority; the
-        # guided OrganizePolicy configuration section legitimately displays it read-only.
+        self.assertIn("'organize'", script)
+        # The Queue Job submission journey must never request overwrite authority or
+        # carry an execution token; the guided OrganizePolicy configuration section
+        # legitimately displays overwrite read-only.
         submission = "".join(
             _js_function_body(script, name)
-            for name in ("showDryRunJobForm", "reviewDryRunJob", "submitDryRunJob")
+            for name in ("showQueueJobForm", "reviewQueueJob", "submitQueueJob")
         )
         self.assertNotIn("overwrite", submission.casefold())
+        self.assertNotIn("delete", submission.casefold())
         self.assertNotIn("overwrite:", script)
 
 

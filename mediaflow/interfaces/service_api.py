@@ -5372,6 +5372,11 @@ class MediaFlowApi:
                         raise ValueError("remote execution is disabled")
                     if document.get("execute") is not True:
                         raise ValueError("remote organize requires execute=true")
+                    unsupported = set(document).difference({"command", "execute", "limit"})
+                    if unsupported:
+                        raise ValueError(
+                            f"unsupported remote organize field {sorted(unsupported)[0]!r}"
+                        )
                     token = str(environ.get("HTTP_X_MEDIAFLOW_EXECUTION_TOKEN", ""))
                     job = binding.execution_authorizations.submit_organize(
                         token, limit=document.get("limit")
