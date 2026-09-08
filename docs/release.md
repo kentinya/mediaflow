@@ -5,6 +5,8 @@ release explicitly.
 
 ## V1 Docker release
 
+Release version: `1.0.0`.
+
 Slice 29 is the final V1 integration Slice. It ships the repository's first installable
 Docker image, `compose.yaml`, and Waitress-backed `api serve-production` command for the four
 independent API/Worker/Scheduler/Notification Worker services. The services retain independent

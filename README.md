@@ -44,6 +44,8 @@ export MEDIAFLOW_WEBHOOK_SECRET="<independent-random-webhook-secret>"
 
 ## V1 self-hosted release status
 
+V1 release version: `1.0.0`.
+
 Slices 26, 27, 28 and 29 are PASS / CLOSED. The V1 self-hosted release is delivered:
 
 ```text

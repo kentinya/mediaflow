@@ -24,6 +24,8 @@ provider SDK APIs directly. It uses domain interfaces and application services.
 
 ## V1 order and architecture decisions
 
+The V1 release line is version `1.0.0`; Slices 26 through 29 form its released baseline.
+
 Slices 26, 27, 28 and 29 are PASS / CLOSED. The V1 business-capability sequence is:
 
 ```text
