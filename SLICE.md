@@ -7,9 +7,9 @@ checkpoints; Slice 29 remains PASS / CLOSED and is not reopened.
 Slice ID: 30
 Name: V2 Frontend Platform & Architecture
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 7c7c602c6531c60ddf2d6678857e2ef76c3860b6
-Implementation Head: NOT SET
+Implementation Head: 6953b87afa09e61ff62ffea5eb2a9a7d96c55492
 ~~~
 
 The Base is the actual V2 activation commit immediately before Slice 30 implementation begins. It
@@ -194,41 +194,99 @@ A-reviewed architecture change.
 ~~~
 Slice: 30 — V2 Frontend Platform & Architecture
 Base SHA: 7c7c602c6531c60ddf2d6678857e2ef76c3860b6
-Head SHA: NOT SET
+Head SHA: 6953b87afa09e61ff62ffea5eb2a9a7d96c55492
 
 Required Outcomes:
-- RO-1 through RO-8 — NOT STARTED; B must report each outcome independently.
+- RO-1 — COMPLETE: project-owned typed React/Vite feature-first frontend boundary.
+- RO-2 — COMPLETE: central typed API client, explicit 401/403 outcomes and memory-only Bearer auth.
+- RO-3 — COMPLETE: Router → Query → client → existing Python API → typed model → shared UI path.
+- RO-4 — COMPLETE: loading, empty, success, categorized failure, auth denial and bounded refresh proof.
+- RO-5 — COMPLETE: locked Vite build is baked into and served from the Python Docker artifact with
+  no Node production runtime or second service.
+- RO-6 — COMPLETE: Vitest/RTL and Playwright foundations plus retained Python security/API tests.
+- RO-7 — COMPLETE: V1 `/ui` and separate `/ui-v2/` coexist in source and production image.
+- RO-8 — COMPLETE: Python/RBAC/execution authority and OrganizerExecutor-only mutation are preserved.
+
+Required Surfaces:
+- Frontend source surface — COMPLETE.
+- Routing surface — COMPLETE.
+- API/query surface — COMPLETE.
+- Authentication/permission surface — COMPLETE.
+- Shared UI surface — COMPLETE.
+- Build/serving surface — COMPLETE in source checkout and production Docker artifact.
+- Test surface — COMPLETE.
+- Migration/documentation surface — COMPLETE for Slice 30; A reconciliation items are listed below.
 
 Implemented:
-- No implementation. This is the committed A-owned Contract and architecture boundary.
+- A typed React/TypeScript/Vite SPA with TanStack Router/Query, central bounded Dashboard client,
+  memory-only API-principal auth, shared UI primitives and the complete read-only Dashboard journey.
+- Python GET-only `/ui-v2/` static serving with safe headers, deep-route fallback, fail-closed asset
+  handling and unchanged V1 `/ui` plus `/api/v1/*` authority.
+- A locked multi-stage Docker build that copies only Vite output into the final non-root Python image,
+  with image/live release-security proof of V1/V2 coexistence and no Node runtime.
 
 Tasks completed:
-- None. B may plan Task 30.1 after this Contract checkpoint.
+- Task 30.1 — V2 Frontend Foundation and Read-Only Dashboard Proof — PASS at `1630c55404770f2657f6f4d99bfa1b08d46cf876`.
+- Task 30.2 — Production Docker V2 Artifact Integration and Release Proof — PASS at `6953b87afa09e61ff62ffea5eb2a9a7d96c55492`.
 
 Final Tests:
-- Governance/release validation belongs to the V2 activation and Slice implementation checkpoints.
+- `python3 scripts/check_governance.py` — PASS.
+- `npm --prefix web ci --include=dev` — PASS; 254 packages, 0 vulnerabilities.
+- Frontend format/type/lint — PASS; Vitest/RTL 45/45; production Vite build PASS; Playwright 3/3.
+- Ruff format/check and compileall — PASS; focused container/static/security tests 33/33.
+- Full unittest discovery in an isolated clean clone — PASS, 1406 tests, 7 skipped environment-gated
+  SMB/S3/OpenList/symlink/POSIX suites; no unavailable required local gate.
+- `python3 scripts/docker_release_security_smoke_test.py` — PASS with Docker available: exact clean
+  candidate image, four-service stack, baked V2 artifact, no Node runtime, static headers/coexistence,
+  RBAC, redaction, non-root/mount and zero-side-effect evidence all passed.
+- `git diff --check` — PASS.
 
 Safety Evidence:
-- V1.0.0 release baseline and existing Python authority remain unchanged by the Contract.
+- Dashboard entry/query/refresh uses only bounded GET requests and creates no Job, Task, Provider call,
+  execution authority or Storage mutation.
+- Bearer token remains runtime-memory-only and is absent from persistent browser stores, URLs,
+  rendered output, image, logs and exported evidence.
+- Static serving is GET-only, allowlisted/fail-closed and repository/Storage/Provider independent.
+- The production image remains non-root and Python-only; V1 API/RBAC, DryRun, confirmation,
+  recovery fencing and OrganizerExecutor-only mutation boundaries are unchanged.
+- Release tests used fake tokens, temporary Compose state and an isolated clean clone; private
+  configuration, `config/alist.json`, operator media and the existing `.mediaflow` database were not used.
 
 Known Non-blocking Issues:
-- None recorded at Slice activation.
+- P2: The pre-existing CWD-relative test/runtime-database isolation hazard can make root-worktree CLI tests
+  observe or write `.mediaflow/mediaflow.sqlite3`; Slice-final full regression was therefore run in an
+  isolated clean clone. This Slice does not change that unrelated test-infrastructure behavior.
+- P2: `node:22-bookworm-slim` floats within the Node 22 line; frontend packages remain lockfile-pinned.
+- P3: Existing unittest ResourceWarnings and 7 environment-gated skips remain unchanged.
 
 Explicitly Deferred:
-- All items in the Explicitly deferred section above.
+- Slice 31 operator shell and complete information architecture beyond the bounded Dashboard route.
+- Slice 32 Files/FileIndex migration, Storage browsing, file detail and media actions.
+- Slice 33 complete Operations workspace, including Tasks, Jobs, schedules and Notifications.
+- Slice 34 review, conflict, checkpoint and per-item recovery workspace.
+- Slice 35 Configuration/Settings/forms, revision evidence, activation and administration migration.
+- Slice 36 parity, accessibility completion, `/ui` cutover and legacy UI retirement.
+- New backend/domain behavior, API redesign/BFF and frontend-owned domain authority.
+- New identity/session/OIDC systems, token persistence/refresh, SSR/Node production serving,
+  micro-frontends, Redux-by-default and CDN runtime dependencies.
+- Provider/Storage expansion, execution-policy changes, uncertain-mutation replay, rollback and any
+  V1 product expansion listed in the Contract remain deferred.
 
 Documentation Reconciliation Needed:
-- A will reconcile factual CURRENT/TARGET statements at Slice closure without extending the
-  reviewed Base..Implementation Head range.
+- A should reconcile stale activation-era statements in the Chinese canonical specification,
+  `docs/product-experience.md`, `docs/v2-requirements.md` and `docs/roadmap.md` that still say Slice 30
+  has no implementation/Task and record the final Roadmap/Progress closure facts if A returns PASS.
+- README, deployment and architecture guidance already describe the implemented V2 build/runtime
+  boundary; A should verify those facts without extending Base..Implementation Head.
 
-Decision: NOT READY FOR A REVIEW
+Decision: SLICE READY FOR A REVIEW
 ~~~
 
 ## Review state
 
 ~~~
-Slice Status: ACTIVE
-Implementation Head: NOT SET
-P0/P1 Defects: None known at activation; no implementation has started
-Next Action: B PLANS TASK 30.1 FROM THIS COMMITTED CONTRACT
+Slice Status: READY FOR A REVIEW
+Implementation Head: 6953b87afa09e61ff62ffea5eb2a9a7d96c55492
+P0/P1 Defects: None found by B in Base..Implementation Head or Slice-final validation
+Next Action: A FINAL REVIEW
 ~~~
