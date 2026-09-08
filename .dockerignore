@@ -22,6 +22,11 @@ compose.yaml
 .mediaflow
 media
 deploy
+web/node_modules
+web/dist
+web/coverage
+web/playwright-report
+web/test-results
 *.md
 .ruff_cache
 

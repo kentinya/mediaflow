@@ -53,8 +53,14 @@ Slice 30 — V2 Frontend Platform & Architecture
 ```
 
 Slice 30 is `ACTIVE` under the committed A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
-`7c7c602c6531c60ddf2d6678857e2ef76c3860b6` and no implementation head yet. The target architecture
-below is therefore an adopted Slice contract, not a claim that V2 frontend code has been delivered.
+`7c7c602c6531c60ddf2d6678857e2ef76c3860b6`. Task 30.1 delivered the first proving unit of the
+architecture below: the `web/` React/TypeScript/Vite source boundary with TanStack Router and
+TanStack Query, a central typed API client with memory-only Bearer-token auth, the read-only
+Dashboard route, and Python static serving of the built artifact at `/ui-v2/` beside the unchanged
+V1 `/ui`. Vitest, React Testing Library and a minimal Playwright path cover it; final Docker
+image/Compose packaging of the artifact and the remaining Slice 30 outcomes stay open under the
+Contract. The rest of this section remains the adopted Slice architecture for the remaining V2
+work.
 
 The target V2 frontend is a client-side React/TypeScript SPA built with Vite, TanStack Router and
 TanStack Query, organized feature-first with a central typed API boundary and project-owned design
