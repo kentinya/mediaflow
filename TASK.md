@@ -283,7 +283,7 @@ evidence are not implemented by this Task. This Task covers RO-4.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: bacfb8b2d1425629a70b15d9d0f7e4a4066094c2
 ```
 
 ## B Review Result
