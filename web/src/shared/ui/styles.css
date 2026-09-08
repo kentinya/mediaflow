@@ -1,0 +1,228 @@
+:root {
+  color-scheme: dark;
+  --bg: #101512;
+  --panel: #19211c;
+  --line: #34443a;
+  --ink: #edf5ef;
+  --muted: #9db0a2;
+  --accent: #b7f26c;
+  --warn: #ffd166;
+  --bad: #ff7b72;
+  font:
+    15px system-ui,
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.mf-shell-header {
+  padding: 28px 4vw;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+}
+
+.mf-shell-header h1 {
+  margin: 0.2rem 0 0;
+  font-size: clamp(1.4rem, 3.5vw, 2.4rem);
+}
+
+.mf-eyebrow {
+  letter-spacing: 0.25em;
+  color: var(--accent);
+}
+
+.mf-auth-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.mf-auth-state {
+  color: var(--muted);
+}
+
+.mf-auth-link {
+  color: var(--accent);
+}
+
+.mf-shell-main {
+  padding: 24px 4vw 64px;
+  max-width: 1100px;
+}
+
+.mf-button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #202b24;
+  color: var(--ink);
+  padding: 9px 14px;
+  cursor: pointer;
+}
+
+.mf-button:hover,
+.mf-button:focus {
+  border-color: var(--accent);
+}
+
+.mf-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.mf-button-secondary {
+  background: transparent;
+}
+
+.mf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 16px 0;
+  max-width: 420px;
+}
+
+.mf-field label {
+  color: var(--muted);
+}
+
+.mf-field input {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #202b24;
+  color: var(--ink);
+  padding: 9px 12px;
+}
+
+.mf-field-hint {
+  color: var(--muted);
+  margin: 0;
+}
+
+.mf-status {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin: 16px 0;
+}
+
+.mf-status h2 {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+}
+
+.mf-status p {
+  margin: 6px 0;
+  color: var(--muted);
+}
+
+.mf-status-info {
+  border-left-color: var(--accent);
+}
+
+.mf-status-success {
+  border-left-color: var(--accent);
+}
+
+.mf-status-warning {
+  border-left-color: var(--warn);
+}
+
+.mf-status-error {
+  border-left-color: var(--bad);
+}
+
+.mf-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.mf-dashboard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.mf-dashboard-head h2 {
+  margin: 0;
+}
+
+.mf-dashboard-meta {
+  color: var(--muted);
+}
+
+.mf-count-section h3 {
+  margin: 24px 0 8px;
+  font-size: 1rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.mf-count-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.mf-count-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mf-count-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.mf-count-label {
+  color: var(--muted);
+}
+
+.mf-failure-list {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0;
+  margin: 8px 0;
+  list-style: none;
+}
+
+.mf-failure-list li {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mf-failure-list li:last-child {
+  border-bottom: none;
+}
+
+.mf-failure-meta {
+  color: var(--muted);
+}

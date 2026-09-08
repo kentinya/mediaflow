@@ -83,9 +83,52 @@ Package version on main: 2.0.0.dev0
 ```
 
 V2 is organized as independently reviewable large Slices. Slice 30 is `ACTIVE` under the committed
-A-owned Contract; no implementation Task is active yet, and the next legal action is B plans Task
-30.1. This documentation boundary does not implement a new frontend or change the V1 API,
-execution, authentication, or Storage authority.
+A-owned Contract. Task 30.1 delivered the first V2 proving unit (the `web/` frontend boundary, the
+read-only Dashboard route and Python `/ui-v2/` static coexistence described below); remaining
+Slice 30 outcomes and final Docker packaging are still open under that Contract. The V1 API,
+execution, authentication and Storage authority are unchanged.
+
+## V2 frontend (web/)
+
+Task 30.1 introduced the first V2 frontend boundary: a project-owned React + TypeScript + Vite SPA
+in `web/`, using TanStack Router for client-side route ownership and TanStack Query as the single
+server-state/query-cache boundary. Node is a build/development tool only — the Python application
+serves the deterministic built artifact at the `/ui-v2/` migration prefix, and no Node runtime,
+second HTTP service, SSR or CDN is involved in production.
+
+- **Entry and routes.** `/ui-v2/` is the V2 entry (documented migration prefix); `/ui-v2/dashboard`
+  is the read-only Dashboard proving route. Unknown client routes fall back to the V2 entry
+  document. The V1 `/ui` remains available and unchanged during migration.
+- **Token model.** The existing API-principal Bearer token is entered once at the V2 entry and held
+  in browser memory only. It is never written to localStorage, sessionStorage, IndexedDB, cookies,
+  URLs or logs; the input is cleared after connect and Disconnect clears the token and query cache.
+- **Static serving.** Python serves the built artifact from `web/dist` (resolved from the checkout),
+  or from the directory named by `MEDIAFLOW_UI_V2_ASSET_ROOT` for deployment-owned layouts. The
+  artifact is GET-only, carries the same safe headers/CSP/cache policy as the V1 static surface,
+  and never accesses repositories, Storage, Providers or execution services. If the artifact has
+  not been built, `/ui-v2/*` fails closed with 404.
+- **Source ownership.** `web/src/app` (bootstrap/providers), `web/src/routes` (router),
+  `web/src/features` (entry, dashboard), `web/src/entities` (typed Dashboard model and
+  normalization), `web/src/shared/api` (central typed client, memory-only auth), and
+  `web/src/shared/ui` (primitives and styles).
+
+Development and verification commands (run after the repository Setup):
+
+```bash
+npm --prefix web ci            # install the pinned toolchain from the lockfile
+npm --prefix web run format:check
+npm --prefix web run typecheck
+npm --prefix web run lint
+npm --prefix web run test -- --run   # Vitest + React Testing Library
+npm --prefix web run build     # deterministic static artifact into web/dist
+npm --prefix web run test:e2e  # minimal Playwright path against web/dist + a local fake API
+```
+
+`npm --prefix web run test:e2e` requires the Playwright Chromium browser
+(`npx --prefix web playwright install chromium` plus system dependencies when needed); it uses
+local fake tokens and a local fake API only. Docker image/Compose packaging of the V2 artifact is a
+separate follow-up Task; until it lands, container deployments keep serving the V1 `/ui` only.
+
 
 ## CLI
 

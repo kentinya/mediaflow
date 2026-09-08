@@ -119,6 +119,7 @@ from mediaflow.interfaces.pagination import (
     decode_directional_cursor,
     encode_cursor,
 )
+from mediaflow.interfaces.v2_ui import V2_UI_PREFIX, v2_ui_asset
 
 
 class ApiPermissionDenied(RuntimeError):
@@ -432,6 +433,14 @@ class MediaFlowApi:
                 if method != "GET":
                     return self._error(start_response, 405, "method_not_allowed", "GET required")
                 content_type, body = OPERATOR_UI_ASSETS[path]
+                return self._static_response(start_response, content_type, body)
+            if path == V2_UI_PREFIX or path.startswith(V2_UI_PREFIX + "/"):
+                if method != "GET":
+                    return self._error(start_response, 405, "method_not_allowed", "GET required")
+                v2_asset = v2_ui_asset(path)
+                if v2_asset is None:
+                    return self._error(start_response, 404, "not_found", "route was not found")
+                content_type, body = v2_asset
                 return self._static_response(start_response, content_type, body)
             if not path.startswith("/api/v1"):
                 return self._error(start_response, 404, "not_found", "route was not found")
