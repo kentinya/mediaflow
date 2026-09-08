@@ -45,6 +45,11 @@ class ReleaseSecurityPolicyTests(unittest.TestCase):
             "export",
             "logs",
             ".ruff_cache",
+            "web/node_modules",
+            "web/dist",
+            "web/coverage",
+            "web/playwright-report",
+            "web/test-results",
         ):
             with self.subTest(pattern=required):
                 self.assertIn(required, dockerignore)

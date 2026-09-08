@@ -313,6 +313,36 @@ class ContainerArtifactTests(unittest.TestCase):
         ):
             self.assertIn(required, ignore)
 
+    def test_dockerfile_multi_stage_builds_v2_artifact_into_python_runtime(self) -> None:
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        stages = [line.strip() for line in dockerfile.splitlines() if line.startswith("FROM ")]
+        self.assertEqual(
+            stages,
+            ["FROM node:22-bookworm-slim AS web-build", "FROM python:3.13-slim"],
+            dockerfile,
+        )
+        self.assertIn("COPY web/package.json web/package-lock.json ./", dockerfile)
+        self.assertIn("RUN npm ci --no-audit --no-fund", dockerfile)
+        self.assertIn("RUN npm run build", dockerfile)
+        self.assertIn("test -f dist/index.html", dockerfile)
+        self.assertIn("COPY --from=web-build /build/web/dist /opt/mediaflow/web/dist", dockerfile)
+        self.assertIn(
+            "MEDIAFLOW_UI_V2_ASSET_ROOT=/opt/mediaflow/web/dist",
+            dockerfile,
+            "the runtime image must bind the static-serving root to the built artifact",
+        )
+        final_stage = dockerfile.split("FROM python:3.13-slim", 1)[1]
+        self.assertNotIn("npm", final_stage)
+        self.assertNotIn("node_modules", final_stage)
+        self.assertNotRegex(final_stage, r"\bnode\b", "the runtime stage must not use Node")
+        self.assertNotIn("COPY web", final_stage)
+
+    def test_compose_serves_v2_from_the_image_without_host_web_bind(self) -> None:
+        compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("web/dist", compose)
+        self.assertNotIn("MEDIAFLOW_UI_V2_ASSET_ROOT", compose)
+        self.assertNotIn("node", compose.casefold())
+
     def test_deployment_config_helper_is_container_shaped_and_secret_free(self) -> None:
         document = make_deployment_configuration()
         rendered = json.dumps(document, ensure_ascii=False)
