@@ -21,6 +21,8 @@ only in [the development workflow](development-workflow.md).
 
 ## Current boundary
 
+The released V1 line is version `1.0.0`.
+
 Slices 26, 27, 28 and 29 are PASS / CLOSED. Slice 28 closed at Base
 `957a4ebcb0fde03e64be9c406fbcdfed9a12501d` and Implementation Head
 `8546ff8fe15386dfbbb5fefb29a66b936ed4613f`, delivering day-2 Web/API configuration

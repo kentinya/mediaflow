@@ -13,6 +13,7 @@ image, Compose topology, runtime output and authenticated projections.
 
 ## Boundary
 
+- This deployment document describes the MediaFlow V1.0.0 release baseline.
 - One image runs the installed `mediaflow` package. The image runs as UID/GID
   `10001:10001` by default and never needs root.
 - `compose.yaml` defines exactly `api`, `worker`, `scheduler`, and

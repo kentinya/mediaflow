@@ -8,6 +8,8 @@ workflow authority. Closure rules live only in
 
 ## Most Recently Closed Slice
 
+V1 release baseline: `1.0.0`.
+
 ### Slice 29 — Docker Production Self-hosted Release
 
 ```text
