@@ -370,16 +370,18 @@ email/chat/media-server notifications remain V1.x/V2 or deployment-specific work
 
 ## V2 Operator Web migration
 
-The V1 `/ui` remains available while the V2 Operator Web is introduced. Slice 30 has delivered and
-closed the architecture/platform foundation plus the bounded Dashboard proving journey below. It
-does not claim the later application migrations or final V1 UI cutover.
+The V1 `/ui` remains available while the V2 Operator Web is introduced. Slices 30 and 31 have
+delivered and closed the architecture/platform foundation, bounded Dashboard proving journey,
+operator shell, centralized information architecture and shared route/authentication recovery below.
+They do not claim the later application migrations or final V1 UI cutover.
 
 ### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
 
-- **Goal:** open a read-only V2 Dashboard and understand the current bounded operational state.
-  An operator entering a supported deep route should connect through the existing memory-only
-  principal boundary, continue to the intended safe route, and recover from absent/rejected
-  authority, forbidden access, unavailable data or an unknown route without losing shell context.
+- **Goal:** enter V2 at the root or a supported deep route, remain oriented in the operator shell,
+  and open the read-only Dashboard or a truthful migration landing. The operator connects through
+  the existing memory-only principal boundary, continues to the intended safe route, and recovers
+  from absent/rejected authority, forbidden access, unavailable data or an unknown route without
+  losing shell context.
 - **Entry:** enter the V2 migration surface at `/ui-v2` (or the repository-selected equivalent) and
   authenticate with the existing API-principal Bearer token. Root entry connects to Overview/Dashboard;
   direct deep entry preserves the intended destination and continues there after connection.
@@ -403,9 +405,10 @@ does not claim the later application migrations or final V1 UI cutover.
 
 - **CURRENT:** V1 `/ui`, its API behavior and Python execution authority remain available and
   authoritative. Existing Bearer authentication and RBAC continue to apply.
-- **CURRENT V2 FOUNDATION:** the separate V2 entry provides typed routing/query/API boundaries,
-  shared UI foundations and production static serving by the existing Python application with no
-  Node production runtime.
+- **CURRENT V2 FOUNDATION:** the separate V2 entry provides the centralized product-area model,
+  persistent responsive shell, typed routing/query/API boundaries, safe deep-link continuation,
+  shared route/authentication recovery and production static serving by the existing Python
+  application with no Node production runtime.
 - **DEFERRED:** no `/ui` cutover or V1 UI retirement occurs until the later parity, accessibility and
-  retirement acceptance. Shell, Files, Operations, Review/Recovery and Configuration migrations are
-  not described as delivered by Slice 30.
+  retirement acceptance. Library/Files, Operations, Review/Recovery and Configuration business
+  migrations remain owned by later Slices; their current V2 landings do not claim those journeys.

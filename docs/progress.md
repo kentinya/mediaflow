@@ -8,7 +8,7 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`, but no large Slice or implementation Task is active after Slice 30
+V2 remains active on `main`, but no large Slice or implementation Task is active after Slice 31
 closure. The next legal action is for A to select the next large Slice in a later turn. The current
 Contract and Roadmap boundary are maintained in [`SLICE.md`](../SLICE.md) and
 [`roadmap.md`](roadmap.md). This pointer is not a closure-ledger entry.
@@ -16,6 +16,23 @@ Contract and Roadmap boundary are maintained in [`SLICE.md`](../SLICE.md) and
 ## Most Recently Closed Slice
 
 V1 release baseline: `1.0.0`. V2 program package: `2.0.0.dev0`.
+
+### Slice 31 — Operator Shell & Information Architecture
+
+```text
+Status: PASS / CLOSED
+Base: 2e7aceb50750fb54689ab26bfd1214b8e36c25f8
+Implementation Head: 45cb1d4cdda6cf46a6d6699600bc4a4563efc06b
+A Final Review: PASS / CLOSED — 2026-09-09
+```
+
+Delivered the centralized typed V2 product-area model, persistent responsive shell, semantic and
+keyboard-usable navigation, memory-only deep-link authentication continuation, actionable
+401/403/unavailable/not-found recovery and truthful V1 migration handoffs. Dashboard remains the
+only implemented V2 business area; V1 `/ui`, `/api/v1/*`, RBAC, Python authority and
+OrganizerExecutor-only mutation remain unchanged. Deferred scope remains the Slice 32–36 Library,
+Operations, Review/Recovery, Configuration and parity/cutover journeys, new identity/API systems and
+all other Slice 31 Contract deferrals.
 
 ### Slice 30 — V2 Frontend Platform & Architecture
 
@@ -176,6 +193,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 31 — Operator Shell & Information Architecture | PASS / CLOSED | `2e7aceb50750fb54689ab26bfd1214b8e36c25f8` | `45cb1d4cdda6cf46a6d6699600bc4a4563efc06b` | A Final Review PASS / CLOSED — 2026-09-09 | Typed product-area IA, responsive/accessible shell, safe deep-link auth continuation, actionable route/permission recovery and truthful V1 handoff | Slices 32–36 business migrations/parity/cutover, new identity/API systems and other Contract deferrals |
 | 30 — V2 frontend platform and architecture | PASS / CLOSED | `7c7c602c6531c60ddf2d6678857e2ef76c3860b6` | `6953b87afa09e61ff62ffea5eb2a9a7d96c55492` | A Final Review PASS / CLOSED — 2026-09-09 | React/TypeScript/Vite platform, typed memory-only API boundary, read-only Dashboard proof, Python V2 static serving and Python-only Docker runtime artifact | Slices 31–36 migrations/cutover, new identity/session systems, API redesign and other Contract deferrals |
 | 29 — Docker production self-hosted release | PASS / CLOSED | `b57db5a28ee944bc121b69608bb6475d8ae555a7` | `657f1a3697eec8e1537bee1335d45a06bec35c6f` | A Final Review PASS / CLOSED — 2026-09-08 | One-image four-service Docker Compose production release, durable `/data`, explicit media mounts, health/readiness, restart/fencing, upgrade/recovery, release security and execution-boundary completeness | Built-in identity/OIDC, TLS/proxy, full Secret Store/Docker Secrets, Provider switching, remote/distributed persistence, uncertain-mutation replay, rollback and specialized notifications |
 | 28 — Web-first configuration and operations administration | PASS / CLOSED | `957a4ebcb0fde03e64be9c406fbcdfed9a12501d` | `8546ff8fe15386dfbbb5fefb29a66b936ed4613f` | A Final Review PASS / CLOSED — 2026-09-07 | Day-2 Web/API configuration administration, consumed System Settings, secret-free package exchange and Webhook test/delivery recovery | Slice 29 Docker release, Provider switching, built-in identity, full Secret Store, specialized notifications, distributed workers and uncertain-mutation replay |

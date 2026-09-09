@@ -19,7 +19,7 @@ only in [the development workflow](development-workflow.md).
 | 28 — Web-first configuration and operations administration | Complete the day-2 Web configuration lifecycle and object-management experience, consumed System Settings, versioned secret-free configuration/result import-export, and managed Webhook delivery configuration/test/recovery | PASS / CLOSED | 27 |
 | 29 — Docker production self-hosted release | Deliver and verify the one-image, multi-service Docker Compose product journey with production HTTP serving, local durable `/data`, explicit media mounts, non-root operation, lifecycle health, restart persistence and fail-closed upgrade/migration | PASS / CLOSED | 27 and 28 |
 | 30 — V2 Frontend Platform & Architecture | Establish the V2 frontend build/runtime boundary and prove it through one typed Dashboard journey without moving production authority out of Python | PASS / CLOSED | V1.0.0 release baseline |
-| 31 — Operator Shell & Information Architecture | Deliver the authenticated V2 application shell, navigation, route ownership and shared operator information architecture | ACTIVE | 30 |
+| 31 — Operator Shell & Information Architecture | Deliver the authenticated V2 application shell, navigation, route ownership and shared operator information architecture | PASS / CLOSED | 30 |
 | 32 — Library & Files Experience | Migrate bounded Storage Files and FileIndex discovery/detail journeys with their existing read-only and authority boundaries | PLANNED | 31 |
 | 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notifications into a coherent V2 workspace, including a complete Web-native interactive organize journey that may redesign operator-facing authorization and whose routine execution avoids CLI token issuance/copy-paste while preserving backend authority, audit, limits and mutation invariants | PLANNED | 30, 31 |
 | 34 — Review & Recovery Workspace | Migrate per-item review, conflict, checkpoint and safe recovery journeys with independent batch state | PLANNED | 32, 33 |
@@ -59,10 +59,12 @@ with the lowest practical friction, while correctness, RBAC, audit, data integri
 OrganizerExecutor-only mutation remain mandatory. Slice 30 is `PASS / CLOSED` at Base
 `7c7c602c6531c60ddf2d6678857e2ef76c3860b6` and Implementation Head
 `6953b87afa09e61ff62ffea5eb2a9a7d96c55492`, having delivered the typed V2 Dashboard proving path,
-frontend/test boundary and Python-only production artifact while retaining V1 `/ui`. Slice 31 is now
-ACTIVE at Base `2e7aceb50750fb54689ab26bfd1214b8e36c25f8` and owns only the shared Operator Shell
-and Information Architecture boundary; B plans its first coherent Task after this Contract is
-checkpointed. This Roadmap does not pre-plan Task details.
+frontend/test boundary and Python-only production artifact while retaining V1 `/ui`. Slice 31 is
+`PASS / CLOSED` at Base `2e7aceb50750fb54689ab26bfd1214b8e36c25f8` and Implementation Head
+`45cb1d4cdda6cf46a6d6699600bc4a4563efc06b`, having delivered the shared responsive Operator Shell,
+centralized information architecture, memory-only deep-link continuation and actionable route/auth
+recovery. No large Slice is active; the next legal action is for A to select the next large Slice in
+a later turn. This Roadmap does not pre-plan Task details.
 
 ## Roadmap rules
 
