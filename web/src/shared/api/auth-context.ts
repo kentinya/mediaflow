@@ -18,6 +18,15 @@ export function useIsConnected(): boolean {
   return useAuthToken() !== null;
 }
 
+/** True when the in-memory principal was rejected by a backend 401. */
+export function useRejected(): boolean {
+  return useSyncExternalStore(
+    authStore.subscribe,
+    authStore.isRejected,
+    () => false,
+  );
+}
+
 /** The safe intended route preserved before authentication, or null when unset. */
 export function useIntendedPath(): string | null {
   return useSyncExternalStore(

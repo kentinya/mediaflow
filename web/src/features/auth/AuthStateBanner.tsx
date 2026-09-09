@@ -56,22 +56,26 @@ export function AuthStateBanner({
 export interface UnavailableBannerProps {
   readonly onRetry: () => void;
   readonly retrying: boolean;
+  readonly title?: string;
+  readonly description?: string;
 }
 
 /**
  * Reusable bounded banner for unavailable / rejected / malformed read results.
  * Offers an explicit retry that repeats only the same safe read-only query.
+ * The default title and description cover any read-only outcome that is
+ * neither auth-rejected nor permission-denied; callers may override them to
+ * surface their own bounded, secret-free context.
  */
 export function UnavailableBanner({
   onRetry,
   retrying,
+  title = "Service unavailable",
+  description = "The requested data could not be loaded right now. This is a read-only query; retrying repeats only that same request.",
 }: UnavailableBannerProps) {
   return (
-    <StatusBanner variant="error" title="Service unavailable">
-      <p>
-        The requested data could not be loaded right now. This is a read-only
-        query; retrying repeats only that same request.
-      </p>
+    <StatusBanner variant="error" title={title}>
+      <p>{description}</p>
       <div className="mf-actions">
         <RefreshControl onRefresh={onRetry} refreshing={retrying} />
       </div>

@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
-import { renderApp } from "../../../tests/utils";
+import { renderWithProviders } from "../../../tests/utils";
+import { DashboardPage } from "./DashboardPage";
 import {
   dashboardPayload,
   emptyDashboardPayload,
@@ -28,14 +29,17 @@ const TOKEN = "page-test-token";
 afterEach(() => {
   cleanup();
   authStore.clearToken();
+  authStore.clearIntendedPath();
   vi.unstubAllGlobals();
 });
 
 describe("DashboardPage", () => {
   it("asks unauthenticated operators to connect through the V2 entry", async () => {
     const fetchMock = stubFetch(async () => jsonResponse(dashboardPayload));
-    renderApp("/ui-v2/dashboard");
-    expect(await screen.findByText("Not connected")).toBeVisible();
+    renderWithProviders(<DashboardPage />);
+    expect(
+      await screen.findByRole("heading", { name: "Not connected" }),
+    ).toBeVisible();
     expect(
       screen.getByRole("link", { name: "Go to the V2 entry" }),
     ).toBeVisible();
@@ -50,14 +54,16 @@ describe("DashboardPage", () => {
         }),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/dashboard");
-    expect(await screen.findByText("Loading Dashboard")).toBeVisible();
+    renderWithProviders(<DashboardPage />);
+    expect(
+      await screen.findByRole("heading", { name: "Loading Dashboard" }),
+    ).toBeVisible();
   });
 
   it("renders the success state from the typed model", async () => {
     const fetchMock = stubFetch(async () => jsonResponse(dashboardPayload));
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/dashboard");
+    renderWithProviders(<DashboardPage />);
     expect(
       await screen.findByRole("heading", { name: "Dashboard" }),
     ).toBeVisible();
@@ -72,38 +78,59 @@ describe("DashboardPage", () => {
   it("renders the honest empty state without fabricated details", async () => {
     stubFetch(async () => jsonResponse(emptyDashboardPayload()));
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/dashboard");
-    expect(await screen.findByText("Dashboard is empty")).toBeVisible();
+    renderWithProviders(<DashboardPage />);
+    expect(
+      await screen.findByRole("heading", { name: "Dashboard is empty" }),
+    ).toBeVisible();
     expect(
       screen.getByText(/No files, tasks or jobs are recorded yet/),
     ).toBeVisible();
   });
 
-  it("renders the unauthorized state with the recovery entry link", async () => {
-    stubFetch(async () => jsonResponse({}, 401));
+  it("clears rejected authority and shows bounded recovery on 401", async () => {
+    const fetchMock = stubFetch(async () => jsonResponse({}, 401));
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/dashboard");
-    expect(await screen.findByText("Not authorized")).toBeVisible();
+    authStore.setIntendedPath("/dashboard");
+    renderWithProviders(<DashboardPage />);
+    expect(
+      await screen.findByRole("heading", { name: "Not authorized" }),
+    ).toBeVisible();
     expect(
       screen.getByRole("link", { name: "Enter an API principal token" }),
     ).toBeVisible();
+    // The rejected principal and its authenticated cache are cleared, while
+    // the intended safe route survives so re-entry can continue there.
+    await waitFor(() => expect(authStore.getToken()).toBeNull());
+    expect(authStore.getIntendedPath()).toBe("/dashboard");
+    // No automatic replay of the rejected request.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the forbidden state as a distinct bounded outcome", async () => {
+  it("keeps the authenticated principal distinct and retained on 403", async () => {
     stubFetch(async () => jsonResponse({}, 403));
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/dashboard");
-    expect(await screen.findByText("Forbidden")).toBeVisible();
+    renderWithProviders(<DashboardPage />);
+    expect(
+      await screen.findByRole("heading", { name: "Forbidden" }),
+    ).toBeVisible();
     expect(
       screen.getByText(/does not have permission to read the Dashboard/),
     ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Not authorized" }),
+    ).toBeNull();
+    // 403 is a permission failure, not an authentication failure: the
+    // still-authenticated principal is retained rather than silently dropped.
+    expect(authStore.getToken()).toBe(TOKEN);
   });
 
   it("renders the transport error state with bounded refresh", async () => {
     stubFetch(async () => new Response("gateway timeout", { status: 504 }));
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/dashboard");
-    expect(await screen.findByText("Dashboard unavailable")).toBeVisible();
+    renderWithProviders(<DashboardPage />);
+    expect(
+      await screen.findByRole("heading", { name: "Dashboard unavailable" }),
+    ).toBeVisible();
     expect(screen.getByText(/currently unavailable/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
   });
@@ -116,8 +143,10 @@ describe("DashboardPage", () => {
       jsonResponse({ unexpected: "payload shape" }),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/dashboard");
-    expect(await screen.findByText("Dashboard unavailable")).toBeVisible();
+    renderWithProviders(<DashboardPage />);
+    expect(
+      await screen.findByRole("heading", { name: "Dashboard unavailable" }),
+    ).toBeVisible();
     expect(
       screen.getByText(
         "The Dashboard response could not be understood as the expected read-only contract.",
@@ -143,7 +172,7 @@ describe("DashboardPage", () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch(async () => jsonResponse(dashboardPayload));
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/dashboard");
+    renderWithProviders(<DashboardPage />);
     await screen.findByRole("heading", { name: "Dashboard" });
     await user.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
