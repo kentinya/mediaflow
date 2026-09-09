@@ -7,9 +7,9 @@ Slice 30. Slice 30 remains `PASS / CLOSED` in Git, Roadmap and Progress history 
 Slice ID: 31
 Name: Operator Shell & Information Architecture
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 2e7aceb50750fb54689ab26bfd1214b8e36c25f8
-Implementation Head: NOT SET
+Implementation Head: 45cb1d4cdda6cf46a6d6699600bc4a4563efc06b
 ~~~
 
 The Base is the actual committed `main` checkpoint immediately before Slice 31 activation and
@@ -222,7 +222,137 @@ memory and authenticated query state; recovery never replays unknown work.
 
 ## Closure Packet
 
-To be completed by B only after all Required Outcomes and Required Surfaces are evidenced.
+~~~
+Slice: 31 — Operator Shell & Information Architecture
+Base SHA: 2e7aceb50750fb54689ab26bfd1214b8e36c25f8
+Head SHA: 45cb1d4cdda6cf46a6d6699600bc4a4563efc06b
+
+Required Outcomes:
+- RO-1 — COMPLETE: one typed `destinationData` literal owns product-area labels, paths,
+  availability, migration state, active-location semantics, the `DestinationPath` union and the
+  runtime intended-route allowlist.
+- RO-2 — COMPLETE: the authenticated and recoverable route experience uses one persistent,
+  responsive shell with brand, navigation, page context and connection controls.
+- RO-3 — COMPLETE: root entry, refresh and allowlisted deep links share deterministic routing;
+  unauthenticated entry preserves the intended safe route in memory and disconnect clears token,
+  continuation and authenticated query state.
+- RO-4 — COMPLETE: Dashboard is identified as available V2 content, later product areas are
+  truthful migration surfaces with a V1 Web continuation, and V1 `/ui` remains available.
+- RO-5 — COMPLETE: semantic landmarks, skip-to-content, active-state semantics, page titles,
+  visible focus and keyboard-usable wide/narrow navigation are implemented and browser-proven.
+- RO-6 — COMPLETE: unauthenticated, rejected-authority, forbidden, unavailable and not-found
+  states remain in shell context and expose bounded connection, retry or navigation actions.
+- RO-7 — COMPLETE: route metadata, shell, auth continuation and authorized-read lifecycle are
+  feature-independent and covered by unit/component plus production-build browser evidence.
+- RO-8 — COMPLETE: existing Python API/domain authority, memory-only Bearer handling, RBAC, V1
+  coexistence, static serving and OrganizerExecutor-only mutation boundaries are preserved.
+
+Required Surfaces:
+- Shell surface — COMPLETE.
+- Information-architecture surface — COMPLETE.
+- Routing and deep-link surface — COMPLETE.
+- Authentication/permission surface — COMPLETE.
+- Migration coexistence surface — COMPLETE.
+- Responsive/accessibility surface — COMPLETE.
+- Test surface — COMPLETE.
+- Documentation surface — COMPLETE for implemented CURRENT shell/IA/auth-continuation facts; A
+  reconciliation items are listed below.
+
+Implemented:
+- A centralized operator-oriented destination model and TanStack Router route tree for Overview,
+  Library, Operations, Review & Recovery and Configuration, with honest implemented/migration
+  availability and active-route semantics.
+- A responsive application shell with semantic navigation, current-page context, narrow-screen
+  disclosure, skip/focus/title support, connection controls, not-found recovery and V1 handoff.
+- Feature-independent memory-only authentication continuation and authorized-read boundaries with
+  deterministic deep-link recovery, explicit disconnect/cache clearing, 401 re-entry, 403
+  distinction and bounded unavailable retry.
+- Focused Vitest/RTL and Playwright evidence for routing, navigation, responsive/keyboard use,
+  authentication/recovery, token secrecy, zero hidden work and V1/V2 coexistence.
+
+Tasks completed:
+- Task 31.1 — Operator shell, information architecture, and migration routes — PASS at
+  `19c389421ed9db4f12e194e75cdb49e9582267ed`.
+- Task 31.2 — Deep-link authentication continuity and actionable recovery — PASS at
+  `45cb1d4cdda6cf46a6d6699600bc4a4563efc06b`.
+
+Final Tests:
+- `python3 scripts/check_governance.py` — PASS.
+- `npm --prefix web ci` — PASS; 254 packages installed, 255 audited, 0 vulnerabilities.
+- Frontend format/type/lint — PASS; Vitest/RTL 79/79 in 10 files; production Vite build PASS;
+  Playwright Chromium 16/16.
+- `.venv/bin/python -m unittest tests.test_v2_ui tests.test_release_security` — PASS, 17/17.
+- Ruff format/check — PASS; 301 files already formatted; compileall — PASS.
+- Root-CWD full unittest discovery — 1408 run, 6 failures and 7 skips. All 6 failures loaded the
+  ignored local `config/alist.json` instead of isolated test configuration; no private values are
+  reproduced in this packet.
+- Full unittest discovery from an isolated clean detached worktree at the exact Implementation
+  Head — PASS, 1408 tests, 7 environment-gated skips. This proves the root-CWD failures are
+  pre-existing/private-runtime-state effects unrelated to Slice 31.
+- `python3 scripts/docker_release_security_smoke_test.py` — PASS with Docker available: clean
+  candidate image, four-service stack, V1/V2 static coexistence, headers, non-root execution,
+  RBAC, redaction, exact Active snapshot and zero-side-effect denial checks passed.
+- `git diff --check` — PASS for Base..Implementation Head and the B closure edits.
+
+Safety Evidence:
+- Shell rendering, routing, handoff and recovery issue no Storage/Provider request, Job/Task
+  creation, execution authority or media mutation; browser network assertions allow only the
+  operator-selected read-only Dashboard request/retry.
+- Bearer material remains runtime-memory-only and absent from URLs, route state, rendered output,
+  localStorage, sessionStorage, IndexedDB, cookies, logs, screenshots and V1 handoff.
+- A 401 clears rejected authority and authenticated query cache without automatic replay; a 403
+  retains the authenticated principal and never grants frontend authority.
+- Python `/api/v1/*`, RBAC, CSP/cache/static serving, V1 `/ui`, immutable Active-snapshot authority
+  and OrganizerExecutor-only mutation remain regression-covered and unchanged.
+- Tests use local fakes and temporary/isolated state. `config/alist.json`, credentials, private
+  endpoints and operator media are absent from Base..Implementation Head.
+
+Known Non-blocking Issues:
+- P2: the pre-existing root-CWD configuration-isolation hazard lets six Python tests read ignored
+  local `config/alist.json`; the exact Implementation Head passes all 1408 tests in a clean
+  worktree. Slice 31 neither changes nor conceals that unrelated test-infrastructure behavior.
+- P3: existing sqlite `ResourceWarning` output and 7 environment-gated skips remain unchanged.
+
+Explicitly Deferred:
+- Slice 32 Library & Files business journeys: real Storage browsing, FileIndex list/detail,
+  search/filter, Scan/Preview/Organize entry and media actions.
+- Slice 33 Operations Workspace: expanded Dashboard, Tasks, Jobs, schedules, Automation,
+  Notifications and the complete Web-native interactive execution-authorization journey.
+- Slice 34 Review & Recovery Workspace: Recognition/Metadata/Classification review, conflict,
+  checkpoint, per-item recovery and bounded batch recovery workflows.
+- Slice 35 Configuration Administration: Configuration, Settings, revision/test evidence,
+  activation and managed object editing in V2.
+- Slice 36 final parity, comprehensive cross-feature accessibility evidence, supported `/ui` cutover
+  and V1 UI retirement.
+- Any new backend endpoint, repository/schema/domain behavior, API redesign, BFF, frontend-owned
+  permission/domain decision or execution-grant implementation.
+- Built-in username/password identity, session/cookie authority, OIDC, reverse-proxy identity,
+  token persistence/refresh/rotation or redesign of the current API-principal authentication model.
+- Provider switching, new Metadata/Storage providers, processing/recovery policy changes, uncertain-
+  mutation replay, rollback, overwrite/delete defaults or any V1 product expansion.
+- SSR, React Server Components, Node production serving, micro-frontends, CDN runtime dependencies,
+  native mobile clients, global search/command palette, localization and complete visual-theme work.
+
+Documentation Reconciliation Needed:
+- A should reconcile activation-era current-state metadata in the canonical Chinese specification,
+  `README.md`, `docs/v2-requirements.md`, `docs/progress.md` and `docs/roadmap.md` if final review
+  returns PASS; several still identify Slice 30 as most recently closed and no large Slice as active,
+  while Roadmap correctly remains ACTIVE until A closes Slice 31.
+- Product Experience and Architecture already describe the implemented shell, information
+  architecture, memory-only continuation and migration boundary; A should verify those facts without
+  extending Base..Implementation Head.
+
+Decision: SLICE READY FOR A REVIEW
+~~~
+
+## Review State
+
+~~~
+Slice Status: READY FOR A REVIEW
+Implementation Head: 45cb1d4cdda6cf46a6d6699600bc4a4563efc06b
+P0/P1 Defects: None found by B in Base..Implementation Head or Slice-final validation
+Next Action: A FINAL REVIEW
+~~~
 
 ## A Final Review
 
