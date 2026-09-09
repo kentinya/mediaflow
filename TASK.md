@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 31.1
 Parent Slice: 31
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: 2de6551a40808b2781701a57d4a6d09b6831dc12
 Difficulty: Medium
 Test Level: T3
@@ -176,7 +176,7 @@ media or private runtime state.
 ### Checkpoint
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [filled after correction commit]
+Head SHA: 39299541c3d43bfdc24df2a9ea6a3c41dbfbbd59
 ```
 
 ## B Review Result
