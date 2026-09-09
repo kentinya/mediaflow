@@ -52,8 +52,9 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 36 — V2 Parity, Accessibility & Legacy UI Retirement
 ```
 
-Slice 30 is `ACTIVE` under the committed A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
-`7c7c602c6531c60ddf2d6678857e2ef76c3860b6`. Task 30.1 delivered the first proving unit of the
+Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
+`7c7c602c6531c60ddf2d6678857e2ef76c3860b6` and Implementation Head
+`6953b87afa09e61ff62ffea5eb2a9a7d96c55492`. Task 30.1 delivered the first proving unit of the
 architecture below: the `web/` React/TypeScript/Vite source boundary with TanStack Router and
 TanStack Query, a central typed API client with memory-only Bearer-token auth, the read-only
 Dashboard route, and Python static serving of the built artifact at `/ui-v2/` beside the unchanged
@@ -65,14 +66,15 @@ Node build stage and copying only the built static files into the final Python r
 consumed by the running Python process. The runtime image keeps no Node executable, npm,
 `node_modules`, frontend source, development server, SSR process, CDN dependency or second HTTP
 service, and the API service serves `/ui-v2/` and hashed assets beside the unchanged V1 `/ui` and
-`/api/v1/*` behavior. The remaining Slice 30 outcomes stay open under the Contract. The rest of
-this section remains the adopted Slice architecture for the remaining V2 work.
+`/api/v1/*` behavior. All Slice 30 outcomes are accepted; Slices 31–36 retain ownership of the
+later operator-surface migrations and cutover.
 
-The target V2 frontend is a client-side React/TypeScript SPA built with Vite, TanStack Router and
-TanStack Query, organized feature-first with a central typed API boundary and project-owned design
-system foundation. Vitest and React Testing Library cover unit/component behavior, with a Playwright
-browser-smoke foundation. The Vite output is served by the existing MediaFlow Python application;
-Node is build/development tooling only and is never a production server runtime.
+The current V2 frontend foundation is a client-side React/TypeScript SPA built with Vite, TanStack
+Router and TanStack Query, organized feature-first with a central typed API boundary and
+project-owned design system foundation. Vitest and React Testing Library cover unit/component
+behavior, with a Playwright browser-smoke foundation. The Vite output is served by the existing
+MediaFlow Python application; Node is build/development tooling only and is never a production
+server runtime.
 
 The V2 program preserves the current `/api/v1/*` authority, Python application/domain behavior,
 API-principal Bearer-token model, memory-only browser token handling, RBAC and all explicit execution

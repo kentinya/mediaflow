@@ -327,11 +327,11 @@ email/chat/media-server notifications remain V1.x/V2 or deployment-specific work
 
 ## V2 Operator Web migration
 
-The V1 `/ui` remains available while the V2 Operator Web is introduced. Slice 30 is the active
-architecture/platform Slice, but its implementation has not started; the journey below is the
-bounded proving target for that Slice, not a claim that it is already delivered.
+The V1 `/ui` remains available while the V2 Operator Web is introduced. Slice 30 has delivered and
+closed the architecture/platform foundation plus the bounded Dashboard proving journey below. It
+does not claim the later application migrations or final V1 UI cutover.
 
-### ACTIVE V2 TARGET — Dashboard proving journey
+### CURRENT V2 FOUNDATION — Dashboard proving journey
 
 - **Goal:** open a read-only V2 Dashboard and understand the current bounded operational state.
 - **Entry:** enter the V2 migration surface at `/ui-v2` (or the repository-selected equivalent) and
@@ -352,8 +352,9 @@ bounded proving target for that Slice, not a claim that it is already delivered.
 
 - **CURRENT:** V1 `/ui`, its API behavior and Python execution authority remain available and
   authoritative. Existing Bearer authentication and RBAC continue to apply.
-- **ACTIVE V2 TARGET:** the V2 entry is separate during migration, with typed routing/query/API
-  boundaries, shared UI foundations and production static serving by the existing Python application.
+- **CURRENT V2 FOUNDATION:** the separate V2 entry provides typed routing/query/API boundaries,
+  shared UI foundations and production static serving by the existing Python application with no
+  Node production runtime.
 - **DEFERRED:** no `/ui` cutover or V1 UI retirement occurs until the later parity, accessibility and
   retirement acceptance. Shell, Files, Operations, Review/Recovery and Configuration migrations are
   not described as delivered by Slice 30.

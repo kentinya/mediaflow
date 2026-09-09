@@ -7,7 +7,7 @@ checkpoints; Slice 29 remains PASS / CLOSED and is not reopened.
 Slice ID: 30
 Name: V2 Frontend Platform & Architecture
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: 7c7c602c6531c60ddf2d6678857e2ef76c3860b6
 Implementation Head: 6953b87afa09e61ff62ffea5eb2a9a7d96c55492
 ~~~
@@ -256,6 +256,10 @@ Known Non-blocking Issues:
 - P2: The pre-existing CWD-relative test/runtime-database isolation hazard can make root-worktree CLI tests
   observe or write `.mediaflow/mediaflow.sqlite3`; Slice-final full regression was therefore run in an
   isolated clean clone. This Slice does not change that unrelated test-infrastructure behavior.
+- P2: `tests/test_release_security.py` still discovers release-gate commands through the active
+  `TASK.md`; the workflow-required no-active-Task state therefore makes that one documentation-coupled
+  assertion fail after B/A closure even though it passes at the reviewed Implementation Head. This is
+  unrelated test-infrastructure cleanup and does not affect any product, packaging or safety outcome.
 - P2: `node:22-bookworm-slim` floats within the Node 22 line; frontend packages remain lockfile-pinned.
 - P3: Existing unittest ResourceWarnings and 7 environment-gated skips remain unchanged.
 
@@ -273,20 +277,22 @@ Explicitly Deferred:
   V1 product expansion listed in the Contract remain deferred.
 
 Documentation Reconciliation Needed:
-- A should reconcile stale activation-era statements in the Chinese canonical specification,
-  `docs/product-experience.md`, `docs/v2-requirements.md` and `docs/roadmap.md` that still say Slice 30
-  has no implementation/Task and record the final Roadmap/Progress closure facts if A returns PASS.
-- README, deployment and architecture guidance already describe the implemented V2 build/runtime
-  boundary; A should verify those facts without extending Base..Implementation Head.
+- None. A reconciled the Chinese canonical specification, Product Experience, V2 requirements,
+  Architecture, Roadmap, Progress, README and Task pointer as factual closure metadata without
+  extending Base..Implementation Head.
 
 Decision: SLICE READY FOR A REVIEW
 ~~~
 
-## Review state
+## A Final Review
 
 ~~~
-Slice Status: READY FOR A REVIEW
-Implementation Head: 6953b87afa09e61ff62ffea5eb2a9a7d96c55492
-P0/P1 Defects: None found by B in Base..Implementation Head or Slice-final validation
-Next Action: A FINAL REVIEW
+Reviewed Range: 7c7c602c6531c60ddf2d6678857e2ef76c3860b6..6953b87afa09e61ff62ffea5eb2a9a7d96c55492
+Decision: PASS
+P0/P1 Blockers: None
+Closure Reconciliation:
+- Slice 30 is PASS / CLOSED at the reviewed Implementation Head; its Base remains unchanged.
+- Roadmap, Progress, product experience, architecture, V2 governance metadata, README and the
+  canonical specification now describe the delivered V2 foundation and retained migration boundary.
+- TASK.md records no active implementation Task. Selection of the next large Slice is a later A turn.
 ~~~

@@ -8,13 +8,30 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 / Slice 30 is `ACTIVE` on `main`; no implementation Task is active. The committed A-owned
-Contract, Base SHA and next legal action are maintained in [`SLICE.md`](../SLICE.md) and
+V2 remains active on `main`, but no large Slice or implementation Task is active after Slice 30
+closure. The next legal action is for A to select the next large Slice in a later turn. The current
+Contract and Roadmap boundary are maintained in [`SLICE.md`](../SLICE.md) and
 [`roadmap.md`](roadmap.md). This pointer is not a closure-ledger entry.
 
 ## Most Recently Closed Slice
 
-V1 release baseline: `1.0.0`.
+V1 release baseline: `1.0.0`. V2 program package: `2.0.0.dev0`.
+
+### Slice 30 — V2 Frontend Platform & Architecture
+
+```text
+Status: PASS / CLOSED
+Base: 7c7c602c6531c60ddf2d6678857e2ef76c3860b6
+Implementation Head: 6953b87afa09e61ff62ffea5eb2a9a7d96c55492
+A Final Review: PASS / CLOSED — 2026-09-09
+```
+
+Delivered the first-class React/TypeScript/Vite frontend and test boundary, central typed
+memory-only Bearer client, complete read-only Dashboard proving journey, Python `/ui-v2/` static
+serving and a locked multi-stage Docker artifact with no Node production runtime, while retaining
+V1 `/ui`, `/api/v1/*`, RBAC and OrganizerExecutor-only mutation authority. Deferred scope remains
+the Slice 31–36 shell, Files, Operations, Review/Recovery, Configuration and parity/cutover journeys,
+new identity/session systems, API redesign and all other Contract deferrals.
 
 ### Slice 29 — Docker Production Self-hosted Release
 
@@ -159,6 +176,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 30 — V2 frontend platform and architecture | PASS / CLOSED | `7c7c602c6531c60ddf2d6678857e2ef76c3860b6` | `6953b87afa09e61ff62ffea5eb2a9a7d96c55492` | A Final Review PASS / CLOSED — 2026-09-09 | React/TypeScript/Vite platform, typed memory-only API boundary, read-only Dashboard proof, Python V2 static serving and Python-only Docker runtime artifact | Slices 31–36 migrations/cutover, new identity/session systems, API redesign and other Contract deferrals |
 | 29 — Docker production self-hosted release | PASS / CLOSED | `b57db5a28ee944bc121b69608bb6475d8ae555a7` | `657f1a3697eec8e1537bee1335d45a06bec35c6f` | A Final Review PASS / CLOSED — 2026-09-08 | One-image four-service Docker Compose production release, durable `/data`, explicit media mounts, health/readiness, restart/fencing, upgrade/recovery, release security and execution-boundary completeness | Built-in identity/OIDC, TLS/proxy, full Secret Store/Docker Secrets, Provider switching, remote/distributed persistence, uncertain-mutation replay, rollback and specialized notifications |
 | 28 — Web-first configuration and operations administration | PASS / CLOSED | `957a4ebcb0fde03e64be9c406fbcdfed9a12501d` | `8546ff8fe15386dfbbb5fefb29a66b936ed4613f` | A Final Review PASS / CLOSED — 2026-09-07 | Day-2 Web/API configuration administration, consumed System Settings, secret-free package exchange and Webhook test/delivery recovery | Slice 29 Docker release, Provider switching, built-in identity, full Secret Store, specialized notifications, distributed workers and uncertain-mutation replay |
 | 22.3 — Local Storage + Library configuration | PASS / CLOSED | LEGACY — not recorded as a Slice Base | `e28a24aff99c073c67b52351a82cb4a29e163de0` | Legacy combined audit PASS — 2026-08-25 | Guided Local managed configuration, checks, activation and immutable pin | Remote setup/capability checks |

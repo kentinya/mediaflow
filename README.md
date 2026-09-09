@@ -82,12 +82,12 @@ Primary program: Operator Web Architecture & UX Modernization
 Package version on main: 2.0.0.dev0
 ```
 
-V2 is organized as independently reviewable large Slices. Slice 30 is `ACTIVE` under the committed
+V2 is organized as independently reviewable large Slices. Slice 30 is `PASS / CLOSED` under the
 A-owned Contract. Task 30.1 delivered the first V2 proving unit (the `web/` frontend boundary, the
 read-only Dashboard route and Python `/ui-v2/` static coexistence described below); Task 30.2
 integrated the built V2 artifact into the one production Docker image with live V1/V2 coexistence
-proofs. Remaining Slice 30 outcomes are still open under that Contract. The V1 API, execution,
-authentication and Storage authority are unchanged.
+proofs. All Slice 30 outcomes are accepted; no large Slice is currently active, and A selects the
+next one in a later turn. The V1 API, execution, authentication and Storage authority are unchanged.
 
 ## V2 frontend (web/)
 
