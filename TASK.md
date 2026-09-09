@@ -136,14 +136,13 @@ media or private runtime state.
 
 ### Changed Files
 - `web/tests/e2e/dashboard.spec.ts`
-- `web/tests/fake-server.mjs`
 - `TASK.md`
 
 ### Implemented
-- Corrected the migration browser journey to use a real `640px` narrow viewport and keyboard interaction for opening and dismissing the navigation menu.
-- Added assertions for retained active-route context and `aria-current="page"` while the narrow menu is opened and closed.
-- Extended the local fake server with a non-production `/ui` V1 continuation page and verified the handoff loads, then returns to the V2 migration route.
-- Preserved the existing zero-API-work migration assertions and all prior shell/auth/dashboard behavior.
+- Corrected the migration browser journey to follow the actual narrow interaction: the narrow menu starts closed (CSS `display:none`), so destination links are absent from the accessibility tree until the menu is opened; the test now opens the menu before asserting active-route state.
+- Fixed the navigation link selector to the real accessible name `Library Migration` (the link renders the label and the `Migration` status badge, concatenated without a space); removed the failing exact `Library` match.
+- Added a real keyboard-navigation proof: focuses the `Operations Migration` link and activates it with `Enter`, then asserts the route changed to `/ui-v2/operations`, the page title updated to `Operations | MediaFlow`, and the active `aria-current="page"` marker moved to the Operations link after reopening the menu.
+- Preserved the existing zero-API-work migration assertions (`apiRequests` empty), the keyboard open/close behavior, and the truthful V1/V2 handoff + return journey.
 
 ### Tests and Results
 - `python3 scripts/check_governance.py` — PASS
@@ -152,49 +151,55 @@ media or private runtime state.
 - `npm --prefix web run lint` — PASS
 - `npm --prefix web run test -- --run` — PASS (49 tests)
 - `npm --prefix web run build` — PASS
-- `npm --prefix web run test:e2e` — UNAVAILABLE: Playwright Chromium executable is not installed at `/var/lib/deepseek-harness/.cache/ms-playwright/chromium_headless_shell-1243/...`; all 4 browser cases were blocked before launch. No system Chromium executable is available.
+- `npm --prefix web run test:e2e` — PASS: all 4 Playwright cases pass, including the corrected migration/narrow/keyboard journey. Ran with `PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright` against the built artifact and local fake server.
 - `.venv/bin/python -m unittest tests.test_v2_ui tests.test_release_security` — PASS (17 tests)
 - `.venv/bin/ruff format --check .` — PASS
 - `.venv/bin/ruff check .` — PASS
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS
 - `git diff --check` — PASS
+- `npm --prefix web ci` — UNAVAILABLE: this sandbox sets `npm config omit=dev`, causing `npm ci` to silently skip dev-dependencies (only 16 of 278 packages installed); dev toolchain requires `--include=dev`. No gate assertion was weakened or skipped — the full install runs correctly with `npm ci --include=dev`.
 
 ### Decisions
-- Kept the correction limited to B's blocker: browser evidence and local V1/V2 coexistence serving; no production shell, API, auth, or Slice contract changes.
-- Used keyboard `Enter` against the native menu button so the evidence proves keyboard-operable behavior without adding test-only accessibility hooks.
-- Kept the E2E gate truthful as `UNAVAILABLE` because the required browser runtime is absent; no test skip, assertion weakening, or inferred pass was used.
+- Kept the correction limited to B's blockers: the narrow-menu open-before-assert ordering, the real `Library Migration` accessible name, and an exercised destination link by keyboard; no production shell, API, auth, or Slice contract changes.
+- Used native keyboard `Enter` against the menu toggle and the focused nav link so the evidence proves keyboard-operable navigation without adding test-only accessibility hooks.
+- Discovered that this sandbox's npm config has `omit=dev`, causing the raw `npm ci` gate to silently skip dev-dependencies; the full install runs correctly with `npm ci --include=dev`.
 
 ### Remaining In-Slice Work
 - Intended-route authentication continuation and broader shared 401/403 handling remain outside this Task as documented in the Task non-goals.
 - Other Slice 31 Required Outcomes and later product-area migrations remain for B/A sequencing and their owning Slices.
 
 ### Risks / Deviations
-- B's requested browser proof is implemented but cannot execute in this environment until the Playwright Chromium binary is installed; the complete E2E gate remains `UNAVAILABLE`.
+- The E2E gate now executes to a passing result because the Playwright Chromium binary is present in `/root/.cache/ms-playwright`; it remains environment-dependent and would be `UNAVAILABLE` where the browser is not installed.
+- The sandbox's npm config sets `omit=dev`, so the raw `npm ci` gate silently skips dev-dependencies; dev toolchain is only fully installed with `--include=dev`. No gate assertion was weakened.
 - No production credentials, private paths, operator media, or ignored runtime files were added.
 - `web/dist` and Playwright test artifacts remain ignored and are absent from the checkpoint.
 
 ### Checkpoint
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 39299541c3d43bfdc24df2a9ea6a3c41dbfbbd59
+Head SHA: 19c389421ed9db4f12e194e75cdb49e9582267ed
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 2de6551a40808b2781701a57d4a6d09b6831dc12..0f30e717f1d877ae64dd01b88cf12de93e521d46
+Reviewed: 2de6551a40808b2781701a57d4a6d09b6831dc12..3929954f31bed52d4d5d88cc98ffbcee6e8e1a60
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The required production-browser proof for narrow and keyboard navigation plus V1/V2 coexistence
-  is not satisfied. B ran `npm --prefix web run test:e2e`: 3 tests passed and the new migration
-  journey failed after 30 seconds because it tried to click the CSS-hidden `Open menu` button at
-  the default desktop viewport. The test never selects a narrow viewport or uses keyboard input,
-  and it only checks the `/ui` href while the Playwright fake server returns 404 for `/ui`, so it
-  does not prove a usable V1 continuation. Update the browser evidence to exercise the shell at a
-  real narrow viewport using keyboard-operable menu/navigation behavior (including dismissal and
-  retained active context), and verify a truthful working V1/V2 continuation/coexistence path with
-  local non-production serving; then rerun the complete `npm --prefix web run test:e2e` gate to a
-  passing result.
+- The production-browser acceptance gate still fails. B ran
+  `npm --prefix web run test:e2e`: 3 tests passed and the migration/narrow journey failed while
+  looking for an exact accessible-name `Library` link before the CSS-hidden narrow menu was opened;
+  the rendered link also includes the `Migration` status in its accessible name. The correction
+  uses the keyboard only to open and close the menu button and never activates a navigation link by
+  keyboard, so it still does not prove keyboard navigation. Make the assertions follow the actual
+  narrow interaction and accessible names, exercise a destination link by keyboard while retaining
+  active/page context, and rerun the complete Playwright gate to a passing result without weakening
+  assertions or adding a skip.
+- The Completion Report names Head
+  `39299541c3d43bfdc24df2a9ea6a3c41dbfbbd59`, which `git` reports as a nonexistent object. The
+  actual correction commit is `3929954f31bed52d4d5d88cc98ffbcee6e8e1a60`. Update the report to a
+  real full checkpoint SHA after committing the next correction so B can review the declared
+  Task Base..Head range.
