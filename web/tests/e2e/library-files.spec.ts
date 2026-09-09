@@ -159,9 +159,7 @@ test("switching Storage resets path and cursor state", async ({ page }) => {
   await expect(page.getByText("show.mkv")).toHaveCount(0);
 });
 
-test("no configured Storage and empty directory states stay truthful", async ({
-  page,
-}) => {
+test("no configured Storage state stays truthful", async ({ page }) => {
   const apiRequests = apiRequestsOf(page);
   await connectAs(page, VIEWER_TOKEN);
   // Intercept system status to report no storages.
@@ -193,6 +191,20 @@ test("no configured Storage and empty directory states stay truthful", async ({
     apiRequests.every((r) => new URL(r.url).pathname.startsWith("/api/v1/")),
   ).toBe(true);
   expect(apiRequests.every((r) => r.method === "GET")).toBe(true);
+});
+
+test("empty Storage directory state stays truthful", async ({ page }) => {
+  const apiRequests = apiRequestsOf(page);
+  await page.goto("/ui-v2/library/files?storage=remote-media&path=empty");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Remote media" }),
+  ).toBeVisible();
+  await expect(page.getByText("This directory is empty.")).toBeVisible();
+  await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
+  expect(apiRequests.every((request) => request.method === "GET")).toBe(true);
+  expect(page.url()).not.toContain(VIEWER_TOKEN);
 });
 
 test("provider read failure is distinct from RBAC denial and offers bounded retry", async ({
@@ -281,7 +293,7 @@ test("limited principal gets the distinct RBAC forbidden state", async ({
   await expect(page.getByText(LIMITED_TOKEN)).toHaveCount(0);
 });
 
-test("malformed and unavailable Library reads stay bounded and retry recovers", async ({
+test("malformed Library reads stay bounded and retry recovers", async ({
   page,
 }) => {
   let malformedAttempts = 0;
@@ -309,6 +321,40 @@ test("malformed and unavailable Library reads stay bounded and retry recovers", 
     page.getByRole("heading", { name: "Choose a Storage" }),
   ).toBeVisible();
   expect(malformedAttempts).toBe(2);
+});
+
+test("unavailable Library reads stay bounded and retry recovers", async ({
+  page,
+}) => {
+  let unavailableAttempts = 0;
+  const apiRequests = apiRequestsOf(page);
+  await page.route("**/api/v1/system/status", async (route) => {
+    unavailableAttempts += 1;
+    if (unavailableAttempts === 1) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "service_unavailable" } }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await connectAs(page, VIEWER_TOKEN);
+  await page.getByRole("link", { name: "Library" }).click();
+  await page.getByRole("link", { name: "Open Storage files" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Library unavailable" }),
+  ).toBeVisible();
+  await expect(page.getByText(/currently unavailable/)).toBeVisible();
+  await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Choose a Storage" }),
+  ).toBeVisible();
+  expect(unavailableAttempts).toBe(2);
+  expect(apiRequests.every((request) => request.method === "GET")).toBe(true);
+  expect(page.url()).not.toContain(VIEWER_TOKEN);
 });
 
 test("previous page navigation returns to prior context", async ({ page }) => {
