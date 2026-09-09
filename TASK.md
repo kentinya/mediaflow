@@ -280,13 +280,13 @@ token secrecy and zero non-GET requests.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: e955eefd
+Head SHA: e955eef3d6045e365957d32e269c5110f2c0eca4
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 12568825cadcd587db6363aa1db612ca3efcfdb2..e955eefd1aaf95d2df53817fa94a977a8f8d
+Reviewed: 12568825cadcd587db6363aa1db612ca3efcfdb2..e955eef3d6045e365957d32e269c5110f2c0eca41aaf95d2df53817fa94a977a8f8d
 Decision: PENDING
 Slice Required Outcomes all satisfied: PENDING
 Next: PENDING
