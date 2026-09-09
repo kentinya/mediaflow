@@ -29,8 +29,9 @@ requires explicit user authorization and must be disclosed in the review result.
 A:
 
 - audits requirements, journeys, architecture, code, tests and current repository state;
-- defines one large Slice, its Base SHA, user goal, Required Outcomes, required surfaces, boundaries,
-  safety invariants, Explicitly Deferred work, acceptance criteria and final validation;
+- defines one large Slice, its Base SHA, user goal, applicable product/UX principles and constraints,
+  Required Outcomes, required surfaces, boundaries, safety/correctness invariants, Explicitly
+  Deferred work, acceptance criteria and final validation;
 - owns and materially changes `SLICE.md` and large-Slice Roadmap boundaries;
 - reviews the entire Slice Base..Implementation Head after B submits a Closure Packet;
 - decides `PASS`, `FIX REQUIRED`, or `PARTIAL / RESCOPE`;
@@ -140,7 +141,8 @@ Root `SLICE.md` is A-owned and contains at least:
 - Slice ID / Name, Owner, Status, Base SHA and Implementation Head;
 - User Goal;
 - Required Outcomes and Required Surfaces;
-- Safety Invariants;
+- Product Experience / UX Constraints for the promised journey;
+- Safety Invariants, including applicable correctness and data-integrity boundaries;
 - Explicitly Deferred;
 - Slice Acceptance Criteria;
 - Final Validation Expectations;
@@ -211,6 +213,12 @@ Every Task declares:
 - implementation scope and acceptance criteria;
 - required tests appropriate to risk;
 - explicit non-goals.
+
+For a user-facing Task, B starts from the operator goal and applicable stable UX requirements rather
+than the backend protocol. Acceptance must complete the promised journey, avoid unnecessary CLI
+fallback or exposure of tokens/internal identifiers, and add interaction friction only for
+meaningful human intent, while preserving all security, authority, data-integrity and architecture
+invariants.
 
 ## 6. Test levels
 
@@ -318,10 +326,10 @@ specialize severity in its Contract but may not downgrade safety or Required Out
 
 ## 10. A Final Review and closure
 
-A reviews Slice Base..Implementation Head and focuses on Required Outcomes, the user journey,
-integration completeness, failure/recovery, architecture, safety, final regression, P0/P1 defects
-and documentation truthfulness. A does not block closure for optional proof strength, non-blocking
-wording, P2 cleanup or future deferred capability.
+A reviews Slice Base..Implementation Head and focuses on Required Outcomes, applicable product/UX
+constraints, the user journey, integration completeness, failure/recovery, architecture, safety,
+final regression, P0/P1 defects and documentation truthfulness. A does not block closure for
+optional proof strength, non-blocking wording, P2 cleanup or future deferred capability.
 
 A returns one of:
 
@@ -342,7 +350,7 @@ facts, A must not hide that change in closure; the decision returns to `PARTIAL 
 
 | Document | Responsibility |
 |---|---|
-| `AGENTS.md` | Permanent architecture, safety, domain invariants, role principles and guidance hierarchy |
+| `AGENTS.md` | Permanent product/UX principles, architecture, safety, domain invariants, role principles and guidance hierarchy |
 | `docs/development-workflow.md` | All detailed Slice/Task lifecycle, planning, testing, review, Git and migration workflow |
 | `SLICE.md` | Current A-owned large-Slice Contract and final review packet |
 | `TASK.md` | Current B-owned Implementation Task only, or an explicit no-active-Task notice |

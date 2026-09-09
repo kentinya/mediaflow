@@ -5,6 +5,34 @@ active V2 migration target. It describes user-visible behavior and completion se
 implementation history or frontend styling. Large-Slice order and status are maintained in
 [`roadmap.md`](roadmap.md); the active implementation boundary is in [`SLICE.md`](../SLICE.md).
 
+## Product Experience Priority
+
+MediaFlow is designed around operator goals, not its internal architecture. User experience is the
+primary product-design and acceptance criterion: ordinary journeys should take the most natural,
+direct and lowest-friction path that still satisfies every correctness, security, authority and
+data-integrity invariant.
+
+- Ask for the minimum necessary user decisions. Safely enforce scope, permissions, capabilities,
+  limits, authorization binding and concurrency in the product rather than making the operator
+  orchestrate internal protocols.
+- Keep tokens, grants, revisions, claims, locks, checkpoints and fencing identifiers invisible when
+  they add no user value. Expose bounded identifiers only when they help diagnosis or support.
+- Complete normal operator journeys through Web-native actions. CLI remains an administration,
+  debugging, migration, automation, compatibility and emergency/support surface, not the fallback
+  completion path for an ordinary Web journey.
+- Interrupt for meaningful human intent: privilege escalation, unresolved ambiguity, uncertain
+  mutation, genuine conflict, expanded scope or irreversible/destructive effects. Do not repeat a
+  confirmation when no new intent or risk boundary has appeared.
+- Errors are action-oriented and recovery-oriented: say what failed, what remains durable, what is
+  safe to repeat and what the user can do next, without requiring raw exception interpretation.
+- Safe defaults reduce decisions instead of creating arbitrary blockers. Preview builds confidence
+  by explaining what will happen; it is not ceremony for ceremony's sake.
+
+These principles do not weaken RBAC, backend-authoritative permissions, explicit mutation intent,
+no silent overwrite/delete, bounded scope, auditability, redaction, Storage confinement, immutable
+Active snapshot pinning, stale/concurrent authority fencing, zero-mutation reads/Preview,
+OrganizerExecutor-only mutation or the prohibition on automatic replay of uncertain mutation.
+
 ## Product completion contract
 
 Every operator-facing capability is evaluated as:
@@ -198,6 +226,8 @@ or mutate Storage.
 
 ## Manual organize
 
+### Current V1
+
 - **Goal:** review and execute a bounded, explicit one-shot organization for selected indexed files.
 - **Entry:** select current Files and choose manual organize.
 - **Visible state:** durable intent, choices, exact Preview, pinned configuration identity, source and
@@ -211,6 +241,19 @@ or mutate Storage.
 - **Recovery:** inspect the checkpoint/effects and use the explicitly offered safe recovery or
   reconciliation action. Known successful siblings remain terminal; uncertain mutation is never
   automatically replayed.
+
+### V2 target
+
+Routine interactive organization must become a complete Web-native journey. The operator reviews a
+Preview, chooses Execute, and supplies meaningful confirmation or step-up authorization only when
+the authority or effect boundary requires it. The backend then obtains and binds short-lived scoped
+execution authority, admits the Job and consumes, expires or revokes that authority without asking
+the operator to issue a CLI token or copy a raw secret.
+
+This target defines the product journey, not an endpoint, schema or credential design. The current
+V1 one-shot mechanism may remain for API automation, local administration, debugging,
+compatibility and emergency/support use. RBAC, revalidation, bounded authority, limits, audit,
+conflict handling and OrganizerExecutor-only mutation remain mandatory.
 
 ## Manual operations and file lifecycle
 

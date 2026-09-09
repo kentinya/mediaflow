@@ -25,6 +25,9 @@ in a later turn.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
+| V2-UX-001 | User experience is the primary product-design and acceptance criterion for V2 Operator Web journeys. | Normal operator journeys are Web-completable with task-oriented actions: no CLI fallback for an ordinary Web journey, no raw internal-token copy/paste as the final UX, no unnecessary implementation identifiers, and no repeated interaction without new human intent. |
+| V2-UX-002 | Safety, authority and data-integrity controls must be delivered with the lowest practical operator friction. | Scope validation, capability checks, limits, authorization binding, short-lived/scoped grants and backend permission enforcement are automatically composed by the product wherever technically safe. Extra interaction occurs only at meaningful authority, ambiguity, uncertain-effect or irreversible/destructive boundaries. |
+| V2-UX-003 | Implementation mechanisms must not define the operator journey. | Bearer tokens, execution tokens, revision IDs, locks, claims, checkpoints, grants or fencing mechanisms do not by themselves justify mandatory user exposure. They remain backend-authoritative and may be surfaced when useful for diagnosis/support, without weakening `V2-AUTH-*`, `V2-SAFE-*` or other authority requirements. |
 | V2-WEB-001 | V2 Operator Web is a first-class product surface for the operator journeys selected by the active V2 program. | Required operator outcomes are delivered through a discoverable Web surface, not only through internal APIs or CLI commands. |
 | V2-AUTH-001 | During the current V2 program, the existing API-principal Bearer-token model and RBAC remain the authentication and authorization boundary. | V2 does not silently introduce a new login, identity provider, session or cookie authority. |
 | V2-AUTH-002 | The API principal token remains memory-only in the browser during the current identity architecture. | The token is not persisted in `localStorage`, `sessionStorage`, IndexedDB, URLs/query strings or frontend-managed authentication cookies. |
@@ -37,8 +40,10 @@ in a later turn.
 
 ## Authority and evolution
 
-The V1 canonical specification and stable V1 requirements remain the product baseline. Each active
-Slice contract may refine its V2 surface and architecture within these boundaries, and a
+The V1 canonical specification and stable V1 requirements remain the product baseline. V2 uses
+operator goals and the UX requirements above to shape interaction while preserving every existing
+correctness, security, authority and data-integrity invariant. Each active Slice contract may refine
+its V2 surface and architecture within these boundaries, and a
 future Slice may add stable requirements through an explicit A-owned documentation change. Task files
 must not silently expand this V2 layer.
 

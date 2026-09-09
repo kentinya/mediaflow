@@ -85,6 +85,27 @@ V1 keeps the environment-owned API-principal Bearer-token authentication model a
 It does not provide a built-in username/password database, cookie session, OIDC or implicit
 reverse-proxy identity. Token rotation and secret injection are deployment responsibilities.
 
+### Interactive execution authorization: CURRENT V1 and V2 TARGET
+
+**CURRENT V1:** interactive remote execution may use a separately issued, short-lived, single-use
+execution authorization token. The operator or automation issues it through the local CLI, receives
+the raw value once and supplies it to the API/UI request. The digest is persisted, admission and
+consumption are atomic, and the normal API-principal Bearer token alone is insufficient mutation
+authority. This remains truthful current behavior and may continue to support API automation, local
+administration, debugging, compatibility and emergency/support workflows.
+
+**V2 TARGET:** the routine operator-facing Web journey must not require manual CLI issuance or raw-
+token transfer. A later Operations Slice may provide a Web-native, short-lived/scoped execution
+grant, execution unlock, step-up authorization or equivalent interaction, automatically bound by
+the backend to the reviewed operation and permitted scope. This target does not select an endpoint,
+schema, table, grant identifier, WebAuthn/PIN mechanism or other concrete design.
+
+Both CURRENT and TARGET preserve backend RBAC and permission enforcement, bounded execution
+authority, limits, audit, immutable configuration binding, stale/concurrent fencing, explicit
+mutation intent and OrganizerExecutor-only Storage mutation. Uncertain mutation is not
+automatically replayed. Slice 33 owns the future Operations Workspace implementation boundary unless
+A later changes the Roadmap.
+
 V1 uses the `MetadataProvider` abstraction with TMDB as the production provider. Provider switching,
 additional production providers and arbitrary provider plugins are V1.x/V2 work. A missing or
 invalid TMDB credential fails closed; it does not trigger an implicit provider fallback.

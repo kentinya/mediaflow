@@ -21,7 +21,7 @@ only in [the development workflow](development-workflow.md).
 | 30 — V2 Frontend Platform & Architecture | Establish the V2 frontend build/runtime boundary and prove it through one typed Dashboard journey without moving production authority out of Python | PASS / CLOSED | V1.0.0 release baseline |
 | 31 — Operator Shell & Information Architecture | Deliver the authenticated V2 application shell, navigation, route ownership and shared operator information architecture | PLANNED | 30 |
 | 32 — Library & Files Experience | Migrate bounded Storage Files and FileIndex discovery/detail journeys with their existing read-only and authority boundaries | PLANNED | 31 |
-| 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notification operations into a coherent V2 workspace | PLANNED | 30, 31 |
+| 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notifications into a coherent V2 workspace, including a complete Web-native interactive organize journey that may redesign operator-facing authorization and whose routine execution avoids CLI token issuance/copy-paste while preserving backend authority, audit, limits and mutation invariants | PLANNED | 30, 31 |
 | 34 — Review & Recovery Workspace | Migrate per-item review, conflict, checkpoint and safe recovery journeys with independent batch state | PLANNED | 32, 33 |
 | 35 — Configuration Administration | Migrate managed Configuration, Settings, revision evidence and activation administration through shared API/Web behavior | PLANNED | 31, 33 |
 | 36 — V2 Parity, Accessibility & Legacy UI Retirement | Complete parity and accessibility evidence, cut over the supported `/ui` surface, and retire the V1 UI only after migration acceptance | PLANNED | 32, 33, 34, 35 |
@@ -53,7 +53,10 @@ mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidd
 
 V2 is active development for Operator Web Architecture & UX Modernization. The rows for Slices 30–36
 are the complete current program boundary; they are not a single Slice and must be activated and
-reviewed independently. Slice 30 is `PASS / CLOSED` at Base
+reviewed independently. User experience is the primary product-design and acceptance criterion for
+these operator journeys: backend security and authority mechanisms should be composed transparently
+with the lowest practical friction, while correctness, RBAC, audit, data integrity and
+OrganizerExecutor-only mutation remain mandatory. Slice 30 is `PASS / CLOSED` at Base
 `7c7c602c6531c60ddf2d6678857e2ef76c3860b6` and Implementation Head
 `6953b87afa09e61ff62ffea5eb2a9a7d96c55492`, having delivered the typed V2 Dashboard proving path,
 frontend/test boundary and Python-only production artifact while retaining V1 `/ui`. No large Slice

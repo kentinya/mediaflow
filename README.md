@@ -1,6 +1,7 @@
 # MediaFlow
 
-MediaFlow is a safety-first media organizer with Storage adapters for Local, SMB, OpenList, AWS S3,
+MediaFlow is a user-experience-first media organizer with strong, transparent safety and
+data-integrity guarantees. It provides Storage adapters for Local, SMB, OpenList, AWS S3,
 Cloudflare R2, and generic S3-compatible services. Its production pipeline scans media, parses
 filenames, recognizes a configured type,
 identifies metadata, calculates names and classification, plans an operation, and optionally
@@ -398,8 +399,10 @@ Claimed deliveries use the configured `deliveryLeaseSeconds` (300 by default). A
 crash, an expired claim is safely eligible for another attempt; its stable delivery ID lets
 receivers deduplicate the unavoidable at-least-once crash window.
 
-Remote real organize Jobs optionally use a locally issued, short-lived, single-use authorization.
-This capability is disabled by default and the normal API bearer token is never
+### Current V1 / API execution-authorization mechanism
+
+Remote real organize Jobs currently may use a locally issued, short-lived, single-use
+authorization. This capability is disabled by default and the normal API bearer token is never
 sufficient mutation authority. Enable it explicitly:
 
 ```json
@@ -427,6 +430,14 @@ mediaflow worker run-next
 The raw authorization token is displayed once and only its SHA-256 digest is persisted. Consumption
 and Job creation are atomic. Scheduler configurations remain scan/preview-only, and all existing
 conflict/no-overwrite/OrganizerExecutor checks still apply.
+
+For V2 interactive operation, manual CLI issuance and raw-token copy/paste are not the intended
+final routine Web experience. A later Operations Slice may replace that operator-facing ceremony
+with a Web-native, scoped, short-lived execution grant, execution unlock, step-up authorization or
+equivalent interaction. The concrete API is not defined here; backend RBAC, bounded mutation
+authority, limits, audit and OrganizerExecutor-only mutation remain mandatory. The V1 mechanism may
+remain available for API automation, local administration, debugging, compatibility and emergency
+support.
 
 Every authenticated or denied API request is recorded in a redacted SQLite security audit. Inspect
 it locally with `mediaflow security-audit list --limit 100`, or through auditor/admin-only
