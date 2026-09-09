@@ -5,9 +5,31 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+NO_ACTIVE_TASK_HEADING = "# NO ACTIVE IMPLEMENTATION TASK"
+REQUIRED_RELEASE_QUALITY_COMMANDS = (
+    "python3 scripts/check_governance.py",
+    "scripts/docker_release_security_smoke_test.py",
+    ".venv/bin/ruff format --check .",
+    ".venv/bin/ruff check .",
+    ".venv/bin/python -m unittest discover -s tests",
+    ".venv/bin/python -m compileall -q mediaflow tests scripts",
+)
 
 
 class ReleaseSecurityPolicyTests(unittest.TestCase):
+    def assert_release_quality_gate_documentation(self, task: str) -> None:
+        """Require execution gates for a real Task, not the canonical no-Task notice."""
+
+        first_nonempty_line = next(
+            (line.strip() for line in task.splitlines() if line.strip()),
+            "",
+        )
+        if first_nonempty_line == NO_ACTIVE_TASK_HEADING:
+            return
+        self.assertNotEqual(first_nonempty_line, "", "TASK.md must declare a lifecycle state")
+        for command in REQUIRED_RELEASE_QUALITY_COMMANDS:
+            self.assertIn(command, task)
+
     def test_dockerignore_covers_private_state_and_dockerfile_copies_only_runtime(self) -> None:
         dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
         for required in (
@@ -103,15 +125,30 @@ class ReleaseSecurityPolicyTests(unittest.TestCase):
 
     def test_release_quality_gate_commands_are_documented_for_task_execution(self) -> None:
         task = (ROOT / "TASK.md").read_text(encoding="utf-8")
-        for command in (
-            "python3 scripts/check_governance.py",
-            "scripts/docker_release_security_smoke_test.py",
-            ".venv/bin/ruff format --check .",
-            ".venv/bin/ruff check .",
-            ".venv/bin/python -m unittest discover -s tests",
-            ".venv/bin/python -m compileall -q mediaflow tests scripts",
-        ):
-            self.assertIn(command, task)
+        self.assert_release_quality_gate_documentation(task)
+
+    def test_no_active_task_is_legal_without_task_execution_commands(self) -> None:
+        self.assert_release_quality_gate_documentation(
+            f"{NO_ACTIVE_TASK_HEADING}\n\nNext Action: A SELECTS THE NEXT LARGE SLICE\n"
+        )
+
+    def test_active_task_still_requires_every_release_quality_command(self) -> None:
+        active_task = "# Task 99.1 — Test fixture\n\n" + "\n".join(
+            REQUIRED_RELEASE_QUALITY_COMMANDS
+        )
+        self.assert_release_quality_gate_documentation(active_task)
+
+        for command in REQUIRED_RELEASE_QUALITY_COMMANDS:
+            with self.subTest(missing=command):
+                with self.assertRaises(AssertionError):
+                    self.assert_release_quality_gate_documentation(
+                        active_task.replace(command, "command intentionally absent", 1)
+                    )
+
+        with self.assertRaises(AssertionError):
+            self.assert_release_quality_gate_documentation(
+                "# Task 99.1 — Malformed fixture\n\nNO ACTIVE IMPLEMENTATION TASK\n"
+            )
 
 
 if __name__ == "__main__":
