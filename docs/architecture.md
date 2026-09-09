@@ -89,10 +89,12 @@ reverse-proxy identity. Token rotation and secret injection are deployment respo
 
 **CURRENT V1:** interactive remote execution may use a separately issued, short-lived, single-use
 execution authorization token. The operator or automation issues it through the local CLI, receives
-the raw value once and supplies it to the API/UI request. The digest is persisted, admission and
-consumption are atomic, and the normal API-principal Bearer token alone is insufficient mutation
-authority. This remains truthful current behavior and may continue to support API automation, local
-administration, debugging, compatibility and emergency/support workflows.
+the raw value once and supplies it to an authenticated API request through the
+`X-MediaFlow-Execution-Token` header. The digest is persisted, admission and consumption are atomic,
+and the normal API-principal Bearer token alone is insufficient mutation authority. The current V1
+Jobs Web UI does not expose this remote-execution token journey as a complete operator flow. This
+mechanism may continue to support API automation, local administration, debugging, compatibility
+and emergency/support workflows.
 
 **V2 TARGET:** the routine operator-facing Web journey must not require manual CLI issuance or raw-
 token transfer. A later Operations Slice may provide a Web-native, short-lived/scoped execution
