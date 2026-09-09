@@ -187,19 +187,25 @@ raises the Task to T4 risk.
   allowlisted System Status Storage projection; no root/options/credentials added.
 - `tests/test_configuration_status.py` — Python regression proving the operator name is exposed and
   the private root is not.
+- `mediaflow/application/storage_browser.py` — remove the dead `previousCursor` response extension
+  introduced during the correction loop; the frozen browser contract remains unchanged.
 - New typed V2 entities/guards: `web/src/entities/shared/normalize.ts`,
-  `web/src/entities/library/system-status.{ts,test.ts}`,
-  `web/src/entities/library/storage-files.{ts,test.ts}`.
+  `web/src/entities/library/system-status.{ts,test.ts}` and
+  `web/src/entities/library/storage-files.{ts,test.ts}`; the correction now requires a complete
+  MANAGED snapshot identity and reads Files authority from `configuration`.
 - Centralized API/query boundary: `web/src/shared/api/api-client.ts`, `api-errors.ts`,
   `library-api.test.ts`, `web/src/features/library/system-status-query.ts`,
   `storage-files-query.ts`.
 - Feature/route surface: `web/src/features/library/LibraryLanding.tsx`,
-  `StorageFilesPage.tsx`, `web/src/routes/router.tsx`, shared UI styles.
+  `StorageFilesPage.tsx`, `web/src/routes/router.tsx`, shared UI styles; the Files view now rejects
+  status/Files revision mismatches with an explicit bounded Active-runtime refresh.
 - Auth/navigation continuation for refresh-safe Storage Files query state:
   `api/auth-store.ts`, `api/auth-context.ts`, `shared/auth/AuthBoundary.tsx`,
   `shared/navigation/destination-model.ts`, `features/entry/EntryPage.tsx` plus focused tests.
 - Browser proof/fakes: `web/tests/e2e/library-files.spec.ts`, `web/tests/fake-server.mjs`, and
-  updated Dashboard/deep-link specs for the real Library landing.
+  updated Dashboard/deep-link specs for the real Library landing; the correction adds a live
+  missing-ResourceLibrary GET failure/recovery proof and stale-revision proof, and removes the
+  invented top-level authority/previous-page fields.
 - `TASK.md` — this Developer Completion Report and checkpoint state.
 
 ### Implemented
@@ -211,13 +217,19 @@ raises the Task to T4 risk.
   page, refresh, return to Library, and switch Storage without carrying stale path/cursor state.
 - Strict frontend normalization covers the allowlisted System Status and runtime Files documents;
   unknown fields are ignored and shape violations become one bounded malformed read state.
+- The managed Active boundary is now complete: System Status requires MANAGED authority plus a
+  non-null snapshot ID, Files requires `configuration.authority === "MANAGED"`, and the view refuses
+  to render a Files document whose revision differs from the Active snapshot until the operator
+  refreshes the runtime.
 - Files provider/permission/configuration failures are bounded results, so a Storage-provider 403
   never clears a valid API principal; RBAC 403 and 401 still use the shared authority lifecycle.
 - Deep-link continuation now retains only allowlisted Storage Files view state (`storage`, `path`,
   `cursor`) through the memory-only connection boundary; 401 rejection preserves the active route
   for explicit re-entry.
 - Loading, no-Active, no-Storage, empty, malformed, invalid-path, not-found, provider, 401 and 403
-  states render bounded operator language with retry/back/reselect/reconnect/V1 continuation.
+  states render bounded operator language with retry/back/reselect/reconnect/V1 continuation;
+  missing-ResourceLibrary and stale-runtime identity failures now have built-artifact recovery
+  evidence as well.
 
 ### Tests and Results
 
@@ -228,15 +240,15 @@ python3 scripts/check_governance.py                          PASS
 npm --prefix web run format:check                            PASS
 npm --prefix web run typecheck                               PASS
 npm --prefix web run lint                                    PASS
-npm --prefix web run test -- --run                           131 passed
+npm --prefix web run test -- --run                           134 passed (13 files)
 npm --prefix web run build                                   PASS
-npm --prefix web run test:e2e -- library-files.spec.ts       14 passed
-npm --prefix web run test:e2e                                30 passed
-.venv/bin/python -m unittest tests.test_configuration_status PASS
-.venv/bin/python -m unittest tests.test_configuration_snapshot tests.test_runtime_files_browser tests.test_v2_ui tests.test_release_security PASS
+npm --prefix web run test:e2e -- library-files.spec.ts       16 passed
+npm --prefix web run test:e2e                                32 passed
+.venv/bin/python -m unittest tests.test_configuration_snapshot tests.test_runtime_files_browser tests.test_v2_ui tests.test_release_security PASS (67 tests)
+.venv/bin/python -m unittest tests.test_configuration_status PASS (6 tests)
 .venv/bin/ruff format --check .                              PASS
 .venv/bin/ruff check .                                       PASS
-.venv/bin/python -m compileall -q mediaflow tests scripts PASS
+.venv/bin/python -m compileall -q mediaflow tests PASS
 git diff --check                                             PASS
 scripts/docker_release_security_smoke_test.py                NOT RUN (T3 scope; reserved for Slice Final per Task)
 .venv/bin/python -m unittest discover -s tests               NOT RUN (T3 scope; full regression reserved for Slice Final per Task)
@@ -280,13 +292,13 @@ token secrecy and zero non-GET requests.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: e955eef3d6045e365957d32e269c5110f2c0eca4
+Head SHA: fb58fabe4f7dc6050815166c58474ad5b2cd4df6
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 12568825cadcd587db6363aa1db612ca3efcfdb2..e955eef3d6045e365957d32e269c5110f2c0eca4
+Reviewed: PENDING
 Decision: PENDING
 Slice Required Outcomes all satisfied: PENDING
 Next: PENDING
