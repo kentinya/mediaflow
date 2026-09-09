@@ -18,7 +18,7 @@ only in [the development workflow](development-workflow.md).
 | 27 — Manual operations and file lifecycle | Let an operator browse real configured Storage, distinguish it from FileIndex, run file- or ResourceLibrary-scoped Scan/Preview/Organize with the correct authority, understand current processing disposition, and complete conflict/review/recovery through an explicit safe continuation | PASS / CLOSED | 26 and closed 23–25 foundations |
 | 28 — Web-first configuration and operations administration | Complete the day-2 Web configuration lifecycle and object-management experience, consumed System Settings, versioned secret-free configuration/result import-export, and managed Webhook delivery configuration/test/recovery | PASS / CLOSED | 27 |
 | 29 — Docker production self-hosted release | Deliver and verify the one-image, multi-service Docker Compose product journey with production HTTP serving, local durable `/data`, explicit media mounts, non-root operation, lifecycle health, restart persistence and fail-closed upgrade/migration | PASS / CLOSED | 27 and 28 |
-| 30 — V2 Frontend Platform & Architecture | Establish the V2 frontend build/runtime boundary and prove it through one typed Dashboard journey without moving production authority out of Python | ACTIVE | V1.0.0 release baseline |
+| 30 — V2 Frontend Platform & Architecture | Establish the V2 frontend build/runtime boundary and prove it through one typed Dashboard journey without moving production authority out of Python | PASS / CLOSED | V1.0.0 release baseline |
 | 31 — Operator Shell & Information Architecture | Deliver the authenticated V2 application shell, navigation, route ownership and shared operator information architecture | PLANNED | 30 |
 | 32 — Library & Files Experience | Migrate bounded Storage Files and FileIndex discovery/detail journeys with their existing read-only and authority boundaries | PLANNED | 31 |
 | 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notification operations into a coherent V2 workspace | PLANNED | 30, 31 |
@@ -53,9 +53,12 @@ mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidd
 
 V2 is active development for Operator Web Architecture & UX Modernization. The rows for Slices 30–36
 are the complete current program boundary; they are not a single Slice and must be activated and
-reviewed independently. Slice 30 is `ACTIVE` under the committed A-owned Contract in
-[`SLICE.md`](../SLICE.md). No implementation Task is active yet; the next legal action is for B to
-plan Task 30.1. This Roadmap does not pre-plan Task details.
+reviewed independently. Slice 30 is `PASS / CLOSED` at Base
+`7c7c602c6531c60ddf2d6678857e2ef76c3860b6` and Implementation Head
+`6953b87afa09e61ff62ffea5eb2a9a7d96c55492`, having delivered the typed V2 Dashboard proving path,
+frontend/test boundary and Python-only production artifact while retaining V1 `/ui`. No large Slice
+is active; the next legal action is for A to select the next large Slice in a later turn. This
+Roadmap does not pre-plan Task details.
 
 ## Roadmap rules
 

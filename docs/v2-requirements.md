@@ -11,13 +11,15 @@ product and authority boundaries.
 ```text
 V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
-Active large Slice: Slice 30 — V2 Frontend Platform & Architecture
+Most recently closed large Slice: Slice 30 — V2 Frontend Platform & Architecture — PASS / CLOSED
 Slice 30 Base: 7c7c602c6531c60ddf2d6678857e2ef76c3860b6
+Slice 30 Implementation Head: 6953b87afa09e61ff62ffea5eb2a9a7d96c55492
+Active large Slice: NONE
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
-product requirements. Slice 30 is active with no implementation head; the next legal action is B
-planning Task 30.1 from the committed Slice contract.
+product requirements. Slice 30 is closed; the next legal action is A selecting the next large Slice
+in a later turn.
 
 ## Stable V2 requirements
 
@@ -35,8 +37,8 @@ planning Task 30.1 from the committed Slice contract.
 
 ## Authority and evolution
 
-The V1 canonical specification and stable V1 requirements remain the product baseline. The active
-Slice contract may refine the V2 proving surface and architecture within these boundaries, and a
+The V1 canonical specification and stable V1 requirements remain the product baseline. Each active
+Slice contract may refine its V2 surface and architecture within these boundaries, and a
 future Slice may add stable requirements through an explicit A-owned documentation change. Task files
 must not silently expand this V2 layer.
 
