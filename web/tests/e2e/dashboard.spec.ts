@@ -103,42 +103,68 @@ test("migration destinations stay truthful and narrow navigation remains usable"
     page.getByRole("link", { name: "Open current Web UI" }),
   ).toHaveAttribute("href", "/ui");
   await expect(page).toHaveTitle("Library | MediaFlow");
-  await expect(page.getByRole("link", { name: "Library" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  expect(apiRequests).toEqual([]);
 
-  const menuToggle = page.getByRole("button", { name: "Open menu" });
-  await menuToggle.focus();
+  // The narrow menu starts closed, hiding the destination links from the
+  // accessibility tree: open it first so the link state can be asserted.
+  const openMenu = page.getByRole("button", { name: "Open menu" });
+  await openMenu.focus();
   await page.keyboard.press("Enter");
   await expect(
     page.getByRole("button", { name: "Close menu" }),
   ).toHaveAttribute("aria-expanded", "true");
-  await expect(page.getByRole("link", { name: "Library" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
+  // The navigation link's accessible name includes the migration status, so
+  // the active-route marker must be read from the rendered link.
+  await expect(
+    page.getByRole("link", { name: "Library Migration" }),
+  ).toHaveAttribute("aria-current", "page");
+  expect(apiRequests).toEqual([]);
 
+  // Exercise a destination link by keyboard, retaining the active/page context.
+  const operationsLink = page.getByRole("link", {
+    name: "Operations Migration",
+  });
+  await operationsLink.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(
+    page.getByRole("heading", {
+      name: "Operations is not available in V2 yet",
+    }),
+  ).toBeVisible();
+  await expect(page).toHaveTitle("Operations | MediaFlow");
+
+  // Reopen the menu and confirm the active context moved with the route.
+  await page.getByRole("button", { name: "Open menu" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("link", { name: "Operations Migration" }),
+  ).toHaveAttribute("aria-current", "page");
+
+  // Dismiss the menu by keyboard without losing orientation.
   await page.getByRole("button", { name: "Close menu" }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("button", { name: "Open menu" })).toHaveAttribute(
     "aria-expanded",
     "false",
   );
-  await expect(page.getByRole("link", { name: "Library" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
+  await expect(
+    page.getByRole("heading", {
+      name: "Operations is not available in V2 yet",
+    }),
+  ).toBeVisible();
 
+  // Truthful V1/V2 coexistence: the handoff opens the current Web UI and the
+  // operator can return to the V2 migration route.
   await page.getByRole("link", { name: "Open current Web UI" }).click();
   await expect(page).toHaveURL(/\/ui$/);
   await expect(
     page.getByRole("heading", { name: "MediaFlow V1 Web UI" }),
   ).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(/\/ui-v2\/library$/);
+  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
   await expect(
-    page.getByRole("heading", { name: "Library is not available in V2 yet" }),
+    page.getByRole("heading", {
+      name: "Operations is not available in V2 yet",
+    }),
   ).toBeVisible();
 });
