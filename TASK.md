@@ -1,11 +1,9 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Slice 31 — Operator Shell & Information Architecture is `PASS / CLOSED` after A's final review of
-`2e7aceb50750fb54689ab26bfd1214b8e36c25f8..45cb1d4cdda6cf46a6d6699600bc4a4563efc06b`.
+Slice 32 — Library & Files Experience is `ACTIVE` at Base
+`76de3f60e223131a8b7db97a566d0ceaadd9b2a0`.
 
-Last reviewed implementation head: `45cb1d4cdda6cf46a6d6699600bc4a4563efc06b`
+The A-owned Slice Contract and Roadmap activation must be committed before B plans implementation.
+No implementation Task is active, and A has not pre-split the Slice into Tasks.
 
-The Closure Packet and A Final Review are recorded in [`SLICE.md`](SLICE.md). No implementation
-Task is active.
-
-Next Action: A SELECTS THE NEXT LARGE SLICE
+Next Action: B PLANS FIRST TASK
