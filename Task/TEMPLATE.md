@@ -36,9 +36,12 @@ List any files or areas that are explicitly frozen when that matters.
 
 ## Acceptance Criteria
 
-- [ ] The promised behavior works through every required affected surface.
-- [ ] Success, failure and recovery semantics match the parent Slice where applicable.
-- [ ] Safety and architecture invariants remain intact.
+- [ ] The promised behavior completes the required user journey through every affected surface,
+      including success, failure and recovery semantics from the parent Slice.
+- [ ] A normal Web journey needs no avoidable CLI fallback, raw internal-token transfer or
+      implementation-detail ceremony; added friction represents meaningful human intent.
+- [ ] Stable UX-first requirements and all correctness, security, data-integrity and architecture
+      invariants remain intact.
 - [ ] Required compatibility, concurrency, stale-state or per-item behavior is covered where
       applicable.
 - [ ] The assigned Test Level passes with actual evidence.

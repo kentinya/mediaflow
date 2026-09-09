@@ -65,21 +65,36 @@ state, action, outcome, error, and recovery promised by the applicable product r
 
 Permanent product rules:
 
-1. Retry is not equivalent to recovery. Recovery must explain what failed, what state is durable,
+1. User experience is the primary product-design and acceptance criterion. Start from the user goal
+   and choose the most natural, direct and lowest-friction journey that still satisfies every
+   correctness, security, data-integrity and architecture invariant.
+2. Retry is not equivalent to recovery. Recovery must explain what failed, what state is durable,
    what is safe to repeat, and the explicit action that continues or resolves the item.
-2. Batch workflows preserve independent per-item state, outcome, and recovery. One item must not
+3. Batch workflows preserve independent per-item state, outcome, and recovery. One item must not
    hide, overwrite, or block the diagnosis and safe recovery of another item.
-3. Configuration displayed as Active must be the exact immutable configuration snapshot consumed
+4. Configuration displayed as Active must be the exact immutable configuration snapshot consumed
    by runtime. A draft, database row, JSON file, or stale process snapshot must not be presented as
    Active merely because it exists.
-4. Automated decisions affecting recognition, metadata identity, naming, classification,
+5. Automated decisions affecting recognition, metadata identity, naming, classification,
    destination, conflict handling, or execution must expose bounded, secret-free explanations.
-5. CLI-only completion does not satisfy a requirement whose final management surface is Web. CLI
-   remains valuable for administration, debugging, migration, and automation.
-6. API and Web capabilities for the same journey must use the same application behavior,
-   permissions, validation, state, and safety rules.
-7. Safety remains stronger than convenience: default DryRun, no silent overwrite/delete, explicit
-   authority, zero-mutation analysis stages, and OrganizerExecutor-only mutation remain mandatory.
+6. CLI-only completion does not satisfy an ordinary journey whose final management surface is Web.
+   CLI remains valuable for administration, debugging, migration, automation and support.
+7. Backend mechanisms do not dictate the operator journey. Do not require ordinary users to handle
+   raw execution tokens or implementation identifiers merely because the backend uses tokens,
+   grants, revisions, locks, claims, checkpoints or fences. Show such identifiers only when they are
+   useful for diagnosis or support.
+8. Safely automate constraints the system can reliably determine. Avoid redundant confirmation and
+   interrupt the operator only for meaningful human intent, authority escalation, ambiguity,
+   uncertain mutation or irreversible/destructive effects.
+9. User-visible failures provide an action-oriented explanation and a meaningful next action rather
+   than exposing raw protocol or exception details.
+10. API and Web capabilities for the same journey must use the same application behavior,
+    permissions, validation, state, and safety rules.
+11. RBAC, backend-authoritative permissions, explicit mutation intent, no silent overwrite/delete,
+    bounded scope, auditability, redaction, Storage confinement, immutable snapshot pinning,
+    concurrency fencing, zero-mutation analysis stages, no automatic uncertain-mutation replay,
+    explainable/recoverable destructive outcomes and OrganizerExecutor-only mutation are mandatory
+    system invariants. They do not justify unnecessary operator friction.
 
 Read `docs/product-experience.md` before implementing any user-facing feature. `SLICE.md` must define
 the user goal, journey outcome, failures/recovery and Slice acceptance. `TASK.md` must identify the
@@ -638,7 +653,9 @@ JSON export should be supported.
 
 This project manages user media files.
 
-Safety is more important than convenience.
+The following correctness, security, and data-integrity rules are mandatory regardless of how the
+operator experience is designed. They should be enforced transparently wherever technically safe,
+without turning internal mechanisms into unnecessary user steps.
 
 Rules:
 
@@ -697,8 +714,9 @@ lifecycle, status, testing, Git and review rules live only in `docs/development-
 
 ## A — Slice Owner / Architect / Final Reviewer
 
-A owns the large business-capability boundary in `SLICE.md`, its user outcome, required surfaces,
-safety invariants, explicit deferrals and final acceptance. Only A may materially change the Slice
+A owns the large business-capability boundary in `SLICE.md`, its user outcome, product/UX
+constraints, required surfaces, safety/correctness invariants, explicit deferrals and final
+acceptance. Only A may materially change the Slice
 Contract, change Roadmap Slice boundaries, conduct the final Base..Head Slice review, or declare a
 Slice `PASS / CLOSED`. A does not turn individual assertions, fields, labels or non-blocking test
 ideas into new Slices.

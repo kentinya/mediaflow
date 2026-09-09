@@ -38,6 +38,13 @@ remain stable while the active V2 program adds migration and operator-surface ac
 The V2 document records durable product and authority boundaries, not transient Task paths,
 package versions, test counts or internal function names.
 
+`REQ-GEN-004` remains a frozen V1 correctness baseline: failure must not create unknown data loss,
+and uncertain or destructive outcomes must stop safely. In V2, its phrase “safety takes precedence
+over convenience” must not be interpreted as permission to impose avoidable CLI fallback, raw-token
+transfer, implementation-identifier handling or redundant confirmation on an ordinary Web journey.
+Interaction design is governed by `V2-UX-*`; the original no-data-loss, explicit-authority and safe-
+recovery meaning remains unchanged.
+
 ## Traceability and derivation rules
 
 - `Canonical Source` 使用中文规格书的章节标题；章节正文仍是最终解释来源。
