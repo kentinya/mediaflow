@@ -83,3 +83,31 @@ test("a forbidden principal renders the distinct bounded permission state", asyn
   ).toBeVisible();
   await expect(page.getByText(LIMITED_TOKEN)).toHaveCount(0);
 });
+
+test("migration destinations stay truthful and narrow navigation remains usable", async ({
+  page,
+}) => {
+  const apiRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/")) {
+      apiRequests.push(request.url());
+    }
+  });
+
+  await page.goto("/ui-v2/library");
+  await expect(
+    page.getByRole("heading", { name: "Library is not available in V2 yet" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open current Web UI" }),
+  ).toHaveAttribute("href", "/ui");
+  await expect(page).toHaveTitle("Library | MediaFlow");
+  expect(apiRequests).toEqual([]);
+
+  await page.getByRole("button", { name: "Open menu" }).click();
+  await expect(
+    page.getByRole("button", { name: "Close menu" }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("link", { name: /Overview/ }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
+});

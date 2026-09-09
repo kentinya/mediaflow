@@ -23,24 +23,97 @@ body {
   color: var(--ink);
 }
 
-.mf-shell-header {
-  padding: 28px 4vw;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--line);
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
 }
 
-.mf-shell-header h1 {
-  margin: 0.2rem 0 0;
-  font-size: clamp(1.4rem, 3.5vw, 2.4rem);
+.mf-skip-link {
+  position: absolute;
+  left: 12px;
+  top: -100px;
+  z-index: 10;
+  padding: 10px 14px;
+  background: var(--accent);
+  color: #101512;
+}
+
+.mf-skip-link:focus {
+  top: 12px;
+}
+
+.mf-shell-header {
+  padding: 24px 4vw;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
 }
 
 .mf-eyebrow {
   letter-spacing: 0.25em;
   color: var(--accent);
+}
+
+.mf-shell-title {
+  margin: 6px 0 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+}
+
+.mf-shell-auth {
+  margin-left: auto;
+}
+
+.mf-menu-toggle {
+  display: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  padding: 9px 12px;
+  cursor: pointer;
+}
+
+.mf-primary-nav {
+  display: flex;
+  gap: 4px;
+  padding: 10px 4vw;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.mf-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  padding: 9px 12px;
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.mf-nav-link:hover,
+.mf-nav-link[aria-current="page"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.mf-nav-status {
+  font-size: 0.72rem;
+  color: var(--warn);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+
+.mf-page-context {
+  color: var(--muted);
+  margin: 0 0 20px;
+  font-size: 0.9rem;
 }
 
 .mf-auth-controls {
@@ -61,6 +134,46 @@ body {
 .mf-shell-main {
   padding: 24px 4vw 64px;
   max-width: 1100px;
+}
+
+.mf-shell-main:focus {
+  outline: none;
+}
+
+@media (max-width: 700px) {
+  .mf-shell-header {
+    padding: 18px 5vw;
+  }
+
+  .mf-shell-auth {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .mf-menu-toggle {
+    display: block;
+    order: 2;
+  }
+
+  .mf-shell-auth {
+    order: 3;
+  }
+
+  .mf-primary-nav {
+    display: none;
+    padding: 8px 5vw 14px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mf-primary-nav-open {
+    display: flex;
+  }
+
+  .mf-nav-link {
+    justify-content: space-between;
+    padding: 11px 8px;
+  }
 }
 
 .mf-button {
