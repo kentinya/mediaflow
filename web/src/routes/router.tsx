@@ -9,14 +9,9 @@ import {
 } from "@tanstack/react-router";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { EntryPage } from "../features/entry/EntryPage";
+import { MigrationPage } from "../features/migration/MigrationPage";
 import { AppShell } from "../shared/ui/AppShell";
 import { StatusBanner } from "../shared/ui/StatusBanner";
-
-/**
- * Client-side route ownership for the V2 migration surface. The router is
- * mounted by the Python application under the documented /ui-v2/ prefix;
- * deep client routes are served through the V2 entry document.
- */
 
 function RootRoute() {
   return (
@@ -29,9 +24,12 @@ function RootRoute() {
 function NotFoundRoute() {
   return (
     <StatusBanner variant="warning" title="Route not found">
-      <p>The requested V2 route does not exist in this migration preview.</p>
+      <p>
+        The requested V2 route is unavailable. Return to a supported product
+        area to continue.
+      </p>
       <div className="mf-actions">
-        <Link to="/">Back to the V2 entry</Link>
+        <Link to="/dashboard">Return to Overview</Link>
       </div>
     </StatusBanner>
   );
@@ -54,7 +52,38 @@ const dashboardRoute = createRoute({
   component: DashboardPage,
 });
 
-const routeTree = rootRoute.addChildren([entryRoute, dashboardRoute]);
+const libraryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "library",
+  component: MigrationPage,
+});
+
+const operationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations",
+  component: MigrationPage,
+});
+
+const reviewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "review",
+  component: MigrationPage,
+});
+
+const configurationRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "configuration",
+  component: MigrationPage,
+});
+
+const routeTree = rootRoute.addChildren([
+  entryRoute,
+  dashboardRoute,
+  libraryRoute,
+  operationsRoute,
+  reviewRoute,
+  configurationRoute,
+]);
 
 export function createAppRouter(
   history: RouterHistory = createBrowserHistory(),
