@@ -13,16 +13,26 @@ export interface MemoryAuthStore {
   getToken(): string | null;
   setToken(token: string): void;
   clearToken(): void;
+  getIntendedPath(): string | null;
+  setIntendedPath(path: string): void;
+  clearIntendedPath(): void;
   subscribe(listener: AuthListener): () => void;
 }
 
 export function createMemoryAuthStore(): MemoryAuthStore {
   let token: string | null = null;
+  let intendedPath: string | null = null;
   const listeners = new Set<AuthListener>();
   const emit = () => {
     for (const listener of listeners) {
       listener();
     }
+  };
+  const clearIntendedPathInternal = () => {
+    if (intendedPath === null) {
+      return;
+    }
+    intendedPath = null;
   };
   return {
     getToken: () => token,
@@ -35,6 +45,16 @@ export function createMemoryAuthStore(): MemoryAuthStore {
         return;
       }
       token = null;
+      clearIntendedPathInternal();
+      emit();
+    },
+    getIntendedPath: () => intendedPath,
+    setIntendedPath: (next) => {
+      intendedPath = next;
+      emit();
+    },
+    clearIntendedPath: () => {
+      clearIntendedPathInternal();
       emit();
     },
     subscribe: (listener) => {

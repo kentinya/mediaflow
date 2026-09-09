@@ -17,3 +17,12 @@ export function useAuthToken(): string | null {
 export function useIsConnected(): boolean {
   return useAuthToken() !== null;
 }
+
+/** The safe intended route preserved before authentication, or null when unset. */
+export function useIntendedPath(): string | null {
+  return useSyncExternalStore(
+    authStore.subscribe,
+    authStore.getIntendedPath,
+    () => null,
+  );
+}

@@ -18,6 +18,7 @@ function stubFetch(
 afterEach(() => {
   cleanup();
   authStore.clearToken();
+  authStore.clearIntendedPath();
   vi.unstubAllGlobals();
 });
 
@@ -32,7 +33,7 @@ describe("EntryPage", () => {
     expect(authStore.getToken()).toBeNull();
   });
 
-  it("connects from memory and opens the Dashboard", async () => {
+  it("connects from root and continues to the Dashboard", async () => {
     const user = userEvent.setup();
     stubFetch(
       async () =>
@@ -43,6 +44,31 @@ describe("EntryPage", () => {
     await user.type(input, TOKEN);
     await user.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(authStore.getToken()).toBe(TOKEN));
+    // Root entry has no deep intention, so it falls through to Dashboard.
+    await screen.findByRole("heading", { name: "Dashboard" });
+    expect(authStore.getIntendedPath()).toBeNull();
+  });
+
+  it("continues to the intended route when entering from a deep link", async () => {
+    const user = userEvent.setup();
+    stubFetch(
+      async () =>
+        new Response(JSON.stringify(dashboardPayload), { status: 200 }),
+    );
+    // Pre-set an intended deep path (simulates direct deep-link entry).
+    authStore.setIntendedPath("/dashboard");
+    renderApp("/ui-v2/dashboard");
+    // The Dashboard shows the not-connected banner because no token yet.
+    expect(await screen.findByText("Not connected")).toBeVisible();
+    // Navigate to entry, connect, and verify continuation.
+    await screen.getByRole("link", { name: "Go to the V2 entry" }).click();
+    const input = await screen.findByLabelText("API token");
+    await user.type(input, TOKEN);
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(authStore.getToken()).toBe(TOKEN));
+    // Intended path was consumed and cleared.
+    expect(authStore.getIntendedPath()).toBeNull();
+    // Dashboard renders with the token-bound query result.
     await screen.findByRole("heading", { name: "Dashboard" });
   });
 
@@ -60,8 +86,9 @@ describe("EntryPage", () => {
     expect(document.body.innerHTML).not.toContain(TOKEN);
   });
 
-  it("connected state reports memory-only auth and disconnect clears memory and cache", async () => {
+  it("connected state reports memory-only auth and disconnect clears memory, intent and cache", async () => {
     authStore.setToken(TOKEN);
+    authStore.setIntendedPath("/library");
     const { queryClient } = renderApp("/ui-v2/");
     queryClient.setQueryData(["dashboard", 10], { kept: true });
     await screen.findByText("Connected");
@@ -73,6 +100,7 @@ describe("EntryPage", () => {
     expect(disconnectButtons.length).toBe(2);
     await userEvent.setup().click(disconnectButtons[0]);
     expect(authStore.getToken()).toBeNull();
+    expect(authStore.getIntendedPath()).toBeNull();
     expect(queryClient.getQueryData(["dashboard", 10])).toBeUndefined();
     expect(await screen.findByLabelText("API token")).toBeVisible();
   });
