@@ -1,6 +1,12 @@
 import { render } from "@testing-library/react";
 import { QueryClient } from "@tanstack/react-query";
-import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
+import {
+  RouterProvider,
+  createMemoryHistory,
+  createRoute,
+  createRootRoute,
+  createRouter,
+} from "@tanstack/react-router";
 import type { ReactElement } from "react";
 import { AppProviders } from "../src/app/providers";
 import { createAppRouter } from "../src/routes/router";
@@ -31,11 +37,39 @@ export function renderApp(initialPath: string): { queryClient: QueryClient } {
   return { queryClient };
 }
 
+/**
+ * Render a single component under the application providers and an isolated
+ * router mounted at "/". The isolated tree has no product routes and no
+ * AuthBoundary, so component tests can exercise one component's own states
+ * deterministically while still having Router context for `Link` elements.
+ */
 export function renderWithProviders(
   element: ReactElement,
 ): ReturnType<typeof render> {
-  const queryClient = new QueryClient();
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+      },
+    },
+  });
+  const rootRoute = createRootRoute();
+  const elementRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/",
+    component: () => <>{element}</>,
+  });
+  const routeTree = rootRoute.addChildren([elementRoute]);
+  const router = createRouter({
+    routeTree,
+    basepath: "/",
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
   return render(
-    <AppProviders queryClient={queryClient}>{element}</AppProviders>,
+    <AppProviders queryClient={queryClient}>
+      <RouterProvider router={router} />
+    </AppProviders>,
   );
 }

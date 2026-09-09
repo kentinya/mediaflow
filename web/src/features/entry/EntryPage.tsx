@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import type { FormEvent } from "react";
-import { useNavigate, useLocation } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthToken, useIntendedPath } from "../../shared/api/auth-context";
 import { authStore } from "../../shared/api/auth-store";
@@ -11,43 +11,29 @@ import { TextField } from "../../shared/ui/TextField";
 /**
  * V2 entry interaction. The existing API-principal Bearer token is accepted
  * into runtime memory only; the input is cleared after connect and the token
- * is never displayed again. Disconnect clears the token, the query cache,
- * and the intended route so no hidden continuation survives.
+ * is never displayed again. The post-connect destination is derived from the
+ * router-aware `AuthBoundary`, which records the safe intended route when an
+ * unauthenticated operator opens a deep link. Root entry falls through to
+ * the Dashboard default. Disconnect clears the token, the query cache, and
+ * the intended route so no hidden continuation survives.
  */
 export function EntryPage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const queryClient = useQueryClient();
   const token = useAuthToken();
   const intendedPath = useIntendedPath();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const justConnected = useRef(false);
 
-  useEffect(() => {
-    // Only track intended paths for actual deep routes; root entry is the
-    // connection boundary itself and must not steal the post-connect
-    // navigation away from the Dashboard or other product routes.
-    if (justConnected.current) {
-      justConnected.current = false;
-      return;
-    }
-    if (location.pathname !== "/") {
-      authStore.setIntendedPath(location.pathname);
-    }
-  }, [location.pathname]);
+  const openDashboard = () => {
+    void navigate({ to: "/dashboard" });
+  };
 
   const disconnect = () => {
     authStore.clearToken();
     authStore.clearIntendedPath();
     queryClient.clear();
-    // Always return to the entry boundary so the operator can reconnect
-    // from any route without losing shell context.
     void navigate({ to: "/" });
-  };
-
-  const openDashboard = () => {
-    void navigate({ to: "/dashboard" });
   };
 
   const continueToIntended = () => {
@@ -66,7 +52,6 @@ export function EntryPage() {
     authStore.setToken(next);
     setValue("");
     setError(null);
-    justConnected.current = true;
     continueToIntended();
   };
 

@@ -49,20 +49,19 @@ test("an expired principal fails safely and recovers through token re-entry", as
   await page.getByLabel("API token").fill(EXPIRED_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
 
+  // The 401 clears the rejected authority and presents the bounded
+  // unauthorized state on the intended Dashboard route.
   await expect(
     page.getByRole("heading", { name: "Not authorized" }),
   ).toBeVisible();
   await expect(page.getByText(EXPIRED_TOKEN)).toHaveCount(0);
 
-  // Recovery goes through the explicit V2 entry: drop the rejected token
-  // from memory, then re-enter a valid one.
+  // Recovery goes through the explicit V2 entry with a fresh credential;
+  // the rejected token was already cleared, so no manual disconnect is needed.
   await page
     .getByRole("link", { name: "Enter an API principal token" })
     .click();
-  await page
-    .getByRole("status")
-    .getByRole("button", { name: "Disconnect" })
-    .click();
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
 
@@ -95,14 +94,14 @@ test("migration destinations stay truthful and narrow navigation remains usable"
   });
 
   await page.setViewportSize({ width: 640, height: 800 });
-  await page.goto("/ui-v2/library");
-  await expect(
-    page.getByRole("heading", { name: "Library is not available in V2 yet" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Open current Web UI" }),
-  ).toHaveAttribute("href", "/ui");
-  await expect(page).toHaveTitle("Library | MediaFlow");
+  await page.goto("/ui-v2/");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+
+  // Migration routes are reached through the shell only while connected;
+  // reset API tracking here so routing and migration pages must stay silent.
+  apiRequests.length = 0;
 
   // The narrow menu starts closed, hiding the destination links from the
   // accessibility tree: open it first so the link state can be asserted.
@@ -112,12 +111,24 @@ test("migration destinations stay truthful and narrow navigation remains usable"
   await expect(
     page.getByRole("button", { name: "Close menu" }),
   ).toHaveAttribute("aria-expanded", "true");
-  // The navigation link's accessible name includes the migration status, so
-  // the active-route marker must be read from the rendered link.
+  await page.getByRole("link", { name: "Library Migration" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/ui-v2\/library$/);
+  await expect(
+    page.getByRole("heading", { name: "Library is not available in V2 yet" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open current Web UI" }),
+  ).toHaveAttribute("href", "/ui");
+  await expect(page).toHaveTitle("Library | MediaFlow");
+
+  // The navigation link click closed the menu: reopen it to read the active
+  // route marker from the rendered link.
+  await openMenu.focus();
+  await page.keyboard.press("Enter");
   await expect(
     page.getByRole("link", { name: "Library Migration" }),
   ).toHaveAttribute("aria-current", "page");
-  expect(apiRequests).toEqual([]);
 
   // Exercise a destination link by keyboard, retaining the active/page context.
   const operationsLink = page.getByRole("link", {
@@ -153,14 +164,23 @@ test("migration destinations stay truthful and narrow navigation remains usable"
     }),
   ).toBeVisible();
 
-  // Truthful V1/V2 coexistence: the handoff opens the current Web UI and the
-  // operator can return to the V2 migration route.
+  // Routing and migration pages make no API request.
+  expect(apiRequests).toEqual([]);
+
+  // Truthful V1/V2 coexistence: the handoff opens the current Web UI.
   await page.getByRole("link", { name: "Open current Web UI" }).click();
   await expect(page).toHaveURL(/\/ui$/);
   await expect(
     page.getByRole("heading", { name: "MediaFlow V1 Web UI" }),
   ).toBeVisible();
+
+  // Returning to the V2 route is a fresh unauthenticated deep entry: the
+  // memory-only store was cleared by the full V1 page load, so the boundary
+  // preserves the intended route and asks the operator to connect again.
   await page.goBack();
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
   await expect(
     page.getByRole("heading", {

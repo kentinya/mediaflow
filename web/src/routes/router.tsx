@@ -11,11 +11,13 @@ import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { EntryPage } from "../features/entry/EntryPage";
 import { MigrationPage } from "../features/migration/MigrationPage";
 import { AppShell } from "../shared/ui/AppShell";
+import { AuthBoundary } from "../shared/auth/AuthBoundary";
 import { StatusBanner } from "../shared/ui/StatusBanner";
 
 function RootRoute() {
   return (
     <AppShell>
+      <AuthBoundary />
       <Outlet />
     </AppShell>
   );

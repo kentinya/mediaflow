@@ -49,27 +49,23 @@ describe("EntryPage", () => {
     expect(authStore.getIntendedPath()).toBeNull();
   });
 
-  it("continues to the intended route when entering from a deep link", async () => {
+  it("continues to the intended path the AuthBoundary recorded", async () => {
     const user = userEvent.setup();
     stubFetch(
       async () =>
         new Response(JSON.stringify(dashboardPayload), { status: 200 }),
     );
-    // Pre-set an intended deep path (simulates direct deep-link entry).
-    authStore.setIntendedPath("/dashboard");
-    renderApp("/ui-v2/dashboard");
-    // The Dashboard shows the not-connected banner because no token yet.
-    expect(await screen.findByText("Not connected")).toBeVisible();
-    // Navigate to entry, connect, and verify continuation.
-    await screen.getByRole("link", { name: "Go to the V2 entry" }).click();
+    // AuthBoundary records /library when an unauthenticated operator opens
+    // it directly; the EntryPage just consumes the captured intention.
+    authStore.setIntendedPath("/library");
+    renderApp("/ui-v2/");
     const input = await screen.findByLabelText("API token");
     await user.type(input, TOKEN);
     await user.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(authStore.getToken()).toBe(TOKEN));
-    // Intended path was consumed and cleared.
+    // Intended path was consumed and cleared, and navigation lands there.
     expect(authStore.getIntendedPath()).toBeNull();
-    // Dashboard renders with the token-bound query result.
-    await screen.findByRole("heading", { name: "Dashboard" });
+    await screen.findByText("Library is not available in V2 yet");
   });
 
   it("never displays the token after the entry interaction", async () => {
