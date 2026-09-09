@@ -1,10 +1,11 @@
 /**
  * Local fake API + static server for the minimal Playwright browser path.
  *
- * It serves the built V2 artifact from web/dist under /ui-v2/ and a tiny
- * fake /api/v1/dashboard that mirrors the existing Python contract. No
- * production credentials, media, Storage or external providers are involved,
- * and no token material is ever logged.
+ * It serves the built V2 artifact from web/dist under /ui-v2/ and fake
+ * /api/v1/dashboard, /api/v1/system/status and /api/v1/storage/files GET
+ * documents that mirror the existing Python contracts. Every unsupported
+ * method is rejected with 405; no production credentials, media, Storage or
+ * external providers are involved, and no token material is ever logged.
  */
 
 import { createServer } from "node:http";
@@ -58,14 +59,212 @@ const DASHBOARD_SNAPSHOT = {
   ],
 };
 
-const CONTENT_TYPES = {
-  ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".txt": "text/plain; charset=utf-8",
+const SYSTEM_STATUS = {
+  system: {
+    application_version: "2.0.0.dev0",
+    configuration_valid: true,
+    configuration_authority: "MANAGED",
+    configuration_snapshot_id: "rev-e2e-1",
+    configuration_snapshot_digest: "digest-e2e-1",
+  },
+  storages: {
+    total: 2,
+    truncated: false,
+    items: [
+      {
+        id: "local-media",
+        name: "Local media",
+        type: "local",
+        read_only: true,
+      },
+      {
+        id: "remote-media",
+        name: "Remote media",
+        type: "openlist",
+        read_only: false,
+      },
+    ],
+  },
+  resource_libraries: {
+    total: 1,
+    truncated: false,
+    items: [{ id: "resources", storage_id: "local-media", enabled: true }],
+  },
+  media_libraries: { total: 1, truncated: false, items: [] },
+  recognition_types: { total: 3, truncated: false, items: [] },
+  recognition_rules: { total: 3, truncated: false, items: [] },
+  recognition_type_policies: { total: 3, truncated: false, items: [] },
+  metadata_policies: { total: 3, truncated: false, items: [] },
+  naming_policies: { total: 3, truncated: false, items: [] },
+  classification_policies: { total: 3, truncated: false, items: [] },
+  organize_policies: { total: 3, truncated: false, items: [] },
 };
+
+function filesDocument(path, cursor, storageId) {
+  const storage =
+    storageId === "remote-media"
+      ? { id: "remote-media", name: "Remote media", type: "openlist" }
+      : { id: "local-media", name: "Local media", type: "local" };
+  const isRoot = path === "";
+  const segments = path === "" ? [] : path.split("/");
+  const breadcrumbs = [
+    { name: "Storage root", path: "", isRoot: true },
+    ...segments.map((segment, index) => ({
+      name: segment,
+      path: segments.slice(0, index + 1).join("/"),
+      isRoot: false,
+    })),
+  ];
+  const entries =
+    storage.id === "remote-media"
+      ? isRoot
+        ? [
+            {
+              name: "remote.mkv",
+              path: "remote.mkv",
+              type: "file",
+              entryType: "file",
+              size: 1024,
+              modifiedAt: "2026-08-22T12:00:00+00:00",
+              isDirectory: false,
+              isSymlink: false,
+              traversable: false,
+              selectable: false,
+              indexMembership: {
+                available: true,
+                indexed: false,
+                memberships: [],
+                total: 0,
+                truncated: false,
+              },
+            },
+          ]
+        : []
+      : isRoot
+        ? [
+            {
+              name: "movies",
+              path: "movies",
+              type: "directory",
+              entryType: "directory",
+              size: 0,
+              modifiedAt: "2026-08-22T12:00:00+00:00",
+              isDirectory: true,
+              isSymlink: false,
+              traversable: true,
+              selectable: true,
+              indexMembership: {
+                available: true,
+                indexed: false,
+                memberships: [],
+                total: 0,
+                truncated: false,
+              },
+            },
+            {
+              name: "show.mkv",
+              path: "show.mkv",
+              type: "file",
+              entryType: "file",
+              size: 1572864000,
+              modifiedAt: "2026-08-22T12:00:00+00:00",
+              isDirectory: false,
+              isSymlink: false,
+              traversable: false,
+              selectable: false,
+              indexMembership: {
+                available: true,
+                indexed: true,
+                memberships: [{ fileId: "file-e2e-1" }],
+                total: 1,
+                truncated: false,
+              },
+            },
+            {
+              name: "draft.mkv",
+              path: "draft.mkv",
+              type: "file",
+              entryType: "file",
+              size: 524288000,
+              modifiedAt: "2026-08-22T12:00:00+00:00",
+              isDirectory: false,
+              isSymlink: false,
+              traversable: false,
+              selectable: false,
+              indexMembership: {
+                available: true,
+                indexed: false,
+                memberships: [],
+                total: 0,
+                truncated: false,
+              },
+            },
+          ]
+        : path === "movies"
+          ? [
+              {
+                name: "movie.mkv",
+                path: "movies/movie.mkv",
+                type: "file",
+                entryType: "file",
+                size: 2097152000,
+                modifiedAt: "2026-08-22T12:00:00+00:00",
+                isDirectory: false,
+                isSymlink: false,
+                traversable: false,
+                selectable: false,
+                indexMembership: {
+                  available: false,
+                  indexed: false,
+                  memberships: [],
+                  total: 0,
+                  truncated: false,
+                },
+              },
+            ]
+          : [];
+  const hasNext =
+    storage.id === "local-media" && (path === "" || Boolean(cursor));
+  return {
+    revisionId: "rev-e2e-1",
+    revision: { revisionId: "rev-e2e-1", version: 1, digest: "digest-e2e-1" },
+    configuration: {
+      authority: "MANAGED",
+      revisionId: "rev-e2e-1",
+      version: 1,
+      digest: "digest-e2e-1",
+    },
+    authority: "MANAGED",
+    storage,
+    storageId: storage.id,
+    storageName: storage.name,
+    storageType: storage.type,
+    pathScope: "storage_relative",
+    root: "",
+    rootPath: "",
+    canonicalPath: path,
+    path,
+    breadcrumbs,
+    entries,
+    limit: 50,
+    nextCursor: hasNext ? "cursor-page-2" : null,
+    hasNext,
+    exhausted: !hasNext,
+    hasPrevious: false,
+    continuation: {
+      hasNext,
+      exhausted: !hasNext,
+      cursorBoundTo: "revision/storage/path/limit",
+    },
+    sideEffects: "none",
+    retrySafe: true,
+  };
+}
+
+function bearerToken(req) {
+  const header = req.headers.authorization ?? "";
+  return header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+}
 
 function sendJson(res, status, payload) {
   const body = Buffer.from(JSON.stringify(payload));
@@ -100,13 +299,20 @@ async function readArtifact(path) {
   }
 }
 
+const CONTENT_TYPES = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".txt": "text/plain; charset=utf-8",
+};
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
+  const token = bearerToken(req);
+
   if (url.pathname === "/api/v1/dashboard") {
-    const header = req.headers.authorization ?? "";
-    const token = header.startsWith("Bearer ")
-      ? header.slice("Bearer ".length)
-      : "";
     if (LIMITED_TOKENS.has(token)) {
       sendJson(res, 403, {
         error: {
@@ -129,6 +335,140 @@ const server = createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, DASHBOARD_SNAPSHOT);
+    return;
+  }
+  if (url.pathname === "/api/v1/system/status") {
+    if (req.method !== "GET") {
+      res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("GET required");
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message: "principal lacks read permission",
+        },
+      });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    sendJson(res, 200, SYSTEM_STATUS);
+    return;
+  }
+  if (url.pathname === "/api/v1/storage/files") {
+    if (req.method !== "GET") {
+      res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("GET required");
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message: "principal lacks read permission",
+        },
+      });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    const storageId = url.searchParams.get("storageId");
+    if (!["local-media", "remote-media"].includes(storageId)) {
+      sendJson(res, 404, {
+        error: {
+          code: "storage_browser_storage_not_found",
+          message: "configured Storage was not found",
+          details: {
+            category: "storage_not_found",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "reload the configuration revision and choose one configured Storage",
+          },
+        },
+      });
+      return;
+    }
+    const path = url.searchParams.get("path") ?? "";
+    if (path.includes("..") || path.startsWith("/") || path.includes("\\")) {
+      sendJson(res, 400, {
+        error: {
+          code: "storage_browser_invalid_path",
+          message: "Storage-relative path is invalid",
+          details: {
+            category: "invalid_path",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "use the displayed Storage-relative breadcrumb or enter a safe relative path",
+          },
+        },
+      });
+      return;
+    }
+    if (path === "missing") {
+      sendJson(res, 404, {
+        error: {
+          code: "storage_browser_not_found",
+          message: "Storage directory was not found",
+          details: {
+            category: "not_found",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "make the configured directory available, reload, and retry",
+          },
+        },
+      });
+      return;
+    }
+    if (path === "blocked") {
+      sendJson(res, 403, {
+        error: {
+          code: "storage_browser_permission_denied",
+          message: "Storage read permission was denied",
+          details: {
+            category: "permission_denied",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "grant MediaFlow read/list permission, reload, and retry",
+          },
+        },
+      });
+      return;
+    }
+    sendJson(
+      res,
+      200,
+      filesDocument(path, url.searchParams.get("cursor"), storageId),
+    );
     return;
   }
   if (req.method !== "GET") {

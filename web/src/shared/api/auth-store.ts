@@ -34,6 +34,13 @@ export interface MemoryAuthStore {
   clearRejectedAuthority(): void;
   getIntendedPath(): DestinationPath | null;
   /**
+   * Safe allowlisted view state (Storage-relative path/cursor) captured from
+   * the current URL before a deep entry redirects to the connection boundary.
+   * It is never token/credential material and is cleared with disconnect.
+   */
+  getIntendedSearch(): string | null;
+  setIntendedSearch(search: string): void;
+  /**
    * Store the safe post-connect destination. The path type and runtime guard
    * both come from the centralized destination model, so the continuation
    * allowlist can never drift from the typed navigation contract; arbitrary
@@ -47,6 +54,7 @@ export interface MemoryAuthStore {
 export function createMemoryAuthStore(): MemoryAuthStore {
   let token: string | null = null;
   let intendedPath: DestinationPath | null = null;
+  let intendedSearch: string | null = null;
   let rejected = false;
   const listeners = new Set<AuthListener>();
   const emit = () => {
@@ -55,10 +63,11 @@ export function createMemoryAuthStore(): MemoryAuthStore {
     }
   };
   const clearIntendedPathInternal = () => {
-    if (intendedPath === null) {
+    if (intendedPath === null && intendedSearch === null) {
       return;
     }
     intendedPath = null;
+    intendedSearch = null;
   };
   return {
     getToken: () => token,
@@ -90,11 +99,22 @@ export function createMemoryAuthStore(): MemoryAuthStore {
       emit();
     },
     getIntendedPath: () => intendedPath,
+    getIntendedSearch: () => intendedSearch,
+    setIntendedSearch: (next) => {
+      // Only meaningful alongside a recorded supported destination; safe
+      // view-state values are copied verbatim and never token material.
+      if (intendedPath === null) {
+        return;
+      }
+      intendedSearch = next.length > 0 ? next : null;
+      emit();
+    },
     setIntendedPath: (next) => {
       if (!isDestinationPath(next)) {
         return;
       }
       intendedPath = next;
+      intendedSearch = null;
       emit();
     },
     clearIntendedPath: () => {

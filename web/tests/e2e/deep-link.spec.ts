@@ -124,13 +124,15 @@ test("connect from a real deep link continues to that exact allowlisted route", 
   await page.getByRole("button", { name: "Connect" }).click();
   // Connecting continues to the exact route that was opened, not a default.
   await expect(page).toHaveURL(/\/ui-v2\/library$/);
+  await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Library is not available in V2 yet" }),
-  ).toBeVisible();
+    page.getByRole("link", { name: "Open Storage files" }),
+  ).toHaveAttribute("href", "/ui-v2/library/files");
   await expect(page).toHaveTitle("Library | MediaFlow");
-  await expect(
-    page.getByRole("link", { name: "Library Migration" }),
-  ).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("link", { name: "Library" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
   await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
 });
 
@@ -407,9 +409,11 @@ test("V1 handoff does not leak the token into URL or persistent stores", async (
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 
   // Navigate (client-side) to a migration route as a connected operator.
-  await page.getByRole("link", { name: "Library Migration" }).click();
+  await page.getByRole("link", { name: "Operations Migration" }).click();
   await expect(
-    page.getByRole("heading", { name: "Library is not available in V2 yet" }),
+    page.getByRole("heading", {
+      name: "Operations is not available in V2 yet",
+    }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Open current Web UI" }).click();
   await expect(page).toHaveURL(/\/ui$/);

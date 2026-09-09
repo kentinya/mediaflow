@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  allDestinationPaths,
+  childDestinations,
   destinationForPath,
   destinationPaths,
   destinations,
@@ -17,21 +19,27 @@ describe("destination model", () => {
     ]);
     expect(
       destinations.filter((item) => item.availability === "migration"),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
+    expect(childDestinations.map((item) => item.label)).toEqual([
+      "Storage files",
+    ]);
   });
 
   it("resolves paths without duplicating route metadata", () => {
     expect(destinationForPath("/dashboard")?.id).toBe("overview");
-    expect(destinationForPath("/library")?.v1Path).toBe("/ui");
+    expect(destinationForPath("/library")?.availability).toBe("implemented");
+    expect(destinationForPath("/library/files")?.id).toBe("library-files");
     expect(destinationForPath("/unknown")).toBeUndefined();
   });
 
   it("derives a unique path allowlist from the destinations contract", () => {
     expect(destinationPaths).toEqual(destinations.map((item) => item.path));
     expect(new Set(destinationPaths).size).toBe(destinations.length);
+    expect(allDestinationPaths).toContain("/library/files");
     for (const path of destinationPaths) {
       expect(isDestinationPath(path)).toBe(true);
     }
+    expect(isDestinationPath("/library/files")).toBe(true);
     expect(isDestinationPath("/")).toBe(false);
     expect(isDestinationPath("/dashboard/")).toBe(false);
     expect(isDestinationPath("/unknown")).toBe(false);

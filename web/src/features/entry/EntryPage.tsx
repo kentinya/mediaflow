@@ -2,7 +2,11 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAuthToken, useIntendedPath } from "../../shared/api/auth-context";
+import {
+  useAuthToken,
+  useIntendedPath,
+  useIntendedSearch,
+} from "../../shared/api/auth-context";
 import { authStore } from "../../shared/api/auth-store";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -22,6 +26,7 @@ export function EntryPage() {
   const queryClient = useQueryClient();
   const token = useAuthToken();
   const intendedPath = useIntendedPath();
+  const intendedSearch = useIntendedSearch();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -38,8 +43,13 @@ export function EntryPage() {
 
   const continueToIntended = () => {
     const next = intendedPath ?? "/dashboard";
+    const rawSearch = intendedSearch ?? "";
+    const search =
+      rawSearch.length > 0 && !rawSearch.startsWith("?")
+        ? `?${rawSearch}`
+        : rawSearch;
     authStore.clearIntendedPath();
-    void navigate({ to: next });
+    void navigate({ to: `${next}${search}` });
   };
 
   const connect = (event: FormEvent<HTMLFormElement>) => {

@@ -318,6 +318,135 @@ body {
   color: var(--muted);
 }
 
+.mf-library-landing h2 {
+  margin: 0 0 8px;
+}
+
+.mf-library-choices {
+  list-style: none;
+  margin: 18px 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.mf-library-choice {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.mf-library-choice h3 {
+  margin: 0;
+}
+
+.mf-library-choice p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.mf-storage-list {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.mf-storage-button {
+  width: 100%;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.mf-storage-button:hover,
+.mf-storage-button:focus {
+  border-color: var(--accent);
+}
+
+.mf-storage-name,
+.mf-storage-meta {
+  display: block;
+}
+
+.mf-storage-meta,
+.mf-file-kind,
+.mf-file-meta,
+.mf-file-membership {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.mf-files-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.mf-files-head h3 {
+  margin: 0;
+}
+
+.mf-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 14px 0;
+}
+
+.mf-link-button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.mf-file-list {
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.mf-file-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 2fr) 90px minmax(150px, 1.4fr) 160px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mf-file-row:last-child {
+  border-bottom: none;
+}
+
+@media (max-width: 700px) {
+  .mf-file-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
+
 .mf-failure-list {
   background: var(--panel);
   border: 1px solid var(--line);

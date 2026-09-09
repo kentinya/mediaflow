@@ -17,19 +17,18 @@ describe("AppShell", () => {
     expect(
       await screen.findByRole("navigation", { name: "Primary" }),
     ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Library" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
     expect(
-      screen.getByRole("link", { name: /LibraryMigration/ }),
-    ).toHaveAttribute("aria-current", "page");
-    expect(
-      screen.getByText("Library is not available in V2 yet"),
+      screen.getByRole("link", { name: "Open Storage files" }),
     ).toBeVisible();
     expect(document.title).toBe("Library | MediaFlow");
     expect(
       screen.getByRole("link", { name: "Skip to main content" }),
     ).toHaveAttribute("href", "#main-content");
-    expect(
-      screen.getByRole("link", { name: "Open current Web UI" }),
-    ).toHaveAttribute("href", "/ui");
   });
 
   it("exposes a keyboard-operable narrow navigation control", async () => {

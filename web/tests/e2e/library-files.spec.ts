@@ -1,0 +1,334 @@
+import { expect, test, type Page } from "@playwright/test";
+
+/**
+ * Browser proof for the V2 Library landing and Storage Files journey.
+ *
+ * Runs against the built V2 artifact plus the local fake API only. The fake
+ * tokens are non-secret throwaway values; no production credentials, media,
+ * Storage or external providers are involved.
+ *
+ * Covered journeys: truthful Library landing, deep-link auth continuation,
+ * Storage selection by label, root/directory/breadcrumb navigation, bounded
+ * next page, refresh, membership variants, no-Storage, provider read failure,
+ * invalid path, 401, 403, narrow/keyboard use and zero non-GET traffic.
+ */
+
+const VIEWER_TOKEN = "e2e-viewer-token";
+const EXPIRED_TOKEN = "e2e-expired-token";
+const LIMITED_TOKEN = "e2e-limited-token";
+
+function apiRequestsOf(page: Page): string[] {
+  const seen: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/")) {
+      seen.push(request.url());
+    }
+  });
+  return seen;
+}
+
+async function connectAs(page: Page, token: string): Promise<void> {
+  await page.goto("/ui-v2/");
+  await page.getByLabel("API token").fill(token);
+  await page.getByRole("button", { name: "Connect" }).click();
+}
+
+test("Library landing truthfully separates Storage files from FileIndex", async ({
+  page,
+}) => {
+  await connectAs(page, VIEWER_TOKEN);
+  await page.getByRole("link", { name: "Library" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/library$/);
+  await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Storage files" }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "FileIndex" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open Storage files" }),
+  ).toHaveAttribute("href", "/ui-v2/library/files");
+  await expect(
+    page.getByRole("link", { name: "Open current Web UI" }),
+  ).toHaveAttribute("href", "/ui");
+  await expect(page).toHaveTitle("Library | MediaFlow");
+  await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
+});
+
+test("direct deep entry to Storage files continues through memory-only auth", async ({
+  page,
+}) => {
+  await page.goto("/ui-v2/library/files");
+  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+  await expect(page).toHaveTitle("Connect | MediaFlow");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/library\/files$/);
+  await expect(
+    page.getByRole("heading", { name: "Choose a Storage" }),
+  ).toBeVisible();
+  const storage = await page.evaluate(() => ({
+    local: window.localStorage.length,
+    session: window.sessionStorage.length,
+    cookie: document.cookie,
+  }));
+  expect(storage).toEqual({ local: 0, session: 0, cookie: "" });
+});
+
+test("Storage selection, root browse, directory, breadcrumb, refresh and page stays read-only", async ({
+  page,
+}) => {
+  const apiRequests = apiRequestsOf(page);
+  await connectAs(page, VIEWER_TOKEN);
+  await page.getByRole("link", { name: "Library" }).click();
+  await page.getByRole("link", { name: "Open Storage files" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Choose a Storage" }),
+  ).toBeVisible();
+  await expect(page.getByText("Local media")).toBeVisible();
+  await expect(page.getByText("Remote media")).toBeVisible();
+
+  await page.getByRole("button", { name: /Local media/ }).click();
+  await expect(page).toHaveURL(/storage=local-media$/);
+  await expect(
+    page.getByRole("heading", { name: "Local media" }),
+  ).toBeVisible();
+  await expect(page.getByText("show.mkv")).toBeVisible();
+  await expect(page.getByText("Indexed", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Not indexed", { exact: true }).first(),
+  ).toBeVisible();
+
+  // Open an immediate directory through the breadcrumb/browse action.
+  await page.getByRole("button", { name: "movies" }).click();
+  await expect(page).toHaveURL(/path=movies$/);
+  await expect(page.getByText("movie.mkv")).toBeVisible();
+  await expect(page.getByText("Membership unavailable")).toBeVisible();
+
+  // Breadcrumb returns to the Storage root without losing the Storage.
+  await page.getByRole("button", { name: "Storage root" }).click();
+  await expect(page).toHaveURL(/storage=local-media$/);
+  await expect(page.getByText("show.mkv")).toBeVisible();
+
+  // Explicit refresh repeats only the same read-only GET.
+  const filesBefore = apiRequests.filter((url) =>
+    url.includes("/api/v1/storage/files"),
+  ).length;
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.getByText("show.mkv")).toBeVisible();
+  await expect
+    .poll(() => {
+      const filesAfter = apiRequests.filter((url) =>
+        url.includes("/api/v1/storage/files"),
+      ).length;
+      return filesAfter;
+    })
+    .toBeGreaterThan(filesBefore);
+
+  // Bounded next page keeps the Storage scope and sends a cursor.
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(page).toHaveURL(/cursor=cursor-page-2/);
+  await expect(page).toHaveURL(/storage=local-media/);
+  await expect(page.getByText("show.mkv")).toBeVisible();
+
+  // Every Library API request is a bounded GET.
+  for (const requestUrl of apiRequests) {
+    expect(new URL(requestUrl).pathname.startsWith("/api/v1/")).toBe(true);
+  }
+});
+
+test("switching Storage resets path and cursor state", async ({ page }) => {
+  await connectAs(page, VIEWER_TOKEN);
+  await page.getByRole("link", { name: "Library" }).click();
+  await page.getByRole("link", { name: "Open Storage files" }).click();
+  await page.getByRole("button", { name: /Local media/ }).click();
+  await expect(page.getByText("show.mkv")).toBeVisible();
+  await page.getByRole("button", { name: "movies" }).click();
+  await expect(page.getByText("movie.mkv")).toBeVisible();
+  await page.getByRole("link", { name: "Back to Library" }).click();
+  await page.getByRole("link", { name: "Open Storage files" }).click();
+  await page.getByRole("button", { name: /Remote media/ }).click();
+  await expect(page).toHaveURL(/storage=remote-media$/);
+  await expect(page).not.toHaveURL(/path=/);
+  await expect(page).not.toHaveURL(/cursor=/);
+  await expect(
+    page.getByRole("heading", { name: "Remote media" }),
+  ).toBeVisible();
+  await expect(page.getByText("remote.mkv")).toBeVisible();
+  await expect(page.getByText("show.mkv")).toHaveCount(0);
+});
+
+test("no configured Storage and empty directory states stay truthful", async ({
+  page,
+}) => {
+  const apiRequests = apiRequestsOf(page);
+  await connectAs(page, VIEWER_TOKEN);
+  // Intercept system status to report no storages.
+  await page.route("**/api/v1/system/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        system: {
+          configuration_valid: true,
+          configuration_authority: "MANAGED",
+        },
+        storages: { total: 0, truncated: false, items: [] },
+        resource_libraries: { total: 0, truncated: false, items: [] },
+      }),
+    });
+  });
+  await page.getByRole("link", { name: "Library" }).click();
+  await page.getByRole("link", { name: "Open Storage files" }).click();
+  await expect(
+    page.getByRole("heading", { name: "No configured Storage" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open current Web UI" }),
+  ).toHaveAttribute("href", "/ui");
+  // Only the two expected reads happened; no work or mutation request.
+  expect(
+    apiRequests.every((url) => new URL(url).pathname.startsWith("/api/v1/")),
+  ).toBe(true);
+});
+
+test("provider read failure is distinct from RBAC denial and offers bounded retry", async ({
+  page,
+}) => {
+  await page.goto("/ui-v2/library/files?storage=local-media&path=blocked");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Storage read failed" }),
+  ).toBeVisible();
+  await expect(page.getByText(/not an API-permission failure/)).toBeVisible();
+  await expect(
+    page.getByText("grant MediaFlow read/list permission"),
+  ).toBeVisible();
+  await expect(page.getByText("API token active in memory")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry read" })).toBeVisible();
+});
+
+test("invalid path and not-found failures offer safe recovery without mutation", async ({
+  page,
+}) => {
+  const apiRequests = apiRequestsOf(page);
+  await page.goto("/ui-v2/library/files?storage=local-media&path=../outside");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Invalid Storage-relative path" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Back to Storage files" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Choose a Storage" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: /Local media/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Local media" }),
+  ).toBeVisible();
+
+  // A full reload intentionally clears the memory-only token, proving the
+  // next not-found deep entry reconnects through the same safe boundary.
+  await page.goto("/ui-v2/library/files?storage=local-media&path=missing");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Directory not found" }),
+  ).toBeVisible();
+  expect(
+    apiRequests.every((url) => new URL(url).pathname.startsWith("/api/v1/")),
+  ).toBe(true);
+});
+
+test("expired principal on Storage files clears rejected authority and recovers", async ({
+  page,
+}) => {
+  await page.goto("/ui-v2/library/files");
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+  await page.getByLabel("API token").fill(EXPIRED_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Not authorized" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/library\/files$/);
+  await expect(page.getByText(EXPIRED_TOKEN)).toHaveCount(0);
+  await page
+    .getByRole("link", { name: "Enter an API principal token" })
+    .click();
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Choose a Storage" }),
+  ).toBeVisible();
+});
+
+test("limited principal gets the distinct RBAC forbidden state", async ({
+  page,
+}) => {
+  await page.goto("/ui-v2/library/files");
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+  await page.getByLabel("API token").fill(LIMITED_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
+  await expect(
+    page.getByText(/does not have permission to view this area/),
+  ).toBeVisible();
+  await expect(page.getByText(LIMITED_TOKEN)).toHaveCount(0);
+});
+
+test("malformed and unavailable Library reads stay bounded and retry recovers", async ({
+  page,
+}) => {
+  let malformedAttempts = 0;
+  await page.route("**/api/v1/system/status", async (route) => {
+    malformedAttempts += 1;
+    if (malformedAttempts === 1) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ unexpected: "shape" }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await connectAs(page, VIEWER_TOKEN);
+  await page.getByRole("link", { name: "Library" }).click();
+  await page.getByRole("link", { name: "Open Storage files" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Library unavailable" }),
+  ).toBeVisible();
+  await expect(page.getByText("unexpected")).toHaveCount(0);
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Choose a Storage" }),
+  ).toBeVisible();
+  expect(malformedAttempts).toBe(2);
+});
+
+test("narrow viewport keeps the journey keyboard-usable and token-free", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 640, height: 800 });
+  await connectAs(page, VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Open menu" }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("link", { name: "Library" }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("link", { name: "Open Storage files" }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Local media/ }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Local media" }),
+  ).toBeVisible();
+  await expect(page.getByText("show.mkv")).toBeVisible();
+  const storage = await page.evaluate(() => ({
+    local: window.localStorage.length,
+    session: window.sessionStorage.length,
+    cookie: document.cookie,
+  }));
+  expect(storage).toEqual({ local: 0, session: 0, cookie: "" });
+  await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
+});

@@ -21,11 +21,30 @@ import { destinationForPath } from "../navigation/destination-model";
  */
 export function AuthBoundary() {
   const navigate = useNavigate();
-  const pathname = useRouterState({
-    select: (state) => state.location.pathname,
+  const location = useRouterState({
+    select: (state) => state.location,
   });
+  const pathname = location.pathname;
+  const searchStr = location.searchStr ?? "";
   const connected = useIsConnected();
   const rejected = useRejected();
+  // A backend 401 leaves the operator on the active route behind the bounded
+  // unauthorized state. Record that exact supported route (with safe view
+  // state) as the continuation target so a fresh credential returns to the
+  // same read instead of the root default.
+  useEffect(() => {
+    if (!rejected || pathname === "/") {
+      return;
+    }
+    const destination = destinationForPath(pathname);
+    if (destination === undefined) {
+      return;
+    }
+    authStore.setIntendedPath(destination.path);
+    if (searchStr.length > 0) {
+      authStore.setIntendedSearch(searchStr);
+    }
+  }, [rejected, pathname, searchStr]);
   useEffect(() => {
     // A fresh unauthenticated deep entry redirects to the connection
     // boundary. A 401-rejected principal stays on the current route so the
@@ -42,9 +61,24 @@ export function AuthBoundary() {
     }
     // The operator's latest explicit supported-route choice always replaces an
     // earlier intention so reconnection continues to the route they last asked
-    // for, never a stale one.
+    // for, never a stale one. Safe Storage Files view state (relative path and
+    // cursor) is retained so a refresh/reconnect returns to the same read.
     authStore.setIntendedPath(destination.path);
+    if (searchStr.length > 0 && destination.path === "/library/files") {
+      // Storage Files refresh-safe view state is allowlisted to bounded
+      // Storage-relative path/cursor keys only; no other query state is
+      // carried across the connection boundary.
+      const allowed = new URLSearchParams();
+      const current = new URLSearchParams(searchStr);
+      for (const key of ["storage", "path", "cursor"]) {
+        const value = current.get(key);
+        if (value !== null) allowed.set(key, value);
+      }
+      if (allowed.size > 0) {
+        authStore.setIntendedSearch(allowed.toString());
+      }
+    }
     void navigate({ to: "/" });
-  }, [connected, rejected, pathname, navigate]);
+  }, [connected, rejected, pathname, searchStr, navigate]);
   return null;
 }

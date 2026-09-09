@@ -16,6 +16,19 @@ describe("authStore", () => {
     expect(authStore.getToken()).toBeNull();
   });
 
+  it("tracks safe intended search view state with a supported destination", () => {
+    authStore.setIntendedPath("/library/files");
+    authStore.setIntendedSearch("storage=local-1&path=Movies");
+    expect(authStore.getIntendedSearch()).toBe("storage=local-1&path=Movies");
+    authStore.clearIntendedPath();
+    expect(authStore.getIntendedSearch()).toBeNull();
+  });
+
+  it("ignores search state without a supported intended destination", () => {
+    authStore.setIntendedSearch("storage=local-1");
+    expect(authStore.getIntendedSearch()).toBeNull();
+  });
+
   it("tracks the intended path and clears it with disconnect", () => {
     expect(authStore.getIntendedPath()).toBeNull();
     authStore.setIntendedPath("/dashboard");
