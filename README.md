@@ -83,12 +83,13 @@ Primary program: Operator Web Architecture & UX Modernization
 Package version on main: 2.0.0.dev0
 ```
 
-V2 is organized as independently reviewable large Slices. Slice 30 is `PASS / CLOSED` under the
-A-owned Contract. Task 30.1 delivered the first V2 proving unit (the `web/` frontend boundary, the
-read-only Dashboard route and Python `/ui-v2/` static coexistence described below); Task 30.2
-integrated the built V2 artifact into the one production Docker image with live V1/V2 coexistence
-proofs. All Slice 30 outcomes are accepted; no large Slice is currently active, and A selects the
-next one in a later turn. The V1 API, execution, authentication and Storage authority are unchanged.
+V2 is organized as independently reviewable large Slices. Slices 30 and 31 are `PASS / CLOSED` under
+their A-owned Contracts. Slice 30 delivered the `web/` frontend boundary, typed read-only Dashboard
+proving route, Python `/ui-v2/` static coexistence and production Docker artifact. Slice 31 delivered
+the centralized product-area information architecture, responsive shell, safe memory-only deep-link
+continuation and actionable route/authentication recovery described below. No large Slice is
+currently active; A selects the next one in a later turn. The V1 API, execution, authentication and
+Storage authority are unchanged.
 
 ## V2 frontend (web/)
 
@@ -98,9 +99,11 @@ server-state/query-cache boundary. Node is a build/development tool only — the
 serves the deterministic built artifact at the `/ui-v2/` migration prefix, and no Node runtime,
 second HTTP service, SSR or CDN is involved in production.
 
-- **Entry and routes.** `/ui-v2/` is the V2 entry (documented migration prefix); `/ui-v2/dashboard`
-  is the read-only Dashboard proving route. Unknown client routes fall back to the V2 entry
-  document. The V1 `/ui` remains available and unchanged during migration.
+- **Entry and routes.** `/ui-v2/` is the V2 entry (documented migration prefix), and
+  `/ui-v2/dashboard` is the implemented read-only Overview/Dashboard route. One typed destination
+  model also owns truthful migration landings for Library, Operations, Review & Recovery and
+  Configuration. Unknown client routes retain shell context and recovery after Python serves the
+  V2 entry document. The V1 `/ui` remains available and unchanged during migration.
 - **Authentication continuity.** Opening a supported `/ui-v2/` deep route without a token presents
   the existing memory-only connection boundary in shell context and continues to that exact
   allowlisted route after valid connection. Root entry remains deterministic and connects to
@@ -120,8 +123,8 @@ second HTTP service, SSR or CDN is involved in production.
   accesses repositories, Storage, Providers or execution services. If the artifact has not been
   built, `/ui-v2/*` fails closed with 404.
 - **Source ownership.** `web/src/app` (bootstrap/providers), `web/src/routes` (router),
-  `web/src/features` (entry, dashboard), `web/src/entities` (typed Dashboard model and
-  normalization), `web/src/shared/api` (central typed client, memory-only auth store and
+  `web/src/features` (entry, Dashboard and migration landings), `web/src/entities` (typed Dashboard
+  model and normalization), `web/src/shared/api` (central typed client, memory-only auth store and
   intended-route continuation), `web/src/shared/auth` (route/connection boundary, auth-state
   banners and the shared authorized-read lifecycle), `web/src/shared/navigation` (typed
   destination model), and `web/src/shared/ui` (primitives and styles).

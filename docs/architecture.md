@@ -66,13 +66,15 @@ Node build stage and copying only the built static files into the final Python r
 consumed by the running Python process. The runtime image keeps no Node executable, npm,
 `node_modules`, frontend source, development server, SSR process, CDN dependency or second HTTP
 service, and the API service serves `/ui-v2/` and hashed assets beside the unchanged V1 `/ui` and
-`/api/v1/*` behavior. All Slice 30 outcomes are accepted; Slices 31–36 retain ownership of the
-later operator-surface migrations and cutover.
+`/api/v1/*` behavior. All Slice 30 outcomes are accepted; Slices 32–36 retain ownership of the
+later business-surface migrations and cutover after the Slice 31 shell boundary.
 
-Task 31.1 established the centralized information architecture, responsive shell, migration routes
-and browser proof. Task 31.2 completed the route/authentication lifecycle: a feature-independent
-authentication/route-continuation boundary ensures that an operator entering a supported deep
-route can connect through the memory-only principal boundary, continue to the intended safe route,
+Slice 31 is `PASS / CLOSED` at Base `2e7aceb50750fb54689ab26bfd1214b8e36c25f8` and Implementation
+Head `45cb1d4cdda6cf46a6d6699600bc4a4563efc06b`. Task 31.1 established the centralized information
+architecture, responsive shell, migration routes and browser proof. Task 31.2 completed the
+route/authentication lifecycle: a feature-independent authentication/route-continuation boundary
+ensures that an operator entering a supported deep route can connect through the memory-only
+principal boundary, continue to the intended safe route,
 and recover from absent/rejected authority (401), forbidden access (403), unavailable data or an
 unknown route without losing shell context. Dashboard consumes the shared lifecycle rather than
 retaining a competing authentication flow.

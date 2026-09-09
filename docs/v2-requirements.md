@@ -11,15 +11,15 @@ product and authority boundaries.
 ```text
 V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
-Most recently closed large Slice: Slice 30 — V2 Frontend Platform & Architecture — PASS / CLOSED
-Slice 30 Base: 7c7c602c6531c60ddf2d6678857e2ef76c3860b6
-Slice 30 Implementation Head: 6953b87afa09e61ff62ffea5eb2a9a7d96c55492
+Most recently closed large Slice: Slice 31 — Operator Shell & Information Architecture — PASS / CLOSED
+Slice 31 Base: 2e7aceb50750fb54689ab26bfd1214b8e36c25f8
+Slice 31 Implementation Head: 45cb1d4cdda6cf46a6d6699600bc4a4563efc06b
 Active large Slice: NONE
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
-product requirements. Slice 30 is closed; the next legal action is A selecting the next large Slice
-in a later turn.
+product requirements. Slices 30 and 31 are closed; the next legal action is A selecting the next
+large Slice in a later turn.
 
 ## Stable V2 requirements
 
