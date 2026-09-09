@@ -9,6 +9,7 @@ const systemStatusPayload = {
   system: {
     configuration_valid: true,
     configuration_authority: "MANAGED",
+    configuration_snapshot_id: "rev-e2e-1",
   },
   storages: {
     total: 2,
@@ -36,6 +37,7 @@ describe("normalizeSystemStatus", () => {
     expect(model).toEqual({
       authority: "MANAGED",
       configurationActive: true,
+      configurationSnapshotId: "rev-e2e-1",
       storages: [
         { id: "local-1", name: "Local media", type: "local", readOnly: true },
         {
@@ -68,6 +70,26 @@ describe("normalizeSystemStatus", () => {
     expect(normalizeSystemStatus(payload).resourceLibraries[0].name).toBe(
       "Visible name",
     );
+  });
+
+  it("requires MANAGED authority for configurationActive; JSON_BOOTSTRAP is not Active", () => {
+    const payload = {
+      ...systemStatusPayload,
+      system: {
+        ...systemStatusPayload.system,
+        configuration_authority: "JSON_BOOTSTRAP",
+        configuration_snapshot_id: null,
+      },
+    };
+    const model = normalizeSystemStatus(payload);
+    expect(model.configurationActive).toBe(false);
+    expect(model.authority).toBe("JSON_BOOTSTRAP");
+    expect(model.configurationSnapshotId).toBeNull();
+  });
+
+  it("includes configurationSnapshotId from the allowlisted projection", () => {
+    const model = normalizeSystemStatus(systemStatusPayload);
+    expect(model.configurationSnapshotId).toBe("rev-e2e-1");
   });
 
   it.each([

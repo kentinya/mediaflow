@@ -18,6 +18,8 @@ function membershipLabel(membership: FileIndexMembership): string {
   switch (membership.kind) {
     case "indexed":
       return "Indexed";
+    case "ambiguous":
+      return "Multiple FileIndex matches";
     case "not-indexed":
       return "Not indexed";
     case "truncated":
@@ -69,6 +71,7 @@ function FileBrowseView({
   onRefresh,
   onOpenPath,
   onNextPage,
+  onPreviousPage,
   onReturnRoot,
 }: {
   readonly model: StorageFilesModel;
@@ -77,6 +80,7 @@ function FileBrowseView({
   readonly onRefresh: () => void;
   readonly onOpenPath: (path: string) => void;
   readonly onNextPage: (cursor: string) => void;
+  readonly onPreviousPage: (cursor: string) => void;
   readonly onReturnRoot: () => void;
 }) {
   return (
@@ -164,6 +168,15 @@ function FileBrowseView({
         </ul>
       )}
       <div className="mf-actions">
+        {model.hasPrevious && model.previousCursor !== null ? (
+          <button
+            className="mf-button mf-button-secondary"
+            type="button"
+            onClick={() => onPreviousPage(model.previousCursor as string)}
+          >
+            Previous page
+          </button>
+        ) : null}
         {model.hasNext && model.nextCursor !== null ? (
           <button
             className="mf-button mf-button-primary"
@@ -235,6 +248,7 @@ export interface StorageFilesViewProps {
   readonly onOpenStorage: (storageId: string) => void;
   readonly onOpenPath: (path: string) => void;
   readonly onNextPage: (cursor: string) => void;
+  readonly onPreviousPage: (cursor: string) => void;
   readonly onReturnRoot: () => void;
   readonly onBack: () => void;
 }
@@ -250,6 +264,7 @@ export function StorageFilesView({
   onOpenStorage,
   onOpenPath,
   onNextPage,
+  onPreviousPage,
   onReturnRoot,
   onBack,
 }: StorageFilesViewProps) {
@@ -453,6 +468,7 @@ export function StorageFilesView({
       onRefresh={refreshFiles}
       onOpenPath={onOpenPath}
       onNextPage={onNextPage}
+      onPreviousPage={onPreviousPage}
       onReturnRoot={onReturnRoot}
     />
   );
@@ -498,6 +514,12 @@ export function StorageFilesPage() {
     const queryString = new URLSearchParams({ storage: storageId as string });
     if (path !== "") queryString.set("path", path);
     queryString.set("cursor", nextCursor);
+    void navigate({ to: `/library/files?${queryString.toString()}` });
+  };
+  const previousPage = (prevCursor: string) => {
+    const queryString = new URLSearchParams({ storage: storageId as string });
+    if (path !== "") queryString.set("path", path);
+    queryString.set("cursor", prevCursor);
     void navigate({ to: `/library/files?${queryString.toString()}` });
   };
   const returnRoot = () => {
@@ -547,6 +569,7 @@ export function StorageFilesPage() {
                 onOpenStorage={selectStorage}
                 onOpenPath={openPath}
                 onNextPage={nextPage}
+                onPreviousPage={previousPage}
                 onReturnRoot={returnRoot}
                 onBack={backToSelection}
               />

@@ -22,6 +22,7 @@ export const MAX_STORAGE_NAME_LENGTH = 256;
 export const MAX_LIBRARY_NAME_LENGTH = 256;
 export const MAX_AUTHORITY_LENGTH = 64;
 export const MAX_SECTION_TOTAL = 1000;
+export const MAX_TEXT_LENGTH = 1024;
 
 export interface SystemStorage {
   readonly id: string;
@@ -41,6 +42,7 @@ export interface SystemResourceLibrary {
 export interface SystemStatusModel {
   readonly authority: string | null;
   readonly configurationActive: boolean;
+  readonly configurationSnapshotId: string | null;
   readonly storages: readonly SystemStorage[];
   readonly resourceLibraries: readonly SystemResourceLibrary[];
 }
@@ -140,6 +142,15 @@ export function normalizeSystemStatus(payload: unknown): SystemStatusModel {
     if (typeof system.configuration_valid !== "boolean") {
       fail("system.configuration_valid");
     }
+    const rawSnapshotId = system.configuration_snapshot_id;
+    const configurationSnapshotId =
+      rawSnapshotId === null || rawSnapshotId === undefined
+        ? null
+        : normalizeBoundedText(
+            rawSnapshotId,
+            "configuration_snapshot_id",
+            MAX_TEXT_LENGTH,
+          );
     const storages = readSectionItems(source, "storages").map(normalizeStorage);
     const resourceLibraries = readSectionItems(
       source,
@@ -147,7 +158,9 @@ export function normalizeSystemStatus(payload: unknown): SystemStatusModel {
     ).map(normalizeResourceLibrary);
     return {
       authority,
-      configurationActive: system.configuration_valid,
+      configurationActive:
+        system.configuration_valid && authority === "MANAGED",
+      configurationSnapshotId,
       storages,
       resourceLibraries,
     };

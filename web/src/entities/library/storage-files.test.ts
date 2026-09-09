@@ -67,8 +67,8 @@ const storageFilesPayload = {
   limit: 50,
   nextCursor: "cursor-2",
   hasNext: true,
-  exhausted: false,
   hasPrevious: false,
+  exhausted: false,
   sideEffects: "none",
   retrySafe: true,
 };
@@ -88,9 +88,34 @@ describe("normalizeStorageFiles", () => {
     expect(model.entries[1].membership.kind).toBe("not-indexed");
     expect(model.nextCursor).toBe("cursor-2");
     expect(model.hasNext).toBe(true);
+    expect(model.hasPrevious).toBe(false);
     expect(model.exhausted).toBe(false);
     expect(model.sideEffects).toBe("none");
     expect(model.retrySafe).toBe(true);
+  });
+
+  it("distinguishes an ambiguous non-truncated multi-match membership", () => {
+    const payload = {
+      ...storageFilesPayload,
+      entries: [
+        {
+          ...storageFilesPayload.entries[0],
+          indexMembership: {
+            available: true,
+            indexed: true,
+            memberships: [{ fileId: "file-1" }, { fileId: "file-2" }],
+            total: 2,
+            truncated: false,
+          },
+        },
+      ],
+    };
+    const model = normalizeStorageFiles(payload);
+    expect(model.entries[0].membership).toEqual({
+      kind: "ambiguous",
+      libraryName: null,
+      total: 2,
+    });
   });
 
   it("ignores unknown fields and supports truncated/unavailable membership", () => {

@@ -45,7 +45,7 @@ export interface StorageFilesEntry {
 }
 
 export type FileIndexMembershipKind =
-  "unavailable" | "indexed" | "not-indexed" | "truncated";
+  "unavailable" | "indexed" | "not-indexed" | "truncated" | "ambiguous";
 
 export interface FileIndexMembership {
   readonly kind: FileIndexMembershipKind;
@@ -65,6 +65,8 @@ export interface StorageFilesModel {
   readonly limit: number;
   readonly nextCursor: string | null;
   readonly hasNext: boolean;
+  readonly hasPrevious: boolean;
+  readonly previousCursor: string | null;
   readonly exhausted: boolean;
   readonly sideEffects: string;
   readonly retrySafe: boolean;
@@ -143,6 +145,9 @@ function normalizeMembership(raw: unknown): FileIndexMembership {
   }
   if (truncated) {
     return { kind: "truncated", libraryName: null, total };
+  }
+  if (record.indexed === true && total > 1) {
+    return { kind: "ambiguous", libraryName: null, total };
   }
   if (record.indexed === true) {
     const libraryName = readOptionalText(record, "libraryName");
@@ -261,6 +266,9 @@ export function normalizeStorageFiles(payload: unknown): StorageFilesModel {
         typeof source.hasNext === "boolean"
           ? source.hasNext
           : nextCursor !== null,
+      hasPrevious:
+        typeof source.hasPrevious === "boolean" ? source.hasPrevious : false,
+      previousCursor: readOptionalText(source, "previousCursor"),
       exhausted:
         typeof source.exhausted === "boolean"
           ? source.exhausted

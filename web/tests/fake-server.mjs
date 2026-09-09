@@ -66,6 +66,7 @@ const SYSTEM_STATUS = {
     configuration_authority: "MANAGED",
     configuration_snapshot_id: "rev-e2e-1",
     configuration_snapshot_digest: "digest-e2e-1",
+    configuration_snapshot_digest: "digest-e2e-1",
   },
   storages: {
     total: 2,
@@ -251,6 +252,7 @@ function filesDocument(path, cursor, storageId) {
     hasNext,
     exhausted: !hasNext,
     hasPrevious: false,
+    previousCursor: null,
     continuation: {
       hasNext,
       exhausted: !hasNext,
@@ -464,11 +466,63 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    sendJson(
-      res,
-      200,
-      filesDocument(path, url.searchParams.get("cursor"), storageId),
-    );
+    // No Active runtime fixture
+    if (
+      url.searchParams.has("fixture") &&
+      url.searchParams.get("fixture") === "no-active"
+    ) {
+      sendJson(res, 200, {
+        system: {
+          application_version: "2.0.0.dev0",
+          configuration_valid: false,
+          configuration_authority: null,
+        },
+        storages: { total: 0, truncated: false, items: [] },
+        resource_libraries: { total: 0, truncated: false, items: [] },
+      });
+      return;
+    }
+    // Invalid/stale cursor fixture
+    const cursor = url.searchParams.get("cursor");
+    if (cursor === "stale-cursor") {
+      sendJson(res, 400, {
+        error: {
+          code: "storage_browser_cursor_invalid",
+          message: "page continuation is no longer valid",
+          details: {
+            category: "cursor_invalid",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "reload the current revision and restart browsing from the directory root",
+          },
+        },
+      });
+      return;
+    }
+    // Missing ResourceLibrary fixture
+    if (
+      url.searchParams.has("fixture") &&
+      url.searchParams.get("fixture") === "missing-rl"
+    ) {
+      sendJson(res, 404, {
+        error: {
+          code: "storage_browser_resource_library_not_found",
+          message: "requested ResourceLibrary not available",
+          details: {
+            category: "resource_library_not_found",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "select a different Storage or reload the active runtime",
+          },
+        },
+      });
+      return;
+    }
+    sendJson(res, 200, filesDocument(path, cursor, storageId));
     return;
   }
   if (req.method !== "GET") {

@@ -109,6 +109,29 @@ export const destinationPaths: readonly DestinationPath[] = destinations.map(
   (destination) => destination.path,
 );
 
+/**
+ * Return only the first safe values of allowlisted query keys for the
+ * given destination. Arbitrary or credential-like keys are dropped so a
+ * rejected 401 can never replay unknown state on reconnect.
+ */
+export function allowlistedDestinationSearch(
+  path: DestinationPath,
+  search: string,
+): string | null {
+  if (path !== "/library/files") {
+    return null;
+  }
+  const allowed = new URLSearchParams();
+  const current = new URLSearchParams(search);
+  for (const key of ["storage", "path", "cursor"] as const) {
+    const value = current.get(key);
+    if (value !== null) {
+      allowed.set(key, value);
+    }
+  }
+  return allowed.toString().length > 0 ? allowed.toString() : null;
+}
+
 export const allDestinationPaths: readonly DestinationPath[] = [
   ...destinationPaths,
   ...childDestinations.map((destination) => destination.path),
