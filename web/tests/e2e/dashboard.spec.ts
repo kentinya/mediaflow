@@ -111,30 +111,7 @@ test("migration destinations stay truthful and narrow navigation remains usable"
   await expect(
     page.getByRole("button", { name: "Close menu" }),
   ).toHaveAttribute("aria-expanded", "true");
-  await page.getByRole("link", { name: "Library Migration" }).focus();
-  await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/ui-v2\/library$/);
-  await expect(
-    page.getByRole("heading", { name: "Library is not available in V2 yet" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Open current Web UI" }),
-  ).toHaveAttribute("href", "/ui");
-  await expect(page).toHaveTitle("Library | MediaFlow");
-
-  // The navigation link click closed the menu: reopen it to read the active
-  // route marker from the rendered link.
-  await openMenu.focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("link", { name: "Library Migration" }),
-  ).toHaveAttribute("aria-current", "page");
-
-  // Exercise a destination link by keyboard, retaining the active/page context.
-  const operationsLink = page.getByRole("link", {
-    name: "Operations Migration",
-  });
-  await operationsLink.focus();
+  await page.getByRole("link", { name: "Operations Migration" }).focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
   await expect(
@@ -142,10 +119,14 @@ test("migration destinations stay truthful and narrow navigation remains usable"
       name: "Operations is not available in V2 yet",
     }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open current Web UI" }),
+  ).toHaveAttribute("href", "/ui");
   await expect(page).toHaveTitle("Operations | MediaFlow");
 
-  // Reopen the menu and confirm the active context moved with the route.
-  await page.getByRole("button", { name: "Open menu" }).focus();
+  // The navigation link click closed the menu: reopen it to read the active
+  // route marker from the rendered link.
+  await openMenu.focus();
   await page.keyboard.press("Enter");
   await expect(
     page.getByRole("link", { name: "Operations Migration" }),

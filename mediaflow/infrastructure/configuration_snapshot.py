@@ -49,6 +49,7 @@ def build_configuration_snapshot(configuration: RuntimeConfiguration) -> Configu
             key=lambda item: item.storage_id,
             value=lambda item: {
                 "id": item.storage_id,
+                "name": item.name,
                 "type": item.storage_type,
                 "read_only": item.read_only,
             },

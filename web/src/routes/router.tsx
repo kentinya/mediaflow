@@ -10,6 +10,8 @@ import {
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { EntryPage } from "../features/entry/EntryPage";
 import { MigrationPage } from "../features/migration/MigrationPage";
+import { LibraryLanding } from "../features/library/LibraryLanding";
+import { StorageFilesPage } from "../features/library/StorageFilesPage";
 import { AppShell } from "../shared/ui/AppShell";
 import { AuthBoundary } from "../shared/auth/AuthBoundary";
 import { StatusBanner } from "../shared/ui/StatusBanner";
@@ -57,7 +59,13 @@ const dashboardRoute = createRoute({
 const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "library",
-  component: MigrationPage,
+  component: LibraryLanding,
+});
+
+const libraryFilesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "library/files",
+  component: StorageFilesPage,
 });
 
 const operationsRoute = createRoute({
@@ -82,6 +90,7 @@ const routeTree = rootRoute.addChildren([
   entryRoute,
   dashboardRoute,
   libraryRoute,
+  libraryFilesRoute,
   operationsRoute,
   reviewRoute,
   configurationRoute,

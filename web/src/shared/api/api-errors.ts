@@ -51,7 +51,6 @@ export class ApiReadError extends Error {
  * boundary detects its category through the base class, while the Dashboard
  * feature keeps its own bounded response copy.
  */
-
 export type DashboardApiErrorCategory = ApiReadErrorCategory;
 
 const DASHBOARD_CATEGORY_MESSAGES: Readonly<
@@ -72,5 +71,40 @@ export class DashboardApiError extends ApiReadError {
   constructor(category: DashboardApiErrorCategory) {
     super(category, DASHBOARD_CATEGORY_MESSAGES[category]);
     this.name = "DashboardApiError";
+  }
+}
+
+const LIBRARY_CATEGORY_MESSAGES: Readonly<
+  Record<ApiReadErrorCategory, string>
+> = {
+  unauthorized:
+    "The API token is missing, invalid or expired. Enter a valid API principal token to continue.",
+  forbidden:
+    "The connected API principal does not have permission to read the Library.",
+  unavailable:
+    "The MediaFlow API is currently unavailable. Check that the application is running, then refresh.",
+  rejected: "The Library request was rejected by the API as invalid.",
+  malformed:
+    "The Library response could not be understood as the expected read-only contract.",
+};
+
+/** Typed boundary error for the managed Active runtime / system status read. */
+export class SystemStatusApiError extends ApiReadError {
+  constructor(category: ApiReadErrorCategory) {
+    super(category, LIBRARY_CATEGORY_MESSAGES[category]);
+    this.name = "SystemStatusApiError";
+  }
+}
+
+/**
+ * Typed boundary error for the Storage Files read. Only API-principal
+ * authentication/RBAC outcomes travel through this error; a Storage-provider
+ * read failure is returned as a bounded `StorageFilesFailure` result instead,
+ * so a provider permission denial never clears a valid authority.
+ */
+export class StorageFilesApiError extends ApiReadError {
+  constructor(category: ApiReadErrorCategory) {
+    super(category, LIBRARY_CATEGORY_MESSAGES[category]);
+    this.name = "StorageFilesApiError";
   }
 }

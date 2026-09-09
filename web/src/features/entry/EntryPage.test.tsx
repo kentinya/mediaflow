@@ -65,7 +65,10 @@ describe("EntryPage", () => {
     await waitFor(() => expect(authStore.getToken()).toBe(TOKEN));
     // Intended path was consumed and cleared, and navigation lands there.
     expect(authStore.getIntendedPath()).toBeNull();
-    await screen.findByText("Library is not available in V2 yet");
+    await screen.findByRole("heading", { name: "Library" });
+    expect(
+      screen.getByRole("link", { name: "Open Storage files" }),
+    ).toBeVisible();
   });
 
   it("never displays the token after the entry interaction", async () => {

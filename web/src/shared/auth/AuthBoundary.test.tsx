@@ -67,7 +67,10 @@ describe("AuthBoundary", () => {
     renderApp("/ui-v2/library");
     expect(authStore.getIntendedPath()).toBeNull();
     expect(
-      await screen.findByText("Library is not available in V2 yet"),
+      await screen.findByRole("heading", { name: "Library" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Open Storage files" }),
     ).toBeVisible();
   });
 

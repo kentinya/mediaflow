@@ -36,3 +36,12 @@ export function useIntendedPath(): DestinationPath | null {
     () => null,
   );
 }
+
+/** Safe allowlisted view state captured with the intended route, or null. */
+export function useIntendedSearch(): string | null {
+  return useSyncExternalStore(
+    authStore.subscribe,
+    authStore.getIntendedSearch,
+    () => null,
+  );
+}

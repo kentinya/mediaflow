@@ -100,6 +100,19 @@ class ConfigurationSnapshotTests(unittest.TestCase):
         self.assertNotIn("template", rendered.casefold())
         self.assertNotIn("condition", rendered.casefold())
 
+    def test_system_status_storage_projection_includes_operator_name_but_never_root(
+        self,
+    ) -> None:
+        source = example_document()
+        secret_root = "/private/mount/DO-NOT-LEAK-9f43"
+        source["storages"][0]["rootPath"] = secret_root
+        document = build_configuration_snapshot(load_runtime_configuration(source)).as_document()
+        storage = document["storages"]["items"][0]
+        self.assertIn("name", storage)
+        self.assertIsInstance(storage["name"], str)
+        self.assertNotIn(secret_root, json.dumps(document))
+        self.assertNotIn("rootPath", json.dumps(document))
+
     def test_api_rbac_method_query_allowlist_and_no_repository_reads(self) -> None:
         snapshot = build_configuration_snapshot(load_runtime_configuration(example_document()))
         repository = AuditOnlyRepository()

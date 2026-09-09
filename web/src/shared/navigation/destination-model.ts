@@ -22,10 +22,9 @@ const destinationData = [
     label: "Library",
     path: "/library",
     title: "Library | MediaFlow",
-    availability: "migration" as const,
+    availability: "implemented" as const,
     description:
-      "Library and Files journeys are moving to V2 in a later release.",
-    v1Path: "/ui" as const,
+      "Browse the configured Active Storage and its FileIndex membership in V2.",
   },
   {
     id: "operations",
@@ -59,6 +58,22 @@ const destinationData = [
   },
 ] as const;
 
+/**
+ * Typed supported child routes inside top-level product destinations. They
+ * participate in titles/continuation allowlisting without becoming primary
+ * navigation items.
+ */
+const childDestinationData = [
+  {
+    id: "library-files",
+    label: "Storage files",
+    path: "/library/files",
+    title: "Storage files | MediaFlow",
+    availability: "implemented" as const,
+    description: "Browse the configured Active Storage.",
+  },
+] as const;
+
 export type DestinationAvailability = "implemented" | "migration";
 
 /**
@@ -66,7 +81,9 @@ export type DestinationAvailability = "implemented" | "migration";
  * `destinationData` literal so the continuation allowlist and its runtime
  * validator can never disagree with the navigation model.
  */
-export type DestinationPath = (typeof destinationData)[number]["path"];
+export type DestinationPath =
+  | (typeof destinationData)[number]["path"]
+  | (typeof childDestinationData)[number]["path"];
 
 export interface Destination {
   readonly id: string;
@@ -81,6 +98,9 @@ export interface Destination {
 /** The single operator-goal navigation contract consumed by routes and shell. */
 export const destinations: readonly Destination[] = destinationData;
 
+/** Supported child routes are typed and allowlisted but not top-level nav items. */
+export const childDestinations: readonly Destination[] = childDestinationData;
+
 /**
  * Every operator route path, derived from the single destination contract so
  * continuation allowlisting can never drift from the typed navigation model.
@@ -89,7 +109,12 @@ export const destinationPaths: readonly DestinationPath[] = destinations.map(
   (destination) => destination.path,
 );
 
-const destinationPathSet: ReadonlySet<string> = new Set(destinationPaths);
+export const allDestinationPaths: readonly DestinationPath[] = [
+  ...destinationPaths,
+  ...childDestinations.map((destination) => destination.path),
+];
+
+const destinationPathSet: ReadonlySet<string> = new Set(allDestinationPaths);
 
 /** Type guard for a path that exists in the centralized destination model. */
 export function isDestinationPath(value: string): value is DestinationPath {
@@ -98,5 +123,8 @@ export function isDestinationPath(value: string): value is DestinationPath {
 
 export function destinationForPath(pathname: string): Destination | undefined {
   const path = pathname.replace(/\/$/, "") || "/";
-  return destinations.find((destination) => destination.path === path);
+  return (
+    destinations.find((destination) => destination.path === path) ??
+    childDestinations.find((destination) => destination.path === path)
+  );
 }
