@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../api/auth-context";
 import { authStore } from "../api/auth-store";
 import { Button } from "../ui/Button";
@@ -7,10 +7,12 @@ import { Button } from "../ui/Button";
 /**
  * Shared authentication surface of the shell. It reports only whether an
  * API principal token is active in memory; the token itself is never
- * displayed again after entry. Disconnect clears the token and the query
- * cache so no authenticated state survives.
+ * displayed again after entry. Disconnect clears the token, the query
+ * cache, and the intended route, then returns to the entry boundary so
+ * the operator can reconnect without losing shell context.
  */
 export function AuthControls() {
+  const navigate = useNavigate();
   const token = useAuthToken();
   const queryClient = useQueryClient();
   if (token === null) {
@@ -22,7 +24,9 @@ export function AuthControls() {
   }
   const disconnect = () => {
     authStore.clearToken();
+    authStore.clearIntendedPath();
     queryClient.clear();
+    void navigate({ to: "/" });
   };
   return (
     <div className="mf-auth-controls">

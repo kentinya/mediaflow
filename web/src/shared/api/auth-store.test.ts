@@ -14,6 +14,22 @@ describe("authStore", () => {
     expect(authStore.getToken()).toBeNull();
   });
 
+  it("tracks the intended path and clears it with disconnect", () => {
+    expect(authStore.getIntendedPath()).toBeNull();
+    authStore.setIntendedPath("/dashboard");
+    expect(authStore.getIntendedPath()).toBe("/dashboard");
+    authStore.clearIntendedPath();
+    expect(authStore.getIntendedPath()).toBeNull();
+  });
+
+  it("clears both token and intended path together", () => {
+    authStore.setToken("t");
+    authStore.setIntendedPath("/library");
+    authStore.clearToken();
+    expect(authStore.getToken()).toBeNull();
+    expect(authStore.getIntendedPath()).toBeNull();
+  });
+
   it("notifies subscribers until they unsubscribe", () => {
     const listener = vi.fn();
     const unsubscribe = authStore.subscribe(listener);
@@ -26,6 +42,7 @@ describe("authStore", () => {
 
   it("leaves every persistent browser storage surface untouched", () => {
     authStore.setToken("principal-token");
+    authStore.setIntendedPath("/dashboard");
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
     expect(document.cookie).toBe("");

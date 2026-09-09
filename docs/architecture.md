@@ -69,6 +69,14 @@ service, and the API service serves `/ui-v2/` and hashed assets beside the uncha
 `/api/v1/*` behavior. All Slice 30 outcomes are accepted; Slices 31–36 retain ownership of the
 later operator-surface migrations and cutover.
 
+Task 31.1 established the centralized information architecture, responsive shell, migration routes
+and browser proof. Task 31.2 completed the route/authentication lifecycle: a feature-independent
+authentication/route-continuation boundary ensures that an operator entering a supported deep
+route can connect through the memory-only principal boundary, continue to the intended safe route,
+and recover from absent/rejected authority (401), forbidden access (403), unavailable data or an
+unknown route without losing shell context. Dashboard consumes the shared lifecycle rather than
+retaining a competing authentication flow.
+
 The current V2 frontend foundation is a client-side React/TypeScript SPA built with Vite, TanStack
 Router and TanStack Query, organized feature-first with a central typed API boundary and
 project-owned design system foundation. Vitest and React Testing Library cover unit/component

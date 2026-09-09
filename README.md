@@ -101,9 +101,17 @@ second HTTP service, SSR or CDN is involved in production.
 - **Entry and routes.** `/ui-v2/` is the V2 entry (documented migration prefix); `/ui-v2/dashboard`
   is the read-only Dashboard proving route. Unknown client routes fall back to the V2 entry
   document. The V1 `/ui` remains available and unchanged during migration.
+- **Authentication continuity.** Opening a supported `/ui-v2/` deep route without a token presents
+  the existing memory-only connection boundary in shell context and continues to that exact
+  allowlisted route after valid connection. Root entry remains deterministic and connects to
+  Overview/Dashboard. Continuation is derived from the router's known route model — no Bearer
+  material enters a URL, route state, DOM, persistent store, log or test artifact, and no arbitrary
+  external return target is accepted.
 - **Token model.** The existing API-principal Bearer token is entered once at the V2 entry and held
   in browser memory only. It is never written to localStorage, sessionStorage, IndexedDB, cookies,
-  URLs or logs; the input is cleared after connect and Disconnect clears the token and query cache.
+  URLs or logs; the input is cleared after connect and Disconnect clears the token, the
+  authenticated TanStack Query cache and any preserved intended route, returning the operator to
+  the entry boundary.
 - **Static serving.** Python serves the built artifact from `web/dist` (resolved from the checkout),
   or from the directory named by `MEDIAFLOW_UI_V2_ASSET_ROOT` for deployment-owned layouts. In the
   production Docker image the artifact is built by the image build itself and placed at
@@ -112,9 +120,9 @@ second HTTP service, SSR or CDN is involved in production.
   accesses repositories, Storage, Providers or execution services. If the artifact has not been
   built, `/ui-v2/*` fails closed with 404.
 - **Source ownership.** `web/src/app` (bootstrap/providers), `web/src/routes` (router),
-  `web/src/features` (entry, dashboard), `web/src/entities` (typed Dashboard model and
-  normalization), `web/src/shared/api` (central typed client, memory-only auth), and
-  `web/src/shared/ui` (primitives and styles).
+  `web/src/features` (entry, dashboard, auth-state banner), `web/src/entities` (typed Dashboard
+  model and normalization), `web/src/shared/api` (central typed client, memory-only auth store
+  and intended-route continuation), and `web/src/shared/ui` (primitives and styles).
 
 Development and verification commands (run after the repository Setup):
 

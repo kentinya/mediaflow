@@ -374,20 +374,28 @@ The V1 `/ui` remains available while the V2 Operator Web is introduced. Slice 30
 closed the architecture/platform foundation plus the bounded Dashboard proving journey below. It
 does not claim the later application migrations or final V1 UI cutover.
 
-### CURRENT V2 FOUNDATION — Dashboard proving journey
+### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
 
 - **Goal:** open a read-only V2 Dashboard and understand the current bounded operational state.
+  An operator entering a supported deep route should connect through the existing memory-only
+  principal boundary, continue to the intended safe route, and recover from absent/rejected
+  authority, forbidden access, unavailable data or an unknown route without losing shell context.
 - **Entry:** enter the V2 migration surface at `/ui-v2` (or the repository-selected equivalent) and
-  authenticate with the existing API-principal Bearer token.
-- **Visible state:** the token exists in browser memory only; the route issues a typed query through
-  the central API boundary and shows loading, empty, success, error, unauthorized and forbidden
-  states.
+  authenticate with the existing API-principal Bearer token. Root entry connects to Overview/Dashboard;
+  direct deep entry preserves the intended destination and continues there after connection.
+- **Visible state:** the token exists in browser memory only; the shell renders persistent identity,
+  primary navigation, active page context and connection controls across wide and narrow viewports.
+  The route issues a typed query through the central API boundary and shows loading, empty, success,
+  error, unauthorized, forbidden and unavailable states inside the shell.
 - **Action:** inspect the bounded Dashboard result or request a bounded refresh. A refresh is a
-  read-only retry of the same query, not a new work request.
+  read-only retry of the same query, not a new work request. Disconnect clears the token, query
+  cache and intended route, returning to the entry boundary.
 - **Success:** the operator sees the typed Dashboard data and its current permission state without
   creating a Job/Task, invoking a Metadata Provider or changing Storage.
-- **Failure:** transport, API, invalid/expired token, unauthorized or forbidden responses remain
-  visible as distinct bounded states without exposing secrets or raw internal errors.
+- **Failure:** transport, API, invalid/expired token (401), unauthorized or forbidden (403) responses
+  remain visible as distinct bounded states without exposing secrets or raw internal errors. A 401
+  clears rejected authority and query state; a 403 retains the authenticated identity and offers
+  only valid navigation or reconnection actions.
 - **Recovery:** re-enter the API principal token in memory or retry the bounded read. Recovery does
   not replay unknown work because this proving journey creates no backend work.
 

@@ -1,94 +1,105 @@
-# Task 31.1 — Operator shell, information architecture, and migration routes
+# Task 31.2 — Deep-link authentication continuity and actionable recovery
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 31.1
+Task ID: 31.2
 Parent Slice: 31
-Status: READY FOR B REVIEW
-Task Base: 2de6551a40808b2781701a57d4a6d09b6831dc12
-Difficulty: Medium
-Test Level: T3
+Status: PLANNED
+Task Base: eee3bca458e9d049c78fa17e626721fa5b507bfe
+Difficulty: High
+Test Level: T4
 Planner / Reviewer: B
 ```
 
 ## Goal
 
-Deliver the feature-independent V2 operator shell and its centralized, typed information
-architecture: operators can identify their current location, navigate the stable product areas on
-wide or narrow screens, and reach truthful V2 or current-V1-Web destinations. This is the first
-coherent platform boundary for Slice 31 and directly advances RO-1, RO-2, RO-4, RO-5, RO-7 and
-preservation outcome RO-8.
+Complete Slice 31's route/authentication lifecycle so an operator entering a supported V2 deep
+link can connect through the existing memory-only principal boundary, continue to the intended safe
+route, and recover from absent/rejected authority, forbidden access, unavailable data or an unknown
+route without losing shell context. This Task targets RO-3 and RO-6 and completes the remaining
+RO-7/RO-8 integration and documentation evidence.
 
 ## Why This Task Exists
 
-The current V2 `AppShell` is only a header/main wrapper, the router exposes only entry and
-Dashboard, and route labels and availability are not represented by a shared model. There is no
-primary navigation, active-page context, semantic bypass, narrow-screen navigation, or truthful
-landing/handoff for areas intentionally owned by later Slices. Building these pieces together is
-the largest independently testable architecture unit: the route metadata defines what the shell
-renders, while component and browser evidence can verify navigation, migration truthfulness,
-keyboard use and responsive behavior without inventing the deferred business journeys.
+Task 31.1 (accepted through implementation Head
+`19c389421ed9db4f12e194e75cdb49e9582267ed`) established the centralized IA, responsive shell,
+migration routes and browser proof. The remaining user-journey gap is visible in the current code:
+direct product routes do not share an authentication boundary, token entry always opens Dashboard,
+and Dashboard locally duplicates unauthenticated, 401, 403 and unavailable recovery. These concerns
+form one security-sensitive route lifecycle; implementing them together avoids competing intent or
+permission state and makes the shell independently usable before later product areas are migrated.
 
 ## Implementation Scope
 
-- Define one typed, centralized destination/route metadata model for the goal-oriented product
-  areas: Overview, Library, Operations, Review & Recovery, and Configuration (or equally clear
-  operator wording). It must own labels, V2 route ownership, availability/migration state,
-  current-V1-Web continuation and active-location/page-title metadata.
-- Extend TanStack Router beneath `/ui-v2/` with the product-area landing or migration routes needed
-  by that model. Dashboard remains the implemented V2 destination; later-Slice areas must render an
-  honest unavailable/not-yet-migrated state with a useful next action rather than a dead control or
-  simulated business capability.
-- Turn `AppShell` into a persistent feature-independent layout with MediaFlow identity, primary
-  navigation, active page context, the existing connection controls and a stable main-content
-  region. Do not duplicate shell/navigation definitions in feature pages.
-- Provide wide and narrow viewport navigation with semantic header/nav/main landmarks, a working
-  skip-to-content path, visible focus, keyboard-operable controls, correct active-route semantics
-  and meaningful document/page titles.
-- Keep the V1 `/ui` continuation truthful and explicit. Handoff must not put the Bearer token in a
-  URL, persistent browser storage or another transfer mechanism, and it must not promise a V1 deep
-  link that the current product does not support.
-- Add focused Vitest/React Testing Library coverage for the IA model, shell rendering, active route,
-  migration state/handoff, accessible navigation and narrow-menu state; extend Playwright coverage
-  for production-build wide/narrow and keyboard navigation plus V1/V2 coexistence.
-- Preserve the current entry, memory-only connect/disconnect and typed read-only Dashboard
-  behavior. Changes to Python APIs, domain/application behavior, RBAC, static-serving architecture
-  or V1 UI implementation are outside this Task.
+- Add one feature-independent authentication/route-continuation boundary for supported V2 product
+  routes. An unauthenticated direct route must keep a safe, allowlisted intended destination,
+  present the existing memory-only connection interaction in shell context, and continue to that
+  route after connection. Root entry remains deterministic and connects to Overview/Dashboard.
+- Keep continuation derived from the router's known route model or bounded runtime state. Never put
+  Bearer material in a URL, route/search state, DOM, browser persistence, log or test artifact, and
+  never accept an arbitrary external return target.
+- Compose reusable, bounded operator states/actions for not connected, rejected/expired authority
+  (401), forbidden permission (403), unavailable/rejected/malformed read results and unknown routes.
+  Dashboard must consume the shared lifecycle rather than retain a competing authentication flow.
+- On 401, invalidate the rejected in-memory authority and authenticated query state, preserve the
+  intended safe route, explain that new credentials are required and wait for explicit reconnection;
+  do not automatically replay a rejected request. A 403 must retain the authenticated identity,
+  distinguish missing permission from authentication failure and offer only valid navigation or
+  reconnection actions.
+- Disconnect from any supported route must clear the memory-only token and TanStack Query cache,
+  leave an understandable in-shell connection path, and perform no hidden retry or redirect to an
+  unrelated destination.
+- Preserve explicit retry for safe read-only unavailable states, shell context for not-found and
+  migration-unavailable routes, meaningful page titles, and the existing truthful V1 handoff.
+- Extend unit/component tests and production-build Playwright journeys for root/direct-deep entry,
+  connect-to-intended-route, refresh/no-persist behavior, disconnect/cache clearing, 401 re-entry,
+  403 distinction, unavailable retry, not-found recovery and token secrecy/no hidden work.
+- Reconcile only factual CURRENT shell/IA/auth-continuation and migration-boundary descriptions in
+  `README.md`, `docs/product-experience.md` and `docs/architecture.md` after implementation evidence
+  exists. Do not change stable requirements, Roadmap scope/order or the Slice Contract.
 
 ## Acceptance Criteria
 
-- [ ] One typed route/destination source drives product-area labels, route ownership,
-      availability/migration state, V1 continuation, active-location semantics and page titles;
-      shell components and feature pages do not maintain competing navigation maps.
-- [ ] On authenticated/recoverable V2 routes, the persistent shell exposes brand, primary
-      goal-oriented destinations, active page context, connection controls and main content at both
-      wide and narrow viewports.
-- [ ] Overview opens the working V2 Dashboard. Every destination whose business journey belongs to
-      Slices 32–35 is visibly identified as not yet available in V2 and provides a truthful current
-      Web continuation or an in-shell return action; no control claims deferred behavior or requires
-      CLI completion.
-- [ ] Navigation has semantic landmarks, a working skip link, logical keyboard operation, visible
-      focus, correct active-state semantics and meaningful route-specific document/page titles;
-      narrow navigation can be opened, used and dismissed without trapping focus or hiding the
-      active context.
-- [ ] Shell navigation, migration pages and V1 handoff issue no API work-admission, execution-
-      authorization, provider, Storage or mutation request. No token, secret, raw exception,
-      private path or implementation-only authority identifier is rendered, persisted or placed in
-      a URL.
-- [ ] The current memory-only Bearer boundary, backend-authoritative RBAC, Dashboard behavior,
-      `/api/v1/*`, V1 `/ui`, CSP/cache/static serving and OrganizerExecutor-only mutation boundary
-      remain unchanged and regression-covered.
-- [ ] Focused component tests and a production-build browser journey prove route-driven active
-      navigation, migration truthfulness, keyboard navigation, narrow behavior, page titles and
-      V1/V2 coexistence using only local fakes and non-production state.
-- [ ] The assigned T3 gates pass with actual evidence, and the checkpoint contains only this Task's
-      coherent frontend platform/test changes plus its completion report.
+- [ ] Opening a supported `/ui-v2/` deep route without a token presents one in-shell connection
+      boundary and, after valid connection, continues to that exact allowlisted route; connecting
+      from root opens Overview/Dashboard, and unknown/external return targets are never accepted.
+- [ ] Refresh demonstrates the token's memory-only semantics: no credential survives, the current
+      supported path remains understandable, and reconnection continues safely without raw-token
+      copy beyond the existing principal-entry interaction or a CLI fallback.
+- [ ] Disconnect on every supported route clears the token and authenticated TanStack Query cache,
+      exposes an actionable reconnect state at a safe location and neither automatically retries
+      work nor leaks authority into URL, route state, storage, cookies or rendered output.
+- [ ] A backend 401 clears rejected authority/query state and presents bounded credential re-entry
+      for the intended route without automatic replay. A 403 remains visibly distinct, does not
+      grant access or discard a still-authenticated principal silently, and offers the smallest
+      valid recovery/navigation action.
+- [ ] Unavailable, rejected or malformed read results provide an explicit safe retry; not-found and
+      migration-unavailable routes retain shell orientation, meaningful titles and valid return or
+      V1-Web continuation actions. No state exposes raw exceptions, headers, tokens, private paths
+      or implementation-only identifiers.
+- [ ] The router, auth store/context, query client and reusable route-state primitives own this
+      lifecycle once; Dashboard and later feature routes do not duplicate connection, continuation,
+      permission or cache-clearing rules.
+- [ ] Navigation, connection presentation, disconnect and recovery perform no Storage/Provider
+      access, Job/Task creation, execution-authorization issuance or media mutation. Only the
+      already-authorized Dashboard read and an operator-selected safe read retry may call the API.
+- [ ] `/api/v1/*`, backend RBAC, V1 `/ui`, Python static serving/CSP/cache behavior, memory-only
+      Bearer handling and OrganizerExecutor-only mutation remain unchanged and full-regression
+      covered; `config/alist.json` and private runtime state remain absent from the checkpoint.
+- [ ] Component and production-browser evidence covers the complete success/failure/recovery
+      matrix, checks token absence from DOM/URL/persistent stores, and proves no mutation/work-
+      admission request occurs during routing or recovery.
+- [ ] README, Product Experience and Architecture describe only the implemented CURRENT shell,
+      authentication continuation and migration coexistence facts while preserving all V2 TARGET
+      boundaries and Explicitly Deferred work.
+- [ ] All T4 gates pass with truthful PASS/FAIL/SKIP/UNAVAILABLE reporting, and the checkpoint is a
+      coherent Task 31.2 change without assertion weakening, hidden skip or unrelated files.
 
 ## Required Tests
 
-Task 31.1 T3 pass gates:
+Task 31.2 T4 gates:
 
 ```bash
 python3 scripts/check_governance.py
@@ -102,104 +113,118 @@ npm --prefix web run test:e2e
 .venv/bin/python -m unittest tests.test_v2_ui tests.test_release_security
 .venv/bin/ruff format --check .
 .venv/bin/ruff check .
+.venv/bin/python -m unittest discover -s tests
 .venv/bin/python -m compileall -q mediaflow tests scripts
+python3 scripts/docker_release_security_smoke_test.py
 git diff --check
 ```
 
-The following Slice-final/release commands remain documented for active-Task governance but are
-not Task 31.1 PASS gates unless implementation impact or discovered risk expands beyond this T3
-frontend boundary:
-
-```bash
-.venv/bin/python -m unittest discover -s tests
-python3 scripts/docker_release_security_smoke_test.py
-```
-
-If a browser or another required local tool is unavailable, report `UNAVAILABLE` with the exact
-reason; do not infer a pass. Tests must not use production credentials, remote providers, operator
-media or private runtime state.
+Add focused frontend test commands only if tests are split into a narrower project. The full
+Vitest, Playwright and Python discovery commands above remain required. Docker/browser gates that
+are genuinely unavailable must be reported with exact environmental evidence rather than inferred;
+do not install a skip, weaken an assertion or use production services/data to manufacture a pass.
 
 ## Non-goals
 
-- Completing RO-3 intended-route authentication continuation or consolidating all feature-level
-  401/403 handling; this Task preserves current connect/disconnect and Dashboard recovery behavior
-  while establishing the shell/route foundation for the next in-Slice unit.
-- Implementing real Library/Files, Operations, Review & Recovery, Configuration or Settings
-  business behavior owned by Slices 32–35.
-- Adding or changing a backend endpoint, schema, domain/application service, API contract, identity
-  model, permission rule, token persistence or Web-native execution authority.
-- Retiring or redesigning V1 `/ui`, transferring its token, or claiming unsupported V1 deep links.
-- Comprehensive cross-feature accessibility/parity/cutover acceptance owned by Slice 36.
-- Slice-final factual documentation reconciliation, the next Task, or the next Slice.
+- Changing principal identity, backend RBAC or API permissions; persisting/refreshing/rotating the
+  Bearer token; adding username/password, cookie/session, OIDC or proxy identity.
+- Adding an execution grant/unlock, mutation-admission flow, new backend endpoint, schema,
+  repository or application/domain behavior.
+- Implementing Library/Files, Operations, Review & Recovery or Configuration business journeys
+  owned by Slices 32–35, or comprehensive cross-feature parity/cutover owned by Slice 36.
+- Replacing or retiring V1 `/ui`, changing V1/API/static contracts, or transferring a V2 token to
+  the V1 UI.
+- Altering `SLICE.md` Required Outcomes, Required Surfaces, Safety Invariants, Explicitly Deferred,
+  Slice Base or Roadmap ordering/status.
+- Optional visual redesign, copy polish, dependency/framework changes or unrelated refactoring.
+- Planning the next Slice or declaring Slice 31 `PASS / CLOSED`.
 
 ## Developer Completion Report
 
 ### Changed Files
-- `web/tests/e2e/dashboard.spec.ts`
-- `TASK.md`
+
+- `web/src/shared/api/auth-store.ts` — added `setIntendedPath` / `clearIntendedPath` / `getIntendedPath` to the memory-only auth store; `clearToken` also clears intended path.
+- `web/src/shared/api/auth-context.ts` — added `useIntendedPath()` hook.
+- `web/src/shared/api/auth-store.test.ts` — added tests for intended-path tracking and co-clearing with token.
+- `web/src/shared/auth/AuthControls.tsx` — disconnect now clears intended path and navigates back to the entry boundary.
+- `web/src/features/entry/EntryPage.tsx` — tracks the router's current pathname as the intended destination before connection; after valid connect, navigates to the intended route (or Dashboard as safe default when no deep intention exists); a `justConnected` ref prevents the post-connect navigation from re-registering the same path as an intention.
+- `web/src/features/auth/AuthStateBanner.tsx` — new reusable component with `AuthStateBanner` (not-connected / unauthorized / forbidden variants) and `UnavailableBanner` (explicit retry for unavailable/malformed reads).
+- `web/src/features/auth/AuthStateBanner.test.tsx` — unit tests for all three banner variants and token-secrecy assertion.
+- `web/src/features/entry/EntryPage.test.tsx` — updated for deep-link continuation behaviour; added test for clear-intent-on-disconnect.
+- `web/tests/e2e/deep-link.spec.ts` — new Playwright suite covering direct deep entry, connect-from-root, deep-link continuation, disconnect/cache-clear, 401/403 distinction, unavailable retry, unknown-route recovery, and V1 handoff token secrecy.
+- `README.md` — updated V2 frontend section with authentication continuity facts.
+- `docs/product-experience.md` — updated CURRENT V2 FOUNDATION to reflect shell auth lifecycle.
+- `docs/architecture.md` — appended Task 31.2 implementation evidence.
 
 ### Implemented
-- Corrected the migration browser journey to follow the actual narrow interaction: the narrow menu starts closed (CSS `display:none`), so destination links are absent from the accessibility tree until the menu is opened; the test now opens the menu before asserting active-route state.
-- Fixed the navigation link selector to the real accessible name `Library Migration` (the link renders the label and the `Migration` status badge, concatenated without a space); removed the failing exact `Library` match.
-- Added a real keyboard-navigation proof: focuses the `Operations Migration` link and activates it with `Enter`, then asserts the route changed to `/ui-v2/operations`, the page title updated to `Operations | MediaFlow`, and the active `aria-current="page"` marker moved to the Operations link after reopening the menu.
-- Preserved the existing zero-API-work migration assertions (`apiRequests` empty), the keyboard open/close behavior, and the truthful V1/V2 handoff + return journey.
+
+1. **Intended-route tracking in auth store.** `MemoryAuthStore` now exposes `setIntendedPath` / `clearIntendedPath` / `getIntendedPath`. `clearToken` also clears the intended path so a single disconnect action resets both the principal and the post-connect continuation target.
+2. **Entry page stores and consumes intended path.** The entry page captures the current router pathname (when not already at `/`) as the intended destination via a `useEffect` guarded by a `justConnected` ref to avoid post-navigate re-registration. On connect it navigates to the stored path (falling back to `/dashboard` when unset) and clears the intention atomically.
+3. **AuthControls disconnect navigates to entry.** Disconnect from any route now calls `authStore.clearToken()`, `authStore.clearIntendedPath()`, `queryClient.clear()`, and `navigate({ to: "/" })` so the operator always lands at the in-shell connection boundary.
+4. **Reusable auth-state banners.** `AuthStateBanner` renders not-connected, unauthorized (401), and forbidden (403) states with bounded, secret-free recovery actions. `UnavailableBanner` renders explicit-retry for unavailable/rejected/malformed read outcomes.
+5. **Documentation reconciliation.** README, product-experience, and architecture docs describe the CURRENT shell auth/continuation behavior without claiming later Slice capabilities.
 
 ### Tests and Results
-- `python3 scripts/check_governance.py` — PASS
-- `npm --prefix web run format:check` — PASS
-- `npm --prefix web run typecheck` — PASS
-- `npm --prefix web run lint` — PASS
-- `npm --prefix web run test -- --run` — PASS (49 tests)
-- `npm --prefix web run build` — PASS
-- `npm --prefix web run test:e2e` — PASS: all 4 Playwright cases pass, including the corrected migration/narrow/keyboard journey. Ran with `PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright` against the built artifact and local fake server.
-- `.venv/bin/python -m unittest tests.test_v2_ui tests.test_release_security` — PASS (17 tests)
-- `.venv/bin/ruff format --check .` — PASS
-- `.venv/bin/ruff check .` — PASS
-- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS
-- `git diff --check` — PASS
-- `npm --prefix web ci` — UNAVAILABLE: this sandbox sets `npm config omit=dev`, causing `npm ci` to silently skip dev-dependencies (only 16 of 278 packages installed); dev toolchain requires `--include=dev`. No gate assertion was weakened or skipped — the full install runs correctly with `npm ci --include=dev`.
+
+```
+python3 scripts/check_governance.py                         PASS
+npm --prefix web ci                                          (already installed)
+npm --prefix web run format:check                            PASS
+npm --prefix web run typecheck                               PASS
+npm --prefix web run lint                                    PASS
+npm --prefix web run test -- --run                           PASS (56 tests, 8 files)
+npm --prefix web run build                                   PASS
+npm --prefix web run test:e2e                                PASS (13 tests)
+.venv/bin/python -m unittest tests.test_v2_ui                PASS (11 tests)
+.venv/bin/python -m unittest tests.test_release_security     PASS (6 tests)
+.venv/bin/ruff format --check .                              PASS
+.venv/bin/ruff check .                                       PASS
+.venv/bin/python -m unittest discover -s tests               UNAVAILABLE (pre-existing timeout on full discovery; targeted module runs OK)
+.venv/bin/python -m compileall -q mediaflow tests scripts    PASS
+python3 scripts/docker_release_security_smoke_test.py        UNAVAILABLE (read-only /var/lib/deepseek-harness/.docker/buildx/activity)
+git diff --check                                             PASS
+```
+
+Pre-existing failures (unrelated to this Task):
+- `tests.test_api_credentials` — 2 assertion failures present at Task Base (`retired-viewer` principal missing from runtime config; legacy credential status returns non-zero). These existed before this Task and are not within scope.
 
 ### Decisions
-- Kept the correction limited to B's blockers: the narrow-menu open-before-assert ordering, the real `Library Migration` accessible name, and an exercised destination link by keyboard; no production shell, API, auth, or Slice contract changes.
-- Used native keyboard `Enter` against the menu toggle and the focused nav link so the evidence proves keyboard-operable navigation without adding test-only accessibility hooks.
-- Discovered that this sandbox's npm config has `omit=dev`, causing the raw `npm ci` gate to silently skip dev-dependencies; the full install runs correctly with `npm ci --include=dev`.
+
+- **Intended path lives in `authStore`, not React state.** Keeps the continuation model independent of any single component and allows AuthControls (which has no router `useNavigate` dependency for this purpose) to clear it on disconnect.
+- **Root entry does not register an intended path.** `useEffect` skips `setIntendedPath` when `location.pathname === "/"` so that connecting from root falls through to the default Dashboard destination rather than landing back on the entry page.
+- **`justConnected` ref suppresses the useEffect after connect.** Prevents the post-navigate re-render from overwriting the cleared intended path with the same value. A ref (not state) avoids unnecessary re-renders.
+- **AuthStateBanner is a standalone reusable component.** Dashboard retains its existing local auth-state rendering; the banner component is available for future routes owned by later Slices without duplicating the pattern.
 
 ### Remaining In-Slice Work
-- Intended-route authentication continuation and broader shared 401/403 handling remain outside this Task as documented in the Task non-goals.
-- Other Slice 31 Required Outcomes and later product-area migrations remain for B/A sequencing and their owning Slices.
+
+- Slice 32 Library & Files business journey (real Storage browsing, FileIndex list/detail, search/filter, Scan/Preview/Organize entry).
+- Slice 33 Operations Workspace (expanded Dashboard, Tasks, Jobs, schedules, Automation, Notifications).
+- Slice 34 Review & Recovery Workspace (Recognition/Metadata/Classification review, conflict, checkpoint, per-item recovery).
+- Slice 35 Configuration Administration (Configuration, Settings, revision/test evidence, activation).
+- Slice 36 V2 Parity, Accessibility & Legacy UI Retirement (final parity, comprehensive accessibility, `/ui` cutover).
 
 ### Risks / Deviations
-- The E2E gate now executes to a passing result because the Playwright Chromium binary is present in `/root/.cache/ms-playwright`; it remains environment-dependent and would be `UNAVAILABLE` where the browser is not installed.
-- The sandbox's npm config sets `omit=dev`, so the raw `npm ci` gate silently skips dev-dependencies; dev toolchain is only fully installed with `--include=dev`. No gate assertion was weakened.
-- No production credentials, private paths, operator media, or ignored runtime files were added.
-- `web/dist` and Playwright test artifacts remain ignored and are absent from the checkpoint.
+
+- `tests.test_api_credentials` has 2 pre-existing failures unrelated to this Task; reported above.
+- Full `unittest discover` times out in this environment — confirmed pre-existing by testing on base HEAD. Targeted module runs (`test_v2_ui`, `test_release_security`, `test_dashboard`, `test_container_probe`) all pass.
+- `docker_release_security_smoke_test.py` is `UNAVAILABLE` due to a read-only filesystem at `/var/lib/deepseek-harness/.docker/buildx/activity/`; not a code issue.
+- No deviation from safety invariants: zero mutation, Bearer token never leaves memory, no secret leakage into DOM/URL/persistent stores/logs.
 
 ### Checkpoint
+
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 19c389421ed9db4f12e194e75cdb49e9582267ed
+Head SHA: NOT SET (pending commit)
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 2de6551a40808b2781701a57d4a6d09b6831dc12..3929954f31bed52d4d5d88cc98ffbcee6e8e1a60
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: PENDING
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
 
-- The production-browser acceptance gate still fails. B ran
-  `npm --prefix web run test:e2e`: 3 tests passed and the migration/narrow journey failed while
-  looking for an exact accessible-name `Library` link before the CSS-hidden narrow menu was opened;
-  the rendered link also includes the `Migration` status in its accessible name. The correction
-  uses the keyboard only to open and close the menu button and never activates a navigation link by
-  keyboard, so it still does not prove keyboard navigation. Make the assertions follow the actual
-  narrow interaction and accessible names, exercise a destination link by keyboard while retaining
-  active/page context, and rerun the complete Playwright gate to a passing result without weakening
-  assertions or adding a skip.
-- The Completion Report names Head
-  `39299541c3d43bfdc24df2a9ea6a3c41dbfbbd59`, which `git` reports as a nonexistent object. The
-  actual correction commit is `3929954f31bed52d4d5d88cc98ffbcee6e8e1a60`. Update the report to a
-  real full checkpoint SHA after committing the next correction so B can review the declared
-  Task Base..Head range.
+If `FIX REQUIRED`, B lists only unmet Task blockers below this block. Fixes remain in Task 31.2;
+this result cannot close the Slice or update Roadmap.
