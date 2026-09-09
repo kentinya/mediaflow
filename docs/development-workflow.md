@@ -12,9 +12,10 @@ MediaFlow has exactly two current development-management objects:
 2. **Task** — one coherent implementation unit inside that Slice, planned and reviewed by B and
    defined in root `TASK.md`.
 
-Phase names, historical A/B/C suffixes, rejected checkpoints and correction names may remain in Git
-or legacy archives, but they are not additional lifecycle objects. A fix is normally another pass
-through the original Task; it does not automatically create an F1/F2 Task or a new Slice.
+Phase names, historical A/B/C suffixes, rejected checkpoints and correction names remain reachable
+in Git or may appear in explicitly retained legacy snapshots, but they are not additional lifecycle
+objects. A fix is normally another pass through the original Task; it does not automatically create
+an F1/F2 Task or a new Slice.
 
 ## 2. Roles
 
@@ -366,9 +367,20 @@ acceptance plan authorizes otherwise.
 
 ## 13. Legacy migration
 
-- Do not rewrite Git history, accepted/rejected commits or historical `Task/` records.
-- Detailed pre-migration Roadmap/Progress logs move intact to dated files under `docs/history/`,
-  marked `LEGACY / READ ONLY / NOT CURRENT WORKFLOW AUTHORITY`.
+- Accepted and rejected implementation/review history is immutable: do not rewrite history, squash
+  away accepted or rejected checkpoints, filter historical files out of old commits, or force-push
+  rewritten history. Historical Task documents already committed remain recoverable through normal
+  Git history.
+- The current working tree is intentionally compact. Its Task-document authority is root `TASK.md`
+  (the active Task or explicit no-active notice) plus `Task/TEMPLATE.md`; it does not need to
+  permanently materialize every completed historical Task document.
+- Historical Task documents may be removed from current `HEAD` as ordinary repository cleanup only
+  when no active Task boundary is disturbed, their commits remain reachable, no current tooling or
+  documentation requires their paths, and accepted/rejected history is not rewritten. Do not create
+  a replacement archive directory merely to relocate the same per-Task files.
+- The dated pre-migration Roadmap/Progress snapshots under `docs/history/` are a separate, explicitly
+  retained category. They remain intact and marked `LEGACY / READ ONLY / NOT CURRENT WORKFLOW
+  AUTHORITY`; do not conflate them with per-Task documents recoverable from Git history.
 - The new Roadmap and Progress do not translate every historical Phase/Task/Fix into new objects or
   backfill uncertain Base SHAs.
 - Historical A–O/F1 names are evidence inside their enclosing migrated Slice, not new lifecycle
