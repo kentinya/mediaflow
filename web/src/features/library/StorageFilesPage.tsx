@@ -71,7 +71,6 @@ function FileBrowseView({
   onRefresh,
   onOpenPath,
   onNextPage,
-  onPreviousPage,
   onReturnRoot,
 }: {
   readonly model: StorageFilesModel;
@@ -80,7 +79,6 @@ function FileBrowseView({
   readonly onRefresh: () => void;
   readonly onOpenPath: (path: string) => void;
   readonly onNextPage: (cursor: string) => void;
-  readonly onPreviousPage: (cursor: string) => void;
   readonly onReturnRoot: () => void;
 }) {
   return (
@@ -168,15 +166,6 @@ function FileBrowseView({
         </ul>
       )}
       <div className="mf-actions">
-        {model.hasPrevious && model.previousCursor !== null ? (
-          <button
-            className="mf-button mf-button-secondary"
-            type="button"
-            onClick={() => onPreviousPage(model.previousCursor as string)}
-          >
-            Previous page
-          </button>
-        ) : null}
         {model.hasNext && model.nextCursor !== null ? (
           <button
             className="mf-button mf-button-primary"
@@ -248,9 +237,9 @@ export interface StorageFilesViewProps {
   readonly onOpenStorage: (storageId: string) => void;
   readonly onOpenPath: (path: string) => void;
   readonly onNextPage: (cursor: string) => void;
-  readonly onPreviousPage: (cursor: string) => void;
   readonly onReturnRoot: () => void;
   readonly onBack: () => void;
+  readonly onRefreshRuntime: () => void;
 }
 
 export function StorageFilesView({
@@ -264,9 +253,9 @@ export function StorageFilesView({
   onOpenStorage,
   onOpenPath,
   onNextPage,
-  onPreviousPage,
   onReturnRoot,
   onBack,
+  onRefreshRuntime,
 }: StorageFilesViewProps) {
   if (status === null || !status.configurationActive) {
     return (
@@ -420,6 +409,44 @@ export function StorageFilesView({
   }
 
   const model = fileResult.model;
+  if (
+    !status.configurationActive ||
+    status.authority !== "MANAGED" ||
+    status.configurationSnapshotId === null ||
+    model.authority !== "MANAGED" ||
+    model.revisionId !== status.configurationSnapshotId
+  ) {
+    return (
+      <section className="mf-status mf-status-warning">
+        <h2>Active runtime changed</h2>
+        <p>
+          The managed Active runtime changed while this read was in progress.
+          The Storage listing was not accepted because its snapshot identity no
+          longer matches the selected runtime.
+        </p>
+        <p>
+          <strong>Next action:</strong> refresh the Active runtime and retry
+          this bounded read.
+        </p>
+        <div className="mf-actions">
+          <button
+            className="mf-button mf-button-primary"
+            type="button"
+            onClick={onRefreshRuntime}
+          >
+            Refresh Active runtime
+          </button>
+          <button
+            className="mf-button mf-button-secondary"
+            type="button"
+            onClick={onBack}
+          >
+            Back to Storage files
+          </button>
+        </div>
+      </section>
+    );
+  }
   if (model.storageId !== storageId) {
     return (
       <section className="mf-status mf-status-warning">
@@ -468,7 +495,6 @@ export function StorageFilesView({
       onRefresh={refreshFiles}
       onOpenPath={onOpenPath}
       onNextPage={onNextPage}
-      onPreviousPage={onPreviousPage}
       onReturnRoot={onReturnRoot}
     />
   );
@@ -516,12 +542,6 @@ export function StorageFilesPage() {
     queryString.set("cursor", nextCursor);
     void navigate({ to: `/library/files?${queryString.toString()}` });
   };
-  const previousPage = (prevCursor: string) => {
-    const queryString = new URLSearchParams({ storage: storageId as string });
-    if (path !== "") queryString.set("path", path);
-    queryString.set("cursor", prevCursor);
-    void navigate({ to: `/library/files?${queryString.toString()}` });
-  };
   const returnRoot = () => {
     const queryString = new URLSearchParams({ storage: storageId as string });
     void navigate({ to: `/library/files?${queryString.toString()}` });
@@ -535,7 +555,11 @@ export function StorageFilesPage() {
       query={system}
       unavailableTitle="Library unavailable"
     >
-      {({ data: statusData, isPending: statusPending }) => {
+      {({
+        data: statusData,
+        isPending: statusPending,
+        refresh: refreshStatus,
+      }) => {
         if (statusPending || statusData === undefined) {
           return (
             <section className="mf-status mf-status-info" role="status">
@@ -569,9 +593,12 @@ export function StorageFilesPage() {
                 onOpenStorage={selectStorage}
                 onOpenPath={openPath}
                 onNextPage={nextPage}
-                onPreviousPage={previousPage}
                 onReturnRoot={returnRoot}
                 onBack={backToSelection}
+                onRefreshRuntime={() => {
+                  refreshStatus();
+                  refreshFiles();
+                }}
               />
             )}
           </AuthorizedReadBoundary>

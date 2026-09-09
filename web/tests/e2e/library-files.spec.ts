@@ -173,6 +173,7 @@ test("no configured Storage and empty directory states stay truthful", async ({
         system: {
           configuration_valid: true,
           configuration_authority: "MANAGED",
+          configuration_snapshot_id: "rev-e2e-1",
         },
         storages: { total: 0, truncated: false, items: [] },
         resource_libraries: { total: 0, truncated: false, items: [] },
@@ -362,6 +363,76 @@ test("no Active runtime shows bounded warning with V1 continuation", async ({
     req.url.includes("/api/v1/storage/files"),
   );
   expect(filesRequests).toHaveLength(0);
+});
+
+test("missing ResourceLibrary read offers bounded recovery", async ({
+  page,
+}) => {
+  const apiRequests = apiRequestsOf(page);
+  await page.route("**/api/v1/storage/files**", async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: {
+          code: "storage_browser_resource_library_not_found",
+          message: "requested ResourceLibrary not available",
+          details: {
+            category: "resource_library_not_found",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "select another Storage or reload the Active runtime",
+          },
+        },
+      }),
+    });
+  });
+  await page.goto("/ui-v2/library/files?storage=local-media");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", { name: "ResourceLibrary not available" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/requested ResourceLibrary is not available/i),
+  ).toBeVisible();
+  await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
+  expect(apiRequests.every((request) => request.method === "GET")).toBe(true);
+  await page.getByRole("button", { name: "Back to Storage files" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Choose a Storage" }),
+  ).toBeVisible();
+});
+
+test("stale Files revision stays bounded until the Active runtime is refreshed", async ({
+  page,
+}) => {
+  let staleResponse = true;
+  await page.route("**/api/v1/storage/files**", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      configuration: { revisionId: string };
+    };
+    if (staleResponse) {
+      staleResponse = false;
+      body.configuration.revisionId = "rev-stale";
+    }
+    await route.fulfill({
+      response,
+      body: JSON.stringify(body),
+    });
+  });
+  await page.goto("/ui-v2/library/files");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await page.getByRole("button", { name: /Local media/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Active runtime changed" }),
+  ).toBeVisible();
+  await expect(page.getByText("show.mkv")).toHaveCount(0);
+  await page.getByRole("button", { name: "Refresh Active runtime" }).click();
+  await expect(page.getByText("show.mkv")).toBeVisible();
 });
 
 test("invalid/stale cursor shows bounded recovery", async ({ page }) => {

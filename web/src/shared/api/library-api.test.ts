@@ -36,7 +36,6 @@ const filesPayload = {
     version: 1,
     digest: "digest-1",
   },
-  authority: "MANAGED",
   storage: { id: "local-1", name: "Local media", type: "local" },
   path: "",
   breadcrumbs: [{ name: "Storage root", path: "", isRoot: true }],

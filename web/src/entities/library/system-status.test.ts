@@ -92,6 +92,20 @@ describe("normalizeSystemStatus", () => {
     expect(model.configurationSnapshotId).toBe("rev-e2e-1");
   });
 
+  it("does not present a managed runtime without a complete snapshot identity as Active", () => {
+    const payload = {
+      ...systemStatusPayload,
+      system: {
+        ...systemStatusPayload.system,
+        configuration_snapshot_id: null,
+      },
+    };
+    const model = normalizeSystemStatus(payload);
+    expect(model.configurationActive).toBe(false);
+    expect(model.authority).toBe("MANAGED");
+    expect(model.configurationSnapshotId).toBeNull();
+  });
+
   it.each([
     ["non-object payload", "nope"],
     ["array payload", [systemStatusPayload]],
