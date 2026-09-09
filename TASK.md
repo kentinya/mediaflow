@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 31.1
 Parent Slice: 31
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: 2de6551a40808b2781701a57d4a6d09b6831dc12
 Difficulty: Medium
 Test Level: T3
@@ -135,29 +135,24 @@ media or private runtime state.
 ## Developer Completion Report
 
 ### Changed Files
-- `web/src/shared/navigation/destination-model.ts` and `web/src/shared/navigation/destination-model.test.ts`
-- `web/src/routes/router.tsx`
-- `web/src/shared/ui/AppShell.tsx`, `web/src/shared/ui/AppShell.test.tsx`, `web/src/shared/ui/styles.css`
-- `web/src/features/migration/MigrationPage.tsx`
 - `web/tests/e2e/dashboard.spec.ts`
-- `web/package.json`
+- `web/tests/fake-server.mjs`
+- `TASK.md`
 
 ### Implemented
-- Added one typed operator-goal destination model for Overview, Library, Operations, Review & Recovery, and Configuration, including route ownership, page titles, availability and V1 continuation.
-- Added TanStack Router routes and honest in-shell migration states for later-Slice areas; Overview continues to the read-only Dashboard.
-- Rebuilt `AppShell` as a persistent semantic header/nav/main shell with active-route semantics, skip-to-content, route-specific document titles, connection controls and responsive keyboard-operable narrow navigation.
-- Preserved memory-only API-principal auth, typed Dashboard behavior, V1 `/ui` handoff and zero-side-effect migration rendering. Added component, model and browser coverage.
-- Made the Vitest npm script explicitly use `NODE_ENV=test` so React 19 test rendering uses the development `act` implementation consistently in this environment.
+- Corrected the migration browser journey to use a real `640px` narrow viewport and keyboard interaction for opening and dismissing the navigation menu.
+- Added assertions for retained active-route context and `aria-current="page"` while the narrow menu is opened and closed.
+- Extended the local fake server with a non-production `/ui` V1 continuation page and verified the handoff loads, then returns to the V2 migration route.
+- Preserved the existing zero-API-work migration assertions and all prior shell/auth/dashboard behavior.
 
 ### Tests and Results
 - `python3 scripts/check_governance.py` — PASS
-- `npm --prefix web ci --include=dev` — PASS (initial default-cache attempt was unavailable due to missing `/var/lib/deepseek-harness/.npm`; rerun with `npm_config_cache=/tmp/mediaflow-npm-cache`)
 - `npm --prefix web run format:check` — PASS
 - `npm --prefix web run typecheck` — PASS
 - `npm --prefix web run lint` — PASS
 - `npm --prefix web run test -- --run` — PASS (49 tests)
 - `npm --prefix web run build` — PASS
-- `npm --prefix web run test:e2e` — UNAVAILABLE: Playwright Chromium executable is not installed at `/var/lib/deepseek-harness/.cache/ms-playwright/.../chrome-headless-shell`; all 4 browser cases were blocked before launch.
+- `npm --prefix web run test:e2e` — UNAVAILABLE: Playwright Chromium executable is not installed at `/var/lib/deepseek-harness/.cache/ms-playwright/chromium_headless_shell-1243/...`; all 4 browser cases were blocked before launch. No system Chromium executable is available.
 - `.venv/bin/python -m unittest tests.test_v2_ui tests.test_release_security` — PASS (17 tests)
 - `.venv/bin/ruff format --check .` — PASS
 - `.venv/bin/ruff check .` — PASS
@@ -165,35 +160,41 @@ media or private runtime state.
 - `git diff --check` — PASS
 
 ### Decisions
-- Kept the navigation contract in a feature-independent shared module so Shell and routes consume the same labels, paths, migration state and titles.
-- Migration destinations use explicit current `/ui` links and an in-shell return action; they do not claim deferred business capability or issue API work.
-- Used semantic native links/buttons and CSS media queries for narrow navigation, with active route state exposed through `aria-current="page"`.
-- Kept the browser test gate truthful as UNAVAILABLE because the required local browser binary is absent; no production fallback or test skip was added.
+- Kept the correction limited to B's blocker: browser evidence and local V1/V2 coexistence serving; no production shell, API, auth, or Slice contract changes.
+- Used keyboard `Enter` against the native menu button so the evidence proves keyboard-operable behavior without adding test-only accessibility hooks.
+- Kept the E2E gate truthful as `UNAVAILABLE` because the required browser runtime is absent; no test skip, assertion weakening, or inferred pass was used.
 
 ### Remaining In-Slice Work
 - Intended-route authentication continuation and broader shared 401/403 handling remain outside this Task as documented in the Task non-goals.
 - Other Slice 31 Required Outcomes and later product-area migrations remain for B/A sequencing and their owning Slices.
 
 ### Risks / Deviations
-- Playwright browser evidence is unavailable in this environment; the added browser journey remains unexecuted.
-- `npm ci` required an explicit temporary cache because the harness default cache directory did not exist. No lockfile or private configuration was changed.
+- B's requested browser proof is implemented but cannot execute in this environment until the Playwright Chromium binary is installed; the complete E2E gate remains `UNAVAILABLE`.
+- No production credentials, private paths, operator media, or ignored runtime files were added.
 - `web/dist` and Playwright test artifacts remain ignored and are absent from the checkpoint.
 
 ### Checkpoint
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 0f30e717f1d877ae64dd01b88cf12de93e521d46
+Head SHA: [filled after correction commit]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 2de6551a40808b2781701a57d4a6d09b6831dc12..0f30e717f1d877ae64dd01b88cf12de93e521d46
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, B will list only blockers for this Task. Fixes remain in this Task unless B
-finds a genuinely independent business goal. This result does not close the Slice or update
-Roadmap.
+- The required production-browser proof for narrow and keyboard navigation plus V1/V2 coexistence
+  is not satisfied. B ran `npm --prefix web run test:e2e`: 3 tests passed and the new migration
+  journey failed after 30 seconds because it tried to click the CSS-hidden `Open menu` button at
+  the default desktop viewport. The test never selects a narrow viewport or uses keyboard input,
+  and it only checks the `/ui` href while the Playwright fake server returns 404 for `/ui`, so it
+  does not prove a usable V1 continuation. Update the browser evidence to exercise the shell at a
+  real narrow viewport using keyboard-operable menu/navigation behavior (including dismissal and
+  retained active context), and verify a truthful working V1/V2 continuation/coexistence path with
+  local non-production serving; then rerun the complete `npm --prefix web run test:e2e` gate to a
+  passing result.
