@@ -136,6 +136,15 @@ const server = createServer(async (req, res) => {
     res.end("GET required");
     return;
   }
+  if (url.pathname === "/ui") {
+    const body = Buffer.from(`<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>MediaFlow V1 Web UI</title></head>
+  <body><main><h1>MediaFlow V1 Web UI</h1><p>Current Web continuation.</p></main></body>
+</html>`);
+    sendFile(res, body, CONTENT_TYPES[".html"]);
+    return;
+  }
   if (url.pathname === "/ui-v2" || url.pathname === "/ui-v2/") {
     const index = await readArtifact("index.html");
     if (index === null) {

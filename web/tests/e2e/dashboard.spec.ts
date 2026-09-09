@@ -94,6 +94,7 @@ test("migration destinations stay truthful and narrow navigation remains usable"
     }
   });
 
+  await page.setViewportSize({ width: 640, height: 800 });
   await page.goto("/ui-v2/library");
   await expect(
     page.getByRole("heading", { name: "Library is not available in V2 yet" }),
@@ -102,12 +103,42 @@ test("migration destinations stay truthful and narrow navigation remains usable"
     page.getByRole("link", { name: "Open current Web UI" }),
   ).toHaveAttribute("href", "/ui");
   await expect(page).toHaveTitle("Library | MediaFlow");
+  await expect(page.getByRole("link", { name: "Library" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
   expect(apiRequests).toEqual([]);
 
-  await page.getByRole("button", { name: "Open menu" }).click();
+  const menuToggle = page.getByRole("button", { name: "Open menu" });
+  await menuToggle.focus();
+  await page.keyboard.press("Enter");
   await expect(
     page.getByRole("button", { name: "Close menu" }),
   ).toHaveAttribute("aria-expanded", "true");
-  await page.getByRole("link", { name: /Overview/ }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
+  await expect(page.getByRole("link", { name: "Library" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+
+  await page.getByRole("button", { name: "Close menu" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Open menu" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await expect(page.getByRole("link", { name: "Library" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+
+  await page.getByRole("link", { name: "Open current Web UI" }).click();
+  await expect(page).toHaveURL(/\/ui$/);
+  await expect(
+    page.getByRole("heading", { name: "MediaFlow V1 Web UI" }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/ui-v2\/library$/);
+  await expect(
+    page.getByRole("heading", { name: "Library is not available in V2 yet" }),
+  ).toBeVisible();
 });
