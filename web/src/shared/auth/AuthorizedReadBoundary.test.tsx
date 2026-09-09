@@ -3,7 +3,7 @@ import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient } from "@tanstack/react-query";
 import { authStore } from "../api/auth-store";
-import { DashboardApiError } from "../api/api-errors";
+import { ApiReadError, DashboardApiError } from "../api/api-errors";
 import { renderWithProviders } from "../../../tests/utils";
 import {
   AuthorizedReadBoundary,
@@ -161,6 +161,81 @@ describe("AuthorizedReadBoundary", () => {
     );
     expect(await screen.findByText("feature count 3")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Refresh data" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+  it("applies the same 401-clearing lifecycle to a non-Dashboard read error", async () => {
+    // A later product feature that throws the plain feature-neutral ApiReadError
+    // (not DashboardApiError) must inherit the shared authority/cache transition.
+    const refetch = vi.fn(async () => undefined);
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(["feature", "read"], { cached: true });
+    authStore.setToken(TOKEN);
+
+    const { queryClient: renderedClient } = renderWithProviders(
+      <AuthorizedReadBoundary
+        query={makeQuery({
+          isError: true,
+          error: new ApiReadError("unauthorized"),
+          refetch,
+        })}
+      >
+        {() => <p>feature content</p>}
+      </AuthorizedReadBoundary>,
+      queryClient,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Not authorized" }),
+    ).toBeVisible();
+    expect(authStore.getToken()).toBeNull();
+    expect(authStore.isRejected()).toBe(true);
+    expect(renderedClient.getQueryData(["feature", "read"])).toBeUndefined();
+    expect(refetch).not.toHaveBeenCalled();
+  });
+
+  it("retains a still-authenticated principal on a non-Dashboard 403", async () => {
+    const queryClient = new QueryClient();
+    authStore.setToken(TOKEN);
+    renderWithProviders(
+      <AuthorizedReadBoundary
+        query={makeQuery({
+          isError: true,
+          error: new ApiReadError("forbidden"),
+        })}
+      >
+        {() => <p>feature content</p>}
+      </AuthorizedReadBoundary>,
+      queryClient,
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Forbidden" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Not authorized" }),
+    ).toBeNull();
+    expect(authStore.getToken()).toBe(TOKEN);
+    expect(authStore.isRejected()).toBe(false);
+  });
+
+  it("offers a bounded retry for a non-Dashboard unavailable read", async () => {
+    const refetch = vi.fn(async () => undefined);
+    const user = userEvent.setup();
+    authStore.setToken(TOKEN);
+    renderWithProviders(
+      <AuthorizedReadBoundary
+        query={makeQuery({
+          isError: true,
+          error: new ApiReadError("unavailable"),
+          refetch,
+        })}
+      >
+        {() => <p>feature content</p>}
+      </AuthorizedReadBoundary>,
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Service unavailable" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 });

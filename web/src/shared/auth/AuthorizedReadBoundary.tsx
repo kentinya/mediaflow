@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { DashboardApiError } from "../api/api-errors";
+import { ApiReadError } from "../api/api-errors";
 import { useAuthToken, useRejected } from "../api/auth-context";
 import { authStore } from "../api/auth-store";
 import { AuthStateBanner, UnavailableBanner } from "./AuthStateBanner";
@@ -70,7 +70,7 @@ export function AuthorizedReadBoundary<T>({
     if (!query.isError) {
       return;
     }
-    if (!(query.error instanceof DashboardApiError)) {
+    if (!(query.error instanceof ApiReadError)) {
       return;
     }
     if (query.error.category !== "unauthorized") {
@@ -111,7 +111,7 @@ export function AuthorizedReadBoundary<T>({
 
   if (query.isError) {
     const category =
-      query.error instanceof DashboardApiError ? query.error.category : null;
+      query.error instanceof ApiReadError ? query.error.category : null;
     if (category === "forbidden") {
       // The principal is still authenticated; only its permission is missing.
       // No access is granted and no silent fallback occurs.
@@ -134,7 +134,7 @@ export function AuthorizedReadBoundary<T>({
       );
     }
     const description =
-      query.error instanceof DashboardApiError
+      query.error instanceof ApiReadError
         ? query.error.message
         : "The requested data could not be loaded right now. This is a read-only query; retrying repeats only that same request.";
     return (

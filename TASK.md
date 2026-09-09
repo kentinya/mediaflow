@@ -141,71 +141,44 @@ do not install a skip, weaken an assertion or use production services/data to ma
 
 ## Developer Completion Report
 
-Second correction loop for `FIX REQUIRED` on
-`eee3bca..bb8f732`. This checkpoint follows `905cc3a`; the B Review Result
-below remains the review record for the `bb8f732` checkpoint.
+Third correction loop for `FIX REQUIRED` on the second-correction checkpoint
+`4e0d0039`. This checkpoint addresses only the two blockers B listed against
+that Head; the B Review Result below remains the review record for `4e0d0039`.
 
 ### Changed Files
 
-- `web/src/shared/navigation/destination-model.ts` — canonical
-  `DestinationPath` union; `destinationPaths` and `isDestinationPath` derived
-  from the one `destinations` contract, so the continuation allowlist and its
-  runtime validator share the single typed navigation source.
-- `web/src/shared/api/auth-store.ts` — removed the separately hard-coded
-  `ALLOWED_INTENDED_PATHS`; `setIntendedPath` is now typed as
-  `DestinationPath` and runtime-guarded by the model's `isDestinationPath`.
-- `web/src/shared/api/auth-context.ts` — `useIntendedPath()` now returns
-  `DestinationPath | null`.
-- `web/src/shared/auth/AuthBoundary.tsx` — always replaces the recorded
-  intention with the operator's latest explicit supported-route choice before
-  redirecting to the connection boundary (no stale-intention short-circuit).
-- `web/src/shared/auth/AuthStateBanner.tsx` / `.test.tsx` — moved from
-  `web/src/features/auth` into `shared/auth` beside the lifecycle it serves.
-- `web/src/shared/auth/AuthorizedReadBoundary.tsx` (new) — feature-independent
-  boundary owning the whole connection/permission/cache-clearing contract for
-  one authenticated read-only query: not-connected, 401 rejection, 403
-  distinction, bounded unavailable retry, and delegation of data states.
-- `web/src/shared/auth/AuthorizedReadBoundary.test.tsx` (new) — directly
-  proves rejected-token + authenticated-cache clearing without replay,
-  forbidden identity retention, bounded retry wiring and ready-data handoff.
-- `web/src/features/dashboard/DashboardPage.tsx` — consumes
-  `AuthorizedReadBoundary` and renders only its own loading/empty/success
-  content; no local 401/403 categorization, cache clearing or banner choice.
-- `README.md` — source-ownership bullet updated for the shared/auth move and
-  the typed navigation model.
-- Tests: `destination-model.test.ts` (derived unique allowlist), `auth-store.test.ts`
-  (model-derived allowlist + typed guard), `AuthBoundary.test.tsx` (changed
-  intent + cache-cleared-after-401), `DashboardPage.test.tsx`,
-  `AuthStateBanner.test.tsx`, `web/tests/utils.tsx`, and Playwright
-  `deep-link.spec.ts` / `dashboard.spec.ts` (generic forbidden copy plus a new
-  changed-intent journey).
+- `web/src/shared/navigation/destination-model.ts` — one `destinationData`
+  `as const` literal is now the sole source of the route contract.
+  `DestinationPath`, `DestinationAvailability`, the exported `destinations`
+  projection, the `destinationPaths` allowlist and the `isDestinationPath`
+  validator are all derived from that literal, so no manually enumerated union
+  exists beside the data to drift from it.
+- `web/src/shared/api/api-errors.ts` — added the feature-neutral
+  `ApiReadError` / `ApiReadErrorCategory` authorized-read contract.
+  `DashboardApiError` now extends it and keeps only the Dashboard-specific
+  bounded response copy.
+- `web/src/shared/auth/AuthorizedReadBoundary.tsx` — detects read-error category
+  through the base `ApiReadError` only; the `DashboardApiError` import is gone,
+  so the shared boundary no longer references any feature type.
+- `web/src/shared/auth/AuthorizedReadBoundary.test.tsx` — three new specs prove
+  the lifecycle for a plain non-Dashboard `ApiReadError` consumer: 401 clears
+  the rejected authority plus authenticated cache with zero replay, 403 retains
+  the principal, unavailable offers one bounded retry.
 
 ### Implemented
 
-1. **One typed navigation source for continuation.** The path type and the
-   runtime validator both come from the centralized destination model; the
-   auth store holds no second route list. `destinations` is statically checked
-   against the canonical `DestinationPath` union and `destinationPaths` is the
-   derived runtime projection, so route-model drift is impossible without a
-   compile error and the guard coverage locks it down.
-2. **Latest explicit route intent always wins.** `AuthBoundary` overwrites any
-   earlier intention whenever an unauthenticated operator reaches a supported
-   product route, so a new shell choice made at the connection boundary is what
-   reconnection continues to — never a stale destination. Proven in an
-   AuthBoundary component test and a Playwright journey (deep `/library` →
-   choose Operations → connect lands on Operations).
-3. **Shared authorized-read lifecycle replaces feature-local rules.**
-   `AuthorizedReadBoundary` owns the 401 rejection transition (clear the
-   rejected authority first so the read query is disabled, then remove the
-   authenticated cache — this ordering prevents a synchronous replay of the
-   rejected request), the 403 identity-retention distinction, the bounded
-   unavailable/malformed retry and the not-connected presentation. Dashboard
-   no longer categorizes 401/403, calls `clearRejectedAuthority()`,
-   `queryClient.clear()` or selects auth banners itself.
-4. **Direct evidence.** Boundary unit tests prove rejected token + cache
-   clearing with zero automatic `refetch`; route-level tests assert the
-   dashboard query cache is empty after a 401; browser journeys keep proving
-   the full success/failure/recovery matrix.
+1. **Single-source navigation path contract (B blocker 1).** The union is
+   `(typeof destinationData)[number]["path"]`. Adding a destination to the
+   literal adds it to the type, the allowlist and the guard simultaneously;
+   deleting one removes it from all four. An unknown or external target is
+   still rejected by the existing tests, and destination-path uniqueness is
+   still asserted.
+2. **Feature-neutral read lifecycle (B blocker 2).** The boundary owns the
+   401-clearing / 403-retention / bounded-retry rules against the shared error
+   contract alone. A Dashboard consumer keeps its own copy because
+   `DashboardApiError` narrows the message map; a later feature either throws
+   `ApiReadError` or subclasses it and inherits the identical lifecycle with no
+   duplicated rules and no change to `api-client.ts`.
 
 ### Tests and Results
 
@@ -215,14 +188,13 @@ npm --prefix web ci                                         PASS (fresh install,
 npm --prefix web run format:check                           PASS
 npm --prefix web run typecheck                              PASS
 npm --prefix web run lint                                   PASS
-npm --prefix web run test -- --run                          PASS (76 tests, 10 files)
+npm --prefix web run test -- --run                          PASS (79 tests, 10 files)
 npm --prefix web run build                                  PASS
 npm --prefix web run test:e2e                               PASS (16 tests, chromium)
-.venv/bin/python -m unittest tests.test_v2_ui               PASS (11 tests)
-.venv/bin/python -m unittest tests.test_release_security    PASS (6 tests)
-.venv/bin/ruff format --check .                             PASS
+.venv/bin/python -m unittest tests.test_v2_ui tests.test_release_security PASS (17 tests)
+.venv/bin/ruff format --check .                             PASS (305 files)
 .venv/bin/ruff check .                                      PASS
-.venv/bin/python -m unittest discover -s tests              PASS (1408 tests, 7 skipped, isolated clean checkout)
+.venv/bin/python -m unittest discover -s tests              PASS (1408 tests, 7 skipped, isolated clean worktree)
 .venv/bin/python -m compileall -q mediaflow tests scripts   PASS
 python3 scripts/docker_release_security_smoke_test.py       PASS
 git diff --check                                            PASS
@@ -230,22 +202,19 @@ git diff --check                                            PASS
 
 ### Decisions
 
-- **The typed path union lives in the destination model, and the model's array
-  is checked against it.** Keeping the union as the canonical declared set and
-  deriving `destinationPaths`/`isDestinationPath` from `destinations` makes a
-  new route opt into the allowlist by construction instead of by a second
-  manual list.
-- **401 clearing is deliberately two-phase.** Clearing only the rejected
-  authority first disables the mounted read query; only then is the
-  authenticated cache removed. Clearing the cache while the observer was still
-  enabled caused TanStack Query to synchronously replay the rejected request,
-  which the tests caught and this ordering eliminates.
-- **The read lifecycle is a boundary component, not a hook plus per-feature
-  switches.** The boundary renders the auth/read states itself and hands
-  feature content a typed data/refresh view, so a later API-backed feature
-  cannot silently reintroduce feature-local permission or cache rules.
-- **`AuthStateBanner`/`UnavailableBanner` moved into `shared/auth`** with the
-  boundary so no `shared` module imports from a feature directory.
+- **Derived union instead of `satisfies`.** Annotating the array
+  `satisfies readonly Destination[]` is circular here because `Destination.path`
+  is typed `DestinationPath`; the `as const` literal plus a derived alias and a
+  widened `readonly Destination[]` export keeps one data source and compiles.
+- **Inheritance instead of a parallel classifier.** `DashboardApiError extends
+  ApiReadError` lets one `instanceof` test carry the shared category while the
+  Dashboard edge retains its own copy, so the boundary needed no second
+  conversion step and existing Dashboard tests are untouched.
+- **No `isApiReadError` helper.** A pure `instanceof` alias would be a
+  zero-content function under the repository TypeScript rules; the boundary uses
+  `instanceof ApiReadError` directly.
+- **Separate renders, not `rerender`,** for the three non-Dashboard proofs:
+  `rerender` drops the `QueryClientProvider` wrapper in this test harness.
 
 ### Remaining In-Slice Work
 
@@ -262,49 +231,49 @@ git diff --check                                            PASS
 
 ### Risks / Deviations
 
-- No known failures remain on the required T4 gate list.
-- The full Python discovery run is executed in an isolated clean checkout of
-  this checkpoint (per the review note) so protected local runtime state in the
-  working checkout does not affect the result.
-- No deviation from safety invariants: routing/recovery performs zero
-  mutation, no Storage/Provider/Job access, no execution-authority issuance;
-  Bearer material never leaves runtime memory and never appears in DOM, URL,
-  persistent stores, logs or test artifacts; `config/alist.json` remains
-  ignored/untracked and is not part of this checkpoint.
-- The only non-web file beyond `TASK.md` is `README.md`, updated solely to keep
-  the source-ownership bullet factual after the `shared/auth` move.
+- No failures remain on the required T4 gate list. The full Python discovery run
+  is executed in an isolated clean `git worktree` of this Head: six
+  configuration tests read protected local runtime state (`/mnt/HDD_2`) through
+  the root working directory, so a dirty-checkout run is not authoritative.
+- No safety-invariant deviation: routing/recovery performs zero mutation, no
+  Storage/Provider/Job access, no execution-authority issuance; Bearer material
+  stays out of DOM, URL, persistent stores, logs and test artifacts;
+  `config/alist.json` remains ignored/untracked and untouched here.
+- Scope is exactly the two B blockers plus their proof tests. `README.md`,
+  `auth-store.ts`, `auth-context.ts`, `AuthBoundary.tsx`, `DashboardPage.tsx`
+  and the Playwright specs are unchanged from `4e0d0039`.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 4e0d0039aaf5bd72c01c379c5585680f0055d424
+Head SHA: 4e0d0039aaf5bd72c01c379c5585680f0055d424 (to be replaced by this commit)
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: eee3bca458e9d049c78fa17e626721fa5b507bfe..bb8f732526cab2221d0edebdcad2953c9743e586
+Reviewed: eee3bca458e9d049c78fa17e626721fa5b507bfe..4e0d0039aaf5bd72c01c379c5585680f0055d424
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- Intended-route authority is still duplicated instead of coming from the one typed navigation
-  source required by RO-1 and this Task. `web/src/shared/api/auth-store.ts` hard-codes
-  `ALLOWED_INTENDED_PATHS` separately from `destinations` in
-  `web/src/shared/navigation/destination-model.ts`; `setIntendedPath(path: string)` therefore relies
-  on a second manually synchronized route map. `AuthBoundary` also refuses to replace an existing
-  intention, so a new explicit supported-route choice made at the connection boundary can leave the
-  operator reconnecting to the stale earlier route. Derive the runtime validator and path type from
-  the centralized destination model, update continuation on the operator's latest explicit safe
-  route intent, and cover route-model drift plus changed-intent continuation in component/browser
-  tests.
-- The rejected-authority/cache/permission lifecycle remains feature-local rather than owned once by
-  the reusable route/auth boundary. `DashboardPage.tsx` directly categorizes 401/403, calls
-  `authStore.clearRejectedAuthority()` and `queryClient.clear()`, and selects the auth banners; a
-  later API-backed feature would have to duplicate that transition despite the Acceptance Criterion
-  explicitly prohibiting feature-level connection, permission and cache-clearing rules. Move this
-  transition/presentation contract into a feature-independent shared hook/boundary consumed by
-  Dashboard, retain 403 identity and explicit read-only retry semantics, and directly prove rejected
-  token plus authenticated cache clearing and no replay before fresh human intent.
+- The intended-path type is still a second manually synchronized route list, so the Task's required
+  single typed navigation authority is not complete. In
+  `web/src/shared/navigation/destination-model.ts`, `DestinationPath` enumerates all five paths
+  separately from `destinations`, while `destinations: readonly Destination[]` only checks that each
+  array value belongs to the union; adding a union-only path compiles even though
+  `destinationPaths`/`isDestinationPath` reject it at runtime. Derive `DestinationPath`, the runtime
+  allowlist and its guard from the literal `destinations` data itself (with an appropriate
+  `satisfies` shape), then retain the invalid/external-target and uniqueness tests without another
+  path enumeration.
+- `AuthorizedReadBoundary` is still coupled to Dashboard and therefore does not meet the
+  feature-independent lifecycle criterion. Repository inspection shows the shared boundary imports
+  `DashboardApiError` and recognizes 401/403 only through `instanceof DashboardApiError`; any later
+  feature query returning its own typed API error would be treated as a generic unavailable read or
+  would have to reuse a Dashboard-specific error, rather than inheriting the shared authority/cache
+  transition. Define a feature-neutral shared authorized-read error/category contract (or an
+  explicit typed classifier supplied to the boundary), keep Dashboard-specific response copy at the
+  feature/client edge, and prove a non-Dashboard-shaped consumer receives the same 401 clearing,
+  403 retention and bounded retry behavior without duplicating those rules.
