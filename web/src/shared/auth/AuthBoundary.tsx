@@ -2,7 +2,10 @@ import { useEffect } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useIsConnected, useRejected } from "../api/auth-context";
 import { authStore } from "../api/auth-store";
-import { destinationForPath } from "../navigation/destination-model";
+import {
+  destinationForPath,
+  allowlistedDestinationSearch,
+} from "../navigation/destination-model";
 
 /**
  * Shared route/authentication boundary for supported V2 product routes.
@@ -41,8 +44,12 @@ export function AuthBoundary() {
       return;
     }
     authStore.setIntendedPath(destination.path);
-    if (searchStr.length > 0) {
-      authStore.setIntendedSearch(searchStr);
+    const allowedSearch = allowlistedDestinationSearch(
+      destination.path,
+      searchStr,
+    );
+    if (allowedSearch !== null) {
+      authStore.setIntendedSearch(allowedSearch);
     }
   }, [rejected, pathname, searchStr]);
   useEffect(() => {
@@ -64,19 +71,12 @@ export function AuthBoundary() {
     // for, never a stale one. Safe Storage Files view state (relative path and
     // cursor) is retained so a refresh/reconnect returns to the same read.
     authStore.setIntendedPath(destination.path);
-    if (searchStr.length > 0 && destination.path === "/library/files") {
-      // Storage Files refresh-safe view state is allowlisted to bounded
-      // Storage-relative path/cursor keys only; no other query state is
-      // carried across the connection boundary.
-      const allowed = new URLSearchParams();
-      const current = new URLSearchParams(searchStr);
-      for (const key of ["storage", "path", "cursor"]) {
-        const value = current.get(key);
-        if (value !== null) allowed.set(key, value);
-      }
-      if (allowed.size > 0) {
-        authStore.setIntendedSearch(allowed.toString());
-      }
+    const allowedSearch = allowlistedDestinationSearch(
+      destination.path,
+      searchStr,
+    );
+    if (allowedSearch !== null) {
+      authStore.setIntendedSearch(allowedSearch);
     }
     void navigate({ to: "/" });
   }, [connected, rejected, pathname, searchStr, navigate]);

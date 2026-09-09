@@ -94,6 +94,7 @@ describe("fetchSystemStatus", () => {
     const model = await fetchSystemStatus(TOKEN);
     expect(model.configurationActive).toBe(true);
     expect(model.authority).toBe("MANAGED");
+    expect(model.configurationSnapshotId).toBe("rev-1");
     expect(model.storages).toEqual([
       { id: "local-1", name: "Local media", type: "local", readOnly: true },
     ]);
