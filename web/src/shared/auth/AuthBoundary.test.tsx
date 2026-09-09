@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
+
+const TOKEN = "boundary-connect-token";
 
 function stubFetch(
   implementation: () => Promise<Response>,
@@ -68,11 +71,37 @@ describe("AuthBoundary", () => {
     ).toBeVisible();
   });
 
+  it("replaces an earlier intention with the operator's newest route choice", async () => {
+    const user = userEvent.setup();
+    renderApp("/ui-v2/library");
+    expect(await screen.findByLabelText("API token")).toBeVisible();
+    expect(authStore.getIntendedPath()).toBe("/library");
+
+    // While still unauthenticated the operator explicitly picks Operations
+    // from the shell navigation. The boundary records the newest supported
+    // route instead of keeping the stale /library intention, and returns to
+    // the connection boundary.
+    await user.click(screen.getByRole("link", { name: /OperationsMigration/ }));
+    expect(await screen.findByLabelText("API token")).toBeVisible();
+    expect(authStore.getIntendedPath()).toBe("/operations");
+
+    // Connecting continues to the newest explicit choice.
+    await user.type(screen.getByLabelText("API token"), TOKEN);
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(authStore.getToken()).toBe(TOKEN));
+    expect(authStore.getIntendedPath()).toBeNull();
+    expect(
+      await screen.findByRole("heading", {
+        name: "Operations is not available in V2 yet",
+      }),
+    ).toBeVisible();
+  });
+
   it("clears a rejected dashboard authority in place and retains the intended route", async () => {
     const fetchMock = stubFetch(async () => jsonResponse({}, 401));
     authStore.setToken("expired-token");
     authStore.setIntendedPath("/dashboard");
-    renderApp("/ui-v2/dashboard");
+    const { queryClient } = renderApp("/ui-v2/dashboard");
     // The 401 clears the rejected principal and its query cache while the
     // operator stays on the route behind a bounded unauthorized state; the
     // intended /dashboard destination survives for explicit re-entry.
@@ -82,6 +111,8 @@ describe("AuthBoundary", () => {
     expect(authStore.getToken()).toBeNull();
     expect(authStore.isRejected()).toBe(true);
     expect(authStore.getIntendedPath()).toBe("/dashboard");
+    // The authenticated dashboard query state was cleared from the cache.
+    expect(queryClient.getQueryData(["dashboard", 10])).toBeUndefined();
     // The rejected read was not automatically replayed.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

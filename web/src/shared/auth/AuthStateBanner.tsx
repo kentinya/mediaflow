@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import { RefreshControl } from "../../shared/ui/RefreshControl";
-import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { RefreshControl } from "../ui/RefreshControl";
+import { StatusBanner } from "../ui/StatusBanner";
 
 export interface AuthStateBannerProps {
   readonly variant: "not-connected" | "unauthorized" | "forbidden";

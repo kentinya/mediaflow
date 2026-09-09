@@ -114,7 +114,7 @@ describe("DashboardPage", () => {
       await screen.findByRole("heading", { name: "Forbidden" }),
     ).toBeVisible();
     expect(
-      screen.getByText(/does not have permission to read the Dashboard/),
+      screen.getByText(/does not have permission to view this area/),
     ).toBeVisible();
     expect(
       screen.queryByRole("heading", { name: "Not authorized" }),

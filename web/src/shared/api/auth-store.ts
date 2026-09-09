@@ -7,20 +7,12 @@
  * may be added without an explicit architecture-contract change.
  */
 
-export type AuthListener = () => void;
+import {
+  isDestinationPath,
+  type DestinationPath,
+} from "../navigation/destination-model";
 
-/**
- * Paths that may be stored as the post-connect continuation target.
- * The AuthBoundary only writes paths from the router's known route model;
- * arbitrary or external targets are rejected here.
- */
-const ALLOWED_INTENDED_PATHS = new Set([
-  "/dashboard",
-  "/library",
-  "/operations",
-  "/review",
-  "/configuration",
-]);
+export type AuthListener = () => void;
 
 export interface MemoryAuthStore {
   getToken(): string | null;
@@ -40,19 +32,21 @@ export interface MemoryAuthStore {
    * continue to the same safe route without hidden replay.
    */
   clearRejectedAuthority(): void;
-  getIntendedPath(): string | null;
+  getIntendedPath(): DestinationPath | null;
   /**
-   * Store the safe post-connect destination only if it matches a router-known
-   * route. Arbitrary or external return targets are silently rejected.
+   * Store the safe post-connect destination. The path type and runtime guard
+   * both come from the centralized destination model, so the continuation
+   * allowlist can never drift from the typed navigation contract; arbitrary
+   * or external return targets are silently rejected.
    */
-  setIntendedPath(path: string): void;
+  setIntendedPath(path: DestinationPath): void;
   clearIntendedPath(): void;
   subscribe(listener: AuthListener): () => void;
 }
 
 export function createMemoryAuthStore(): MemoryAuthStore {
   let token: string | null = null;
-  let intendedPath: string | null = null;
+  let intendedPath: DestinationPath | null = null;
   let rejected = false;
   const listeners = new Set<AuthListener>();
   const emit = () => {
@@ -95,14 +89,9 @@ export function createMemoryAuthStore(): MemoryAuthStore {
       // safe route after a rejected 401 read.
       emit();
     },
-    getIntendedPath: () => {
-      if (intendedPath !== null && !ALLOWED_INTENDED_PATHS.has(intendedPath)) {
-        intendedPath = null;
-      }
-      return intendedPath;
-    },
+    getIntendedPath: () => intendedPath,
     setIntendedPath: (next) => {
-      if (!ALLOWED_INTENDED_PATHS.has(next)) {
+      if (!isDestinationPath(next)) {
         return;
       }
       intendedPath = next;

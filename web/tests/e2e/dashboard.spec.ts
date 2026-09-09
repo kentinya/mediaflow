@@ -78,7 +78,7 @@ test("a forbidden principal renders the distinct bounded permission state", asyn
 
   await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
   await expect(
-    page.getByText(/does not have permission to read the Dashboard/),
+    page.getByText(/does not have permission to view this area/),
   ).toBeVisible();
   await expect(page.getByText(LIMITED_TOKEN)).toHaveCount(0);
 });

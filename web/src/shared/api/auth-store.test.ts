@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { authStore } from "./auth-store";
+import { destinations } from "../navigation/destination-model";
+import type { DestinationPath } from "../navigation/destination-model";
 
 afterEach(() => {
   authStore.clearToken();
@@ -26,9 +28,29 @@ describe("authStore", () => {
     authStore.setIntendedPath("/dashboard");
     expect(authStore.getIntendedPath()).toBe("/dashboard");
     authStore.clearIntendedPath();
-    authStore.setIntendedPath("/../../etc/passwd");
+    // The typed API only accepts DestinationPath values; the runtime guard is
+    // still exercised with untyped strings to prove arbitrary targets fail.
+    authStore.setIntendedPath(
+      "/../../etc/passwd" as unknown as DestinationPath,
+    );
     expect(authStore.getIntendedPath()).toBeNull();
-    authStore.setIntendedPath("https://evil.example.com/dashboard");
+    authStore.setIntendedPath(
+      "https://evil.example.com/dashboard" as unknown as DestinationPath,
+    );
+    expect(authStore.getIntendedPath()).toBeNull();
+  });
+
+  it("derives the continuation allowlist from the destination model", () => {
+    // Every typed destination is a valid continuation target and nothing else
+    // is, so the allowlist can never drift from the navigation contract.
+    for (const destination of destinations) {
+      authStore.setIntendedPath(destination.path);
+      expect(authStore.getIntendedPath()).toBe(destination.path);
+      authStore.clearIntendedPath();
+    }
+    authStore.setIntendedPath(
+      "/not-a-product-area" as unknown as DestinationPath,
+    );
     expect(authStore.getIntendedPath()).toBeNull();
   });
 
