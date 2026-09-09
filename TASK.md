@@ -150,7 +150,7 @@ npm --prefix web run test:e2e -- library-files.spec.ts
 .venv/bin/python -m unittest tests.test_configuration_snapshot tests.test_runtime_files_browser tests.test_v2_ui tests.test_release_security
 .venv/bin/ruff format --check .
 .venv/bin/ruff check .
-.venv/bin/python -m compileall -q mediaflow tests
+.venv/bin/python -m compileall -q mediaflow tests scripts
 git diff --check
 ```
 
@@ -204,8 +204,9 @@ raises the Task to T4 risk.
   `shared/navigation/destination-model.ts`, `features/entry/EntryPage.tsx` plus focused tests.
 - Browser proof/fakes: `web/tests/e2e/library-files.spec.ts`, `web/tests/fake-server.mjs`, and
   updated Dashboard/deep-link specs for the real Library landing; the correction adds a live
-  missing-ResourceLibrary GET failure/recovery proof and stale-revision proof, and removes the
-  invented top-level authority/previous-page fields.
+  missing-ResourceLibrary GET failure/recovery proof, stale-revision proof, empty-directory proof
+  and unavailable-Library retry proof, and removes the invented top-level authority/previous-page
+  fields.
 - `TASK.md` — this Developer Completion Report and checkpoint state.
 
 ### Implemented
@@ -229,7 +230,8 @@ raises the Task to T4 risk.
 - Loading, no-Active, no-Storage, empty, malformed, invalid-path, not-found, provider, 401 and 403
   states render bounded operator language with retry/back/reselect/reconnect/V1 continuation;
   missing-ResourceLibrary and stale-runtime identity failures now have built-artifact recovery
-  evidence as well.
+  evidence as well. Empty-directory and unavailable-Library recovery are now covered by actual
+  built-artifact browser journeys.
 
 ### Tests and Results
 
@@ -242,13 +244,13 @@ npm --prefix web run typecheck                               PASS
 npm --prefix web run lint                                    PASS
 npm --prefix web run test -- --run                           134 passed (13 files)
 npm --prefix web run build                                   PASS
-npm --prefix web run test:e2e -- library-files.spec.ts       16 passed
-npm --prefix web run test:e2e                                32 passed
+npm --prefix web run test:e2e -- library-files.spec.ts       18 passed
+npm --prefix web run test:e2e                                34 passed
 .venv/bin/python -m unittest tests.test_configuration_snapshot tests.test_runtime_files_browser tests.test_v2_ui tests.test_release_security PASS (67 tests)
 .venv/bin/python -m unittest tests.test_configuration_status PASS (6 tests)
 .venv/bin/ruff format --check .                              PASS
 .venv/bin/ruff check .                                       PASS
-.venv/bin/python -m compileall -q mediaflow tests PASS
+.venv/bin/python -m compileall -q mediaflow tests scripts PASS
 git diff --check                                             PASS
 scripts/docker_release_security_smoke_test.py                NOT RUN (T3 scope; reserved for Slice Final per Task)
 .venv/bin/python -m unittest discover -s tests               NOT RUN (T3 scope; full regression reserved for Slice Final per Task)
@@ -256,8 +258,9 @@ scripts/docker_release_security_smoke_test.py                NOT RUN (T3 scope; 
 
 Browser evidence covers landing truthfulness, direct/deep auth continuation with allowlisted query
 state, Storage selection, root/directory/breadcrumb/page/refresh/switch, membership variants,
-no-Storage, provider failure, invalid path/not-found, 401/403, malformed retry, narrow keyboard use,
-token secrecy and zero non-GET requests.
+no-Storage, empty directory, provider failure, invalid path/not-found, 401/403, malformed and
+unavailable retry, missing ResourceLibrary, stale runtime identity, narrow keyboard use, token
+secrecy and zero non-GET requests.
 
 ### Decisions
 
@@ -292,7 +295,7 @@ token secrecy and zero non-GET requests.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: fb58fabe4f7dc6050815166c58474ad5b2cd4df6
+Head SHA: b102145aedb3258532bcb7377b6f030abd880a51
 ```
 
 ## B Review Result
