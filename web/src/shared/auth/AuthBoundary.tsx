@@ -10,9 +10,11 @@ import { destinationForPath } from "../navigation/destination-model";
  * When an unauthenticated operator opens a known deep route, the boundary
  * records the exact allowed destination in the memory-only auth store and
  * redirects to the shell's entry interaction at "/". Connecting from the
- * entry then continues to that exact route. Root entry itself does not set
- * an intention, so connecting from root still falls through to the
- * Dashboard default.
+ * entry then continues to the operator's latest recorded supported route:
+ * each explicit route choice replaces any earlier intention, so reconnection
+ * never returns to a stale destination. Root entry itself does not set an
+ * intention, so connecting from root still falls through to the Dashboard
+ * default.
  *
  * Arbitrary / unknown routes are ignored so the shell's not-found UX
  * remains responsible. Bearer material never enters URL / route state.
@@ -38,9 +40,10 @@ export function AuthBoundary() {
     if (destination === undefined) {
       return;
     }
-    if (authStore.getIntendedPath() === null) {
-      authStore.setIntendedPath(destination.path);
-    }
+    // The operator's latest explicit supported-route choice always replaces an
+    // earlier intention so reconnection continues to the route they last asked
+    // for, never a stale one.
+    authStore.setIntendedPath(destination.path);
     void navigate({ to: "/" });
   }, [connected, rejected, pathname, navigate]);
   return null;

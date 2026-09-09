@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { authStore } from "../../shared/api/auth-store";
+import { authStore } from "../api/auth-store";
 import { renderWithProviders } from "../../../tests/utils";
 import { AuthStateBanner, UnavailableBanner } from "./AuthStateBanner";
 
@@ -18,7 +18,7 @@ describe("AuthStateBanner", () => {
       <AuthStateBanner
         variant="not-connected"
         title="Not connected"
-        message="Enter an API principal token to view the Dashboard."
+        message="Enter an API principal token to view this area."
       />,
     );
     expect(
@@ -51,14 +51,14 @@ describe("AuthStateBanner", () => {
       <AuthStateBanner
         variant="forbidden"
         title="Forbidden"
-        message="The connected API principal does not have permission to read the Dashboard."
+        message="The connected API principal does not have permission to view this area."
       />,
     );
     expect(
       await screen.findByRole("heading", { name: "Forbidden" }),
     ).toBeVisible();
     expect(
-      screen.getByText(/does not have permission to read the Dashboard/),
+      screen.getByText(/does not have permission to view this area/),
     ).toBeVisible();
     expect(
       screen.getByRole("link", {

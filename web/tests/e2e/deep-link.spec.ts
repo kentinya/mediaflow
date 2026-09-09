@@ -134,6 +134,29 @@ test("connect from a real deep link continues to that exact allowlisted route", 
   await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
 });
 
+test("an explicit route choice at the boundary replaces an earlier intention", async ({
+  page,
+}) => {
+  // Deep entry to Library records /library as the initial intention.
+  await page.goto("/ui-v2/library");
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+
+  // Before connecting, the operator explicitly chooses Operations from the
+  // shell navigation. The boundary must update continuation to the newest
+  // supported route instead of keeping the stale /library intention.
+  await page.getByRole("link", { name: "Operations Migration" }).click();
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+
+  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(
+    page.getByRole("heading", {
+      name: "Operations is not available in V2 yet",
+    }),
+  ).toBeVisible();
+});
+
 test("refresh keeps memory-only semantics and reconnects to the same supported path", async ({
   page,
 }) => {
@@ -249,7 +272,7 @@ test("403 is visibly distinct from 401 and retains the authenticated principal",
 
   await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
   await expect(
-    page.getByText(/does not have permission to read the Dashboard/),
+    page.getByText(/does not have permission to view this area/),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Not authorized" }),

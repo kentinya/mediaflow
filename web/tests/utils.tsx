@@ -45,8 +45,7 @@ export function renderApp(initialPath: string): { queryClient: QueryClient } {
  */
 export function renderWithProviders(
   element: ReactElement,
-): ReturnType<typeof render> {
-  const queryClient = new QueryClient({
+  queryClient: QueryClient = new QueryClient({
     defaultOptions: {
       queries: {
         retry: false,
@@ -54,7 +53,8 @@ export function renderWithProviders(
         refetchOnReconnect: false,
       },
     },
-  });
+  }),
+): ReturnType<typeof render> & { queryClient: QueryClient } {
   const rootRoute = createRootRoute();
   const elementRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -67,9 +67,10 @@ export function renderWithProviders(
     basepath: "/",
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
-  return render(
+  const result = render(
     <AppProviders queryClient={queryClient}>
       <RouterProvider router={router} />
     </AppProviders>,
   );
+  return Object.assign(result, { queryClient });
 }

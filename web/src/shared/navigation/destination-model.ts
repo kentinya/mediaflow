@@ -1,10 +1,18 @@
 export type DestinationAvailability = "implemented" | "migration";
 
+/**
+ * The canonical typed set of operator-route paths. `destinations` below is
+ * checked against this union, and `destinationPaths` / `isDestinationPath`
+ * derive the runtime allowlist from the same contract, so no second list can
+ * drift from the navigation model.
+ */
+export type DestinationPath =
+  "/dashboard" | "/library" | "/operations" | "/review" | "/configuration";
+
 export interface Destination {
   readonly id: string;
   readonly label: string;
-  readonly path:
-    "/dashboard" | "/library" | "/operations" | "/review" | "/configuration";
+  readonly path: DestinationPath;
   readonly title: string;
   readonly availability: DestinationAvailability;
   readonly description: string;
@@ -63,6 +71,21 @@ export const destinations: readonly Destination[] = [
     v1Path: "/ui",
   },
 ];
+
+/**
+ * Every operator route path, derived from the single destination contract so
+ * continuation allowlisting can never drift from the typed navigation model.
+ */
+export const destinationPaths: readonly DestinationPath[] = destinations.map(
+  (destination) => destination.path,
+);
+
+const destinationPathSet: ReadonlySet<string> = new Set(destinationPaths);
+
+/** Type guard for a path that exists in the centralized destination model. */
+export function isDestinationPath(value: string): value is DestinationPath {
+  return destinationPathSet.has(value);
+}
 
 export function destinationForPath(pathname: string): Destination | undefined {
   const path = pathname.replace(/\/$/, "") || "/";

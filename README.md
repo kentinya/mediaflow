@@ -120,9 +120,11 @@ second HTTP service, SSR or CDN is involved in production.
   accesses repositories, Storage, Providers or execution services. If the artifact has not been
   built, `/ui-v2/*` fails closed with 404.
 - **Source ownership.** `web/src/app` (bootstrap/providers), `web/src/routes` (router),
-  `web/src/features` (entry, dashboard, auth-state banner), `web/src/entities` (typed Dashboard
-  model and normalization), `web/src/shared/api` (central typed client, memory-only auth store
-  and intended-route continuation), and `web/src/shared/ui` (primitives and styles).
+  `web/src/features` (entry, dashboard), `web/src/entities` (typed Dashboard model and
+  normalization), `web/src/shared/api` (central typed client, memory-only auth store and
+  intended-route continuation), `web/src/shared/auth` (route/connection boundary, auth-state
+  banners and the shared authorized-read lifecycle), `web/src/shared/navigation` (typed
+  destination model), and `web/src/shared/ui` (primitives and styles).
 
 Development and verification commands (run after the repository Setup):
 

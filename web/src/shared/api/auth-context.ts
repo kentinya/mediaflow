@@ -4,6 +4,7 @@
 
 import { useSyncExternalStore } from "react";
 import { authStore } from "./auth-store";
+import type { DestinationPath } from "../navigation/destination-model";
 
 /** The in-memory API-principal token, or null when not connected. */
 export function useAuthToken(): string | null {
@@ -28,7 +29,7 @@ export function useRejected(): boolean {
 }
 
 /** The safe intended route preserved before authentication, or null when unset. */
-export function useIntendedPath(): string | null {
+export function useIntendedPath(): DestinationPath | null {
   return useSyncExternalStore(
     authStore.subscribe,
     authStore.getIntendedPath,
