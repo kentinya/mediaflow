@@ -159,7 +159,9 @@ export function normalizeSystemStatus(payload: unknown): SystemStatusModel {
     return {
       authority,
       configurationActive:
-        system.configuration_valid && authority === "MANAGED",
+        system.configuration_valid &&
+        authority === "MANAGED" &&
+        configurationSnapshotId !== null,
       configurationSnapshotId,
       storages,
       resourceLibraries,

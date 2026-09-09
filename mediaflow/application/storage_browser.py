@@ -581,7 +581,6 @@ class StorageBrowserService:
             "hasNext": next_cursor is not None,
             "exhausted": exhausted,
             "hasPrevious": False,
-            "previousCursor": None,
             "continuation": {
                 "hasNext": next_cursor is not None,
                 "exhausted": exhausted,

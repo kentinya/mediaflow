@@ -14,7 +14,6 @@ const storageFilesPayload = {
     version: 1,
     digest: "digest-1",
   },
-  authority: "MANAGED",
   storage: { id: "local-1", name: "Local media", type: "local" },
   storageId: "local-1",
   storageName: "Local media",
@@ -67,7 +66,6 @@ const storageFilesPayload = {
   limit: 50,
   nextCursor: "cursor-2",
   hasNext: true,
-  hasPrevious: false,
   exhausted: false,
   sideEffects: "none",
   retrySafe: true,
@@ -86,9 +84,9 @@ describe("normalizeStorageFiles", () => {
       total: 1,
     });
     expect(model.entries[1].membership.kind).toBe("not-indexed");
+    expect(model.authority).toBe("MANAGED");
     expect(model.nextCursor).toBe("cursor-2");
     expect(model.hasNext).toBe(true);
-    expect(model.hasPrevious).toBe(false);
     expect(model.exhausted).toBe(false);
     expect(model.sideEffects).toBe("none");
     expect(model.retrySafe).toBe(true);
@@ -165,6 +163,26 @@ describe("normalizeStorageFiles", () => {
     [
       "missing configuration",
       { ...storageFilesPayload, configuration: undefined },
+    ],
+    [
+      "missing configuration authority",
+      {
+        ...storageFilesPayload,
+        configuration: {
+          ...storageFilesPayload.configuration,
+          authority: undefined,
+        },
+      },
+    ],
+    [
+      "non-managed configuration authority",
+      {
+        ...storageFilesPayload,
+        configuration: {
+          ...storageFilesPayload.configuration,
+          authority: "JSON_BOOTSTRAP",
+        },
+      },
     ],
     ["missing storage", { ...storageFilesPayload, storage: undefined }],
     ["missing entries", { ...storageFilesPayload, entries: undefined }],

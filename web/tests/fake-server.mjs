@@ -66,7 +66,6 @@ const SYSTEM_STATUS = {
     configuration_authority: "MANAGED",
     configuration_snapshot_id: "rev-e2e-1",
     configuration_snapshot_digest: "digest-e2e-1",
-    configuration_snapshot_digest: "digest-e2e-1",
   },
   storages: {
     total: 2,
@@ -235,7 +234,6 @@ function filesDocument(path, cursor, storageId) {
       version: 1,
       digest: "digest-e2e-1",
     },
-    authority: "MANAGED",
     storage,
     storageId: storage.id,
     storageName: storage.name,
@@ -251,8 +249,6 @@ function filesDocument(path, cursor, storageId) {
     nextCursor: hasNext ? "cursor-page-2" : null,
     hasNext,
     exhausted: !hasNext,
-    hasPrevious: false,
-    previousCursor: null,
     continuation: {
       hasNext,
       exhausted: !hasNext,
@@ -496,27 +492,6 @@ const server = createServer(async (req, res) => {
             retrySafe: true,
             nextAction:
               "reload the current revision and restart browsing from the directory root",
-          },
-        },
-      });
-      return;
-    }
-    // Missing ResourceLibrary fixture
-    if (
-      url.searchParams.has("fixture") &&
-      url.searchParams.get("fixture") === "missing-rl"
-    ) {
-      sendJson(res, 404, {
-        error: {
-          code: "storage_browser_resource_library_not_found",
-          message: "requested ResourceLibrary not available",
-          details: {
-            category: "resource_library_not_found",
-            durableState: "active_runtime_preserved",
-            sideEffects: "none",
-            retrySafe: true,
-            nextAction:
-              "select a different Storage or reload the active runtime",
           },
         },
       });

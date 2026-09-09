@@ -20,6 +20,7 @@ import {
 
 export const MAX_NAME_LENGTH = 1024;
 export const MAX_PATH_LENGTH = 4096;
+export const MAX_AUTHORITY_LENGTH = 64;
 export const MAX_TEXT_LENGTH = 1024;
 export const MAX_ENTRIES = 200;
 
@@ -55,7 +56,7 @@ export interface FileIndexMembership {
 
 export interface StorageFilesModel {
   readonly revisionId: string;
-  readonly authority: string | null;
+  readonly authority: "MANAGED";
   readonly storageId: string;
   readonly storageName: string;
   readonly storageType: string;
@@ -65,8 +66,6 @@ export interface StorageFilesModel {
   readonly limit: number;
   readonly nextCursor: string | null;
   readonly hasNext: boolean;
-  readonly hasPrevious: boolean;
-  readonly previousCursor: string | null;
   readonly exhausted: boolean;
   readonly sideEffects: string;
   readonly retrySafe: boolean;
@@ -214,20 +213,21 @@ export function normalizeStorageFiles(payload: unknown): StorageFilesModel {
     }
     const storage = source.storage as Record<string, unknown>;
     const nextCursor = readOptionalText(source, "nextCursor");
+    const authority = normalizeBoundedText(
+      configuration.authority,
+      "configuration.authority",
+      MAX_AUTHORITY_LENGTH,
+    );
+    if (authority !== "MANAGED") {
+      fail("configuration.authority");
+    }
     return {
       revisionId: normalizeBoundedText(
         configuration.revisionId,
         "configuration.revisionId",
         MAX_TEXT_LENGTH,
       ),
-      authority:
-        source.authority === null || source.authority === undefined
-          ? null
-          : normalizeBoundedText(
-              source.authority,
-              "authority",
-              MAX_TEXT_LENGTH,
-            ),
+      authority,
       storageId: normalizeBoundedText(
         storage.id,
         "storage.id",
@@ -266,9 +266,6 @@ export function normalizeStorageFiles(payload: unknown): StorageFilesModel {
         typeof source.hasNext === "boolean"
           ? source.hasNext
           : nextCursor !== null,
-      hasPrevious:
-        typeof source.hasPrevious === "boolean" ? source.hasPrevious : false,
-      previousCursor: readOptionalText(source, "previousCursor"),
       exhausted:
         typeof source.exhausted === "boolean"
           ? source.exhausted
