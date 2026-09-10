@@ -65,11 +65,10 @@ function taskRecord(overrides: Record<string, unknown> = {}) {
     total_items: 4,
     completed_items: 1,
     failed_items: 1,
-    error: null,
-    failureExplanation: null,
+    failure: null,
     pause_requested: false,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
+    item_limit: 20,
     ...overrides,
   };
 }
@@ -80,6 +79,7 @@ function taskLifecycle(overrides: Record<string, unknown> = {}) {
     objectId: "task-run",
     state: "running",
     version: "2026-08-22T12:00:00+00:00",
+    executionPath: "operator_workflow",
     terminal: false,
     permitted: true,
     permission: "cancel_job",
@@ -111,17 +111,23 @@ function taskDetailPayload(overrides: Record<string, unknown> = {}) {
         storage_id: "source",
         resource_library_id: "movies",
         source_path: "movie.mkv",
-        source_display: "movie.mkv",
         status: "failed",
         stage: "metadata",
         attempts: 1,
         created_at: "2026-08-22T12:00:00+00:00",
         updated_at: "2026-08-22T12:00:00+00:00",
-        plan_id: null,
         destination_storage_id: null,
         destination_path: null,
         execution_status: null,
-        error: "lookup failed",
+        failure: {
+          category: "provider_failure",
+          message: "Provider failure: metadata lookup did not complete",
+          durableState: "TaskItem and Result are durable with a failed outcome",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction:
+            "inspect Provider availability and explicitly retry metadata analysis",
+        },
         checkpoint: null,
       },
     ],
@@ -161,7 +167,7 @@ describe("Operations router journeys", () => {
     stubFetch(async (input) => {
       const url = String(input);
       requested.push(url);
-      if (url.startsWith("/api/v1/tasks?")) {
+      if (url.startsWith("/api/v1/operations/tasks?")) {
         return jsonResponse(taskListPayload([]));
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
@@ -171,7 +177,7 @@ describe("Operations router journeys", () => {
 
     await screen.findByRole("heading", { name: "Tasks" });
     await waitFor(() => expect(requested.length).toBe(1));
-    expect(requested[0]).toContain("/api/v1/tasks?limit=20");
+    expect(requested[0]).toContain("/api/v1/operations/tasks?limit=20");
 
     await user.selectOptions(
       screen.getByLabelText("Filter by status"),
@@ -211,7 +217,7 @@ describe("Operations router journeys", () => {
   it("renders only the lifecycle controls the backend advertises", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url.startsWith("/api/v1/tasks/task-run")) {
+      if (url.startsWith("/api/v1/operations/tasks/task-run")) {
         return jsonResponse(taskDetailPayload());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
@@ -233,7 +239,7 @@ describe("Operations router journeys", () => {
   it("exposes no control for a read-only principal projection", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url.startsWith("/api/v1/tasks/task-run")) {
+      if (url.startsWith("/api/v1/operations/tasks/task-run")) {
         return jsonResponse(
           taskDetailPayload({
             lifecycle: taskLifecycle({
@@ -267,7 +273,7 @@ describe("Operations router journeys", () => {
     stubFetch(async (input, init) => {
       const url = String(input);
       calls.push({ url, init });
-      if (url.startsWith("/api/v1/tasks/task-run?")) {
+      if (url.startsWith("/api/v1/operations/tasks/task-run?")) {
         return jsonResponse(taskDetailPayload());
       }
       if (url === "/api/v1/tasks/task-run/pause") {
@@ -319,7 +325,7 @@ describe("Operations router journeys", () => {
   it("treats a malformed Task detail response as a bounded failure", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url.startsWith("/api/v1/tasks/task-run")) {
+      if (url.startsWith("/api/v1/operations/tasks/task-run")) {
         return jsonResponse({ ...taskRecord(), status: "teleported" });
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
@@ -350,13 +356,66 @@ describe("Operations router journeys", () => {
     ).toBeVisible();
   });
 
+  it("renders no credential, private path or fingerprint from a hostile historical record", async () => {
+    // A legacy row may still hold a credential, a private absolute path and a
+    // configured fingerprint. The bounded Operations read projects none of
+    // them, and the page must therefore show none of them either.
+    const hostile = taskDetailPayload({
+      error: "Authorization: Bearer topsecret /home/alice/private.mkv",
+      configuration_snapshot_digest:
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      source_display: "/srv/media/private.mkv",
+      source_fingerprint: "fingerprint-value",
+      failure: null,
+      items: [
+        {
+          item_id: "item-1",
+          task_id: "task-run",
+          storage_id: "source",
+          resource_library_id: "movies",
+          source_path: "movie.mkv",
+          status: "failed",
+          stage: "metadata",
+          attempts: 1,
+          created_at: "2026-08-22T12:00:00+00:00",
+          updated_at: "2026-08-22T12:00:00+00:00",
+          destination_storage_id: null,
+          destination_path: null,
+          execution_status: null,
+          error: "Authorization: Bearer topsecret /home/alice/private.mkv",
+          source_display: "/srv/media/private.mkv",
+          checkpoint: null,
+        },
+      ],
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/v1/operations/tasks/task-run")) {
+        return jsonResponse(hostile);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/tasks/task-run");
+
+    await screen.findByRole("heading", { name: "Task task-run" });
+    const rendered = document.body.textContent ?? "";
+    expect(rendered).not.toContain("topsecret");
+    expect(rendered).not.toContain("/home/alice");
+    expect(rendered).not.toContain("/srv/media");
+    expect(rendered).not.toContain("deadbeef");
+    expect(rendered).not.toContain("fingerprint-value");
+    // The Storage-relative source identity is still visible for diagnosis.
+    expect(rendered).toContain("source:movie.mkv");
+  });
+
   it("renders a Filter by status control on Jobs and reports forbidden reads", async () => {
     const user = userEvent.setup();
     const requested: string[] = [];
     stubFetch(async (input) => {
       const url = String(input);
       requested.push(url);
-      if (url.startsWith("/api/v1/jobs?")) {
+      if (url.startsWith("/api/v1/operations/jobs?")) {
         return jsonResponse({
           items: [],
           limit: 20,
@@ -387,10 +446,10 @@ describe("Operations router journeys", () => {
     const user = userEvent.setup();
     stubFetch(async (input) => {
       const url = String(input);
-      if (url.startsWith("/api/v1/tasks/task-run")) {
+      if (url.startsWith("/api/v1/operations/tasks/task-run")) {
         return jsonResponse(taskDetailPayload());
       }
-      if (url.startsWith("/api/v1/tasks")) {
+      if (url.startsWith("/api/v1/operations/tasks")) {
         return jsonResponse(
           taskListPayload([taskRecord()], { status: "running" }),
         );

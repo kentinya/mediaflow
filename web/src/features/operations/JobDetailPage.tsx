@@ -221,7 +221,7 @@ export function JobDetailPage() {
                 <dt>Pinned configuration</dt>
                 <dd>
                   {job.configurationSnapshotId
-                    ? `${job.configurationSnapshotId} (digest ${job.configurationSnapshotDigest})`
+                    ? `${job.configurationSnapshotId} (immutable revision identity)`
                     : "no pinned configuration snapshot"}
                 </dd>
               </dl>
@@ -282,21 +282,16 @@ export function JobDetailPage() {
                   admission record above is the authoritative state.
                 </p>
               )}
-              {job.error && (
-                <p className="mf-dashboard-meta">Failure: {job.error}</p>
-              )}
-              {job.failureExplanation && (
+              {job.failure && (
                 <div>
                   <p className="mf-dashboard-meta">
-                    Failure category: {job.failureExplanation.category} —{" "}
-                    {job.failureExplanation.message}
+                    Failure category: {job.failure.category} —{" "}
+                    {job.failure.message}
                   </p>
                   <p className="mf-dashboard-meta">
-                    {job.failureExplanation.durableState}
+                    {job.failure.durableState}
                   </p>
-                  <p className="mf-dashboard-meta">
-                    {job.failureExplanation.nextAction}
-                  </p>
+                  <p className="mf-dashboard-meta">{job.failure.nextAction}</p>
                 </div>
               )}
             </section>

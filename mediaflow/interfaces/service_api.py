@@ -48,10 +48,17 @@ from mediaflow.application.notification_delivery import (
 )
 from mediaflow.application.operations_lifecycle import (
     OperationsLifecycleConflict,
+    TaskExecutionPath,
     TaskLifecycleService,
+    bounded_failure_document,
     job_lifecycle_document,
+    job_operator_document,
+    manual_scan_operator_document,
     require_cancellable,
+    task_item_operator_document,
     task_lifecycle_document,
+    task_operator_document,
+    task_result_operator_document,
 )
 from mediaflow.application.package_exchange import PackageExchangeService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
@@ -74,6 +81,7 @@ from mediaflow.application.unattended_execution import (
 from mediaflow.application.webhook_test import WebhookTestService
 from mediaflow.domain.automation import (
     AutomationCommand,
+    AutomationJobControlConflict,
     AutomationJobStatus,
     AutomationQueueFull,
     AutomationTaskDefinition,
@@ -137,6 +145,20 @@ from mediaflow.interfaces.v2_ui import V2_UI_PREFIX, v2_ui_asset
 # matches it against the exact command and its own ``<kind>:<identity>``
 # continuation family.
 _TASK_COMMAND_FILTER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
+
+# Historical Task/Job/TaskItem/Result keys that must never leave the API: claim
+# and fence evidence, internal scope hints and fingerprint values.  The V2
+# Operations projection uses an explicit allowlist on top of this filter.
+_HIDDEN_DOCUMENT_FIELDS = frozenset(
+    {
+        "claim_token",
+        "scope_path",
+        "source_scope",
+        "definition_fingerprint",
+        "source_fingerprint",
+        "source_occurrence_id",
+    }
+)
 
 
 def _collection_scope(status: str | None, command: str | None) -> str:
@@ -1108,6 +1130,24 @@ class MediaFlowApi:
                 str(error),
                 details=error.document(),
             )
+        except AutomationJobControlConflict as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "operations-lifecycle",
+                "conflict",
+                409,
+            )
+            return self._error(
+                start_response,
+                409,
+                "lifecycle_conflict",
+                str(error),
+                details=error.document(),
+            )
         except (ValueError, json.JSONDecodeError) as error:
             self._safe_audit(
                 environ,
@@ -1155,6 +1195,19 @@ class MediaFlowApi:
         principal: ResolvedApiPrincipal,
     ):
         parts = [part for part in path.split("/") if part]
+        operations_projection = False
+        if (
+            len(parts) >= 4
+            and parts[:3] == ["api", "v1", "operations"]
+            and parts[3] in {"tasks", "jobs", "workers"}
+        ):
+            # The V2 Operations workspace reads one explicit bounded operator
+            # projection.  The pre-existing /api/v1/tasks, /api/v1/jobs and
+            # /api/v1/workers compatibility documents keep their historical
+            # fields for existing clients; this alias never publishes a raw
+            # durable error, a fingerprint value or a configured display root.
+            operations_projection = True
+            parts = ["api", "v1", *parts[3:]]
         if len(parts) >= 3 and parts[:3] == ["api", "v1", "file-index"]:
             # ``/file-index`` is the explicit daily catalog contract.  Keep the
             # older ``/files`` route as a compatibility alias for the same
@@ -1894,7 +1947,7 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 200,
-                self._worker_readiness_document(principal),
+                self._worker_readiness_document(principal, bounded=operations_projection),
             )
         if parts == ["api", "v1", "workers"]:
             if method != "GET":
@@ -1916,7 +1969,7 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 200,
-                self._workers_document(principal, limit=limit),
+                self._workers_document(principal, limit=limit, bounded=operations_projection),
             )
         if parts == ["api", "v1", "configuration", "status"]:
             if method != "GET":
@@ -4728,7 +4781,9 @@ class MediaFlowApi:
                 start_response,
                 200,
                 {
-                    "items": [self._value(item) for item in page],
+                    "items": [
+                        self._task_document(item, bounded=operations_projection) for item in page
+                    ],
                     "limit": limit,
                     "status": task_status.value if task_status else None,
                     "command": task_command,
@@ -5046,12 +5101,8 @@ class MediaFlowApi:
                 task = service.pause(parts[3], expected_version=expected_version)
             else:
                 task = self._cancel_task(service, parts[3], expected_version, binding)
-            lifecycle = redact_manual_value(
-                task_lifecycle_document(
-                    task,
-                    service.results(task.task_id),
-                    permissions=principal.permissions,
-                )
+            lifecycle = self._task_lifecycle(
+                service, task, principal, results=service.results(task.task_id)
             )
             return self._response(
                 start_response,
@@ -5059,7 +5110,7 @@ class MediaFlowApi:
                 {
                     "action": action,
                     "taskId": task.task_id,
-                    "task": self._value(task),
+                    "task": task_operator_document(task),
                     "lifecycle": lifecycle,
                     "durableOutcome": next(
                         (
@@ -5097,11 +5148,15 @@ class MediaFlowApi:
             )
             checkpoint_items = []
             for item in item_page:
-                value = self._value(item)
-                value["checkpoint"] = self._checkpoint_service.summary(
-                    item.item_id, task_id=task.task_id
+                checkpoint_items.append(
+                    self._task_item_document(
+                        item,
+                        bounded=operations_projection,
+                        checkpoint=self._checkpoint_service.summary(
+                            item.item_id, task_id=task.task_id
+                        ),
+                    )
                 )
-                checkpoint_items.append(value)
             manual_discovery = (
                 self._manual_execution.discovery_for_task(task.task_id)
                 if self._manual_execution is not None
@@ -5128,6 +5183,8 @@ class MediaFlowApi:
                     )
                     manual_scan.pop("_has_previous_items", None)
                     manual_scan.pop("_has_next_items", None)
+                    if operations_projection:
+                        manual_scan = manual_scan_operator_document(manual_scan)
                 except ManualScanError as error:
                     if error.code != "task_not_found":
                         raise
@@ -5135,9 +5192,12 @@ class MediaFlowApi:
                 start_response,
                 200,
                 {
-                    **self._value(task),
+                    **self._task_document(task, bounded=operations_projection),
                     "items": checkpoint_items,
-                    "results": [self._value(item) for item in result_page],
+                    "results": [
+                        self._task_result_document(item, bounded=operations_projection)
+                        for item in result_page
+                    ],
                     "manualExecutionDiscovery": manual_discovery,
                     "manualScan": manual_scan,
                     "recovery_batches": [
@@ -5168,10 +5228,11 @@ class MediaFlowApi:
                         "task_results", result_page, has_next_results, CursorDirection.NEXT
                     ),
                     "lifecycle": redact_manual_value(
-                        task_lifecycle_document(
+                        self._task_lifecycle(
+                            TaskLifecycleService(self._repository),
                             task,
-                            tuple(result_page),
-                            permissions=principal.permissions,
+                            principal,
+                            results=tuple(result_page),
                             # Effect certainty is claimed only from a view that
                             # provably holds every durable Result.
                             results_complete=result_cursor is None and not has_next_results,
@@ -5480,7 +5541,10 @@ class MediaFlowApi:
                     start_response,
                     200,
                     {
-                        "items": [self._job_document(item, principal) for item in page],
+                        "items": [
+                            self._job_document(item, principal, bounded=operations_projection)
+                            for item in page
+                        ],
                         "limit": limit,
                         "status": job_status.value if job_status else None,
                         "command": job_command.value if job_command else None,
@@ -5535,36 +5599,29 @@ class MediaFlowApi:
             job = self._repository.get_job(parts[3])
             if job is None:
                 raise LookupError(f"automation job {parts[3]!r} was not found")
-            return self._response(start_response, 200, self._job_document(job, principal))
+            return self._response(
+                start_response,
+                200,
+                self._job_document(job, principal, bounded=operations_projection),
+            )
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
             if method != "POST":
                 return self._error(start_response, 405, "method_not_allowed", "POST required")
             self._require(principal, ApiPermission.CANCEL_JOB)
             self._require_empty_query(environ, "job cancellation")
             expected_version = self._control_version(environ, "job cancellation")
-            job = self._repository.get_job(parts[3])
-            if job is None:
-                raise LookupError(f"automation job {parts[3]!r} was not found")
-            if expected_version is not None and expected_version != job.updated_at.isoformat():
-                raise OperationsLifecycleConflict(
-                    "stale_job_state",
-                    "the Job changed after the submitted state was read",
-                    durable_state="the submitted Job version is no longer the durable version",
-                    next_action=(
-                        "reload the Job, review its current state, and submit again deliberately"
-                    ),
-                    retry_safe=True,
-                    current_version=job.updated_at.isoformat(),
-                )
-            if job.status not in {AutomationJobStatus.PENDING, AutomationJobStatus.RUNNING}:
-                raise OperationsLifecycleConflict(
-                    "cancel_unavailable",
-                    f"a {job.status.value} Job cannot be cancelled",
-                    durable_state=f"the Job remains {job.status.value}",
-                    next_action="refresh the Job; a terminal Job keeps its recorded outcome",
-                )
+            # The durable transition itself binds the cancellable state, the
+            # unset request flag and the version the operator read in one atomic
+            # compare-and-set, so a concurrent or repeated control is refused
+            # instead of being admitted twice.
             return self._response(
-                start_response, 200, self._job_document(binding.jobs.cancel(parts[3]), principal)
+                start_response,
+                200,
+                self._job_document(
+                    binding.jobs.cancel(parts[3], expected_version=expected_version),
+                    principal,
+                    bounded=True,
+                ),
             )
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "requeue-stale":
             if method != "POST":
@@ -5708,14 +5765,21 @@ class MediaFlowApi:
     def _worker_readiness_document(
         self,
         principal: ResolvedApiPrincipal,
+        *,
+        bounded: bool = False,
     ) -> dict[str, object]:
-        """Worker readiness document (GET /api/v1/workers/readiness)."""
+        """Worker readiness document (GET /api/v1/workers/readiness).
+
+        The bounded Operations projection keeps the readiness identity and the
+        Operator-facing next action but not the Active snapshot digest, which is
+        a fingerprint value.
+        """
         self._require(principal, ApiPermission.READ)
         self._refresh_configuration_binding()
         active_snapshot_id = self._runtime_binding.snapshot_id
         active_snapshot_digest = self._runtime_binding.snapshot_digest
         if self._worker_service is None:
-            return {
+            document: dict[str, object] = {
                 "ready": False,
                 "condition": WorkerReadiness.NO_WORKER.value,
                 "category": WorkerReadiness.NO_WORKER.value,
@@ -5725,34 +5789,36 @@ class MediaFlowApi:
                 "nextAction": "contact system administrator",
                 "activeWorkersCount": 0,
                 "activeSnapshotId": active_snapshot_id,
-                "activeSnapshotDigest": active_snapshot_digest,
             }
+            if not bounded:
+                document["activeSnapshotDigest"] = active_snapshot_digest
+            return document
         readiness = self._worker_service.evaluate_readiness(
             active_snapshot_id=active_snapshot_id,
             active_snapshot_digest=active_snapshot_digest,
         )
-        return redact_manual_value(
-            {
-                "ready": readiness.get("ready", False),
-                "condition": readiness.get("condition", WorkerReadiness.NO_WORKER.value),
-                "category": readiness.get("condition", None)
-                if not readiness.get("ready")
-                else None,
-                "durableState": readiness.get("durableState", ""),
-                "sideEffects": readiness.get("sideEffects", "none"),
-                "retrySafe": readiness.get("retrySafe", True),
-                "nextAction": readiness.get("nextAction", ""),
-                "activeWorkersCount": readiness.get("liveWorkers", 0),
-                "activeSnapshotId": active_snapshot_id,
-                "activeSnapshotDigest": active_snapshot_digest,
-                "expectedRuntimeSchemaVersion": readiness.get("expectedSchemaVersion"),
-            }
-        )
+        document = {
+            "ready": readiness.get("ready", False),
+            "condition": readiness.get("condition", WorkerReadiness.NO_WORKER.value),
+            "category": readiness.get("condition", None) if not readiness.get("ready") else None,
+            "durableState": readiness.get("durableState", ""),
+            "sideEffects": readiness.get("sideEffects", "none"),
+            "retrySafe": readiness.get("retrySafe", True),
+            "nextAction": readiness.get("nextAction", ""),
+            "activeWorkersCount": readiness.get("liveWorkers", 0),
+            "activeSnapshotId": active_snapshot_id,
+            "expectedRuntimeSchemaVersion": readiness.get("expectedSchemaVersion"),
+        }
+        if not bounded:
+            document["activeSnapshotDigest"] = active_snapshot_digest
+        return redact_manual_value(document)
 
     def _workers_document(
         self,
         principal: ResolvedApiPrincipal,
         limit: int = 50,
+        *,
+        bounded: bool = False,
     ) -> dict[str, object]:
         """Workers list document (GET /api/v1/workers)."""
         self._require(principal, ApiPermission.READ)
@@ -5765,26 +5831,30 @@ class MediaFlowApi:
         # Apply limit to the list (repository list_workers returns all, we slice)
         limited_workers = workers[:limit]
         return {
-            "workers": [self._worker_document(worker) for worker in limited_workers],
+            "workers": [
+                self._worker_document(worker, bounded=bounded) for worker in limited_workers
+            ],
             "count": len(workers),
         }
 
     @staticmethod
-    def _worker_document(worker) -> dict[str, object]:
-        return redact_manual_value(
-            {
-                "worker_id": worker.worker_id,
-                "label": worker.label,
-                "registered_at": worker.registered_at.isoformat(),
-                "last_heartbeat_at": worker.last_heartbeat_at.isoformat(),
-                "heartbeat_interval_seconds": worker.heartbeat_interval_seconds,
-                "supported_commands": list(worker.supported_commands),
-                "configuration_snapshot_id": worker.configuration_snapshot_id,
-                "configuration_snapshot_digest": worker.configuration_snapshot_digest,
-                "runtime_schema_version": worker.runtime_schema_version,
-                "status": worker.status.value,
-            }
-        )
+    def _worker_document(worker, *, bounded: bool = False) -> dict[str, object]:
+        document: dict[str, object] = {
+            "worker_id": worker.worker_id,
+            "label": worker.label,
+            "registered_at": worker.registered_at.isoformat(),
+            "last_heartbeat_at": worker.last_heartbeat_at.isoformat(),
+            "heartbeat_interval_seconds": worker.heartbeat_interval_seconds,
+            "supported_commands": list(worker.supported_commands),
+            "configuration_snapshot_id": worker.configuration_snapshot_id,
+            "runtime_schema_version": worker.runtime_schema_version,
+            "status": worker.status.value,
+        }
+        if not bounded:
+            # The digest is a fingerprint value and stays out of the Operations
+            # projection only; the administrative compatibility document keeps it.
+            document["configuration_snapshot_digest"] = worker.configuration_snapshot_digest
+        return redact_manual_value(document)
 
     @staticmethod
     def _require_manual_execution(principal: ResolvedApiPrincipal) -> None:
@@ -6097,6 +6167,21 @@ class MediaFlowApi:
     @staticmethod
     def _audit_route(path: str) -> str:
         parts = [part for part in path.split("/") if part]
+        if (
+            len(parts) >= 4
+            and parts[:3] == ["api", "v1", "operations"]
+            and parts[3] in {"tasks", "jobs", "workers"}
+        ):
+            # The V2 Operations read alias names its own bounded projection
+            # without publishing an object identifier in audit evidence.
+            kind = parts[3]
+            if len(parts) == 4:
+                return f"/api/v1/operations/{kind}"
+            if len(parts) == 5:
+                if kind == "workers" and parts[4] == "readiness":
+                    return "/api/v1/operations/workers/readiness"
+                return f"/api/v1/operations/{kind}/{{id}}"
+            return "/api/v1/<unmatched>"
         exact = {
             ("api", "v1", "tasks"),
             ("api", "v1", "scans"),
@@ -6470,6 +6555,86 @@ class MediaFlowApi:
             raise ValueError("expectedUpdatedAt must be the version read by the operator")
         return expected
 
+    def _task_lifecycle(
+        self,
+        service: TaskLifecycleService,
+        task,
+        principal: ResolvedApiPrincipal,
+        *,
+        results=(),
+        results_complete: bool = True,
+    ) -> dict[str, object]:
+        """Project the lifecycle controls for one exact Task and principal."""
+
+        return redact_manual_value(
+            task_lifecycle_document(
+                task,
+                tuple(results),
+                permissions=principal.permissions,
+                execution=service.execution_context(task),
+                results_complete=results_complete,
+            )
+        )
+
+    @classmethod
+    def _compatibility_document(cls, value) -> dict[str, object]:
+        """Keep the historical document keys without the forbidden values.
+
+        Existing clients may read these documents, so the historical field names
+        are preserved.  Internal claim/fence, scope and fingerprint values never
+        belong in an operator document, and a raw durable error is replaced by
+        the normalized failure message plus the bounded failure evidence: a
+        legacy or externally written row must never echo a credential, a private
+        path or raw adapter text through this API.
+        """
+
+        document = {
+            key: item
+            for key, item in cls._value(value).items()
+            if key not in _HIDDEN_DOCUMENT_FIELDS
+        }
+        raw_error = getattr(value, "error", None)
+        failure = bounded_failure_document(raw_error)
+        if "error" in document:
+            document["error"] = None if failure is None else failure["message"]
+        if failure is not None:
+            document["failure"] = failure
+        for key in (
+            "failure_category",
+            "failure_durable_state",
+            "failure_side_effects",
+            "failure_next_action",
+        ):
+            if key in document and isinstance(document[key], str):
+                # Structured failure evidence is app-authored and bounded, but a
+                # legacy or externally written row must not smuggle a credential
+                # through it either.
+                document[key] = redact_manual_text(document[key], limit=512) or None
+        return document
+
+    @classmethod
+    def _task_document(cls, task, *, bounded: bool) -> dict[str, object]:
+        return task_operator_document(task) if bounded else cls._compatibility_document(task)
+
+    @classmethod
+    def _task_item_document(
+        cls, item, *, bounded: bool, checkpoint: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        if bounded:
+            return task_item_operator_document(item, checkpoint=checkpoint)
+        document = cls._compatibility_document(item)
+        if checkpoint is not None:
+            document["checkpoint"] = checkpoint
+        return document
+
+    @classmethod
+    def _task_result_document(cls, result, *, bounded: bool) -> dict[str, object]:
+        return (
+            task_result_operator_document(result)
+            if bounded
+            else cls._compatibility_document(result)
+        )
+
     def _cancel_task(
         self,
         service: TaskLifecycleService,
@@ -6477,19 +6642,23 @@ class MediaFlowApi:
         expected_version: str | None,
         binding,
     ):
-        """Cancel one Task, reusing the manual Scan cancellation path when it owns it."""
+        """Cancel one Task through the execution path that really observes it."""
 
         task = service.require(task_id)
-        service.require_version(task, expected_version)
         require_cancellable(task)
-        if binding is not None and binding.manual_scans is not None:
-            try:
-                binding.manual_scans.cancel(task_id)
-            except ManualScanError as error:
-                if error.code != "task_not_found":
-                    raise
-            else:
-                return service.require(task_id)
+        context = service.execution_context(task)
+        if context.path is TaskExecutionPath.MANUAL_SCAN:
+            # The manual Scan service owns the cooperative cancellation: claim it
+            # atomically for the observed version, then let the service mark its
+            # own bounded state and cancel any in-process token.
+            service.claim_manual_scan_cancellation(task_id, expected_version=expected_version)
+            if binding is not None and binding.manual_scans is not None:
+                try:
+                    binding.manual_scans.cancel(task_id)
+                except ManualScanError as error:
+                    if error.code != "task_not_found":
+                        raise
+            return service.require(task_id)
         return service.cancel(task_id, expected_version=expected_version)
 
     @staticmethod
@@ -7932,20 +8101,23 @@ class MediaFlowApi:
         start_response(f"{status} {labels[status]}", headers)
         return [body]
 
-    def _job_document(self, job, principal: ResolvedApiPrincipal) -> dict[str, object]:
-        """Project a Job for API responses, including worker ownership evidence
-        (workerId, ownerLastHeartbeatAt) for RUNNING Jobs and operational
-        condition (no-worker / stale-worker) for PENDING and stale RUNNING Jobs
-        with a bounded recovery next action.
+    def _job_document(
+        self, job, principal: ResolvedApiPrincipal, *, bounded: bool = False
+    ) -> dict[str, object]:
+        """Project one Job with its worker evidence and lifecycle projection.
 
-        The lifecycle block is the backend-computed control projection for the
-        authenticated principal and this exact Job state; a client renders a
-        control only from it.
+        The bounded Operations projection is an explicit operator allowlist.
+        The pre-existing compatibility document keeps its historical keys for
+        existing clients while the claim/fence, scope, fingerprint and raw error
+        values stay out of every document.  Either way the response carries the
+        bounded worker ownership evidence (workerId, ownerLastHeartbeatAt) for a
+        RUNNING Job and the operational condition (no-worker / stale-worker) for
+        a PENDING or stale RUNNING Job with a bounded recovery next action.
         """
-        document = self._value(job)
+        document = job_operator_document(job) if bounded else self._compatibility_document(job)
         status_value = document.get("status")
         if status_value == "running":
-            worker_id = document.get("worker_id") or document.get("workerId")
+            worker_id = getattr(job, "worker_id", None)
             if worker_id:
                 document["workerId"] = worker_id
             document.update(self._worker_owner_evidence(worker_id))

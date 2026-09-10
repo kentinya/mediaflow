@@ -1,10 +1,13 @@
 /**
  * Frontend-owned Job entity for the Operations workspace.
  *
- * The Python contract (`GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`) returns a
- * snake_case admission record with bounded worker-ownership evidence and the
+ * The Python contract (`GET /api/v1/operations/jobs`,
+ * `GET /api/v1/operations/jobs/{id}`) returns the bounded, secret-free
+ * admission projection with worker-ownership evidence and the
  * backend-computed lifecycle projection. A Job command, status or condition
- * outside the modelled set is malformed data, never a coerced string.
+ * outside the modelled set is malformed data, never a coerced string, and the
+ * document carries no definition fingerprint, raw source scope, configuration
+ * digest or raw durable error.
  */
 
 import {
@@ -72,6 +75,7 @@ export interface JobOperationalCondition {
   readonly nextAction: string;
 }
 
+/** Bounded, secret-free failure evidence; never a raw durable error string. */
 export interface JobFailureExplanation {
   readonly category: string;
   readonly message: string;
@@ -90,16 +94,16 @@ export interface JobSummary {
   readonly startedAt: string | null;
   readonly completedAt: string | null;
   readonly taskId: string | null;
-  readonly error: string | null;
-  readonly errorCategory: string | null;
   readonly cancellationRequested: boolean;
   readonly executeAuthorized: boolean;
   readonly scheduleId: string | null;
   readonly definitionId: string | null;
+  readonly definitionVersion: number | null;
   readonly runMode: JobRunMode | null;
+  readonly resourceLibraryId: string | null;
+  /** Pinned managed configuration revision identity; never a digest. */
   readonly configurationSnapshotId: string | null;
-  readonly configurationSnapshotDigest: string | null;
-  readonly failureExplanation: JobFailureExplanation | null;
+  readonly failure: JobFailureExplanation | null;
   readonly workerEvidence: JobWorkerEvidence | null;
   readonly operationalCondition: JobOperationalCondition | null;
   readonly lifecycle: LifecycleProjection;
@@ -184,7 +188,7 @@ function normalizeOperationalCondition(
 }
 
 function normalizeFailureExplanation(value: unknown): JobFailureExplanation {
-  const source = readRecord(value, "failureExplanation");
+  const source = readRecord(value, "failure");
   try {
     return {
       category: text(source, "category"),
@@ -270,8 +274,8 @@ function normalizeJobSummary(source: Record<string, unknown>): JobSummary {
     rawCondition === null || rawCondition === undefined
       ? null
       : normalizeOperationalCondition(rawCondition);
-  const rawFailure = source["failureExplanation"];
-  const failureExplanation =
+  const rawFailure = source["failure"];
+  const failure =
     rawFailure === null || rawFailure === undefined
       ? null
       : normalizeFailureExplanation(rawFailure);
@@ -308,19 +312,20 @@ function normalizeJobSummary(source: Record<string, unknown>): JobSummary {
     startedAt,
     completedAt,
     taskId,
-    error: optionalText(source, "error"),
-    errorCategory: optionalText(source, "failure_category"),
     cancellationRequested,
     executeAuthorized: flag(source, "execute_authorized"),
     scheduleId: optionalText(source, "schedule_id"),
     definitionId: optionalText(source, "definition_id"),
+    definitionVersion: (() => {
+      const raw = source["definition_version"];
+      return raw === null || raw === undefined
+        ? null
+        : count(source, "definition_version");
+    })(),
     runMode,
+    resourceLibraryId: optionalText(source, "resource_library_id"),
     configurationSnapshotId: optionalText(source, "configuration_snapshot_id"),
-    configurationSnapshotDigest: optionalText(
-      source,
-      "configuration_snapshot_digest",
-    ),
-    failureExplanation,
+    failure,
     workerEvidence,
     operationalCondition,
     lifecycle,

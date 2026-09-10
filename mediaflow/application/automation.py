@@ -140,8 +140,10 @@ class AutomationJobService:
             )
         return job
 
-    def cancel(self, job_id: str) -> AutomationJob:
-        return self._repository.request_job_cancellation(job_id, datetime.now(UTC))
+    def cancel(self, job_id: str, *, expected_version: str | None = None) -> AutomationJob:
+        return self._repository.request_job_cancellation(
+            job_id, datetime.now(UTC), expected_version=expected_version
+        )
 
     def stale(self, *, age_seconds: float, limit: int = 100) -> tuple[AutomationJob, ...]:
         if age_seconds <= 0:

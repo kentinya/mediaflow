@@ -156,6 +156,11 @@ class DefinitionScopedExecutionService:
                     "then wait for a new occurrence",
                 ),
             ) from error
+        if coordinator.cancellation_observed(task.task_id):
+            # The operator accepted a durable cooperative cancellation for this
+            # Task, so the owning Job is cancelled at that boundary as well
+            # instead of being reported as a completed occurrence.
+            raise AutomationCancelled(task.task_id)
         return task.task_id
 
     def _resolve_definition(self, job) -> Any:
@@ -406,6 +411,9 @@ class DefinitionScopedExecutionService:
         if cancellation_check():
             self._cancel_task_if_running(coordinator, task.task_id)
             raise AutomationCancelled(task.task_id)
+        if coordinator.cancellation_observed(task.task_id):
+            # A durable cooperative cancellation already owns this Task outcome.
+            raise AutomationCancelled(task.task_id)
         if coordinator.pause_requested(task.task_id):
             coordinator.acknowledge_pause(task.task_id)
             return
@@ -454,7 +462,11 @@ class DefinitionScopedExecutionService:
             display_root = posixpath.join(display_root, scoped_root_scope)
 
         def workflow_stop() -> bool:
-            return bool(cancellation_check() or coordinator.pause_requested(task.task_id))
+            return bool(
+                cancellation_check()
+                or coordinator.pause_requested(task.task_id)
+                or coordinator.cancellation_observed(task.task_id)
+            )
 
         service = MediaOrganizerService(
             strategy,

@@ -13,15 +13,32 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+import threading
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mediaflow.application.automation import AutomationJobService
+from mediaflow.application.media_organizer import (
+    MediaOrganizerBatchResult,
+    MediaOrganizerItemResult,
+)
+from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationJob,
     AutomationJobStatus,
+)
+from mediaflow.domain.manual_scan import (
+    ManualScanScopeKind,
+    ManualScanTask,
+    ScanMode,
+)
+from mediaflow.domain.organizer import (
+    ExecutionEffectCertainty,
+    ExecutionResult,
+    ExecutionStatus,
+    PlanOperation,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
@@ -31,6 +48,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     TaskItemStatus,
 )
+from mediaflow.final_cli import _task_was_cancelled
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.pagination import (
     CursorDirection,
@@ -666,6 +684,429 @@ class OperationsWorkspaceTests(unittest.TestCase):
         self.assertEqual(status, 400)
         status, _, _ = request(self.api, "GET", "/api/v1/tasks/task-run/pause")
         self.assertEqual(status, 404)
+
+
+class OperationsControlFencingTests(unittest.TestCase):
+    """Deterministic proof for atomic controls and real handler cooperation.
+
+    Every accepted transition is one compare-and-set over the exact durable
+    state the operator read; an accepted cancellation is observed by the owning
+    execution path at its own item boundary, never by releasing confinement for
+    work that is still in flight, and never overwritten by a later completion.
+    """
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.repository = SQLiteTaskRepository(Path(self.directory.name, "runtime.sqlite3"))
+        self.api = MediaFlowApi(
+            self.repository,
+            None,
+            principals=(VIEWER, OPERATOR, AUDITOR),
+        )
+
+    def tearDown(self) -> None:
+        self.repository.close()
+        self.directory.cleanup()
+
+    def running_task(self, task_id: str, *, command: str = "preview", execute: bool = False):
+        task = PersistentTask(
+            task_id,
+            command,
+            PersistentTaskStatus.RUNNING,
+            execute,
+            NOW,
+            NOW,
+            started_at=NOW,
+        )
+        self.repository.create_task(task)
+        return task
+
+    def concurrent_control(self, path: str, version: str) -> list[int]:
+        """Submit the identical control from two threads behind one barrier."""
+
+        barrier = threading.Barrier(2)
+        statuses: list[int] = []
+        lock = threading.Lock()
+
+        def submit() -> None:
+            barrier.wait(5)
+            code, _, _ = request(self.api, "POST", path, body=control_body(version))
+            with lock:
+                statuses.append(code)
+
+        threads = [threading.Thread(target=submit) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        return sorted(statuses)
+
+    def test_concurrent_pause_submissions_admit_exactly_one(self) -> None:
+        self.running_task("task-pause")
+        version = self.repository.get_task("task-pause").updated_at.isoformat()
+
+        self.assertEqual(
+            self.concurrent_control("/api/v1/tasks/task-pause/pause", version),
+            [200, 409],
+        )
+        task = self.repository.get_task("task-pause")
+        self.assertTrue(task.pause_requested)
+        self.assertEqual(task.status, PersistentTaskStatus.RUNNING)
+
+        # A further submission against the now-current version is refused for the
+        # durable reason instead of storing the request twice.
+        status, body, _ = request(
+            self.api,
+            "POST",
+            "/api/v1/tasks/task-pause/pause",
+            body=control_body(task.updated_at.isoformat()),
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["details"]["reason"], "already_requested")
+
+    def test_concurrent_cancel_submissions_admit_exactly_one(self) -> None:
+        self.running_task("task-cancel", execute=True)
+        version = self.repository.get_task("task-cancel").updated_at.isoformat()
+
+        self.assertEqual(
+            self.concurrent_control("/api/v1/tasks/task-cancel/cancel", version),
+            [200, 409],
+        )
+        task = self.repository.get_task("task-cancel")
+        self.assertEqual(task.status, PersistentTaskStatus.CANCELLED)
+
+    def test_concurrent_job_cancel_submissions_admit_exactly_one(self) -> None:
+        job = AutomationJobService(self.repository).submit("scan")
+        version = job.updated_at.isoformat()
+
+        self.assertEqual(
+            self.concurrent_control(f"/api/v1/jobs/{job.job_id}/cancel", version),
+            [200, 409],
+        )
+        persisted = self.repository.get_job(job.job_id)
+        self.assertTrue(persisted.cancellation_requested)
+
+    def test_accepted_cancel_keeps_the_in_flight_lock_and_is_never_overwritten(self) -> None:
+        task = self.running_task("task-live", command="organize", execute=True)
+        coordinator = PersistentTaskCoordinator(self.repository, self.repository)
+        in_flight = coordinator.begin_item(
+            task.task_id, "source", "movies", "movie.mkv", "source:movie.mkv"
+        )
+        # A second lock of the same Task belongs to no in-flight item.
+        self.assertTrue(self.repository.acquire("source", "queued.mkv", task.task_id, NOW))
+        version = self.repository.get_task(task.task_id).updated_at.isoformat()
+
+        status, body, _ = request(
+            self.api,
+            "POST",
+            f"/api/v1/tasks/{task.task_id}/cancel",
+            body=control_body(version),
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["task"]["status"], "cancelled")
+        self.assertTrue(body["task"]["execute_authorized"])
+        # The in-flight source lock is preserved; the idle one is released.
+        self.assertTrue(self.repository.lock_owned("source", "movie.mkv", task.task_id))
+        self.assertFalse(self.repository.lock_owned("source", "queued.mkv", task.task_id))
+        self.assertEqual(
+            self.repository.get_item(in_flight.item_id).status,
+            TaskItemStatus.CANCELLED,
+        )
+
+        # The owning handler observes the durable cancellation at its item
+        # boundary and records the outcome of the item it was already running.
+        self.assertTrue(coordinator.cancellation_observed(task.task_id))
+        execution = ExecutionResult(
+            ExecutionStatus.SUCCESS,
+            PlanOperation.MOVE,
+            "movie.mkv",
+            "Movies/movie.mkv",
+            completed_operations=("MOVE",),
+            effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+        )
+        coordinator.complete_item(
+            in_flight,
+            MediaOrganizerItemResult("movie.mkv", execution=execution),
+        )
+        self.assertFalse(self.repository.lock_owned("source", "movie.mkv", task.task_id))
+        self.assertEqual(self.repository.get_item(in_flight.item_id).status, TaskItemStatus.SUCCESS)
+
+        # A later completion can never resurrect the durable cancellation.
+        finished = coordinator.finish(task.task_id, MediaOrganizerBatchResult(()))
+        self.assertEqual(finished.status, PersistentTaskStatus.CANCELLED)
+        self.assertEqual(finished.completed_at.isoformat(), body["task"]["completed_at"])
+        self.assertEqual(
+            self.repository.get_task(task.task_id).status,
+            PersistentTaskStatus.CANCELLED,
+        )
+
+    def test_pause_is_withheld_for_a_manual_scan_task(self) -> None:
+        task = PersistentTask(
+            "scan-task",
+            "scan",
+            PersistentTaskStatus.RUNNING,
+            False,
+            NOW,
+            NOW,
+            started_at=NOW,
+            configuration_snapshot_id="snap-1",
+            configuration_snapshot_digest="digest-1",
+        )
+        # The manual Scan service owns the Task row and its discovery scope row
+        # in one transaction.
+        self.repository.create_manual_scan(
+            task,
+            ManualScanTask(
+                task.task_id,
+                ManualScanScopeKind.RESOURCE_LIBRARY,
+                "movies",
+                ScanMode.FULL,
+                PersistentTaskStatus.RUNNING,
+                "snap-1",
+                "digest-1",
+                NOW,
+                NOW,
+            ),
+        )
+
+        status, detail, _ = request(self.api, "GET", "/api/v1/tasks/scan-task")
+        self.assertEqual(status, 200)
+        lifecycle = detail["lifecycle"]
+        self.assertEqual(lifecycle["executionPath"], "manual_scan")
+        pause = next(item for item in lifecycle["actions"] if item["action"] == "pause")
+        self.assertFalse(pause["available"])
+        self.assertIn("never acknowledges a Task pause request", pause["unavailableReason"])
+        # The manual Scan service observes its own cooperative cancellation.
+        cancel = next(item for item in lifecycle["actions"] if item["action"] == "cancel")
+        self.assertTrue(cancel["available"])
+
+        status, body, _ = request(
+            self.api,
+            "POST",
+            "/api/v1/tasks/scan-task/pause",
+            body=control_body(task.updated_at.isoformat()),
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["details"]["reason"], "pause_unavailable")
+        persisted = self.repository.get_task("scan-task")
+        self.assertFalse(persisted.pause_requested)
+        self.assertEqual(persisted.status, PersistentTaskStatus.RUNNING)
+
+    def test_synchronously_executed_manual_organize_task_exposes_no_control(self) -> None:
+        task = self.running_task("manual-run", command="manual_organize", execute=True)
+        self.repository.acquire("source", "movie.mkv", task.task_id, NOW)
+
+        status, detail, _ = request(self.api, "GET", "/api/v1/tasks/manual-run")
+        self.assertEqual(status, 200)
+        lifecycle = detail["lifecycle"]
+        self.assertEqual(lifecycle["executionPath"], "synchronous_manual_organize")
+        self.assertFalse(any(item["available"] for item in lifecycle["actions"]))
+
+        for action in ("pause", "cancel"):
+            with self.subTest(action=action):
+                status, body, _ = request(
+                    self.api,
+                    "POST",
+                    f"/api/v1/tasks/manual-run/{action}",
+                    body=control_body(task.updated_at.isoformat()),
+                )
+                self.assertEqual(status, 409)
+                self.assertEqual(body["error"]["details"]["reason"], f"{action}_unavailable")
+        persisted = self.repository.get_task("manual-run")
+        self.assertEqual(persisted.status, PersistentTaskStatus.RUNNING)
+        self.assertTrue(persisted.execute_authorized)
+        self.assertTrue(self.repository.lock_owned("source", "movie.mkv", "manual-run"))
+
+    def test_hostile_historical_record_never_reaches_the_operations_projection(self) -> None:
+        hostile_error = "Authorization: Bearer topsecret /home/alice/private.mkv"
+        fingerprint = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+        task = PersistentTask(
+            "task-hostile",
+            "preview",
+            PersistentTaskStatus.FAILED,
+            False,
+            NOW,
+            NOW,
+            started_at=NOW,
+            completed_at=NOW,
+            total_items=1,
+            completed_items=0,
+            failed_items=1,
+            error=hostile_error,
+            configuration_snapshot_id="rev-1",
+            configuration_snapshot_digest=fingerprint,
+        )
+        self.repository.create_task(task)
+        self.repository.upsert_item(
+            PersistentTaskItem(
+                "item-hostile",
+                task.task_id,
+                "source",
+                "movies",
+                "movie.mkv",
+                "/srv/media/private.mkv",
+                TaskItemStatus.FAILED,
+                "failed",
+                1,
+                NOW,
+                NOW,
+                error=hostile_error,
+                source_occurrence_id="occurrence-1",
+                source_fingerprint="fingerprint-value",
+                source_fingerprint_state="verified",
+            )
+        )
+        self.repository.append_result(
+            PersistentResultRecord(
+                "item-hostile:1",
+                task.task_id,
+                "item-hostile",
+                "source",
+                "movie.mkv",
+                None,
+                None,
+                "A",
+                "tmdb",
+                "1",
+                "A",
+                "A",
+                "A",
+                "A",
+                "MOVE",
+                "failed",
+                NOW,
+                error=hostile_error,
+                source_occurrence_id="occurrence-1",
+                source_fingerprint="fingerprint-value",
+                source_fingerprint_state="verified",
+            )
+        )
+        self.repository.create_job(
+            AutomationJob(
+                "job-hostile",
+                AutomationCommand.PREVIEW,
+                AutomationJobStatus.FAILED,
+                NOW,
+                NOW,
+                started_at=NOW,
+                completed_at=NOW,
+                error=hostile_error,
+                failure_category="workflow_failed",
+                failure_durable_state=hostile_error,
+                failure_side_effects="none",
+                failure_retry_safe=False,
+                failure_next_action=hostile_error,
+                definition_fingerprint="fingerprint-value",
+                source_scope="/srv/media/private",
+                configuration_snapshot_id="rev-1",
+                configuration_snapshot_digest=fingerprint,
+            )
+        )
+
+        forbidden = ("topsecret", "/home/alice", "/srv/media", "fingerprint-value", fingerprint)
+        operations_reads = (
+            ("/api/v1/operations/tasks", ""),
+            (f"/api/v1/operations/tasks/{task.task_id}", ""),
+            ("/api/v1/operations/jobs", ""),
+            ("/api/v1/operations/jobs/job-hostile", ""),
+        )
+        for path, query in operations_reads:
+            with self.subTest(path=path):
+                status, document, _ = request(self.api, "GET", path, query=query)
+                self.assertEqual(status, 200)
+                serialized = json.dumps(document)
+                for value in forbidden:
+                    self.assertNotIn(value, serialized)
+                self.assertNotIn("configuration_snapshot_digest", serialized)
+                self.assertNotIn('"error"', serialized)
+
+        status, detail, _ = request(self.api, "GET", f"/api/v1/operations/tasks/{task.task_id}")
+        self.assertEqual(status, 200)
+        # Bounded failure evidence is still present for the operator.
+        self.assertIn("failure", detail)
+        self.assertIn("category", detail["failure"])
+        self.assertIn("nextAction", detail["failure"])
+        self.assertIn("failure", detail["items"][0])
+        self.assertIn("failure", detail["results"][0])
+        # The immutable revision identity stays visible as the pin evidence.
+        self.assertEqual(detail["items"][0]["source_path"], "movie.mkv")
+        self.assertEqual(detail["configuration_snapshot_id"], "rev-1")
+
+        # The pre-existing compatibility document keeps its historical fields.
+        # It keeps the configured display root the V1 operator UI renders and the
+        # pinned configuration digest a pre-existing pin test asserts, but a
+        # hostile durable error is normalized there too, so no Task/Job read
+        # echoes a credential or the raw record.
+        status, legacy, _ = request(self.api, "GET", f"/api/v1/tasks/{task.task_id}")
+        self.assertEqual(status, 200)
+        legacy_serialized = json.dumps(legacy)
+        self.assertNotIn("topsecret", legacy_serialized)
+        self.assertNotIn("/home/alice", legacy_serialized)
+        self.assertEqual(
+            legacy["items"][0]["error"],
+            "scheduled organization failed at a bounded workflow boundary",
+        )
+        self.assertEqual(legacy["configuration_snapshot_id"], "rev-1")
+
+    def test_operations_reads_create_no_work_and_no_fingerprint(self) -> None:
+        task = self.running_task("task-read")
+        self.repository.create_job(
+            AutomationJob(
+                "job-read",
+                AutomationCommand.PREVIEW,
+                AutomationJobStatus.PENDING,
+                NOW,
+                NOW,
+            )
+        )
+        before = (len(self.repository.list_tasks()), len(self.repository.list_jobs()))
+        reads = (
+            "/api/v1/operations/tasks",
+            f"/api/v1/operations/tasks/{task.task_id}",
+            "/api/v1/operations/jobs",
+            "/api/v1/operations/jobs/job-read",
+            "/api/v1/operations/workers",
+            "/api/v1/operations/workers/readiness",
+        )
+        for path in reads:
+            with self.subTest(path=path):
+                status, document, _ = request(self.api, "GET", path)
+                self.assertEqual(status, 200)
+                serialized = json.dumps(document)
+                self.assertNotIn("digest", serialized)
+                self.assertNotIn("fingerprint", serialized)
+        self.assertEqual(
+            (len(self.repository.list_tasks()), len(self.repository.list_jobs())), before
+        )
+        routes = self.audit_routes()
+        self.assertIn("/api/v1/operations/tasks", routes)
+        self.assertIn("/api/v1/operations/tasks/{id}", routes)
+        self.assertIn("/api/v1/operations/workers/readiness", routes)
+        self.assertNotIn(task.task_id, json.dumps(routes))
+
+    def test_worker_reports_a_web_cancelled_task_as_a_cancelled_job(self) -> None:
+        task = self.running_task("task-worker", command="scan")
+        version = self.repository.get_task(task.task_id).updated_at.isoformat()
+        status, _, _ = request(
+            self.api,
+            "POST",
+            f"/api/v1/tasks/{task.task_id}/cancel",
+            body=control_body(version),
+        )
+        self.assertEqual(status, 200)
+
+        # The queued-workflow wrapper refuses to report a Job as completed once
+        # the durable Task carries an operator-accepted cancellation, and the
+        # definition-scoped runner uses the same coordinator observation.
+        self.assertTrue(_task_was_cancelled(self.repository, task.task_id))
+        self.assertTrue(
+            PersistentTaskCoordinator(self.repository, self.repository).cancellation_observed(
+                task.task_id
+            )
+        )
+
+    def audit_routes(self) -> list[str]:
+        return [item.route for item in self.repository.list_security_audit(limit=400)]
 
 
 if __name__ == "__main__":

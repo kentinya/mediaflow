@@ -283,22 +283,15 @@ export function TaskDetailPage() {
                 <dt>Pinned configuration</dt>
                 <dd>
                   {task.configurationSnapshotId
-                    ? `${task.configurationSnapshotId} (digest ${task.configurationSnapshotDigest})`
+                    ? `${task.configurationSnapshotId} (immutable revision identity)`
                     : "no pinned configuration snapshot"}
                 </dd>
-                {task.error && (
-                  <>
-                    <dt>Failure</dt>
-                    <dd>{task.error}</dd>
-                  </>
-                )}
-                {task.failureExplanation && (
+                {task.failure && (
                   <>
                     <dt>Failure evidence</dt>
                     <dd>
-                      {task.failureExplanation.category}:{" "}
-                      {task.failureExplanation.durableState} —{" "}
-                      {task.failureExplanation.nextAction}
+                      {task.failure.category}: {task.failure.message} —{" "}
+                      {task.failure.durableState} — {task.failure.nextAction}
                     </dd>
                   </>
                 )}
@@ -385,21 +378,27 @@ export function TaskDetailPage() {
                           <th>Stage</th>
                           <th>Attempts</th>
                           <th>Destination</th>
-                          <th>Error</th>
+                          <th>Failure evidence</th>
                         </tr>
                       </thead>
                       <tbody>
                         {items.map((item) => (
                           <tr key={item.itemId}>
                             <td>{item.itemId}</td>
-                            <td>{item.sourceDisplay}</td>
+                            <td>
+                              {item.storageId}:{item.sourcePath}
+                            </td>
                             <td>
                               <StatusBadge status={item.status} />
                             </td>
                             <td>{item.stage}</td>
                             <td>{item.attempts}</td>
                             <td>{item.destinationPath ?? "—"}</td>
-                            <td>{item.error ?? "—"}</td>
+                            <td>
+                              {item.failure
+                                ? `${item.failure.category}: ${item.failure.nextAction}`
+                                : "—"}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -454,7 +453,7 @@ export function TaskDetailPage() {
                           <th>Operation</th>
                           <th>Effect certainty</th>
                           <th>Destination</th>
-                          <th>Error</th>
+                          <th>Failure evidence</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -468,7 +467,11 @@ export function TaskDetailPage() {
                             <td>{result.operation ?? "—"}</td>
                             <td>{result.effectCertainty}</td>
                             <td>{result.destinationPath ?? "—"}</td>
-                            <td>{result.error ?? "—"}</td>
+                            <td>
+                              {result.failure
+                                ? `${result.failure.category}: ${result.failure.nextAction}`
+                                : "—"}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
