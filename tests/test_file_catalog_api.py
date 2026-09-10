@@ -4,10 +4,12 @@ import io
 import json
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from mediaflow.application.file_catalog import FileCatalogService
+from mediaflow.domain.file_lifecycle import ProcessingDisposition
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentResultRecord
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
@@ -136,6 +138,123 @@ class FileCatalogApiTests(unittest.TestCase):
                 self.assertEqual(status, 401)
                 status, _ = api_request(api, "/api/v1/files", method="POST")
                 self.assertIn(status, {404, 405})
+
+    def test_files_endpoints_apply_processing_disposition_filter_before_paging(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteFileIndexRepository(database) as file_index:
+                file_index.batch_upsert(
+                    (
+                        file_record(
+                            "one",
+                            "source-storage",
+                            "source",
+                            "Movies/A.mkv",
+                            updated_at=NOW,
+                            processing_disposition=ProcessingDisposition.ORGANIZED,
+                        ),
+                        file_record(
+                            "two",
+                            "source-storage",
+                            "source",
+                            "Movies/B.mkv",
+                            updated_at=NOW,
+                            processing_disposition=ProcessingDisposition.FAILED,
+                        ),
+                        file_record(
+                            "three",
+                            "source-storage",
+                            "source",
+                            "Movies/C.mkv",
+                            updated_at=NOW - timedelta(minutes=1),
+                            processing_disposition=ProcessingDisposition.ORGANIZED,
+                        ),
+                    )
+                )
+            with SQLiteFileIndexRepository(database) as file_index:
+                catalog = FileCatalogService(
+                    file_index,
+                    ("source",),
+                    ("source-storage",),
+                )
+                api = MediaFlowApi(
+                    SQLiteTaskRepository(database),
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal(
+                            "viewer",
+                            "viewer-token",
+                            frozenset({ApiPermission.READ}),
+                        ),
+                    ),
+                    file_catalog=catalog,
+                )
+                status, document = api_request(
+                    api,
+                    "/api/v1/file-index",
+                    query="processingDisposition=organized&limit=10",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    [item["fileId"] for item in document["items"]],
+                    ["one", "three"],
+                )
+                self.assertEqual(
+                    {item["processingDisposition"] for item in document["items"]},
+                    {"organized"},
+                )
+                # The filter applies before paging: a bounded page keeps the
+                # stable cursor contract inside the filtered set.
+                status, document = api_request(
+                    api,
+                    "/api/v1/file-index",
+                    query="processingDisposition=organized&limit=1",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual([item["fileId"] for item in document["items"]], ["one"])
+                cursor_after = f"after={quote_plus(NOW.isoformat())}&cursorFileId=one"
+                status, document = api_request(
+                    api,
+                    "/api/v1/file-index",
+                    query=f"processingDisposition=organized&limit=1&{cursor_after}",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual([item["fileId"] for item in document["items"]], ["three"])
+                # Existing /files alias shares the same authority and filter.
+                status, document = api_request(
+                    api,
+                    "/api/v1/files",
+                    query="processingDisposition=failed&limit=10",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual([item["fileId"] for item in document["items"]], ["two"])
+                # Unsupported values and duplicate fields fail closed.
+                status, document = api_request(
+                    api,
+                    "/api/v1/file-index",
+                    query="processingDisposition=bogus",
+                )
+                self.assertEqual(status, 400)
+                status, _ = api_request(
+                    api,
+                    "/api/v1/file-index",
+                    query="processingDisposition=organized&processingDisposition=organized",
+                )
+                self.assertEqual(status, 400)
+                status, _ = api_request(
+                    api,
+                    "/api/v1/file-index",
+                    query="cursorFileId=one",
+                )
+                self.assertEqual(status, 400)
+                # Other existing list filters still combine with the new one.
+                status, document = api_request(
+                    api,
+                    "/api/v1/file-index",
+                    query="processingDisposition=organized&scanStatus=ready&query=a.mkv",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual([item["fileId"] for item in document["items"]], ["one"])
 
 
 if __name__ == "__main__":

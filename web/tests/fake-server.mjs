@@ -2,7 +2,8 @@
  * Local fake API + static server for the minimal Playwright browser path.
  *
  * It serves the built V2 artifact from web/dist under /ui-v2/ and fake
- * /api/v1/dashboard, /api/v1/system/status and /api/v1/storage/files GET
+ * /api/v1/dashboard, /api/v1/system/status, /api/v1/file-index and
+ * /api/v1/storage/files GET
  * documents that mirror the existing Python contracts. Every unsupported
  * method is rejected with 405; no production credentials, media, Storage or
  * external providers are involved, and no token material is ever logged.
@@ -99,6 +100,234 @@ const SYSTEM_STATUS = {
   classification_policies: { total: 3, truncated: false, items: [] },
   organize_policies: { total: 3, truncated: false, items: [] },
 };
+
+const FILE_INDEX_ITEMS = [
+  {
+    fileId: "file-index-example",
+    storageId: "local-media",
+    resourceLibraryId: "resources",
+    path: "Movies/Example.mkv",
+    filename: "Example.mkv",
+    extension: "mkv",
+    size: 2097152000,
+    modifiedAt: "2026-08-22T12:10:00+00:00",
+    updatedAt: "2026-08-22T12:10:00+00:00",
+    firstSeenAt: "2026-08-22T11:10:00+00:00",
+    lastSeenAt: "2026-08-22T12:10:00+00:00",
+    stableSince: "2026-08-22T11:30:00+00:00",
+    missingSince: null,
+    scanStatus: "ready",
+    change: "unchanged",
+    occurrenceState: "verified",
+    currentOccurrence: { state: "verified", current: true },
+    processingDisposition: "organized",
+    recognitionType: "Movie",
+    provider: "tmdb",
+    providerId: "101",
+    title: "Example",
+    year: "2026",
+    taskId: "task-example",
+    identitySummary: {
+      recognitionType: "Movie",
+      provider: "tmdb",
+      providerId: "101",
+      title: "Example",
+      year: 2026,
+    },
+  },
+  ...Array.from({ length: 51 }, (_, index) => {
+    const number = String(index + 1).padStart(3, "0");
+    const dispositions = ["organized", "attention", "unknown"];
+    const statuses = ["ready", "unstable", "discovered"];
+    return {
+      fileId: `file-index-${number}`,
+      storageId: "local-media",
+      resourceLibraryId: "resources",
+      path: `Movies/Title-${number}.mkv`,
+      filename: `Title-${number}.mkv`,
+      extension: "mkv",
+      size: 1048576 + index,
+      modifiedAt: "2026-08-22T12:00:00+00:00",
+      updatedAt: "2026-08-22T12:00:00+00:00",
+      firstSeenAt: "2026-08-22T11:00:00+00:00",
+      lastSeenAt: "2026-08-22T12:00:00+00:00",
+      stableSince: index % 2 === 0 ? "2026-08-22T11:30:00+00:00" : null,
+      missingSince: null,
+      scanStatus: statuses[index % statuses.length],
+      change: index % 2 === 0 ? "unchanged" : "modified",
+      occurrenceState: index % 3 === 0 ? "verified" : "unverified",
+      currentOccurrence: {
+        state: index % 3 === 0 ? "verified" : "unverified",
+        current: true,
+      },
+      processingDisposition: dispositions[index % dispositions.length],
+      recognitionType: index % 2 === 0 ? "Movie" : "TV",
+      provider: "tmdb",
+      providerId: String(200 + index),
+      title: `Title ${number}`,
+      year: String(2000 + (index % 25)),
+      taskId: `task-${number}`,
+      identitySummary:
+        index % 2 === 0
+          ? {
+              recognitionType: index % 2 === 0 ? "Movie" : "TV",
+              provider: "tmdb",
+              providerId: String(200 + index),
+              title: `Title ${number}`,
+              year: 2000 + (index % 25),
+            }
+          : null,
+    };
+  }),
+];
+
+const FILE_INDEX_ALLOWED_QUERY = new Set([
+  "resourceLibrary",
+  "storage",
+  "scanStatus",
+  "query",
+  "limit",
+  "after",
+  "before",
+  "cursorFileId",
+  "recognitionType",
+  "provider",
+  "providerId",
+  "title",
+  "taskId",
+  "year",
+  "processingDisposition",
+]);
+
+function fileIndexTuple(item) {
+  return [Date.parse(item.updatedAt), item.fileId];
+}
+
+function compareFileIndexTuples(left, right) {
+  const [leftTime, leftId] = fileIndexTuple(left);
+  const [rightTime, rightId] = fileIndexTuple(right);
+  if (leftTime !== rightTime) return leftTime - rightTime;
+  return leftId.localeCompare(rightId);
+}
+
+function fileIndexCursor(url, timestampKey) {
+  const timestamp = url.searchParams.get(timestampKey);
+  if (timestamp === null) return null;
+  const fileId = url.searchParams.get("cursorFileId");
+  if ((timestamp === null) !== (fileId === null)) {
+    return { error: "cursor" };
+  }
+  if (timestamp === null || fileId === null) return null;
+  const parsed = Date.parse(timestamp);
+  if (!Number.isFinite(parsed) || fileId.length === 0) {
+    return { error: "cursor" };
+  }
+  return { updatedAt: new Date(parsed).toISOString(), fileId };
+}
+
+function fileIndexDocument(url) {
+  const values = new Map();
+  for (const [key, value] of url.searchParams.entries()) {
+    if (!FILE_INDEX_ALLOWED_QUERY.has(key) || values.has(key)) {
+      return { status: 400, payload: { error: { code: "invalid_filter" } } };
+    }
+    values.set(key, value);
+  }
+  const limit = Number(values.get("limit") ?? "100");
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    return { status: 400, payload: { error: { code: "invalid_filter" } } };
+  }
+  if (values.has("after") && values.has("before")) {
+    return { status: 400, payload: { error: { code: "invalid_cursor" } } };
+  }
+  if (
+    values.has("cursorFileId") &&
+    !values.has("after") &&
+    !values.has("before")
+  ) {
+    return { status: 400, payload: { error: { code: "invalid_cursor" } } };
+  }
+  const after = fileIndexCursor(url, "after");
+  const before = fileIndexCursor(url, "before");
+  if (after?.error || before?.error) {
+    return { status: 400, payload: { error: { code: "invalid_cursor" } } };
+  }
+  const query = (values.get("query") ?? "").toLowerCase();
+  const items = FILE_INDEX_ITEMS.filter((item) => {
+    if (
+      values.has("resourceLibrary") &&
+      item.resourceLibraryId !== values.get("resourceLibrary")
+    ) {
+      return false;
+    }
+    if (values.has("storage") && item.storageId !== values.get("storage")) {
+      return false;
+    }
+    if (
+      values.has("scanStatus") &&
+      item.scanStatus !== values.get("scanStatus")
+    ) {
+      return false;
+    }
+    if (
+      values.has("processingDisposition") &&
+      item.processingDisposition !== values.get("processingDisposition")
+    ) {
+      return false;
+    }
+    if (
+      query !== "" &&
+      !item.path.toLowerCase().includes(query) &&
+      !item.filename.toLowerCase().includes(query)
+    ) {
+      return false;
+    }
+    if (
+      values.has("recognitionType") &&
+      item.recognitionType !== values.get("recognitionType")
+    ) {
+      return false;
+    }
+    if (values.has("provider") && item.provider !== values.get("provider")) {
+      return false;
+    }
+    if (
+      values.has("providerId") &&
+      item.providerId !== values.get("providerId")
+    ) {
+      return false;
+    }
+    if (
+      values.has("title") &&
+      !item.title.toLowerCase().includes(values.get("title").toLowerCase())
+    ) {
+      return false;
+    }
+    if (values.has("taskId") && item.taskId !== values.get("taskId")) {
+      return false;
+    }
+    if (values.has("year") && item.year !== values.get("year")) {
+      return false;
+    }
+    if (after && compareFileIndexTuples(item, after) >= 0) {
+      return false;
+    }
+    if (before && compareFileIndexTuples(item, before) <= 0) {
+      return false;
+    }
+    return true;
+  }).sort((left, right) => compareFileIndexTuples(right, left));
+  return {
+    status: 200,
+    payload: {
+      surface: "file_index",
+      fileIndexSurface: "/api/v1/file-index",
+      filesSurface: "/api/v1/storage/files",
+      items: items.slice(0, limit),
+      limit,
+    },
+  };
+}
 
 function filesDocument(path, cursor, storageId) {
   const storage =
@@ -363,6 +592,31 @@ const server = createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, SYSTEM_STATUS);
+    return;
+  }
+  if (url.pathname === "/api/v1/file-index") {
+    if (req.method !== "GET") {
+      res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("GET required");
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message: "principal lacks read permission",
+        },
+      });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    const document = fileIndexDocument(url);
+    sendJson(res, document.status, document.payload);
     return;
   }
   if (url.pathname === "/api/v1/storage/files") {

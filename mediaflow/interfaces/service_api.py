@@ -81,7 +81,7 @@ from mediaflow.domain.configuration_management import (
     RuntimeSnapshotUnavailable,
 )
 from mediaflow.domain.failure import failure_document
-from mediaflow.domain.file_lifecycle import FileIndexLifecycleError
+from mediaflow.domain.file_lifecycle import FileIndexLifecycleError, ProcessingDisposition
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_organize import (
     ManualIntentError,
@@ -7103,13 +7103,29 @@ class MediaFlowApi:
             "title",
             "taskId",
             "year",
+            "processingDisposition",
         }
         if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
             raise ValueError("file catalog query fields must be supported and specified once")
+        if "cursorFileId" in values and "after" not in values and "before" not in values:
+            raise ValueError("file cursor requires after/before and cursorFileId")
         limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], "file")
         scan_status = FileScanStatus(values["scanStatus"][0]) if "scanStatus" in values else None
-        after = MediaFlowApi._file_cursor(values.get("after"), values.get("cursorFileId"))
-        before = MediaFlowApi._file_cursor(values.get("before"), values.get("cursorFileId"))
+        processing_disposition = (
+            ProcessingDisposition(values["processingDisposition"][0])
+            if "processingDisposition" in values
+            else None
+        )
+        after = (
+            MediaFlowApi._file_cursor(values.get("after"), values.get("cursorFileId"))
+            if "after" in values
+            else None
+        )
+        before = (
+            MediaFlowApi._file_cursor(values.get("before"), values.get("cursorFileId"))
+            if "before" in values
+            else None
+        )
         year = int(values["year"][0]) if "year" in values else None
         return FileCatalogFilter(
             resource_library_id=values.get("resourceLibrary", [None])[0],
@@ -7125,6 +7141,7 @@ class MediaFlowApi:
             title=values.get("title", [None])[0],
             task_id=values.get("taskId", [None])[0],
             year=year,
+            processing_disposition=processing_disposition,
         )
 
     @staticmethod

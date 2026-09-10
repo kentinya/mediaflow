@@ -23,6 +23,7 @@ describe("destination model", () => {
     ).toHaveLength(3);
     expect(childDestinations.map((item) => item.label)).toEqual([
       "Storage files",
+      "FileIndex",
     ]);
   });
 
@@ -30,6 +31,9 @@ describe("destination model", () => {
     expect(destinationForPath("/dashboard")?.id).toBe("overview");
     expect(destinationForPath("/library")?.availability).toBe("implemented");
     expect(destinationForPath("/library/files")?.id).toBe("library-files");
+    expect(destinationForPath("/library/file-index")?.id).toBe(
+      "library-file-index",
+    );
     expect(destinationForPath("/unknown")).toBeUndefined();
   });
 
@@ -37,6 +41,7 @@ describe("destination model", () => {
     expect(destinationPaths).toEqual(destinations.map((item) => item.path));
     expect(new Set(destinationPaths).size).toBe(destinations.length);
     expect(allDestinationPaths).toContain("/library/files");
+    expect(allDestinationPaths).toContain("/library/file-index");
     for (const path of destinationPaths) {
       expect(isDestinationPath(path)).toBe(true);
     }
@@ -89,6 +94,14 @@ describe("destination model", () => {
       expect(search).toBe(
         "storage=local-1&path=movies%2FNew+%26+Old&cursor=a+b%2Fc",
       );
+    });
+
+    it("preserves only catalog view state for FileIndex continuation", () => {
+      const search = allowlistedDestinationSearch(
+        "/library/file-index",
+        "query=movie&processingDisposition=organized&token=secret&limit=50",
+      );
+      expect(search).toBe("query=movie&processingDisposition=organized");
     });
   });
 });

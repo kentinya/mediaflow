@@ -108,3 +108,10 @@ export class StorageFilesApiError extends ApiReadError {
     this.name = "StorageFilesApiError";
   }
 }
+
+export class FileIndexApiError extends ApiReadError {
+  constructor(category: ApiReadErrorCategory) {
+    super(category, LIBRARY_CATEGORY_MESSAGES[category]);
+    this.name = "FileIndexApiError";
+  }
+}

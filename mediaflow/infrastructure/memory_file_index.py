@@ -75,6 +75,7 @@ class InMemoryFileIndexRepository:
         limit: int = 100,
         after: tuple[datetime, str] | None = None,
         before: tuple[datetime, str] | None = None,
+        processing_disposition: ProcessingDisposition | None = None,
     ) -> tuple[FileIndexRecord, ...]:
         if not resource_library_ids:
             raise ValueError("file catalog requires at least one ResourceLibrary")
@@ -92,6 +93,10 @@ class InMemoryFileIndexRepository:
             if record.resource_library_id in allowed_libraries
             and (storage_id is None or record.storage_id == storage_id)
             and (scan_status is None or record.scan_status is scan_status)
+            and (
+                processing_disposition is None
+                or record.processing_disposition is processing_disposition
+            )
             and (
                 normalized_query is None
                 or normalized_query in record.path.lower()

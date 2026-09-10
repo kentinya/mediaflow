@@ -86,6 +86,7 @@ class FileIndexRepository(Protocol):
         limit: int = 100,
         after: tuple[datetime, str] | None = None,
         before: tuple[datetime, str] | None = None,
+        processing_disposition: ProcessingDisposition | None = None,
     ) -> tuple[FileIndexRecord, ...]: ...
 
     def reconcile_missing(
