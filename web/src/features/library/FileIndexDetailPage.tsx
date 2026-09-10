@@ -1,6 +1,10 @@
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import type {
+  FileDetailCheckpoint,
+  FileDetailEvidenceRecord,
+  FileDetailEvidenceSection,
+  FileDetailEvidenceValue,
   FileDetailModel,
   FileDetailResult,
 } from "../../entities/library/file-detail";
@@ -64,14 +68,21 @@ function StorageBackLink({
   readonly status: SystemStatusModel;
   readonly model: FileDetailModel;
 }) {
-  const active = status.storages.some(
+  const activeStorage = status.storages.some(
     (storage) => storage.id === model.record.storageId,
   );
-  if (!active) {
+  const activeResourceLibrary = status.resourceLibraries.some(
+    (library) =>
+      library.id === model.record.resourceLibraryId &&
+      library.enabled &&
+      library.storageId === model.record.storageId,
+  );
+  if (!status.configurationActive || !activeStorage || !activeResourceLibrary) {
     return (
       <p className="mf-dashboard-meta">
-        The Storage recorded for this entry is not part of the current managed
-        Active runtime, so no physical location is offered.
+        The recorded Storage and ResourceLibrary are not a matching enabled pair
+        in the current managed Active runtime, so no physical location is
+        offered.
       </p>
     );
   }
@@ -93,9 +104,11 @@ function StorageBackLink({
 
 function TruncatedNote({
   section,
+  label = section,
   truncated,
 }: {
   readonly section: string;
+  readonly label?: string;
   readonly truncated: Readonly<Record<string, boolean>>;
 }) {
   if (truncated[section] !== true) {
@@ -103,7 +116,7 @@ function TruncatedNote({
   }
   return (
     <p className="mf-dashboard-meta">
-      More {section} records exist for this entry; they are not loaded by this
+      More {label} records exist for this entry; they are not loaded by this
       bounded read.
     </p>
   );
@@ -117,6 +130,216 @@ function relevanceSentence(model: FileDetailModel): string {
     return "Only historical Results are available; they do not describe the present occurrence.";
   }
   return "Result relevance is not established for this entry.";
+}
+
+function evidenceKeyLabel(key: string): string {
+  return key
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase())
+    .replace(/\bId\b/g, "ID");
+}
+
+function evidenceValueText(value: FileDetailEvidenceValue): string {
+  if (value === null) {
+    return "Unavailable / not verified";
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => evidenceValueText(entry)).join(", ");
+  }
+  if (typeof value === "object") {
+    return Object.entries(value)
+      .map(
+        ([key, entry]) =>
+          `${evidenceKeyLabel(key)}: ${evidenceValueText(entry)}`,
+      )
+      .join("; ");
+  }
+  return String(value);
+}
+
+function EvidenceFacts({
+  facts,
+  emptyLabel = "No additional bounded facts were captured.",
+}: {
+  readonly facts: FileDetailEvidenceRecord | null;
+  readonly emptyLabel?: string;
+}) {
+  if (facts === null || Object.keys(facts).length === 0) {
+    return <p>{emptyLabel}</p>;
+  }
+  return (
+    <dl>
+      {Object.entries(facts).map(([key, value]) => (
+        <div key={key}>
+          <dt>{evidenceKeyLabel(key)}</dt>
+          <dd>{evidenceValueText(value)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function EvidenceItemFacts({
+  items,
+}: {
+  readonly items: readonly FileDetailEvidenceRecord[];
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+  return (
+    <>
+      <p>Bounded item evidence ({items.length}):</p>
+      <ul>
+        {items.map((item, index) => (
+          <li key={index}>
+            <EvidenceFacts
+              facts={item}
+              emptyLabel="No named item facts were captured."
+            />
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function EvidenceSectionView({
+  section,
+}: {
+  readonly section: FileDetailEvidenceSection;
+}) {
+  return (
+    <div>
+      <h5>{displayEnum(section.name)} evidence</h5>
+      {section.available ? (
+        <>
+          <EvidenceFacts facts={section.value} />
+          <EvidenceItemFacts items={section.items} />
+          {section.warnings.length === 0 ? null : (
+            <>
+              <p>Warnings:</p>
+              <ul>
+                {section.warnings.map((warning, index) => (
+                  <li key={index}>{warning}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </>
+      ) : (
+        <p>
+          Unavailable —{" "}
+          {section.unavailableReason ?? "this section was not captured"}
+        </p>
+      )}
+      {section.truncated ? (
+        <p className="mf-dashboard-meta">
+          More bounded facts exist for this section; they were not loaded.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function CheckpointFacts({
+  checkpoint,
+}: {
+  readonly checkpoint: FileDetailCheckpoint;
+}) {
+  return (
+    <div>
+      <dl>
+        <dt>Checkpoint status</dt>
+        <dd>{displayEnum(checkpoint.status)}</dd>
+        <dt>Checkpoint stage</dt>
+        <dd>{displayEnum(checkpoint.stage)}</dd>
+        <dt>Attempts</dt>
+        <dd>
+          {checkpoint.attempts === null
+            ? "Unavailable / not verified"
+            : checkpoint.attempts}
+        </dd>
+        <dt>Effect certainty</dt>
+        <dd>{displayEnum(checkpoint.effects.certainty)}</dd>
+        <dt>Retry safety</dt>
+        <dd>{displayEnum(checkpoint.retrySafety)}</dd>
+        <dt>Configuration availability</dt>
+        <dd>
+          {checkpoint.configuration.resolvable === null
+            ? "Not checked"
+            : checkpoint.configuration.resolvable
+              ? "Resolvable"
+              : `Unavailable${checkpoint.configuration.reason === null ? "" : ` — ${displayEnum(checkpoint.configuration.reason)}`}`}
+        </dd>
+        <dt>Checkpoint updated</dt>
+        <dd>{checkpoint.updatedAt}</dd>
+      </dl>
+      {checkpoint.blocker === null &&
+      checkpoint.blockers.length === 0 ? null : (
+        <p>
+          Blocker:{" "}
+          {displayEnum(
+            checkpoint.blocker?.kind ??
+              checkpoint.blockers[0]?.kind ??
+              "unknown",
+          )}{" "}
+          ·{" "}
+          {displayEnum(
+            checkpoint.blocker?.status ??
+              checkpoint.blockers[0]?.status ??
+              "unknown",
+          )}
+        </p>
+      )}
+      {checkpoint.effects.completedOperations.length === 0 ? null : (
+        <p>
+          Completed operations:{" "}
+          {checkpoint.effects.completedOperations.join(", ")}
+        </p>
+      )}
+      {checkpoint.effects.uncertainEffects.length === 0 ? null : (
+        <p>
+          Uncertain effects: {checkpoint.effects.uncertainEffects.join(", ")}
+        </p>
+      )}
+      {checkpoint.failure === null ? null : (
+        <div>
+          <p>Checkpoint failure explanation: {checkpoint.failure.message}</p>
+          <p>
+            Durable state: {checkpoint.failure.durableState} · side effects:{" "}
+            {checkpoint.failure.sideEffects} · safe to retry:{" "}
+            {checkpoint.failure.retrySafe ? "yes" : "no"}
+          </p>
+          <p>Next action: {checkpoint.failure.nextAction}</p>
+        </div>
+      )}
+      {checkpoint.failure === null && checkpoint.nextAction !== null ? (
+        <p>Next action: {checkpoint.nextAction}</p>
+      ) : null}
+      {checkpoint.actions.length === 0 ? null : (
+        <ul>
+          {checkpoint.actions.map((action, index) => (
+            <li key={index}>
+              {action.label} —{" "}
+              {action.admissible
+                ? "available in the current workflow"
+                : "not admissible"}
+              ;{" "}
+              {action.confirmationRequired
+                ? "confirmation required"
+                : "no confirmation required"}
+              ; V2 does not execute it.
+            </li>
+          ))}
+        </ul>
+      )}
+      {checkpoint.refusalReason === null ? null : (
+        <p>Continuation unavailable: {checkpoint.refusalReason}</p>
+      )}
+    </div>
+  );
 }
 
 function DetailResultLine({
@@ -319,6 +542,11 @@ export function FileIndexDetailSections({
                 · checkpoint{" "}
                 {item.checkpointAvailable ? "available" : "not available"} ·
                 updated {item.updatedAt}
+                {item.checkpoint === null ? null : (
+                  <div className="mf-dashboard-meta">
+                    <CheckpointFacts checkpoint={item.checkpoint} />
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -326,7 +554,11 @@ export function FileIndexDetailSections({
       </section>
       <section aria-labelledby="detail-reviews">
         <h4 id="detail-reviews">Related reviews</h4>
-        <TruncatedNote section="relatedReviews" truncated={model.truncated} />
+        <TruncatedNote
+          section="reviews"
+          label="review"
+          truncated={model.truncated}
+        />
         {model.relatedReviews.length === 0 ? (
           <p>No review records are attached to this entry.</p>
         ) : (
@@ -358,14 +590,18 @@ export function FileIndexDetailSections({
                 : "no evidence error"}
               {evidence.truncated ? " · truncated" : ""}
             </p>
+            {evidence.warnings.length === 0 ? null : (
+              <>
+                <p>Evidence warnings:</p>
+                <ul>
+                  {evidence.warnings.map((warning, warningIndex) => (
+                    <li key={warningIndex}>{warning}</li>
+                  ))}
+                </ul>
+              </>
+            )}
             {Object.values(evidence.sections).map((section) => (
-              <p key={section.name} className="mf-dashboard-meta">
-                {displayEnum(section.name)}:{" "}
-                {section.available
-                  ? `${section.itemTotal} item(s), ${section.warningTotal} warning(s)`
-                  : "unavailable — this section was not captured"}
-                {section.truncated ? " (truncated)" : ""}
-              </p>
+              <EvidenceSectionView key={section.name} section={section} />
             ))}
           </div>
         ))}

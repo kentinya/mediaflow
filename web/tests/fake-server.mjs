@@ -624,31 +624,456 @@ function filesDocument(path, cursor, storageId) {
   };
 }
 
+function detailUnavailableSections(reason) {
+  return Object.fromEntries(
+    [
+      "parse",
+      "recognition",
+      "metadata",
+      "policies",
+      "naming",
+      "classification",
+      "plan",
+      "operation",
+      "capabilities",
+    ].map((name) => [
+      name,
+      {
+        available: false,
+        value: null,
+        items: [],
+        warnings: [],
+        truncated: false,
+        unavailableReason: reason,
+      },
+    ]),
+  );
+}
+
+function detailEvidenceSections(truncated = false) {
+  const section = (value, items = [], warnings = []) => ({
+    available: true,
+    value,
+    items,
+    warnings,
+    truncated,
+  });
+  return {
+    parse: section(
+      {
+        titleCandidate: "Example",
+        year: 2026,
+        season: 1,
+        episode: 1,
+        episodes: ["1"],
+        resolutionTag: "1080p",
+        sourceTag: "WEB-DL",
+        videoCodecTag: "H265",
+        audioTag: "AAC",
+        hdrTag: "HDR",
+        versionTag: "v1",
+        releaseGroup: "Group",
+        extension: "mkv",
+        nfoMediaType: "movie",
+        nfoPath: "NFO/Example.nfo",
+        languageTags: ["en"],
+      },
+      [
+        {
+          field: "titleCandidate",
+          value: "Example",
+          source: "filename",
+          confidence: "high",
+        },
+      ],
+      ["The parser used bounded filename facts."],
+    ),
+    recognition: section(
+      {
+        status: "matched",
+        recognitionTypeId: "Movie",
+        ruleId: "rule-movie",
+        confidence: 0.98,
+        score: 98,
+        matchedRules: [
+          {
+            ruleId: "rule-movie",
+            recognitionTypeId: "Movie",
+            priority: 1,
+            score: 98,
+          },
+        ],
+        alternatives: [],
+      },
+      [
+        {
+          ruleId: "rule-movie",
+          field: "extension",
+          operator: "equals",
+          expected: "mkv",
+          actual: "mkv",
+        },
+      ],
+    ),
+    metadata: section({
+      status: "matched",
+      recognitionTypeId: "Movie",
+      query: "Example",
+      provider: "tmdb",
+      providerId: "101",
+      mediaType: "movie",
+      title: "Example",
+      originalTitle: "Example Original",
+      year: 2026,
+      confidence: 0.97,
+      matchedBy: "title_year",
+      matchStatus: "matched",
+      matchReasons: ["exact title and year"],
+      matchWarnings: [],
+      candidateCount: 1,
+      bestCandidate: {
+        provider: "tmdb",
+        providerId: "101",
+        mediaType: "movie",
+        title: "Example",
+        originalTitle: "Example Original",
+        year: 2026,
+        score: 0.97,
+        exactTitle: true,
+        exactYear: true,
+        matchedLocalTitle: "Example",
+        matchedProviderTitle: "Example",
+        matchedTitleSource: "title",
+        scoreComponents: [{ name: "title", score: 1, reason: "exact" }],
+      },
+    }),
+    policies: section({
+      recognitionTypeId: "Movie",
+      recognitionTypePolicyId: "movie-default",
+      metadataPolicyId: "meta-a",
+      namingPolicyId: "naming-a",
+      classificationPolicyId: "class-a",
+      organizePolicyId: "organize-move",
+    }),
+    naming: section({
+      policyId: "naming-a",
+      recognitionTypeId: "Movie",
+      mediaType: "movie",
+      directory: "Example (2026)",
+      filename: "Example (2026).mkv",
+      directorySegments: ["Example (2026)"],
+      sanitizationChanges: [],
+      renderedVariables: [["title", "Example"]],
+    }),
+    classification: section({
+      policyId: "class-a",
+      recognitionTypeId: "Movie",
+      status: "classified",
+      mediaLibraryId: "media-library",
+      relativePath: "Movies",
+      matchedRuleId: "rule-movies",
+      matchedRuleName: "Movies",
+      library: "Movies",
+      category: "movie",
+      subcategory: "feature",
+      confidence: 1,
+      matchEvidence: ["media type movie"],
+    }),
+    plan: section({
+      planId: "plan-example",
+      sourceStorageId: "local-media",
+      targetStorageId: "local-media",
+      target: "Media/Movies/Example (2026)/Example (2026).mkv",
+      relativeDestination: "Movies/Example (2026)/Example (2026).mkv",
+      operation: "move",
+      status: "ready",
+      overwriteAuthorized: false,
+      configuredPolicy: {
+        policyId: "organize-move",
+        configuredConflictStrategy: "manual",
+      },
+      nextAction: "Review the bounded plan.",
+      warnings: [],
+      conflicts: [],
+      attachments: [],
+      duplicateDetection: {
+        status: "not_found",
+        mode: "exact",
+        reason: "no duplicate matched",
+      },
+    }),
+    operation: section({
+      status: "completed",
+      operation: "move",
+      destination: "Media/Movies/Example (2026)/Example (2026).mkv",
+      planId: "plan-example",
+      createdDirectories: ["Media/Movies"],
+      completedOperations: ["move"],
+      effectCertainty: "verified_complete",
+      uncertainEffects: [],
+      cleanupStatus: "not_required",
+      rollbackStatus: "not_required",
+    }),
+    capabilities: section({
+      required: ["CanMove"],
+      declared: ["CanMove", "CanRead"],
+      missing: [],
+      verdict: "satisfied",
+      operation: "move",
+      sourceStorageId: "local-media",
+      targetStorageId: "local-media",
+    }),
+  };
+}
+
+function detailCheckpoint(fileId) {
+  return {
+    status: "completed",
+    raw_stage: "organizing",
+    stage: "organizing",
+    attempts: 1,
+    plan_id: "plan-" + fileId,
+    destination_storage_id: "local-media",
+    destination_path: "Media/Movies/Example (2026)/Example (2026).mkv",
+    configuration: {
+      snapshot_id: "snapshot-e2e-1",
+      snapshot_digest: "digest-e2e-1",
+      resolvable: true,
+      reason: null,
+    },
+    blocker: null,
+    blockers: [],
+    effects: {
+      certainty: "verified_complete",
+      completed_operations: ["move"],
+      uncertain_effects: [],
+    },
+    error_category: "none",
+    failureExplanation: null,
+    nextAction: null,
+    retry_safety: "safe",
+    actions: [],
+    permitted_action_ids: [],
+    refusal_reason: null,
+    checkpoint_version: "checkpoint-e2e-1",
+    updated_at: "2026-08-22T12:04:00+00:00",
+  };
+}
+
 function fileDetailDocument(fileId) {
-  const base = FILE_INDEX_ITEMS.find((item) => item.fileId === fileId);
-  if (base === undefined) {
+  const indexedBase = FILE_INDEX_ITEMS.find((item) => item.fileId === fileId);
+  const specialIds = new Set([
+    "file-index-legacy",
+    "file-index-missing-evidence",
+    "file-index-truncated",
+    "file-index-mismatched",
+  ]);
+  if (indexedBase === undefined && !specialIds.has(fileId)) {
     return null;
   }
-  const index = Number(fileId.slice("file-index-".length)) || 0;
+  const template = indexedBase ?? FILE_INDEX_ITEMS[0];
+  const isLegacy = fileId === "file-index-legacy";
+  const isMissingEvidence = fileId === "file-index-missing-evidence";
+  const isTruncated = fileId === "file-index-truncated";
+  const isMismatched = fileId === "file-index-mismatched";
+  const base = {
+    ...template,
+    fileId,
+    resourceLibraryId: isMismatched
+      ? "orphaned-resources"
+      : template.resourceLibraryId,
+    path: isMismatched ? "Movies/Mismatched.mkv" : template.path,
+    filename: isMismatched ? "Mismatched.mkv" : template.filename,
+    occurrenceState: isLegacy ? "legacy" : template.occurrenceState,
+    currentOccurrence: isLegacy
+      ? { state: "legacy", current: false }
+      : template.currentOccurrence,
+    processingDisposition:
+      isLegacy || isMissingEvidence
+        ? "unknown"
+        : template.processingDisposition,
+    identitySummary: isLegacy ? null : template.identitySummary,
+  };
+  const resultId = "result-" + fileId;
+  const priorResultId = resultId + "-prior";
+  const itemId = "item-" + fileId;
+  const reviewId = "review-" + fileId;
+  const destinationPath =
+    "Library/Movies/" + base.title + " (" + base.year + ")";
+  const standardResult = {
+    resultId,
+    status: "completed",
+    createdAt: "2026-08-22T12:05:00+00:00",
+    recognitionType: base.recognitionType,
+    provider: "tmdb",
+    providerId: base.providerId,
+    title: base.title,
+    metadataPolicyId: "meta-a",
+    namingPolicyId: "naming-a",
+    classificationPolicyId: "class-a",
+    organizePolicyId: "organize-move",
+    operation: "move",
+    destinationPath,
+    effectCertainty: "verified_complete",
+    error: null,
+    relevance: "current",
+    current: true,
+  };
+  const historicalResult = {
+    resultId: priorResultId,
+    status: "superseded",
+    createdAt: "2026-08-01T09:00:00+00:00",
+    recognitionType: base.recognitionType,
+    provider: "tmdb",
+    providerId: base.providerId,
+    title: base.title,
+    metadataPolicyId: "meta-a",
+    namingPolicyId: "naming-a",
+    classificationPolicyId: "class-a",
+    organizePolicyId: "organize-move",
+    operation: "move",
+    destinationPath: null,
+    effectCertainty: "attempted_unverified",
+    error: null,
+    relevance: "historical_different_occurrence",
+    current: false,
+  };
+  const standardOccurrence = {
+    occurrenceId: "occ-" + fileId,
+    state: base.occurrenceState,
+    current: !isLegacy,
+    firstSeenAt: "2026-08-22T11:10:00+00:00",
+    lastSeenAt: "2026-08-22T12:10:00+00:00",
+    supersededAt: null,
+  };
+  const priorOccurrence = {
+    occurrenceId: "occ-" + fileId + "-prior",
+    state: "verified",
+    current: false,
+    firstSeenAt: "2026-08-01T09:00:00+00:00",
+    lastSeenAt: "2026-08-21T10:00:00+00:00",
+    supersededAt: "2026-08-22T11:10:00+00:00",
+  };
+  const standardEvidence = {
+    outcome: "completed",
+    capturedAt: "2026-08-22T12:06:00+00:00",
+    error: null,
+    truncated: isTruncated,
+    warnings: ["One bounded evidence warning."],
+    sections: detailEvidenceSections(isTruncated),
+  };
+  const standardCheckpoint = detailCheckpoint(fileId);
+  if (isLegacy) {
+    return {
+      ...base,
+      currentOccurrence: {
+        state: "legacy",
+        current: false,
+        occurrenceId: null,
+        fingerprintAlgorithm: null,
+      },
+      occurrenceHistory: [priorOccurrence],
+      priorResultRelevance: {
+        currentResultId: null,
+        current: false,
+        historicalOnly: true,
+      },
+      reprocess: { eligible: false, reason: "legacy evidence is unavailable" },
+      reprocessRequests: [],
+      processing: {
+        resultId: null,
+        effectCertainty: "unknown",
+        retrySafety: "unknown",
+        nextAction: "review this legacy record",
+        updatedAt: "2026-08-22T12:05:00+00:00",
+      },
+      latestResult: null,
+      results: [historicalResult],
+      items: [
+        {
+          taskId: base.taskId,
+          itemId,
+          status: "unknown",
+          stage: "unknown",
+          updatedAt: "2026-08-22T12:05:00+00:00",
+          relevance: "unverified_legacy",
+          current: false,
+          checkpoint: null,
+        },
+      ],
+      relatedReviews: [],
+      evidence: [
+        {
+          outcome: "legacy",
+          capturedAt: null,
+          error: null,
+          truncated: false,
+          warnings: [],
+          sections: detailUnavailableSections(
+            "legacy evidence was not captured",
+          ),
+        },
+      ],
+      evidenceAvailability: "unavailable",
+      currentActions: [],
+      truncated: {
+        occurrenceHistory: false,
+        reviews: false,
+        evidence: false,
+        items: false,
+        results: false,
+      },
+    };
+  }
+  if (isMissingEvidence) {
+    return {
+      ...base,
+      currentOccurrence: {
+        ...base.currentOccurrence,
+        occurrenceId: "occ-" + fileId,
+        fingerprintAlgorithm: "sha256-v2",
+      },
+      occurrenceHistory: [],
+      priorResultRelevance: {
+        currentResultId: null,
+        current: false,
+        historicalOnly: false,
+      },
+      reprocess: { eligible: false, reason: "evidence is unavailable" },
+      reprocessRequests: [],
+      processing: {
+        resultId: null,
+        effectCertainty: "unknown",
+        retrySafety: "unknown",
+        nextAction: null,
+        updatedAt: null,
+      },
+      latestResult: null,
+      results: [],
+      items: [],
+      relatedReviews: [],
+      evidence: [],
+      evidenceAvailability: "unavailable",
+      currentActions: [],
+      truncated: {
+        occurrenceHistory: false,
+        reviews: false,
+        evidence: false,
+        items: false,
+        results: false,
+      },
+    };
+  }
   return {
     ...base,
     currentOccurrence: {
       ...base.currentOccurrence,
-      occurrenceId: `occ-${fileId}`,
+      occurrenceId: "occ-" + fileId,
       fingerprintAlgorithm: "sha256-v2",
     },
-    occurrenceHistory: [
-      {
-        occurrenceId: `occ-${fileId}-prior`,
-        state: "verified",
-        current: false,
-        firstSeenAt: "2026-08-01T09:00:00+00:00",
-        lastSeenAt: "2026-08-21T10:00:00+00:00",
-        supersededAt: "2026-08-22T11:10:00+00:00",
-      },
-    ],
+    occurrenceHistory: [standardOccurrence, priorOccurrence],
     priorResultRelevance: {
-      currentResultId: `result-${fileId}`,
+      currentResultId: resultId,
       current: true,
       historicalOnly: false,
     },
@@ -663,14 +1088,14 @@ function fileDetailDocument(fileId) {
       base.processingDisposition === "attention"
         ? [
             {
-              requestId: `reprocess-${fileId}`,
+              requestId: "reprocess-" + fileId,
               status: "pending_confirmation",
               nextAction: "confirm in the current Web UI",
             },
           ]
         : [],
     processing: {
-      resultId: `result-${fileId}`,
+      resultId,
       effectCertainty:
         base.processingDisposition === "organized"
           ? "verified_complete"
@@ -680,97 +1105,28 @@ function fileDetailDocument(fileId) {
         base.processingDisposition === "organized" ? null : "review the record",
       updatedAt: "2026-08-22T12:05:00+00:00",
     },
-    latestResult: {
-      resultId: `result-${fileId}`,
-      status: "completed",
-      createdAt: "2026-08-22T12:05:00+00:00",
-      recognitionType: base.recognitionType,
-      provider: "tmdb",
-      providerId: base.providerId,
-      title: base.title,
-      metadataPolicyId: "meta-a",
-      namingPolicyId: "naming-a",
-      classificationPolicyId: "class-a",
-      organizePolicyId: "organize-move",
-      operation: "move",
-      destinationPath: `Library/Movies/${base.title} (${base.year})`,
-      effectCertainty:
-        base.processingDisposition === "organized"
-          ? "verified_complete"
-          : "attempted_unverified",
-      error: null,
-      relevance: "current",
-      current: true,
-    },
-    results: [
-      {
-        resultId: `result-${fileId}-prior`,
-        status: "superseded",
-        createdAt: "2026-08-01T09:00:00+00:00",
-        recognitionType: base.recognitionType,
-        provider: "tmdb",
-        providerId: base.providerId,
-        title: base.title,
-        metadataPolicyId: "meta-a",
-        namingPolicyId: "naming-a",
-        classificationPolicyId: "class-a",
-        organizePolicyId: "organize-move",
-        operation: "move",
-        destinationPath: null,
-        effectCertainty: "attempted_unverified",
-        error: null,
-        relevance: "historical_different_occurrence",
-        current: false,
-      },
-    ],
+    latestResult: standardResult,
+    results: [historicalResult],
     items: [
       {
         taskId: base.taskId,
-        itemId: `item-${fileId}`,
+        itemId,
         status: "completed",
         stage: "organizing",
         updatedAt: "2026-08-22T12:05:00+00:00",
         relevance: "current",
         current: true,
-        checkpoint: {
-          stage: "organizing",
-          savedAt: "2026-08-22T12:04:00+00:00",
-        },
+        checkpoint: standardCheckpoint,
       },
     ],
     relatedReviews: [
       {
         kind: "organize",
-        reviewId: `review-${fileId}`,
+        reviewId,
         status: "resolved",
       },
     ],
-    evidence: [
-      {
-        outcome: "completed",
-        capturedAt: "2026-08-22T12:06:00+00:00",
-        error: null,
-        truncated: false,
-        sections: {
-          parse: {
-            available: true,
-            truncated: false,
-            items: [{ note: "discovery ok" }],
-            warnings: [],
-          },
-          operation: {
-            available: index % 2 === 0,
-            truncated: index % 4 === 0,
-            items: [],
-            warnings: [],
-            unavailableReason:
-              index % 2 === 0
-                ? undefined
-                : "organize evidence was not captured",
-          },
-        },
-      },
-    ],
+    evidence: [standardEvidence],
     evidenceAvailability: "available",
     currentActions: [
       {
@@ -779,7 +1135,13 @@ function fileDetailDocument(fileId) {
         admissible: base.processingDisposition === "attention",
       },
     ],
-    truncated: { occurrenceHistory: false, results: false, items: false },
+    truncated: {
+      occurrenceHistory: isTruncated,
+      reviews: isTruncated,
+      evidence: isTruncated,
+      items: isTruncated,
+      results: isTruncated,
+    },
   };
 }
 
