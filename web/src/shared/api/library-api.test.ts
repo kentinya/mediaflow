@@ -428,6 +428,7 @@ describe("fetchFileIndex", () => {
     expect(read.model.items[0]?.fileId).toBe("f1");
     expect(read.model.items[0]?.processingDisposition).toBe("organized");
     expect(read.model.hasNext).toBe(false);
+    expect(read.model.hasPrevious).toBe(false);
     const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(input).toBe("/api/v1/file-index?limit=51");
     expect(init.method).toBe("GET");
@@ -455,6 +456,34 @@ describe("fetchFileIndex", () => {
     expect(read.ok).toBe(true);
     if (!read.ok) return;
     expect(read.model.items).toHaveLength(1);
+    expect(read.model.hasNext).toBe(true);
+    expect(read.model.hasPrevious).toBe(false);
+  });
+
+  it("trims the nearest backward page and preserves both cursor directions", async () => {
+    stubFetch(async () => {
+      const data = {
+        ...fileIndexPayload,
+        items: [
+          { ...fileIndexPayload.items[0], fileId: "older-lookahead" },
+          { ...fileIndexPayload.items[0], fileId: "nearest-1" },
+          { ...fileIndexPayload.items[0], fileId: "nearest-2" },
+        ],
+      };
+      return jsonResponse(data);
+    });
+    const read = await fetchFileIndex(TOKEN, {
+      before: "2026-08-23T12:00:00+00:00",
+      cursorFileId: "cursor",
+      limit: 2,
+    });
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.model.items.map((item) => item.fileId)).toEqual([
+      "nearest-1",
+      "nearest-2",
+    ]);
+    expect(read.model.hasPrevious).toBe(true);
     expect(read.model.hasNext).toBe(true);
   });
 

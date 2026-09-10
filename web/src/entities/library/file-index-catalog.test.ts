@@ -151,6 +151,22 @@ describe("normalizeFileIndexCatalog", () => {
     );
   });
 
+  it("rejects malformed or conflicting canonical and nested facts", () => {
+    const cases = [
+      rawItem({ scanStatus: 42 }),
+      rawItem({ discovery: { status: 42, change: "unchanged" } }),
+      rawItem({ processing: { disposition: 42 } }),
+      rawItem({ discovery: { status: "missing", change: "unchanged" } }),
+      rawItem({ change: "modified" }),
+      rawItem({ processing: { disposition: "failed" } }),
+    ];
+    for (const item of cases) {
+      expect(() =>
+        normalizeFileIndexCatalog({ items: [item], limit: 50 }),
+      ).toThrow(FileIndexCatalogNormalizationError);
+    }
+  });
+
   it("does not expose fingerprints or detail-only evidence", () => {
     const model = normalizeFileIndexCatalog({
       surface: "file_index",
@@ -253,6 +269,7 @@ describe("toFileIndexCatalogPage", () => {
     expect(page.items).toHaveLength(pageLimit);
     expect(page.items.map((item) => item.fileId)).toEqual(["a", "b"]);
     expect(page.hasNext).toBe(true);
+    expect(page.hasPrevious).toBe(false);
   });
 
   it("keeps the whole page and reports no next page when under the limit", () => {
@@ -268,6 +285,25 @@ describe("toFileIndexCatalogPage", () => {
     );
     expect(page.items).toHaveLength(2);
     expect(page.hasNext).toBe(false);
+    expect(page.hasPrevious).toBe(false);
+  });
+
+  it("trims a backward page to the records nearest its cursor", () => {
+    const page = toFileIndexCatalogPage(
+      document([
+        record({ fileId: "older-lookahead" }),
+        record({ fileId: "nearest-1" }),
+        record({ fileId: "nearest-2" }),
+      ]),
+      2,
+      "backward",
+    );
+    expect(page.items.map((item) => item.fileId)).toEqual([
+      "nearest-1",
+      "nearest-2",
+    ]);
+    expect(page.hasPrevious).toBe(true);
+    expect(page.hasNext).toBe(true);
   });
 
   it("lookahead size is exactly one record", () => {

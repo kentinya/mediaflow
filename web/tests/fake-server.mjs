@@ -135,7 +135,7 @@ const FILE_INDEX_ITEMS = [
       year: 2026,
     },
   },
-  ...Array.from({ length: 51 }, (_, index) => {
+  ...Array.from({ length: 151 }, (_, index) => {
     const number = String(index + 1).padStart(3, "0");
     const dispositions = ["organized", "attention", "unknown"];
     const statuses = ["ready", "unstable", "discovered"];
@@ -199,6 +199,28 @@ const FILE_INDEX_ALLOWED_QUERY = new Set([
   "processingDisposition",
 ]);
 
+const FILE_INDEX_SCAN_STATUSES = new Set([
+  "discovered",
+  "unstable",
+  "ready",
+  "ignored",
+  "missing",
+  "error",
+]);
+
+const FILE_INDEX_PROCESSING_DISPOSITIONS = new Set([
+  "unknown",
+  "organized",
+  "skipped",
+  "attention",
+  "conflict",
+  "review",
+  "partial",
+  "failed",
+  "unverified",
+  "reprocess_requested",
+]);
+
 function fileIndexTuple(item) {
   return [Date.parse(item.updatedAt), item.fileId];
 }
@@ -235,6 +257,18 @@ function fileIndexDocument(url) {
   }
   const limit = Number(values.get("limit") ?? "100");
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    return { status: 400, payload: { error: { code: "invalid_filter" } } };
+  }
+  if (
+    values.has("scanStatus") &&
+    !FILE_INDEX_SCAN_STATUSES.has(values.get("scanStatus"))
+  ) {
+    return { status: 400, payload: { error: { code: "invalid_filter" } } };
+  }
+  if (
+    values.has("processingDisposition") &&
+    !FILE_INDEX_PROCESSING_DISPOSITIONS.has(values.get("processingDisposition"))
+  ) {
     return { status: 400, payload: { error: { code: "invalid_filter" } } };
   }
   if (values.has("after") && values.has("before")) {
@@ -317,13 +351,14 @@ function fileIndexDocument(url) {
     }
     return true;
   }).sort((left, right) => compareFileIndexTuples(right, left));
+  const pageItems = before ? items.slice(-limit) : items.slice(0, limit);
   return {
     status: 200,
     payload: {
       surface: "file_index",
       fileIndexSurface: "/api/v1/file-index",
       filesSurface: "/api/v1/storage/files",
-      items: items.slice(0, limit),
+      items: pageItems,
       limit,
     },
   };

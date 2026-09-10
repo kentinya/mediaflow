@@ -521,9 +521,19 @@ export async function fetchFileIndex(
   }
   try {
     const document = normalizeFileIndexCatalog(payload);
+    const page = toFileIndexCatalogPage(
+      document,
+      options.limit,
+      options.before !== null && options.before !== undefined
+        ? "backward"
+        : "forward",
+    );
     return {
       ok: true,
-      model: toFileIndexCatalogPage(document, options.limit),
+      model:
+        options.after !== null && options.after !== undefined
+          ? { ...page, hasPrevious: page.items.length > 0 }
+          : page,
     };
   } catch {
     throw new FileIndexApiError("malformed");

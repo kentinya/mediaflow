@@ -446,13 +446,12 @@ function PageControls({
 }) {
   const first = model.items[0];
   const last = model.items[model.items.length - 1];
-  const hasPrevious = applied.after !== null || applied.before !== null;
   return (
     <div className="mf-actions mf-page-controls" aria-label="FileIndex paging">
       <Button
         type="button"
         variant="secondary"
-        disabled={!hasPrevious || first === undefined}
+        disabled={!model.hasPrevious || first === undefined}
         onClick={() => {
           if (first === undefined) return;
           onNavigate({
@@ -491,6 +490,7 @@ function CatalogFailure({
   failure,
   onRetry,
   onReset,
+  onResetPage,
   onBack,
   retrying,
 }: {
@@ -499,6 +499,7 @@ function CatalogFailure({
   >;
   readonly onRetry: () => void;
   readonly onReset: () => void;
+  readonly onResetPage: () => void;
   readonly onBack: () => void;
   readonly retrying: boolean;
 }) {
@@ -519,7 +520,7 @@ function CatalogFailure({
       </p>
       <div className="mf-actions">
         {isFilter || isCursor ? (
-          <Button type="button" onClick={onReset}>
+          <Button type="button" onClick={isCursor ? onResetPage : onReset}>
             {isCursor ? "Return to first page" : "Reset filters"}
           </Button>
         ) : (
@@ -548,6 +549,7 @@ export interface FileIndexCatalogViewProps {
   readonly onDraftChange: (key: FilterKey, value: string) => void;
   readonly onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   readonly onReset: () => void;
+  readonly onResetPage: () => void;
   readonly onRetry: () => void;
   readonly onNavigate: (value: FileIndexCatalogSearchState) => void;
   readonly onRefresh: () => void;
@@ -564,6 +566,7 @@ export function FileIndexCatalogView({
   onDraftChange,
   onSubmit,
   onReset,
+  onResetPage,
   onRetry,
   onNavigate,
   onRefresh,
@@ -643,6 +646,7 @@ export function FileIndexCatalogView({
           failure={catalog.failure}
           onRetry={onRetry}
           onReset={onReset}
+          onResetPage={onResetPage}
           onBack={onBack}
           retrying={catalogFetching}
         />
@@ -663,6 +667,11 @@ export function FileIndexCatalogView({
               : "No durable discovery records are available in the selected Active scope yet."}
           </p>
           <div className="mf-actions">
+            {applied.after !== null || applied.before !== null ? (
+              <Button type="button" onClick={onResetPage}>
+                Return to first page
+              </Button>
+            ) : null}
             <Button type="button" onClick={onReset}>
               Reset filters and page
             </Button>
@@ -742,6 +751,16 @@ export function FileIndexCatalogPage() {
     setDraftOverride({ routeSearchKey, value: empty });
     goToSearch(empty);
   };
+  const resetPage = () => {
+    const firstPage = {
+      ...search,
+      after: null,
+      before: null,
+      cursorFileId: null,
+    };
+    setDraftOverride({ routeSearchKey, value: firstPage });
+    goToSearch(firstPage);
+  };
   const navigatePage = (next: FileIndexCatalogSearchState) => {
     goToSearch(next);
   };
@@ -778,6 +797,7 @@ export function FileIndexCatalogPage() {
               onDraftChange={updateDraft}
               onSubmit={submit}
               onReset={reset}
+              onResetPage={resetPage}
               onRetry={() => undefined}
               onNavigate={navigatePage}
               onRefresh={refreshStatus}
@@ -801,6 +821,7 @@ export function FileIndexCatalogPage() {
                 onDraftChange={updateDraft}
                 onSubmit={submit}
                 onReset={reset}
+                onResetPage={resetPage}
                 onRetry={refresh}
                 onNavigate={navigatePage}
                 onRefresh={() => {

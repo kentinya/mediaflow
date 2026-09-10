@@ -190,6 +190,64 @@ class FileCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "file ID"):
             service.list(FileCatalogFilter(after=(NOW, "")))
 
+    def test_backward_cursor_returns_nearest_page_with_equal_timestamps(self) -> None:
+        repository = InMemoryFileIndexRepository()
+        repository.batch_upsert(
+            tuple(
+                file_record(
+                    f"file-{index}",
+                    "local",
+                    "movies",
+                    f"Movies/{index}.mkv",
+                    updated_at=NOW,
+                )
+                for index in range(1, 8)
+            )
+        )
+        service = self._service(repository)
+
+        page_one = service.list(FileCatalogFilter(limit=2))
+        self.assertEqual([value.file_id for value in page_one], ["file-7", "file-6"])
+        page_two = service.list(FileCatalogFilter(after=(NOW, "file-6"), limit=2))
+        self.assertEqual([value.file_id for value in page_two], ["file-5", "file-4"])
+        page_three = service.list(FileCatalogFilter(after=(NOW, "file-4"), limit=2))
+        self.assertEqual([value.file_id for value in page_three], ["file-3", "file-2"])
+
+        # The API requests one extra item when moving backwards. The repository
+        # must return the nearest records first, followed by the older lookahead.
+        previous = service.list(FileCatalogFilter(before=(NOW, "file-3"), limit=3))
+        self.assertEqual([value.file_id for value in previous], ["file-6", "file-5", "file-4"])
+
+    def test_sqlite_backward_cursor_returns_nearest_page_with_equal_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteFileIndexRepository(database) as file_index:
+                file_index.batch_upsert(
+                    tuple(
+                        file_record(
+                            f"file-{index}",
+                            "local",
+                            "movies",
+                            f"Movies/{index}.mkv",
+                            updated_at=NOW,
+                        )
+                        for index in range(1, 8)
+                    )
+                )
+            with SQLiteFileIndexRepository(database) as file_index:
+                service = self._service(file_index)
+                page_one = service.list(FileCatalogFilter(limit=2))
+                self.assertEqual([value.file_id for value in page_one], ["file-7", "file-6"])
+                page_two = service.list(FileCatalogFilter(after=(NOW, "file-6"), limit=2))
+                self.assertEqual([value.file_id for value in page_two], ["file-5", "file-4"])
+                page_three = service.list(FileCatalogFilter(after=(NOW, "file-4"), limit=2))
+                self.assertEqual([value.file_id for value in page_three], ["file-3", "file-2"])
+                previous = service.list(FileCatalogFilter(before=(NOW, "file-3"), limit=3))
+                self.assertEqual(
+                    [value.file_id for value in previous],
+                    ["file-6", "file-5", "file-4"],
+                )
+
     def test_processing_disposition_filter_applies_before_paging_in_memory(self) -> None:
         repository = InMemoryFileIndexRepository()
         repository.batch_upsert(

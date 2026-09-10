@@ -139,6 +139,50 @@ function readOptionalText(
   return normalizeBoundedText(value, field, MAX_TEXT_LENGTH);
 }
 
+function readPresentText(
+  source: Record<string, unknown>,
+  key: string,
+  field: string,
+): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(source, key)) {
+    return undefined;
+  }
+  return normalizeBoundedText(source[key], field, MAX_TEXT_LENGTH);
+}
+
+function readOptionalRecord(
+  source: Record<string, unknown>,
+  key: string,
+  field: string,
+): Record<string, unknown> | undefined {
+  if (!Object.prototype.hasOwnProperty.call(source, key)) {
+    return undefined;
+  }
+  return readRecord(source[key], field);
+}
+
+function resolveEnumFact(
+  topLevel: string | undefined,
+  nested: string | undefined,
+  allowed: ReadonlySet<string>,
+  field: string,
+): string {
+  if (topLevel !== undefined && !allowed.has(topLevel)) {
+    fail(field);
+  }
+  if (nested !== undefined && !allowed.has(nested)) {
+    fail(`${field}.nested`);
+  }
+  if (topLevel !== undefined && nested !== undefined && topLevel !== nested) {
+    fail(`${field}.conflict`);
+  }
+  const value = topLevel ?? nested;
+  if (value === undefined) {
+    fail(field);
+  }
+  return value;
+}
+
 function normalizeSafeIdentifier(value: unknown, field: string): string {
   const identifier = normalizeBoundedText(value, field, MAX_TEXT_LENGTH);
   if (
@@ -278,59 +322,67 @@ function normalizeRecord(raw: unknown, index: number): FileIndexCatalogRecord {
   const prefix = `items[${index}]`;
   // The API sends scanStatus/change/processingDisposition at the top level
   // alongside a nested discovery/processing/currentOccurrence grouping.
-  // Accept either the top-level or nested value for stability; prefer top-level
-  // when present since that is the canonical contract the API exposes on the
-  // list document.
-  const topScanStatus =
-    typeof item.scanStatus === "string" ? item.scanStatus : undefined;
-  const nestedScanStatus =
-    typeof (item.discovery as Record<string, unknown> | undefined)?.status ===
-    "string"
-      ? (item.discovery as Record<string, unknown>).status
-      : undefined;
-  const effectiveScanStatus = topScanStatus ?? nestedScanStatus;
-  if (
-    typeof effectiveScanStatus !== "string" ||
-    !SCAN_STATUSES.has(effectiveScanStatus)
-  ) {
-    fail(`${prefix}.scanStatus`);
-  }
-  const topChange = typeof item.change === "string" ? item.change : undefined;
-  const nestedChange =
-    typeof (item.discovery as Record<string, unknown> | undefined)?.change ===
-    "string"
-      ? (item.discovery as Record<string, unknown>).change
-      : undefined;
-  const effectiveChange = topChange ?? nestedChange;
-  if (typeof effectiveChange !== "string" || !CHANGES.has(effectiveChange)) {
-    fail(`${prefix}.change`);
-  }
-  const topDisposition =
-    typeof item.processingDisposition === "string"
-      ? item.processingDisposition
-      : undefined;
-  const nestedDisposition =
-    typeof (item.processing as Record<string, unknown> | undefined)
-      ?.disposition === "string"
-      ? (item.processing as Record<string, unknown>).disposition
-      : undefined;
-  const effectiveDisposition = topDisposition ?? nestedDisposition;
-  if (
-    typeof effectiveDisposition !== "string" ||
-    !PROCESSING_DISPOSITIONS.has(effectiveDisposition)
-  ) {
-    fail(`${prefix}.processingDisposition`);
-  }
-  const rawOccurrence = item.currentOccurrence as
-    Record<string, unknown> | undefined;
-  const effectiveOccurrenceState =
-    typeof rawOccurrence?.state === "string" ? rawOccurrence.state : undefined;
-  if (
-    typeof effectiveOccurrenceState !== "string" ||
-    !OCCURRENCE_STATES.has(effectiveOccurrenceState)
-  ) {
-    fail(`${prefix}.occurrenceState`);
-  }
+  // Accept either the top-level or nested value for compatibility, but require
+  // every present representation to be well-typed, allowlisted and equal.
+  const discovery = readOptionalRecord(
+    item,
+    "discovery",
+    `${prefix}.discovery`,
+  );
+  const processing = readOptionalRecord(
+    item,
+    "processing",
+    `${prefix}.processing`,
+  );
+  const effectiveScanStatus = resolveEnumFact(
+    readPresentText(item, "scanStatus", `${prefix}.scanStatus`),
+    discovery === undefined
+      ? undefined
+      : readPresentText(discovery, "status", `${prefix}.discovery.status`),
+    SCAN_STATUSES,
+    `${prefix}.scanStatus`,
+  );
+  const effectiveChange = resolveEnumFact(
+    readPresentText(item, "change", `${prefix}.change`),
+    discovery === undefined
+      ? undefined
+      : readPresentText(discovery, "change", `${prefix}.discovery.change`),
+    CHANGES,
+    `${prefix}.change`,
+  );
+  const effectiveDisposition = resolveEnumFact(
+    readPresentText(
+      item,
+      "processingDisposition",
+      `${prefix}.processingDisposition`,
+    ),
+    processing === undefined
+      ? undefined
+      : readPresentText(
+          processing,
+          "disposition",
+          `${prefix}.processing.disposition`,
+        ),
+    PROCESSING_DISPOSITIONS,
+    `${prefix}.processingDisposition`,
+  );
+  const rawOccurrence = readOptionalRecord(
+    item,
+    "currentOccurrence",
+    `${prefix}.currentOccurrence`,
+  );
+  const effectiveOccurrenceState = resolveEnumFact(
+    undefined,
+    rawOccurrence === undefined
+      ? undefined
+      : readPresentText(
+          rawOccurrence,
+          "state",
+          `${prefix}.currentOccurrence.state`,
+        ),
+    OCCURRENCE_STATES,
+    `${prefix}.occurrenceState`,
+  );
   return {
     fileId: normalizeSafeIdentifier(item.fileId, `${prefix}.fileId`),
     storageId: normalizeSafeIdentifier(item.storageId, `${prefix}.storageId`),
@@ -420,6 +472,7 @@ export interface FileIndexCatalogPage {
   readonly items: readonly FileIndexCatalogRecord[];
   readonly limit: number;
   readonly hasNext: boolean;
+  readonly hasPrevious: boolean;
 }
 
 /**
@@ -430,11 +483,24 @@ export interface FileIndexCatalogPage {
 export function toFileIndexCatalogPage(
   document: FileIndexCatalogDocument,
   pageLimit: number,
+  direction: "forward" | "backward" = "forward",
 ): FileIndexCatalogPage {
-  const hasNext = document.items.length > pageLimit;
+  const hasLookahead = document.items.length > pageLimit;
+  if (direction === "backward") {
+    return {
+      // The API returns the nearest previous page plus one older lookahead in
+      // descending order. Keep the page nearest to the cursor and use the
+      // extra item to prove whether another previous page exists.
+      items: hasLookahead ? document.items.slice(-pageLimit) : document.items,
+      limit: document.limit,
+      hasNext: document.items.length > 0,
+      hasPrevious: hasLookahead,
+    };
+  }
   return {
-    items: hasNext ? document.items.slice(0, pageLimit) : document.items,
+    items: hasLookahead ? document.items.slice(0, pageLimit) : document.items,
     limit: document.limit,
-    hasNext,
+    hasNext: hasLookahead,
+    hasPrevious: false,
   };
 }

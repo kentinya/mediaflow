@@ -105,7 +105,7 @@ test("FileIndex draft filters apply only on submit and reset safely", async ({
   await page.getByRole("button", { name: "Reset filters" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/library\/file-index$/);
   await expect(page.getByText("Draft changes not submitted")).toHaveCount(0);
-  await expect(page.getByText("Title-051.mkv", { exact: true })).toBeVisible();
+  await expect(page.getByText("Title-151.mkv", { exact: true })).toBeVisible();
 });
 
 test("FileIndex paging uses stable updatedAt/fileId cursors and preserves GET-only behavior", async ({
@@ -133,12 +133,91 @@ test("FileIndex paging uses stable updatedAt/fileId cursors and preserves GET-on
   }
 });
 
+test("FileIndex previous paging stays adjacent across three pages with equal timestamps", async ({
+  page,
+}) => {
+  await page.goto("/ui-v2/library/file-index");
+  await connectAs(page, VIEWER_TOKEN);
+
+  for (let index = 0; index < 3; index += 1) {
+    await page.getByRole("button", { name: "Next page" }).click();
+  }
+  await expect(page.getByText("Title-002.mkv", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Previous page" }),
+  ).toBeEnabled();
+
+  await page.getByRole("button", { name: "Previous page" }).click();
+  await expect(page.getByText("Title-052.mkv", { exact: true })).toBeVisible();
+  await expect(page.getByText("Title-002.mkv", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Previous page" }).click();
+  await expect(page.getByText("Title-102.mkv", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Previous page" }),
+  ).toBeEnabled();
+
+  await page.getByRole("button", { name: "Previous page" }).click();
+  await expect(page.getByText("Title-151.mkv", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Previous page" }),
+  ).toBeDisabled();
+});
+
+test("FileIndex submits all supported discovery and identity filters together", async ({
+  page,
+}) => {
+  await page.goto("/ui-v2/library/file-index");
+  await connectAs(page, VIEWER_TOKEN);
+
+  await page.getByLabel("Path or filename").fill("Example");
+  await page
+    .getByRole("combobox", { name: "ResourceLibrary" })
+    .selectOption("resources");
+  await page
+    .getByRole("combobox", { name: "Storage" })
+    .selectOption("local-media");
+  await page
+    .getByRole("combobox", { name: "Discovery status" })
+    .selectOption("ready");
+  await page
+    .getByRole("combobox", { name: "Processing disposition" })
+    .selectOption("organized");
+  await page.getByLabel("Recognition type").fill("Movie");
+  await page
+    .getByRole("textbox", { name: "Provider", exact: true })
+    .fill("tmdb");
+  await page.getByLabel("Provider ID").fill("101");
+  await page.getByLabel("Identity title").fill("Example");
+  await page.getByLabel("Task ID").fill("task-example");
+  await page.getByLabel("Year").fill("2026");
+  await page.getByRole("button", { name: "Apply filters" }).click();
+
+  await expect(page.getByText("Example.mkv", { exact: true })).toBeVisible();
+  const submitted = new URL(page.url()).searchParams;
+  for (const [key, value] of Object.entries({
+    resourceLibrary: "resources",
+    storage: "local-media",
+    scanStatus: "ready",
+    query: "Example",
+    processingDisposition: "organized",
+    recognitionType: "Movie",
+    provider: "tmdb",
+    providerId: "101",
+    title: "Example",
+    taskId: "task-example",
+    year: "2026",
+  })) {
+    expect(submitted.get(key)).toBe(value);
+  }
+});
+
 test("FileIndex invalid cursor offers first-page recovery without mutation", async ({
   page,
 }) => {
   const apiRequests = apiRequestsOf(page);
   await page.goto(
-    "/ui-v2/library/file-index?after=not-a-date&cursorFileId=file-index-001",
+    "/ui-v2/library/file-index?query=Example&processingDisposition=organized&after=not-a-date&cursorFileId=file-index-001",
   );
   await connectAs(page, VIEWER_TOKEN);
   await expect(
@@ -146,7 +225,9 @@ test("FileIndex invalid cursor offers first-page recovery without mutation", asy
   ).toBeVisible();
   await expect(page.getByText(/No work or mutation was started/)).toBeVisible();
   await page.getByRole("button", { name: "Return to first page" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/library\/file-index$/);
+  await expect(page).toHaveURL(
+    /query=Example.*processingDisposition=organized/,
+  );
   await expect(page.getByText("Example.mkv", { exact: true })).toBeVisible();
   expect(apiRequests.every((request) => request.method === "GET")).toBe(true);
 });
@@ -204,4 +285,110 @@ test("FileIndex does not fabricate scope without Active runtime", async ({
   await expect(
     page.getByRole("link", { name: "Open current Web UI" }),
   ).toHaveAttribute("href", "/ui");
+});
+
+test("FileIndex reports an Active runtime with no managed ResourceLibrary", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/system/status", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as Record<string, unknown>;
+    body.resource_libraries = { total: 0, truncated: false, items: [] };
+    await route.fulfill({ response, body: JSON.stringify(body) });
+  });
+  await page.goto("/ui-v2/library/file-index");
+  await connectAs(page, VIEWER_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "No managed FileIndex scope" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Search and filters" }),
+  ).toHaveCount(0);
+});
+
+test("FileIndex resets an invalid submitted filter", async ({ page }) => {
+  await page.goto(
+    "/ui-v2/library/file-index?processingDisposition=unsupported",
+  );
+  await connectAs(page, VIEWER_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "Unsupported filter value" }),
+  ).toBeVisible();
+  await page
+    .getByRole("alert")
+    .getByRole("button", { name: "Reset filters" })
+    .click();
+  await expect(page).toHaveURL(/\/ui-v2\/library\/file-index$/);
+  await expect(page.getByText("Example.mkv", { exact: true })).toBeVisible();
+});
+
+test("FileIndex recovers from a malformed read with an explicit refresh", async ({
+  page,
+}) => {
+  let malformed = true;
+  await page.route("**/api/v1/file-index**", async (route) => {
+    if (malformed) {
+      malformed = false;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: "malformed", limit: 51 }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto("/ui-v2/library/file-index");
+  await connectAs(page, VIEWER_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "FileIndex unavailable" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.getByText("Example.mkv", { exact: true })).toBeVisible();
+});
+
+test("FileIndex recovers from an unavailable read without changing the query", async ({
+  page,
+}) => {
+  let unavailable = true;
+  await page.route("**/api/v1/file-index**", async (route) => {
+    if (unavailable) {
+      unavailable = false;
+      await route.abort("failed");
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto("/ui-v2/library/file-index");
+  await connectAs(page, VIEWER_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "FileIndex unavailable" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Retry read" }).click();
+  await expect(page.getByText("Example.mkv", { exact: true })).toBeVisible();
+});
+
+test("FileIndex remains usable at a narrow viewport with keyboard filter navigation", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/ui-v2/library/file-index");
+  await connectAs(page, VIEWER_TOKEN);
+  await expect(page.getByText("Example.mkv", { exact: true })).toBeVisible();
+
+  const query = page.getByLabel("Path or filename");
+  const resourceLibrary = page.getByRole("combobox", {
+    name: "ResourceLibrary",
+  });
+  const storage = page.getByRole("combobox", { name: "Storage" });
+  await query.focus();
+  await page.keyboard.press("Tab");
+  await expect(resourceLibrary).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(storage).toBeFocused();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
 });

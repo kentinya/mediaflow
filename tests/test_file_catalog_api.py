@@ -212,6 +212,7 @@ class FileCatalogApiTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual([item["fileId"] for item in document["items"]], ["one"])
+
                 cursor_after = f"after={quote_plus(NOW.isoformat())}&cursorFileId=one"
                 status, document = api_request(
                     api,
@@ -255,6 +256,82 @@ class FileCatalogApiTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual([item["fileId"] for item in document["items"]], ["one"])
+
+    def test_file_index_backward_cursor_is_adjacent_at_equal_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteFileIndexRepository(database) as file_index:
+                file_index.batch_upsert(
+                    tuple(
+                        file_record(
+                            f"file-{index}",
+                            "source-storage",
+                            "source",
+                            f"Movies/{index}.mkv",
+                            updated_at=NOW,
+                        )
+                        for index in range(1, 8)
+                    )
+                )
+            with SQLiteFileIndexRepository(database) as file_index:
+                catalog = FileCatalogService(
+                    file_index,
+                    ("source",),
+                    ("source-storage",),
+                )
+                api = MediaFlowApi(
+                    SQLiteTaskRepository(database),
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal(
+                            "viewer",
+                            "viewer-token",
+                            frozenset({ApiPermission.READ}),
+                        ),
+                    ),
+                    file_catalog=catalog,
+                )
+                cursor = quote_plus(NOW.isoformat())
+                status, document = api_request(
+                    api,
+                    "/api/v1/file-index",
+                    query="limit=2",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    [item["fileId"] for item in document["items"]],
+                    ["file-7", "file-6"],
+                )
+                status, document = api_request(
+                    api,
+                    "/api/v1/file-index",
+                    query=f"limit=2&after={cursor}&cursorFileId=file-6",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    [item["fileId"] for item in document["items"]],
+                    ["file-5", "file-4"],
+                )
+                status, document = api_request(
+                    api,
+                    "/api/v1/file-index",
+                    query=f"limit=2&after={cursor}&cursorFileId=file-4",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    [item["fileId"] for item in document["items"]],
+                    ["file-3", "file-2"],
+                )
+                status, document = api_request(
+                    api,
+                    "/api/v1/file-index",
+                    query=f"limit=3&before={cursor}&cursorFileId=file-3",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    [item["fileId"] for item in document["items"]],
+                    ["file-6", "file-5", "file-4"],
+                )
 
 
 if __name__ == "__main__":

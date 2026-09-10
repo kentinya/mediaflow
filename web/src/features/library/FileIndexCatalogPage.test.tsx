@@ -73,6 +73,7 @@ const CATALOG: FileIndexRead = {
     items: [RECORD, SECOND_RECORD],
     limit: 50,
     hasNext: true,
+    hasPrevious: false,
   },
 };
 
@@ -90,6 +91,7 @@ function viewProps(
     onDraftChange: vi.fn(),
     onSubmit: vi.fn((event) => event.preventDefault()),
     onReset: vi.fn(),
+    onResetPage: vi.fn(),
     onRetry: vi.fn(),
     onNavigate: vi.fn(),
     onRefresh: vi.fn(),
@@ -202,9 +204,49 @@ describe("FileIndexCatalogView", () => {
     });
   });
 
+  it("pages backward to adjacent records while preserving submitted filters", async () => {
+    const user = userEvent.setup();
+    const applied = {
+      ...emptyFileIndexSearch(),
+      processingDisposition: "organized",
+      before: "2026-08-22T12:02:00+00:00",
+      cursorFileId: "cursor",
+    };
+    const onNavigate = vi.fn();
+    renderWithProviders(
+      <FileIndexCatalogView
+        {...viewProps({
+          applied,
+          draft: applied,
+          onNavigate,
+          catalog: {
+            ok: true,
+            model: {
+              items: [SECOND_RECORD, RECORD],
+              limit: 50,
+              hasNext: true,
+              hasPrevious: true,
+            },
+          },
+        })}
+      />,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Previous page" }),
+    );
+    expect(onNavigate).toHaveBeenCalledWith({
+      ...applied,
+      after: null,
+      before: SECOND_RECORD.updatedAt,
+      cursorFileId: SECOND_RECORD.fileId,
+    });
+  });
+
   it("presents bounded failure recovery and keeps the read path explicit", async () => {
     const user = userEvent.setup();
     const onReset = vi.fn();
+    const onResetPage = vi.fn();
     const onBack = vi.fn();
     const onRetry = vi.fn();
     const failure: FileIndexRead = {
@@ -220,6 +262,7 @@ describe("FileIndexCatalogView", () => {
         {...viewProps({
           catalog: failure,
           onReset,
+          onResetPage,
           onBack,
           onRetry,
         })}
@@ -236,7 +279,8 @@ describe("FileIndexCatalogView", () => {
       screen.getByRole("button", { name: "Return to first page" }),
     );
     await user.click(screen.getByRole("button", { name: "Back to Library" }));
-    expect(onReset).toHaveBeenCalledTimes(1);
+    expect(onReset).not.toHaveBeenCalled();
+    expect(onResetPage).toHaveBeenCalledTimes(1);
     expect(onBack).toHaveBeenCalledTimes(1);
     expect(onRetry).not.toHaveBeenCalled();
   });
@@ -245,7 +289,7 @@ describe("FileIndexCatalogView", () => {
     const user = userEvent.setup();
     const emptyCatalog: FileIndexRead = {
       ok: true,
-      model: { items: [], limit: 50, hasNext: false },
+      model: { items: [], limit: 50, hasNext: false, hasPrevious: false },
     };
     const applied = {
       ...emptyFileIndexSearch(),
