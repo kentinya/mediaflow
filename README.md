@@ -83,13 +83,14 @@ Primary program: Operator Web Architecture & UX Modernization
 Package version on main: 2.0.0.dev0
 ```
 
-V2 is organized as independently reviewable large Slices. Slices 30 and 31 are `PASS / CLOSED` under
-their A-owned Contracts. Slice 30 delivered the `web/` frontend boundary, typed read-only Dashboard
+V2 is organized as independently reviewable large Slices. Slices 30, 31 and 32 are `PASS / CLOSED`
+under their A-owned Contracts. Slice 30 delivered the `web/` frontend boundary, typed read-only Dashboard
 proving route, Python `/ui-v2/` static coexistence and production Docker artifact. Slice 31 delivered
 the centralized product-area information architecture, responsive shell, safe memory-only deep-link
-continuation and actionable route/authentication recovery described below. No large Slice is
-currently active; A selects the next one in a later turn. The V1 API, execution, authentication and
-Storage authority are unchanged.
+continuation and actionable route/authentication recovery described below. Slice 32 delivered the
+read-only Library journey across bounded Active Storage browsing, FileIndex catalog/detail and safe
+physical/indexed context. No large Slice is currently active; A selects the next one in a later
+turn. The V1 API, execution, authentication and Storage authority are unchanged.
 
 ## V2 frontend (web/)
 
@@ -100,10 +101,17 @@ serves the deterministic built artifact at the `/ui-v2/` migration prefix, and n
 second HTTP service, SSR or CDN is involved in production.
 
 - **Entry and routes.** `/ui-v2/` is the V2 entry (documented migration prefix), and
-  `/ui-v2/dashboard` is the implemented read-only Overview/Dashboard route. One typed destination
-  model also owns truthful migration landings for Library, Operations, Review & Recovery and
-  Configuration. Unknown client routes retain shell context and recovery after Python serves the
-  V2 entry document. The V1 `/ui` remains available and unchanged during migration.
+  `/ui-v2/dashboard` is the implemented read-only Overview/Dashboard route. The same typed
+  destination model owns the implemented `/ui-v2/library`, `/ui-v2/library/files`,
+  `/ui-v2/library/file-index` and FileIndex detail routes, plus truthful migration landings for
+  Operations, Review & Recovery and Configuration. Unknown client routes retain shell context and
+  recovery after Python serves the V2 entry document. The V1 `/ui` remains available and unchanged
+  during migration.
+- **Library.** The Library landing separates a bounded live read of configured Active Storage from
+  durable FileIndex discovery records. It provides Storage-relative browsing and membership,
+  catalog search/filter/stable paging, bounded detail/history/evidence and uniquely confirmed
+  physical/indexed navigation. All requests use the central authenticated GET boundary; malformed,
+  unavailable, ambiguous, stale and permission states remain explicit and start no work.
 - **Authentication continuity.** Opening a supported `/ui-v2/` deep route without a token presents
   the existing memory-only connection boundary in shell context and continues to that exact
   allowlisted route after valid connection. Root entry remains deterministic and connects to
@@ -123,10 +131,11 @@ second HTTP service, SSR or CDN is involved in production.
   accesses repositories, Storage, Providers or execution services. If the artifact has not been
   built, `/ui-v2/*` fails closed with 404.
 - **Source ownership.** `web/src/app` (bootstrap/providers), `web/src/routes` (router),
-  `web/src/features` (entry, Dashboard and migration landings), `web/src/entities` (typed Dashboard
-  model and normalization), `web/src/shared/api` (central typed client, memory-only auth store and
-  intended-route continuation), `web/src/shared/auth` (route/connection boundary, auth-state
-  banners and the shared authorized-read lifecycle), `web/src/shared/navigation` (typed
+  `web/src/features` (entry, Dashboard, Library and migration landings), `web/src/entities` (typed
+  Dashboard/Library models and normalization), `web/src/shared/api` (central typed client,
+  memory-only auth store and intended-route continuation), `web/src/shared/auth` (route/connection
+  boundary, auth-state banners and the shared authorized-read lifecycle),
+  `web/src/shared/navigation` (typed
   destination model), and `web/src/shared/ui` (primitives and styles).
 
 Development and verification commands (run after the repository Setup):
