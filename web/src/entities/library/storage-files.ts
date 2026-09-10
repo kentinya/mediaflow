@@ -23,6 +23,7 @@ export const MAX_PATH_LENGTH = 4096;
 export const MAX_AUTHORITY_LENGTH = 64;
 export const MAX_TEXT_LENGTH = 1024;
 export const MAX_ENTRIES = 200;
+export const MAX_MEMBERSHIPS = 32;
 
 export type FileEntryType = "file" | "directory" | "symlink" | "unknown";
 
@@ -48,10 +49,17 @@ export interface StorageFilesEntry {
 export type FileIndexMembershipKind =
   "unavailable" | "indexed" | "not-indexed" | "truncated" | "ambiguous";
 
+export interface FileIndexMembershipRecord {
+  readonly fileId: string;
+  /** Older bounded Storage projections may omit the scope identity. */
+  readonly resourceLibraryId: string | null;
+}
+
 export interface FileIndexMembership {
   readonly kind: FileIndexMembershipKind;
   readonly libraryName: string | null;
   readonly total: number;
+  readonly memberships: readonly FileIndexMembershipRecord[];
 }
 
 export interface StorageFilesModel {
@@ -125,6 +133,32 @@ function normalizeBreadcrumbs(
   });
 }
 
+function normalizeMembershipRecord(
+  raw: unknown,
+  field: string,
+): FileIndexMembershipRecord {
+  const record = readRecord(raw, field);
+  const safeId = (value: unknown, name: string): string => {
+    const text = normalizeBoundedText(
+      value,
+      `${field}.${name}`,
+      MAX_TEXT_LENGTH,
+    );
+    if (text.includes("/") || text.includes("\\")) {
+      fail(`${field}.${name}`);
+    }
+    return text;
+  };
+  const rawResourceLibraryId = record.resourceLibraryId;
+  return {
+    fileId: safeId(record.fileId, "fileId"),
+    resourceLibraryId:
+      rawResourceLibraryId === null || rawResourceLibraryId === undefined
+        ? null
+        : safeId(rawResourceLibraryId, "resourceLibraryId"),
+  };
+}
+
 function normalizeMembership(raw: unknown): FileIndexMembership {
   const record = readRecord(raw, "entry.indexMembership");
   if (typeof record.available !== "boolean") {
@@ -139,20 +173,45 @@ function normalizeMembership(raw: unknown): FileIndexMembership {
   );
   const truncated =
     typeof record.truncated === "boolean" ? record.truncated : false;
+  let memberships: readonly FileIndexMembershipRecord[] = [];
+  if (record.memberships !== null && record.memberships !== undefined) {
+    if (!Array.isArray(record.memberships)) {
+      fail("entry.indexMembership.memberships");
+    }
+    if (record.memberships.length > MAX_MEMBERSHIPS) {
+      fail("entry.indexMembership.memberships");
+    }
+    memberships = record.memberships.map((entry, index) =>
+      normalizeMembershipRecord(
+        entry,
+        `entry.indexMembership.memberships[${index}]`,
+      ),
+    );
+  }
   if (record.available === false) {
-    return { kind: "unavailable", libraryName: null, total: 0 };
+    return {
+      kind: "unavailable",
+      libraryName: null,
+      total: 0,
+      memberships: [],
+    };
   }
   if (truncated) {
-    return { kind: "truncated", libraryName: null, total };
+    return { kind: "truncated", libraryName: null, total, memberships: [] };
   }
   if (record.indexed === true && total > 1) {
-    return { kind: "ambiguous", libraryName: null, total };
+    return { kind: "ambiguous", libraryName: null, total, memberships: [] };
   }
   if (record.indexed === true) {
     const libraryName = readOptionalText(record, "libraryName");
-    return { kind: "indexed", libraryName, total };
+    return {
+      kind: "indexed",
+      libraryName,
+      total,
+      memberships: total === 1 && memberships.length === 1 ? memberships : [],
+    };
   }
-  return { kind: "not-indexed", libraryName: null, total };
+  return { kind: "not-indexed", libraryName: null, total, memberships: [] };
 }
 
 function normalizeEntryType(value: unknown): FileEntryType {

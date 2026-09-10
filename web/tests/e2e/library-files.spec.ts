@@ -97,7 +97,16 @@ test("Storage selection, root browse, directory, breadcrumb, refresh and page st
     page.getByRole("heading", { name: "Local media" }),
   ).toBeVisible();
   await expect(page.getByText("show.mkv")).toBeVisible();
-  await expect(page.getByText("Indexed", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Check indexed link" }).first(),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Check indexed link" })
+    .first()
+    .click();
+  await expect(
+    page.getByRole("link", { name: "Open indexed record" }),
+  ).toBeVisible();
   await expect(
     page.getByText("Not indexed", { exact: true }).first(),
   ).toBeVisible();

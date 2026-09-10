@@ -1311,6 +1311,7 @@ class FileMediaDetailTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertFalse(document["available"])
+                self.assertEqual(document["reason"], "ambiguous")
                 self.assertIn("ambiguous", document["unavailableReason"])
                 status, document = api_request(
                     api,
@@ -1319,6 +1320,7 @@ class FileMediaDetailTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertTrue(document["available"])
+                self.assertEqual(document["reason"], None)
                 self.assertEqual(document["fileId"], "one")
                 status, document = api_request(
                     api,
@@ -1327,6 +1329,7 @@ class FileMediaDetailTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertFalse(document["available"])
+                self.assertEqual(document["reason"], "missing")
                 self.assertIn("no current indexed", document["unavailableReason"])
 
     def test_review_queues_expose_source_links_for_all_blocker_families(self) -> None:

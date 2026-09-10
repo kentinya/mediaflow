@@ -57,7 +57,7 @@ export function AppShell({ children }: AppShellProps) {
         {destinations.map((item) => (
           <Link
             key={item.id}
-            to={item.path}
+            to={item.path as string}
             activeOptions={{ exact: item.path !== "/library" }}
             activeProps={{ "aria-current": "page" }}
             className="mf-nav-link"

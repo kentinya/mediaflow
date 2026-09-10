@@ -24,6 +24,7 @@ export interface FileIndexCatalogSearchState {
 }
 
 const PAGE_LIMIT = 50;
+const MAX_ROUTE_VALUE_LENGTH = 512;
 
 const SEARCH_KEYS = [
   "resourceLibrary",
@@ -41,6 +42,19 @@ const SEARCH_KEYS = [
   "cursorFileId",
   "before",
 ] as const;
+
+function safeRouteValue(value: string | null): string | null {
+  if (
+    value === null ||
+    value === "" ||
+    value.length > MAX_ROUTE_VALUE_LENGTH ||
+    // eslint-disable-next-line no-control-regex
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    return null;
+  }
+  return value;
+}
 
 export function fileIndexQueryOptions(
   token: string | null,
@@ -75,7 +89,7 @@ export function fileIndexQueryOptions(
 export function parseFileIndexSearch(
   search: URLSearchParams,
 ): FileIndexCatalogSearchState {
-  const get = (key: string) => search.get(key);
+  const get = (key: string) => safeRouteValue(search.get(key));
   return {
     resourceLibrary: get("resourceLibrary"),
     storage: get("storage"),
@@ -100,12 +114,47 @@ export function serializeFileIndexSearch(
 ): string {
   const params = new URLSearchParams();
   for (const key of SEARCH_KEYS) {
-    const value = search[key];
-    if (value !== null && value !== "") {
+    const value = safeRouteValue(search[key]);
+    if (value !== null) {
       params.set(key, value);
     }
   }
   return params.toString();
+}
+
+/**
+ * Serialize the submitted catalog view state as bounded `q_`-prefixed return
+ * context for the FileIndex detail route. Only backend-supported catalog
+ * query names travel; no credentials or mutation authority are ever included.
+ */
+export function serializeCatalogReturnContext(
+  search: FileIndexCatalogSearchState,
+): string {
+  const params = new URLSearchParams();
+  for (const key of SEARCH_KEYS) {
+    const value = safeRouteValue(search[key]);
+    if (value !== null) {
+      params.set(`q_${key}`, value);
+    }
+  }
+  return params.toString();
+}
+
+/** Reconstruct the submitted catalog query from detail-route return context. */
+export function parseCatalogReturnContext(
+  params: URLSearchParams,
+): FileIndexCatalogSearchState {
+  const state = emptyFileIndexSearch();
+  for (const key of SEARCH_KEYS) {
+    const value = params.get(`q_${key}`);
+    if (value !== null) {
+      const safe = safeRouteValue(value);
+      if (safe !== null) {
+        (state as unknown as Record<string, string | null>)[key] = safe;
+      }
+    }
+  }
+  return state;
 }
 
 export function emptyFileIndexSearch(): FileIndexCatalogSearchState {

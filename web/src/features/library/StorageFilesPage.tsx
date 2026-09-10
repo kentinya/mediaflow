@@ -1,3 +1,4 @@
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -13,6 +14,28 @@ import type {
 import { systemStatusQueryOptions } from "./system-status-query";
 import { storageFilesQueryOptions } from "./storage-files-query";
 import type { StorageFilesRead } from "../../shared/api/api-client";
+import type { FileBySourceRead } from "../../shared/api/api-client";
+import { fileBySourceQueryOptions } from "./file-detail-query";
+
+interface SourceResolutionTarget {
+  readonly storageId: string;
+  readonly path: string;
+  readonly resourceLibrary: string | null;
+  readonly contextKey: string;
+}
+
+function sameSourceTarget(
+  left: SourceResolutionTarget | null,
+  right: SourceResolutionTarget,
+): boolean {
+  return (
+    left !== null &&
+    left.storageId === right.storageId &&
+    left.path === right.path &&
+    left.resourceLibrary === right.resourceLibrary &&
+    left.contextKey === right.contextKey
+  );
+}
 
 function membershipLabel(membership: FileIndexMembership): string {
   switch (membership.kind) {
@@ -64,6 +87,116 @@ function failureDetail(kind: string, path: string): string {
   }
 }
 
+function IndexedFileEntry({
+  storageId,
+  path,
+  membership,
+  contextKey,
+  sourceTarget,
+  sourceRead,
+  onResolve,
+}: {
+  readonly storageId: string;
+  readonly path: string;
+  readonly membership: FileIndexMembership;
+  readonly contextKey: string;
+  readonly sourceTarget: SourceResolutionTarget | null;
+  readonly sourceRead: FileBySourceRead | undefined;
+  readonly onResolve: (target: SourceResolutionTarget) => void;
+}) {
+  const membershipRecord = membership.memberships[0];
+  const target: SourceResolutionTarget = {
+    storageId,
+    path,
+    resourceLibrary: membershipRecord?.resourceLibraryId ?? null,
+    contextKey,
+  };
+  if (!sameSourceTarget(sourceTarget, target)) {
+    return (
+      <button
+        type="button"
+        className="mf-link-button"
+        onClick={() => onResolve(target)}
+      >
+        Check indexed link
+      </button>
+    );
+  }
+  if (sourceRead === undefined) {
+    return <span className="mf-file-membership">Checking indexed link…</span>;
+  }
+  if (!sourceRead.ok) {
+    return <span className="mf-file-membership">Indexed link unavailable</span>;
+  }
+  const model = sourceRead.model;
+  if (!model.available || model.fileId === null) {
+    const reason =
+      model.reason === "ambiguous"
+        ? "Multiple FileIndex matches"
+        : model.reason === "missing"
+          ? "Not indexed"
+          : "Indexed link unavailable";
+    return <span className="mf-file-membership">{reason}</span>;
+  }
+  return (
+    <Link
+      className="mf-link-button"
+      to="/library/file-index/$fileId"
+      params={{ fileId: model.fileId }}
+      search={{
+        q_resourceLibrary:
+          model.resourceLibraryId ?? target.resourceLibrary ?? undefined,
+      }}
+    >
+      Open indexed record
+    </Link>
+  );
+}
+
+function SourceResolutionNotice({
+  target,
+  data,
+  pending,
+}: {
+  readonly target: SourceResolutionTarget;
+  readonly data: FileBySourceRead | undefined;
+  readonly pending: boolean;
+}) {
+  if (pending || data === undefined) {
+    return (
+      <p className="mf-dashboard-meta" role="status">
+        Checking the authoritative FileIndex link for this Storage-relative
+        source ({target.path})…
+      </p>
+    );
+  }
+  if (!data.ok) {
+    return (
+      <p className="mf-dashboard-meta" role="status">
+        The indexed link could not be checked. No destination was selected;
+        retry this read if the Active runtime is available.
+      </p>
+    );
+  }
+  if (data.model.available && data.model.fileId !== null) {
+    return (
+      <p className="mf-dashboard-meta" role="status">
+        A unique current FileIndex record was confirmed for this source. Open
+        the explicit link in the row below.
+      </p>
+    );
+  }
+  return (
+    <p className="mf-dashboard-meta" role="status">
+      {data.model.reason === "ambiguous"
+        ? "The source has multiple FileIndex matches. Scope the read by ResourceLibrary before opening a record."
+        : data.model.reason === "missing"
+          ? "No current FileIndex record matches this source; the physical file remains available in this read-only view."
+          : "The source-link response did not establish a unique current FileIndex record; no destination was selected."}
+    </p>
+  );
+}
+
 function FileBrowseView({
   model,
   storage,
@@ -72,6 +205,11 @@ function FileBrowseView({
   onOpenPath,
   onNextPage,
   onReturnRoot,
+  sourceTarget,
+  contextKey,
+  sourceRead,
+  sourceResolution,
+  onResolveSource,
 }: {
   readonly model: StorageFilesModel;
   readonly storage: SystemStorage | null;
@@ -80,6 +218,11 @@ function FileBrowseView({
   readonly onOpenPath: (path: string) => void;
   readonly onNextPage: (cursor: string) => void;
   readonly onReturnRoot: () => void;
+  readonly sourceTarget: SourceResolutionTarget | null;
+  readonly contextKey: string;
+  readonly sourceRead: FileBySourceRead | undefined;
+  readonly sourceResolution: ReactNode;
+  readonly onResolveSource: (target: SourceResolutionTarget) => void;
 }) {
   return (
     <section className="mf-files">
@@ -104,6 +247,7 @@ function FileBrowseView({
         This read is bounded and read-only: {model.sideEffects} side effects,
         retry safe: {model.retrySafe ? "yes" : "no"}.
       </p>
+      {sourceResolution}
       <nav aria-label="Storage breadcrumb" className="mf-breadcrumbs">
         {model.breadcrumbs.map((crumb) =>
           crumb.isRoot ? (
@@ -159,7 +303,26 @@ function FileBrowseView({
                 {entry.modifiedAt}
               </span>
               <span className="mf-file-membership">
-                {membershipLabel(entry.membership)}
+                {entry.membership.kind === "indexed" &&
+                entry.membership.memberships.length === 1 ? (
+                  <IndexedFileEntry
+                    storageId={model.storageId}
+                    path={entry.path}
+                    membership={entry.membership}
+                    contextKey={contextKey}
+                    sourceTarget={sourceTarget}
+                    sourceRead={
+                      sourceTarget !== null &&
+                      sourceTarget.storageId === model.storageId &&
+                      sourceTarget.path === entry.path
+                        ? sourceRead
+                        : undefined
+                    }
+                    onResolve={onResolveSource}
+                  />
+                ) : (
+                  membershipLabel(entry.membership)
+                )}
               </span>
             </li>
           ))}
@@ -240,6 +403,11 @@ export interface StorageFilesViewProps {
   readonly onReturnRoot: () => void;
   readonly onBack: () => void;
   readonly onRefreshRuntime: () => void;
+  readonly sourceTarget: SourceResolutionTarget | null;
+  readonly contextKey: string;
+  readonly sourceRead: FileBySourceRead | undefined;
+  readonly sourceResolution: ReactNode;
+  readonly onResolveSource: (target: SourceResolutionTarget) => void;
 }
 
 export function StorageFilesView({
@@ -256,6 +424,11 @@ export function StorageFilesView({
   onReturnRoot,
   onBack,
   onRefreshRuntime,
+  sourceTarget,
+  contextKey,
+  sourceRead,
+  sourceResolution,
+  onResolveSource,
 }: StorageFilesViewProps) {
   if (status === null || !status.configurationActive) {
     return (
@@ -496,6 +669,11 @@ export function StorageFilesView({
       onOpenPath={onOpenPath}
       onNextPage={onNextPage}
       onReturnRoot={onReturnRoot}
+      sourceTarget={sourceTarget}
+      contextKey={contextKey}
+      sourceRead={sourceRead}
+      sourceResolution={sourceResolution}
+      onResolveSource={onResolveSource}
     />
   );
 }
@@ -506,13 +684,21 @@ export function StorageFilesPage() {
   const location = routerState.location;
   const query = new URLSearchParams(location.searchStr ?? "");
   const storageId = query.get("storage");
+  const resourceLibrary = query.get("resourceLibrary");
   const rawPath = query.get("path");
   const rawCursor = query.get("cursor");
   const path = rawPath ?? "";
   const cursor = rawCursor ?? null;
+  const contextKey = `${storageId ?? ""}|${path}|${cursor ?? ""}`;
 
   const token = useAuthToken();
   const system = useQuery(systemStatusQueryOptions(token));
+  const [sourceTarget, setSourceTarget] =
+    useState<SourceResolutionTarget | null>(null);
+  const activeSourceTarget =
+    sourceTarget !== null && sourceTarget.contextKey === contextKey
+      ? sourceTarget
+      : null;
 
   const files = useQuery(
     storageFilesQueryOptions(
@@ -521,9 +707,17 @@ export function StorageFilesPage() {
         storageId: storageId ?? "",
         path,
         cursor,
-        resourceLibrary: null,
+        resourceLibrary,
       },
       system.data !== undefined,
+    ),
+  );
+
+  const source = useQuery(
+    fileBySourceQueryOptions(
+      token,
+      activeSourceTarget ?? { storageId: "", path: "", resourceLibrary: null },
+      activeSourceTarget !== null,
     ),
   );
 
@@ -533,17 +727,26 @@ export function StorageFilesPage() {
   };
   const openPath = (nextPath: string) => {
     const queryString = new URLSearchParams({ storage: storageId as string });
+    if (resourceLibrary !== null) {
+      queryString.set("resourceLibrary", resourceLibrary);
+    }
     if (nextPath !== "") queryString.set("path", nextPath);
     void navigate({ to: `/library/files?${queryString.toString()}` });
   };
   const nextPage = (nextCursor: string) => {
     const queryString = new URLSearchParams({ storage: storageId as string });
+    if (resourceLibrary !== null) {
+      queryString.set("resourceLibrary", resourceLibrary);
+    }
     if (path !== "") queryString.set("path", path);
     queryString.set("cursor", nextCursor);
     void navigate({ to: `/library/files?${queryString.toString()}` });
   };
   const returnRoot = () => {
     const queryString = new URLSearchParams({ storage: storageId as string });
+    if (resourceLibrary !== null) {
+      queryString.set("resourceLibrary", resourceLibrary);
+    }
     void navigate({ to: `/library/files?${queryString.toString()}` });
   };
   const backToSelection = () => {
@@ -581,26 +784,48 @@ export function StorageFilesPage() {
               isPending: filePending,
               isFetching: fileFetching,
               refresh: refreshFiles,
-            }) => (
-              <StorageFilesView
-                status={statusData}
-                storageId={storageId}
-                path={path}
-                fileResult={fileResult}
-                filePending={filePending}
-                fileFetching={fileFetching}
-                refreshFiles={refreshFiles}
-                onOpenStorage={selectStorage}
-                onOpenPath={openPath}
-                onNextPage={nextPage}
-                onReturnRoot={returnRoot}
-                onBack={backToSelection}
-                onRefreshRuntime={() => {
-                  refreshStatus();
-                  refreshFiles();
-                }}
-              />
-            )}
+            }) => {
+              const sourceResolution =
+                activeSourceTarget === null ? null : (
+                  <AuthorizedReadBoundary
+                    query={source}
+                    unavailableTitle="Indexed link unavailable"
+                  >
+                    {({ data, isPending }) => (
+                      <SourceResolutionNotice
+                        target={activeSourceTarget}
+                        data={data}
+                        pending={isPending}
+                      />
+                    )}
+                  </AuthorizedReadBoundary>
+                );
+              return (
+                <StorageFilesView
+                  status={statusData}
+                  storageId={storageId}
+                  path={path}
+                  fileResult={fileResult}
+                  filePending={filePending}
+                  fileFetching={fileFetching}
+                  refreshFiles={refreshFiles}
+                  onOpenStorage={selectStorage}
+                  onOpenPath={openPath}
+                  onNextPage={nextPage}
+                  onReturnRoot={returnRoot}
+                  onBack={backToSelection}
+                  onRefreshRuntime={() => {
+                    refreshStatus();
+                    refreshFiles();
+                  }}
+                  sourceTarget={activeSourceTarget}
+                  contextKey={contextKey}
+                  sourceRead={source.data}
+                  sourceResolution={sourceResolution}
+                  onResolveSource={setSourceTarget}
+                />
+              );
+            }}
           </AuthorizedReadBoundary>
         );
       }}
