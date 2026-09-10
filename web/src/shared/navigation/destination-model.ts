@@ -195,6 +195,11 @@ export function isDestinationPath(value: string): value is DestinationPath {
   );
 }
 
+/** A backend-submitted Operations status filter is a bounded lowercase token. */
+const STATUS_FILTER_TOKEN = /^[a-z][a-z0-9_]{0,31}$/;
+/** A backend-submitted Operations command filter is a bounded work-kind token. */
+const COMMAND_FILTER_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+
 /**
  * Return only the first safe values of allowlisted query keys for the
  * given destination. Arbitrary or credential-like keys are dropped so a
@@ -215,6 +220,21 @@ export function allowlistedDestinationSearch(
       // eslint-disable-next-line no-control-regex
       !/[\u0000-\u001f\u007f]/.test(value)
     ) {
+      target.set(key, value);
+    }
+  };
+  /**
+   * A value must satisfy one closed shape to enter an Operations URL: a filter
+   * value that does not match the backend's bounded token grammar (including
+   * anything credential-like, path-like or free-form) is dropped instead.
+   */
+  const setFilterToken = (
+    target: URLSearchParams,
+    key: string,
+    value: string | null,
+    pattern: RegExp,
+  ) => {
+    if (value !== null && pattern.test(value)) {
       target.set(key, value);
     }
   };
@@ -287,6 +307,47 @@ export function allowlistedDestinationSearch(
         setSafe(allowed, key, value);
       }
     }
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
+  if (path === "/operations/tasks" || path === "/operations/jobs") {
+    // Only the backend-submitted filter values travel in the URL, so a
+    // reconnect resumes the same bounded collection read and never replays
+    // credential-like, authority-bearing or arbitrary state.
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    setFilterToken(
+      allowed,
+      "status",
+      current.get("status"),
+      STATUS_FILTER_TOKEN,
+    );
+    setFilterToken(
+      allowed,
+      "command",
+      current.get("command"),
+      COMMAND_FILTER_TOKEN,
+    );
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
+  if (
+    path === "/operations/tasks/$taskId" ||
+    path === "/operations/jobs/$jobId"
+  ) {
+    // A detail route carries only its bounded parent-list filter context back.
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    setFilterToken(
+      allowed,
+      "q_status",
+      current.get("q_status"),
+      STATUS_FILTER_TOKEN,
+    );
+    setFilterToken(
+      allowed,
+      "q_command",
+      current.get("q_command"),
+      COMMAND_FILTER_TOKEN,
+    );
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   return null;

@@ -45,3 +45,74 @@ export function readRecord(
   }
   return value as Record<string, unknown>;
 }
+
+/**
+ * A required boolean. `Boolean(value)`-style coercion is deliberately absent:
+ * an omitted, null or string-typed flag is malformed data, not `false`.
+ */
+export function normalizeBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    fail(field);
+  }
+  return value;
+}
+
+/** An optional bounded string; an empty string is a valid absent value. */
+export function normalizeOptionalText(
+  value: unknown,
+  field: string,
+  maxLength: number = MAX_TEXT_LENGTH,
+): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string" || value.length > maxLength) {
+    fail(field);
+  }
+  const trimmed = value.trimEnd();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
+/**
+ * A member of a closed set. Arbitrary server strings are rejected rather than
+ * cast, so an unknown status, command or condition can never travel through the
+ * frontend as if it were modelled.
+ */
+export function normalizeEnum<T extends string>(
+  value: unknown,
+  field: string,
+  allowed: readonly T[],
+): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    fail(field);
+  }
+  return value as T;
+}
+
+/** A bounded list of closed-set string members. */
+export function normalizeEnumArray<T extends string>(
+  value: unknown,
+  field: string,
+  allowed: readonly T[],
+): readonly T[] {
+  if (!Array.isArray(value)) {
+    fail(field);
+  }
+  return value.map((item, index) =>
+    normalizeEnum(item, `${field}[${index}]`, allowed),
+  );
+}
+
+/** A bounded list of non-empty strings. */
+export function normalizeTextArray(
+  value: unknown,
+  field: string,
+  maxItems = 64,
+): readonly string[] {
+  if (!Array.isArray(value) || value.length > maxItems) {
+    fail(field);
+  }
+  return value.map((item, index) =>
+    normalizeBoundedText(item, `${field}[${index}]`),
+  );
+}

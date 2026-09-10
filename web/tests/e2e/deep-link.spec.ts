@@ -143,18 +143,19 @@ test("an explicit route choice at the boundary replaces an earlier intention", a
   await page.goto("/ui-v2/library");
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
 
-  // Before connecting, the operator explicitly chooses Operations from the
-  // shell navigation. The boundary must update continuation to the newest
-  // supported route instead of keeping the stale /library intention.
-  await page.getByRole("link", { name: "Operations Migration" }).click();
+  // Before connecting, the operator explicitly chooses Review & Recovery (a
+  // route still owned by a later Slice) from the shell navigation. The
+  // boundary must update continuation to the newest supported route instead of
+  // keeping the stale /library intention.
+  await page.getByRole("link", { name: "Review & Recovery" }).click();
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
 
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/ui-v2\/review$/);
   await expect(
     page.getByRole("heading", {
-      name: "Operations is not available in V2 yet",
+      name: "Review & Recovery is not available in V2 yet",
     }),
   ).toBeVisible();
 });
@@ -408,11 +409,12 @@ test("V1 handoff does not leak the token into URL or persistent stores", async (
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 
-  // Navigate (client-side) to a migration route as a connected operator.
-  await page.getByRole("link", { name: "Operations Migration" }).click();
+  // Navigate (client-side) to a route still owned by a later Slice as a
+  // connected operator.
+  await page.getByRole("link", { name: "Configuration" }).click();
   await expect(
     page.getByRole("heading", {
-      name: "Operations is not available in V2 yet",
+      name: "Configuration is not available in V2 yet",
     }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Open current Web UI" }).click();

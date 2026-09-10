@@ -151,5 +151,56 @@ describe("destination model", () => {
         ),
       ).toBeNull();
     });
+
+    it("keeps only the submitted Operations collection filters", () => {
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/tasks",
+          "status=failed&command=preview&token=secret&cursor=abc",
+        ),
+      ).toBe("status=failed&command=preview");
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/jobs",
+          "authorization=Bearer%20x&status=pending",
+        ),
+      ).toBe("status=pending");
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/tasks",
+          "token=secret&unknown=x",
+        ),
+      ).toBeNull();
+    });
+
+    it("keeps only the bounded parent-list context on an Operations detail route", () => {
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/tasks/$taskId",
+          "q_status=failed&q_command=preview&status=failed&token=secret",
+        ),
+      ).toBe("q_status=failed&q_command=preview");
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/jobs/$jobId",
+          "q_status=pending&token=secret",
+        ),
+      ).toBe("q_status=pending");
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/jobs/$jobId",
+          "token=secret&status=pending",
+        ),
+      ).toBeNull();
+    });
+
+    it("drops credential-like values from an Operations collection link", () => {
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/tasks",
+          "status=Bearer%20abc&command=preview",
+        ),
+      ).toBe("command=preview");
+    });
   });
 });

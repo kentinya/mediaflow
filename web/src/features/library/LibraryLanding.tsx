@@ -3,6 +3,10 @@ import { Link } from "@tanstack/react-router";
 /**
  * Library landing for the two deliberately separate read journeys. Neither
  * choice starts work, reads media content or mutates Storage.
+ *
+ * A bounded Operations cross-link is offered so an operator in the daily
+ * operations flow can reach the Task/Job workspace without copying an
+ * identifier, a path or an authority value into a URL.
  */
 export function LibraryLanding() {
   return (
@@ -42,6 +46,25 @@ export function LibraryLanding() {
           </Link>
         </li>
       </ul>
+      <section className="mf-count-section">
+        <h3>Operations</h3>
+        <p>
+          Library discovery and processing state is produced by Operations
+          Tasks. Follow the exact Task or Job behind a FileIndex record in the
+          Operations workspace; this page reads state only and starts no work.
+        </p>
+        <div className="mf-actions">
+          <Link
+            className="mf-button mf-button-secondary"
+            to="/operations/tasks"
+          >
+            Open Operations Tasks
+          </Link>
+          <Link className="mf-button mf-button-secondary" to="/operations/jobs">
+            Open Operations Jobs
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }

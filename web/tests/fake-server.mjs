@@ -21,6 +21,62 @@ const DIST = fileURLToPath(new URL("../dist", import.meta.url));
 const VIEWER_TOKENS = new Set(["e2e-viewer-token"]);
 const LIMITED_TOKENS = new Set(["e2e-limited-token"]);
 const EXPIRED_TOKENS = new Set(["e2e-expired-token"]);
+// Read-only principals hold `read` but not `cancel_job`, so their Operations
+// projections must advertise no actionable control.
+const READ_ONLY_TOKENS = new Set(["e2e-readonly-token"]);
+const OPERATOR_TOKENS = new Set([...VIEWER_TOKENS]);
+// Principals that may read every surface but hold no lifecycle permission.
+const READABLE_TOKENS = new Set([...VIEWER_TOKENS, ...READ_ONLY_TOKENS]);
+const KNOWN_TOKENS = new Set([
+  ...VIEWER_TOKENS,
+  ...LIMITED_TOKENS,
+  ...EXPIRED_TOKENS,
+  ...READ_ONLY_TOKENS,
+]);
+
+const KNOWN_TASK_STATUSES = new Set([
+  "pending",
+  "running",
+  "completed",
+  "partial_success",
+  "failed",
+  "cancelled",
+  "paused",
+]);
+const TERMINAL_TASK_STATUSES = new Set([
+  "completed",
+  "partial_success",
+  "failed",
+  "cancelled",
+]);
+const CANCELLABLE_TASK_STATUSES = new Set(["pending", "running", "paused"]);
+const KNOWN_JOB_STATUSES = new Set([
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const KNOWN_JOB_COMMANDS = new Set([
+  "scan",
+  "preview",
+  "organize",
+  "file-metadata-correction",
+  "recovery-continuation",
+]);
+const SAFE_COMMAND_FILTER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+
+// Safe test-observable metadata only: method, normalized object identity,
+// action and whether the submitted version matched. No Bearer value, body
+// payload or authority material is ever recorded.
+const RECORDED_MUTATIONS = [];
+
+function bumpTimestamp(value) {
+  const parsed = Date.parse(value);
+  const base = Number.isNaN(parsed) ? Date.now() : parsed;
+  return new Date(base + 60_000).toISOString();
+}
 
 const DASHBOARD_SNAPSHOT = {
   as_of: "2026-08-22T12:00:00+00:00",
@@ -52,10 +108,24 @@ const DASHBOARD_SNAPSHOT = {
   recent_failures: [
     {
       kind: "job",
-      identifier: "job-e2e-1",
+      identifier: "job-005",
       status: "failed",
       occurred_at: "2026-08-22T11:58:00+00:00",
       category: "processing_error",
+    },
+    {
+      kind: "task",
+      identifier: "task-004",
+      status: "failed",
+      occurred_at: "2026-08-22T11:57:00+00:00",
+      category: "task_failed",
+    },
+    {
+      kind: "notification",
+      identifier: "delivery-e2e-1",
+      status: "dead-letter",
+      occurred_at: "2026-08-22T11:56:00+00:00",
+      category: "delivery_failed",
     },
   ],
 };
@@ -211,6 +281,50 @@ const FAKE_TASKS = [
     completed_items: 0,
     failed_items: 3,
     error: "storage unavailable",
+    failureExplanation: {
+      category: "storage",
+      message: "the source Storage became unavailable",
+      durableState: "the source Storage became unavailable",
+      sideEffects: "none",
+      retrySafe: true,
+      nextAction: "restore the source Storage, then re-run the Scan",
+    },
+    pause_requested: false,
+    configuration_snapshot_id: "snap-1",
+    configuration_snapshot_digest: "digest-1",
+  },
+  {
+    task_id: "task-005",
+    command: "retry-failed:task-004",
+    status: "running",
+    execute_authorized: false,
+    created_at: "2026-08-22T12:20:00+00:00",
+    updated_at: "2026-08-22T12:21:00+00:00",
+    started_at: "2026-08-22T12:20:01+00:00",
+    completed_at: null,
+    total_items: 2,
+    completed_items: 0,
+    failed_items: 0,
+    error: null,
+    failureExplanation: null,
+    pause_requested: true,
+    configuration_snapshot_id: "snap-1",
+    configuration_snapshot_digest: "digest-1",
+  },
+  {
+    task_id: "task-006",
+    command: "organize",
+    status: "paused",
+    execute_authorized: true,
+    created_at: "2026-08-22T12:25:00+00:00",
+    updated_at: "2026-08-22T12:30:00+00:00",
+    started_at: "2026-08-22T12:25:01+00:00",
+    completed_at: null,
+    total_items: 4,
+    completed_items: 2,
+    failed_items: 0,
+    error: null,
+    failureExplanation: null,
     pause_requested: false,
     configuration_snapshot_id: "snap-1",
     configuration_snapshot_digest: "digest-1",
@@ -227,13 +341,16 @@ const FAKE_JOBS = [
     started_at: "2026-08-22T12:00:01+00:00",
     completed_at: "2026-08-22T12:06:00+00:00",
     task_id: "task-001",
-    worker_id: null,
+    cancellation_requested: false,
+    execute_authorized: false,
     error: null,
     failure_category: null,
     failureExplanation: null,
     definition_id: null,
-    definition_name: null,
     schedule_id: null,
+    run_mode: null,
+    configuration_snapshot_id: "snap-1",
+    configuration_snapshot_digest: "digest-1",
   },
   {
     job_id: "job-002",
@@ -243,14 +360,17 @@ const FAKE_JOBS = [
     updated_at: "2026-08-22T12:15:00+00:00",
     started_at: null,
     completed_at: null,
-    task_id: "task-003",
-    worker_id: null,
+    task_id: null,
+    cancellation_requested: false,
+    execute_authorized: false,
     error: null,
     failure_category: null,
     failureExplanation: null,
     definition_id: null,
-    definition_name: null,
     schedule_id: null,
+    run_mode: null,
+    configuration_snapshot_id: "snap-1",
+    configuration_snapshot_digest: "digest-1",
     operationalCondition: {
       condition: "no_worker",
       stage: "pending",
@@ -259,6 +379,90 @@ const FAKE_JOBS = [
       retrySafe: true,
       nextAction: "start a processing worker",
     },
+  },
+  {
+    job_id: "job-003",
+    command: "preview",
+    status: "running",
+    created_at: "2026-08-22T12:16:00+00:00",
+    updated_at: "2026-08-22T12:18:00+00:00",
+    started_at: "2026-08-22T12:16:05+00:00",
+    completed_at: null,
+    task_id: "task-005",
+    cancellation_requested: false,
+    execute_authorized: false,
+    error: null,
+    failure_category: null,
+    failureExplanation: null,
+    definition_id: null,
+    schedule_id: null,
+    run_mode: null,
+    configuration_snapshot_id: "snap-1",
+    configuration_snapshot_digest: "digest-1",
+    worker_id: "worker-e2e-1",
+    workerId: "worker-e2e-1",
+    ownerStatus: "live",
+    ownerLastHeartbeatAt: "2026-08-22T12:18:00+00:00",
+  },
+  {
+    job_id: "job-004",
+    command: "organize",
+    status: "running",
+    created_at: "2026-08-22T12:19:00+00:00",
+    updated_at: "2026-08-22T12:19:30+00:00",
+    started_at: "2026-08-22T12:19:05+00:00",
+    completed_at: null,
+    task_id: "task-006",
+    cancellation_requested: false,
+    execute_authorized: true,
+    error: null,
+    failure_category: null,
+    failureExplanation: null,
+    definition_id: null,
+    schedule_id: null,
+    run_mode: null,
+    configuration_snapshot_id: "snap-1",
+    configuration_snapshot_digest: "digest-1",
+    worker_id: "worker-e2e-stale",
+    workerId: "worker-e2e-stale",
+    ownerStatus: "stale",
+    ownerLastHeartbeatAt: "2026-08-22T11:00:00+00:00",
+    operationalCondition: {
+      condition: "stale_worker",
+      stage: "running",
+      durableState: "the owning processing worker has a stale heartbeat",
+      sideEffects: "none",
+      retrySafe: true,
+      nextAction:
+        "restart the resident worker, then inspect or explicitly requeue the stale Job",
+    },
+  },
+  {
+    job_id: "job-005",
+    command: "preview",
+    status: "failed",
+    created_at: "2026-08-22T12:22:00+00:00",
+    updated_at: "2026-08-22T12:24:00+00:00",
+    started_at: "2026-08-22T12:22:05+00:00",
+    completed_at: "2026-08-22T12:24:00+00:00",
+    task_id: "task-004",
+    cancellation_requested: false,
+    execute_authorized: false,
+    error: "queued workflow returned a failure status",
+    failure_category: "processing_error",
+    failureExplanation: {
+      category: "processing_error",
+      message: "the queued workflow failed before completing",
+      durableState: "the queued workflow failed before completing",
+      sideEffects: "none",
+      retrySafe: false,
+      nextAction: "inspect the linked Task results before re-running anything",
+    },
+    definition_id: null,
+    schedule_id: null,
+    run_mode: null,
+    configuration_snapshot_id: "snap-1",
+    configuration_snapshot_digest: "digest-1",
   },
 ];
 
@@ -1444,7 +1648,7 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    if (!VIEWER_TOKENS.has(token)) {
+    if (!READABLE_TOKENS.has(token)) {
       sendJson(res, 401, {
         error: { code: "unauthorized", message: "bearer token required" },
       });
@@ -1474,7 +1678,7 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    if (!VIEWER_TOKENS.has(token)) {
+    if (!READABLE_TOKENS.has(token)) {
       sendJson(res, 401, {
         error: { code: "unauthorized", message: "bearer token required" },
       });
@@ -1504,7 +1708,7 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+    if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
       sendJson(res, 401, {
         error: { code: "unauthorized", message: "bearer token required" },
       });
@@ -1529,7 +1733,7 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    if (!VIEWER_TOKENS.has(token)) {
+    if (!READABLE_TOKENS.has(token)) {
       sendJson(res, 401, {
         error: { code: "unauthorized", message: "bearer token required" },
       });
@@ -1667,7 +1871,7 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+    if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
       sendJson(res, 401, {
         error: { code: "unauthorized", message: "bearer token required" },
       });
@@ -1739,7 +1943,7 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    if (!VIEWER_TOKENS.has(token)) {
+    if (!READABLE_TOKENS.has(token)) {
       sendJson(res, 401, {
         error: { code: "unauthorized", message: "bearer token required" },
       });
@@ -1784,39 +1988,377 @@ const server = createServer(async (req, res) => {
   }
 
   // --- Operations fake API routes ---
+  // --- Operations fake API routes ---
+  //
+  // These routes mirror the authoritative Python contract: bounded
+  // status/command filters with filter-bound cursors, a backend-computed
+  // lifecycle projection per principal and exact object version, durable
+  // cooperative controls with optimistic rejection, and no fabricated
+  // capability the real API does not have. Only safe request metadata
+  // (method, normalized path, submitted filter, version match) is recorded.
 
-  if (url.pathname === "/api/v1/tasks" && req.method === "GET") {
-    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
-      return;
+  const operationsPrincipal = (() => {
+    if (EXPIRED_TOKENS.has(token) || !KNOWN_TOKENS.has(token)) {
+      return null;
     }
     if (LIMITED_TOKENS.has(token)) {
+      return { permitted: false, readable: false };
+    }
+    return {
+      permitted: OPERATOR_TOKENS.has(token),
+      readable: true,
+    };
+  })();
+
+  function operationsGuard(res) {
+    if (operationsPrincipal === null) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return false;
+    }
+    if (!operationsPrincipal.readable) {
       sendJson(res, 403, { error: { code: "forbidden" } });
+      return false;
+    }
+    return true;
+  }
+
+  function boundedText(value, fallback) {
+    return typeof value === "string" && value.length > 0 && value.length <= 512
+      ? value
+      : fallback;
+  }
+
+  function taskScope(status, command) {
+    return `status=${status ?? "all"};command=${command ?? "all"}`;
+  }
+
+  function encodeCollectionCursor(kind, scope, index) {
+    return Buffer.from(
+      JSON.stringify({ index, kind, scope, version: 2 }),
+      "utf8",
+    ).toString("base64url");
+  }
+
+  function decodeCollectionCursor(raw, kind, scope) {
+    if (typeof raw !== "string" || raw.length === 0 || raw.length > 512) {
+      return null;
+    }
+    try {
+      const document = JSON.parse(
+        Buffer.from(raw, "base64url").toString("utf8"),
+      );
+      if (
+        document === null ||
+        typeof document !== "object" ||
+        document.kind !== kind ||
+        document.scope !== scope ||
+        document.version !== 2 ||
+        !Number.isInteger(document.index) ||
+        document.index < 0
+      ) {
+        return null;
+      }
+      return document.index;
+    } catch {
+      return null;
+    }
+  }
+
+  function collectionPage(items, limit, cursor) {
+    const start = cursor ?? 0;
+    const page = items.slice(start, start + limit);
+    const next = start + limit < items.length ? start + limit : null;
+    const previous = start > 0 ? Math.max(0, start - limit) : null;
+    return { next, page, previous };
+  }
+
+  function taskAction(action, label, available, unavailableReason, extra) {
+    return {
+      action,
+      label,
+      method: "POST",
+      path: `/api/v1/tasks/{id}/${action}`,
+      available,
+      unavailableReason,
+      confirmationRequired: false,
+      cooperative: true,
+      durableOutcome:
+        extra?.durableOutcome ??
+        "a durable request is stored and acknowledged at the next supported item boundary",
+      sideEffects:
+        extra?.sideEffects ??
+        "no Storage mutation; an in-flight Provider/Storage call is not interrupted",
+      retrySafe: false,
+      nextAction:
+        extra?.nextAction ?? "refresh the Task to read its durable state",
+    };
+  }
+
+  function taskLifecycle(task, results) {
+    const permitted = operationsPrincipal.permitted;
+    const permissionReason = permitted
+      ? null
+      : "the connected API principal does not hold the cancel_job permission required for this control";
+    const terminal = TERMINAL_TASK_STATUSES.has(task.status);
+    const cancellable = CANCELLABLE_TASK_STATUSES.has(task.status);
+    const uncertain = results.some(
+      (result) => result.effect_certainty === "attempted_unverified",
+    );
+    const verified = results.some(
+      (result) => result.effect_certainty === "verified_complete",
+    );
+    let cancelReason = permissionReason;
+    if (cancelReason === null && !cancellable) {
+      cancelReason = `a ${task.status} Task cannot be cancelled`;
+    }
+    let pauseReason = permissionReason;
+    if (pauseReason === null && task.pause_requested) {
+      pauseReason =
+        "a durable pause request is already stored and is acknowledged at the next supported item boundary";
+    } else if (pauseReason === null && task.status !== "running") {
+      pauseReason = `only a running Task accepts a pause request; this Task is ${task.status}`;
+    }
+    return {
+      objectType: "task",
+      objectId: task.task_id,
+      state: task.status,
+      version: task.updated_at,
+      terminal,
+      permitted,
+      permission: "cancel_job",
+      pauseRequested: task.pause_requested,
+      effectCertainty: uncertain
+        ? "uncertain"
+        : verified
+          ? "verified_complete"
+          : results.length > 0
+            ? "unknown"
+            : "none",
+      resultsObserved: results.length,
+      resultsComplete: true,
+      uncertainResults: results.filter(
+        (result) => result.effect_certainty === "attempted_unverified",
+      ).length,
+      knownEffects: uncertain
+        ? "an item result carries an unverified Storage effect; MediaFlow never replays an uncertain effect automatically"
+        : "Storage effects are reported only from recorded item results",
+      nextAction: terminal
+        ? "this Task is terminal; no lifecycle control is available"
+        : "refresh the Task to read the durable state",
+      actions: [
+        taskAction(
+          "cancel",
+          "Cancel Task",
+          permitted && cancellable,
+          cancelReason,
+          {
+            durableOutcome:
+              "the Task and its non-terminal items are durably marked cancelled and the Task file locks are released",
+            nextAction: "refresh the Task to read the durable cancelled state",
+          },
+        ),
+        taskAction(
+          "pause",
+          "Request pause",
+          permitted && task.status === "running" && !task.pause_requested,
+          pauseReason,
+        ),
+        taskAction(
+          "resume",
+          "Resume Task",
+          false,
+          permissionReason ??
+            "continuing one exact paused Task scope with its pinned configuration and successful-item exclusions is currently an operator CLI workflow; no durable queued command reproduces it, so MediaFlow does not advertise resume here",
+          {
+            durableOutcome:
+              "not offered: no durable queued continuation of this exact paused scope exists",
+            sideEffects: "none",
+            nextAction:
+              "continue the paused Task from the operator terminal (mediaflow tasks resume <task-id>), or leave it paused",
+          },
+        ),
+      ],
+    };
+  }
+
+  function jobLifecycle(job) {
+    const permitted = operationsPrincipal.permitted;
+    const permissionReason = permitted
+      ? null
+      : "the connected API principal does not hold the cancel_job permission required for this control";
+    const terminal = TERMINAL_JOB_STATUSES.has(job.status);
+    const cancellable = job.status === "pending" || job.status === "running";
+    let reason = permissionReason;
+    if (reason === null && job.cancellation_requested === true) {
+      reason =
+        "cancellation is already durably requested; the Job reaches cancelled at its own cooperative boundary";
+    } else if (reason === null && !cancellable) {
+      reason = `a ${job.status} Job cannot be cancelled`;
+    }
+    return {
+      objectType: "job",
+      objectId: job.job_id,
+      state: job.status,
+      version: job.updated_at,
+      terminal,
+      permitted,
+      permission: "cancel_job",
+      cancellationRequested: job.cancellation_requested === true,
+      commandKind: "source discovery",
+      knownEffects:
+        "the Job owns admission and queue state; Storage effects, if any, belong to its linked Task and its per-item Results",
+      nextAction: terminal
+        ? "this Job is terminal; no lifecycle control is available"
+        : "refresh the Job to read the durable state",
+      actions: [
+        {
+          action: "cancel",
+          label: "Cancel Job",
+          method: "POST",
+          path: `/api/v1/jobs/{id}/cancel`,
+          available:
+            permitted && cancellable && job.cancellation_requested !== true,
+          unavailableReason: reason,
+          confirmationRequired: false,
+          cooperative: true,
+          durableOutcome:
+            "a durable cancellation request is stored; a pending Job becomes cancelled immediately and a running Job reaches cancelled at its next cooperative boundary",
+          sideEffects:
+            "no Storage mutation; an in-flight Provider/Storage call is not interrupted and completed effects are not undone",
+          retrySafe: false,
+          nextAction: "refresh the Job to read the durable cancellation state",
+        },
+      ],
+    };
+  }
+
+  function taskDocument(task) {
+    return {
+      ...task,
+      lifecycle: taskLifecycle(
+        task,
+        TASK_RESULTS.filter((result) => result.task_id === task.task_id),
+      ),
+    };
+  }
+
+  function jobDocument(job) {
+    return { ...job, lifecycle: jobLifecycle(job) };
+  }
+
+  function readExpectedVersion(req, res) {
+    let raw = "";
+    req.on("data", (chunk) => {
+      if (raw.length < 4096) {
+        raw += String(chunk);
+      }
+    });
+    return new Promise((resolve) => {
+      req.on("end", () => {
+        if (raw.length === 0) {
+          resolve({ ok: true, version: null });
+          return;
+        }
+        let document;
+        try {
+          document = JSON.parse(raw);
+        } catch {
+          sendJson(res, 400, { error: { code: "invalid_request" } });
+          resolve({ ok: false });
+          return;
+        }
+        if (
+          document === null ||
+          typeof document !== "object" ||
+          Array.isArray(document) ||
+          Object.keys(document).length !== 1 ||
+          typeof document.expectedUpdatedAt !== "string" ||
+          document.expectedUpdatedAt.length === 0 ||
+          document.expectedUpdatedAt.length > 128
+        ) {
+          sendJson(res, 400, { error: { code: "invalid_request" } });
+          resolve({ ok: false });
+          return;
+        }
+        resolve({ ok: true, version: document.expectedUpdatedAt });
+      });
+    });
+  }
+
+  if (url.pathname === "/api/v1/tasks" && req.method === "GET") {
+    if (!operationsGuard(res)) {
       return;
     }
-    const statusFilter = url.searchParams.get("status");
-    let items = FAKE_TASKS;
-    if (statusFilter) {
-      items = items.filter((t) => t.status === statusFilter);
+    const rawStatus = url.searchParams.get("status");
+    const status =
+      rawStatus === null || rawStatus === "" || rawStatus === "all"
+        ? null
+        : rawStatus;
+    if (status !== null && !KNOWN_TASK_STATUSES.has(status)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
     }
+    const rawCommand = url.searchParams.get("command");
+    const command =
+      rawCommand === null || rawCommand === "" || rawCommand === "all"
+        ? null
+        : rawCommand;
+    if (command !== null && !SAFE_COMMAND_FILTER.test(command)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const rawLimit = url.searchParams.get("limit");
+    const limit = rawLimit === null ? 20 : Number(rawLimit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const scope = taskScope(status, command);
+    const rawCursor = url.searchParams.get("cursor");
+    let offset = null;
+    if (rawCursor !== null) {
+      offset = decodeCollectionCursor(rawCursor, "tasks", scope);
+      if (offset === null) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+    }
+    let items = [...FAKE_TASKS].sort((left, right) =>
+      left.created_at === right.created_at
+        ? right.task_id.localeCompare(left.task_id)
+        : right.created_at.localeCompare(left.created_at),
+    );
+    if (status !== null) {
+      items = items.filter((task) => task.status === status);
+    }
+    if (command !== null) {
+      const family = `${command}:`;
+      items = items.filter(
+        (task) => task.command === command || task.command.startsWith(family),
+      );
+    }
+    const page = collectionPage(items, limit, offset);
     sendJson(res, 200, {
-      items,
-      limit: 20,
-      truncated: false,
-      previous_cursor: null,
-      next_cursor: null,
+      items: page.page.map((task) => taskDocument(task)),
+      limit,
+      status,
+      command,
+      truncated: page.next !== null,
+      previous_cursor:
+        page.previous === null
+          ? null
+          : encodeCollectionCursor("tasks", scope, page.previous),
+      next_cursor:
+        page.next === null
+          ? null
+          : encodeCollectionCursor("tasks", scope, page.next),
     });
     return;
   }
 
   const taskDetailMatch = url.pathname.match(/^\/api\/v1\/tasks\/([^/]+)$/);
   if (taskDetailMatch && req.method === "GET") {
-    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
-      return;
-    }
-    if (LIMITED_TOKENS.has(token)) {
-      sendJson(res, 403, { error: { code: "forbidden" } });
+    if (!operationsGuard(res)) {
       return;
     }
     const taskId = decodeURIComponent(taskDetailMatch[1]);
@@ -1828,7 +2370,7 @@ const server = createServer(async (req, res) => {
     const taskItems = TASK_ITEMS.filter((i) => i.task_id === taskId);
     const taskResults = TASK_RESULTS.filter((r) => r.task_id === taskId);
     sendJson(res, 200, {
-      ...task,
+      ...taskDocument(task),
       items: taskItems,
       results: taskResults,
       item_limit: 20,
@@ -1843,111 +2385,158 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const taskCancelMatch = url.pathname.match(
-    /^\/api\/v1\/tasks\/([^/]+)\/cancel$/,
+  const taskControlMatch = url.pathname.match(
+    /^\/api\/v1\/tasks\/([^/]+)\/(cancel|pause|resume)$/,
   );
-  if (taskCancelMatch && req.method === "POST") {
-    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
+  if (taskControlMatch && req.method === "POST") {
+    if (!operationsGuard(res)) {
       return;
     }
-    if (LIMITED_TOKENS.has(token)) {
+    const action = taskControlMatch[2];
+    if (!operationsPrincipal.permitted) {
       sendJson(res, 403, { error: { code: "forbidden" } });
       return;
     }
-    const taskId = decodeURIComponent(taskCancelMatch[1]);
+    const taskId = decodeURIComponent(taskControlMatch[1]);
     const task = FAKE_TASKS.find((t) => t.task_id === taskId);
     if (!task) {
       sendJson(res, 404, { error: { code: "not_found" } });
       return;
     }
-    sendJson(res, 200, { ...task, status: "cancelled" });
-    return;
-  }
-
-  const taskPauseMatch = url.pathname.match(
-    /^\/api\/v1\/tasks\/([^/]+)\/pause$/,
-  );
-  if (taskPauseMatch && req.method === "POST") {
-    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
+    const expected = await readExpectedVersion(req, res);
+    if (!expected.ok) {
       return;
     }
-    if (LIMITED_TOKENS.has(token)) {
-      sendJson(res, 403, { error: { code: "forbidden" } });
-      return;
-    }
-    const taskId = decodeURIComponent(taskPauseMatch[1]);
-    const task = FAKE_TASKS.find((t) => t.task_id === taskId);
-    if (!task) {
-      sendJson(res, 404, { error: { code: "not_found" } });
-      return;
-    }
-    if (task.status !== "running") {
+    RECORDED_MUTATIONS.push({
+      action,
+      method: "POST",
+      objectId: taskId,
+      objectType: "task",
+      versionMatches: expected.version === task.updated_at,
+    });
+    if (expected.version !== null && expected.version !== task.updated_at) {
       sendJson(res, 409, {
-        error: { code: "conflict", message: "task is not running" },
+        error: { code: "lifecycle_conflict" },
       });
       return;
     }
-    sendJson(res, 200, { ...task, status: "paused", pause_requested: true });
-    return;
-  }
-
-  const taskResumeMatch = url.pathname.match(
-    /^\/api\/v1\/tasks\/([^/]+)\/resume$/,
-  );
-  if (taskResumeMatch && req.method === "POST") {
-    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
+    if (action === "resume") {
+      sendJson(res, 409, { error: { code: "lifecycle_conflict" } });
       return;
     }
-    if (LIMITED_TOKENS.has(token)) {
-      sendJson(res, 403, { error: { code: "forbidden" } });
-      return;
-    }
-    const taskId = decodeURIComponent(taskResumeMatch[1]);
-    const task = FAKE_TASKS.find((t) => t.task_id === taskId);
-    if (!task) {
-      sendJson(res, 404, { error: { code: "not_found" } });
-      return;
-    }
-    if (task.status !== "paused") {
-      sendJson(res, 409, {
-        error: { code: "conflict", message: "task is not paused" },
+    if (action === "pause") {
+      if (task.status !== "running" || task.pause_requested === true) {
+        sendJson(res, 409, { error: { code: "lifecycle_conflict" } });
+        return;
+      }
+      task.pause_requested = true;
+      task.updated_at = bumpTimestamp(task.updated_at);
+      sendJson(res, 200, {
+        action,
+        taskId: task.task_id,
+        task,
+        lifecycle: taskLifecycle(task, []),
+        durableOutcome:
+          "a durable pause request is stored; the Task becomes paused only at a supported item boundary",
+        sideEffects: "none",
+        retrySafe: false,
+        nextAction:
+          "refresh the Task to see whether the pause was acknowledged at an item boundary",
       });
       return;
     }
-    sendJson(res, 200, { ...task, status: "running", pause_requested: false });
+    if (!CANCELLABLE_TASK_STATUSES.has(task.status)) {
+      sendJson(res, 409, { error: { code: "lifecycle_conflict" } });
+      return;
+    }
+    task.status = "cancelled";
+    task.completed_at = bumpTimestamp(task.updated_at);
+    task.updated_at = task.completed_at;
+    sendJson(res, 200, {
+      action,
+      taskId: task.task_id,
+      task,
+      lifecycle: taskLifecycle(task, []),
+      durableOutcome:
+        "the Task and its non-terminal items are durably marked cancelled and the Task file locks are released",
+      sideEffects: "none",
+      retrySafe: false,
+      nextAction: "refresh the Task to read the durable cancelled state",
+    });
     return;
   }
 
   if (url.pathname === "/api/v1/jobs" && req.method === "GET") {
-    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
+    if (!operationsGuard(res)) {
       return;
     }
-    if (LIMITED_TOKENS.has(token)) {
-      sendJson(res, 403, { error: { code: "forbidden" } });
+    const rawStatus = url.searchParams.get("status");
+    const status =
+      rawStatus === null || rawStatus === "" || rawStatus === "all"
+        ? null
+        : rawStatus;
+    if (status !== null && !KNOWN_JOB_STATUSES.has(status)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
     }
+    const rawCommand = url.searchParams.get("command");
+    const command =
+      rawCommand === null || rawCommand === "" || rawCommand === "all"
+        ? null
+        : rawCommand;
+    if (command !== null && !KNOWN_JOB_COMMANDS.has(command)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const rawLimit = url.searchParams.get("limit");
+    const limit = rawLimit === null ? 20 : Number(rawLimit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const scope = taskScope(status, command);
+    const rawCursor = url.searchParams.get("cursor");
+    let offset = null;
+    if (rawCursor !== null) {
+      offset = decodeCollectionCursor(rawCursor, "jobs", scope);
+      if (offset === null) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+    }
+    let items = [...FAKE_JOBS].sort((left, right) =>
+      left.created_at === right.created_at
+        ? right.job_id.localeCompare(left.job_id)
+        : right.created_at.localeCompare(left.created_at),
+    );
+    if (status !== null) {
+      items = items.filter((job) => job.status === status);
+    }
+    if (command !== null) {
+      items = items.filter((job) => job.command === command);
+    }
+    const page = collectionPage(items, limit, offset);
     sendJson(res, 200, {
-      items: FAKE_JOBS,
-      limit: 20,
-      truncated: false,
-      previous_cursor: null,
-      next_cursor: null,
+      items: page.page.map((job) => jobDocument(job)),
+      limit,
+      status,
+      command,
+      truncated: page.next !== null,
+      previous_cursor:
+        page.previous === null
+          ? null
+          : encodeCollectionCursor("jobs", scope, page.previous),
+      next_cursor:
+        page.next === null
+          ? null
+          : encodeCollectionCursor("jobs", scope, page.next),
     });
     return;
   }
 
   const jobDetailMatch = url.pathname.match(/^\/api\/v1\/jobs\/([^/]+)$/);
   if (jobDetailMatch && req.method === "GET") {
-    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
-      return;
-    }
-    if (LIMITED_TOKENS.has(token)) {
-      sendJson(res, 403, { error: { code: "forbidden" } });
+    if (!operationsGuard(res)) {
       return;
     }
     const jobId = decodeURIComponent(jobDetailMatch[1]);
@@ -1956,7 +2545,7 @@ const server = createServer(async (req, res) => {
       sendJson(res, 404, { error: { code: "not_found" } });
       return;
     }
-    sendJson(res, 200, job);
+    sendJson(res, 200, jobDocument(job));
     return;
   }
 
@@ -1964,11 +2553,10 @@ const server = createServer(async (req, res) => {
     /^\/api\/v1\/jobs\/([^/]+)\/cancel$/,
   );
   if (jobCancelMatch && req.method === "POST") {
-    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
+    if (!operationsGuard(res)) {
       return;
     }
-    if (LIMITED_TOKENS.has(token)) {
+    if (!operationsPrincipal.permitted) {
       sendJson(res, 403, { error: { code: "forbidden" } });
       return;
     }
@@ -1978,41 +2566,59 @@ const server = createServer(async (req, res) => {
       sendJson(res, 404, { error: { code: "not_found" } });
       return;
     }
-    sendJson(res, 200, { ...job, status: "cancelled" });
+    const expected = await readExpectedVersion(req, res);
+    if (!expected.ok) {
+      return;
+    }
+    RECORDED_MUTATIONS.push({
+      action: "cancel",
+      method: "POST",
+      objectId: jobId,
+      objectType: "job",
+      versionMatches: expected.version === job.updated_at,
+    });
+    if (expected.version !== null && expected.version !== job.updated_at) {
+      sendJson(res, 409, { error: { code: "lifecycle_conflict" } });
+      return;
+    }
+    if (job.status !== "pending" && job.status !== "running") {
+      sendJson(res, 409, { error: { code: "lifecycle_conflict" } });
+      return;
+    }
+    job.cancellation_requested = true;
+    if (job.status === "pending") {
+      job.status = "cancelled";
+      job.completed_at = bumpTimestamp(job.updated_at);
+      job.updated_at = job.completed_at;
+    } else {
+      job.updated_at = bumpTimestamp(job.updated_at);
+    }
+    sendJson(res, 200, jobDocument(job));
     return;
   }
 
   if (url.pathname === "/api/v1/workers/readiness" && req.method === "GET") {
-    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
-      return;
-    }
-    if (LIMITED_TOKENS.has(token)) {
-      sendJson(res, 403, { error: { code: "forbidden" } });
+    if (!operationsGuard(res)) {
       return;
     }
     sendJson(res, 200, {
       ready: true,
       condition: "ready",
       category: null,
-      durableState: "processing worker is active",
+      durableState: "resident processing worker is live and ready",
       sideEffects: "none",
       retrySafe: true,
-      nextAction: "",
+      nextAction: "none",
       activeWorkersCount: 1,
       activeSnapshotId: "snap-1",
       activeSnapshotDigest: "digest-1",
+      expectedRuntimeSchemaVersion: 33,
     });
     return;
   }
 
   if (url.pathname === "/api/v1/workers" && req.method === "GET") {
-    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
-      return;
-    }
-    if (LIMITED_TOKENS.has(token)) {
-      sendJson(res, 403, { error: { code: "forbidden" } });
+    if (!operationsGuard(res)) {
       return;
     }
     sendJson(res, 200, {
@@ -2023,11 +2629,19 @@ const server = createServer(async (req, res) => {
           status: "live",
           last_heartbeat_at: "2026-08-22T12:10:00+00:00",
           registered_at: "2026-08-22T12:00:00+00:00",
+          heartbeat_interval_seconds: 5,
           supported_commands: ["scan", "preview", "organize"],
+          configuration_snapshot_id: "snap-1",
+          runtime_schema_version: 33,
         },
       ],
       count: 1,
     });
+    return;
+  }
+
+  if (url.pathname === "/__test__/mutations" && req.method === "GET") {
+    sendJson(res, 200, { items: RECORDED_MUTATIONS });
     return;
   }
 

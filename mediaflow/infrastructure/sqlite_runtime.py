@@ -225,6 +225,13 @@ def _fingerprint_json(value: object) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
+def _command_family_pattern(command: str) -> str:
+    """Build the escaped LIKE pattern matching ``<command>:<derived identity>``."""
+
+    escaped = command.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"{escaped}:%"
+
+
 class SQLiteTaskRepository:
     """Durable task/result/lock adapter sharing the configured runtime SQLite database."""
 
@@ -318,20 +325,34 @@ class SQLiteTaskRepository:
         limit: int | None = None,
         after: tuple[datetime, str] | None = None,
         before: tuple[datetime, str] | None = None,
+        status: str | None = None,
+        command: str | None = None,
     ) -> tuple[PersistentTask, ...]:
         if after is not None and before is not None:
             raise ValueError("after and before are mutually exclusive")
         query = "SELECT * FROM tasks"
         parameters: tuple[object, ...] = ()
+        clauses: list[str] = []
+        if status is not None:
+            clauses.append("status = ?")
+            parameters += (status,)
+        if command is not None:
+            # A Task command is either a base work kind or a derived
+            # ``<kind>:<source identity>`` continuation, so a submitted command
+            # filter selects that exact command and its own family.
+            clauses.append("(command = ? OR command LIKE ? ESCAPE '\\')")
+            parameters += (command, _command_family_pattern(command))
         reverse = before is not None
         if after is not None:
             timestamp = after[0].isoformat()
-            query += " WHERE (created_at < ? OR (created_at = ? AND task_id < ?))"
-            parameters = (timestamp, timestamp, after[1])
+            clauses.append("(created_at < ? OR (created_at = ? AND task_id < ?))")
+            parameters += (timestamp, timestamp, after[1])
         elif before is not None:
             timestamp = before[0].isoformat()
-            query += " WHERE (created_at > ? OR (created_at = ? AND task_id > ?))"
-            parameters = (timestamp, timestamp, before[1])
+            clauses.append("(created_at > ? OR (created_at = ? AND task_id > ?))")
+            parameters += (timestamp, timestamp, before[1])
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += (
             " ORDER BY created_at ASC, task_id ASC"
             if reverse
@@ -4461,20 +4482,31 @@ class SQLiteTaskRepository:
         limit: int | None = None,
         after: tuple[datetime, str] | None = None,
         before: tuple[datetime, str] | None = None,
+        status: str | None = None,
+        command: str | None = None,
     ) -> tuple[AutomationJob, ...]:
         if after is not None and before is not None:
             raise ValueError("after and before are mutually exclusive")
         query = "SELECT * FROM automation_jobs"
         parameters: tuple[object, ...] = ()
+        clauses: list[str] = []
+        if status is not None:
+            clauses.append("status = ?")
+            parameters += (status,)
+        if command is not None:
+            clauses.append("command = ?")
+            parameters += (command,)
         reverse = before is not None
         if after is not None:
             timestamp = after[0].isoformat()
-            query += " WHERE (created_at < ? OR (created_at = ? AND job_id < ?))"
-            parameters = (timestamp, timestamp, after[1])
+            clauses.append("(created_at < ? OR (created_at = ? AND job_id < ?))")
+            parameters += (timestamp, timestamp, after[1])
         elif before is not None:
             timestamp = before[0].isoformat()
-            query += " WHERE (created_at > ? OR (created_at = ? AND job_id > ?))"
-            parameters = (timestamp, timestamp, before[1])
+            clauses.append("(created_at > ? OR (created_at = ? AND job_id > ?))")
+            parameters += (timestamp, timestamp, before[1])
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += (
             " ORDER BY created_at ASC, job_id ASC"
             if reverse

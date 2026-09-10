@@ -818,14 +818,22 @@ export async function fetchFileBySource(
 import {
   normalizeTaskListPage,
   normalizeTaskDetailPage,
+  normalizeTaskRecord,
+  TASK_COMMAND_FILTERS,
+  TASK_STATUSES,
   type TaskListPage,
   type TaskDetailPage,
+  type TaskStatus,
 } from "../../entities/operations/task";
 import {
   normalizeJobListPage,
   normalizeJobDetail,
+  JOB_COMMANDS,
+  JOB_STATUSES,
   type JobListPage,
   type JobSummary,
+  type JobCommand,
+  type JobStatus,
 } from "../../entities/operations/job";
 import {
   normalizeWorkerReadiness,
@@ -833,6 +841,11 @@ import {
   type WorkerReadinessModel,
   type WorkerListModel,
 } from "../../entities/operations/worker";
+import {
+  normalizeLifecycleProjection,
+  type LifecycleActionName,
+  type LifecycleProjection,
+} from "../../entities/operations/lifecycle";
 import { OperationsApiError } from "./api-errors";
 
 export type OperationsReadErrorCategory =
@@ -875,7 +888,8 @@ const OPERATIONS_FAILURES: Readonly<
   rejected: {
     kind: "rejected",
     title: "Request rejected",
-    nextAction: "The request was rejected as invalid. Retry the operation.",
+    nextAction:
+      "The submitted filter or page cursor is not valid for this collection. Reset the filters and reload.",
   },
   malformed: {
     kind: "malformed",
@@ -903,21 +917,25 @@ function operationsHeaders(token: string | null): Record<string, string> {
   return headers;
 }
 
-function isSafeTaskId(value: string): boolean {
-  return (
-    value.length > 0 &&
-    value.length <= 256 &&
-    !value.includes("/") &&
-    !value.includes("\\") &&
-    // eslint-disable-next-line no-control-regex
-    !/[\u0000-\u001f\u007f]/.test(value)
-  );
+function operationsMutationHeaders(
+  token: string | null,
+): Record<string, string> {
+  return {
+    ...operationsHeaders(token),
+    "Content-Type": "application/json",
+  };
+}
+
+const SAFE_IDENTIFIER = /^[A-Za-z0-9._:-]{1,256}$/;
+
+function isSafeIdentifier(value: string): boolean {
+  return SAFE_IDENTIFIER.test(value);
 }
 
 // --- Task list ---
 
 export interface TaskListQueryOptions {
-  readonly status?: string | null;
+  readonly status?: TaskStatus | null;
   readonly command?: string | null;
   readonly limit?: number;
   readonly cursor?: string | null;
@@ -972,6 +990,18 @@ export async function fetchTaskList(
   }
 }
 
+/** The bounded Task status and command filter values the backend accepts. */
+export const TASK_FILTER_VALUES = {
+  statuses: TASK_STATUSES,
+  commands: TASK_COMMAND_FILTERS,
+} as const;
+
+/** The bounded Job status and command filter values the backend accepts. */
+export const JOB_FILTER_VALUES = {
+  statuses: JOB_STATUSES,
+  commands: JOB_COMMANDS,
+} as const;
+
 // --- Task detail ---
 
 export interface TaskDetailQueryOptions {
@@ -1003,7 +1033,7 @@ export async function fetchTaskDetail(
   options: TaskDetailQueryOptions,
   fetchImpl: FetchLike = fetch,
 ): Promise<TaskDetailRead> {
-  if (!isSafeTaskId(options.taskId)) {
+  if (!isSafeIdentifier(options.taskId)) {
     return { ok: false, failure: operationsFailure("not_found") };
   }
   let response: Response;
@@ -1043,119 +1073,170 @@ export async function fetchTaskDetail(
   }
 }
 
-// --- Task lifecycle mutations ---
+// --- Operations lifecycle mutations ---
 
-export interface TaskLifecycleResult {
-  readonly ok: boolean;
+/**
+ * Bounded outcome of one deliberate lifecycle control.
+ *
+ * A failure carries only the backend's normalized reason token and HTTP status:
+ * raw response bodies, exception text and protocol detail never reach the DOM,
+ * console or a retry decision. Nothing here is ever replayed automatically.
+ */
+export interface LifecycleSuccess {
+  readonly ok: true;
   readonly status: number;
-  readonly body: unknown;
+  readonly action: LifecycleActionName;
+  readonly objectId: string;
+  readonly state: string;
+  readonly version: string;
+  readonly lifecycle: LifecycleProjection;
+  readonly durableOutcome: string | null;
+  readonly nextAction: string | null;
 }
 
-function isSafeLifecycleId(value: string): boolean {
-  return (
-    value.length > 0 &&
-    value.length <= 256 &&
-    // eslint-disable-next-line no-control-regex
-    !/[\u0000-\u001f\u007f]/.test(value)
-  );
+export interface LifecycleFailure {
+  readonly ok: false;
+  readonly status: number;
+  readonly code: string;
 }
 
-export async function mutateTaskCancel(
-  token: string | null,
-  taskId: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<TaskLifecycleResult> {
-  if (!isSafeLifecycleId(taskId)) {
-    return { ok: false, status: 400, body: { error: { code: "invalid_id" } } };
+export type LifecycleMutationResult = LifecycleSuccess | LifecycleFailure;
+
+const SAFE_REASON = /^[a-z][a-z0-9_]{0,63}$/;
+
+function readSafeReason(value: unknown): string | null {
+  return typeof value === "string" && SAFE_REASON.test(value) ? value : null;
+}
+
+function lifecycleFailure(status: number, body: unknown): LifecycleFailure {
+  let code = status === 0 ? "transport_unavailable" : "request_rejected";
+  if (typeof body === "object" && body !== null && !Array.isArray(body)) {
+    const error = (body as Record<string, unknown>)["error"];
+    if (typeof error === "object" && error !== null && !Array.isArray(error)) {
+      const detail = error as Record<string, unknown>;
+      // The backend distinguishes a stale/duplicate refusal from a state
+      // refusal through its own normalized reason token, so the operator copy
+      // can name the real cause without receiving free-form server text.
+      const details = detail["details"];
+      const reason =
+        typeof details === "object" &&
+        details !== null &&
+        !Array.isArray(details)
+          ? readSafeReason((details as Record<string, unknown>)["reason"])
+          : null;
+      code = reason ?? readSafeReason(detail["code"]) ?? code;
+    }
   }
+  return { ok: false, status, code };
+}
+
+/**
+ * The single mutation boundary for every Operations lifecycle control.
+ *
+ * It always sends exactly one authenticated POST with exactly the version the
+ * operator saw; a rejected, stale, 401 or 403 response is returned as a bounded
+ * failure and is never retried by this client or by TanStack Query.
+ */
+export async function mutateLifecycle(
+  token: string | null,
+  options: {
+    readonly objectType: "task" | "job";
+    readonly objectId: string;
+    readonly action: LifecycleActionName;
+    readonly expectedVersion: string;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<LifecycleMutationResult> {
+  if (
+    !isSafeIdentifier(options.objectId) ||
+    options.expectedVersion.length > 128
+  ) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  const collection = options.objectType === "task" ? "tasks" : "jobs";
+  const url = `/api/v1/${collection}/${encodeURIComponent(options.objectId)}/${options.action}`;
   let response: Response;
   try {
-    response = await fetchImpl(
-      `/api/v1/tasks/${encodeURIComponent(taskId)}/cancel`,
-      {
-        method: "POST",
-        headers: operationsHeaders(token),
-      },
-    );
+    response = await fetchImpl(url, {
+      method: "POST",
+      headers: operationsMutationHeaders(token),
+      body: JSON.stringify({ expectedUpdatedAt: options.expectedVersion }),
+    });
   } catch {
-    return { ok: false, status: 503, body: { error: { code: "unavailable" } } };
+    return { ok: false, status: 0, code: "transport_unavailable" };
   }
   let body: unknown;
   try {
     body = await response.json();
   } catch {
-    body = {};
+    body = null;
   }
-  return { ok: response.ok, status: response.status, body };
-}
-
-export async function mutateTaskPause(
-  token: string | null,
-  taskId: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<TaskLifecycleResult> {
-  if (!isSafeLifecycleId(taskId)) {
-    return { ok: false, status: 400, body: { error: { code: "invalid_id" } } };
+  if (!response.ok) {
+    return lifecycleFailure(response.status, body);
   }
-  let response: Response;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  const document = body as Record<string, unknown>;
   try {
-    response = await fetchImpl(
-      `/api/v1/tasks/${encodeURIComponent(taskId)}/pause`,
-      {
-        method: "POST",
-        headers: operationsHeaders(token),
-      },
-    );
+    if (options.objectType === "job") {
+      const job: JobSummary = normalizeJobDetail(document);
+      return {
+        ok: true,
+        status: response.status,
+        action: options.action,
+        objectId: job.jobId,
+        state: job.status,
+        version: job.lifecycle.version,
+        lifecycle: job.lifecycle,
+        durableOutcome:
+          job.lifecycle.actions.find((item) => item.action === options.action)
+            ?.durableOutcome ?? null,
+        nextAction: job.lifecycle.nextAction,
+      };
+    }
+    const task = normalizeTaskRecord(document["task"]);
+    const lifecycle = normalizeLifecycleProjection(document["lifecycle"], {
+      objectType: "task",
+      objectId: task.taskId,
+      state: task.status,
+    });
+    if (task.taskId !== options.objectId) {
+      return { ok: false, status: response.status, code: "malformed_response" };
+    }
+    const durableOutcome = document["durableOutcome"];
+    return {
+      ok: true,
+      status: response.status,
+      action: options.action,
+      objectId: task.taskId,
+      state: task.status,
+      version: lifecycle.version,
+      lifecycle,
+      durableOutcome:
+        typeof durableOutcome === "string" && durableOutcome.length <= 1024
+          ? durableOutcome
+          : null,
+      nextAction: lifecycle.nextAction,
+    };
   } catch {
-    return { ok: false, status: 503, body: { error: { code: "unavailable" } } };
+    return { ok: false, status: response.status, code: "malformed_response" };
   }
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    body = {};
-  }
-  return { ok: response.ok, status: response.status, body };
-}
-
-export async function mutateTaskResume(
-  token: string | null,
-  taskId: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<TaskLifecycleResult> {
-  if (!isSafeLifecycleId(taskId)) {
-    return { ok: false, status: 400, body: { error: { code: "invalid_id" } } };
-  }
-  let response: Response;
-  try {
-    response = await fetchImpl(
-      `/api/v1/tasks/${encodeURIComponent(taskId)}/resume`,
-      {
-        method: "POST",
-        headers: operationsHeaders(token),
-      },
-    );
-  } catch {
-    return { ok: false, status: 503, body: { error: { code: "unavailable" } } };
-  }
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    body = {};
-  }
-  return { ok: response.ok, status: response.status, body };
 }
 
 // --- Job list ---
 
 export interface JobListQueryOptions {
+  readonly status?: JobStatus | null;
+  readonly command?: JobCommand | null;
   readonly limit?: number;
   readonly cursor?: string | null;
 }
 
 export function jobListUrl(options: JobListQueryOptions): string {
   const params = new URLSearchParams();
+  if (options.status) params.set("status", options.status);
+  if (options.command) params.set("command", options.command);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.cursor) params.set("cursor", options.cursor);
   const qs = params.toString();
@@ -1212,7 +1293,7 @@ export async function fetchJobDetail(
   jobId: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<JobDetailRead> {
-  if (!isSafeTaskId(jobId)) {
+  if (!isSafeIdentifier(jobId)) {
     return { ok: false, failure: operationsFailure("not_found") };
   }
   let response: Response;
@@ -1250,37 +1331,6 @@ export async function fetchJobDetail(
   } catch {
     throw new OperationsApiError("malformed");
   }
-}
-
-// --- Job lifecycle mutations ---
-
-export async function mutateJobCancel(
-  token: string | null,
-  jobId: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<TaskLifecycleResult> {
-  if (!isSafeLifecycleId(jobId)) {
-    return { ok: false, status: 400, body: { error: { code: "invalid_id" } } };
-  }
-  let response: Response;
-  try {
-    response = await fetchImpl(
-      `/api/v1/jobs/${encodeURIComponent(jobId)}/cancel`,
-      {
-        method: "POST",
-        headers: operationsHeaders(token),
-      },
-    );
-  } catch {
-    return { ok: false, status: 503, body: { error: { code: "unavailable" } } };
-  }
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    body = {};
-  }
-  return { ok: response.ok, status: response.status, body };
 }
 
 // --- Worker readiness ---
