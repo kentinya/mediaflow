@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 32.3
 Parent Slice: 32
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 3e556026cf432571a6c434e07b0cfd59ab29e22a
 Difficulty: Medium
 Test Level: T3
@@ -226,10 +226,15 @@ The Docker release-security smoke command is `python3 scripts/docker_release_sec
   active navigation, catalog return context and memory-only auth continuation.
 - Added centralized strict normalization for bounded FileIndex detail and by-source documents. It
   validates modeled facts, rejects malformed/contradictory relevance, ignores unknown fields and
-  retains only fingerprint provenance and bounded failure presence, never raw fingerprint or error
-  values.
+  retains only explicitly allowlisted, bounded pipeline facts and checkpoint explanations; raw
+  fingerprints, provider payloads, private paths and exception values never enter the model.
 - Rendered distinct source/library, discovery/stability, occurrence, processing, identity/policy,
-  Result relevance, TaskItem, review, evidence, reprocess explanation and recovery sections.
+  parser/recognition/metadata/naming/classification/plan/operation evidence, Result relevance,
+  TaskItem checkpoint, review, reprocess explanation and recovery sections.
+- Corrected the detail correction loop by preserving safe evidence values/items/warnings and
+  unavailable reasons, rendering durable checkpoint facts, using the authoritative `reviews`
+  truncation key, and requiring a matching enabled Active ResourceLibrary-to-Storage binding
+  before offering physical navigation.
 - Added an explicit authoritative by-source GET after operator intent. Only one confirmed current
   match can open a FileIndex detail; missing, ambiguous, truncated, malformed and unavailable
   linkage remain non-navigating bounded states.
@@ -247,11 +252,11 @@ python3 scripts/check_governance.py                          PASS
 npm --prefix web run format:check                            PASS
 npm --prefix web run typecheck                               PASS
 npm --prefix web run lint                                    PASS
-npm --prefix web run test -- --run                           PASS (189 tests, 17 files)
+npm --prefix web run test -- --run                           PASS (191 tests, 17 files)
 npm --prefix web run build                                   PASS
-npm --prefix web run test:e2e -- library-file-detail.spec.ts PASS (6 tests)
-npm --prefix web run test:e2e                                PASS (53 tests)
-npm --prefix web run test -- --run src/entities/library/file-detail.test.ts src/entities/library/storage-files.test.ts PASS (31 tests, 2 files)
+npm --prefix web run test:e2e -- library-file-detail.spec.ts PASS (7 tests)
+npm --prefix web run test:e2e                                PASS (54 tests)
+npm --prefix web run test -- --run src/entities/library/file-detail.test.ts PASS (17 tests)
 .venv/bin/python -m unittest tests.test_file_media_detail tests.test_file_catalog tests.test_file_catalog_api tests.test_storage_browser tests.test_file_index_lifecycle tests.test_v2_ui tests.test_release_security PASS (76 tests)
 .venv/bin/ruff format --check .                              PASS (301 files)
 .venv/bin/ruff check .                                       PASS
@@ -273,6 +278,9 @@ private configuration was used.
   backend prose.
 - Kept physical-to-index navigation behind explicit operator intent and an authoritative resolver;
   bounded Storage membership is only a hint and never selects a record by itself.
+- Kept detail evidence and checkpoint rendering behind centralized allowlists with bounded text,
+  identifier and relative-path validation; unknown provider/payload/error fields are discarded and
+  known unsafe explanations are redacted or mapped to a safe unavailable label.
 - Used allowlisted bounded route context and the existing memory-only auth store. No token,
   fingerprint, occurrence authority or backend action URL enters navigation state.
 - Kept operational, review/recovery and configuration controls explanatory or handed off to the
@@ -295,14 +303,39 @@ private configuration was used.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 6687658fdf1af48bc5f4e4889fb259cbcbb7f91c
+Head SHA: ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 3e556026cf432571a6c434e07b0cfd59ab29e22a..94583c7c16dfe93b12f4602f3d576f2c8570bdcb
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- The valid detail does not expose the bounded pipeline/checkpoint facts required by the Task when
+  they exist. `normalizeEvidenceSection()` reduces each redacted section to item/warning counts and
+  discards its allowlisted `value`, `items`, warnings and unavailable explanation; TaskItem
+  checkpoints are likewise reduced to an availability boolean. The browser therefore renders only
+  count/availability labels instead of the parser, recognition, metadata, naming, classification,
+  plan/target and checkpoint explanation promised by the Goal and second Acceptance Criterion.
+  Preserve and render bounded, explicitly allowlisted, secret-free operator facts from these
+  authoritative summaries without rendering raw payloads or exceptions, and cover their valid and
+  unavailable forms.
+- Truncation and legacy detail behavior do not satisfy the required rendering proof. The backend
+  emits `truncated.reviews` and the normalizer retains that key, but the page checks
+  `truncated.relatedReviews`, so review truncation is never shown. In addition,
+  `library-file-detail.spec.ts` has no legacy-detail fixture/assertion and its detail fixture sets
+  the top-level truncation flags false; the independently rerun focused suite still passes all 6
+  tests without exercising the Task-required current/historical/legacy/missing/truncated rendering.
+  Correct the review key and add focused fixtures/assertions that prove legacy/unavailable evidence
+  and each relevant bounded truncation state remain distinct and oriented.
+- The detail-to-physical link validates only that `record.storageId` exists in Active status. It
+  does not require an enabled Active ResourceLibrary whose id and Storage binding match the detail
+  record, yet it passes `record.resourceLibraryId` to `/library/files`. This can fabricate a
+  physical-context destination for a stale/disabled/mismatched ResourceLibrary instead of using the
+  required Library/FileIndex fallback. Gate the link on the matching enabled Active
+  ResourceLibrary-to-Storage binding and add focused coverage for the unavailable/mismatched Active
+  physical-context case.
