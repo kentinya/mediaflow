@@ -431,9 +431,14 @@ credential-free URLs, DOM and console.
 
 ### Checkpoint
 
+The implementation checkpoint `00f03e0003e81efdb62deb36a02683a3a338478c` is the coherent
+correction commit for this Task; the follow-up `docs(task)` commit records this report and the
+SHA itself and changes no product behavior. The reviewed range is
+`aae640bd7111e9089bb67eb5fef8dbf50c2d85b8..HEAD`.
+
 ```text
 Status: READY FOR B REVIEW
-Head SHA: __HEAD_SHA__
+Head SHA: 00f03e0003e81efdb62deb36a02683a3a338478c
 ```
 
 ## B Review Result
