@@ -1,13 +1,13 @@
-# Task 32.1 — V2 Active Storage Files journey
+# Task 32.2 — V2 FileIndex discovery journey
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to the
 current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 32.1
+Task ID: 32.2
 Parent Slice: 32
 Status: READY FOR B REVIEW
-Task Base: 12568825cadcd587db6363aa1db612ca3efcfdb2
+Task Base: 4b1f8358199a6eaf00f043175c17eccedf0d7083
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
@@ -15,125 +15,131 @@ Planner / Reviewer: B
 
 ## Goal
 
-Complete the first independently usable Slice 32 journey: an authenticated operator can enter the
-real V2 Library surface, choose an available configured Active Storage without typing its ID, browse
-bounded immediate directories/files with Storage-relative navigation and FileIndex membership, and
-recover safely from read failures without starting work or mutating state. This directly advances
-RO-1, completes the Storage-files behavior in RO-2, and advances RO-6 through RO-8.
+Complete the FileIndex catalog portion of Slice 32: an authenticated operator can open a real V2
+FileIndex route, inspect bounded durable discovery records, submit/reset/revisit meaningful search
+and filters, move through deterministic pages, and understand discovery/stability, current
+occurrence and processing disposition as distinct facts without starting work. This completes RO-3
+and advances RO-1 and RO-6 through RO-8.
 
 ## Why This Task Exists
 
-At Task Base, `/ui-v2/library` is still a generic migration page. The existing Python application
-already exposes authenticated read-only authority through `GET /api/v1/system/status` and
-`GET /api/v1/storage/files`, including exact managed-runtime identity, bounded Storage-relative
-entries, breadcrumbs, cursors, provider-safe failures and FileIndex membership. The V1 UI consumes
-those contracts, but V2 has no typed model, query, route or user journey for them.
+Task 32.1 made `/ui-v2/library` and the Active Storage Files journey real, but its FileIndex choice
+still hands off to the current V1 Web UI. The authoritative Python catalog already provides
+authenticated read-only list/search/filter behavior at `GET /api/v1/file-index`, stable
+`updatedAt`/`fileId` cursor components, bounded records, current occurrence state and processing
+disposition. V2 has no typed entity/query model or catalog route for that behavior. The API also
+lacks a server-side processing-disposition filter, so filtering that field in the browser would
+misrepresent a bounded page as the catalog result.
 
-This is the largest reasonable first unit because Library entry, Active Storage discovery, API
-normalization, routing, browsing, visible state, failure recovery and browser proof must work
-together to be independently useful. FileIndex search/list and rich detail are separate coherent
-journeys with materially different models and remain for later Tasks in this Slice; splitting the
-route, model or one response field into smaller Tasks would not produce an acceptable user outcome.
+The catalog route, minimal authoritative filter completion, typed normalization, submitted filter
+state, paging, failure recovery and built-artifact proof form one independently useful vertical
+journey. File detail and physical/indexed detail linkage require a materially richer projection and
+remain a later coherent Task; splitting individual filters, labels or test cases would be too small.
 
 ## Implementation Scope
 
 The implementation boundary is:
 
 ```text
-Existing Active runtime/System status + Storage read application behavior
-→ existing authenticated API projections
-→ typed V2 entities/API/query boundary
-→ Library landing and Storage Files routes/views
-→ unit/component/router/browser and affected Python regression tests
+FileIndex Domain/Persistence filter
+→ existing FileCatalog Application/API authority
+→ typed V2 entity/API/query boundary
+→ Library FileIndex route/view
+→ unit/integration/router/browser regressions
 ```
 
-- Replace the `/library` migration placeholder with a real Library landing that plainly separates
-  **Storage files** from **FileIndex**. Storage files opens the implemented V2 journey; FileIndex
-  remains an honest current-Web continuation until its later Slice 32 Task and is not a dead or
-  falsely implemented control.
-- Add a supported refresh-safe Storage Files child route under `/library`. Compose it with the Slice
-  31 shell, title/active-route metadata, memory-only authentication continuation and safe allowlisted
-  view state. Storage-relative path and opaque paging cursor may enter route/search state only when
-  safely encoded; no token, credential, root path or execution authority may enter a URL.
-- Extend the centralized typed frontend API boundary with strict normalization for:
-  - the minimum allowlisted `system/status` fields needed to identify a managed Active snapshot and
-    present selectable configured Storages/related enabled ResourceLibraries; and
-  - the runtime Files document: configuration identity, Storage-relative path/breadcrumbs, bounded
-    entries, entry type/size/modified time, pagination/exhaustion, side-effect statement and bounded
-    FileIndex membership.
-- Add the Storage display name to the existing allowlisted Python System Status Storage projection
-  if needed for an operator-meaningful selector. Preserve the existing response and authority
-  semantics, expose no Storage root/options/credentials, and cover the projection with its affected
-  Python tests. Do not add a new endpoint or alternate configuration authority.
-- Build feature-owned TanStack Query options and UI state so the operator can select from the exact
-  backend-reported managed Active Storages, open the root, traverse immediate directories and
-  breadcrumbs, move through a bounded next page and return to a prior page/context, refresh the
-  current read, and switch Storage without retaining an invalid path/cursor.
-- Render operator-meaningful loading, no-Active/no-Storage, empty-directory and success states.
-  Each file row exposes only safe read facts and truthfully distinguishes indexed, not indexed,
-  unavailable and truncated/ambiguous membership; this Task does not infer processing state from
-  membership or create the later V2 FileIndex detail route.
-- Map authentication rejection, RBAC denial and Files-specific invalid path/cursor, missing library,
-  managed-configuration unavailable and provider read/permission failures to bounded, secret-free
-  states with a concrete retry, breadcrumb/landing return, Storage reselection, reconnect or current
-  V1 Configuration continuation as appropriate. Do not collapse a Storage-provider permission
-  failure into a claim that the API principal lacks RBAC permission; distinguish them from stable
-  response code/category, never raw provider text.
-- Keep every request in this journey an explicit bounded `GET`. Query prefetch, render, refresh,
-  selection, navigation and retry must not invoke Scan, Preview, Organize, Reprocess, Provider work,
-  Task/Job admission, audit writes or any Storage mutation.
-- Add responsive and keyboard-usable presentation using the existing shared UI foundation. Preserve
-  V1 `/ui`, Dashboard and the Operations/Review/Configuration migration surfaces.
-- Extend the local Playwright fake with only secret-free System Status and runtime Files GET
-  fixtures/failures needed for this journey; it must continue rejecting unsupported mutation
-  methods and must never log Bearer values.
+- Replace the Library landing's FileIndex V1 continuation with a real, shell-integrated,
+  refresh-safe V2 catalog route under `/library`. Keep an explicit current V1 Web continuation only
+  for operational or detail actions not implemented by this Task; do not claim those actions work
+  in V2.
+- Add one bounded `processingDisposition` FileIndex filter through the existing domain/application,
+  in-memory/SQLite persistence and `/api/v1/file-index` list authority. Validate supported values,
+  preserve existing aliases and response compatibility, and apply the filter before paging. Do not
+  implement it as client-side filtering of a returned page or introduce another endpoint.
+- Add strict centralized V2 normalization for the FileIndex list document and the allowlisted record
+  facts needed here: safe identifiers, Storage-relative path/filename, discovery status/change and
+  stability timestamps, current occurrence state, processing disposition, bounded identity summary,
+  update timestamp and paging inputs. Ignore unknown fields and fail the whole malformed document
+  closed; do not expose fingerprints, absolute roots, raw provider payloads or detail-only evidence.
+- Build feature-owned TanStack Query options and URL construction for authenticated bounded GETs.
+  Search and applied filters may use allowlisted route state so refresh/back is useful; use only
+  backend-supported query names and safe scalar values, never credentials or execution authority.
+- Build an operator-oriented filter form with a clearly separate draft and submitted state. Include
+  path/filename search plus applicable ResourceLibrary, Storage, discovery-status,
+  processing-disposition and existing identity filters. Populate Storage/ResourceLibrary choices
+  from the exact managed Active System Status projection with operator labels where available; raw
+  IDs may appear secondarily for diagnosis but must not be required to reach the first useful page.
+  Submitting or resetting filters resets paging deterministically.
+- Render bounded catalog rows/cards that visibly separate discovery/stability/change evidence,
+  current occurrence state and processing disposition. Missing/unverified facts remain explicit;
+  do not infer a successful outcome, current Result relevance or action eligibility from path,
+  membership or historical data.
+- Implement deterministic next/previous/back behavior using the backend's stable
+  `updatedAt` + `fileId` cursor contract. A bounded one-record lookahead may establish whether a next
+  page exists; do not invent opaque cursors, recursively load the catalog, silently refetch every
+  page or expose cursor components as ordinary operator ceremony. Preserve submitted filters while
+  paging and useful prior context when returning to Library.
+- Keep loading, empty-unfiltered, empty-filtered, no managed Active options, invalid/unknown filter,
+  invalid/stale cursor, unavailable/malformed catalog, 401 and RBAC 403 states inside the shell with
+  the smallest truthful retry, reset, previous-page, reconnect or V1 Configuration continuation.
+  Never render raw exception/API/provider text or private paths.
+- Keep all catalog entry, search, filter, page, refresh and retry requests read-only. They must not
+  call detail or by-source speculatively, access Storage/media content, invoke Providers, submit
+  Scan/Preview/Organize/Reprocess/review work, create audit mutations or send a non-GET API request.
+- Add responsive and keyboard-usable presentation using the existing shell/UI foundation. Preserve
+  Task 32.1 Storage Files behavior, V1 `/ui`, Dashboard and the remaining migration surfaces.
+- Extend the Playwright fake only with secret-free FileIndex GET fixtures and bounded failures. It
+  must reject unsupported methods and must not log or persist Bearer values.
 
 Frozen for this Task:
 
-- `SLICE.md`, `docs/roadmap.md`, stable requirements and all A-owned Contract fields.
-- FileIndex search/list/detail implementation, cross-surface detail navigation, operational action
-  submission and review/recovery behavior; these remain later work inside the Slice or Explicitly
-  Deferred as stated by the Contract.
-- Existing Storage/domain/persistence behavior, Active activation lifecycle, RBAC permissions,
-  mutation endpoints and OrganizerExecutor boundaries except for the narrow allowlisted System
-  Status display-name projection above.
+- `SLICE.md`, `docs/roadmap.md`, stable requirements and every A-owned Contract field.
+- FileIndex detail/explanation, occurrence/history expansion, reviews/checkpoints, current/historical
+  Result explanation and physical-to-indexed detail navigation; these remain the next coherent work
+  within Slice 32.
+- Storage Files semantics, Active activation/configuration editing, operational/recovery mutations,
+  OrganizerExecutor and all POST/PUT/PATCH/DELETE authorities.
+- New FileIndex schema/lifecycle design, full-text search infrastructure, Provider calls and V1
+  behavior beyond the minimal backward-compatible processing-disposition list filter.
 
 ## Acceptance Criteria
 
-- [ ] `/ui-v2/library` is a real shell-integrated Library landing, visually and semantically
-      distinguishes Storage files from FileIndex, opens the implemented Storage Files route, and
-      offers a truthful current V1 Web continuation for FileIndex without a false V2 claim.
-- [ ] Direct or refreshed unauthenticated entry to the Storage Files route returns through the
-      existing memory-only connection boundary to the intended safe route; connect/disconnect and
-      401 cache clearing retain the Slice 31 behavior and never persist or expose the token.
-- [ ] With a valid managed Active runtime, the operator chooses a backend-reported Storage using an
-      operator-meaningful label, reaches its root without typing an ID, and sees only allowlisted
-      Active identity plus Storage-relative browse state. Draft/JSON/local rows are not presented as
-      managed Active authority.
-- [ ] The operator can open an immediate directory, use breadcrumbs, request a bounded next page,
-      return to a prior page/context, refresh, and switch Storage. Path/cursor state stays scoped to
-      the selected Storage and no frontend code invents cursors, recursively enumerates Storage or
-      exposes an absolute/provider root.
-- [ ] Directory and file entries render bounded safe facts; membership accurately distinguishes
-      indexed, not indexed, unavailable and truncated/ambiguous cases without inventing a processing
-      disposition or linking to a not-yet-implemented V2 detail page.
-- [ ] Loading, empty directory, no managed Active runtime, no available Storage, malformed response,
-      invalid/escaped path, invalid/stale cursor, missing ResourceLibrary, provider read/permission
-      failure, 401 and RBAC 403 states remain in shell context and provide the smallest valid
-      retry/back/reselect/reconnect/current-Web recovery. Raw API/provider text and private paths are
-      not rendered.
-- [ ] System Status and Files data are validated in centralized typed entity/API/query boundaries;
-      feature components do not issue raw fetches, duplicate Bearer/RBAC handling, infer backend
-      authority or trust unknown response fields.
-- [ ] All Library landing and Storage Files traffic is bounded authenticated GET traffic. Unit and
-      browser evidence proves view/navigation/refresh/retry creates no Job, Task, Provider request,
-      Reprocess/review action, audit write or Storage mutation and sends no non-GET API request.
-- [ ] The journey is keyboard-usable and coherent at narrow and wide viewports, with useful focus,
-      headings, labels and active-route/title behavior; existing V1 `/ui`, Dashboard and remaining
-      migration routes continue to work.
-- [ ] The T3 test commands below pass with actual results, and the checkpoint contains only this
-      coherent Task plus its Developer Completion Report. Any pre-existing/unrelated failure is
-      reported with reproducible evidence rather than hidden or weakened.
+- [ ] `/ui-v2/library` opens a real FileIndex catalog route that remains correctly titled and active
+      in the shared shell across direct entry, refresh and memory-only auth continuation. Storage
+      files and durable FileIndex stay visibly distinct, and no unfinished detail/action control is
+      presented as implemented V2 behavior.
+- [ ] A valid managed Active runtime yields operator-labeled Storage/ResourceLibrary choices and a
+      first bounded FileIndex page without requiring the operator to type an internal ID. Draft or
+      stale configuration is not presented as Active filter authority.
+- [ ] The operator can submit meaningful path/filename search and applicable ResourceLibrary,
+      Storage, discovery, processing and identity filters; the submitted state is visible,
+      refresh-safe and distinct from unsubmitted edits, while reset restores the unfiltered first
+      page and removes stale cursor state.
+- [ ] `processingDisposition` is validated and applied by the authoritative FileCatalog query before
+      paging across supported persistence implementations. Existing list filters, aliases, RBAC,
+      redaction and malformed/duplicate/unsupported-query behavior remain compatible.
+- [ ] Each result keeps discovery status, stability/change evidence, current occurrence state and
+      processing disposition in separate operator-language groups. Missing, unverified, legacy or
+      absent identity facts are not guessed and no historical Result is portrayed as current solely
+      from this list projection.
+- [ ] Next and previous/back movement is deterministic and bounded under the submitted query, uses
+      the existing stable cursor components, preserves useful filter context, and does not duplicate,
+      skip or recursively enumerate records in the covered equal-timestamp/page-boundary cases.
+- [ ] Loading, unfiltered empty, filtered empty, no managed Active options, invalid/unknown filters,
+      invalid/stale cursor, malformed/unavailable response, 401 and RBAC 403 states preserve shell
+      orientation and offer an appropriate retry/reset/back/reconnect/current-Web recovery without
+      showing raw protocol text, credentials, absolute roots or private endpoints.
+- [ ] FileIndex documents and query construction live in centralized typed entity/API/query
+      boundaries. Feature components do not issue raw fetches, locally reinterpret backend authority,
+      duplicate Bearer/RBAC handling or filter a server page as though it were a complete catalog.
+- [ ] Unit, Python integration and built-artifact browser evidence prove that entry, search, filter,
+      reset, paging, refresh and retry send bounded authenticated GETs only and create no Job, Task,
+      Provider request, Reprocess/review action, audit mutation or Storage mutation.
+- [ ] The catalog remains keyboard-usable and coherent at narrow and wide viewports; Task 32.1
+      Storage Files, V1 `/ui`, Dashboard and other supported V2 routes remain regression-safe.
+- [ ] The T3 commands below pass with actual results, and the checkpoint contains only this coherent
+      Task plus its Developer Completion Report. Pre-existing/unrelated failures or unavailable gates
+      are reported reproducibly rather than hidden, skipped or weakened.
 
 ## Required Tests
 
@@ -146,92 +152,76 @@ npm --prefix web run typecheck
 npm --prefix web run lint
 npm --prefix web run test -- --run
 npm --prefix web run build
-npm --prefix web run test:e2e -- library-files.spec.ts
-.venv/bin/python -m unittest tests.test_configuration_snapshot tests.test_runtime_files_browser tests.test_v2_ui tests.test_release_security
+npm --prefix web run test:e2e -- library-file-index.spec.ts
+npm --prefix web run test:e2e
+.venv/bin/python -m unittest tests.test_file_catalog tests.test_file_catalog_api tests.test_file_index_lifecycle tests.test_configuration_snapshot tests.test_v2_ui tests.test_release_security
 .venv/bin/ruff format --check .
 .venv/bin/ruff check .
 .venv/bin/python -m compileall -q mediaflow tests scripts
 git diff --check
 ```
 
-Focused frontend tests must include strict valid/malformed normalization, ignored unknown fields,
-query URL encoding/scoping, Library landing truthfulness, direct/deep route auth continuation,
-Storage selection, root/directory/breadcrumb/page-back/switch/refresh behavior, membership variants,
-all Acceptance Criteria failure/recovery categories, narrow/keyboard use, token secrecy and zero
-non-GET/work requests. If the exact test filename differs, run the focused replacement plus the full
-Playwright suite selector needed to prove the same journey and report the actual command.
+Focused frontend tests must cover strict valid/malformed normalization, ignored unknown fields,
+query encoding and draft/applied/reset behavior, deep-route auth continuation, Active selector
+authority, catalog row semantics, all supported filter classes, equal-timestamp cursor boundaries,
+next/previous context, empty/failure/recovery states, narrow/keyboard behavior, token secrecy and
+zero non-GET/work requests. If the exact focused filename differs, run its replacement and report
+the actual command.
 
-Python tests use temporary Storage roots and local fakes only. No production Local/SMB/OpenList/S3/
-TMDB service, credentials, private configuration or operator media may be accessed. Full Python
-unittest discovery and Docker smoke are reserved for Slice Final unless an implementation change
-raises the Task to T4 risk.
+Python tests must prove the new processing-disposition filter at application, in-memory/SQLite and
+API levels, including invalid values, combination with other filters and stable pagination. Tests
+use temporary databases and local fakes only; no production Storage, TMDB service, credentials,
+private configuration or operator media may be accessed.
+
+Full Python discovery and Docker release-security smoke remain Slice Final gates for this T3 Task;
+their canonical commands are `.venv/bin/python -m unittest discover -s tests` and
+`scripts/docker_release_security_smoke_test.py`. Report them as NOT RUN unless actual Task risk or a
+new blocker requires escalation to T4; never imply PASS without execution.
 
 ## Non-goals
 
-- FileIndex search/filter/list, FileIndex detail/explanation and V2 physical-to-indexed detail
-  navigation beyond truthful membership display; these are later coherent Tasks in Slice 32.
-- Scan, Preview, Organize, Reprocess, re-recognize, re-match, re-plan, review, checkpoint, recovery,
-  configuration editing/activation or any other POST/PUT/PATCH/DELETE action.
-- File selection for work, file content read/preview/download/upload, thumbnails/artwork, recursive
-  tree loading, media streaming, arbitrary host browsing or Storage mutation.
-- New API endpoints, Storage providers, adapters, schemas/repositories, FileIndex lifecycle behavior,
-  full-text search, domain redesign or changes to V1 execution/authorization behavior.
-- V1 UI retirement, identity redesign, token persistence, SSR/BFF/Node production serving, unrelated
-  refactors, optional polish or closure reconciliation for the whole Slice.
+- FileIndex detail/explanation UI, occurrence/history expansion, related review/checkpoint views,
+  Result relevance explanation, by-source resolution or physical/indexed detail links.
+- Scan, Preview, Organize, Reprocess, re-recognize, re-match, re-plan, review/recovery,
+  configuration editing/activation or any other state-changing action.
+- Client-side filtering of a partial catalog, full-text search infrastructure, arbitrary query
+  language, unbounded export, bulk selection/action or background indexing.
+- Storage browsing changes, file content read/preview/download/upload, thumbnails/artwork,
+  recursive Storage enumeration, media streaming or any Storage mutation.
+- New endpoints, providers, schemas, identity/auth architecture, token persistence, SSR/BFF/Node
+  production serving, V1 retirement, unrelated refactors or whole-Slice documentation reconciliation.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-- `mediaflow/infrastructure/configuration_snapshot.py` — add the Storage display name to the
-  allowlisted System Status Storage projection; no root/options/credentials added.
-- `tests/test_configuration_status.py` — Python regression proving the operator name is exposed and
-  the private root is not.
-- `mediaflow/application/storage_browser.py` — remove the dead `previousCursor` response extension
-  introduced during the correction loop; the frozen browser contract remains unchanged.
-- New typed V2 entities/guards: `web/src/entities/shared/normalize.ts`,
-  `web/src/entities/library/system-status.{ts,test.ts}` and
-  `web/src/entities/library/storage-files.{ts,test.ts}`; the correction now requires a complete
-  MANAGED snapshot identity and reads Files authority from `configuration`.
-- Centralized API/query boundary: `web/src/shared/api/api-client.ts`, `api-errors.ts`,
-  `library-api.test.ts`, `web/src/features/library/system-status-query.ts`,
-  `storage-files-query.ts`.
-- Feature/route surface: `web/src/features/library/LibraryLanding.tsx`,
-  `StorageFilesPage.tsx`, `web/src/routes/router.tsx`, shared UI styles; the Files view now rejects
-  status/Files revision mismatches with an explicit bounded Active-runtime refresh.
-- Auth/navigation continuation for refresh-safe Storage Files query state:
-  `api/auth-store.ts`, `api/auth-context.ts`, `shared/auth/AuthBoundary.tsx`,
-  `shared/navigation/destination-model.ts`, `features/entry/EntryPage.tsx` plus focused tests.
-- Browser proof/fakes: `web/tests/e2e/library-files.spec.ts`, `web/tests/fake-server.mjs`, and
-  updated Dashboard/deep-link specs for the real Library landing; the correction adds a live
-  missing-ResourceLibrary GET failure/recovery proof, stale-revision proof, empty-directory proof
-  and unavailable-Library retry proof, and removes the invented top-level authority/previous-page
-  fields.
+- Backend authority and persistence: `mediaflow/domain/file_index.py`,
+  `mediaflow/application/file_catalog.py`, `mediaflow/infrastructure/memory_file_index.py`,
+  `mediaflow/infrastructure/sqlite_file_index.py`, and `mediaflow/interfaces/service_api.py`.
+- Backend regression coverage: `tests/test_file_catalog.py` and `tests/test_file_catalog_api.py`.
+- Typed frontend boundary: `web/src/entities/library/file-index-catalog.ts` and its tests,
+  `web/src/features/library/file-index-query.ts`, `web/src/shared/api/api-client.ts`,
+  `web/src/shared/api/api-errors.ts`, and `web/src/shared/api/library-api.test.ts`.
+- V2 route and journey: `web/src/features/library/FileIndexCatalogPage.tsx` and its tests,
+  `web/src/features/library/LibraryLanding.tsx`, `web/src/routes/router.tsx`,
+  `web/src/shared/navigation/destination-model.ts` and its tests, plus shared styles.
+- Browser proof and fixtures: `web/tests/e2e/library-file-index.spec.ts`,
+  `web/tests/e2e/library-files.spec.ts`, and `web/tests/fake-server.mjs`.
 - `TASK.md` — this Developer Completion Report and checkpoint state.
 
 ### Implemented
 
-- `/ui-v2/library` is now a real shell-integrated Library landing that clearly separates Storage
-  files (implemented V2 journey) from FileIndex (truthful current-Web continuation).
-- A refresh-safe Storage Files route lets the operator choose a backend-reported Active Storage by
-  its operator label, browse root/immediate directories with breadcrumbs, request the bounded next
-  page, refresh, return to Library, and switch Storage without carrying stale path/cursor state.
-- Strict frontend normalization covers the allowlisted System Status and runtime Files documents;
-  unknown fields are ignored and shape violations become one bounded malformed read state.
-- The managed Active boundary is now complete: System Status requires MANAGED authority plus a
-  non-null snapshot ID, Files requires `configuration.authority === "MANAGED"`, and the view refuses
-  to render a Files document whose revision differs from the Active snapshot until the operator
-  refreshes the runtime.
-- Files provider/permission/configuration failures are bounded results, so a Storage-provider 403
-  never clears a valid API principal; RBAC 403 and 401 still use the shared authority lifecycle.
-- Deep-link continuation now retains only allowlisted Storage Files view state (`storage`, `path`,
-  `cursor`) through the memory-only connection boundary; 401 rejection preserves the active route
-  for explicit re-entry.
-- Loading, no-Active, no-Storage, empty, malformed, invalid-path, not-found, provider, 401 and 403
-  states render bounded operator language with retry/back/reselect/reconnect/V1 continuation;
-  missing-ResourceLibrary and stale-runtime identity failures now have built-artifact recovery
-  evidence as well. Empty-directory and unavailable-Library recovery are now covered by actual
-  built-artifact browser journeys.
+- Added the server-authoritative `processingDisposition` filter through the domain, application,
+  in-memory/SQLite repositories and API, before paging, with validation, aliases, duplicate-query
+  and cursor compatibility preserved.
+- Built the real authenticated `/ui-v2/library/file-index` journey with Active-scope choices,
+  submitted-versus-draft filters, reset, stable cursor paging and one-record lookahead.
+- Added strict allowlisted FileIndex normalization that rejects malformed documents while ignoring
+  unknown fields and excludes fingerprints, private paths and raw provider payloads.
+- Rendered separate discovery/stability, current-occurrence, processing and identity facts with
+  explicit unavailable states, bounded loading/empty/error/auth recovery and GET-only behavior.
+- Added the truthful Library landing handoff, secret-free fake-server fixtures and built-artifact
+  browser coverage for filters, paging, recovery, keyboard use and token/mutation absence.
 
 ### Tests and Results
 
@@ -242,60 +232,53 @@ python3 scripts/check_governance.py                          PASS
 npm --prefix web run format:check                            PASS
 npm --prefix web run typecheck                               PASS
 npm --prefix web run lint                                    PASS
-npm --prefix web run test -- --run                           134 passed (13 files)
+npm --prefix web run test -- --run                           PASS (164 tests, 15 files)
 npm --prefix web run build                                   PASS
-npm --prefix web run test:e2e -- library-files.spec.ts       18 passed
-npm --prefix web run test:e2e                                34 passed
-.venv/bin/python -m unittest tests.test_configuration_snapshot tests.test_runtime_files_browser tests.test_v2_ui tests.test_release_security PASS (67 tests)
-.venv/bin/python -m unittest tests.test_configuration_status PASS (6 tests)
+npm --prefix web run test:e2e -- library-file-index.spec.ts  PASS (6 tests)
+npm --prefix web run test:e2e                                PASS (40 tests)
+.venv/bin/python -m unittest tests.test_file_catalog tests.test_file_catalog_api tests.test_file_index_lifecycle tests.test_configuration_snapshot tests.test_v2_ui tests.test_release_security PASS (87 tests)
 .venv/bin/ruff format --check .                              PASS
 .venv/bin/ruff check .                                       PASS
-.venv/bin/python -m compileall -q mediaflow tests scripts PASS
+.venv/bin/python -m compileall -q mediaflow tests scripts  PASS
 git diff --check                                             PASS
-scripts/docker_release_security_smoke_test.py                NOT RUN (T3 scope; reserved for Slice Final per Task)
-.venv/bin/python -m unittest discover -s tests               NOT RUN (T3 scope; full regression reserved for Slice Final per Task)
 ```
 
-Browser evidence covers landing truthfulness, direct/deep auth continuation with allowlisted query
-state, Storage selection, root/directory/breadcrumb/page/refresh/switch, membership variants,
-no-Storage, empty directory, provider failure, invalid path/not-found, 401/403, malformed and
-unavailable retry, missing ResourceLibrary, stale runtime identity, narrow keyboard use, token
-secrecy and zero non-GET requests.
+The frontend test run emitted non-failing jsdom `Window.scrollTo()` diagnostics. The focused Python
+run emitted existing unclosed-database `ResourceWarning` messages but exited successfully. Full
+Python discovery and `scripts/docker_release_security_smoke_test.py` were NOT RUN; they remain
+Slice Final gates for this T3 Task.
 
 ### Decisions
 
-- Kept the Storage Files route under the `/library/files` URL and centralized route metadata, using
-  the existing flat route tree with an allowlisted child destination model for titles and auth
-  continuation.
-- Files identity (`authority`/`revisionId`) is read from the runtime document `configuration`
-  block, matching the actual backend projection.
-- Files 5xx provider/configuration failures with a known bounded envelope are returned as
-  `StorageFilesRead` results instead of shared errors so a provider denial never impersonates an
-  API-principal denial; only real 401/RBAC 403 travel through the shared boundary.
-- The Files query is gated on the successful System Status read and nested under the shared
-  authorized-read boundary so both endpoints share the same cache/auth lifecycle without racing.
-- Only `storage`, `path` and `cursor` query state is retained across an unauthenticated deep-entry
-  reconnect; arbitrary search text and token-like material are never carried.
+- Kept the existing authenticated `/api/v1/file-index` authority and `/files` alias; the new
+  processing filter is applied in the catalog query rather than in a partial client page.
+- Kept applied filters in allowlisted route state while editing remains draft-only, so submit/reset
+  and refresh/back preserve truthful query context without carrying credentials or authority.
+- Used an optional bounded identity summary and explicit unavailable labels rather than inferring
+  identity, current Result relevance or action eligibility from list facts.
+- Preserved the existing stable `updatedAt` + `fileId` cursor contract and corrected/regressed the
+  backward `before` URL parameter in the centralized API client.
 
 ### Remaining In-Slice Work
 
-- FileIndex list/search/filter and detail/explanation journeys (later Slice 32 Tasks).
-- Cross-surface physical-to-indexed detail navigation beyond the membership display implemented
-  here, plus Slice-level responsive/accessibility and final validation evidence.
+- FileIndex detail/explanation, occurrence/history, physical-to-index linkage, and current or
+  historical Result explanation remain outside this Task's frozen boundary.
+- Slice-level final review and validation evidence remain outside this Developer implementation
+  checkpoint.
 
 ### Risks / Deviations
 
-- No known failures. Full Python unittest discovery and the Docker release-security smoke test are
-  intentionally not run under this T3 Task; both remain Slice Final gates and are documented above
-  rather than inferred.
-- The Playwright fake only mirrors secret-free System Status/Files GET fixtures; real SMB/OpenList/
-  S3/TMDB services and credentials are never used.
+- Full Python discovery and Docker release-security smoke are intentionally NOT RUN under the T3
+  scope; no external Storage, TMDB service, credentials or private configuration was used.
+- Existing test-run warnings are recorded above; no test command failed.
+- Pre-existing untracked `node_modules/` was preserved and not staged. Ignored `config/alist.json`
+  was not staged; no credentials or private paths are in the checkpoint.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: b102145aedb3258532bcb7377b6f030abd880a51
+Head SHA: 755ddf7b7232b97aad88487dd7a9c57bcf458f54
 ```
 
 ## B Review Result
