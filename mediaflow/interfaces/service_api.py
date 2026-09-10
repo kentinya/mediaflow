@@ -51,6 +51,7 @@ from mediaflow.application.operations_lifecycle import (
     TaskExecutionPath,
     TaskLifecycleService,
     bounded_failure_document,
+    bounded_identity_path,
     job_lifecycle_document,
     job_operator_document,
     manual_scan_operator_document,
@@ -6623,17 +6624,25 @@ class MediaFlowApi:
         if bounded:
             return task_item_operator_document(item, checkpoint=checkpoint)
         document = cls._compatibility_document(item)
+        for key in ("source_path", "destination_path"):
+            if key in document:
+                # A persisted identity column that is not a provably
+                # Storage-relative identity fails closed in the compatibility
+                # read too; the V1 operator UI renders source_display, not this.
+                document[key] = bounded_identity_path(document[key])
         if checkpoint is not None:
             document["checkpoint"] = checkpoint
         return document
 
     @classmethod
     def _task_result_document(cls, result, *, bounded: bool) -> dict[str, object]:
-        return (
-            task_result_operator_document(result)
-            if bounded
-            else cls._compatibility_document(result)
-        )
+        if bounded:
+            return task_result_operator_document(result)
+        document = cls._compatibility_document(result)
+        for key in ("source_path", "destination_path"):
+            if key in document:
+                document[key] = bounded_identity_path(document[key])
+        return document
 
     def _cancel_task(
         self,

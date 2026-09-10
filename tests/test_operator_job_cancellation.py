@@ -4,10 +4,12 @@ import io
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 from mediaflow.application.automation import AutomationJobService
+from mediaflow.domain.automation import AutomationJobStatus, job_control_version
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.operator_ui import APP_JS
@@ -99,6 +101,73 @@ class OperatorJobCancellationTests(unittest.TestCase):
         )
         self.assertEqual(request(self.api, "POST", path + "/extra", token="operator-token")[0], 404)
         self.assertEqual(self.repository.get_job(job.job_id).status.value, "pending")
+
+    def test_terminal_commit_cannot_overwrite_an_accepted_running_cancellation(self) -> None:
+        """The exact cancel-versus-completion boundary B demonstrated.
+
+        A claimed running Job's cancellation is durably accepted first; the
+        already-in-flight workflow then submits itself as COMPLETED through
+        ``complete_claimed_job``.  The accepted request must win: the row
+        becomes cancelled, stays cancelled and keeps the request flag, so a
+        late completion can never be reported as success.
+        """
+
+        service = AutomationJobService(self.repository)
+        service.submit("scan")
+        claimed = self.repository.claim_next_job(datetime.now(UTC))
+        assert claimed is not None
+        self.repository.request_job_cancellation(
+            claimed.job_id,
+            datetime.now(UTC),
+            expected_version=job_control_version(claimed),
+        )
+        running = self.repository.get_job(claimed.job_id)
+        self.assertEqual(running.status, AutomationJobStatus.RUNNING)
+        self.assertTrue(running.cancellation_requested)
+        finished = replace(
+            claimed,
+            status=AutomationJobStatus.COMPLETED,
+            completed_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            task_id="task-completed",
+        )
+        self.assertTrue(self.repository.complete_claimed_job(finished))
+        persisted = self.repository.get_job(claimed.job_id)
+        self.assertEqual(persisted.status, AutomationJobStatus.CANCELLED)
+        self.assertTrue(persisted.cancellation_requested)
+        self.assertEqual(persisted.task_id, "task-completed")
+        self.assertIsNone(persisted.claim_token)
+
+    def test_failed_terminal_commit_also_cannot_overwrite_an_accepted_cancellation(self) -> None:
+        service = AutomationJobService(self.repository)
+        service.submit("preview")
+        claimed = self.repository.claim_next_job(datetime.now(UTC))
+        assert claimed is not None
+        self.repository.request_job_cancellation(
+            claimed.job_id,
+            datetime.now(UTC),
+            expected_version=job_control_version(claimed),
+        )
+        failed = replace(
+            claimed,
+            status=AutomationJobStatus.FAILED,
+            completed_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            task_id="task-failed",
+            error="workflow failed (RuntimeError)",
+            failure_category="workflow_failed",
+            failure_durable_state="the run failed at a bounded boundary",
+            failure_retry_safe=False,
+            failure_next_action="inspect the linked Task",
+        )
+        self.assertTrue(self.repository.complete_claimed_job(failed))
+        persisted = self.repository.get_job(claimed.job_id)
+        self.assertEqual(persisted.status, AutomationJobStatus.CANCELLED)
+        self.assertTrue(persisted.cancellation_requested)
+        # The workflow's own failure evidence stays truthful; only the status
+        # and the accepted request flag are fenced.
+        self.assertEqual(persisted.error, "workflow failed (RuntimeError)")
+        self.assertEqual(persisted.failure_category, "workflow_failed")
 
     def test_ui_is_two_step_terminal_safe_and_does_not_add_execution_controls(self) -> None:
         script = APP_JS.decode()

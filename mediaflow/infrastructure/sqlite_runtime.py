@@ -4991,6 +4991,30 @@ class SQLiteTaskRepository:
         if not job.claim_token:
             raise AutomationClaimLost("automation Job claim ownership was lost")
         with self._lock, self._connection:
+            # An accepted cooperative cancellation is a durable operator decision:
+            # the terminal commit of a claimed Job must never overwrite it.  A
+            # completion or failure that arrives after the request was durably
+            # admitted is converted into the same cancelled outcome the Worker's
+            # own cancellation boundary publishes (the linked Task keeps its own
+            # truthful per-item state), so an accepted request can never be lost
+            # and reported as success.  The claim fencing below is unchanged.
+            row = self._connection.execute(
+                "SELECT cancellation_requested FROM automation_jobs "
+                "WHERE job_id=? AND status=? AND claim_token=?",
+                (job.job_id, AutomationJobStatus.RUNNING.value, job.claim_token),
+            ).fetchone()
+            if row is None:
+                return False
+            if row["cancellation_requested"] and job.status is not AutomationJobStatus.CANCELLED:
+                now = datetime.now(UTC)
+                job = replace(
+                    job,
+                    status=AutomationJobStatus.CANCELLED,
+                    cancellation_requested=True,
+                    updated_at=now,
+                    completed_at=now,
+                    error=job.error or "workflow cancelled",
+                )
             cursor = self._connection.execute(
                 "UPDATE automation_jobs SET command=?, status=?, created_at=?, updated_at=?, "
                 "limit_value=?, started_at=?, completed_at=?, task_id=?, error=?, "

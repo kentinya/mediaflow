@@ -1002,6 +1002,75 @@ class OperationsControlFencingTests(unittest.TestCase):
                 configuration_snapshot_digest=fingerprint,
             )
         )
+        # A syntactically valid durable failure envelope whose structured
+        # fields smuggle a credential and an absolute host path: the envelope
+        # must be published only after the same bounded scrubbing as every
+        # other evidence branch.
+        envelope = "mediaflow-failure-v1:" + json.dumps(
+            {
+                "category": "storage_failure",
+                "message": "Authorization: Bearer topsecret",
+                "durableState": "effects were recorded under /home/alice/private.mkv",
+                "sideEffects": "Authorization: Bearer topsecret",
+                "retrySafe": False,
+                "nextAction": "inspect /home/alice/private.mkv",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self.repository.create_job(
+            AutomationJob(
+                "job-envelope",
+                AutomationCommand.PREVIEW,
+                AutomationJobStatus.FAILED,
+                NOW,
+                NOW,
+                started_at=NOW,
+                completed_at=NOW,
+                error=envelope,
+            )
+        )
+        # A second item and result whose persisted identity columns hold
+        # absolute host paths instead of Storage-relative identities: the
+        # projection must fail closed rather than publish them.
+        self.repository.upsert_item(
+            PersistentTaskItem(
+                "item-path",
+                task.task_id,
+                "source",
+                "movies",
+                "/home/alice/private.mkv",
+                "/srv/media/display.mkv",
+                TaskItemStatus.FAILED,
+                "failed",
+                1,
+                NOW,
+                NOW,
+                destination_path="/home/alice/dest/private.mkv",
+            )
+        )
+        self.repository.append_result(
+            PersistentResultRecord(
+                "item-path:1",
+                task.task_id,
+                "item-path",
+                "source",
+                "/home/alice/private.mkv",
+                "destination",
+                "/home/alice/dest/private.mkv",
+                "A",
+                "tmdb",
+                "1",
+                "A",
+                "A",
+                "A",
+                "A",
+                "MOVE",
+                "failed",
+                NOW,
+            )
+        )
 
         forbidden = ("topsecret", "/home/alice", "/srv/media", "fingerprint-value", fingerprint)
         operations_reads = (
@@ -1009,6 +1078,7 @@ class OperationsControlFencingTests(unittest.TestCase):
             (f"/api/v1/operations/tasks/{task.task_id}", ""),
             ("/api/v1/operations/jobs", ""),
             ("/api/v1/operations/jobs/job-hostile", ""),
+            ("/api/v1/operations/jobs/job-envelope", ""),
         )
         for path, query in operations_reads:
             with self.subTest(path=path):
@@ -1031,6 +1101,24 @@ class OperationsControlFencingTests(unittest.TestCase):
         # The immutable revision identity stays visible as the pin evidence.
         self.assertEqual(detail["items"][0]["source_path"], "movie.mkv")
         self.assertEqual(detail["configuration_snapshot_id"], "rev-1")
+        # A persisted identity column that is not a provably Storage-relative
+        # identity fails closed to the redaction marker.
+        hostile_items = {item["item_id"]: item for item in detail["items"]}
+        self.assertEqual(hostile_items["item-path"]["source_path"], "[redacted-path]")
+        self.assertEqual(hostile_items["item-path"]["destination_path"], "[redacted-path]")
+        self.assertIn("failure", detail["results"][1])
+        hostile_results = {result["item_id"]: result for result in detail["results"]}
+        self.assertEqual(hostile_results["item-path"]["source_path"], "[redacted-path]")
+        self.assertEqual(hostile_results["item-path"]["destination_path"], "[redacted-path]")
+        # The decoded envelope is still published as bounded failure evidence,
+        # with its credential and host-path content replaced.
+        status, envelope_document, _ = request(
+            self.api, "GET", "/api/v1/operations/jobs/job-envelope"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(envelope_document["failure"]["category"], "storage_failure")
+        self.assertIn("[redacted]", envelope_document["failure"]["message"])
+        self.assertIn("[redacted-path]", envelope_document["failure"]["durableState"])
 
         # The pre-existing compatibility document keeps its historical fields.
         # It keeps the configured display root the V1 operator UI renders and the
