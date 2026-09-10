@@ -295,7 +295,7 @@ private configuration was used.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [implementation commit SHA]
+Head SHA: 6687658fb91a6fd7f5fbc616bb7d4e96f0fa7d6e
 ```
 
 ## B Review Result
