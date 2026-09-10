@@ -105,7 +105,16 @@ class InMemoryFileIndexRepository:
             and (after is None or (record.updated_at, record.file_id) < after)
             and (before is None or (record.updated_at, record.file_id) > before)
         ]
-        records.sort(key=lambda record: (record.updated_at, record.file_id), reverse=True)
+        records.sort(
+            key=lambda record: (record.updated_at, record.file_id),
+            reverse=before is None,
+        )
+        if before is not None:
+            # A backward cursor asks for the records immediately newer than the
+            # anchor.  Ascending order makes the nearest records the bounded
+            # prefix; reverse only that prefix so the API still returns its
+            # canonical descending order and one-record lookahead.
+            return tuple(reversed(records[:limit]))
         return tuple(records[:limit])
 
     def reconcile_missing(

@@ -206,11 +206,16 @@ class SQLiteFileIndexRepository:
         elif before is not None:
             sql += " AND (updated_at > ? OR (updated_at = ? AND file_id > ?))"
             parameters.extend((before[0].isoformat(), before[0].isoformat(), before[1]))
-        sql += " ORDER BY updated_at DESC, file_id DESC LIMIT ?"
+        sql += (
+            " ORDER BY updated_at ASC, file_id ASC LIMIT ?"
+            if before is not None
+            else " ORDER BY updated_at DESC, file_id DESC LIMIT ?"
+        )
         parameters.append(limit)
         with self._lock:
             rows = self._connection.execute(sql, tuple(parameters)).fetchall()
-        return tuple(self._record(row) for row in rows)
+        values = tuple(self._record(row) for row in rows)
+        return tuple(reversed(values)) if before is not None else values
 
     def list_enriched_catalog(
         self,
@@ -325,11 +330,16 @@ class SQLiteFileIndexRepository:
         elif before is not None:
             sql += " AND (f.updated_at > ? OR (f.updated_at = ? AND f.file_id > ?))"
             parameters.extend((before[0].isoformat(), before[0].isoformat(), before[1]))
-        sql += " ORDER BY f.updated_at DESC, f.file_id DESC LIMIT ?"
+        sql += (
+            " ORDER BY f.updated_at ASC, f.file_id ASC LIMIT ?"
+            if before is not None
+            else " ORDER BY f.updated_at DESC, f.file_id DESC LIMIT ?"
+        )
         parameters.append(limit)
         with self._lock:
             rows = self._connection.execute(sql, tuple(parameters)).fetchall()
-        return tuple(self._enriched_record(row) for row in rows)
+        values = tuple(self._enriched_record(row) for row in rows)
+        return tuple(reversed(values)) if before is not None else values
 
     def reconcile_missing(
         self,
