@@ -9,7 +9,7 @@ Name: Operations Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: 827c36b410687e41b1da53ba6475d8c03a47dbfd
-Implementation Head:
+Implementation Head: NOT SET
 ~~~
 
 The Base is the actual committed `main` checkpoint immediately before Slice 33 activation and
