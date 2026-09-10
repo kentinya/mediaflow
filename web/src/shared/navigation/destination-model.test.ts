@@ -24,6 +24,7 @@ describe("destination model", () => {
     expect(childDestinations.map((item) => item.label)).toEqual([
       "Storage files",
       "FileIndex",
+      "FileIndex detail",
     ]);
   });
 
@@ -35,6 +36,32 @@ describe("destination model", () => {
       "library-file-index",
     );
     expect(destinationForPath("/unknown")).toBeUndefined();
+  });
+
+  it("resolves one-segment concrete instances of the detail route", () => {
+    expect(destinationForPath("/library/file-index/file-123")?.id).toBe(
+      "library-file-index-detail",
+    );
+    expect(destinationForPath("/library/file-index/file-123")?.title).toBe(
+      "FileIndex detail | MediaFlow",
+    );
+    // The catalog route keeps its own identity; only one extra segment is a
+    // detail instance. Deeper or empty paths never resolve.
+    expect(destinationForPath("/library/file-index")?.id).toBe(
+      "library-file-index",
+    );
+    expect(destinationForPath("/library/file-index/a/b")).toBeUndefined();
+    expect(destinationForPath("/library/file-index/")?.id).toBe(
+      "library-file-index",
+    );
+    // The declared template path resolves to the same destination contract;
+    // it is never a navigable route (the router only registers the
+    // parameterized path), but it must not invent a second identity.
+    expect(destinationForPath("/library/file-index/$fileId")?.id).toBe(
+      "library-file-index-detail",
+    );
+    expect(isDestinationPath("/library/file-index/file-123")).toBe(true);
+    expect(isDestinationPath("/library/file-index/abc")).toBe(true);
   });
 
   it("derives a unique path allowlist from the destinations contract", () => {
@@ -102,6 +129,23 @@ describe("destination model", () => {
         "query=movie&processingDisposition=organized&token=secret&limit=50",
       );
       expect(search).toBe("query=movie&processingDisposition=organized");
+    });
+
+    it("preserves q_ keys and drops others for the detail route", () => {
+      const search = allowlistedDestinationSearch(
+        "/library/file-index/$fileId",
+        "q_query=movie&q_resourceLibrary=tv&token=secret&limit=50",
+      );
+      expect(search).toBe("q_query=movie&q_resourceLibrary=tv");
+    });
+
+    it("returns null when no q_ keys are present on the detail route", () => {
+      expect(
+        allowlistedDestinationSearch(
+          "/library/file-index/$fileId",
+          "token=secret&limit=50",
+        ),
+      ).toBeNull();
     });
   });
 });

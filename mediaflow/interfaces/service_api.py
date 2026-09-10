@@ -3560,6 +3560,7 @@ class MediaFlowApi:
                 resource_library_id=resource_library_id,
             )
             if record is None:
+                reason_code = "ambiguous" if unavailable_reason == "ambiguous" else "missing"
                 return self._response(
                     start_response,
                     200,
@@ -3569,9 +3570,10 @@ class MediaFlowApi:
                         "filesSurface": "/api/v1/storage/files",
                         "available": False,
                         "fileId": None,
+                        "reason": reason_code,
                         "unavailableReason": (
                             "the source link is ambiguous; scope it by ResourceLibrary and reload"
-                            if unavailable_reason == "ambiguous"
+                            if reason_code == "ambiguous"
                             else "no current indexed FileIndex record matches this source link"
                         ),
                     },
@@ -3585,6 +3587,7 @@ class MediaFlowApi:
                     "filesSurface": "/api/v1/storage/files",
                     "available": True,
                     "fileId": record.file_id,
+                    "reason": None,
                     "resourceLibraryId": record.resource_library_id,
                     "detailUrl": f"/api/v1/files/{record.file_id}",
                 },

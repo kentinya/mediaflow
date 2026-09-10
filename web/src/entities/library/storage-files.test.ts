@@ -38,7 +38,7 @@ const storageFilesPayload = {
       indexMembership: {
         available: true,
         indexed: true,
-        memberships: [{ fileId: "file-1" }],
+        memberships: [{ fileId: "file-1", resourceLibraryId: "resources-1" }],
         total: 1,
         truncated: false,
       },
@@ -82,6 +82,7 @@ describe("normalizeStorageFiles", () => {
       kind: "indexed",
       libraryName: null,
       total: 1,
+      memberships: [{ fileId: "file-1", resourceLibraryId: "resources-1" }],
     });
     expect(model.entries[1].membership.kind).toBe("not-indexed");
     expect(model.authority).toBe("MANAGED");
@@ -101,7 +102,10 @@ describe("normalizeStorageFiles", () => {
           indexMembership: {
             available: true,
             indexed: true,
-            memberships: [{ fileId: "file-1" }, { fileId: "file-2" }],
+            memberships: [
+              { fileId: "file-1", resourceLibraryId: "resources-1" },
+              { fileId: "file-2", resourceLibraryId: "resources-2" },
+            ],
             total: 2,
             truncated: false,
           },
@@ -113,6 +117,7 @@ describe("normalizeStorageFiles", () => {
       kind: "ambiguous",
       libraryName: null,
       total: 2,
+      memberships: [],
     });
   });
 
@@ -148,11 +153,13 @@ describe("normalizeStorageFiles", () => {
       kind: "truncated",
       libraryName: null,
       total: 9,
+      memberships: [],
     });
     expect(model.entries[1].membership).toEqual({
       kind: "unavailable",
       libraryName: null,
       total: 0,
+      memberships: [],
     });
     expect(model.hasNext).toBe(false);
   });

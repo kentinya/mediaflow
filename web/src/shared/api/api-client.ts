@@ -27,6 +27,12 @@ import {
   type FileIndexCatalogPage,
 } from "../../entities/library/file-index-catalog";
 import {
+  normalizeFileBySource,
+  normalizeFileDetail,
+  type FileBySourceDocument,
+  type FileDetailModel,
+} from "../../entities/library/file-detail";
+import {
   DashboardApiError,
   FileIndexApiError,
   StorageFilesApiError,
@@ -535,6 +541,271 @@ export async function fetchFileIndex(
           ? { ...page, hasPrevious: page.items.length > 0 }
           : page,
     };
+  } catch {
+    throw new FileIndexApiError("malformed");
+  }
+}
+
+/**
+ * Bounded, secret-free reason a FileIndex detail read did not return a
+ * document. Authentication/RBAC outcomes throw instead so the shared boundary
+ * owns the authority transition; a missing/stale record is a normal bounded
+ * result the page can recover from without clearing a valid principal.
+ */
+export type FileDetailFailureKind = "not_found" | "rejected" | "unavailable";
+
+export interface FileDetailFailure {
+  readonly kind: FileDetailFailureKind;
+  readonly title: string;
+  readonly nextAction: string;
+}
+
+export type FileDetailRead =
+  | { readonly ok: true; readonly model: FileDetailModel }
+  | { readonly ok: false; readonly failure: FileDetailFailure };
+
+const FILE_DETAIL_FAILURES: Readonly<
+  Record<FileDetailFailureKind, FileDetailFailure>
+> = {
+  not_found: {
+    kind: "not_found",
+    title: "FileIndex record not found",
+    nextAction:
+      "This FileIndex record is no longer available. Return to the FileIndex catalog or the Library.",
+  },
+  rejected: {
+    kind: "rejected",
+    title: "Detail request rejected",
+    nextAction:
+      "The detail request was rejected as invalid. No file was changed and this read remains safe to repeat.",
+  },
+  unavailable: {
+    kind: "unavailable",
+    title: "FileIndex detail unavailable",
+    nextAction: "Reload the current Active runtime and retry the same read.",
+  },
+};
+
+function fileDetailFailure(kind: FileDetailFailureKind): FileDetailRead {
+  return { ok: false, failure: FILE_DETAIL_FAILURES[kind] };
+}
+
+function isSafeRouteFileId(fileId: string): boolean {
+  return (
+    fileId.length > 0 &&
+    fileId.length <= 256 &&
+    !fileId.includes("/") &&
+    !fileId.includes("\\") &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f]/.test(fileId)
+  );
+}
+
+function isSafeScopedIdentifier(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 1024 &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f]/.test(value)
+  );
+}
+
+function isSafeStorageRelativePath(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 4096 &&
+    !value.startsWith("/") &&
+    !value.includes("\\") &&
+    !value.split("/").some((segment) => segment === "..") &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f]/.test(value)
+  );
+}
+
+export interface FileDetailQueryOptions {
+  readonly fileId: string;
+  readonly resourceLibrary?: string | null;
+}
+
+export function fileDetailUrl(options: FileDetailQueryOptions): string {
+  const params = new URLSearchParams();
+  if (options.resourceLibrary) {
+    params.set("resourceLibrary", options.resourceLibrary);
+  }
+  const query = params.toString();
+  return `/api/v1/files/${encodeURIComponent(options.fileId)}${query ? `?${query}` : ""}`;
+}
+
+export async function fetchFileDetail(
+  token: string | null,
+  options: FileDetailQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<FileDetailRead> {
+  if (
+    !isSafeRouteFileId(options.fileId) ||
+    (options.resourceLibrary !== null &&
+      options.resourceLibrary !== undefined &&
+      !isSafeScopedIdentifier(options.resourceLibrary))
+  ) {
+    return fileDetailFailure("not_found");
+  }
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (token !== null) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(fileDetailUrl(options), {
+      method: "GET",
+      headers,
+    });
+  } catch {
+    return fileDetailFailure("unavailable");
+  }
+  if (response.status === 401) {
+    throw new FileIndexApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    const envelope = await readErrorEnvelope(response);
+    if (envelope.code === "forbidden") {
+      throw new FileIndexApiError("forbidden");
+    }
+    return fileDetailFailure("rejected");
+  }
+  if (response.status === 404) {
+    return fileDetailFailure("not_found");
+  }
+  if (response.status >= 500) {
+    return fileDetailFailure("unavailable");
+  }
+  if (!response.ok) {
+    return fileDetailFailure("rejected");
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new FileIndexApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeFileDetail(payload, options.fileId) };
+  } catch {
+    throw new FileIndexApiError("malformed");
+  }
+}
+
+/**
+ * Bounded result of the explicit unique-link check before a Storage file
+ * entry may offer the FileIndex detail destination.
+ */
+export type FileBySourceFailureKind = "rejected" | "unavailable";
+
+export interface FileBySourceFailure {
+  readonly kind: FileBySourceFailureKind;
+  readonly title: string;
+  readonly nextAction: string;
+}
+
+export type FileBySourceRead =
+  | { readonly ok: true; readonly model: FileBySourceDocument }
+  | { readonly ok: false; readonly failure: FileBySourceFailure };
+
+const FILE_BY_SOURCE_FAILURES: Readonly<
+  Record<FileBySourceFailureKind, FileBySourceFailure>
+> = {
+  rejected: {
+    kind: "rejected",
+    title: "Source link check rejected",
+    nextAction:
+      "The source-link request was rejected as invalid. No file was changed and this read remains safe to repeat.",
+  },
+  unavailable: {
+    kind: "unavailable",
+    title: "Source link check unavailable",
+    nextAction: "Reload the current Active runtime and retry the same read.",
+  },
+};
+
+export interface FileBySourceQueryOptions {
+  readonly storageId: string;
+  readonly path: string;
+  readonly resourceLibrary?: string | null;
+}
+
+export function fileBySourceUrl(options: FileBySourceQueryOptions): string {
+  const params = new URLSearchParams();
+  params.set("storageId", options.storageId);
+  params.set("path", options.path);
+  if (options.resourceLibrary) {
+    params.set("resourceLibrary", options.resourceLibrary);
+  }
+  return `/api/v1/files/by-source?${params.toString()}`;
+}
+
+export async function fetchFileBySource(
+  token: string | null,
+  options: FileBySourceQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<FileBySourceRead> {
+  if (
+    !isSafeScopedIdentifier(options.storageId) ||
+    !isSafeStorageRelativePath(options.path) ||
+    (options.resourceLibrary !== null &&
+      options.resourceLibrary !== undefined &&
+      !isSafeScopedIdentifier(options.resourceLibrary))
+  ) {
+    return { ok: false, failure: FILE_BY_SOURCE_FAILURES.rejected };
+  }
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (token !== null) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(fileBySourceUrl(options), {
+      method: "GET",
+      headers,
+    });
+  } catch {
+    return { ok: false, failure: FILE_BY_SOURCE_FAILURES.unavailable };
+  }
+  if (response.status === 401) {
+    throw new FileIndexApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    const envelope = await readErrorEnvelope(response);
+    if (envelope.code === "forbidden") {
+      throw new FileIndexApiError("forbidden");
+    }
+    return { ok: false, failure: FILE_BY_SOURCE_FAILURES.rejected };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: FILE_BY_SOURCE_FAILURES.unavailable };
+  }
+  if (response.status === 404) {
+    return {
+      ok: true,
+      model: {
+        available: false,
+        fileId: null,
+        resourceLibraryId: null,
+        reason: "missing",
+      },
+    };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: FILE_BY_SOURCE_FAILURES.rejected };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new FileIndexApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeFileBySource(payload) };
   } catch {
     throw new FileIndexApiError("malformed");
   }

@@ -17,6 +17,7 @@ import {
   emptyFileIndexSearch,
   fileIndexQueryOptions,
   parseFileIndexSearch,
+  serializeCatalogReturnContext,
   serializeFileIndexSearch,
   type FileIndexCatalogSearchState,
 } from "./file-index-query";
@@ -339,16 +340,33 @@ function CatalogFilters({
 
 function CatalogRecord({
   record,
+  returnContext,
 }: {
   readonly record: FileIndexCatalogRecord;
+  readonly returnContext: FileIndexCatalogSearchState;
 }) {
   const identity = record.identitySummary;
+  const returnQuery = serializeCatalogReturnContext(returnContext);
   return (
     <li className="mf-catalog-record">
       <article>
         <header className="mf-catalog-record-head">
           <div>
-            <h3>{record.filename}</h3>
+            <h3>
+              <Link
+                to="/library/file-index/$fileId"
+                params={{ fileId: record.fileId }}
+                search={
+                  returnQuery.length > 0
+                    ? (Object.fromEntries(
+                        new URLSearchParams(returnQuery),
+                      ) as Record<string, string>)
+                    : undefined
+                }
+              >
+                {record.filename}
+              </Link>
+            </h3>
             <p className="mf-dashboard-meta">
               Storage-relative path: {record.path}
             </p>
@@ -684,7 +702,11 @@ export function FileIndexCatalogView({
         <>
           <ul className="mf-catalog-list" aria-label="FileIndex records">
             {catalog.model.items.map((record) => (
-              <CatalogRecord key={record.fileId} record={record} />
+              <CatalogRecord
+                key={record.fileId}
+                record={record}
+                returnContext={applied}
+              />
             ))}
           </ul>
           <PageControls

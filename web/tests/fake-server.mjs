@@ -439,7 +439,108 @@ function filesDocument(path, cursor, storageId) {
               indexMembership: {
                 available: true,
                 indexed: true,
-                memberships: [{ fileId: "file-e2e-1" }],
+                memberships: [
+                  {
+                    fileId: "file-index-example",
+                    resourceLibraryId: "resources",
+                  },
+                ],
+                total: 1,
+                truncated: false,
+              },
+            },
+            {
+              name: "ambiguous.mkv",
+              path: "ambiguous.mkv",
+              type: "file",
+              entryType: "file",
+              size: 1572864000,
+              modifiedAt: "2026-08-22T12:00:00+00:00",
+              isDirectory: false,
+              isSymlink: false,
+              traversable: false,
+              selectable: false,
+              indexMembership: {
+                available: true,
+                indexed: true,
+                memberships: [
+                  {
+                    fileId: "file-index-example",
+                    resourceLibraryId: "resources",
+                  },
+                ],
+                total: 1,
+                truncated: false,
+              },
+            },
+            {
+              name: "unavailable.mkv",
+              path: "unavailable.mkv",
+              type: "file",
+              entryType: "file",
+              size: 1572864000,
+              modifiedAt: "2026-08-22T12:00:00+00:00",
+              isDirectory: false,
+              isSymlink: false,
+              traversable: false,
+              selectable: false,
+              indexMembership: {
+                available: true,
+                indexed: true,
+                memberships: [
+                  {
+                    fileId: "file-index-example",
+                    resourceLibraryId: "resources",
+                  },
+                ],
+                total: 1,
+                truncated: false,
+              },
+            },
+            {
+              name: "missing-link.mkv",
+              path: "missing-link.mkv",
+              type: "file",
+              entryType: "file",
+              size: 1572864000,
+              modifiedAt: "2026-08-22T12:00:00+00:00",
+              isDirectory: false,
+              isSymlink: false,
+              traversable: false,
+              selectable: false,
+              indexMembership: {
+                available: true,
+                indexed: true,
+                memberships: [
+                  {
+                    fileId: "file-index-example",
+                    resourceLibraryId: "resources",
+                  },
+                ],
+                total: 1,
+                truncated: false,
+              },
+            },
+            {
+              name: "malformed.mkv",
+              path: "malformed.mkv",
+              type: "file",
+              entryType: "file",
+              size: 1572864000,
+              modifiedAt: "2026-08-22T12:00:00+00:00",
+              isDirectory: false,
+              isSymlink: false,
+              traversable: false,
+              selectable: false,
+              indexMembership: {
+                available: true,
+                indexed: true,
+                memberships: [
+                  {
+                    fileId: "file-index-example",
+                    resourceLibraryId: "resources",
+                  },
+                ],
                 total: 1,
                 truncated: false,
               },
@@ -521,6 +622,201 @@ function filesDocument(path, cursor, storageId) {
     sideEffects: "none",
     retrySafe: true,
   };
+}
+
+function fileDetailDocument(fileId) {
+  const base = FILE_INDEX_ITEMS.find((item) => item.fileId === fileId);
+  if (base === undefined) {
+    return null;
+  }
+  const index = Number(fileId.slice("file-index-".length)) || 0;
+  return {
+    ...base,
+    currentOccurrence: {
+      ...base.currentOccurrence,
+      occurrenceId: `occ-${fileId}`,
+      fingerprintAlgorithm: "sha256-v2",
+    },
+    occurrenceHistory: [
+      {
+        occurrenceId: `occ-${fileId}-prior`,
+        state: "verified",
+        current: false,
+        firstSeenAt: "2026-08-01T09:00:00+00:00",
+        lastSeenAt: "2026-08-21T10:00:00+00:00",
+        supersededAt: "2026-08-22T11:10:00+00:00",
+      },
+    ],
+    priorResultRelevance: {
+      currentResultId: `result-${fileId}`,
+      current: true,
+      historicalOnly: false,
+    },
+    reprocess: {
+      eligible: base.processingDisposition === "attention",
+      reason:
+        base.processingDisposition === "attention"
+          ? "record is in the attention disposition"
+          : "only attention records are reprocessable",
+    },
+    reprocessRequests:
+      base.processingDisposition === "attention"
+        ? [
+            {
+              requestId: `reprocess-${fileId}`,
+              status: "pending_confirmation",
+              nextAction: "confirm in the current Web UI",
+            },
+          ]
+        : [],
+    processing: {
+      resultId: `result-${fileId}`,
+      effectCertainty:
+        base.processingDisposition === "organized"
+          ? "verified_complete"
+          : "attempted_unverified",
+      retrySafety: "safe",
+      nextAction:
+        base.processingDisposition === "organized" ? null : "review the record",
+      updatedAt: "2026-08-22T12:05:00+00:00",
+    },
+    latestResult: {
+      resultId: `result-${fileId}`,
+      status: "completed",
+      createdAt: "2026-08-22T12:05:00+00:00",
+      recognitionType: base.recognitionType,
+      provider: "tmdb",
+      providerId: base.providerId,
+      title: base.title,
+      metadataPolicyId: "meta-a",
+      namingPolicyId: "naming-a",
+      classificationPolicyId: "class-a",
+      organizePolicyId: "organize-move",
+      operation: "move",
+      destinationPath: `Library/Movies/${base.title} (${base.year})`,
+      effectCertainty:
+        base.processingDisposition === "organized"
+          ? "verified_complete"
+          : "attempted_unverified",
+      error: null,
+      relevance: "current",
+      current: true,
+    },
+    results: [
+      {
+        resultId: `result-${fileId}-prior`,
+        status: "superseded",
+        createdAt: "2026-08-01T09:00:00+00:00",
+        recognitionType: base.recognitionType,
+        provider: "tmdb",
+        providerId: base.providerId,
+        title: base.title,
+        metadataPolicyId: "meta-a",
+        namingPolicyId: "naming-a",
+        classificationPolicyId: "class-a",
+        organizePolicyId: "organize-move",
+        operation: "move",
+        destinationPath: null,
+        effectCertainty: "attempted_unverified",
+        error: null,
+        relevance: "historical_different_occurrence",
+        current: false,
+      },
+    ],
+    items: [
+      {
+        taskId: base.taskId,
+        itemId: `item-${fileId}`,
+        status: "completed",
+        stage: "organizing",
+        updatedAt: "2026-08-22T12:05:00+00:00",
+        relevance: "current",
+        current: true,
+        checkpoint: {
+          stage: "organizing",
+          savedAt: "2026-08-22T12:04:00+00:00",
+        },
+      },
+    ],
+    relatedReviews: [
+      {
+        kind: "organize",
+        reviewId: `review-${fileId}`,
+        status: "resolved",
+      },
+    ],
+    evidence: [
+      {
+        outcome: "completed",
+        capturedAt: "2026-08-22T12:06:00+00:00",
+        error: null,
+        truncated: false,
+        sections: {
+          parse: {
+            available: true,
+            truncated: false,
+            items: [{ note: "discovery ok" }],
+            warnings: [],
+          },
+          operation: {
+            available: index % 2 === 0,
+            truncated: index % 4 === 0,
+            items: [],
+            warnings: [],
+            unavailableReason:
+              index % 2 === 0
+                ? undefined
+                : "organize evidence was not captured",
+          },
+        },
+      },
+    ],
+    evidenceAvailability: "available",
+    currentActions: [
+      {
+        label: "Reprocess this record",
+        confirmationRequired: true,
+        admissible: base.processingDisposition === "attention",
+      },
+    ],
+    truncated: { occurrenceHistory: false, results: false, items: false },
+  };
+}
+
+function fileBySourceDocument(storageId, path) {
+  if (storageId === "local-media" && path === "show.mkv") {
+    return {
+      available: true,
+      fileId: "file-index-example",
+      resourceLibraryId: "resources",
+      reason: null,
+    };
+  }
+  if (storageId === "local-media" && path === "draft.mkv") {
+    return {
+      available: false,
+      fileId: null,
+      resourceLibraryId: null,
+      reason: "missing",
+    };
+  }
+  if (storageId === "local-media" && path === "ambiguous.mkv") {
+    return {
+      available: false,
+      fileId: null,
+      resourceLibraryId: null,
+      reason: "ambiguous",
+    };
+  }
+  if (storageId === "local-media" && path === "missing-link.mkv") {
+    return {
+      available: false,
+      fileId: null,
+      resourceLibraryId: null,
+      reason: "missing",
+    };
+  }
+  return null;
 }
 
 function bearerToken(req) {
@@ -787,6 +1083,139 @@ const server = createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, filesDocument(path, cursor, storageId));
+    return;
+  }
+  const detailMatch = url.pathname.match(
+    /^\/api\/v1\/files\/(?!by-source$)(.+)$/,
+  );
+  if (detailMatch !== null) {
+    if (req.method !== "GET") {
+      res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("GET required");
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message: "principal lacks read permission",
+        },
+      });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    const encodedFileId = detailMatch[1];
+    let fileId;
+    try {
+      fileId = decodeURIComponent(encodedFileId);
+    } catch {
+      sendJson(res, 400, {
+        error: { code: "rejected", message: "fileId encoding is invalid" },
+      });
+      return;
+    }
+    if (fileId === "file-index-malformed") {
+      sendJson(res, 200, {
+        some_json: 42,
+        missing_the_required_file_detail_document_structure: true,
+      });
+      return;
+    }
+    if (fileId === "file-index-unavailable") {
+      sendJson(res, 503, {
+        error: {
+          code: "service_unavailable",
+          message: "detail backend unavailable",
+        },
+      });
+      return;
+    }
+    if (fileId === "file-index-unauthorized") {
+      sendJson(res, 401, {
+        error: {
+          code: "unauthorized",
+          message: "detail authorization expired",
+        },
+      });
+      return;
+    }
+    if (fileId === "file-index-forbidden") {
+      sendJson(res, 403, {
+        error: { code: "forbidden", message: "detail permission denied" },
+      });
+      return;
+    }
+    const document = fileDetailDocument(fileId);
+    if (document === null) {
+      sendJson(res, 404, {
+        error: { code: "not_found", message: "FileIndex record was not found" },
+      });
+      return;
+    }
+    sendJson(res, 200, document);
+    return;
+  }
+  if (url.pathname === "/api/v1/files/by-source") {
+    if (req.method !== "GET") {
+      res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("GET required");
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message: "principal lacks read permission",
+        },
+      });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    const storageId = url.searchParams.get("storageId");
+    const path = url.searchParams.get("path");
+    if (storageId === null || path === null) {
+      sendJson(res, 400, {
+        error: { code: "rejected", message: "storageId and path are required" },
+      });
+      return;
+    }
+    if (path === "unavailable.mkv") {
+      sendJson(res, 503, {
+        error: {
+          code: "service_unavailable",
+          message: "source resolver unavailable",
+        },
+      });
+      return;
+    }
+    if (path === "malformed.mkv") {
+      sendJson(res, 200, { available: "yes", fileId: "file-index-example" });
+      return;
+    }
+    const document = fileBySourceDocument(storageId, path);
+    if (document === null) {
+      sendJson(res, 404, {
+        error: { code: "not_found", message: "by-source path was not found" },
+      });
+      return;
+    }
+    sendJson(res, 200, document);
     return;
   }
   if (req.method !== "GET") {

@@ -11,8 +11,9 @@ import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { EntryPage } from "../features/entry/EntryPage";
 import { MigrationPage } from "../features/migration/MigrationPage";
 import { LibraryLanding } from "../features/library/LibraryLanding";
-import { StorageFilesPage } from "../features/library/StorageFilesPage";
 import { FileIndexCatalogPage } from "../features/library/FileIndexCatalogPage";
+import { StorageFilesPage } from "../features/library/StorageFilesPage";
+import { FileIndexDetailPage } from "../features/library/FileIndexDetailPage";
 import { AppShell } from "../shared/ui/AppShell";
 import { AuthBoundary } from "../shared/auth/AuthBoundary";
 import { StatusBanner } from "../shared/ui/StatusBanner";
@@ -74,7 +75,11 @@ const libraryFileIndexPath = createRoute({
   path: "library/file-index",
   component: FileIndexCatalogPage,
 });
-
+const libraryFileIndexDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "library/file-index/$fileId",
+  component: FileIndexDetailPage,
+});
 const operationsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations",
@@ -99,6 +104,7 @@ const routeTree = rootRoute.addChildren([
   libraryRoute,
   libraryFilesRoute,
   libraryFileIndexPath,
+  libraryFileIndexDetailRoute,
   operationsRoute,
   reviewRoute,
   configurationRoute,

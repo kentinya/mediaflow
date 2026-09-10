@@ -61,7 +61,10 @@ const destinationData = [
 /**
  * Typed supported child routes inside top-level product destinations. They
  * participate in titles/continuation allowlisting without becoming primary
- * navigation items.
+ * navigation items. A child with `dynamicPrefix` additionally accepts
+ * concrete one-segment instances of itself (e.g. a parameterized detail
+ * route), so deep links and post-reconnect continuations resolve against the
+ * same navigation contract as the static routes.
  */
 const childDestinationData = [
   {
@@ -79,6 +82,15 @@ const childDestinationData = [
     title: "FileIndex | MediaFlow",
     availability: "implemented" as const,
     description: "Browse the durable indexed discovery records.",
+  },
+  {
+    id: "library-file-index-detail",
+    label: "FileIndex detail",
+    path: "/library/file-index/$fileId",
+    title: "FileIndex detail | MediaFlow",
+    availability: "implemented" as const,
+    description: "Read-only detail for one indexed FileIndex discovery record.",
+    dynamicPrefix: "/library/file-index/" as const,
   },
 ] as const;
 
@@ -101,6 +113,9 @@ export interface Destination {
   readonly availability: DestinationAvailability;
   readonly description: string;
   readonly v1Path?: "/ui";
+  /** Present only for parameterized routes. A concrete instance is exactly
+   * one non-empty path segment after this prefix. */
+  readonly dynamicPrefix?: string;
 }
 
 /** The single operator-goal navigation contract consumed by routes and shell. */
@@ -117,6 +132,37 @@ export const destinationPaths: readonly DestinationPath[] = destinations.map(
   (destination) => destination.path,
 );
 
+export const allDestinationPaths: readonly DestinationPath[] = [
+  ...destinationPaths,
+  ...childDestinations.map((destination) => destination.path),
+];
+
+const destinationPathSet: ReadonlySet<string> = new Set(allDestinationPaths);
+
+/** True only for a concrete one-segment instance of a dynamic destination. */
+function dynamicInstancePath(value: string): Destination | undefined {
+  for (const destination of childDestinations) {
+    const prefix = destination.dynamicPrefix;
+    if (prefix === undefined || !value.startsWith(prefix)) {
+      continue;
+    }
+    const rest = value.slice(prefix.length);
+    if (rest.length === 0 || rest.includes("/") || rest.startsWith("$")) {
+      continue;
+    }
+    return destination;
+  }
+  return undefined;
+}
+
+/** Type guard for a path that exists in the centralized destination model.
+ * Concrete one-segment instances of dynamic destinations also pass. */
+export function isDestinationPath(value: string): value is DestinationPath {
+  return (
+    destinationPathSet.has(value) || dynamicInstancePath(value) !== undefined
+  );
+}
+
 /**
  * Return only the first safe values of allowlisted query keys for the
  * given destination. Arbitrary or credential-like keys are dropped so a
@@ -126,14 +172,31 @@ export function allowlistedDestinationSearch(
   path: DestinationPath,
   search: string,
 ): string | null {
+  const setSafe = (
+    target: URLSearchParams,
+    key: string,
+    value: string | null,
+  ) => {
+    if (
+      value !== null &&
+      value.length <= 512 &&
+      // eslint-disable-next-line no-control-regex
+      !/[\u0000-\u001f\u007f]/.test(value)
+    ) {
+      target.set(key, value);
+    }
+  };
   if (path === "/library/files") {
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
-    for (const key of ["storage", "path", "cursor"] as const) {
+    for (const key of [
+      "storage",
+      "resourceLibrary",
+      "path",
+      "cursor",
+    ] as const) {
       const value = current.get(key);
-      if (value !== null) {
-        allowed.set(key, value);
-      }
+      setSafe(allowed, key, value);
     }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
@@ -157,8 +220,39 @@ export function allowlistedDestinationSearch(
       "cursorFileId",
     ] as const) {
       const value = current.get(key);
-      if (value !== null) {
-        allowed.set(key, value);
+      setSafe(allowed, key, value);
+    }
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
+  if (path === "/library/file-index/$fileId") {
+    // A detail link only carries the catalog return context back, and that
+    // context uses `q_`-prefixed keys exclusively. Anything else
+    // (credentials, unknown state) is dropped before reconnect replay.
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    const detailKeys = new Set([
+      "q_resourceLibrary",
+      "q_storage",
+      "q_scanStatus",
+      "q_query",
+      "q_processingDisposition",
+      "q_recognitionType",
+      "q_provider",
+      "q_providerId",
+      "q_title",
+      "q_taskId",
+      "q_year",
+      "q_after",
+      "q_cursorFileId",
+      "q_before",
+    ]);
+    for (const key of current.keys()) {
+      if (!detailKeys.has(key)) {
+        continue;
+      }
+      const value = current.get(key);
+      if (value !== null && !allowed.has(key)) {
+        setSafe(allowed, key, value);
       }
     }
     return allowed.toString().length > 0 ? allowed.toString() : null;
@@ -166,22 +260,16 @@ export function allowlistedDestinationSearch(
   return null;
 }
 
-export const allDestinationPaths: readonly DestinationPath[] = [
-  ...destinationPaths,
-  ...childDestinations.map((destination) => destination.path),
-];
-
-const destinationPathSet: ReadonlySet<string> = new Set(allDestinationPaths);
-
-/** Type guard for a path that exists in the centralized destination model. */
-export function isDestinationPath(value: string): value is DestinationPath {
-  return destinationPathSet.has(value);
-}
-
 export function destinationForPath(pathname: string): Destination | undefined {
   const path = pathname.replace(/\/$/, "") || "/";
-  return (
+  const exact =
     destinations.find((destination) => destination.path === path) ??
-    childDestinations.find((destination) => destination.path === path)
-  );
+    childDestinations.find((destination) => destination.path === path);
+  if (exact) {
+    return exact;
+  }
+  const dynamic = dynamicInstancePath(path);
+  return dynamic === undefined
+    ? undefined
+    : childDestinations.find((destination) => destination.id === dynamic.id);
 }

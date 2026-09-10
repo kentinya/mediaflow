@@ -430,6 +430,16 @@ function normalizeRecord(raw: unknown, index: number): FileIndexCatalogRecord {
 }
 
 /**
+ * Strictly normalize one raw FileIndex record (exported for detail reuse).
+ */
+export function normalizeFileIndexRecord(
+  raw: unknown,
+  index: number,
+): FileIndexCatalogRecord {
+  return normalizeRecord(raw, index);
+}
+
+/**
  * Strictly normalize one raw FileIndex list document. Fingerprints,
  * provider payloads, absolute roots and detail-only evidence are never
  * selected into the model.

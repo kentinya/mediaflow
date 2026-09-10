@@ -6,6 +6,7 @@ import {
   destinationForPath,
   allowlistedDestinationSearch,
 } from "../navigation/destination-model";
+import type { DestinationPath } from "../navigation/destination-model";
 
 /**
  * Shared route/authentication boundary for supported V2 product routes.
@@ -43,7 +44,7 @@ export function AuthBoundary() {
     if (destination === undefined) {
       return;
     }
-    authStore.setIntendedPath(destination.path);
+    authStore.setIntendedPath(pathname as DestinationPath);
     const allowedSearch = allowlistedDestinationSearch(
       destination.path,
       searchStr,
@@ -70,7 +71,7 @@ export function AuthBoundary() {
     // earlier intention so reconnection continues to the route they last asked
     // for, never a stale one. Safe Storage Files view state (relative path and
     // cursor) is retained so a refresh/reconnect returns to the same read.
-    authStore.setIntendedPath(destination.path);
+    authStore.setIntendedPath(pathname as DestinationPath);
     const allowedSearch = allowlistedDestinationSearch(
       destination.path,
       searchStr,
