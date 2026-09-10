@@ -1433,6 +1433,7 @@ def final_main(
                     return bool(
                         (cancellation_check and cancellation_check())
                         or coordinator.pause_requested(task.task_id)
+                        or coordinator.cancellation_observed(task.task_id)
                     )
 
                 batch = ResourceLibraryScanner(
@@ -1448,6 +1449,11 @@ def final_main(
                 cancelled = bool(cancellation_check and cancellation_check())
                 if cancelled:
                     coordinator.cancel(task.task_id)
+                elif coordinator.cancellation_observed(task.task_id):
+                    # A durable cooperative cancellation already owns this
+                    # Task outcome; a late finish must not overwrite it and a
+                    # pause acknowledgement no longer applies.
+                    pass
                 elif coordinator.pause_requested(task.task_id):
                     coordinator.acknowledge_pause(task.task_id)
                 else:
@@ -1556,6 +1562,7 @@ def final_main(
                 return bool(
                     (cancellation_check and cancellation_check())
                     or coordinator.pause_requested(task.task_id)
+                    or coordinator.cancellation_observed(task.task_id)
                 )
 
             # A queued non-definition Job Preview is an analysis-only Preview:
@@ -1724,6 +1731,11 @@ def final_main(
             cancelled = bool(cancellation_check and cancellation_check())
             if cancelled:
                 coordinator.cancel(task.task_id)
+            elif coordinator.cancellation_observed(task.task_id):
+                # A durable cooperative cancellation already owns this Task
+                # outcome; a late finish must not overwrite it and a pause
+                # acknowledgement no longer applies.
+                pass
             elif coordinator.pause_requested(task.task_id):
                 coordinator.acknowledge_pause(task.task_id)
             else:
@@ -2898,11 +2910,25 @@ def _run_queued_workflow(
         if line.startswith("Task ID: "):
             task_id = line.removeprefix("Task ID: ").strip()
             break
+    if task_id is not None and _task_was_cancelled(repository, task_id):
+        # A durable cooperative Task cancellation accepted by the operator is a
+        # Job cancellation too: the Workflow really stopped at a supported item
+        # boundary, so the Job must not be reported as completed.
+        raise AutomationCancelled(task_id)
     if code == 130:
         raise AutomationCancelled(task_id)
     if code:
         raise RuntimeError("queued workflow returned a failure status")
     return task_id
+
+
+def _task_was_cancelled(repository, task_id: str) -> bool:
+    """Whether one durable Task cancellation was accepted while the Job ran."""
+
+    if repository is None:
+        return False
+    task = repository.get_task(task_id)
+    return task is not None and task.status is PersistentTaskStatus.CANCELLED
 
 
 class _ConfiguredPermissionAuthority:
@@ -3073,7 +3099,11 @@ def _run_metadata_correction_continuation(
             repository.bind_metadata_correction_continuation_task(job.job_id, task.task_id)
 
             def workflow_stop() -> bool:
-                return bool(cancellation_check() or coordinator.pause_requested(task_id or ""))
+                return bool(
+                    cancellation_check()
+                    or coordinator.pause_requested(task_id or "")
+                    or coordinator.cancellation_observed(task_id or "")
+                )
 
             service = MediaOrganizerService(
                 strategy,
@@ -3104,6 +3134,12 @@ def _run_metadata_correction_continuation(
             )
             if cancellation_check():
                 coordinator.cancel(task.task_id)
+                continuation_service.cancelled(job.job_id)
+                raise AutomationCancelled(task.task_id)
+            if coordinator.cancellation_observed(task.task_id):
+                # An operator-accepted durable cancellation owns this Task
+                # outcome, so the continuation is cancelled rather than
+                # reported as completed.
                 continuation_service.cancelled(job.job_id)
                 raise AutomationCancelled(task.task_id)
             finished = coordinator.finish(task.task_id, MediaOrganizerBatchResult((item,)))
@@ -3281,7 +3317,11 @@ def _run_recovery_continuation(
             repository.bind_recovery_continuation_task(job.job_id, task.task_id)
 
             def workflow_stop() -> bool:
-                return bool(cancellation_check() or coordinator.pause_requested(task_id or ""))
+                return bool(
+                    cancellation_check()
+                    or coordinator.pause_requested(task_id or "")
+                    or coordinator.cancellation_observed(task_id or "")
+                )
 
             service = MediaOrganizerService(
                 strategy,
@@ -3312,6 +3352,12 @@ def _run_recovery_continuation(
             )
             if cancellation_check():
                 coordinator.cancel(task.task_id)
+                continuation_service.cancelled(job.job_id)
+                raise AutomationCancelled(task.task_id)
+            if coordinator.cancellation_observed(task.task_id):
+                # An operator-accepted durable cancellation owns this Task
+                # outcome, so the continuation is cancelled rather than
+                # reported as completed.
                 continuation_service.cancelled(job.job_id)
                 raise AutomationCancelled(task.task_id)
             finished = coordinator.finish(task.task_id, MediaOrganizerBatchResult((item,)))

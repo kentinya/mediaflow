@@ -103,7 +103,7 @@ describe("AuthBoundary", () => {
       screen.queryByText("Operations is not available in V2 yet"),
     ).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/workers/readiness",
+      "/api/v1/operations/workers/readiness",
       expect.objectContaining({ method: "GET" }),
     );
   });

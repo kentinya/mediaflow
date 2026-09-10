@@ -19,6 +19,12 @@ from mediaflow.domain.manual_organize_preview import (
 from mediaflow.domain.manual_safety import redact_evidence_text, redact_evidence_value
 from mediaflow.domain.recovery import RecoveryRequest
 
+#: The command recorded by the Web-native manual Organize admission path.  That
+#: Task is executed synchronously inside the admitting API request, so it
+#: observes neither a durable pause request nor a durable Task cancellation and
+#: advertises no Web lifecycle control.
+MANUAL_ORGANIZE_TASK_COMMAND = "manual_organize"
+
 
 class PersistentTaskStatus(StrEnum):
     PENDING = "pending"
@@ -296,6 +302,20 @@ class PersistentTaskRepository(Protocol):
     def create_task(self, task: PersistentTask) -> None: ...
     def update_task(self, task: PersistentTask) -> None: ...
     def request_task_pause(self, task_id: str, updated_at: datetime) -> PersistentTask: ...
+    def pause_task_if_current(
+        self,
+        task_id: str,
+        *,
+        updated_at: datetime,
+        expected_version: str | None = None,
+    ) -> PersistentTask | None: ...
+    def cancel_task_if_current(
+        self,
+        task_id: str,
+        *,
+        updated_at: datetime,
+        expected_version: str | None = None,
+    ) -> PersistentTask | None: ...
     def task_pause_requested(self, task_id: str) -> bool: ...
     def get_task(self, task_id: str) -> PersistentTask | None: ...
     def list_tasks(

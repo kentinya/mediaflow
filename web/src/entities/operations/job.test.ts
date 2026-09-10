@@ -50,14 +50,11 @@ function job(overrides: Record<string, unknown> = {}) {
     task_id: null,
     cancellation_requested: false,
     execute_authorized: false,
-    error: null,
-    failure_category: null,
-    failureExplanation: null,
+    failure: null,
     definition_id: null,
     schedule_id: null,
     run_mode: null,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
     lifecycle: jobLifecycle(),
     ...overrides,
   };
@@ -187,7 +184,7 @@ describe("normalizeJobDetail", () => {
         completed_at: LATER,
         task_id: "task-1",
         lifecycle: jobLifecycle({ state: "failed" }),
-        failureExplanation: {
+        failure: {
           category: "processing_error",
           message: "the queued workflow failed",
           durableState: "the queued workflow failed",
@@ -197,10 +194,32 @@ describe("normalizeJobDetail", () => {
         },
       }),
     );
-    expect(model.failureExplanation?.category).toBe("processing_error");
+    expect(model.failure?.category).toBe("processing_error");
     expect(() =>
-      normalizeJobDetail(job({ failureExplanation: { category: "x" } })),
+      normalizeJobDetail(job({ failure: { category: "x" } })),
     ).toThrow();
+  });
+
+  it("never carries a hostile historical record into the model", () => {
+    const model = normalizeJobDetail(
+      job({
+        error: "Authorization: Bearer topsecret /home/alice/private.mkv",
+        failure_category: "workflow_cancelled",
+        failure_next_action: "Authorization: Bearer topsecret",
+        definition_fingerprint: "fingerprint-value",
+        source_scope: "/srv/media",
+        configuration_snapshot_digest:
+          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      }),
+    );
+    const serialized = JSON.stringify(model);
+    expect(serialized).not.toContain("topsecret");
+    expect(serialized).not.toContain("/home/alice");
+    expect(serialized).not.toContain("/srv/media");
+    expect(serialized).not.toContain("deadbeef");
+    expect(serialized).not.toContain("fingerprint-value");
+    expect("configurationSnapshotDigest" in model).toBe(false);
+    expect("error" in model).toBe(false);
   });
 });
 

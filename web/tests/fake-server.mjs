@@ -139,25 +139,26 @@ const TASK_ITEMS = [
     storage_id: "local-media",
     resource_library_id: "resources",
     source_path: "movies/The Matrix (1999).mkv",
-    source_display: "The Matrix (1999).mkv",
     status: "success",
     stage: "organizing",
     attempts: 1,
     created_at: "2026-08-22T12:00:00+00:00",
     updated_at: "2026-08-22T12:05:00+00:00",
-    plan_id: "plan-001",
     destination_storage_id: "local-media",
     destination_path: "Media/Movies/The Matrix (1999)/The Matrix (1999).mkv",
     execution_status: "completed",
-    error: null,
+    failure: null,
     checkpoint: {
       status: "completed",
       stage: "organizing",
-      attempts: 1,
+      raw_stage: "organizing",
+      blocker_kind: null,
+      blocker_id: null,
       effect_certainty: "verified_complete",
       retry_safety: "safe",
-      next_action: null,
-      error_category: "none",
+      refusal_reason: null,
+      checkpoint_version: "checkpoint-item-001",
+      permitted_action_ids: [],
     },
   },
   {
@@ -166,25 +167,34 @@ const TASK_ITEMS = [
     storage_id: "local-media",
     resource_library_id: "resources",
     source_path: "movies/Inception (2010).mkv",
-    source_display: "Inception (2010).mkv",
     status: "failed",
     stage: "metadata",
     attempts: 2,
     created_at: "2026-08-22T12:00:00+00:00",
     updated_at: "2026-08-22T12:06:00+00:00",
-    plan_id: null,
     destination_storage_id: null,
     destination_path: null,
     execution_status: null,
-    error: "metadata lookup failed: TMDB timeout",
+    failure: {
+      category: "provider_failure",
+      message: "Provider failure: metadata lookup did not complete",
+      durableState: "TaskItem and Result are durable with a failed outcome",
+      sideEffects: "none",
+      retrySafe: true,
+      nextAction:
+        "inspect Provider availability and explicitly retry metadata analysis",
+    },
     checkpoint: {
       status: "failed",
       stage: "metadata",
-      attempts: 2,
+      raw_stage: "metadata",
+      blocker_kind: null,
+      blocker_id: null,
       effect_certainty: "unknown",
       retry_safety: "safe",
-      next_action: "retry metadata lookup",
-      error_category: "metadata",
+      refusal_reason: null,
+      checkpoint_version: "checkpoint-item-002",
+      permitted_action_ids: [],
     },
   },
 ];
@@ -209,7 +219,7 @@ const TASK_RESULTS = [
     status: "completed",
     created_at: "2026-08-22T12:05:00+00:00",
     title: "The Matrix",
-    error: null,
+    failure: null,
     completed_operations: ["move"],
     effect_certainty: "verified_complete",
     uncertain_effects: [],
@@ -218,7 +228,25 @@ const TASK_RESULTS = [
 
 const FAKE_TASKS = [
   {
+    // This first fixture deliberately also carries the historical legacy fields
+    // a real row may still hold (a raw durable error, a configured snapshot
+    // fingerprint and a display root). They are not part of the bounded
+    // Operations projection the V2 client models, so the browser proof can
+    // assert they never reach the DOM or the console.
     task_id: "task-001",
+    error: "Authorization: Bearer topsecret /home/alice/private.mkv",
+    failureExplanation: {
+      category: "storage",
+      message: "the source Storage became unavailable",
+      durableState: "the source Storage became unavailable",
+      sideEffects: "none",
+      retrySafe: true,
+      nextAction: "restore the source Storage, then re-run the Scan",
+    },
+    configuration_snapshot_digest:
+      "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    source_display: "/srv/media/private.mkv",
+    source_fingerprint: "fingerprint-value",
     command: "scan",
     status: "completed",
     execute_authorized: false,
@@ -229,10 +257,10 @@ const FAKE_TASKS = [
     total_items: 2,
     completed_items: 1,
     failed_items: 1,
-    error: null,
+    failure: null,
     pause_requested: false,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
+    item_limit: null,
   },
   {
     task_id: "task-002",
@@ -246,10 +274,10 @@ const FAKE_TASKS = [
     total_items: 5,
     completed_items: 2,
     failed_items: 0,
-    error: null,
+    failure: null,
     pause_requested: false,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
+    item_limit: null,
   },
   {
     task_id: "task-003",
@@ -263,10 +291,10 @@ const FAKE_TASKS = [
     total_items: 0,
     completed_items: 0,
     failed_items: 0,
-    error: null,
+    failure: null,
     pause_requested: false,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
+    item_limit: null,
   },
   {
     task_id: "task-004",
@@ -280,8 +308,7 @@ const FAKE_TASKS = [
     total_items: 3,
     completed_items: 0,
     failed_items: 3,
-    error: "storage unavailable",
-    failureExplanation: {
+    failure: {
       category: "storage",
       message: "the source Storage became unavailable",
       durableState: "the source Storage became unavailable",
@@ -291,7 +318,7 @@ const FAKE_TASKS = [
     },
     pause_requested: false,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
+    item_limit: null,
   },
   {
     task_id: "task-005",
@@ -305,11 +332,10 @@ const FAKE_TASKS = [
     total_items: 2,
     completed_items: 0,
     failed_items: 0,
-    error: null,
-    failureExplanation: null,
+    failure: null,
     pause_requested: true,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
+    item_limit: null,
   },
   {
     task_id: "task-006",
@@ -323,11 +349,10 @@ const FAKE_TASKS = [
     total_items: 4,
     completed_items: 2,
     failed_items: 0,
-    error: null,
-    failureExplanation: null,
+    failure: null,
     pause_requested: false,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
+    item_limit: null,
   },
 ];
 
@@ -343,14 +368,12 @@ const FAKE_JOBS = [
     task_id: "task-001",
     cancellation_requested: false,
     execute_authorized: false,
-    error: null,
+    failure: null,
     failure_category: null,
-    failureExplanation: null,
     definition_id: null,
     schedule_id: null,
     run_mode: null,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
   },
   {
     job_id: "job-002",
@@ -363,14 +386,12 @@ const FAKE_JOBS = [
     task_id: null,
     cancellation_requested: false,
     execute_authorized: false,
-    error: null,
+    failure: null,
     failure_category: null,
-    failureExplanation: null,
     definition_id: null,
     schedule_id: null,
     run_mode: null,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
     operationalCondition: {
       condition: "no_worker",
       stage: "pending",
@@ -391,14 +412,12 @@ const FAKE_JOBS = [
     task_id: "task-005",
     cancellation_requested: false,
     execute_authorized: false,
-    error: null,
+    failure: null,
     failure_category: null,
-    failureExplanation: null,
     definition_id: null,
     schedule_id: null,
     run_mode: null,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
     worker_id: "worker-e2e-1",
     workerId: "worker-e2e-1",
     ownerStatus: "live",
@@ -415,14 +434,12 @@ const FAKE_JOBS = [
     task_id: "task-006",
     cancellation_requested: false,
     execute_authorized: true,
-    error: null,
+    failure: null,
     failure_category: null,
-    failureExplanation: null,
     definition_id: null,
     schedule_id: null,
     run_mode: null,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
     worker_id: "worker-e2e-stale",
     workerId: "worker-e2e-stale",
     ownerStatus: "stale",
@@ -448,9 +465,7 @@ const FAKE_JOBS = [
     task_id: "task-004",
     cancellation_requested: false,
     execute_authorized: false,
-    error: "queued workflow returned a failure status",
-    failure_category: "processing_error",
-    failureExplanation: {
+    failure: {
       category: "processing_error",
       message: "the queued workflow failed before completing",
       durableState: "the queued workflow failed before completing",
@@ -458,11 +473,16 @@ const FAKE_JOBS = [
       retrySafe: false,
       nextAction: "inspect the linked Task results before re-running anything",
     },
+    failure_category: "processing_error",
+    failure_durable_state: "the queued workflow failed before completing",
+    failure_side_effects: "none",
+    failure_retry_safe: false,
+    failure_next_action:
+      "inspect the linked Task results before re-running anything",
     definition_id: null,
     schedule_id: null,
     run_mode: null,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
   },
 ];
 
@@ -1637,6 +1657,12 @@ const CONTENT_TYPES = {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
   const token = bearerToken(req);
+  // The V2 Operations workspace reads the bounded /api/v1/operations/* alias;
+  // the fake mirrors the authoritative Python contract by serving the same
+  // bounded documents for both spellings.
+  if (url.pathname.startsWith("/api/v1/operations/")) {
+    url.pathname = url.pathname.replace("/api/v1/operations/", "/api/v1/");
+  }
 
   if (url.pathname === "/api/v1/dashboard") {
     if (LIMITED_TOKENS.has(token)) {
@@ -2123,6 +2149,7 @@ const server = createServer(async (req, res) => {
       objectId: task.task_id,
       state: task.status,
       version: task.updated_at,
+      executionPath: "operator_workflow",
       terminal,
       permitted,
       permission: "cancel_job",
@@ -2153,8 +2180,9 @@ const server = createServer(async (req, res) => {
           cancelReason,
           {
             durableOutcome:
-              "the Task and its non-terminal items are durably marked cancelled and the Task file locks are released",
-            nextAction: "refresh the Task to read the durable cancelled state",
+              "the Task and its non-terminal items are durably marked cancelled; no further item is admitted, an item that is already in flight is not interrupted and records its own outcome, and its source lock is released only when that outcome is recorded",
+            nextAction:
+              "refresh the Task to read the durable cancelled state and the independent item outcomes",
           },
         ),
         taskAction(
@@ -2458,10 +2486,11 @@ const server = createServer(async (req, res) => {
       task,
       lifecycle: taskLifecycle(task, []),
       durableOutcome:
-        "the Task and its non-terminal items are durably marked cancelled and the Task file locks are released",
+        "the Task and its non-terminal items are durably marked cancelled; no further item is admitted, an item that is already in flight is not interrupted and records its own outcome, and its source lock is released only when that outcome is recorded",
       sideEffects: "none",
       retrySafe: false,
-      nextAction: "refresh the Task to read the durable cancelled state",
+      nextAction:
+        "refresh the Task to read the durable cancelled state and the independent item outcomes",
     });
     return;
   }
@@ -2611,7 +2640,6 @@ const server = createServer(async (req, res) => {
       nextAction: "none",
       activeWorkersCount: 1,
       activeSnapshotId: "snap-1",
-      activeSnapshotDigest: "digest-1",
       expectedRuntimeSchemaVersion: 33,
     });
     return;

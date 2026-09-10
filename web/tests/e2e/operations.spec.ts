@@ -184,6 +184,46 @@ test("Task detail separates the aggregate from items and results", async ({
   ).toBeVisible();
 });
 
+test("the operations read and the rendered page stay free of a hostile historical record", async ({
+  page,
+}) => {
+  const consoleMessages: string[] = [];
+  const requested: string[] = [];
+  page.on("console", (message) => consoleMessages.push(message.text()));
+  page.on("request", (request) => requested.push(request.url()));
+
+  await connect(page);
+  await openTaskDetail(page, "task-001");
+  await page.waitForTimeout(250);
+
+  const html = await page.content();
+  const visible = await page.locator("body").innerText();
+  for (const hostile of [
+    "topsecret",
+    "/home/alice",
+    "/srv/media",
+    "deadbeef",
+    "fingerprint-value",
+  ]) {
+    expect(html).not.toContain(hostile);
+    expect(visible).not.toContain(hostile);
+    expect(consoleMessages.join("\n")).not.toContain(hostile);
+  }
+  expect(html).not.toContain(VIEWER_TOKEN);
+  // The V2 workspace reads the bounded Operations projection, not the legacy
+  // compatibility document, so no fingerprint value is fetched at all.
+  expect(
+    requested.some((url) => url.includes("/api/v1/operations/tasks/task-001")),
+  ).toBe(true);
+  expect(
+    requested.some(
+      (url) =>
+        url.includes("/api/v1/tasks/task-001") &&
+        !url.includes("/api/v1/operations/"),
+    ),
+  ).toBe(false);
+});
+
 test("Job detail distinguishes admission state, Worker ownership and the linked Task", async ({
   page,
 }) => {

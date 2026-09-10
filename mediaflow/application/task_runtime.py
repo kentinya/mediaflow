@@ -186,6 +186,18 @@ class PersistentTaskCoordinator:
     def pause_requested(self, task_id: str) -> bool:
         return self.repository.task_pause_requested(task_id)
 
+    def cancellation_observed(self, task_id: str) -> bool:
+        """Whether one durable cooperative cancellation was accepted for this Task.
+
+        A running handler polls this at its supported item boundary: the
+        accepted transition is durable, so the handler stops admitting new work
+        instead of relying on an in-memory signal, and the in-flight item keeps
+        its confinement lock until its own outcome is recorded.
+        """
+
+        task = self.repository.get_task(task_id)
+        return task is not None and task.status is PersistentTaskStatus.CANCELLED
+
     def acknowledge_pause(self, task_id: str) -> PersistentTask:
         task = self.require(task_id)
         if task.status is PersistentTaskStatus.PAUSED:
@@ -411,6 +423,11 @@ class PersistentTaskCoordinator:
 
     def finish(self, task_id: str, batch: MediaOrganizerBatchResult) -> PersistentTask:
         task = self.require(task_id)
+        if task.status is PersistentTaskStatus.CANCELLED:
+            # A durable cooperative cancellation is never overwritten by a later
+            # completion: the operator's accepted request stays the Task outcome
+            # and the items/results keep their own recorded state.
+            return task
         items = self.repository.list_items(task_id)
         failed = sum(
             item.status in {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL} for item in items

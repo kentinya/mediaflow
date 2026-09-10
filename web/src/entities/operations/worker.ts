@@ -4,7 +4,8 @@
  * A Worker readiness or list response is only rendered from a fully modelled
  * shape: an unknown readiness condition, a coerced boolean or an unknown
  * supported-command value is malformed data rather than an approximate Worker
- * state.
+ * state. Configuration digests are fingerprints and are deliberately not
+ * modelled, so they can never reach the DOM or a browser artifact.
  */
 
 import {
@@ -40,8 +41,6 @@ export interface WorkerReadinessModel {
   readonly retrySafe: boolean;
   readonly nextAction: string | null;
   readonly activeWorkersCount: number;
-  readonly activeSnapshotId: string | null;
-  readonly activeSnapshotDigest: string | null;
   readonly expectedRuntimeSchemaVersion: number | null;
 }
 
@@ -53,7 +52,6 @@ export interface WorkerSummary {
   readonly registeredAt: string | null;
   readonly heartbeatIntervalSeconds: number;
   readonly supportedCommands: readonly JobCommand[];
-  readonly configurationSnapshotId: string | null;
   readonly runtimeSchemaVersion: number | null;
 }
 
@@ -155,8 +153,6 @@ export function normalizeWorkerReadiness(
     retrySafe: flag(source, "retrySafe"),
     nextAction: optionalText(source, "nextAction"),
     activeWorkersCount,
-    activeSnapshotId: optionalText(source, "activeSnapshotId"),
-    activeSnapshotDigest: optionalText(source, "activeSnapshotDigest"),
     expectedRuntimeSchemaVersion: optionalCount(
       source,
       "expectedRuntimeSchemaVersion",
@@ -188,7 +184,6 @@ function normalizeWorkerSummary(
     heartbeatIntervalSeconds:
       optionalCount(source, "heartbeat_interval_seconds") ?? 0,
     supportedCommands,
-    configurationSnapshotId: optionalText(source, "configuration_snapshot_id"),
     runtimeSchemaVersion: optionalCount(source, "runtime_schema_version"),
   };
 }

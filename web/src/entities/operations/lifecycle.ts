@@ -56,6 +56,7 @@ export interface LifecycleProjection {
   readonly objectId: string;
   readonly state: string;
   readonly version: string;
+  readonly executionPath: string | null;
   readonly terminal: boolean;
   readonly permitted: boolean;
   readonly permission: string;
@@ -233,6 +234,11 @@ export function normalizeLifecycleProjection(
         source["version"],
         "lifecycle.version",
         128,
+      ),
+      executionPath: normalizeOptionalText(
+        source["executionPath"],
+        "lifecycle.executionPath",
+        64,
       ),
       terminal: normalizeBoolean(source["terminal"], "lifecycle.terminal"),
       permitted,

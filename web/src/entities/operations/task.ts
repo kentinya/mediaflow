@@ -1,11 +1,15 @@
 /**
  * Frontend-owned Task entity for the Operations workspace.
  *
- * The Python contract (`GET /api/v1/tasks`, `GET /api/v1/tasks/{id}`) returns
- * snake_case records. Normalization is deliberately fail-closed: a status
- * outside the modelled set, a coerced boolean, a miscounted progress pair or a
- * lifecycle projection that contradicts its own state makes the whole response
- * malformed instead of being rendered as an approximate truth.
+ * The Python contract (`GET /api/v1/operations/tasks`,
+ * `GET /api/v1/operations/tasks/{id}`) returns the bounded, secret-free
+ * operator projection: raw durable errors are already normalized into failure
+ * evidence, and configuration digests, fingerprint values and configured
+ * display roots are absent by contract.  Normalization is deliberately
+ * fail-closed: a status outside the modelled set, a coerced boolean, a
+ * miscounted progress pair or a lifecycle projection that contradicts its own
+ * state makes the whole response malformed instead of being rendered as an
+ * approximate truth.
  */
 
 import {
@@ -70,6 +74,7 @@ export const TASK_COMMAND_FILTERS = [
   "metadata-correction-continuation",
   "recovery-continuation",
   "file-metadata-correction",
+  "manual_organize",
 ] as const;
 
 export const EFFECT_CERTAINTY_VALUES = [
@@ -82,8 +87,8 @@ export type ResultEffectCertainty = (typeof EFFECT_CERTAINTY_VALUES)[number];
 
 /**
  * Bounded, secret-free failure evidence. The backend supplies this only when it
- * can decode its own bounded envelope, so a raw adapter exception never reaches
- * the model.
+ * can decode its own bounded envelope or classify the recorded failure, so a
+ * raw adapter exception never reaches the model.
  */
 export interface TaskFailureExplanation {
   readonly category: string;
@@ -106,11 +111,11 @@ export interface TaskSummary {
   readonly totalItems: number;
   readonly completedItems: number;
   readonly failedItems: number;
-  readonly error: string | null;
-  readonly failureExplanation: TaskFailureExplanation | null;
+  readonly itemLimit: number | null;
+  readonly failure: TaskFailureExplanation | null;
   readonly pauseRequested: boolean;
+  /** Pinned managed configuration revision identity; never a digest. */
   readonly configurationSnapshotId: string | null;
-  readonly configurationSnapshotDigest: string | null;
 }
 
 export interface TaskItemSummary {
@@ -118,29 +123,36 @@ export interface TaskItemSummary {
   readonly taskId: string;
   readonly storageId: string;
   readonly resourceLibraryId: string;
+  /** Storage-relative source identity; never a configured display root. */
   readonly sourcePath: string;
-  readonly sourceDisplay: string;
   readonly status: TaskItemStatus;
   readonly stage: string;
   readonly attempts: number;
   readonly createdAt: string;
   readonly updatedAt: string;
-  readonly planId: string | null;
   readonly destinationStorageId: string | null;
   readonly destinationPath: string | null;
   readonly executionStatus: string | null;
-  readonly error: string | null;
+  readonly failure: TaskFailureExplanation | null;
   readonly checkpoint: TaskItemCheckpoint | null;
 }
 
+/**
+ * The bounded checkpoint projection the Python API embeds in a Task detail
+ * row (`ProcessingCheckpoint.summary()`); it never contains a raw error or a
+ * fingerprint value.
+ */
 export interface TaskItemCheckpoint {
   readonly status: string;
   readonly stage: string;
-  readonly attempts: number;
+  readonly rawStage: string;
+  readonly blockerKind: string | null;
+  readonly blockerId: string | null;
   readonly effectCertainty: string;
   readonly retrySafety: string;
-  readonly nextAction: string | null;
-  readonly errorCategory: string;
+  readonly refusalReason: string | null;
+  readonly checkpointVersion: string | null;
+  readonly permittedActionIds: readonly string[];
 }
 
 export interface TaskResultSummary {
@@ -162,7 +174,7 @@ export interface TaskResultSummary {
   readonly status: string;
   readonly createdAt: string;
   readonly title: string | null;
-  readonly error: string | null;
+  readonly failure: TaskFailureExplanation | null;
   readonly completedOperations: readonly string[];
   readonly effectCertainty: ResultEffectCertainty;
   readonly uncertainEffects: readonly string[];
@@ -231,9 +243,39 @@ function count(source: Record<string, unknown>, field: string): number {
   }
 }
 
+function optionalCount(
+  source: Record<string, unknown>,
+  field: string,
+): number | null {
+  const raw = source[field];
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+  return count(source, field);
+}
+
 function flag(source: Record<string, unknown>, field: string): boolean {
   try {
     return normalizeBoolean(source[field], field);
+  } catch {
+    return fail();
+  }
+}
+
+function normalizeFailure(value: unknown): TaskFailureExplanation | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const source = readRecord(value, "failure");
+  try {
+    return {
+      category: text(source, "category"),
+      message: text(source, "message"),
+      durableState: text(source, "durableState"),
+      sideEffects: text(source, "sideEffects"),
+      retrySafe: flag(source, "retrySafe"),
+      nextAction: text(source, "nextAction"),
+    };
   } catch {
     return fail();
   }
@@ -277,37 +319,11 @@ function normalizeTaskSummary(source: Record<string, unknown>): TaskSummary {
     totalItems,
     completedItems,
     failedItems,
-    error: optionalText(source, "error"),
-    failureExplanation:
-      source["failureExplanation"] === null ||
-      source["failureExplanation"] === undefined
-        ? null
-        : normalizeTaskFailureExplanation(source["failureExplanation"]),
+    itemLimit: optionalCount(source, "item_limit"),
+    failure: normalizeFailure(source["failure"]),
     pauseRequested,
     configurationSnapshotId: optionalText(source, "configuration_snapshot_id"),
-    configurationSnapshotDigest: optionalText(
-      source,
-      "configuration_snapshot_digest",
-    ),
   };
-}
-
-function normalizeTaskFailureExplanation(
-  value: unknown,
-): TaskFailureExplanation {
-  const source = readRecord(value, "failureExplanation");
-  try {
-    return {
-      category: text(source, "category"),
-      message: text(source, "message"),
-      durableState: text(source, "durableState"),
-      sideEffects: text(source, "sideEffects"),
-      retrySafe: flag(source, "retrySafe"),
-      nextAction: text(source, "nextAction"),
-    };
-  } catch {
-    return fail();
-  }
 }
 
 function normalizeTaskItemCheckpoint(
@@ -315,15 +331,26 @@ function normalizeTaskItemCheckpoint(
 ): TaskItemCheckpoint | null {
   if (value === null || value === undefined) return null;
   const source = readRecord(value, "checkpoint");
+  let permittedActionIds: readonly string[];
+  try {
+    permittedActionIds = normalizeTextArray(
+      source["permitted_action_ids"] ?? [],
+      "checkpoint.permitted_action_ids",
+    );
+  } catch {
+    return fail();
+  }
   return {
     status: text(source, "status"),
     stage: text(source, "stage"),
-    attempts: count(source, "attempts"),
+    rawStage: text(source, "raw_stage"),
+    blockerKind: optionalText(source, "blocker_kind"),
+    blockerId: optionalText(source, "blocker_id"),
     effectCertainty: text(source, "effect_certainty"),
     retrySafety: text(source, "retry_safety"),
-    nextAction:
-      optionalText(source, "nextAction") ?? optionalText(source, "next_action"),
-    errorCategory: text(source, "error_category"),
+    refusalReason: optionalText(source, "refusal_reason"),
+    checkpointVersion: optionalText(source, "checkpoint_version"),
+    permittedActionIds,
   };
 }
 
@@ -342,17 +369,15 @@ function normalizeTaskItemSummary(
     storageId: text(source, "storage_id"),
     resourceLibraryId: text(source, "resource_library_id"),
     sourcePath: text(source, "source_path"),
-    sourceDisplay: text(source, "source_display"),
     status,
     stage: text(source, "stage"),
     attempts: count(source, "attempts"),
     createdAt: text(source, "created_at"),
     updatedAt: text(source, "updated_at"),
-    planId: optionalText(source, "plan_id"),
     destinationStorageId: optionalText(source, "destination_storage_id"),
     destinationPath: optionalText(source, "destination_path"),
     executionStatus: optionalText(source, "execution_status"),
-    error: optionalText(source, "error"),
+    failure: normalizeFailure(source["failure"]),
     checkpoint: normalizeTaskItemCheckpoint(source["checkpoint"]),
   };
 }
@@ -406,7 +431,7 @@ function normalizeTaskResultSummary(
     status: text(source, "status"),
     createdAt: text(source, "created_at"),
     title: optionalText(source, "title"),
-    error: optionalText(source, "error"),
+    failure: normalizeFailure(source["failure"]),
     completedOperations,
     effectCertainty,
     uncertainEffects,

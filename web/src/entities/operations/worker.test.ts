@@ -23,6 +23,14 @@ describe("normalizeWorkerReadiness", () => {
     expect(model.category).toBeNull();
   });
 
+  it("never models an Active snapshot digest", () => {
+    // The administrative compatibility document still carries the digest, so
+    // the Operations model must ignore it instead of retaining a fingerprint.
+    const model = normalizeWorkerReadiness(READY);
+    expect(JSON.stringify(model)).not.toContain("digest-1");
+    expect("activeSnapshotDigest" in model).toBe(false);
+  });
+
   it("accepts a not-ready document with an actionable reason", () => {
     const model = normalizeWorkerReadiness({
       ...READY,

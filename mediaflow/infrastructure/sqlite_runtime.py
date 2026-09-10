@@ -17,6 +17,7 @@ from mediaflow.domain.automation import (
     AutomationDefinitionDueState,
     AutomationDefinitionOccurrence,
     AutomationJob,
+    AutomationJobControlConflict,
     AutomationJobStatus,
     AutomationQueueFull,
     AutomationTaskRunMode,
@@ -24,6 +25,7 @@ from mediaflow.domain.automation import (
     ScheduleAuditRecord,
     ScheduleState,
     WorkerStatus,
+    job_control_version,
     validate_worker_commands,
     validate_worker_id,
     validate_worker_label,
@@ -312,6 +314,123 @@ class SQLiteTaskRepository:
             raise LookupError(f"task {task_id!r} was not found")
         return bool(row["pause_requested"])
 
+    def pause_task_if_current(
+        self,
+        task_id: str,
+        *,
+        updated_at: datetime,
+        expected_version: str | None = None,
+    ) -> PersistentTask | None:
+        """Atomically store one pause request for the exact observed Task state.
+
+        The single UPDATE binds the Task identity, its running state, the unset
+        pause flag and (when the operator submitted one) the version that was
+        read.  Two concurrent submissions of the same control therefore cannot
+        both be admitted, and a Task that already carries a durable request is
+        refused instead of silently re-acknowledged.
+        """
+
+        statement = (
+            "UPDATE tasks SET pause_requested=1, updated_at=? "
+            "WHERE task_id=? AND status=? AND pause_requested=0"
+        )
+        parameters: list[object] = [
+            updated_at.isoformat(),
+            task_id,
+            PersistentTaskStatus.RUNNING.value,
+        ]
+        if expected_version is not None:
+            statement += " AND updated_at=?"
+            parameters.append(expected_version)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(statement, tuple(parameters))
+            if cursor.rowcount != 1:
+                return None
+            row = self._connection.execute(
+                "SELECT * FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+        return self._task(row) if row is not None else None
+
+    def cancel_task_if_current(
+        self,
+        task_id: str,
+        *,
+        updated_at: datetime,
+        expected_version: str | None = None,
+    ) -> PersistentTask | None:
+        """Atomically accept one cooperative Task cancellation.
+
+        The Task and its non-terminal items become cancelled in one transaction.
+        A source lock held for an item that is being processed right now is
+        deliberately preserved: the handler that owns that item releases the
+        confinement lock at its own supported boundary, so this transition never
+        releases confinement for work that may still be in flight.  A later
+        completion cannot resurrect the durable cancellation because
+        :meth:`PersistentTaskCoordinator.finish` keeps the cancelled outcome.
+        """
+
+        statement = (
+            "UPDATE tasks SET status=?, updated_at=?, completed_at=?, error=? "
+            "WHERE task_id=? AND status IN (?, ?, ?)"
+        )
+        parameters: list[object] = [
+            PersistentTaskStatus.CANCELLED.value,
+            updated_at.isoformat(),
+            updated_at.isoformat(),
+            "task cancelled",
+            task_id,
+            PersistentTaskStatus.PENDING.value,
+            PersistentTaskStatus.RUNNING.value,
+            PersistentTaskStatus.PAUSED.value,
+        ]
+        if expected_version is not None:
+            statement += " AND updated_at=?"
+            parameters.append(expected_version)
+        cancellable_items = (
+            TaskItemStatus.PENDING.value,
+            TaskItemStatus.PROCESSING.value,
+            TaskItemStatus.PAUSED.value,
+        )
+        with self._lock, self._connection:
+            cursor = self._connection.execute(statement, tuple(parameters))
+            if cursor.rowcount != 1:
+                return None
+            in_flight: set[tuple[str, str]] = set()
+            for row in self._connection.execute(
+                "SELECT * FROM task_items WHERE task_id=?", (task_id,)
+            ).fetchall():
+                if row["status"] == TaskItemStatus.PROCESSING.value:
+                    normalized = self._bounded_lock_path(row["source_path"])
+                    if normalized is not None:
+                        in_flight.add((row["storage_id"], normalized))
+                if row["status"] in cancellable_items:
+                    self._connection.execute(
+                        "UPDATE task_items SET status=?, stage=?, updated_at=?, error=? "
+                        "WHERE item_id=?",
+                        (
+                            TaskItemStatus.CANCELLED.value,
+                            "cancelled",
+                            updated_at.isoformat(),
+                            "task cancelled",
+                            row["item_id"],
+                        ),
+                    )
+            for lock in self._connection.execute(
+                "SELECT storage_id, path FROM file_locks WHERE task_id=?", (task_id,)
+            ).fetchall():
+                if (lock["storage_id"], lock["path"]) in in_flight:
+                    # The item is being processed right now; its handler releases
+                    # the lock when it reports the item outcome.
+                    continue
+                self._connection.execute(
+                    "DELETE FROM file_locks WHERE storage_id=? AND path=? AND task_id=?",
+                    (lock["storage_id"], lock["path"], task_id),
+                )
+            row = self._connection.execute(
+                "SELECT * FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+        return self._task(row) if row is not None else None
+
     def get_task(self, task_id: str) -> PersistentTask | None:
         with self._lock:
             row = self._connection.execute(
@@ -452,6 +571,42 @@ class SQLiteTaskRepository:
         if value is None:
             raise LookupError(f"manual Scan Task {task_id!r} was not found")
         return value
+
+    def claim_manual_scan_cancellation(
+        self,
+        task_id: str,
+        *,
+        updated_at: datetime,
+        expected_version: str | None = None,
+    ) -> ManualScanTask | None:
+        """Atomically claim one manual Scan cancellation for the observed Task state.
+
+        Unlike the idempotent compatibility request, this admission binds the
+        unset cancellation flag, the Task's cancellable state and (when the
+        operator submitted one) the exact Task version that was read.
+        """
+
+        statement = (
+            "UPDATE manual_scan_tasks SET cancellation_requested=1, updated_at=? "
+            "WHERE task_id=? AND cancellation_requested=0 AND EXISTS ("
+            "SELECT 1 FROM tasks WHERE tasks.task_id=manual_scan_tasks.task_id "
+            "AND tasks.status IN (?, ?)"
+        )
+        parameters: list[object] = [
+            updated_at.isoformat(),
+            task_id,
+            PersistentTaskStatus.PENDING.value,
+            PersistentTaskStatus.RUNNING.value,
+        ]
+        if expected_version is not None:
+            statement += " AND tasks.updated_at=?"
+            parameters.append(expected_version)
+        statement += ")"
+        with self._lock, self._connection:
+            cursor = self._connection.execute(statement, tuple(parameters))
+            if cursor.rowcount != 1:
+                return None
+        return self.get_manual_scan(task_id)
 
     def upsert_manual_scan_item(self, item: ManualScanItemOutcome) -> None:
         with self._lock, self._connection:
@@ -4639,31 +4794,42 @@ class SQLiteTaskRepository:
             if cursor.rowcount != 1:
                 raise LookupError(f"automation job {job.job_id!r} was not found")
 
-    def request_job_cancellation(self, job_id: str, now: datetime) -> AutomationJob:
+    def request_job_cancellation(
+        self, job_id: str, now: datetime, *, expected_version: str | None = None
+    ) -> AutomationJob:
         with self._lock, self._connection:
             existing_row = self._connection.execute(
                 "SELECT command, status FROM automation_jobs WHERE job_id=?", (job_id,)
             ).fetchone()
             if existing_row is None:
                 raise LookupError(f"automation job {job_id!r} was not found")
-            cursor = self._connection.execute(
+            statement = (
                 "UPDATE automation_jobs SET status=CASE WHEN status=? THEN ? ELSE status END, "
                 "cancellation_requested=1, updated_at=?, "
                 "completed_at=CASE WHEN status=? THEN ? ELSE completed_at END "
-                "WHERE job_id=? AND status IN (?, ?)",
-                (
-                    AutomationJobStatus.PENDING.value,
-                    AutomationJobStatus.CANCELLED.value,
-                    now.isoformat(),
-                    AutomationJobStatus.PENDING.value,
-                    now.isoformat(),
-                    job_id,
-                    AutomationJobStatus.PENDING.value,
-                    AutomationJobStatus.RUNNING.value,
-                ),
+                "WHERE job_id=? AND status IN (?, ?) AND cancellation_requested=0"
             )
+            parameters: list[object] = [
+                AutomationJobStatus.PENDING.value,
+                AutomationJobStatus.CANCELLED.value,
+                now.isoformat(),
+                AutomationJobStatus.PENDING.value,
+                now.isoformat(),
+                job_id,
+                AutomationJobStatus.PENDING.value,
+                AutomationJobStatus.RUNNING.value,
+            ]
+            if expected_version is not None:
+                # A claimed Job advances updated_at as Worker liveness evidence,
+                # which is not a state transition, so its control version is the
+                # immutable claim time (see ``job_control_version``).  Either
+                # form is bound together with status and the request flag in
+                # this single atomic transition.
+                statement += " AND (updated_at=? OR (claim_token IS NOT NULL AND started_at=?))"
+                parameters.extend((expected_version, expected_version))
+            cursor = self._connection.execute(statement, tuple(parameters))
             if cursor.rowcount != 1:
-                raise ValueError("only a pending or running automation job can be cancelled")
+                raise self._job_cancellation_conflict_locked(job_id, expected_version)
             if existing_row["command"] == AutomationCommand.FILE_METADATA_CORRECTION.value:
                 self._connection.execute(
                     """UPDATE metadata_correction_continuations
@@ -4744,6 +4910,60 @@ class SQLiteTaskRepository:
                 "SELECT cancellation_requested FROM automation_jobs WHERE job_id=?", (job_id,)
             ).fetchone()
         return bool(row and row["cancellation_requested"])
+
+    def _job_cancellation_conflict_locked(
+        self, job_id: str, expected_version: str | None
+    ) -> AutomationJobControlConflict:
+        """Classify a refused Job cancellation from the durable row alone."""
+
+        row = self._connection.execute(
+            "SELECT * FROM automation_jobs WHERE job_id=?", (job_id,)
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"automation job {job_id!r} was not found")
+        current = self._job(row)
+        version = job_control_version(current)
+        if expected_version is not None and expected_version != version:
+            return AutomationJobControlConflict(
+                "stale_job_state",
+                "the Job changed after the submitted state was read",
+                durable_state="the submitted Job admission state is no longer the durable state",
+                next_action=(
+                    "reload the Job, review its current state, and submit again deliberately"
+                ),
+                retry_safe=True,
+                current_version=version,
+            )
+        if current.cancellation_requested:
+            return AutomationJobControlConflict(
+                "already_requested",
+                "cancellation is already durably requested for this Job",
+                durable_state=(
+                    "the Job reaches cancelled at its own cooperative boundary; "
+                    "the stored request is not replaced or repeated"
+                ),
+                next_action=(
+                    "reload the Job and read its durable cancellation state instead of "
+                    "submitting the same request again"
+                ),
+                current_version=version,
+            )
+        if current.status not in {AutomationJobStatus.PENDING, AutomationJobStatus.RUNNING}:
+            return AutomationJobControlConflict(
+                "cancel_unavailable",
+                f"a {current.status.value} Job cannot be cancelled",
+                durable_state=f"the Job remains {current.status.value}",
+                next_action="refresh the Job; a terminal Job keeps its recorded outcome",
+                current_version=version,
+            )
+        return AutomationJobControlConflict(
+            "stale_job_state",
+            "the Job changed after the submitted state was read",
+            durable_state="the submitted Job admission state is no longer the durable state",
+            next_action=("reload the Job, review its current state, and submit again deliberately"),
+            retry_safe=True,
+            current_version=version,
+        )
 
     def heartbeat_job(self, job_id: str, claim_token: str, now: datetime) -> bool:
         if not claim_token:
@@ -9107,6 +9327,20 @@ class SQLiteTaskRepository:
         if not parts:
             raise ValueError("lock path must be non-empty")
         return "/".join(parts)
+
+    @classmethod
+    def _bounded_lock_path(cls, path: str) -> str | None:
+        """Normalize a stored path without failing a Task-state transition.
+
+        A persisted item path that cannot be normalized holds no lock row (the
+        lock acquisition uses the same normalization and would have refused it),
+        so it must never abort a cancel transition.
+        """
+
+        try:
+            return cls._lock_path(path)
+        except ValueError:
+            return None
 
     @staticmethod
     def _manual_execution_authorization_values(

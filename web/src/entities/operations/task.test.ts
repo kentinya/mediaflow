@@ -14,6 +14,7 @@ function lifecycle(overrides: Record<string, unknown> = {}) {
     objectId: "task-1",
     state: "completed",
     version: LATER,
+    executionPath: "operator_workflow",
     terminal: true,
     permitted: true,
     permission: "cancel_job",
@@ -57,11 +58,10 @@ function task(overrides: Record<string, unknown> = {}) {
     total_items: 2,
     completed_items: 1,
     failed_items: 1,
-    error: null,
-    failureExplanation: null,
+    failure: null,
     pause_requested: false,
     configuration_snapshot_id: "snap-1",
-    configuration_snapshot_digest: "digest-1",
+    item_limit: 20,
     ...overrides,
   };
 }
@@ -86,7 +86,7 @@ function result(overrides: Record<string, unknown> = {}) {
     status: "success",
     created_at: LATER,
     title: "Movie",
-    error: null,
+    failure: null,
     completed_operations: ["move"],
     effect_certainty: "verified_complete",
     uncertain_effects: [],
@@ -99,7 +99,7 @@ describe("normalizeTaskRecord", () => {
     const model = normalizeTaskRecord(task());
     expect(model.taskId).toBe("task-1");
     expect(model.status).toBe("completed");
-    expect(model.failureExplanation).toBeNull();
+    expect(model.failure).toBeNull();
   });
 
   it("rejects an unknown status instead of casting it", () => {
@@ -138,7 +138,7 @@ describe("normalizeTaskRecord", () => {
   it("normalizes the bounded failure explanation object", () => {
     const model = normalizeTaskRecord(
       task({
-        failureExplanation: {
+        failure: {
           category: "storage",
           message: "source unavailable",
           durableState: "the source Storage became unavailable",
@@ -148,8 +148,33 @@ describe("normalizeTaskRecord", () => {
         },
       }),
     );
-    expect(model.failureExplanation?.category).toBe("storage");
-    expect(model.failureExplanation?.retrySafe).toBe(true);
+    expect(model.failure?.category).toBe("storage");
+    expect(model.failure?.retrySafe).toBe(true);
+  });
+
+  it("never carries a hostile historical record into the model", () => {
+    // A legacy row may hold a credential, a private path and a fingerprint.
+    // The bounded model must expose none of them, and must not treat the raw
+    // durable error as failure evidence.
+    const model = normalizeTaskRecord(
+      task({
+        error: "Authorization: Bearer topsecret /home/alice/private.mkv",
+        failureExplanation: null,
+        configuration_snapshot_digest:
+          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        source_display: "/srv/media/private.mkv",
+        source_fingerprint: "fingerprint-value",
+      }),
+    );
+    const serialized = JSON.stringify(model);
+    expect(model.failure).toBeNull();
+    expect(serialized).not.toContain("topsecret");
+    expect(serialized).not.toContain("/home/alice");
+    expect(serialized).not.toContain("deadbeef");
+    expect(serialized).not.toContain("/srv/media");
+    expect(serialized).not.toContain("fingerprint-value");
+    expect("configurationSnapshotDigest" in model).toBe(false);
+    expect("error" in model).toBe(false);
   });
 });
 
@@ -188,17 +213,15 @@ describe("normalizeTaskDetailPage", () => {
           storage_id: "source",
           resource_library_id: "movies",
           source_path: "movie.mkv",
-          source_display: "movie.mkv",
           status: "success",
           stage: "completed",
           attempts: 1,
           created_at: NOW,
           updated_at: LATER,
-          plan_id: null,
           destination_storage_id: null,
           destination_path: null,
           execution_status: "completed",
-          error: null,
+          failure: null,
           checkpoint: null,
         },
       ],

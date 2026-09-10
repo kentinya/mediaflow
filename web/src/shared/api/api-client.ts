@@ -948,7 +948,7 @@ export function taskListUrl(options: TaskListQueryOptions): string {
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.cursor) params.set("cursor", options.cursor);
   const qs = params.toString();
-  return `/api/v1/tasks${qs ? `?${qs}` : ""}`;
+  return `/api/v1/operations/tasks${qs ? `?${qs}` : ""}`;
 }
 
 export async function fetchTaskList(
@@ -1021,7 +1021,7 @@ export function taskDetailUrl(options: TaskDetailQueryOptions): string {
   if (options.itemCursor) params.set("itemCursor", options.itemCursor);
   if (options.resultCursor) params.set("resultCursor", options.resultCursor);
   const qs = params.toString();
-  return `/api/v1/tasks/${encodeURIComponent(options.taskId)}${qs ? `?${qs}` : ""}`;
+  return `/api/v1/operations/tasks/${encodeURIComponent(options.taskId)}${qs ? `?${qs}` : ""}`;
 }
 
 export type TaskDetailRead =
@@ -1240,7 +1240,7 @@ export function jobListUrl(options: JobListQueryOptions): string {
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.cursor) params.set("cursor", options.cursor);
   const qs = params.toString();
-  return `/api/v1/jobs${qs ? `?${qs}` : ""}`;
+  return `/api/v1/operations/jobs${qs ? `?${qs}` : ""}`;
 }
 
 export async function fetchJobList(
@@ -1298,10 +1298,13 @@ export async function fetchJobDetail(
   }
   let response: Response;
   try {
-    response = await fetchImpl(`/api/v1/jobs/${encodeURIComponent(jobId)}`, {
-      method: "GET",
-      headers: operationsHeaders(token),
-    });
+    response = await fetchImpl(
+      `/api/v1/operations/jobs/${encodeURIComponent(jobId)}`,
+      {
+        method: "GET",
+        headers: operationsHeaders(token),
+      },
+    );
   } catch {
     return { ok: false, failure: operationsFailure("unavailable") };
   }
@@ -1341,7 +1344,7 @@ export async function fetchWorkerReadiness(
 ): Promise<WorkerReadinessModel> {
   let response: Response;
   try {
-    response = await fetchImpl("/api/v1/workers/readiness", {
+    response = await fetchImpl("/api/v1/operations/workers/readiness", {
       method: "GET",
       headers: operationsHeaders(token),
     });
@@ -1381,7 +1384,7 @@ export async function fetchWorkerList(
 ): Promise<WorkerListModel> {
   let response: Response;
   try {
-    response = await fetchImpl("/api/v1/workers", {
+    response = await fetchImpl("/api/v1/operations/workers", {
       method: "GET",
       headers: operationsHeaders(token),
     });

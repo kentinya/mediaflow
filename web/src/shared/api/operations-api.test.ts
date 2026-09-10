@@ -41,14 +41,16 @@ describe("operations read URLs", () => {
         limit: 20,
         cursor: "c1",
       }),
-    ).toBe("/api/v1/tasks?status=failed&command=preview&limit=20&cursor=c1");
-    expect(jobListUrl({ status: "pending", command: "scan", limit: 10 })).toBe(
-      "/api/v1/jobs?status=pending&command=scan&limit=10",
+    ).toBe(
+      "/api/v1/operations/tasks?status=failed&command=preview&limit=20&cursor=c1",
     );
-    expect(taskListUrl({})).toBe("/api/v1/tasks");
+    expect(jobListUrl({ status: "pending", command: "scan", limit: 10 })).toBe(
+      "/api/v1/operations/jobs?status=pending&command=scan&limit=10",
+    );
+    expect(taskListUrl({})).toBe("/api/v1/operations/tasks");
     expect(
       taskDetailUrl({ taskId: "task-1", itemLimit: 20, resultLimit: 20 }),
-    ).toBe("/api/v1/tasks/task-1?itemLimit=20&resultLimit=20");
+    ).toBe("/api/v1/operations/tasks/task-1?itemLimit=20&resultLimit=20");
   });
 });
 
@@ -70,17 +72,17 @@ describe("mutateLifecycle", () => {
           total_items: 1,
           completed_items: 0,
           failed_items: 0,
-          error: null,
-          failureExplanation: null,
+          failure: null,
           pause_requested: true,
           configuration_snapshot_id: null,
-          configuration_snapshot_digest: null,
+          item_limit: null,
         },
         lifecycle: {
           objectType: "task",
           objectId: "task-1",
           state: "running",
           version: "2026-08-22T12:00:00+00:00",
+          executionPath: "operator_workflow",
           terminal: false,
           permitted: true,
           permission: "cancel_job",

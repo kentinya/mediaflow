@@ -896,6 +896,57 @@ class ScheduleAuditRecord:
     next_run_at: datetime
 
 
+class AutomationJobControlConflict(ValueError):
+    """One bounded refusal of a Job lifecycle control.
+
+    The refusal is raised by the atomic compare-and-set transition itself, so a
+    concurrent or repeated control can never be admitted twice and the message
+    never carries a raw adapter or protocol value.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        durable_state: str,
+        next_action: str,
+        retry_safe: bool = False,
+        current_version: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.durable_state = durable_state
+        self.next_action = next_action
+        self.retry_safe = retry_safe
+        self.current_version = current_version
+
+    def document(self) -> dict[str, object]:
+        return {
+            "reason": self.code,
+            "durableState": self.durable_state,
+            "sideEffects": "none",
+            "retrySafe": self.retry_safe,
+            "nextAction": self.next_action,
+            **({"currentVersion": self.current_version} if self.current_version else {}),
+        }
+
+
+def job_control_version(job: AutomationJob) -> str:
+    """The durable Job state version one lifecycle control binds to.
+
+    A claimed running Job advances ``updated_at`` as Worker liveness evidence,
+    which is not a state transition.  Such a Job therefore binds the immutable
+    claim time it was admitted at, so a heartbeat can never invalidate a
+    deliberate operator control while every real transition still can.
+    """
+
+    if job.status is AutomationJobStatus.RUNNING and job.claim_token and job.started_at:
+        return job.started_at.isoformat()
+    return job.updated_at.isoformat()
+
+
 class AutomationJobRepository(Protocol):
     def create_job(self, job: AutomationJob) -> None: ...
     def admit_job(self, job: AutomationJob, maximum_active_jobs: int) -> bool: ...
@@ -916,7 +967,9 @@ class AutomationJobRepository(Protocol):
         worker_id: str | None = None,
     ) -> AutomationJob | None: ...
     def update_job(self, job: AutomationJob) -> None: ...
-    def request_job_cancellation(self, job_id: str, now: datetime) -> AutomationJob: ...
+    def request_job_cancellation(
+        self, job_id: str, now: datetime, *, expected_version: str | None = None
+    ) -> AutomationJob: ...
     def job_cancellation_requested(self, job_id: str) -> bool: ...
     def heartbeat_job(self, job_id: str, claim_token: str, now: datetime) -> bool: ...
     def complete_claimed_job(self, job: AutomationJob) -> bool: ...
