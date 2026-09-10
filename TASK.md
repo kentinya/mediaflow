@@ -216,12 +216,18 @@ new blocker requires escalation to T4; never imply PASS without execution.
   and cursor compatibility preserved.
 - Built the real authenticated `/ui-v2/library/file-index` journey with Active-scope choices,
   submitted-versus-draft filters, reset, stable cursor paging and one-record lookahead.
-- Added strict allowlisted FileIndex normalization that rejects malformed documents while ignoring
-  unknown fields and excludes fingerprints, private paths and raw provider payloads.
+- Corrected backward FileIndex paging so Memory/SQLite repositories select the nearest records
+  before a cursor, the typed API trims the backward lookahead correctly, and cursor recovery clears
+  only paging state while preserving submitted filters.
+- Added strict allowlisted FileIndex normalization that rejects malformed documents, wrong-typed
+  present canonical/nested facts and contradictory discovery/change/processing duplicates while
+  ignoring unknown fields and excluding fingerprints, private paths and raw provider payloads.
 - Rendered separate discovery/stability, current-occurrence, processing and identity facts with
   explicit unavailable states, bounded loading/empty/error/auth recovery and GET-only behavior.
-- Added the truthful Library landing handoff, secret-free fake-server fixtures and built-artifact
-  browser coverage for filters, paging, recovery, keyboard use and token/mutation absence.
+- Added repository/API and focused frontend regressions, expanded secret-free fake-server fixtures,
+  and built-artifact browser coverage for multi-page equal-timestamp paging, all filter classes,
+  Active-without-ResourceLibrary, invalid/malformed/unavailable recovery, keyboard use and
+  token/mutation absence.
 
 ### Tests and Results
 
@@ -232,21 +238,23 @@ python3 scripts/check_governance.py                          PASS
 npm --prefix web run format:check                            PASS
 npm --prefix web run typecheck                               PASS
 npm --prefix web run lint                                    PASS
-npm --prefix web run test -- --run                           PASS (164 tests, 15 files)
+npm --prefix web run test -- --run                           PASS (168 tests, 15 files)
 npm --prefix web run build                                   PASS
-npm --prefix web run test:e2e -- library-file-index.spec.ts  PASS (6 tests)
-npm --prefix web run test:e2e                                PASS (40 tests)
-.venv/bin/python -m unittest tests.test_file_catalog tests.test_file_catalog_api tests.test_file_index_lifecycle tests.test_configuration_snapshot tests.test_v2_ui tests.test_release_security PASS (87 tests)
+npm --prefix web run test:e2e -- library-file-index.spec.ts  PASS (13 tests)
+npm --prefix web run test:e2e                                PASS (47 tests)
+.venv/bin/python -m unittest tests.test_file_catalog tests.test_file_catalog_api tests.test_file_index_lifecycle tests.test_configuration_snapshot tests.test_v2_ui tests.test_release_security PASS (90 tests)
+.venv/bin/python -m unittest tests.test_file_catalog tests.test_file_catalog_api                PASS (18 tests, focused correction regressions)
 .venv/bin/ruff format --check .                              PASS
 .venv/bin/ruff check .                                       PASS
 .venv/bin/python -m compileall -q mediaflow tests scripts  PASS
 git diff --check                                             PASS
 ```
 
-The frontend test run emitted non-failing jsdom `Window.scrollTo()` diagnostics. The focused Python
-run emitted existing unclosed-database `ResourceWarning` messages but exited successfully. Full
-Python discovery and `scripts/docker_release_security_smoke_test.py` were NOT RUN; they remain
-Slice Final gates for this T3 Task.
+The frontend test run emitted non-failing jsdom `Window.scrollTo()` diagnostics. The specified
+Python run emitted existing unclosed-database `ResourceWarning` messages but exited successfully;
+the focused correction run had no failures. Full Python discovery and
+`scripts/docker_release_security_smoke_test.py` were NOT RUN; they remain Slice Final gates for
+this T3 Task.
 
 ### Decisions
 
@@ -256,8 +264,11 @@ Slice Final gates for this T3 Task.
   and refresh/back preserve truthful query context without carrying credentials or authority.
 - Used an optional bounded identity summary and explicit unavailable labels rather than inferring
   identity, current Result relevance or action eligibility from list facts.
-- Preserved the existing stable `updatedAt` + `fileId` cursor contract and corrected/regressed the
-  backward `before` URL parameter in the centralized API client.
+- Preserved the existing stable `updatedAt` + `fileId` cursor contract by ordering backward
+  repository reads ascending for bounded selection, reversing the selected records for the
+  canonical descending response, and trimming the lookahead in the centralized API client.
+- Treat duplicate canonical/nested facts as one consistency boundary: every present field is
+  validated and two present representations must agree before a record is exposed.
 
 ### Remaining In-Slice Work
 
@@ -278,14 +289,39 @@ Slice Final gates for this T3 Task.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 755ddf7b7232b97aad88487dd7a9c57bcf458f54
+Head SHA: e8a77fcae64bcda78fda46d29700e9794fdf9c7f
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 4b1f8358199a6eaf00f043175c17eccedf0d7083..755ddf7b7232b97aad88487dd7a9c57bcf458f54
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- Adjacent backward paging and cursor recovery do not preserve the promised bounded query context.
+  `PageControls` sends `before` from the first item of the current page, while both repositories
+  filter newer rows and take the first descending `limit`; a three-page probe produced page 1
+  `['7', '6']`, page 2 `['5', '4']`, page 3 `['3', '2']`, then rendered `['7', '6']` for Previous
+  instead of page 2. The existing browser fixture has only two pages, so its passing Previous test
+  does not exercise this boundary. In addition, the invalid-cursor button labelled “Return to first
+  page” calls the full filter reset and discards submitted filters. Correct the authoritative/UI
+  paging behavior so Previous returns the immediately preceding page across three or more pages and
+  equal timestamps, and make cursor recovery clear only paging state while explicit filter reset
+  remains separate. Add repository/API and built-artifact regressions for both behaviors.
+- The strict FileIndex normalizer does not fail the whole malformed document closed when canonical
+  and nested duplicate facts are malformed or disagree. An in-memory execution of the actual
+  TypeScript module accepted `scanStatus: 123` by falling back to `discovery.status: "ready"`, and
+  accepted top-level `processingDisposition: "organized"` together with nested disposition
+  `"failed"`. Validate any present canonical/nested field and reject wrong types or contradictory
+  discovery/change/processing facts; add focused normalization regressions proving rejection.
+- The mandatory focused frontend evidence is incomplete. The required Vitest and Playwright
+  commands pass (164 unit tests and 6 focused/40 full browser tests), but inspection of
+  `FileIndexCatalogPage.test.tsx` and `library-file-index.spec.ts` finds no FileIndex viewport or
+  keyboard interaction, no Active-with-no-ResourceLibrary state, no invalid-filter or
+  malformed/unavailable FileIndex UI recovery, and no submitted UI exercise of the remaining
+  ResourceLibrary/Storage/discovery/identity filter classes. Add only the Task-required focused
+  coverage for these states and controls, including the multi-page equal-timestamp boundary above;
+  rerun the original T3 gate.
