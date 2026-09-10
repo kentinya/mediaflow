@@ -6,6 +6,7 @@ from datetime import datetime
 
 from mediaflow.domain.file_catalog import FileReviewLink
 from mediaflow.domain.file_index import FileIndexRecord, FileIndexRepository
+from mediaflow.domain.file_lifecycle import ProcessingDisposition
 from mediaflow.domain.media_evidence import PipelineEvidence, redact_pipeline_evidence
 from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.task_persistence import (
@@ -30,6 +31,7 @@ class FileCatalogFilter:
     title: str | None = None
     task_id: str | None = None
     year: int | None = None
+    processing_disposition: ProcessingDisposition | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +125,7 @@ class FileCatalogService:
                     title=value.title,
                     task_id=value.task_id,
                     year=value.year,
+                    processing_disposition=value.processing_disposition,
                 )
                 return tuple(item.file for item in enriched)
         records = list(
@@ -134,6 +137,7 @@ class FileCatalogService:
                 limit=value.limit,
                 after=value.after,
                 before=value.before,
+                processing_disposition=value.processing_disposition,
             )
         )
         if self._has_derived_filter(value):
@@ -402,6 +406,10 @@ class FileCatalogService:
             or not 1870 <= value.year <= 2100
         ):
             raise ValueError("file catalog year must be between 1870 and 2100")
+        if value.processing_disposition is not None and not isinstance(
+            value.processing_disposition, ProcessingDisposition
+        ):
+            raise ValueError("file catalog processing disposition must be a supported value")
 
     @staticmethod
     def _has_derived_filter(value: FileCatalogFilter) -> bool:

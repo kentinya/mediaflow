@@ -58,7 +58,7 @@ export function AppShell({ children }: AppShellProps) {
           <Link
             key={item.id}
             to={item.path}
-            activeOptions={{ exact: true }}
+            activeOptions={{ exact: item.path !== "/library" }}
             activeProps={{ "aria-current": "page" }}
             className="mf-nav-link"
             onClick={() => setMenuOpen(false)}

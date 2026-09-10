@@ -173,6 +173,7 @@ class SQLiteFileIndexRepository:
         limit: int = 100,
         after: tuple[datetime, str] | None = None,
         before: tuple[datetime, str] | None = None,
+        processing_disposition: ProcessingDisposition | None = None,
     ) -> tuple[FileIndexRecord, ...]:
         if not resource_library_ids:
             raise ValueError("file catalog requires at least one ResourceLibrary")
@@ -192,6 +193,9 @@ class SQLiteFileIndexRepository:
         if scan_status is not None:
             sql += " AND scan_status = ?"
             parameters.append(scan_status.value)
+        if processing_disposition is not None:
+            sql += " AND processing_disposition = ?"
+            parameters.append(processing_disposition.value)
         if query:
             normalized = query.lower()
             sql += " AND (instr(lower(path), ?) > 0 OR instr(lower(filename), ?) > 0)"
@@ -224,6 +228,7 @@ class SQLiteFileIndexRepository:
         title: str | None = None,
         task_id: str | None = None,
         year: int | None = None,
+        processing_disposition: ProcessingDisposition | None = None,
     ) -> tuple[FileCatalogEnrichedRecord, ...]:
         if not resource_library_ids:
             raise ValueError("file catalog requires at least one ResourceLibrary")
@@ -289,6 +294,9 @@ class SQLiteFileIndexRepository:
         if scan_status is not None:
             sql += " AND f.scan_status = ?"
             parameters.append(scan_status.value)
+        if processing_disposition is not None:
+            sql += " AND f.processing_disposition = ?"
+            parameters.append(processing_disposition.value)
         if query:
             normalized = query.lower()
             sql += " AND (instr(lower(f.path), ?) > 0 OR instr(lower(f.filename), ?) > 0)"

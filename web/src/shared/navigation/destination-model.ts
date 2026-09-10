@@ -72,6 +72,14 @@ const childDestinationData = [
     availability: "implemented" as const,
     description: "Browse the configured Active Storage.",
   },
+  {
+    id: "library-file-index",
+    label: "FileIndex",
+    path: "/library/file-index",
+    title: "FileIndex | MediaFlow",
+    availability: "implemented" as const,
+    description: "Browse the durable indexed discovery records.",
+  },
 ] as const;
 
 export type DestinationAvailability = "implemented" | "migration";
@@ -118,18 +126,44 @@ export function allowlistedDestinationSearch(
   path: DestinationPath,
   search: string,
 ): string | null {
-  if (path !== "/library/files") {
-    return null;
-  }
-  const allowed = new URLSearchParams();
-  const current = new URLSearchParams(search);
-  for (const key of ["storage", "path", "cursor"] as const) {
-    const value = current.get(key);
-    if (value !== null) {
-      allowed.set(key, value);
+  if (path === "/library/files") {
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    for (const key of ["storage", "path", "cursor"] as const) {
+      const value = current.get(key);
+      if (value !== null) {
+        allowed.set(key, value);
+      }
     }
+    return allowed.toString().length > 0 ? allowed.toString() : null;
   }
-  return allowed.toString().length > 0 ? allowed.toString() : null;
+  if (path === "/library/file-index") {
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    for (const key of [
+      "resourceLibrary",
+      "storage",
+      "scanStatus",
+      "query",
+      "processingDisposition",
+      "recognitionType",
+      "provider",
+      "providerId",
+      "title",
+      "taskId",
+      "year",
+      "after",
+      "before",
+      "cursorFileId",
+    ] as const) {
+      const value = current.get(key);
+      if (value !== null) {
+        allowed.set(key, value);
+      }
+    }
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
+  return null;
 }
 
 export const allDestinationPaths: readonly DestinationPath[] = [

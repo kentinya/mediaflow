@@ -12,6 +12,7 @@ from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogSer
 from mediaflow.application.recognition_review import RecognitionReviewService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.file_index import FileIndexRecord
+from mediaflow.domain.file_lifecycle import ProcessingDisposition
 from mediaflow.domain.recognition import RecognitionResult, RecognitionStatus
 from mediaflow.domain.scanner import FileChange, FileScanStatus
 from mediaflow.domain.task_persistence import PersistentResultRecord
@@ -34,6 +35,7 @@ def file_record(
     scan_status: FileScanStatus = FileScanStatus.READY,
     change: FileChange = FileChange.UNCHANGED,
     updated_at: datetime | None = None,
+    processing_disposition: ProcessingDisposition = ProcessingDisposition.UNKNOWN,
 ) -> FileIndexRecord:
     return FileIndexRecord(
         file_id,
@@ -51,6 +53,7 @@ def file_record(
         change,
         NOW - timedelta(days=3),
         updated_at or NOW,
+        processing_disposition=processing_disposition,
     )
 
 
@@ -186,6 +189,255 @@ class FileCatalogTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "file ID"):
             service.list(FileCatalogFilter(after=(NOW, "")))
+
+    def test_processing_disposition_filter_applies_before_paging_in_memory(self) -> None:
+        repository = InMemoryFileIndexRepository()
+        repository.batch_upsert(
+            (
+                file_record(
+                    "one",
+                    "local",
+                    "movies",
+                    "Movies/A.mkv",
+                    updated_at=NOW - timedelta(minutes=2),
+                    processing_disposition=ProcessingDisposition.ORGANIZED,
+                ),
+                file_record(
+                    "two",
+                    "local",
+                    "movies",
+                    "Movies/B.mkv",
+                    updated_at=NOW - timedelta(minutes=2),
+                    processing_disposition=ProcessingDisposition.FAILED,
+                ),
+                file_record(
+                    "three",
+                    "local",
+                    "movies",
+                    "Movies/C.mkv",
+                    updated_at=NOW - timedelta(minutes=2),
+                    processing_disposition=ProcessingDisposition.ORGANIZED,
+                ),
+                file_record(
+                    "four",
+                    "local",
+                    "movies",
+                    "Movies/D.mkv",
+                    updated_at=NOW - timedelta(minutes=3),
+                    processing_disposition=ProcessingDisposition.UNKNOWN,
+                ),
+            )
+        )
+        service = self._service(repository)
+        values = service.list(
+            FileCatalogFilter(
+                processing_disposition=ProcessingDisposition.ORGANIZED,
+                limit=10,
+            )
+        )
+        self.assertEqual([value.file_id for value in values], ["three", "one"])
+        # The filter applies before paging: one record per page over the
+        # filtered set with equal timestamps keeps the stable cursor contract.
+        first = service.list(
+            FileCatalogFilter(
+                processing_disposition=ProcessingDisposition.ORGANIZED,
+                limit=1,
+            )
+        )
+        self.assertEqual([value.file_id for value in first], ["three"])
+        second = service.list(
+            FileCatalogFilter(
+                processing_disposition=ProcessingDisposition.ORGANIZED,
+                after=(NOW - timedelta(minutes=2), "three"),
+                limit=1,
+            )
+        )
+        self.assertEqual([value.file_id for value in second], ["one"])
+        empty = service.list(
+            FileCatalogFilter(
+                processing_disposition=ProcessingDisposition.ORGANIZED,
+                after=(NOW - timedelta(minutes=2), "one"),
+                limit=1,
+            )
+        )
+        self.assertEqual(empty, ())
+        # An empty disposition filter keeps the unfiltered catalog intact.
+        values = service.list(FileCatalogFilter(limit=10))
+        self.assertEqual([value.file_id for value in values], ["two", "three", "one", "four"])
+
+    def test_processing_disposition_filter_combines_and_stable_pages_sqlite(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteFileIndexRepository(database) as file_index:
+                file_index.batch_upsert(
+                    (
+                        file_record(
+                            "one",
+                            "local",
+                            "movies",
+                            "Movies/A.mkv",
+                            updated_at=NOW - timedelta(minutes=2),
+                            processing_disposition=ProcessingDisposition.ORGANIZED,
+                        ),
+                        file_record(
+                            "two",
+                            "local",
+                            "movies",
+                            "Movies/B.mkv",
+                            scan_status=FileScanStatus.UNSTABLE,
+                            updated_at=NOW - timedelta(minutes=2),
+                            processing_disposition=ProcessingDisposition.ORGANIZED,
+                        ),
+                        file_record(
+                            "three",
+                            "local",
+                            "tv",
+                            "TV/C.mkv",
+                            updated_at=NOW - timedelta(minutes=2),
+                            processing_disposition=ProcessingDisposition.ORGANIZED,
+                        ),
+                        file_record(
+                            "four",
+                            "local",
+                            "movies",
+                            "Movies/D.mkv",
+                            updated_at=NOW - timedelta(minutes=1),
+                            processing_disposition=ProcessingDisposition.REVIEW,
+                        ),
+                    )
+                )
+            with SQLiteFileIndexRepository(database) as file_index:
+                service = FileCatalogService(
+                    file_index,
+                    ("movies", "tv"),
+                    ("local",),
+                )
+                values = service.list(
+                    FileCatalogFilter(processing_disposition=ProcessingDisposition.ORGANIZED)
+                )
+                self.assertEqual([value.file_id for value in values], ["two", "three", "one"])
+                values = service.list(
+                    FileCatalogFilter(
+                        resource_library_id="movies",
+                        processing_disposition=ProcessingDisposition.ORGANIZED,
+                        query="a.mkv",
+                    )
+                )
+                self.assertEqual([value.file_id for value in values], ["one"])
+                values = service.list(
+                    FileCatalogFilter(
+                        storage_id="local",
+                        scan_status=FileScanStatus.UNSTABLE,
+                        processing_disposition=ProcessingDisposition.ORGANIZED,
+                    )
+                )
+                self.assertEqual([value.file_id for value in values], ["two"])
+                # Pagination inside the filtered result set neither duplicates
+                # nor skips records at the equal-timestamp boundary.
+                page_one = service.list(
+                    FileCatalogFilter(
+                        processing_disposition=ProcessingDisposition.ORGANIZED,
+                        limit=2,
+                    )
+                )
+                self.assertEqual([value.file_id for value in page_one], ["two", "three"])
+                page_two = service.list(
+                    FileCatalogFilter(
+                        processing_disposition=ProcessingDisposition.ORGANIZED,
+                        after=(NOW - timedelta(minutes=2), "three"),
+                        limit=2,
+                    )
+                )
+                self.assertEqual([value.file_id for value in page_two], ["one"])
+                self.assertEqual(len(page_one) + len(page_two), 3)
+                previous = service.list(
+                    FileCatalogFilter(
+                        processing_disposition=ProcessingDisposition.ORGANIZED,
+                        before=(NOW - timedelta(minutes=2), "three"),
+                        limit=2,
+                    )
+                )
+                self.assertEqual([value.file_id for value in previous], ["two"])
+
+    def test_processing_disposition_filter_matches_derived_filter_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteFileIndexRepository(database) as file_index:
+                file_index.batch_upsert(
+                    (
+                        file_record(
+                            "one",
+                            "local",
+                            "movies",
+                            "Movies/A.mkv",
+                            processing_disposition=ProcessingDisposition.ORGANIZED,
+                        ),
+                        file_record(
+                            "two",
+                            "local",
+                            "movies",
+                            "Movies/B.mkv",
+                            processing_disposition=ProcessingDisposition.FAILED,
+                        ),
+                    )
+                )
+            with SQLiteTaskRepository(database) as task_repository:
+                task_repository.append_result(
+                    PersistentResultRecord(
+                        "result-1",
+                        "task-1",
+                        "item-1",
+                        "local",
+                        "Movies/A.mkv",
+                        "target",
+                        "Media/Movies/A.mkv",
+                        "C",
+                        "tmdb",
+                        "101",
+                        "C",
+                        "A",
+                        "A",
+                        "A",
+                        "move",
+                        "dry_run",
+                        NOW,
+                        title="Movie A",
+                    )
+                )
+            with (
+                SQLiteFileIndexRepository(database) as file_index,
+                SQLiteTaskRepository(database) as task_repository,
+            ):
+                service = FileCatalogService(
+                    file_index,
+                    ("movies",),
+                    ("local",),
+                    task_repository=task_repository,
+                )
+                values = service.list(
+                    FileCatalogFilter(
+                        recognition_type="C",
+                        processing_disposition=ProcessingDisposition.ORGANIZED,
+                        limit=10,
+                    )
+                )
+                self.assertEqual([value.file_id for value in values], ["one"])
+                values = service.list(
+                    FileCatalogFilter(
+                        recognition_type="C",
+                        processing_disposition=ProcessingDisposition.FAILED,
+                        limit=10,
+                    )
+                )
+                self.assertEqual(values, ())
+
+    def test_processing_disposition_filter_rejects_unsupported_values(self) -> None:
+        repository = InMemoryFileIndexRepository()
+        service = self._service(repository)
+        for raw in ("bogus", "ORGANIZED", "", 123, True):
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(ValueError, "processing disposition"):
+                    service.list(FileCatalogFilter(processing_disposition=raw))
 
     def test_cli_cursor_list_construct_no_storage_or_provider(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

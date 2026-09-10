@@ -48,8 +48,11 @@ test("Library landing truthfully separates Storage files from FileIndex", async 
     page.getByRole("link", { name: "Open Storage files" }),
   ).toHaveAttribute("href", "/ui-v2/library/files");
   await expect(
+    page.getByRole("link", { name: "Open FileIndex catalog" }),
+  ).toHaveAttribute("href", "/ui-v2/library/file-index");
+  await expect(
     page.getByRole("link", { name: "Open current Web UI" }),
-  ).toHaveAttribute("href", "/ui");
+  ).toHaveCount(0);
   await expect(page).toHaveTitle("Library | MediaFlow");
   await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
 });

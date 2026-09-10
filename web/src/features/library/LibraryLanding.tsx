@@ -1,9 +1,8 @@
 import { Link } from "@tanstack/react-router";
 
 /**
- * Library landing: the physical Storage files journey is implemented in V2,
- * while FileIndex remains an honest current-Web continuation until its own
- * Slice 32 Task. No read action here starts work or mutates state.
+ * Library landing for the two deliberately separate read journeys. Neither
+ * choice starts work, reads media content or mutates Storage.
  */
 export function LibraryLanding() {
   return (
@@ -31,12 +30,16 @@ export function LibraryLanding() {
         <li className="mf-library-choice">
           <h3>FileIndex</h3>
           <p>
-            Durable indexed discovery records are not available in V2 yet. The
-            current Web UI remains the supported continuation for FileIndex.
+            Search and filter durable indexed discovery records separately from
+            the live Storage view. Discovery, occurrence and processing facts
+            remain distinct and read-only.
           </p>
-          <a className="mf-button mf-button-secondary" href="/ui">
-            Open current Web UI
-          </a>
+          <Link
+            className="mf-button mf-button-secondary"
+            to="/library/file-index"
+          >
+            Open FileIndex catalog
+          </Link>
         </li>
       </ul>
     </div>

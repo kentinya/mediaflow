@@ -21,7 +21,14 @@ import {
   type StorageFilesModel,
 } from "../../entities/library/storage-files";
 import {
+  LOOKAHEAD_SIZE,
+  normalizeFileIndexCatalog,
+  toFileIndexCatalogPage,
+  type FileIndexCatalogPage,
+} from "../../entities/library/file-index-catalog";
+import {
   DashboardApiError,
+  FileIndexApiError,
   StorageFilesApiError,
   SystemStatusApiError,
 } from "./api-errors";
@@ -362,5 +369,163 @@ export async function fetchStorageFiles(
     return { ok: true, model: normalizeStorageFiles(payload) };
   } catch {
     throw new StorageFilesApiError("malformed");
+  }
+}
+
+/**
+ * Bounded, secret-free reason a FileIndex read did not return a document.
+ *
+ * A 400 is returned for an unknown/unsupported filter value or an invalid or
+ * stale cursor: the operator can reset the filters or restart from the first
+ * page, so it is a bounded result rather than a fatal error.
+ */
+export type FileIndexFailureKind =
+  "invalid_filter" | "invalid_cursor" | "unavailable" | "rejected";
+
+export interface FileIndexFailure {
+  readonly kind: FileIndexFailureKind;
+  readonly title: string;
+  readonly nextAction: string;
+}
+
+export type FileIndexRead =
+  | { readonly ok: true; readonly model: FileIndexCatalogPage }
+  | { readonly ok: false; readonly failure: FileIndexFailure };
+
+export interface FileIndexQueryOptions {
+  readonly resourceLibrary?: string | null;
+  readonly storage?: string | null;
+  readonly scanStatus?: string | null;
+  readonly query?: string | null;
+  readonly processingDisposition?: string | null;
+  readonly recognitionType?: string | null;
+  readonly provider?: string | null;
+  readonly providerId?: string | null;
+  readonly title?: string | null;
+  readonly taskId?: string | null;
+  readonly year?: number | string | null;
+  readonly after?: string | null;
+  readonly cursorFileId?: string | null;
+  readonly before?: string | null;
+  readonly limit: number;
+}
+
+export function fileIndexUrl(options: FileIndexQueryOptions): string {
+  const params = new URLSearchParams();
+  const set = (key: string, value: string | null | undefined) => {
+    if (value !== null && value !== undefined && value !== "") {
+      params.set(key, value);
+    }
+  };
+  set("resourceLibrary", options.resourceLibrary);
+  set("storage", options.storage);
+  set("scanStatus", options.scanStatus);
+  set("query", options.query);
+  set("processingDisposition", options.processingDisposition);
+  set("recognitionType", options.recognitionType);
+  set("provider", options.provider);
+  set("providerId", options.providerId);
+  set("title", options.title);
+  set("taskId", options.taskId);
+  if (options.year !== null && options.year !== undefined) {
+    params.set("year", String(options.year));
+  }
+  set("after", options.after);
+  set("cursorFileId", options.cursorFileId);
+  set("before", options.before);
+  // Request one extra record so the page can prove whether a next page exists
+  // without inventing opaque cursors or refetching the whole catalog.
+  params.set("limit", String(options.limit + LOOKAHEAD_SIZE));
+  return `/api/v1/file-index?${params.toString()}`;
+}
+
+const FILE_INDEX_FAILURE_TITLES: Readonly<
+  Record<FileIndexFailureKind, string>
+> = {
+  invalid_filter: "Unsupported filter value",
+  invalid_cursor: "Page continuation no longer valid",
+  unavailable: "FileIndex unavailable",
+  rejected: "Request rejected",
+};
+
+function fileIndexFailure(kind: FileIndexFailureKind): FileIndexFailure {
+  const nextAction =
+    kind === "invalid_filter"
+      ? "Reset the filters and submit the supported values again."
+      : kind === "invalid_cursor"
+        ? "Return to the first page and page forward again."
+        : "Reload the current Active runtime and retry the same read.";
+  return {
+    kind,
+    title: FILE_INDEX_FAILURE_TITLES[kind],
+    nextAction,
+  };
+}
+
+function fileIndexFailureFromStatus(
+  status: number,
+  hadCursor: boolean,
+): FileIndexFailure {
+  if (status === 400) {
+    return fileIndexFailure(hadCursor ? "invalid_cursor" : "invalid_filter");
+  }
+  return fileIndexFailure("rejected");
+}
+
+export async function fetchFileIndex(
+  token: string | null,
+  options: FileIndexQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<FileIndexRead> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (token !== null) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const hadCursor =
+    Boolean(options.after) ||
+    Boolean(options.before) ||
+    Boolean(options.cursorFileId);
+  let response: Response;
+  try {
+    response = await fetchImpl(fileIndexUrl(options), {
+      method: "GET",
+      headers,
+    });
+  } catch {
+    return { ok: false, failure: fileIndexFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new FileIndexApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    const envelope = await readErrorEnvelope(response);
+    if (envelope.code === "forbidden") {
+      throw new FileIndexApiError("forbidden");
+    }
+    return { ok: false, failure: fileIndexFailureFromStatus(403, hadCursor) };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: fileIndexFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return {
+      ok: false,
+      failure: fileIndexFailureFromStatus(response.status, hadCursor),
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new FileIndexApiError("malformed");
+  }
+  try {
+    const document = normalizeFileIndexCatalog(payload);
+    return {
+      ok: true,
+      model: toFileIndexCatalogPage(document, options.limit),
+    };
+  } catch {
+    throw new FileIndexApiError("malformed");
   }
 }
