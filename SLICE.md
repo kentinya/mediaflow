@@ -1,13 +1,14 @@
 # Slice 32 — Library & Files Experience
 
-This is the A-owned Slice Contract for the next independently reviewable V2 capability after
-Slice 31. Slice 31 remains `PASS / CLOSED` in Git, Roadmap and Progress history and is not reopened.
+This is the A-owned Slice Contract and closure record for the independently reviewed V2 capability
+after Slice 31. Slice 31 remains `PASS / CLOSED` in Git, Roadmap and Progress history and is not
+reopened.
 
 ~~~
 Slice ID: 32
 Name: Library & Files Experience
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: 76de3f60e223131a8b7db97a566d0ceaadd9b2a0
 Implementation Head: ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99
 ~~~
@@ -23,7 +24,7 @@ V2 remains a sequence of independently accepted user capabilities:
 ~~~
 Slice 30 — V2 Frontend Platform & Architecture — PASS / CLOSED
 Slice 31 — Operator Shell & Information Architecture — PASS / CLOSED
-Slice 32 — Library & Files Experience — ACTIVE
+Slice 32 — Library & Files Experience — PASS / CLOSED
 Slice 33 — Operations Workspace — PLANNED
 Slice 34 — Review & Recovery Workspace — PLANNED
 Slice 35 — Configuration Administration — PLANNED
@@ -400,13 +401,9 @@ Explicitly Deferred:
   Contract deferrals.
 
 Documentation Reconciliation Needed:
-- If A's final review returns PASS, reconcile `README.md`, `docs/v2-requirements.md`,
-  `docs/progress.md` and `docs/roadmap.md`; they still identify Slice 31 as the latest closed Slice,
-  no active large Slice, or Slice 32 as ACTIVE.
-- Reconcile the CURRENT V2 sections in `docs/product-experience.md` and `docs/architecture.md` so
-  they describe the implemented read-only Library route family while preserving V1 coexistence and
-  Slices 33–36 deferrals. A should verify whether the canonical Chinese specification needs the same
-  factual program-status update without changing stable product requirements.
+- None. A reconciled the current program status and delivered V2 Library facts in `README.md`, the
+  V2, product-experience, architecture, Roadmap and Progress documents, and the canonical Chinese
+  specification without changing stable product requirements.
 
 Decision: SLICE READY FOR A REVIEW
 ~~~
@@ -414,12 +411,31 @@ Decision: SLICE READY FOR A REVIEW
 ## Review State
 
 ~~~
-Slice Status: READY FOR A REVIEW
+Slice Status: PASS / CLOSED
 Implementation Head: ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99
-P0/P1 Defects: None found by B in Base..Implementation Head or Slice-final validation
-Next Action: A FINAL REVIEW
+P0/P1 Defects: None
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ~~~
 
 ## A Final Review
 
-Pending B Closure Packet.
+~~~
+Reviewed Range: 76de3f60e223131a8b7db97a566d0ceaadd9b2a0..ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99
+Decision: PASS
+P0/P1 Blockers: None
+Closure Reconciliation:
+- All Required Outcomes and Required Surfaces are complete. The V2 Library journey has a real
+  authenticated entry, distinct Active Storage and FileIndex reads, bounded detail/linkage state,
+  actionable failure recovery and no hidden dependency on deferred mutation journeys.
+- Base..Implementation Head preserves Python and existing `/api/v1/*` authority, memory-only
+  Bearer/RBAC behavior, V1 `/ui` coexistence, Storage-relative confinement, GET-only Library reads
+  and OrganizerExecutor-only mutation. No test weakening, private configuration, credential or
+  unrelated artifact is present in the reviewed range.
+- A independently re-ran governance, focused Python authority/security tests (76/76), strict
+  frontend model tests (79/79), Library built-artifact browser journeys (38/38), Ruff on the changed
+  Python boundary and Base..Implementation Head diff checking. B's exact-head clean-worktree full
+  regression, complete frontend and Docker release-security evidence is credible; the documented
+  root-CWD local-configuration isolation issue remains non-blocking and pre-existing.
+- Current-status and CURRENT architecture/product facts were reconciled once at closure. Slices
+  33–36 and every Explicitly Deferred item remain deferred; no next Slice is activated here.
+~~~

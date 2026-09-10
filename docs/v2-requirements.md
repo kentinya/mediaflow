@@ -11,14 +11,14 @@ product and authority boundaries.
 ```text
 V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
-Most recently closed large Slice: Slice 31 — Operator Shell & Information Architecture — PASS / CLOSED
-Slice 31 Base: 2e7aceb50750fb54689ab26bfd1214b8e36c25f8
-Slice 31 Implementation Head: 45cb1d4cdda6cf46a6d6699600bc4a4563efc06b
+Most recently closed large Slice: Slice 32 — Library & Files Experience — PASS / CLOSED
+Slice 32 Base: 76de3f60e223131a8b7db97a566d0ceaadd9b2a0
+Slice 32 Implementation Head: ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99
 Active large Slice: NONE
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
-product requirements. Slices 30 and 31 are closed; the next legal action is A selecting the next
+product requirements. Slices 30, 31 and 32 are closed; the next legal action is A selecting the next
 large Slice in a later turn.
 
 ## Stable V2 requirements

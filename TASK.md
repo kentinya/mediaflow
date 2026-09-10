@@ -1,11 +1,10 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Slice 32 — Library & Files Experience has completed B's Task review and Slice-final validation.
-All Required Outcomes are satisfied and the Slice is `READY FOR A REVIEW`.
+Slice 32 — Library & Files Experience is `PASS / CLOSED` after A Final Review. There is no active
+Developer implementation Task.
 
-Last reviewed implementation head: `ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99`
+Last accepted implementation head: `ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99`
 
-The Closure Packet is recorded in [`SLICE.md`](SLICE.md). No implementation Task is active while
-the Slice awaits A's final review.
+The Closure Packet and A Final Review are recorded in [`SLICE.md`](SLICE.md).
 
-Next Action: A FINAL REVIEW
+Next Action: A SELECTS THE NEXT LARGE SLICE

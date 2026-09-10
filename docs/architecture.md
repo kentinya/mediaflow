@@ -66,8 +66,8 @@ Node build stage and copying only the built static files into the final Python r
 consumed by the running Python process. The runtime image keeps no Node executable, npm,
 `node_modules`, frontend source, development server, SSR process, CDN dependency or second HTTP
 service, and the API service serves `/ui-v2/` and hashed assets beside the unchanged V1 `/ui` and
-`/api/v1/*` behavior. All Slice 30 outcomes are accepted; Slices 32–36 retain ownership of the
-later business-surface migrations and cutover after the Slice 31 shell boundary.
+`/api/v1/*` behavior. All Slice 30 outcomes are accepted; later Slices retain ownership of the
+business-surface migrations and cutover after the shared shell boundary.
 
 Slice 31 is `PASS / CLOSED` at Base `2e7aceb50750fb54689ab26bfd1214b8e36c25f8` and Implementation
 Head `45cb1d4cdda6cf46a6d6699600bc4a4563efc06b`. Task 31.1 established the centralized information
@@ -78,6 +78,16 @@ principal boundary, continue to the intended safe route,
 and recover from absent/rejected authority (401), forbidden access (403), unavailable data or an
 unknown route without losing shell context. Dashboard consumes the shared lifecycle rather than
 retaining a competing authentication flow.
+
+Slice 32 is `PASS / CLOSED` at Base `76de3f60e223131a8b7db97a566d0ceaadd9b2a0` and Implementation
+Head `ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99`. It composes the existing Python Active
+configuration, Storage Browser, FileIndex catalog/detail and by-source resolution into a read-only
+V2 Library route family. Frontend-owned strict models and the central authenticated API/query
+boundary consume bounded `/api/v1/*` projections; they do not create a second business authority.
+Stable directional paging stays in the authoritative FileIndex repository, physical/indexed links
+require an exact Active Storage and enabled ResourceLibrary binding, and detail evidence is bounded,
+allowlisted and redacted. All Library requests are GET-only; V1 `/ui`, operational mutations and
+OrganizerExecutor ownership remain unchanged.
 
 The current V2 frontend foundation is a client-side React/TypeScript SPA built with Vite, TanStack
 Router and TanStack Query, organized feature-first with a central typed API boundary and
@@ -393,6 +403,15 @@ Notification Worker services, production Waitress WSGI serving, explicit local `
 media bind mounts, non-root operation, liveness/management/business readiness, restart persistence,
 fenced ownership, fail-closed backup/migration upgrade behavior and release-security validation.
 The Jobs/Preview/Organize execution boundary remains explicit and OrganizerExecutor-only.
+
+## Current Slice 32 delivery
+
+Slice 32 adds the V2 Library landing, bounded Active Storage directory browser, FileIndex
+catalog/search/filter/directional paging, strict detail/evidence projection and uniquely confirmed
+physical/indexed navigation. It reuses managed Active snapshot, Storage and FileIndex/Application
+ports and existing authenticated `/api/v1/*` reads. The frontend stores no domain authority or
+credentials, renders no raw fingerprint/provider/private-path material, and exposes no Storage or
+workflow mutation. Operations, Review/Recovery, Configuration and V1 cutover remain Slices 33–36.
 
 ## TARGET architecture
 

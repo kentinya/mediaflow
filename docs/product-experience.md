@@ -370,10 +370,11 @@ email/chat/media-server notifications remain V1.x/V2 or deployment-specific work
 
 ## V2 Operator Web migration
 
-The V1 `/ui` remains available while the V2 Operator Web is introduced. Slices 30 and 31 have
+The V1 `/ui` remains available while the V2 Operator Web is introduced. Slices 30, 31 and 32 have
 delivered and closed the architecture/platform foundation, bounded Dashboard proving journey,
-operator shell, centralized information architecture and shared route/authentication recovery below.
-They do not claim the later application migrations or final V1 UI cutover.
+operator shell, centralized information architecture, shared route/authentication recovery and
+read-only Library journey below. They do not claim the later Operations, Review/Recovery,
+Configuration or final V1 UI cutover migrations.
 
 ### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
 
@@ -401,6 +402,29 @@ They do not claim the later application migrations or final V1 UI cutover.
 - **Recovery:** re-enter the API principal token in memory or retry the bounded read. Recovery does
   not replay unknown work because this proving journey creates no backend work.
 
+### CURRENT V2 LIBRARY — Storage Files and FileIndex
+
+- **Goal:** answer separately what is physically present in configured Active Storage and what the
+  durable FileIndex currently knows about a source, then move between a uniquely linked physical
+  file and indexed record without starting work.
+- **Entry:** open `/ui-v2/library` or a supported Storage Files, FileIndex catalog or detail deep
+  link through the shared memory-only authentication continuation.
+- **Visible state:** the Library landing separates fresh Storage reads from durable discovery;
+  Storage Files shows Active Storage selection, relative breadcrumbs, bounded pages and membership;
+  FileIndex shows submitted filters, stable pages, discovery versus processing state, and bounded
+  detail/history/evidence with current, historical, legacy, truncated and unavailable facts kept
+  distinct.
+- **Action:** browse, search, filter, page, inspect, refresh and follow a uniquely confirmed
+  physical/indexed link. These actions are authenticated bounded GETs and do not submit Scan,
+  Preview, Organize, Reprocess, review/recovery or configuration work.
+- **Success:** the operator understands physical and indexed state, current relevance and the next
+  honest destination while retaining safe list/breadcrumb context.
+- **Failure:** absent Active configuration, invalid or stale paths/cursors, empty data,
+  missing/ambiguous linkage, malformed/unavailable responses and 401/403 remain bounded,
+  secret-free shell states rather than fabricated authority or current evidence.
+- **Recovery:** retry or restart the read, select another Active Storage, reset filters, return to a
+  valid Library parent, reconnect, or use an explicit V1 handoff for a journey not yet migrated.
+
 ### Migration coexistence and deferrals
 
 - **CURRENT:** V1 `/ui`, its API behavior and Python execution authority remain available and
@@ -409,6 +433,9 @@ They do not claim the later application migrations or final V1 UI cutover.
   persistent responsive shell, typed routing/query/API boundaries, safe deep-link continuation,
   shared route/authentication recovery and production static serving by the existing Python
   application with no Node production runtime.
+- **CURRENT V2 LIBRARY:** the implemented Library route family composes existing Python
+  `/api/v1/*` read authority into distinct Active Storage and FileIndex journeys with strict typed
+  models, bounded paging/detail evidence and zero-side-effect physical/indexed navigation.
 - **DEFERRED:** no `/ui` cutover or V1 UI retirement occurs until the later parity, accessibility and
-  retirement acceptance. Library/Files, Operations, Review/Recovery and Configuration business
-  migrations remain owned by later Slices; their current V2 landings do not claim those journeys.
+  retirement acceptance. Operations, Review/Recovery and Configuration business migrations remain
+  owned by later Slices; their current V2 landings do not claim those journeys.
