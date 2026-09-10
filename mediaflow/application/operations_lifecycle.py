@@ -261,7 +261,7 @@ def bounded_failure_document(value: str | None) -> dict[str, object] | None:
     }
 
 
-def _bounded_evidence_text(value: str | None) -> str | None:
+def _bounded_evidence_text(value: str | None, *, limit: int = _MAX_BOUNDED_TEXT) -> str | None:
     """Bound one already-structured evidence string without changing its meaning.
 
     A credential-shaped value and an absolute file path are replaced, so a
@@ -274,6 +274,33 @@ def _bounded_evidence_text(value: str | None) -> str | None:
     text = redact_manual_text(value, limit=_MAX_BOUNDED_TEXT)
     text = _ABSOLUTE_FILE_PATH.sub("[redacted-path]", text)
     return text or None
+
+
+def _bounded_identity_path(value: object | None) -> str | None:
+    """Project a persisted Storage-relative identity or fail closed.
+
+    The Operations projection assumes source/destination identities are
+    Storage-relative, but a legacy or externally written row can hold an
+    absolute host/adapter root, a private endpoint or a credential-shaped
+    value in the same column.  Only a provably relative identity is published;
+    anything else is replaced with the bounded redaction marker.
+    """
+
+    if not isinstance(value, str):
+        return "[redacted-path]" if value is not None else None
+    text = value.strip()
+    segments = text.replace("\\", "/").split("/")
+    if (
+        not text
+        or len(text) > _MAX_BOUNDED_TEXT
+        or text.startswith(("/", "\\", "~"))
+        or re.match(r"^[A-Za-z]:", text) is not None
+        or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", text) is not None
+        or ".." in segments
+        or redact_manual_text(text) != text
+    ):
+        return "[redacted-path]"
+    return text
 
 
 def task_operator_document(task: PersistentTask) -> dict[str, object]:
@@ -318,9 +345,9 @@ def task_item_operator_document(
         "attempts": item.attempts,
         "storage_id": item.storage_id,
         "resource_library_id": item.resource_library_id,
-        "source_path": item.source_path,
+        "source_path": _bounded_identity_path(item.source_path),
         "destination_storage_id": item.destination_storage_id,
-        "destination_path": item.destination_path,
+        "destination_path": _bounded_identity_path(item.destination_path),
         "execution_status": item.execution_status,
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
@@ -354,23 +381,30 @@ def task_result_operator_document(result: PersistentResultRecord) -> dict[str, o
         "classification_policy_id": result.classification_policy_id,
         "organize_policy_id": result.organize_policy_id,
         "source_storage_id": result.source_storage_id,
-        "source_path": result.source_path,
+        "source_path": _bounded_identity_path(result.source_path),
         "destination_storage_id": result.destination_storage_id,
-        "destination_path": result.destination_path,
+        "destination_path": _bounded_identity_path(result.destination_path),
         "created_at": result.created_at.isoformat(),
         "failure": bounded_failure_document(result.error),
     }
 
 
 def job_failure_document(job: AutomationJob) -> dict[str, object] | None:
-    """Normalized failure evidence for one Job, never its raw durable error."""
+    """Normalized failure evidence for one Job, never its raw durable error.
 
-    envelope = failure_document(job.error)
+    A decoded durable envelope is only evidence when it survives the same
+    bounded scrubbing as every other structured field: a legacy or externally
+    written row can hold credentials or absolute host paths inside an
+    otherwise valid envelope.
+    """
+
+    envelope = bounded_failure_document(job.error)
     if envelope is not None:
         return envelope
     if job.failure_category:
         return {
-            "category": redact_manual_text(job.failure_category, limit=96) or "workflow_failure",
+            "category": _bounded_evidence_text(job.failure_category, limit=96)
+            or "workflow_failure",
             "message": (
                 "the scheduled workflow stopped at a bounded boundary; inspect the recorded "
                 "durable state and next action"
@@ -444,7 +478,7 @@ def manual_scan_operator_document(document: dict[str, object]) -> dict[str, obje
         "resourceLibraryId": document.get("resourceLibraryId"),
         "fileId": document.get("fileId"),
         "storageId": document.get("storageId"),
-        "sourcePath": document.get("sourcePath"),
+        "sourcePath": _bounded_identity_path(document.get("sourcePath")),
         "mode": document.get("mode"),
         "status": document.get("status"),
         # The immutable revision identity is the pin evidence; the digest is a
@@ -466,7 +500,7 @@ def manual_scan_operator_document(document: dict[str, object]) -> dict[str, obje
                 "taskId": item.get("taskId"),
                 "storageId": item.get("storageId"),
                 "resourceLibraryId": item.get("resourceLibraryId"),
-                "sourcePath": item.get("sourcePath"),
+                "sourcePath": _bounded_identity_path(item.get("sourcePath")),
                 "fileId": item.get("fileId"),
                 "status": item.get("status"),
                 "change": item.get("change"),
@@ -953,6 +987,12 @@ def require_cancellable(task: PersistentTask) -> None:
         )
 
 
+def bounded_identity_path(value: object | None) -> str | None:
+    """Public alias for the fail-closed Storage-relative identity projection."""
+
+    return _bounded_identity_path(value)
+
+
 __all__ = [
     "EffectSummary",
     "OperationsLifecycleConflict",
@@ -960,6 +1000,7 @@ __all__ = [
     "TaskExecutionPath",
     "TaskLifecycleService",
     "bounded_failure_document",
+    "bounded_identity_path",
     "job_failure_document",
     "job_lifecycle_document",
     "job_operator_document",
