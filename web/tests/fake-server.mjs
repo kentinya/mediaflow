@@ -60,6 +60,208 @@ const DASHBOARD_SNAPSHOT = {
   ],
 };
 
+// --- Operations fake data ---
+
+const TASK_ITEMS = [
+  {
+    item_id: "item-001",
+    task_id: "task-001",
+    storage_id: "local-media",
+    resource_library_id: "resources",
+    source_path: "movies/The Matrix (1999).mkv",
+    source_display: "The Matrix (1999).mkv",
+    status: "success",
+    stage: "organizing",
+    attempts: 1,
+    created_at: "2026-08-22T12:00:00+00:00",
+    updated_at: "2026-08-22T12:05:00+00:00",
+    plan_id: "plan-001",
+    destination_storage_id: "local-media",
+    destination_path: "Media/Movies/The Matrix (1999)/The Matrix (1999).mkv",
+    execution_status: "completed",
+    error: null,
+    checkpoint: {
+      status: "completed",
+      stage: "organizing",
+      attempts: 1,
+      effect_certainty: "verified_complete",
+      retry_safety: "safe",
+      next_action: null,
+      error_category: "none",
+    },
+  },
+  {
+    item_id: "item-002",
+    task_id: "task-001",
+    storage_id: "local-media",
+    resource_library_id: "resources",
+    source_path: "movies/Inception (2010).mkv",
+    source_display: "Inception (2010).mkv",
+    status: "failed",
+    stage: "metadata",
+    attempts: 2,
+    created_at: "2026-08-22T12:00:00+00:00",
+    updated_at: "2026-08-22T12:06:00+00:00",
+    plan_id: null,
+    destination_storage_id: null,
+    destination_path: null,
+    execution_status: null,
+    error: "metadata lookup failed: TMDB timeout",
+    checkpoint: {
+      status: "failed",
+      stage: "metadata",
+      attempts: 2,
+      effect_certainty: "unknown",
+      retry_safety: "safe",
+      next_action: "retry metadata lookup",
+      error_category: "metadata",
+    },
+  },
+];
+
+const TASK_RESULTS = [
+  {
+    result_id: "result-001",
+    task_id: "task-001",
+    item_id: "item-001",
+    source_storage_id: "local-media",
+    source_path: "movies/The Matrix (1999).mkv",
+    destination_storage_id: "local-media",
+    destination_path: "Media/Movies/The Matrix (1999)/The Matrix (1999).mkv",
+    recognition_type: "Movie",
+    provider: "tmdb",
+    provider_id: "603",
+    metadata_policy_id: "meta-a",
+    naming_policy_id: "naming-a",
+    classification_policy_id: "class-a",
+    organize_policy_id: "organize-move",
+    operation: "move",
+    status: "completed",
+    created_at: "2026-08-22T12:05:00+00:00",
+    title: "The Matrix",
+    error: null,
+    completed_operations: ["move"],
+    effect_certainty: "verified_complete",
+    uncertain_effects: [],
+  },
+];
+
+const FAKE_TASKS = [
+  {
+    task_id: "task-001",
+    command: "scan",
+    status: "completed",
+    execute_authorized: false,
+    created_at: "2026-08-22T12:00:00+00:00",
+    updated_at: "2026-08-22T12:06:00+00:00",
+    started_at: "2026-08-22T12:00:01+00:00",
+    completed_at: "2026-08-22T12:06:00+00:00",
+    total_items: 2,
+    completed_items: 1,
+    failed_items: 1,
+    error: null,
+    pause_requested: false,
+    configuration_snapshot_id: "snap-1",
+    configuration_snapshot_digest: "digest-1",
+  },
+  {
+    task_id: "task-002",
+    command: "scan",
+    status: "running",
+    execute_authorized: false,
+    created_at: "2026-08-22T12:10:00+00:00",
+    updated_at: "2026-08-22T12:10:00+00:00",
+    started_at: "2026-08-22T12:10:01+00:00",
+    completed_at: null,
+    total_items: 5,
+    completed_items: 2,
+    failed_items: 0,
+    error: null,
+    pause_requested: false,
+    configuration_snapshot_id: "snap-1",
+    configuration_snapshot_digest: "digest-1",
+  },
+  {
+    task_id: "task-003",
+    command: "preview",
+    status: "pending",
+    execute_authorized: false,
+    created_at: "2026-08-22T12:15:00+00:00",
+    updated_at: "2026-08-22T12:15:00+00:00",
+    started_at: null,
+    completed_at: null,
+    total_items: 0,
+    completed_items: 0,
+    failed_items: 0,
+    error: null,
+    pause_requested: false,
+    configuration_snapshot_id: "snap-1",
+    configuration_snapshot_digest: "digest-1",
+  },
+  {
+    task_id: "task-004",
+    command: "scan",
+    status: "failed",
+    execute_authorized: false,
+    created_at: "2026-08-22T11:50:00+00:00",
+    updated_at: "2026-08-22T11:55:00+00:00",
+    started_at: "2026-08-22T11:50:01+00:00",
+    completed_at: "2026-08-22T11:55:00+00:00",
+    total_items: 3,
+    completed_items: 0,
+    failed_items: 3,
+    error: "storage unavailable",
+    pause_requested: false,
+    configuration_snapshot_id: "snap-1",
+    configuration_snapshot_digest: "digest-1",
+  },
+];
+
+const FAKE_JOBS = [
+  {
+    job_id: "job-001",
+    command: "scan",
+    status: "completed",
+    created_at: "2026-08-22T12:00:00+00:00",
+    updated_at: "2026-08-22T12:06:00+00:00",
+    started_at: "2026-08-22T12:00:01+00:00",
+    completed_at: "2026-08-22T12:06:00+00:00",
+    task_id: "task-001",
+    worker_id: null,
+    error: null,
+    failure_category: null,
+    failureExplanation: null,
+    definition_id: null,
+    definition_name: null,
+    schedule_id: null,
+  },
+  {
+    job_id: "job-002",
+    command: "scan",
+    status: "pending",
+    created_at: "2026-08-22T12:15:00+00:00",
+    updated_at: "2026-08-22T12:15:00+00:00",
+    started_at: null,
+    completed_at: null,
+    task_id: "task-003",
+    worker_id: null,
+    error: null,
+    failure_category: null,
+    failureExplanation: null,
+    definition_id: null,
+    definition_name: null,
+    schedule_id: null,
+    operationalCondition: {
+      condition: "no_worker",
+      stage: "pending",
+      durableState: "no processing worker is registered",
+      sideEffects: "none",
+      retrySafe: true,
+      nextAction: "start a processing worker",
+    },
+  },
+];
+
 const SYSTEM_STATUS = {
   system: {
     application_version: "2.0.0.dev0",
@@ -1580,6 +1782,255 @@ const server = createServer(async (req, res) => {
     sendJson(res, 200, document);
     return;
   }
+
+  // --- Operations fake API routes ---
+
+  if (url.pathname === "/api/v1/tasks" && req.method === "GET") {
+    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const statusFilter = url.searchParams.get("status");
+    let items = FAKE_TASKS;
+    if (statusFilter) {
+      items = items.filter((t) => t.status === statusFilter);
+    }
+    sendJson(res, 200, {
+      items,
+      limit: 20,
+      truncated: false,
+      previous_cursor: null,
+      next_cursor: null,
+    });
+    return;
+  }
+
+  const taskDetailMatch = url.pathname.match(/^\/api\/v1\/tasks\/([^/]+)$/);
+  if (taskDetailMatch && req.method === "GET") {
+    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const taskId = decodeURIComponent(taskDetailMatch[1]);
+    const task = FAKE_TASKS.find((t) => t.task_id === taskId);
+    if (!task) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    const taskItems = TASK_ITEMS.filter((i) => i.task_id === taskId);
+    const taskResults = TASK_RESULTS.filter((r) => r.task_id === taskId);
+    sendJson(res, 200, {
+      ...task,
+      items: taskItems,
+      results: taskResults,
+      item_limit: 20,
+      result_limit: 20,
+      items_truncated: false,
+      results_truncated: false,
+      previous_item_cursor: null,
+      previous_result_cursor: null,
+      next_item_cursor: null,
+      next_result_cursor: null,
+    });
+    return;
+  }
+
+  const taskCancelMatch = url.pathname.match(
+    /^\/api\/v1\/tasks\/([^/]+)\/cancel$/,
+  );
+  if (taskCancelMatch && req.method === "POST") {
+    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const taskId = decodeURIComponent(taskCancelMatch[1]);
+    const task = FAKE_TASKS.find((t) => t.task_id === taskId);
+    if (!task) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    sendJson(res, 200, { ...task, status: "cancelled" });
+    return;
+  }
+
+  const taskPauseMatch = url.pathname.match(
+    /^\/api\/v1\/tasks\/([^/]+)\/pause$/,
+  );
+  if (taskPauseMatch && req.method === "POST") {
+    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const taskId = decodeURIComponent(taskPauseMatch[1]);
+    const task = FAKE_TASKS.find((t) => t.task_id === taskId);
+    if (!task) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    if (task.status !== "running") {
+      sendJson(res, 409, {
+        error: { code: "conflict", message: "task is not running" },
+      });
+      return;
+    }
+    sendJson(res, 200, { ...task, status: "paused", pause_requested: true });
+    return;
+  }
+
+  const taskResumeMatch = url.pathname.match(
+    /^\/api\/v1\/tasks\/([^/]+)\/resume$/,
+  );
+  if (taskResumeMatch && req.method === "POST") {
+    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const taskId = decodeURIComponent(taskResumeMatch[1]);
+    const task = FAKE_TASKS.find((t) => t.task_id === taskId);
+    if (!task) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    if (task.status !== "paused") {
+      sendJson(res, 409, {
+        error: { code: "conflict", message: "task is not paused" },
+      });
+      return;
+    }
+    sendJson(res, 200, { ...task, status: "running", pause_requested: false });
+    return;
+  }
+
+  if (url.pathname === "/api/v1/jobs" && req.method === "GET") {
+    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    sendJson(res, 200, {
+      items: FAKE_JOBS,
+      limit: 20,
+      truncated: false,
+      previous_cursor: null,
+      next_cursor: null,
+    });
+    return;
+  }
+
+  const jobDetailMatch = url.pathname.match(/^\/api\/v1\/jobs\/([^/]+)$/);
+  if (jobDetailMatch && req.method === "GET") {
+    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const jobId = decodeURIComponent(jobDetailMatch[1]);
+    const job = FAKE_JOBS.find((j) => j.job_id === jobId);
+    if (!job) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    sendJson(res, 200, job);
+    return;
+  }
+
+  const jobCancelMatch = url.pathname.match(
+    /^\/api\/v1\/jobs\/([^/]+)\/cancel$/,
+  );
+  if (jobCancelMatch && req.method === "POST") {
+    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const jobId = decodeURIComponent(jobCancelMatch[1]);
+    const job = FAKE_JOBS.find((j) => j.job_id === jobId);
+    if (!job) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    sendJson(res, 200, { ...job, status: "cancelled" });
+    return;
+  }
+
+  if (url.pathname === "/api/v1/workers/readiness" && req.method === "GET") {
+    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    sendJson(res, 200, {
+      ready: true,
+      condition: "ready",
+      category: null,
+      durableState: "processing worker is active",
+      sideEffects: "none",
+      retrySafe: true,
+      nextAction: "",
+      activeWorkersCount: 1,
+      activeSnapshotId: "snap-1",
+      activeSnapshotDigest: "digest-1",
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/v1/workers" && req.method === "GET") {
+    if (!VIEWER_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    sendJson(res, 200, {
+      workers: [
+        {
+          worker_id: "worker-e2e-1",
+          label: "e2e-worker",
+          status: "live",
+          last_heartbeat_at: "2026-08-22T12:10:00+00:00",
+          registered_at: "2026-08-22T12:00:00+00:00",
+          supported_commands: ["scan", "preview", "organize"],
+        },
+      ],
+      count: 1,
+    });
+    return;
+  }
+
   if (req.method !== "GET") {
     res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("GET required");

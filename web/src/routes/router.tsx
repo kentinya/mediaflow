@@ -14,6 +14,11 @@ import { LibraryLanding } from "../features/library/LibraryLanding";
 import { FileIndexCatalogPage } from "../features/library/FileIndexCatalogPage";
 import { StorageFilesPage } from "../features/library/StorageFilesPage";
 import { FileIndexDetailPage } from "../features/library/FileIndexDetailPage";
+import { OperationsLanding } from "../features/operations/OperationsLanding";
+import { TaskListPage } from "../features/operations/TaskListPage";
+import { TaskDetailPage } from "../features/operations/TaskDetailPage";
+import { JobListPage } from "../features/operations/JobListPage";
+import { JobDetailPage } from "../features/operations/JobDetailPage";
 import { AppShell } from "../shared/ui/AppShell";
 import { AuthBoundary } from "../shared/auth/AuthBoundary";
 import { StatusBanner } from "../shared/ui/StatusBanner";
@@ -83,7 +88,31 @@ const libraryFileIndexDetailRoute = createRoute({
 const operationsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations",
-  component: MigrationPage,
+  component: OperationsLanding,
+});
+
+const taskListRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/tasks",
+  component: TaskListPage,
+});
+
+const taskDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/tasks/$taskId",
+  component: TaskDetailPage,
+});
+
+const jobListRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/jobs",
+  component: JobListPage,
+});
+
+const jobDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/jobs/$jobId",
+  component: JobDetailPage,
 });
 
 const reviewRoute = createRoute({
@@ -106,6 +135,10 @@ const routeTree = rootRoute.addChildren([
   libraryFileIndexPath,
   libraryFileIndexDetailRoute,
   operationsRoute,
+  taskListRoute,
+  taskDetailRoute,
+  jobListRoute,
+  jobDetailRoute,
   reviewRoute,
   configurationRoute,
 ]);

@@ -115,3 +115,25 @@ export class FileIndexApiError extends ApiReadError {
     this.name = "FileIndexApiError";
   }
 }
+
+const OPERATIONS_CATEGORY_MESSAGES: Readonly<
+  Record<ApiReadErrorCategory, string>
+> = {
+  unauthorized:
+    "The API token is missing, invalid or expired. Enter a valid API principal token to continue.",
+  forbidden:
+    "The connected API principal does not have permission to view Operations.",
+  unavailable:
+    "The MediaFlow API is currently unavailable. Check that the application is running, then refresh.",
+  rejected: "The Operations request was rejected by the API as invalid.",
+  malformed:
+    "The Operations response could not be understood as the expected contract.",
+};
+
+/** Typed boundary error for Operations reads. */
+export class OperationsApiError extends ApiReadError {
+  constructor(category: ApiReadErrorCategory) {
+    super(category, OPERATIONS_CATEGORY_MESSAGES[category]);
+    this.name = "OperationsApiError";
+  }
+}

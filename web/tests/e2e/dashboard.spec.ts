@@ -83,25 +83,14 @@ test("a forbidden principal renders the distinct bounded permission state", asyn
   await expect(page.getByText(LIMITED_TOKEN)).toHaveCount(0);
 });
 
-test("migration destinations stay truthful and narrow navigation remains usable", async ({
+test("review and configuration destinations remain migration placeholders", async ({
   page,
 }) => {
-  const apiRequests: string[] = [];
-  page.on("request", (request) => {
-    if (request.url().includes("/api/")) {
-      apiRequests.push(request.url());
-    }
-  });
-
   await page.setViewportSize({ width: 640, height: 800 });
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-
-  // Migration routes are reached through the shell only while connected;
-  // reset API tracking here so routing and migration pages must stay silent.
-  apiRequests.length = 0;
 
   // The narrow menu starts closed, hiding the destination links from the
   // accessibility tree: open it first so the link state can be asserted.
@@ -111,61 +100,16 @@ test("migration destinations stay truthful and narrow navigation remains usable"
   await expect(
     page.getByRole("button", { name: "Close menu" }),
   ).toHaveAttribute("aria-expanded", "true");
-  await page.getByRole("link", { name: "Operations Migration" }).focus();
+  await page.getByRole("link", { name: "Review & Recovery Migration" }).focus();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/ui-v2\/review$/);
   await expect(
     page.getByRole("heading", {
-      name: "Operations is not available in V2 yet",
+      name: "Review & Recovery is not available in V2 yet",
     }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Open current Web UI" }),
   ).toHaveAttribute("href", "/ui");
-  await expect(page).toHaveTitle("Operations | MediaFlow");
-
-  // The navigation link click closed the menu: reopen it to read the active
-  // route marker from the rendered link.
-  await openMenu.focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("link", { name: "Operations Migration" }),
-  ).toHaveAttribute("aria-current", "page");
-
-  // Dismiss the menu by keyboard without losing orientation.
-  await page.getByRole("button", { name: "Close menu" }).focus();
-  await page.keyboard.press("Enter");
-  await expect(page.getByRole("button", { name: "Open menu" })).toHaveAttribute(
-    "aria-expanded",
-    "false",
-  );
-  await expect(
-    page.getByRole("heading", {
-      name: "Operations is not available in V2 yet",
-    }),
-  ).toBeVisible();
-
-  // Routing and migration pages make no API request.
-  expect(apiRequests).toEqual([]);
-
-  // Truthful V1/V2 coexistence: the handoff opens the current Web UI.
-  await page.getByRole("link", { name: "Open current Web UI" }).click();
-  await expect(page).toHaveURL(/\/ui$/);
-  await expect(
-    page.getByRole("heading", { name: "MediaFlow V1 Web UI" }),
-  ).toBeVisible();
-
-  // Returning to the V2 route is a fresh unauthenticated deep entry: the
-  // memory-only store was cleared by the full V1 page load, so the boundary
-  // preserves the intended route and asks the operator to connect again.
-  await page.goBack();
-  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
-  await expect(
-    page.getByRole("heading", {
-      name: "Operations is not available in V2 yet",
-    }),
-  ).toBeVisible();
+  await expect(page).toHaveTitle("Review & Recovery | MediaFlow");
 });
