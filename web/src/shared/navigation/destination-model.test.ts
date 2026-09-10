@@ -20,11 +20,15 @@ describe("destination model", () => {
     ]);
     expect(
       destinations.filter((item) => item.availability === "migration"),
-    ).toHaveLength(3);
+    ).toHaveLength(2);
     expect(childDestinations.map((item) => item.label)).toEqual([
       "Storage files",
       "FileIndex",
       "FileIndex detail",
+      "Task list",
+      "Task detail",
+      "Job list",
+      "Job detail",
     ]);
   });
 

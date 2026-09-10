@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import type { DashboardModel } from "../../entities/dashboard/dashboard";
 import { CountGrid } from "../../shared/ui/CountGrid";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
@@ -65,30 +66,54 @@ export function DashboardView({
           { label: "Errors", value: model.files.errors },
         ]}
       />
-      <CountGrid
-        title="Tasks"
-        counts={[
-          { label: "Total", value: model.tasks.total },
-          { label: "Pending", value: model.tasks.pending },
-          { label: "Running", value: model.tasks.running },
-          { label: "Completed", value: model.tasks.completed },
-          { label: "Partial success", value: model.tasks.partialSuccess },
-          { label: "Failed", value: model.tasks.failed },
-          { label: "Cancelled", value: model.tasks.cancelled },
-          { label: "Paused", value: model.tasks.paused },
-        ]}
-      />
-      <CountGrid
-        title="Jobs"
-        counts={[
-          { label: "Total", value: model.jobs.total },
-          { label: "Pending", value: model.jobs.pending },
-          { label: "Running", value: model.jobs.running },
-          { label: "Completed", value: model.jobs.completed },
-          { label: "Failed", value: model.jobs.failed },
-          { label: "Cancelled", value: model.jobs.cancelled },
-        ]}
-      />
+      <section className="mf-count-section">
+        <h3>
+          Tasks{" "}
+          <Link
+            to="/operations/tasks"
+            className="mf-nav-link"
+            style={{ fontSize: "0.85rem", fontWeight: "normal" }}
+          >
+            View all →
+          </Link>
+        </h3>
+        <CountGrid
+          title=""
+          counts={[
+            { label: "Total", value: model.tasks.total },
+            { label: "Pending", value: model.tasks.pending },
+            { label: "Running", value: model.tasks.running },
+            { label: "Completed", value: model.tasks.completed },
+            { label: "Partial success", value: model.tasks.partialSuccess },
+            { label: "Failed", value: model.tasks.failed },
+            { label: "Cancelled", value: model.tasks.cancelled },
+            { label: "Paused", value: model.tasks.paused },
+          ]}
+        />
+      </section>
+      <section className="mf-count-section">
+        <h3>
+          Jobs{" "}
+          <Link
+            to="/operations/jobs"
+            className="mf-nav-link"
+            style={{ fontSize: "0.85rem", fontWeight: "normal" }}
+          >
+            View all →
+          </Link>
+        </h3>
+        <CountGrid
+          title=""
+          counts={[
+            { label: "Total", value: model.jobs.total },
+            { label: "Pending", value: model.jobs.pending },
+            { label: "Running", value: model.jobs.running },
+            { label: "Completed", value: model.jobs.completed },
+            { label: "Failed", value: model.jobs.failed },
+            { label: "Cancelled", value: model.jobs.cancelled },
+          ]}
+        />
+      </section>
       <CountGrid
         title="Reviews and notifications"
         counts={[

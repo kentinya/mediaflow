@@ -31,10 +31,8 @@ const destinationData = [
     label: "Operations",
     path: "/operations",
     title: "Operations | MediaFlow",
-    availability: "migration" as const,
-    description:
-      "Tasks, Jobs and automation workspace migration is not available yet.",
-    v1Path: "/ui" as const,
+    availability: "implemented" as const,
+    description: "Tasks, Jobs and Worker workspace for daily operations.",
   },
   {
     id: "review",
@@ -91,6 +89,40 @@ const childDestinationData = [
     availability: "implemented" as const,
     description: "Read-only detail for one indexed FileIndex discovery record.",
     dynamicPrefix: "/library/file-index/" as const,
+  },
+  {
+    id: "operations-tasks",
+    label: "Task list",
+    path: "/operations/tasks",
+    title: "Tasks | MediaFlow",
+    availability: "implemented" as const,
+    description: "List, filter and page durable Tasks.",
+  },
+  {
+    id: "operations-task-detail",
+    label: "Task detail",
+    path: "/operations/tasks/$taskId",
+    title: "Task detail | MediaFlow",
+    availability: "implemented" as const,
+    description: "Task aggregate, independent TaskItems and Results.",
+    dynamicPrefix: "/operations/tasks/" as const,
+  },
+  {
+    id: "operations-jobs",
+    label: "Job list",
+    path: "/operations/jobs",
+    title: "Jobs | MediaFlow",
+    availability: "implemented" as const,
+    description: "List and page durable Jobs.",
+  },
+  {
+    id: "operations-job-detail",
+    label: "Job detail",
+    path: "/operations/jobs/$jobId",
+    title: "Job detail | MediaFlow",
+    availability: "implemented" as const,
+    description: "Job admission state, linked Task and Worker ownership.",
+    dynamicPrefix: "/operations/jobs/" as const,
   },
 ] as const;
 

@@ -810,3 +810,555 @@ export async function fetchFileBySource(
     throw new FileIndexApiError("malformed");
   }
 }
+
+// ---------------------------------------------------------------------------
+// Operations workspace API functions
+// ---------------------------------------------------------------------------
+
+import {
+  normalizeTaskListPage,
+  normalizeTaskDetailPage,
+  type TaskListPage,
+  type TaskDetailPage,
+} from "../../entities/operations/task";
+import {
+  normalizeJobListPage,
+  normalizeJobDetail,
+  type JobListPage,
+  type JobSummary,
+} from "../../entities/operations/job";
+import {
+  normalizeWorkerReadiness,
+  normalizeWorkerList,
+  type WorkerReadinessModel,
+  type WorkerListModel,
+} from "../../entities/operations/worker";
+import { OperationsApiError } from "./api-errors";
+
+export type OperationsReadErrorCategory =
+  | "unauthorized"
+  | "forbidden"
+  | "unavailable"
+  | "rejected"
+  | "malformed"
+  | "not_found";
+
+export interface OperationsFailure {
+  readonly kind: OperationsReadErrorCategory;
+  readonly title: string;
+  readonly nextAction: string;
+}
+
+export type OperationsRead<T> =
+  | { readonly ok: true; readonly model: T }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+const OPERATIONS_FAILURES: Readonly<
+  Record<OperationsReadErrorCategory, OperationsFailure>
+> = {
+  unauthorized: {
+    kind: "unauthorized",
+    title: "Not authorized",
+    nextAction: "Enter a valid API principal token to continue.",
+  },
+  forbidden: {
+    kind: "forbidden",
+    title: "Forbidden",
+    nextAction:
+      "The connected API principal does not have permission to view Operations.",
+  },
+  unavailable: {
+    kind: "unavailable",
+    title: "Operations unavailable",
+    nextAction: "Reload the current Active runtime and retry the same read.",
+  },
+  rejected: {
+    kind: "rejected",
+    title: "Request rejected",
+    nextAction: "The request was rejected as invalid. Retry the operation.",
+  },
+  malformed: {
+    kind: "malformed",
+    title: "Response could not be understood",
+    nextAction: "Reload and retry the same read.",
+  },
+  not_found: {
+    kind: "not_found",
+    title: "Record not found",
+    nextAction: "Return to the Operations list.",
+  },
+};
+
+function operationsFailure(
+  kind: OperationsReadErrorCategory,
+): OperationsFailure {
+  return OPERATIONS_FAILURES[kind];
+}
+
+function operationsHeaders(token: string | null): Record<string, string> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (token !== null) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+function isSafeTaskId(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 256 &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f]/.test(value)
+  );
+}
+
+// --- Task list ---
+
+export interface TaskListQueryOptions {
+  readonly status?: string | null;
+  readonly command?: string | null;
+  readonly limit?: number;
+  readonly cursor?: string | null;
+}
+
+export function taskListUrl(options: TaskListQueryOptions): string {
+  const params = new URLSearchParams();
+  if (options.status) params.set("status", options.status);
+  if (options.command) params.set("command", options.command);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  const qs = params.toString();
+  return `/api/v1/tasks${qs ? `?${qs}` : ""}`;
+}
+
+export async function fetchTaskList(
+  token: string | null,
+  options: TaskListQueryOptions = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<OperationsRead<TaskListPage>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(taskListUrl(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeTaskListPage(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+// --- Task detail ---
+
+export interface TaskDetailQueryOptions {
+  readonly taskId: string;
+  readonly itemLimit?: number;
+  readonly resultLimit?: number;
+  readonly itemCursor?: string | null;
+  readonly resultCursor?: string | null;
+}
+
+export function taskDetailUrl(options: TaskDetailQueryOptions): string {
+  const params = new URLSearchParams();
+  if (options.itemLimit !== undefined)
+    params.set("itemLimit", String(options.itemLimit));
+  if (options.resultLimit !== undefined)
+    params.set("resultLimit", String(options.resultLimit));
+  if (options.itemCursor) params.set("itemCursor", options.itemCursor);
+  if (options.resultCursor) params.set("resultCursor", options.resultCursor);
+  const qs = params.toString();
+  return `/api/v1/tasks/${encodeURIComponent(options.taskId)}${qs ? `?${qs}` : ""}`;
+}
+
+export type TaskDetailRead =
+  | { readonly ok: true; readonly model: TaskDetailPage }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchTaskDetail(
+  token: string | null,
+  options: TaskDetailQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<TaskDetailRead> {
+  if (!isSafeTaskId(options.taskId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(taskDetailUrl(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeTaskDetailPage(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+// --- Task lifecycle mutations ---
+
+export interface TaskLifecycleResult {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly body: unknown;
+}
+
+function isSafeLifecycleId(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 256 &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f]/.test(value)
+  );
+}
+
+export async function mutateTaskCancel(
+  token: string | null,
+  taskId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<TaskLifecycleResult> {
+  if (!isSafeLifecycleId(taskId)) {
+    return { ok: false, status: 400, body: { error: { code: "invalid_id" } } };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/tasks/${encodeURIComponent(taskId)}/cancel`,
+      {
+        method: "POST",
+        headers: operationsHeaders(token),
+      },
+    );
+  } catch {
+    return { ok: false, status: 503, body: { error: { code: "unavailable" } } };
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    body = {};
+  }
+  return { ok: response.ok, status: response.status, body };
+}
+
+export async function mutateTaskPause(
+  token: string | null,
+  taskId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<TaskLifecycleResult> {
+  if (!isSafeLifecycleId(taskId)) {
+    return { ok: false, status: 400, body: { error: { code: "invalid_id" } } };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/tasks/${encodeURIComponent(taskId)}/pause`,
+      {
+        method: "POST",
+        headers: operationsHeaders(token),
+      },
+    );
+  } catch {
+    return { ok: false, status: 503, body: { error: { code: "unavailable" } } };
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    body = {};
+  }
+  return { ok: response.ok, status: response.status, body };
+}
+
+export async function mutateTaskResume(
+  token: string | null,
+  taskId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<TaskLifecycleResult> {
+  if (!isSafeLifecycleId(taskId)) {
+    return { ok: false, status: 400, body: { error: { code: "invalid_id" } } };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/tasks/${encodeURIComponent(taskId)}/resume`,
+      {
+        method: "POST",
+        headers: operationsHeaders(token),
+      },
+    );
+  } catch {
+    return { ok: false, status: 503, body: { error: { code: "unavailable" } } };
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    body = {};
+  }
+  return { ok: response.ok, status: response.status, body };
+}
+
+// --- Job list ---
+
+export interface JobListQueryOptions {
+  readonly limit?: number;
+  readonly cursor?: string | null;
+}
+
+export function jobListUrl(options: JobListQueryOptions): string {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  const qs = params.toString();
+  return `/api/v1/jobs${qs ? `?${qs}` : ""}`;
+}
+
+export async function fetchJobList(
+  token: string | null,
+  options: JobListQueryOptions = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<OperationsRead<JobListPage>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(jobListUrl(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeJobListPage(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+// --- Job detail ---
+
+export type JobDetailRead =
+  | { readonly ok: true; readonly model: JobSummary }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchJobDetail(
+  token: string | null,
+  jobId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<JobDetailRead> {
+  if (!isSafeTaskId(jobId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(`/api/v1/jobs/${encodeURIComponent(jobId)}`, {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeJobDetail(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+// --- Job lifecycle mutations ---
+
+export async function mutateJobCancel(
+  token: string | null,
+  jobId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<TaskLifecycleResult> {
+  if (!isSafeLifecycleId(jobId)) {
+    return { ok: false, status: 400, body: { error: { code: "invalid_id" } } };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/jobs/${encodeURIComponent(jobId)}/cancel`,
+      {
+        method: "POST",
+        headers: operationsHeaders(token),
+      },
+    );
+  } catch {
+    return { ok: false, status: 503, body: { error: { code: "unavailable" } } };
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    body = {};
+  }
+  return { ok: response.ok, status: response.status, body };
+}
+
+// --- Worker readiness ---
+
+export async function fetchWorkerReadiness(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<WorkerReadinessModel> {
+  let response: Response;
+  try {
+    response = await fetchImpl("/api/v1/workers/readiness", {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    throw new OperationsApiError("unavailable");
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status >= 500) {
+    throw new OperationsApiError("unavailable");
+  }
+  if (!response.ok) {
+    throw new OperationsApiError("rejected");
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return normalizeWorkerReadiness(payload);
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+// --- Worker list ---
+
+export async function fetchWorkerList(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<WorkerListModel> {
+  let response: Response;
+  try {
+    response = await fetchImpl("/api/v1/workers", {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    throw new OperationsApiError("unavailable");
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status >= 500) {
+    throw new OperationsApiError("unavailable");
+  }
+  if (!response.ok) {
+    throw new OperationsApiError("rejected");
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return normalizeWorkerList(payload);
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
