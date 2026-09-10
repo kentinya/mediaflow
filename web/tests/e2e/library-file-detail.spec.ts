@@ -69,6 +69,94 @@ test("catalog detail preserves query context and exposes bounded evidence", asyn
   );
 });
 
+test("detail distinguishes current historical legacy missing and truncated facts", async ({
+  page,
+}) => {
+  await page.goto("/ui-v2/library/file-index/file-index-example");
+  await connectAs(page);
+  await expect(
+    page.getByRole("heading", { name: "FileIndex record" }),
+  ).toBeVisible();
+  for (const label of [
+    "Title Candidate",
+    "Recognition Type ID",
+    "Provider ID",
+    "Directory",
+    "Relative Destination",
+    "Target",
+    "Checkpoint stage",
+  ]) {
+    await expect(page.getByText(label, { exact: true }).first()).toBeVisible();
+  }
+  await expect(
+    page.getByText("The parser used bounded filename facts."),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/historical different occurrence/i),
+  ).toBeVisible();
+
+  await page.goto("/ui-v2/library/file-index/file-index-legacy");
+  await connectAs(page);
+  await expect(
+    page.getByRole("heading", { name: "FileIndex record" }),
+  ).toBeVisible();
+  await expect(page.getByText("Legacy", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(/Only historical Results are available/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Legacy evidence was not captured/).first(),
+  ).toBeVisible();
+  await expect(page.getByText(/checkpoint not available/)).toBeVisible();
+  await expect(page.getByText("Open physical location")).toBeVisible();
+
+  await page.goto("/ui-v2/library/file-index/file-index-missing-evidence");
+  await connectAs(page);
+  await expect(
+    page.getByText(
+      "Evidence is unavailable for this record. This page does not re-collect evidence.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No organize Result records are attached to this entry."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No bounded task-item records reference this entry."),
+  ).toBeVisible();
+
+  await page.goto("/ui-v2/library/file-index/file-index-truncated");
+  await connectAs(page);
+  for (const label of [
+    "occurrenceHistory",
+    "review",
+    "evidence",
+    "items",
+    "results",
+  ]) {
+    await expect(
+      page.getByText(new RegExp("More " + label + " records exist")),
+    ).toBeVisible();
+  }
+  await expect(
+    page
+      .getByText(
+        "More bounded facts exist for this section; they were not loaded.",
+      )
+      .first(),
+  ).toBeVisible();
+
+  await page.goto("/ui-v2/library/file-index/file-index-mismatched");
+  await connectAs(page);
+  await expect(
+    page.getByText(
+      /Storage and ResourceLibrary are not a matching enabled pair/,
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open physical location" }),
+  ).toHaveCount(0);
+});
+
 test("direct detail entry and refresh retain memory-only auth continuation", async ({
   page,
 }) => {
