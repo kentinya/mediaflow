@@ -1,111 +1,121 @@
 /**
- * Task list page with backend-filtered, cursor-paged, deterministic order.
+ * Task list page with backend-submitted filters, cursor-paged, deterministic
+ * order.
  *
- * Provides status filter controls, forward/backward paging, and links to
- * individual task detail. Empty and filtered-empty states are distinct.
- * All reads are zero-side-effect.
+ * Both filters and page cursors are submitted to the API: the frontend never
+ * filters a partial page and never infers a total. Empty and filtered-empty
+ * states are distinct. All reads are zero-side-effect.
  */
 
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
-import type { TaskStatus } from "../../entities/operations/task";
+import {
+  TASK_COMMAND_FILTERS,
+  TASK_STATUSES,
+  type TaskStatus,
+} from "../../entities/operations/task";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { taskListQueryOptions } from "./task-query";
 
-const STATUS_FILTERS: readonly (TaskStatus | "all")[] = [
-  "all",
-  "pending",
-  "running",
-  "completed",
-  "partial_success",
-  "failed",
-  "cancelled",
-  "paused",
-];
+const TASK_STATUS_LABELS: Readonly<Record<TaskStatus, string>> = {
+  pending: "Pending",
+  running: "Running",
+  completed: "Completed",
+  partial_success: "Partial success",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  paused: "Paused",
+};
 
-function StatusLabel({ status }: { readonly status: TaskStatus }) {
-  const map: Record<TaskStatus, string> = {
-    pending: "Pending",
-    running: "Running",
-    completed: "Completed",
-    partial_success: "Partial success",
-    failed: "Failed",
-    cancelled: "Cancelled",
-    paused: "Paused",
-  };
-  return <span>{map[status] ?? status}</span>;
+function readSafeSearchValue(
+  search: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = search[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function TaskRow({
-  task,
-}: {
-  readonly task: {
-    taskId: string;
-    command: string;
-    status: TaskStatus;
-    createdAt: string;
-    totalItems: number;
-    completedItems: number;
-    failedItems: number;
-  };
-}) {
-  return (
-    <tr>
-      <td>
-        <Link to="/operations/tasks/$taskId" params={{ taskId: task.taskId }}>
-          {task.taskId}
-        </Link>
-      </td>
-      <td>{task.command}</td>
-      <td>
-        <StatusLabel status={task.status} />
-      </td>
-      <td>{task.totalItems}</td>
-      <td>{task.completedItems}</td>
-      <td>{task.failedItems}</td>
-      <td>{task.createdAt}</td>
-    </tr>
-  );
+/** Submitted collection filters, reflected in the URL so a reconnect resumes them. */
+function taskListSearch(
+  status: string,
+  command: string,
+): Record<string, string> | undefined {
+  const search: Record<string, string> = {};
+  if (status !== "all") search["status"] = status;
+  if (command !== "all") search["command"] = command;
+  return Object.keys(search).length > 0 ? search : undefined;
+}
+
+/** Bounded parent-list context carried into one Task detail route. */
+function taskDetailReturnSearch(
+  status: string,
+  command: string,
+): Record<string, string> | undefined {
+  const search: Record<string, string> = {};
+  if (status !== "all") search["q_status"] = status;
+  if (command !== "all") search["q_command"] = command;
+  return Object.keys(search).length > 0 ? search : undefined;
 }
 
 export function TaskListPage() {
   const token = useAuthToken();
-  const searchParams = useSearch({ strict: false }) as Record<string, string>;
-  const [statusFilter, setStatusFilter] = useState<string>(
-    searchParams.status ?? "all",
-  );
+  const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
+  const navigate = useNavigate();
+  // The URL search is the single source of truth for the submitted backend
+  // filters, so a deep entry, a reconnect continuation and the rendered page
+  // can never disagree about which collection was requested.
+  const statusFilter = readSafeSearchValue(searchParams, "status") ?? "all";
+  const commandFilter = readSafeSearchValue(searchParams, "command") ?? "all";
   const [cursor, setCursor] = useState<string | null>(null);
   const [direction, setDirection] = useState<"forward" | "backward">("forward");
 
   const effectiveStatus = statusFilter === "all" ? null : statusFilter;
-  const cursorParam = direction === "forward" ? cursor : undefined;
-  const prevCursorParam = direction === "backward" ? cursor : undefined;
+  const effectiveCommand = commandFilter === "all" ? null : commandFilter;
 
   const query = useQuery(
     taskListQueryOptions(token, {
-      status: effectiveStatus,
+      status: effectiveStatus as TaskStatus | null,
+      command: effectiveCommand,
       limit: 20,
-      cursor: direction === "forward" ? cursorParam : prevCursorParam,
+      cursor,
     }),
   );
 
-  const goForward = useCallback(() => {
+  // A page cursor is only ever taken from the response to the exact submitted
+  // filter state, so it can never be replayed against different filters.
+  const goForward = () => {
     if (query.data?.ok === true && query.data.model.nextCursor) {
       setCursor(query.data.model.nextCursor);
       setDirection("forward");
     }
-  }, [query.data]);
+  };
 
-  const goBackward = useCallback(() => {
+  const goBackward = () => {
     if (query.data?.ok === true && query.data.model.previousCursor) {
       setCursor(query.data.model.previousCursor);
       setDirection("backward");
     }
-  }, [query.data]);
+  };
+
+  const applyFilters = (status: string, command: string) => {
+    setCursor(null);
+    setDirection("forward");
+    void navigate({
+      to: "/operations/tasks",
+      search: taskListSearch(status, command),
+      replace: true,
+    });
+  };
+
+  const resetFilters = () => {
+    applyFilters("all", "all");
+  };
+
+  const filtered = effectiveStatus !== null || effectiveCommand !== null;
 
   return (
     <AuthorizedReadBoundary
@@ -113,24 +123,7 @@ export function TaskListPage() {
       unavailableTitle="Task list unavailable"
     >
       {({ data, isFetching, refresh }) => {
-        if (data === undefined) {
-          return (
-            <StatusBanner variant="info" title="Loading Tasks">
-              <p>Requesting the Task list from the MediaFlow API.</p>
-            </StatusBanner>
-          );
-        }
-        if (!data.ok) {
-          return (
-            <StatusBanner variant="error" title={data.failure.title}>
-              <p>{data.failure.nextAction}</p>
-              <div className="mf-actions">
-                <RefreshControl onRefresh={refresh} refreshing={isFetching} />
-              </div>
-            </StatusBanner>
-          );
-        }
-        const page = data.model;
+        const page = data?.ok === true ? data.model : null;
         return (
           <div className="mf-dashboard">
             <header className="mf-dashboard-head">
@@ -142,26 +135,77 @@ export function TaskListPage() {
               <select
                 id="task-status-filter"
                 value={statusFilter}
-                onChange={(e) => {
-                  setStatusFilter(e.target.value);
-                  setCursor(null);
-                  setDirection("forward");
-                }}
+                onChange={(e) => applyFilters(e.target.value, commandFilter)}
               >
-                {STATUS_FILTERS.map((s) => (
-                  <option key={s} value={s}>
-                    {s === "all" ? "All statuses" : s}
+                <option value="all">All statuses</option>
+                {TASK_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {TASK_STATUS_LABELS[status]}
                   </option>
                 ))}
               </select>
+              <label htmlFor="task-command-filter">Filter by work kind</label>
+              <select
+                id="task-command-filter"
+                value={commandFilter}
+                onChange={(e) => applyFilters(statusFilter, e.target.value)}
+              >
+                <option value="all">All work kinds</option>
+                {TASK_COMMAND_FILTERS.map((command) => (
+                  <option key={command} value={command}>
+                    {command}
+                  </option>
+                ))}
+              </select>
+              {filtered && (
+                <button
+                  type="button"
+                  className="mf-button mf-button-secondary"
+                  onClick={resetFilters}
+                >
+                  Reset filters
+                </button>
+              )}
             </div>
-            {page.items.length === 0 ? (
-              <StatusBanner variant="info" title="No tasks found">
+            {data === undefined ? (
+              <StatusBanner variant="info" title="Loading Tasks">
+                <p>Requesting the Task list from the MediaFlow API.</p>
+              </StatusBanner>
+            ) : !data.ok ? (
+              <StatusBanner variant="error" title={data.failure.title}>
+                <p>{data.failure.nextAction}</p>
+                <div className="mf-actions">
+                  <RefreshControl onRefresh={refresh} refreshing={isFetching} />
+                  <button
+                    type="button"
+                    className="mf-button mf-button-secondary"
+                    onClick={resetFilters}
+                  >
+                    Reset filters
+                  </button>
+                </div>
+              </StatusBanner>
+            ) : page === null ? null : page.items.length === 0 ? (
+              <StatusBanner
+                variant="info"
+                title={filtered ? "No matching Tasks" : "No Tasks yet"}
+              >
                 <p>
-                  {effectiveStatus
-                    ? `No tasks match the selected status filter.`
-                    : `No tasks have been created yet.`}
+                  {filtered
+                    ? "No Task matches the submitted status and work-kind filters. Reset the filters to see every Task this principal may read."
+                    : "No Task has been created yet. Nothing is pending, running or failed."}
                 </p>
+                {filtered && (
+                  <div className="mf-actions">
+                    <button
+                      type="button"
+                      className="mf-button mf-button-secondary"
+                      onClick={resetFilters}
+                    >
+                      Reset filters
+                    </button>
+                  </div>
+                )}
               </StatusBanner>
             ) : (
               <>
@@ -180,7 +224,26 @@ export function TaskListPage() {
                     </thead>
                     <tbody>
                       {page.items.map((task) => (
-                        <TaskRow key={task.taskId} task={task} />
+                        <tr key={task.taskId}>
+                          <td>
+                            <Link
+                              to="/operations/tasks/$taskId"
+                              params={{ taskId: task.taskId }}
+                              search={taskDetailReturnSearch(
+                                statusFilter,
+                                commandFilter,
+                              )}
+                            >
+                              {task.taskId}
+                            </Link>
+                          </td>
+                          <td>{task.command}</td>
+                          <td>{TASK_STATUS_LABELS[task.status]}</td>
+                          <td>{task.totalItems}</td>
+                          <td>{task.completedItems}</td>
+                          <td>{task.failedItems}</td>
+                          <td>{task.createdAt}</td>
+                        </tr>
                       ))}
                     </tbody>
                   </table>
@@ -197,7 +260,11 @@ export function TaskListPage() {
                   <button
                     type="button"
                     className="mf-button mf-button-secondary"
-                    disabled={!page.truncated}
+                    disabled={
+                      direction === "forward"
+                        ? !page.truncated
+                        : !page.nextCursor
+                    }
                     onClick={goForward}
                   >
                     Next

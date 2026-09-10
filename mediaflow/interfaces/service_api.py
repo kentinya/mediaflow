@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
@@ -45,6 +46,13 @@ from mediaflow.application.notification_delivery import (
     DELIVERY_LEASE_DEFAULT_SECONDS,
     NotificationDeliveryService,
 )
+from mediaflow.application.operations_lifecycle import (
+    OperationsLifecycleConflict,
+    TaskLifecycleService,
+    job_lifecycle_document,
+    require_cancellable,
+    task_lifecycle_document,
+)
 from mediaflow.application.package_exchange import PackageExchangeService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recognition_retry import RecognitionRetryService
@@ -66,6 +74,7 @@ from mediaflow.application.unattended_execution import (
 from mediaflow.application.webhook_test import WebhookTestService
 from mediaflow.domain.automation import (
     AutomationCommand,
+    AutomationJobStatus,
     AutomationQueueFull,
     AutomationTaskDefinition,
     WorkerReadiness,
@@ -110,7 +119,10 @@ from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, Secur
 from mediaflow.domain.system_settings import (
     SystemSettingsEdit,
 )
-from mediaflow.domain.task_persistence import ConfirmationStatus
+from mediaflow.domain.task_persistence import (
+    ConfirmationStatus,
+    PersistentTaskStatus,
+)
 from mediaflow.infrastructure.webhook import UrllibWebhookTransport
 from mediaflow.interfaces.operator_ui import ASSETS as OPERATOR_UI_ASSETS
 from mediaflow.interfaces.pagination import (
@@ -120,6 +132,17 @@ from mediaflow.interfaces.pagination import (
     encode_cursor,
 )
 from mediaflow.interfaces.v2_ui import V2_UI_PREFIX, v2_ui_asset
+
+# A submitted Task command filter is a bounded work-kind token; the repository
+# matches it against the exact command and its own ``<kind>:<identity>``
+# continuation family.
+_TASK_COMMAND_FILTER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
+
+
+def _collection_scope(status: str | None, command: str | None) -> str:
+    """Deterministic cursor scope binding the submitted collection filters."""
+
+    return f"status={status or 'all'};command={command or 'all'}"
 
 
 class ApiPermissionDenied(RuntimeError):
@@ -1067,6 +1090,24 @@ class MediaFlowApi:
                 404,
             )
             return self._error(start_response, 404, "not_found", str(error))
+        except OperationsLifecycleConflict as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "operations-lifecycle",
+                "conflict",
+                409,
+            )
+            return self._error(
+                start_response,
+                409,
+                "lifecycle_conflict",
+                str(error),
+                details=error.document(),
+            )
         except (ValueError, json.JSONDecodeError) as error:
             self._safe_audit(
                 environ,
@@ -4671,8 +4712,17 @@ class MediaFlowApi:
         if method == "GET":
             self._require(principal, ApiPermission.READ)
         if parts == ["api", "v1", "tasks"] and method == "GET":
-            limit, cursor = self._collection_page(environ, "tasks")
-            values = self._list_page(self._repository.list_tasks, limit, cursor)
+            task_status, task_command, limit, cursor = self._task_collection_query(environ)
+            scope = _collection_scope(task_status.value if task_status else None, task_command)
+            values = self._list_page(
+                lambda **kwargs: self._repository.list_tasks(
+                    status=task_status.value if task_status else None,
+                    command=task_command,
+                    **kwargs,
+                ),
+                limit,
+                cursor,
+            )
             page, has_previous, has_next = self._page_window(values, limit, cursor)
             return self._response(
                 start_response,
@@ -4680,11 +4730,19 @@ class MediaFlowApi:
                 {
                     "items": [self._value(item) for item in page],
                     "limit": limit,
+                    "status": task_status.value if task_status else None,
+                    "command": task_command,
                     "truncated": has_next,
                     "previous_cursor": self._page_cursor(
-                        "tasks", page, has_previous, CursorDirection.PREVIOUS
+                        "tasks",
+                        page,
+                        has_previous,
+                        CursorDirection.PREVIOUS,
+                        scope=scope,
                     ),
-                    "next_cursor": self._page_cursor("tasks", page, has_next, CursorDirection.NEXT),
+                    "next_cursor": self._page_cursor(
+                        "tasks", page, has_next, CursorDirection.NEXT, scope=scope
+                    ),
                 },
             )
         if (
@@ -4955,21 +5013,66 @@ class MediaFlowApi:
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "cancel"
+            and parts[4] in {"cancel", "pause", "resume"}
             and method == "POST"
         ):
+            # Cooperative Task lifecycle control.  The advertised action, the
+            # exact current version and the permission check all come from the
+            # same backend projection the V2 client renders; a rejected or
+            # stale control performs no Provider/Storage work and is never
+            # replayed automatically.
             self._require(principal, ApiPermission.CANCEL_JOB)
-            self._require_empty_query(environ, "manual Scan cancellation")
-            self._require_empty_body(environ, "manual Scan cancellation")
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
+            self._require_empty_query(environ, f"Task {parts[4]}")
+            action = parts[4]
+            expected_version = self._control_version(environ, f"Task {parts[4]} control")
+            service = TaskLifecycleService(self._repository)
+            if action == "resume":
+                # No durable queued continuation of one exact paused scope
+                # exists today, so the transition is refused with the same
+                # actionable reason the projection states.
+                task = service.require(parts[3])
+                service.require_version(task, expected_version)
+                raise OperationsLifecycleConflict(
+                    "resume_unavailable",
+                    "pausing is cooperative, but resuming one exact paused Task scope is not "
+                    "available through this API",
+                    durable_state="the Task keeps its paused state and its recorded item outcomes",
+                    next_action=(
+                        "continue the paused Task from the operator terminal "
+                        "(mediaflow tasks resume <task-id>), or leave it paused"
+                    ),
                 )
+            if action == "pause":
+                task = service.pause(parts[3], expected_version=expected_version)
+            else:
+                task = self._cancel_task(service, parts[3], expected_version, binding)
+            lifecycle = redact_manual_value(
+                task_lifecycle_document(
+                    task,
+                    service.results(task.task_id),
+                    permissions=principal.permissions,
+                )
+            )
             return self._response(
-                start_response, 200, binding.manual_scans.cancel(parts[3]).document()
+                start_response,
+                200,
+                {
+                    "action": action,
+                    "taskId": task.task_id,
+                    "task": self._value(task),
+                    "lifecycle": lifecycle,
+                    "durableOutcome": next(
+                        (
+                            item["durableOutcome"]
+                            for item in lifecycle["actions"]
+                            if item["action"] == action
+                        ),
+                        None,
+                    ),
+                    "sideEffects": "none",
+                    "retrySafe": False,
+                    "nextAction": lifecycle["nextAction"],
+                },
             )
         if len(parts) == 4 and parts[:3] == ["api", "v1", "tasks"] and method == "GET":
             item_limit, result_limit, item_cursor, result_cursor = self._task_detail_page(environ)
@@ -5063,6 +5166,16 @@ class MediaFlowApi:
                     ),
                     "next_result_cursor": self._page_cursor(
                         "task_results", result_page, has_next_results, CursorDirection.NEXT
+                    ),
+                    "lifecycle": redact_manual_value(
+                        task_lifecycle_document(
+                            task,
+                            tuple(result_page),
+                            permissions=principal.permissions,
+                            # Effect certainty is claimed only from a view that
+                            # provably holds every durable Result.
+                            results_complete=result_cursor is None and not has_next_results,
+                        )
                     ),
                 },
             )
@@ -5348,21 +5461,39 @@ class MediaFlowApi:
             )
         if parts == ["api", "v1", "jobs"]:
             if method == "GET":
-                limit, cursor = self._collection_page(environ, "jobs")
-                values = self._list_page(self._repository.list_jobs, limit, cursor)
+                job_status, job_command, limit, cursor = self._job_collection_query(environ)
+                scope = (
+                    f"status={job_status.value if job_status else 'all'};"
+                    f"command={job_command.value if job_command else 'all'}"
+                )
+                values = self._list_page(
+                    lambda **kwargs: self._repository.list_jobs(
+                        status=job_status.value if job_status else None,
+                        command=job_command.value if job_command else None,
+                        **kwargs,
+                    ),
+                    limit,
+                    cursor,
+                )
                 page, has_previous, has_next = self._page_window(values, limit, cursor)
                 return self._response(
                     start_response,
                     200,
                     {
-                        "items": [self._job_document(item) for item in page],
+                        "items": [self._job_document(item, principal) for item in page],
                         "limit": limit,
+                        "status": job_status.value if job_status else None,
+                        "command": job_command.value if job_command else None,
                         "truncated": has_next,
                         "previous_cursor": self._page_cursor(
-                            "jobs", page, has_previous, CursorDirection.PREVIOUS
+                            "jobs",
+                            page,
+                            has_previous,
+                            CursorDirection.PREVIOUS,
+                            scope=scope,
                         ),
                         "next_cursor": self._page_cursor(
-                            "jobs", page, has_next, CursorDirection.NEXT
+                            "jobs", page, has_next, CursorDirection.NEXT, scope=scope
                         ),
                     },
                 )
@@ -5399,20 +5530,41 @@ class MediaFlowApi:
                     if unsupported:
                         raise ValueError(f"unsupported DryRun job field {sorted(unsupported)[0]!r}")
                     job = binding.jobs.submit(command, limit=document.get("limit"))
-                return self._response(start_response, 202, self._job_document(job))
+                return self._response(start_response, 202, self._job_document(job, principal))
         if len(parts) == 4 and parts[:3] == ["api", "v1", "jobs"] and method == "GET":
             job = self._repository.get_job(parts[3])
             if job is None:
                 raise LookupError(f"automation job {parts[3]!r} was not found")
-            return self._response(start_response, 200, self._job_document(job))
+            return self._response(start_response, 200, self._job_document(job, principal))
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
             if method != "POST":
                 return self._error(start_response, 405, "method_not_allowed", "POST required")
             self._require(principal, ApiPermission.CANCEL_JOB)
             self._require_empty_query(environ, "job cancellation")
-            self._require_empty_body(environ, "job cancellation")
+            expected_version = self._control_version(environ, "job cancellation")
+            job = self._repository.get_job(parts[3])
+            if job is None:
+                raise LookupError(f"automation job {parts[3]!r} was not found")
+            if expected_version is not None and expected_version != job.updated_at.isoformat():
+                raise OperationsLifecycleConflict(
+                    "stale_job_state",
+                    "the Job changed after the submitted state was read",
+                    durable_state="the submitted Job version is no longer the durable version",
+                    next_action=(
+                        "reload the Job, review its current state, and submit again deliberately"
+                    ),
+                    retry_safe=True,
+                    current_version=job.updated_at.isoformat(),
+                )
+            if job.status not in {AutomationJobStatus.PENDING, AutomationJobStatus.RUNNING}:
+                raise OperationsLifecycleConflict(
+                    "cancel_unavailable",
+                    f"a {job.status.value} Job cannot be cancelled",
+                    durable_state=f"the Job remains {job.status.value}",
+                    next_action="refresh the Job; a terminal Job keeps its recorded outcome",
+                )
             return self._response(
-                start_response, 200, self._job_document(binding.jobs.cancel(parts[3]))
+                start_response, 200, self._job_document(binding.jobs.cancel(parts[3]), principal)
             )
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "requeue-stale":
             if method != "POST":
@@ -5434,7 +5586,8 @@ class MediaFlowApi:
                     binding.jobs.requeue_stale(
                         parts[3],
                         age_seconds=binding.stale_job_age_seconds,
-                    )
+                    ),
+                    principal,
                 ),
             )
         if (
@@ -6062,8 +6215,12 @@ class MediaFlowApi:
             return "/api/v1/recovery-batches/{id}/resume"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "jobs"] and parts[4] == "cancel":
             return "/api/v1/jobs/{id}/cancel"
-        if len(parts) == 5 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "cancel":
-            return "/api/v1/tasks/{id}/cancel"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] in {"cancel", "pause", "resume"}
+        ):
+            return f"/api/v1/tasks/{{id}}/{parts[4]}"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "scans"] and parts[4] == "cancel":
             return "/api/v1/scans/{id}/cancel"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":
@@ -6282,6 +6439,60 @@ class MediaFlowApi:
             raise ValueError(f"{resource} body must be empty")
 
     @staticmethod
+    def _control_version(environ: dict, resource: str) -> str | None:
+        """Read the optional optimistic-concurrency body of a lifecycle control.
+
+        An empty body keeps the pre-existing cancellation contract working.
+        When a body is supplied it must carry exactly the version the operator
+        read, so a control submitted against a state that has already changed is
+        rejected before any durable transition.
+        """
+
+        raw_length = str(environ.get("CONTENT_LENGTH", "")).strip()
+        if not raw_length:
+            return None
+        try:
+            length = int(raw_length)
+        except ValueError as error:
+            raise ValueError("invalid Content-Length") from error
+        if length == 0:
+            return None
+        document = MediaFlowApi._document(environ)
+        if set(document) != {"expectedUpdatedAt"}:
+            raise ValueError(f"{resource} accepts only expectedUpdatedAt")
+        expected = document["expectedUpdatedAt"]
+        if (
+            not isinstance(expected, str)
+            or not expected.strip()
+            or len(expected) > 128
+            or not expected.isascii()
+        ):
+            raise ValueError("expectedUpdatedAt must be the version read by the operator")
+        return expected
+
+    def _cancel_task(
+        self,
+        service: TaskLifecycleService,
+        task_id: str,
+        expected_version: str | None,
+        binding,
+    ):
+        """Cancel one Task, reusing the manual Scan cancellation path when it owns it."""
+
+        task = service.require(task_id)
+        service.require_version(task, expected_version)
+        require_cancellable(task)
+        if binding is not None and binding.manual_scans is not None:
+            try:
+                binding.manual_scans.cancel(task_id)
+            except ManualScanError as error:
+                if error.code != "task_not_found":
+                    raise
+            else:
+                return service.require(task_id)
+        return service.cancel(task_id, expected_version=expected_version)
+
+    @staticmethod
     def _scoped_page_query(
         environ: dict, kind: str, scope: str, resource: str
     ) -> tuple[int, DecodedCursor | None]:
@@ -6385,6 +6596,96 @@ class MediaFlowApi:
         )
         raw_cursor = values.get("cursor")
         return limit, decode_directional_cursor(raw_cursor[0], resource) if raw_cursor else None
+
+    @staticmethod
+    def _task_collection_query(
+        environ: dict,
+    ) -> tuple[PersistentTaskStatus | None, str | None, int, DecodedCursor | None]:
+        """Bounded Task collection filter state plus its filter-bound cursor.
+
+        The submitted filters are part of the cursor scope, so a cursor minted
+        for one filter state is rejected as soon as the submitted status or
+        command differs, and a cursor minted without filters is rejected when
+        filters are submitted.
+        """
+
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit", "cursor", "status", "command"}) or any(
+            len(value) != 1 for value in values.values()
+        ):
+            raise ValueError("task query accepts limit, cursor, status, and command once")
+        limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], "task")
+        raw_status = values.get("status", ["all"])[0]
+        if raw_status in {"", "all"}:
+            status = None
+        else:
+            try:
+                status = PersistentTaskStatus(raw_status)
+            except ValueError as error:
+                raise ValueError("task status is invalid") from error
+        raw_command = values.get("command", [""])[0]
+        command = None if raw_command in {"", "all"} else raw_command
+        if command is not None and not _TASK_COMMAND_FILTER.fullmatch(command):
+            raise ValueError("task command filter is invalid")
+        scope = _collection_scope(status.value if status else None, command)
+        raw_cursor = values.get("cursor")
+        cursor = (
+            decode_directional_cursor(
+                raw_cursor[0],
+                "tasks",
+                expected_scope=scope,
+                # Without a submitted filter the collection keeps the
+                # pre-existing unfiltered cursor contract.
+                scope_optional=status is None and command is None,
+            )
+            if raw_cursor
+            else None
+        )
+        return status, command, limit, cursor
+
+    @staticmethod
+    def _job_collection_query(
+        environ: dict,
+    ) -> tuple[AutomationJobStatus | None, AutomationCommand | None, int, DecodedCursor | None]:
+        """Bounded Job collection filter state plus its filter-bound cursor."""
+
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit", "cursor", "status", "command"}) or any(
+            len(value) != 1 for value in values.values()
+        ):
+            raise ValueError("job query accepts limit, cursor, status, and command once")
+        limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], "job")
+        raw_status = values.get("status", ["all"])[0]
+        if raw_status in {"", "all"}:
+            status = None
+        else:
+            try:
+                status = AutomationJobStatus(raw_status)
+            except ValueError as error:
+                raise ValueError("job status is invalid") from error
+        raw_command = values.get("command", [""])[0]
+        if raw_command in {"", "all"}:
+            command = None
+        else:
+            try:
+                command = AutomationCommand(raw_command)
+            except ValueError as error:
+                raise ValueError("job command is invalid") from error
+        scope = _collection_scope(
+            status.value if status else None, command.value if command else None
+        )
+        raw_cursor = values.get("cursor")
+        cursor = (
+            decode_directional_cursor(
+                raw_cursor[0],
+                "jobs",
+                expected_scope=scope,
+                scope_optional=status is None and command is None,
+            )
+            if raw_cursor
+            else None
+        )
+        return status, command, limit, cursor
 
     @staticmethod
     def _task_detail_page(
@@ -7631,11 +7932,15 @@ class MediaFlowApi:
         start_response(f"{status} {labels[status]}", headers)
         return [body]
 
-    def _job_document(self, job) -> dict[str, object]:
+    def _job_document(self, job, principal: ResolvedApiPrincipal) -> dict[str, object]:
         """Project a Job for API responses, including worker ownership evidence
         (workerId, ownerLastHeartbeatAt) for RUNNING Jobs and operational
         condition (no-worker / stale-worker) for PENDING and stale RUNNING Jobs
         with a bounded recovery next action.
+
+        The lifecycle block is the backend-computed control projection for the
+        authenticated principal and this exact Job state; a client renders a
+        control only from it.
         """
         document = self._value(job)
         status_value = document.get("status")
@@ -7659,6 +7964,9 @@ class MediaFlowApi:
                         "retrySafe": True,
                         "nextAction": readiness.get("nextAction"),
                     }
+        document["lifecycle"] = redact_manual_value(
+            job_lifecycle_document(job, permissions=principal.permissions)
+        )
         return document
 
     def _worker_owner_evidence(self, worker_id: str | None) -> dict[str, object]:

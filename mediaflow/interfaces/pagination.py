@@ -32,6 +32,12 @@ _SCOPED_KINDS = frozenset(
         "operational_logs",
     }
 )
+# Kinds whose cursors may carry a scope that binds the submitted query.  Task
+# and Job collections accept filters, so a page cursor must be invalidated as
+# soon as the filter state it was minted for changes.  Cursors without a scope
+# stay decodable for callers that submit no filter state, which keeps the
+# pre-existing collection contract usable.
+_OPTIONALLY_SCOPED_KINDS = frozenset({"tasks", "jobs"})
 MAX_CURSOR_LENGTH = 512
 
 
@@ -78,6 +84,11 @@ def encode_cursor(
         if not scope:
             raise ValueError("cursor scope is required")
         document["scope"] = _scope_digest(kind, scope)
+    elif kind in _OPTIONALLY_SCOPED_KINDS:
+        if scope is not None:
+            if not scope:
+                raise ValueError("cursor scope must not be empty")
+            document["scope"] = _scope_digest(kind, scope)
     elif scope is not None:
         raise ValueError("cursor scope is unsupported")
     raw = json.dumps(document, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
@@ -91,7 +102,11 @@ def decode_cursor(
 
 
 def decode_directional_cursor(
-    value: str, expected_kind: str, *, expected_scope: str | None = None
+    value: str,
+    expected_kind: str,
+    *,
+    expected_scope: str | None = None,
+    scope_optional: bool = False,
 ) -> DecodedCursor:
     if expected_kind not in _KINDS:
         raise ValueError("unsupported cursor kind")
@@ -113,11 +128,20 @@ def decode_directional_cursor(
     version = document.get("version")
     v1_fields = {"at", "id", "kind", "version"}
     v2_fields = v1_fields | {"direction"}
-    if expected_kind in _SCOPED_KINDS:
-        v2_fields.add("scope")
+    scoped = expected_kind in _SCOPED_KINDS
+    optionally_scoped = expected_kind in _OPTIONALLY_SCOPED_KINDS
     if type(version) is not int or version not in {1, 2}:
         raise ValueError("cursor does not match this resource")
-    if set(document) != (v1_fields if version == 1 else v2_fields):
+    if scoped:
+        if version != 2 or set(document) != v2_fields | {"scope"}:
+            raise ValueError("cursor has an invalid schema")
+    elif optionally_scoped:
+        accepted = {frozenset(v1_fields)}
+        if version == 2:
+            accepted |= {frozenset(v2_fields), frozenset(v2_fields | {"scope"})}
+        if frozenset(document) not in accepted:
+            raise ValueError("cursor has an invalid schema")
+    elif set(document) != (v1_fields if version == 1 else v2_fields):
         raise ValueError("cursor has an invalid schema")
     if not isinstance(document["kind"], str) or document["kind"] != expected_kind:
         raise ValueError("cursor does not match this resource")
@@ -128,15 +152,32 @@ def decode_directional_cursor(
     except ValueError as error:
         raise ValueError("cursor timestamp is invalid") from error
     _validate_position(created_at, document["id"])
-    if expected_kind in _SCOPED_KINDS:
-        if version == 1 or not expected_scope:
+    if scoped:
+        if not expected_scope:
             raise ValueError("cursor scope is required")
-        expected_digest = _scope_digest(expected_kind, expected_scope)
         if not isinstance(document["scope"], str) or not hmac.compare_digest(
-            document["scope"], expected_digest
+            document["scope"], _scope_digest(expected_kind, expected_scope)
         ):
             raise ValueError("cursor does not match this resource scope")
         scope = document["scope"]
+    elif optionally_scoped:
+        submitted = "scope" in document
+        if not submitted:
+            if expected_scope is None or scope_optional:
+                # An unscoped cursor is exactly the pre-existing collection
+                # contract, so it stays valid only while no filter state that
+                # would have to be bound is submitted.
+                scope = None
+            else:
+                raise ValueError("cursor does not match this resource scope")
+        else:
+            if expected_scope is None or not isinstance(document["scope"], str):
+                raise ValueError("cursor does not match this resource scope")
+            if not hmac.compare_digest(
+                document["scope"], _scope_digest(expected_kind, expected_scope)
+            ):
+                raise ValueError("cursor does not match this resource scope")
+            scope = document["scope"]
     else:
         if expected_scope is not None:
             raise ValueError("cursor scope is unsupported")

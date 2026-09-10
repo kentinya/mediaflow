@@ -906,6 +906,8 @@ class AutomationJobRepository(Protocol):
         limit: int | None = None,
         after: tuple[datetime, str] | None = None,
         before: tuple[datetime, str] | None = None,
+        status: str | None = None,
+        command: str | None = None,
     ) -> tuple[AutomationJob, ...]: ...
     def claim_next_job(
         self,

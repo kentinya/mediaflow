@@ -1,90 +1,130 @@
 /**
- * Task detail page: separates aggregate progress from independent TaskItems
- * and Results. Shows pinned configuration, source/effect/failure facts and
- * lifecycle controls.
+ * Task detail page: separates the Task aggregate from independently paged
+ * TaskItems and Results, shows pinned configuration and bounded
+ * source/effect/failure facts, and renders only the lifecycle controls the
+ * backend advertises for this exact Task version and principal.
  *
- * Items and Results are independently paged. Successful siblings remain visible
- * and terminal. Uncertain effects are never labelled safe to retry.
+ * Successful siblings remain visible and terminal; an uncertain effect is
+ * never labelled safe to repeat, and a rejected control is never replayed.
  */
 
 import { useCallback, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useParams, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
-import type { TaskItemStatus } from "../../entities/operations/task";
-import { taskLifecycleActions } from "../../entities/operations/task";
+import { isTerminalTaskStatus } from "../../entities/operations/task";
 import {
-  mutateTaskCancel,
-  mutateTaskPause,
-  mutateTaskResume,
+  availableLifecycleAction,
+  type LifecycleAction,
+  type LifecycleProjection,
+} from "../../entities/operations/lifecycle";
+import {
+  mutateLifecycle,
+  type LifecycleMutationResult,
 } from "../../shared/api/api-client";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { taskDetailQueryOptions, taskListQueryKey } from "./task-query";
 
+/** Bounded operator copy per normalized lifecycle rejection reason. */
+const LIFECYCLE_REJECTION_COPY: Readonly<Record<string, string>> = {
+  stale_task_state:
+    "This Task changed after the page was loaded. Reload the Task, review its current state, and submit again deliberately.",
+  lifecycle_conflict:
+    "The backend refused this control for the current Task state. Reload the Task to read its durable state.",
+  forbidden: "The connected API principal may not control Task lifecycle.",
+  not_found: "This Task no longer exists.",
+  transport_unavailable:
+    "The control could not reach the API. Nothing was changed; reload and try again deliberately.",
+  malformed_response:
+    "The API response for this control could not be understood. Reload the Task before acting again.",
+  request_rejected: "The control was rejected by the API as invalid.",
+};
+
+function rejectionCopy(result: LifecycleMutationResult): string {
+  if (result.ok) return "";
+  return (
+    LIFECYCLE_REJECTION_COPY[result.code] ??
+    "The control was refused. Reload the Task to read its durable state before acting again."
+  );
+}
+
 function StatusBadge({ status }: { readonly status: string }) {
   return <span className="mf-status-badge">{status}</span>;
 }
 
-function TaskItemRow({
-  item,
+function LifecycleControls({
+  projection,
+  pendingAction,
+  onInvoke,
 }: {
-  readonly item: {
-    itemId: string;
-    sourceDisplay: string;
-    status: TaskItemStatus;
-    stage: string;
-    attempts: number;
-    error: string | null;
-    destinationPath: string | null;
-  };
+  readonly projection: LifecycleProjection;
+  readonly pendingAction: string | null;
+  readonly onInvoke: (action: LifecycleAction) => void;
 }) {
+  const available = projection.actions.filter((item) => item.available);
   return (
-    <tr>
-      <td>{item.itemId}</td>
-      <td>{item.sourceDisplay}</td>
-      <td>
-        <StatusBadge status={item.status} />
-      </td>
-      <td>{item.stage}</td>
-      <td>{item.attempts}</td>
-      <td>{item.destinationPath ?? "—"}</td>
-      <td>{item.error ?? "—"}</td>
-    </tr>
+    <section className="mf-count-section">
+      <h3>Lifecycle controls</h3>
+      <p className="mf-dashboard-meta">{projection.knownEffects}</p>
+      {available.length === 0 ? (
+        <div>
+          <p className="mf-dashboard-meta">
+            The backend advertises no lifecycle action for this Task state and
+            principal.
+          </p>
+          <ul className="mf-dashboard-meta">
+            {projection.actions
+              .filter((item) => item.unavailableReason !== null)
+              .map((item) => (
+                <li key={item.action}>
+                  {item.label}: {item.unavailableReason}
+                </li>
+              ))}
+          </ul>
+        </div>
+      ) : (
+        <div className="mf-actions">
+          {available.map((item) => (
+            <button
+              key={item.action}
+              type="button"
+              className="mf-button mf-button-secondary"
+              disabled={pendingAction !== null}
+              onClick={() => onInvoke(item)}
+            >
+              {pendingAction === item.action ? "Working…" : item.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="mf-dashboard-meta">{projection.nextAction}</p>
+    </section>
   );
 }
 
-function TaskResultRow({
-  result,
-}: {
-  readonly result: {
-    resultId: string;
-    sourcePath: string;
-    status: string;
-    operation: string | null;
-    effectCertainty: string;
-    destinationPath: string | null;
-    error: string | null;
-  };
-}) {
-  return (
-    <tr>
-      <td>{result.resultId}</td>
-      <td>{result.sourcePath}</td>
-      <td>
-        <StatusBadge status={result.status} />
-      </td>
-      <td>{result.operation ?? "—"}</td>
-      <td>{result.effectCertainty}</td>
-      <td>{result.destinationPath ?? "—"}</td>
-      <td>{result.error ?? "—"}</td>
-    </tr>
-  );
+/** Read the bounded parent-list filter context this detail was opened from. */
+function returnSearch(
+  search: Record<string, unknown>,
+): Record<string, string> | undefined {
+  const value: Record<string, string> = {};
+  for (const [source, target] of [
+    ["q_status", "status"],
+    ["q_command", "command"],
+  ] as const) {
+    const raw = search[source];
+    if (typeof raw === "string" && raw.length > 0 && raw.length <= 64) {
+      value[target] = raw;
+    }
+  }
+  return Object.keys(value).length > 0 ? value : undefined;
 }
 
 export function TaskDetailPage() {
   const { taskId } = useParams({ strict: false }) as { taskId: string };
+  const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
+  const listReturnSearch = returnSearch(searchParams);
   const token = useAuthToken();
   const queryClient = useQueryClient();
   const [itemCursor, setItemCursor] = useState<string | null>(null);
@@ -95,35 +135,47 @@ export function TaskDetailPage() {
   const [resultDirection, setResultDirection] = useState<
     "forward" | "backward"
   >("forward");
+  const [controlResult, setControlResult] =
+    useState<LifecycleMutationResult | null>(null);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
 
   const query = useQuery(
     taskDetailQueryOptions(token, {
       taskId,
       itemLimit: 20,
       resultLimit: 20,
-      itemCursor: itemDirection === "forward" ? itemCursor : undefined,
-      resultCursor: resultDirection === "forward" ? resultCursor : undefined,
+      itemCursor,
+      resultCursor,
     }),
   );
 
-  const cancelMutation = useMutation({
-    mutationFn: () => mutateTaskCancel(token, taskId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [taskListQueryKey],
-      });
-      void query.refetch();
+  // A lifecycle mutation is submitted at most once per deliberate click. There
+  // is no retry policy: a rejected, stale, 401 or 403 control requires the
+  // operator to reload and act again.
+  const lifecycleMutation = useMutation({
+    mutationFn: (request: {
+      readonly action: LifecycleAction;
+      readonly expectedVersion: string;
+    }) =>
+      mutateLifecycle(token, {
+        objectType: "task",
+        objectId: taskId,
+        action: request.action.action,
+        expectedVersion: request.expectedVersion,
+      }),
+    retry: false,
+    onMutate: (request) => {
+      setPendingAction(request.action.action);
+      setControlResult(null);
     },
-  });
-
-  const pauseMutation = useMutation({
-    mutationFn: () => mutateTaskPause(token, taskId),
-    onSuccess: () => void query.refetch(),
-  });
-
-  const resumeMutation = useMutation({
-    mutationFn: () => mutateTaskResume(token, taskId),
-    onSuccess: () => void query.refetch(),
+    onSuccess: (result) => {
+      setControlResult(result);
+      if (result.ok) {
+        void queryClient.invalidateQueries({ queryKey: [taskListQueryKey] });
+        void query.refetch();
+      }
+    },
+    onSettled: () => setPendingAction(null),
   });
 
   const goItemsForward = useCallback(() => {
@@ -175,15 +227,19 @@ export function TaskDetailPage() {
                 <Link
                   className="mf-button mf-button-secondary"
                   to="/operations/tasks"
+                  search={listReturnSearch}
                 >
                   Back to Tasks
                 </Link>
+                <RefreshControl onRefresh={refresh} refreshing={isFetching} />
               </div>
             </StatusBanner>
           );
         }
-        const { task, items, results } = data.model;
-        const actions = taskLifecycleActions(task);
+        const { task, lifecycle, items, results } = data.model;
+        const resumeWithheld = lifecycle.actions.find(
+          (item) => item.action === "resume",
+        );
         return (
           <div className="mf-dashboard">
             <header className="mf-dashboard-head">
@@ -191,13 +247,13 @@ export function TaskDetailPage() {
               <RefreshControl onRefresh={refresh} refreshing={isFetching} />
             </header>
             <section className="mf-count-section">
-              <h3>Task overview</h3>
+              <h3>Task aggregate</h3>
               <dl>
                 <dt>Status</dt>
                 <dd>
                   <StatusBadge status={task.status} />
                 </dd>
-                <dt>Command</dt>
+                <dt>Work kind</dt>
                 <dd>{task.command}</dd>
                 <dt>Items</dt>
                 <dd>
@@ -218,87 +274,105 @@ export function TaskDetailPage() {
                     <dd>{task.completedAt}</dd>
                   </>
                 )}
-                {task.configurationSnapshotId && (
-                  <>
-                    <dt>Configuration snapshot</dt>
-                    <dd>{task.configurationSnapshotId}</dd>
-                  </>
-                )}
+                <dt>Execution authority</dt>
+                <dd>
+                  {task.executeAuthorized
+                    ? "execution was authorized for this Task"
+                    : "analysis only — no Storage mutation was authorized"}
+                </dd>
+                <dt>Pinned configuration</dt>
+                <dd>
+                  {task.configurationSnapshotId
+                    ? `${task.configurationSnapshotId} (digest ${task.configurationSnapshotDigest})`
+                    : "no pinned configuration snapshot"}
+                </dd>
                 {task.error && (
                   <>
-                    <dt>Error</dt>
+                    <dt>Failure</dt>
                     <dd>{task.error}</dd>
+                  </>
+                )}
+                {task.failureExplanation && (
+                  <>
+                    <dt>Failure evidence</dt>
+                    <dd>
+                      {task.failureExplanation.category}:{" "}
+                      {task.failureExplanation.durableState} —{" "}
+                      {task.failureExplanation.nextAction}
+                    </dd>
                   </>
                 )}
                 {task.pauseRequested && (
                   <>
                     <dt>Pause requested</dt>
                     <dd>
-                      Yes — cooperative pause pending at next item boundary
+                      Yes — cooperative pause pending at the next supported item
+                      boundary
+                    </dd>
+                  </>
+                )}
+                {isTerminalTaskStatus(task.status) && (
+                  <>
+                    <dt>Terminal</dt>
+                    <dd>
+                      This Task has reached a durable terminal outcome. No
+                      lifecycle control is available.
                     </dd>
                   </>
                 )}
               </dl>
             </section>
-            <section className="mf-count-section">
-              <h3>Lifecycle controls</h3>
-              <div className="mf-actions">
-                {actions.cancel && (
-                  <button
-                    type="button"
-                    className="mf-button mf-button-secondary"
-                    disabled={cancelMutation.isPending}
-                    onClick={() => cancelMutation.mutate()}
-                  >
-                    {cancelMutation.isPending ? "Cancelling…" : "Cancel"}
-                  </button>
-                )}
-                {actions.pause && (
-                  <button
-                    type="button"
-                    className="mf-button mf-button-secondary"
-                    disabled={pauseMutation.isPending}
-                    onClick={() => pauseMutation.mutate()}
-                  >
-                    {pauseMutation.isPending ? "Requesting pause…" : "Pause"}
-                  </button>
-                )}
-                {actions.resume && (
-                  <button
-                    type="button"
-                    className="mf-button mf-button-primary"
-                    disabled={resumeMutation.isPending}
-                    onClick={() => resumeMutation.mutate()}
-                  >
-                    {resumeMutation.isPending ? "Resuming…" : "Resume"}
-                  </button>
-                )}
-                {!actions.cancel && !actions.pause && !actions.resume && (
-                  <p className="mf-dashboard-meta">
-                    No lifecycle controls available for this task state.
+            <LifecycleControls
+              projection={lifecycle}
+              pendingAction={pendingAction}
+              onInvoke={(action) =>
+                lifecycleMutation.mutate({
+                  action,
+                  expectedVersion: lifecycle.version,
+                })
+              }
+            />
+            {resumeWithheld?.unavailableReason && (
+              <section className="mf-count-section">
+                <h3>Resume</h3>
+                <p className="mf-dashboard-meta">
+                  {resumeWithheld.unavailableReason}
+                </p>
+                <p className="mf-dashboard-meta">{resumeWithheld.nextAction}</p>
+              </section>
+            )}
+            {controlResult !== null && (
+              <StatusBanner
+                variant={controlResult.ok ? "success" : "error"}
+                title={
+                  controlResult.ok
+                    ? "Control accepted"
+                    : "Control was not applied"
+                }
+              >
+                {controlResult.ok ? (
+                  <p>
+                    Durable state: {controlResult.state} (version{" "}
+                    {controlResult.version}).{" "}
+                    {controlResult.durableOutcome ?? ""}
+                    {controlResult.nextAction
+                      ? ` Next: ${controlResult.nextAction}`
+                      : ""}
                   </p>
+                ) : (
+                  <p>{rejectionCopy(controlResult)}</p>
                 )}
-              </div>
-              {cancelMutation.isError && (
-                <StatusBanner variant="error" title="Cancel failed">
-                  <p>The cancel request was rejected. Reload and try again.</p>
-                </StatusBanner>
-              )}
-              {pauseMutation.isError && (
-                <StatusBanner variant="error" title="Pause failed">
-                  <p>The pause request was rejected. Reload and try again.</p>
-                </StatusBanner>
-              )}
-              {resumeMutation.isError && (
-                <StatusBanner variant="error" title="Resume failed">
-                  <p>The resume request was rejected. Reload and try again.</p>
-                </StatusBanner>
-              )}
-            </section>
+                <div className="mf-actions">
+                  <RefreshControl onRefresh={refresh} refreshing={isFetching} />
+                </div>
+              </StatusBanner>
+            )}
             <section className="mf-count-section">
-              <h3>Task items ({items.length})</h3>
+              <h3>TaskItems ({items.length} on this page)</h3>
               {items.length === 0 ? (
-                <p className="mf-dashboard-meta">No items on this page.</p>
+                <p className="mf-dashboard-meta">
+                  No TaskItem is visible in this page window.
+                </p>
               ) : (
                 <>
                   <div style={{ overflowX: "auto" }}>
@@ -316,7 +390,17 @@ export function TaskDetailPage() {
                       </thead>
                       <tbody>
                         {items.map((item) => (
-                          <TaskItemRow key={item.itemId} item={item} />
+                          <tr key={item.itemId}>
+                            <td>{item.itemId}</td>
+                            <td>{item.sourceDisplay}</td>
+                            <td>
+                              <StatusBadge status={item.status} />
+                            </td>
+                            <td>{item.stage}</td>
+                            <td>{item.attempts}</td>
+                            <td>{item.destinationPath ?? "—"}</td>
+                            <td>{item.error ?? "—"}</td>
+                          </tr>
                         ))}
                       </tbody>
                     </table>
@@ -333,7 +417,11 @@ export function TaskDetailPage() {
                     <button
                       type="button"
                       className="mf-button mf-button-secondary"
-                      disabled={!data.model.itemsTruncated}
+                      disabled={
+                        itemDirection === "forward"
+                          ? !data.model.itemsTruncated
+                          : !data.model.nextItemCursor
+                      }
                       onClick={goItemsForward}
                     >
                       Next items
@@ -343,9 +431,17 @@ export function TaskDetailPage() {
               )}
             </section>
             <section className="mf-count-section">
-              <h3>Results ({results.length})</h3>
+              <h3>Results ({results.length} on this page)</h3>
+              <p className="mf-dashboard-meta">
+                Effect certainty: {lifecycle.effectCertainty ?? "unknown"}
+                {lifecycle.resultsComplete === false
+                  ? " (a partial Result view; MediaFlow does not claim the remaining effects are safe to repeat)"
+                  : ""}
+              </p>
               {results.length === 0 ? (
-                <p className="mf-dashboard-meta">No results on this page.</p>
+                <p className="mf-dashboard-meta">
+                  No Result is visible in this page window.
+                </p>
               ) : (
                 <>
                   <div style={{ overflowX: "auto" }}>
@@ -363,10 +459,17 @@ export function TaskDetailPage() {
                       </thead>
                       <tbody>
                         {results.map((result) => (
-                          <TaskResultRow
-                            key={result.resultId}
-                            result={result}
-                          />
+                          <tr key={result.resultId}>
+                            <td>{result.resultId}</td>
+                            <td>{result.sourcePath}</td>
+                            <td>
+                              <StatusBadge status={result.status} />
+                            </td>
+                            <td>{result.operation ?? "—"}</td>
+                            <td>{result.effectCertainty}</td>
+                            <td>{result.destinationPath ?? "—"}</td>
+                            <td>{result.error ?? "—"}</td>
+                          </tr>
                         ))}
                       </tbody>
                     </table>
@@ -383,7 +486,11 @@ export function TaskDetailPage() {
                     <button
                       type="button"
                       className="mf-button mf-button-secondary"
-                      disabled={!data.model.resultsTruncated}
+                      disabled={
+                        resultDirection === "forward"
+                          ? !data.model.resultsTruncated
+                          : !data.model.nextResultCursor
+                      }
                       onClick={goResultsForward}
                     >
                       Next results
@@ -396,9 +503,24 @@ export function TaskDetailPage() {
               <Link
                 className="mf-button mf-button-secondary"
                 to="/operations/tasks"
+                search={listReturnSearch}
               >
                 Back to Tasks
               </Link>
+              {task.configurationSnapshotId && (
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/configuration"
+                >
+                  Configuration handoff
+                </Link>
+              )}
+              {availableLifecycleAction(lifecycle, "cancel") === null &&
+                items.some((item) => item.status === "failed") && (
+                  <Link className="mf-button mf-button-secondary" to="/review">
+                    Review &amp; Recovery handoff
+                  </Link>
+                )}
             </div>
           </div>
         );

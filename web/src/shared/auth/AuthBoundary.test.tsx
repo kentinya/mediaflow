@@ -76,6 +76,7 @@ describe("AuthBoundary", () => {
 
   it("replaces an earlier intention with the operator's newest route choice", async () => {
     const user = userEvent.setup();
+    const fetchMock = stubFetch(async () => jsonResponse({}, 503));
     renderApp("/ui-v2/library");
     expect(await screen.findByLabelText("API token")).toBeVisible();
     expect(authStore.getIntendedPath()).toBe("/library");
@@ -84,20 +85,27 @@ describe("AuthBoundary", () => {
     // from the shell navigation. The boundary records the newest supported
     // route instead of keeping the stale /library intention, and returns to
     // the connection boundary.
-    await user.click(screen.getByRole("link", { name: /OperationsMigration/ }));
+    await user.click(screen.getByRole("link", { name: "Operations" }));
     expect(await screen.findByLabelText("API token")).toBeVisible();
     expect(authStore.getIntendedPath()).toBe("/operations");
 
-    // Connecting continues to the newest explicit choice.
+    // Connecting continues to the newest explicit choice. Operations is a real
+    // V2 workspace now, so the intended route renders its own bounded state
+    // (here the API is unavailable) instead of a migration placeholder.
     await user.type(screen.getByLabelText("API token"), TOKEN);
     await user.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(authStore.getToken()).toBe(TOKEN));
     expect(authStore.getIntendedPath()).toBeNull();
     expect(
-      await screen.findByRole("heading", {
-        name: "Operations is not available in V2 yet",
-      }),
+      await screen.findByRole("heading", { name: "Operations unavailable" }),
     ).toBeVisible();
+    expect(
+      screen.queryByText("Operations is not available in V2 yet"),
+    ).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/workers/readiness",
+      expect.objectContaining({ method: "GET" }),
+    );
   });
 
   it("clears a rejected dashboard authority in place and retains the intended route", async () => {
