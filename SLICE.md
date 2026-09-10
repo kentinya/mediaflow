@@ -7,9 +7,9 @@ Slice 31. Slice 31 remains `PASS / CLOSED` in Git, Roadmap and Progress history 
 Slice ID: 32
 Name: Library & Files Experience
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 76de3f60e223131a8b7db97a566d0ceaadd9b2a0
-Implementation Head: NOT SET
+Implementation Head: ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99
 ~~~
 
 The Base is the actual committed `main` checkpoint immediately before Slice 32 activation and
@@ -274,7 +274,151 @@ Slice. Recovery preserves safe navigation context where practical and never repl
 
 ## Closure Packet
 
-Pending B submission after all Required Outcomes are satisfied and Slice-final validation passes.
+~~~
+Slice: 32 — Library & Files Experience
+Base SHA: 76de3f60e223131a8b7db97a566d0ceaadd9b2a0
+Head SHA: ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99
+
+Required Outcomes:
+- RO-1 — COMPLETE: `/ui-v2/library`, `/library/files`, `/library/file-index` and
+  `/library/file-index/$fileId` are typed shell destinations with centralized route metadata,
+  refresh-safe view state and memory-only authentication continuation.
+- RO-2 — COMPLETE: the Storage Files journey selects configured Active Storage, browses bounded
+  Storage-relative directories and breadcrumbs, exposes membership state and recovers without
+  accepting a host path or starting work.
+- RO-3 — COMPLETE: FileIndex search, ResourceLibrary/Storage/discovery/processing/identity filters,
+  reset and stable bidirectional paging expose durable discovery separately from processing and
+  current-source state.
+- RO-4 — COMPLETE: FileIndex detail renders bounded current, historical, legacy and unavailable
+  source, occurrence, processing, pipeline, Result, review and checkpoint evidence without
+  reconstructing missing facts.
+- RO-5 — COMPLETE: an explicit authoritative by-source read opens only one current unique indexed
+  record, while detail offers physical context only for a matching enabled Active
+  ResourceLibrary-to-Storage binding; uncertain linkage remains non-navigating.
+- RO-6 — COMPLETE: Library-specific empty, malformed, unavailable, path/cursor, stale/not-found,
+  401 and 403 states retain orientation and provide bounded retry/back/reset/reconnect or current
+  V1 Web continuation without submitting work.
+- RO-7 — COMPLETE: System Status, Storage Files, FileIndex catalog, detail and by-source reads use
+  centralized strict entity/API/query boundaries and the shared authentication/RBAC lifecycle.
+- RO-8 — COMPLETE: unit, component, Python integration and built-artifact browser evidence proves
+  responsive keyboard use, GET-only zero-side-effect behavior, memory-only Bearer handling,
+  V1/V2 coexistence and Python-served production assets.
+
+Required Surfaces:
+- Library route surface — COMPLETE.
+- Storage files surface — COMPLETE.
+- FileIndex catalog surface — COMPLETE.
+- File detail/explanation surface — COMPLETE.
+- Cross-surface and migration surface — COMPLETE.
+- State, auth and responsive surface — COMPLETE.
+- Application/API authority surface — COMPLETE.
+- Test and documentation surface — COMPLETE for implementation and proof; A-owned factual
+  documentation reconciliation is listed below.
+
+Implemented:
+- A V2 Library landing and typed route family that truthfully separates fresh Active Storage files
+  from durable FileIndex records inside the shared responsive shell.
+- Bounded Active Storage selection, directory/file browsing, Storage-relative breadcrumbs,
+  deterministic paging, membership presentation and Library-specific recovery states.
+- A strict FileIndex catalog with submitted search/filter state, stable adjacent paging,
+  discovery/stability and processing/current-occurrence separation, and bounded identity facts.
+- A strict FileIndex detail model and view for source/library identity, occurrence/fingerprint
+  provenance, pipeline/policy/target evidence, current-versus-historical Results, reviews,
+  checkpoints, truncation, unavailable evidence and honest next destinations.
+- Explicit unique by-source resolution and safely gated physical/indexed navigation using the exact
+  managed Active Storage and enabled ResourceLibrary binding.
+- Shared authenticated GET/query ownership, dynamic route metadata, safe return context and local
+  fake/browser coverage without a Node production runtime or frontend-owned business authority.
+
+Tasks completed:
+- Task 32.1 — V2 Library Storage Files journey — PASS at
+  `b102145aedb3258532bcb7377b6f030abd880a51`.
+- Task 32.2 — V2 FileIndex discovery journey — PASS at
+  `e8a77fcae64bcda78fda46d29700e9794fdf9c7f`.
+- Task 32.3 — V2 FileIndex detail and physical/indexed context — PASS at
+  `ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99`.
+
+Final Tests:
+- `python3 scripts/check_governance.py` — PASS.
+- `npm --prefix web ci` — PASS; 254 packages installed, 255 audited, 0 vulnerabilities.
+- Frontend format/type/lint — PASS; Vitest/React Testing Library 191/191 in 17 files;
+  production Vite build PASS; Playwright Chromium 54/54.
+- Task 32.3 focused evidence — PASS: detail normalization 17/17, built-artifact detail journey
+  7/7 and focused Python catalog/API/Storage/lifecycle/static/security modules 76/76.
+- Ruff format/check — PASS; 301 files already formatted; compileall — PASS.
+- Root-CWD full unittest discovery — FAIL, 1417 run, 6 failures and 7 skips. The six failures read
+  ignored local runtime/configuration state instead of their fixture assumptions; Slice 32 changes
+  none of the failing test modules or the CLI/runtime-configuration paths involved, and no private
+  value is reproduced in this packet.
+- Full unittest discovery from a clean detached worktree at the exact Implementation Head — PASS,
+  1417 tests, 7 environment-gated skips. This is the valid isolated full-regression result and
+  demonstrates that the root-CWD failures are pre-existing/private-runtime-state effects unrelated
+  to Slice 32.
+- `python3 scripts/docker_release_security_smoke_test.py` — PASS with Docker available: clean
+  candidate image, four-service topology, non-root runtime, V1/V2 static coexistence, safe headers,
+  authentication/RBAC, exact Active snapshot, durable projections and zero-side-effect denial.
+- `git diff --check` — PASS for Task, Base..Implementation Head and B closure edit ranges.
+
+Safety Evidence:
+- Base..Implementation Head inspection found no test deletion/skip/assertion weakening, tracked
+  private configuration, credentials, binary artifacts or unrelated mutation behavior.
+- Browser request capture and the rejecting fake prove Library navigation, retry, paging, search,
+  detail and linkage issue authenticated bounded GETs only and create no Job, Task, Provider,
+  audit, execution-authority or Storage mutation request.
+- Storage paths remain normalized and relative; physical links require the exact Active Storage and
+  enabled ResourceLibrary binding. No host root, fingerprint value, provider payload, raw exception
+  or uncertain linkage is promoted into frontend authority.
+- Detail evidence/checkpoints pass through explicit bounded allowlists; Bearer material remains in
+  memory and absent from routes, DOM, persistent browser stores, handoff links, console output and
+  captured artifacts.
+- Existing Python RBAC, Active-snapshot, root-confinement, FileIndex relevance, V1 `/ui`, static
+  security, RecognitionType C and OrganizerExecutor-only mutation regressions remain covered; the
+  Docker smoke validates the exact release artifact.
+- Tests use local fakes, temporary state and an isolated clean worktree. `config/alist.json`, local
+  ignored runtime configuration, production credentials, private endpoints and operator media are
+  absent from Base..Implementation Head.
+
+Known Non-blocking Issues:
+- P2: pre-existing root-CWD test isolation permits six Python tests to consume ignored local
+  runtime/configuration state. The exact Implementation Head passes all 1417 tests in a clean Git
+  worktree; Slice 32 neither changes nor conceals the unrelated infrastructure behavior.
+- P3: existing sqlite `ResourceWarning` diagnostics and 7 environment-gated full-suite skips remain
+  unchanged. Frontend Vitest also emits non-failing jsdom `Window.scrollTo()` diagnostics.
+
+Explicitly Deferred:
+- Slice 33 Operations Workspace: expanded Dashboard, Tasks, Jobs, schedules, Automation,
+  Notifications and complete Web-native Scan/Preview/Organize/execution authorization.
+- Slice 34 Review & Recovery Workspace: review decisions, conflicts, checkpoint actions,
+  Reprocess and per-item/bounded-batch recovery mutations.
+- Slice 35 Configuration Administration: Storage/ResourceLibrary and other managed configuration,
+  Settings, revision/test evidence and activation in V2.
+- Slice 36 final parity, cross-feature accessibility evidence, supported `/ui` cutover and V1 UI
+  retirement.
+- Upload/download/content preview, streaming/artwork, recursive browsing, arbitrary filesystem or
+  Storage mutation, new providers, FileIndex/schema redesign, background/full-text indexing,
+  Provider calls during reads, auth redesign, SSR/BFF/Node production serving and the remaining
+  Contract deferrals.
+
+Documentation Reconciliation Needed:
+- If A's final review returns PASS, reconcile `README.md`, `docs/v2-requirements.md`,
+  `docs/progress.md` and `docs/roadmap.md`; they still identify Slice 31 as the latest closed Slice,
+  no active large Slice, or Slice 32 as ACTIVE.
+- Reconcile the CURRENT V2 sections in `docs/product-experience.md` and `docs/architecture.md` so
+  they describe the implemented read-only Library route family while preserving V1 coexistence and
+  Slices 33–36 deferrals. A should verify whether the canonical Chinese specification needs the same
+  factual program-status update without changing stable product requirements.
+
+Decision: SLICE READY FOR A REVIEW
+~~~
+
+## Review State
+
+~~~
+Slice Status: READY FOR A REVIEW
+Implementation Head: ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99
+P0/P1 Defects: None found by B in Base..Implementation Head or Slice-final validation
+Next Action: A FINAL REVIEW
+~~~
 
 ## A Final Review
 
