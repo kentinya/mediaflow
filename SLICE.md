@@ -1,19 +1,18 @@
-# Slice 32 — Library & Files Experience
+# Slice 33 — Operations Workspace
 
-This is the A-owned Slice Contract and closure record for the independently reviewed V2 capability
-after Slice 31. Slice 31 remains `PASS / CLOSED` in Git, Roadmap and Progress history and is not
-reopened.
+This is the A-owned Slice Contract for the next independently reviewed V2 capability after Slice
+32. Slice 32 remains `PASS / CLOSED` in Git, Roadmap and Progress history and is not reopened.
 
 ~~~
-Slice ID: 32
-Name: Library & Files Experience
+Slice ID: 33
+Name: Operations Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
-Base SHA: 76de3f60e223131a8b7db97a566d0ceaadd9b2a0
-Implementation Head: ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99
+Status: ACTIVE
+Base SHA: 827c36b410687e41b1da53ba6475d8c03a47dbfd
+Implementation Head:
 ~~~
 
-The Base is the actual committed `main` checkpoint immediately before Slice 32 activation and
+The Base is the actual committed `main` checkpoint immediately before Slice 33 activation and
 implementation. It must not move when B plans Tasks or Developer work begins. This Contract and its
 Roadmap activation commit follow the Base and are governance changes, not Slice implementation.
 
@@ -25,165 +24,194 @@ V2 remains a sequence of independently accepted user capabilities:
 Slice 30 — V2 Frontend Platform & Architecture — PASS / CLOSED
 Slice 31 — Operator Shell & Information Architecture — PASS / CLOSED
 Slice 32 — Library & Files Experience — PASS / CLOSED
-Slice 33 — Operations Workspace — PLANNED
+Slice 33 — Operations Workspace — ACTIVE
 Slice 34 — Review & Recovery Workspace — PLANNED
 Slice 35 — Configuration Administration — PLANNED
 Slice 36 — V2 Parity, Accessibility & Legacy UI Retirement — PLANNED
 ~~~
 
-This Contract owns the V2 read-oriented Library experience: bounded browsing of real configured
-Storage, FileIndex discovery/list/detail, and truthful navigation between physical and indexed
-context. It does not absorb work admission, execution, review/recovery or configuration journeys
-assigned to Slices 33–35.
+This Contract owns the V2 daily-operations journey: actionable Dashboard entry, bounded manual
+Scan/Preview/Organize, durable Task and Job observation, scheduled Automation operation and
+Notification delivery operation. It may reuse the narrow managed-revision/object validation and
+checked-activation lifecycle needed to publish Automation Task Definitions and Webhook Definitions,
+but it does not absorb general Configuration administration or media review/recovery journeys
+assigned to Slices 34 and 35.
 
 ## User goal and vertical journey
 
-**User goal:** within the current API-principal Bearer authentication architecture, an operator can
-open Library in V2, browse what currently exists in a configured Active Storage, distinguish that
-physical view from the durable FileIndex, search and filter indexed records, inspect one record's
-current discovery/processing meaning and bounded history, and choose a safe next destination without
-using CLI, exposing host paths or accidentally starting work.
+**User goal:** within the current API-principal Bearer authentication architecture, an authorized
+operator can use V2 as the daily command center to start a bounded Scan or zero-mutation Preview,
+review and execute an exact manual organization without issuing or copying a CLI execution token,
+observe each durable Task/Job and item outcome, operate reviewed schedules and Webhook delivery, and
+understand the next safe action when work cannot proceed.
 
-**Entry:** open `/ui-v2/library` or a supported Library deep link from the shared V2 shell, Dashboard
-or browser refresh. An unauthenticated entry uses Slice 31's memory-only connection continuation and
-returns to the intended safe Library route. Library first presents operator language and explicit
-choices for **Storage files** and **FileIndex** rather than treating them as one dataset.
+**Entry:** open `/ui-v2/operations`, follow an actionable Dashboard status/count, or continue from a
+current V2 Library file, FileIndex record or ResourceLibrary scope. Supported operation detail links
+remain refresh-safe. An unauthenticated deep entry uses the shared memory-only connection flow and
+returns only to the intended safe route; authority-bearing values never enter the URL.
 
-**Visible state:** Storage files shows the configured Active runtime identity needed to establish
-freshness, an operator-meaningful Storage selector, Storage-relative breadcrumb, immediate directory
-entries, bounded pagination and each file's FileIndex membership where available. FileIndex shows
-bounded indexed records, search/filter state, discovery/stability separately from processing
-disposition, current-source occurrence evidence, and stable paging. File detail explains the source,
-ResourceLibrary, discovery/stability, current versus legacy occurrence, parsing/recognition/metadata
-and policy/result evidence when present, target/outcome, relevant history and currently available
-next destination without fabricating unavailable evidence.
+**Visible state:** the workspace separates requests, queue/admission records, processing Tasks,
+per-item outcomes and schedules instead of presenting them as one generic status. It shows Worker
+readiness, exact source scope, Active/pinned configuration identity, operation mode, progress,
+warnings, conflicts/capabilities, manual intent and Preview versions, execution-authority state,
+Automation definition/schedule/grant/occurrence state, Notification definition/delivery state, and
+bounded failure/recovery guidance without exposing secrets or raw backend payloads.
 
-**Action:** choose an Active Storage, navigate a directory or breadcrumb, change a bounded page,
-refresh or retry a failed read, open a matching FileIndex record, search/filter/reset the index,
-inspect a record and return without losing useful context, or follow an explicit current V1 Web
-handoff for an operational action not yet migrated. Opening or interacting with these V2 Library
-surfaces does not submit Scan, Preview, Organize, Reprocess, review continuation or any other work.
+**Action:** submit a bounded current-source or ResourceLibrary Scan; create and inspect a complete
+zero-mutation Preview; create/update a durable manual intent and permitted item choices; select exact
+Preview items, explicitly authorize and submit their organization; inspect/filter/page Task, Job and
+item detail; request a currently valid cooperative pause/resume/cancel control; manage and preview a
+bounded Automation definition and publish it through checked activation, explicitly grant/revoke
+unattended authority and inspect schedules and occurrences; or manage/test and checked-activate a
+Webhook and explicitly recover one eligible delivery. Each action is permission-gated and only
+controls the exact durable object shown.
 
-**Success:** the operator can answer both “what is physically present now?” and “what does MediaFlow
-currently know and conclude about this source?”, understand why the two answers may differ, move
-between available physical/indexed context, and identify the honest next step while all reads remain
-bounded and zero-side-effect.
+**Success:** admitted long work immediately has a durable identity and can be followed without
+holding a browser request open. Preview changes no Storage. Manual execution consumes backend-bound,
+short-lived one-shot authority for exactly the reviewed items, and only OrganizerExecutor performs
+the resulting Storage mutation. Scheduled occurrences pin their runtime snapshot and remain tied to
+their definition/grant. Every item/delivery records an independent result that links back to the
+relevant operation and source when safe.
 
-**Failure:** no valid Active runtime, no configured Storage, a missing/disabled ResourceLibrary,
-invalid or out-of-root path, stale/invalid page cursor, provider permission/timeout/read failure,
-empty results, missing/ambiguous source linkage, stale/deleted indexed record, malformed API response,
-401/403 or unavailable service is shown as a bounded operator-facing state. It does not leak raw
-credentials, absolute host paths, provider payloads or exceptions and does not imply that a retry
-will start or resume work.
+**Failure:** missing or unhealthy Worker, queue limits, stale/changed source, stale Preview or
+configuration version, invalid scope, unsupported capability, conflict, insufficient permission,
+expired/consumed/revoked authority, concurrent update, unavailable Active runtime, schedule/grant
+ineligibility, delivery lease/dead-letter failure, malformed API response, 401/403 or backend
+unavailability is attributed to the affected request/object/item. No failure is rendered as success,
+no completed sibling is hidden, and no uncertain Storage effect is presented as safe to retry.
 
-**Recovery:** retry the failed read, return to the last valid breadcrumb/list/Library landing, reset
-or narrow filters, select another configured Storage, reconnect through the shared auth boundary, or
-follow an explicit V1 Configuration/Operations continuation when the fix belongs outside this
-Slice. Recovery preserves safe navigation context where practical and never replays unknown work.
+**Recovery:** retry a known-safe read, correct and resubmit an unadmitted request, refresh the exact
+durable state, restore Worker/configuration readiness, cancel work cooperatively, rerun Preview after
+a stale change, reauthorize an exact reviewed operation, repair/repreview/regrant an Automation
+definition, or use the delivery-specific retry/requeue action. Repair of dependent general
+configuration may hand off to the current V1 Web Configuration journey until Slice 35. Media review
+decisions, checkpoint continuation, Reprocess and failed-item/batch recovery lead honestly to the
+current V1 Web journey or the V2 Review & Recovery destination owned by Slice 34; they are never
+simulated inside Operations.
 
 ## Product Experience / UX constraints
 
-- **Storage files** means a fresh, lazy, immediate and read-only view through the configured Active
-  Storage adapter. **FileIndex** means durable discovery records. Labels, routes, state and empty
-  results must never conflate the two or imply that one is a synchronized copy of the other.
-- The default Library experience starts from operator choices. It must not require a raw Storage ID,
-  ResourceLibrary ID, File ID, occurrence ID, fingerprint or cursor to discover the first useful
-  page. Bounded identifiers may appear secondarily when useful for diagnosis or support.
-- Paths shown or accepted by the browser are Storage-relative and breadcrumb-oriented. Absolute host
-  paths, adapter roots, private endpoints, signed URLs, credentials and source contents are not a
-  V2 Library display or navigation contract.
-- Discovery/stability state and processing disposition are orthogonal. A missing/changed physical
-  source, a historical Result and an unverified legacy occurrence are not rendered as a current
-  successful processing outcome.
-- Automated recognition, metadata, naming, classification, destination and Result facts expose
-  bounded, secret-free explanations when evidence exists. Missing or legacy evidence is described
-  as unavailable/unverified rather than reconstructed or guessed.
-- Search, filters, breadcrumbs and page movement remain deterministic and bounded. Safe, allowlisted
-  view state may be represented in the route so refresh/back navigation remains useful; tokens,
-  secrets and internal execution authority must never enter the URL.
-- Controls are never deceptive. Read actions work in V2; operational actions outside this Contract
-  are visibly unavailable or provide an explicit current V1 Web continuation with no token transfer
-  or claim of V2 completion. No ordinary journey is redirected to CLI.
-- Loading, empty, partial, unavailable, malformed, unauthorized and forbidden states remain inside
-  the shared shell, retain orientation, and give the smallest valid next action.
-- The surfaces are keyboard-usable and responsive at narrow and wide viewports using the accessible
-  shell foundation from Slice 31. Slice 36 remains responsible for final cross-feature parity,
-  accessibility evidence and legacy UI retirement.
+- **Operations is state-oriented, not endpoint-oriented.** The UI distinguishes a submission from a
+  Job, a Job from its Task, and aggregate Task status from independent TaskItem/Result outcomes.
+- **Routine manual organization is Web-native.** The operator does not run a CLI command, receive a
+  raw execution secret or copy an execution token. The backend binds one-shot authority to the
+  authenticated principal, exact Preview/configuration/item set, allowed effects, expiry and audit.
+- Scan and Preview are plainly labelled analysis actions. Preview runs the complete applicable
+  pipeline and presents its findings, but both remain zero Storage mutation and do not imply that an
+  Organize was authorized.
+- The manual flow starts from operator-recognizable files or a ResourceLibrary scope. Raw File,
+  occurrence, fingerprint, intent, Preview, grant, Task or Job identifiers are not mandatory entry
+  inputs and appear only secondarily when useful for support.
+- Organize has a separate explicit confirmation at the meaningful mutation boundary. Overwrite and
+  source cleanup/destruction are separately explained and permitted; they are never inferred from a
+  generic Execute click. Unsupported HardLink/SoftLink never silently falls back.
+- Task/Job controls appear only when the backend says the transition is currently available and the
+  principal has permission. Pause/cancel are cooperative and do not claim to interrupt an in-flight
+  Provider/Storage call or undo completed effects. Slice 34 owns media retry/recovery semantics.
+- Automation clearly separates an editable Draft definition from the immutable Active snapshot
+  actually consumed by Scheduler/Worker. Enabling a schedule is not unattended execution authority;
+  Preview eligibility and a separate persistent, scoped, revocable grant remain explicit.
+- The narrow Automation/Webhook editor composes existing managed Draft, validation/test and checked-
+  activation behavior only for those owned object types. It must not recreate configuration
+  authority, label an unactivated Draft Active, or become a hidden general Configuration editor.
+- Notification testing is an explicit read-only test of the selected exact revision. Delivery
+  retry/requeue/expired-lease resolution changes only the exact delivery state and never reexecutes,
+  rewrites or rolls back completed media work.
+- Dashboard and cross-links preserve useful bounded context and lead to exact Operations, Library or
+  later Review routes. Counts are navigation aids, not permission or authority.
+- Loading, empty, partial, queued-without-worker, stale, malformed, unavailable, unauthorized and
+  forbidden states remain inside the shared shell and provide the smallest valid next action.
+- The workspace remains keyboard-usable and responsive at narrow and wide viewports. Slice 36 owns
+  final cross-feature parity, comprehensive accessibility evidence and supported V1 UI retirement.
 
 ## Required Outcomes
 
 | ID | Required Outcome | Gap at Base |
 |---|---|---|
-| RO-1 | **Library information architecture and route ownership.** `/ui-v2/library` becomes a real V2 Library landing with typed, refresh-safe child/detail routes that clearly separate Storage files from FileIndex and remain integrated with the shared shell, route metadata and auth continuation. | The Library destination is a truthful migration placeholder and has no feature routes or model. |
-| RO-2 | **Active Storage files journey.** An operator can select an available configured Active Storage without supplying a raw identifier, browse its root and immediate directories through Storage-relative breadcrumbs and bounded pages, refresh/retry safely, and see FileIndex membership for file entries when available. | The V1 UI and Python application/API support the journey; V2 has no Storage browser. |
-| RO-3 | **FileIndex discovery journey.** An operator can list, search and filter durable FileIndex records with bounded stable navigation while visibly keeping scan/discovery status, stability/change evidence and current processing disposition distinct. | The V1/API projection exists; V2 has no catalog list or filters. |
-| RO-4 | **File detail and explanation journey.** A refresh-safe detail route presents the selected record's bounded source/library identity, current occurrence and fingerprint state, discovery evidence, processing disposition, parser/recognition/metadata/policy/target/result evidence, current versus historical relevance, reviews/checkpoints and next-action explanation when those facts exist, without fabricating legacy or unavailable evidence. | Rich redacted API detail exists but is not modeled or rendered in V2. |
-| RO-5 | **Physical/indexed context linkage.** A real file can open its unique indexed record when membership is available; the detail/list can lead the operator back to the relevant physical Storage context when it can be expressed safely; missing, ambiguous, truncated or unavailable linkage is explicit and non-destructive. | V1/API expose membership and by-source semantics, but V2 has no composed journey. |
-| RO-6 | **Honest next-action and recovery states.** Empty, invalid, stale, not-found, malformed, unavailable, provider-read, 401 and 403 outcomes preserve useful Library context and offer a safe retry/back/reset/reconnect or current V1 Web continuation. Operational actions are explained or handed off, never silently submitted by Library navigation. | Only shared shell-level states exist in V2; Library-specific failures and action boundaries do not. |
-| RO-7 | **Reusable typed read boundary.** Storage status/options, Files pages, FileIndex pages and detail documents are normalized and validated through centralized feature/entity API-query boundaries. UI components do not reinterpret backend authority, leak protocol exceptions or duplicate raw fetch/RBAC logic. | Slice 30/31 established the pattern only for Dashboard and shared shell concerns. |
-| RO-8 | **Zero-side-effect, coexistence and proof.** The complete V2 Library journey is responsive, keyboard-usable, regression-covered, read-only and compatible with V1 `/ui`, `/api/v1/*`, Python authority, memory-only Bearer handling and Python-served production assets. | Existing backend/V1 coverage proves the service boundary; V2 Library behavior and browser evidence are absent. |
+| RO-1 | **Operations information architecture and actionable Dashboard.** `/ui-v2/operations` becomes a real V2 workspace with typed, refresh-safe task-oriented routes; Dashboard health/counts lead to the relevant bounded Operations views and show truthful permission/readiness state. | Dashboard is a read-only proving page and Operations is a migration placeholder. |
+| RO-2 | **Durable Task/Job observation and lifecycle control.** Operators can list/filter/page Tasks and Jobs, inspect linked request/Task/TaskItem/Result and Worker/readiness evidence, follow relevant Library context, and invoke only backend-advertised cooperative pause/resume/cancel controls. | Python API/V1 expose durable processing state and selected controls; V2 has no operational list/detail journey. |
+| RO-3 | **Bounded manual Scan and zero-mutation Preview.** From V2 Library or Operations, an authorized operator can choose an exact current file or ResourceLibrary-relative scope, understand readiness/limits, submit Scan or complete Preview, and inspect durable per-item findings and failures. | The authoritative application/API journey exists, but V2 Library only hands operational actions to V1. |
+| RO-4 | **Complete Web-native manual Organize.** Operators can create a durable intent, make permitted item choices, review an exact immutable Preview, select exact items, explicitly authorize and admit execution, then follow durable per-item outcomes without CLI issuance, raw execution-token transfer or arbitrary request-supplied paths/plans. | V1 manual services provide exact intent/Preview and server-side one-shot authorization, while V2 has no flow and the general remote Organize Job still exposes a CLI-token mechanism. |
+| RO-5 | **Scheduled Automation operation.** Operators can discover, create/copy/edit, validate, preview and enable/disable bounded Automation Task Definitions; checked-activate the owned change while distinguishing Draft from Active; grant/revoke scoped unattended authority; and inspect schedule state, occurrence history and linked work/results. | The current application/API/V1 surface is complete but absent from V2 and its managed-revision semantics are not composed in the V2 shell. |
+| RO-6 | **Notification operation.** Operators can discover and manage Webhook Definitions without seeing secret values, run an explicit exact-revision read-only test, checked-activate the owned change, inspect bounded delivery/detail state, and invoke only eligible per-delivery retry/requeue/stale-lease actions with concurrency protection. | Slice 28 delivered authoritative API/V1 behavior; V2 has no Notification journey. |
+| RO-7 | **Actionable failure and boundary handoff.** Missing Worker/Active state, queue pressure, stale/concurrent versions, invalid scope, conflict/capability/authority denial, partial/uncertain outcomes, schedule/grant failures, notification failures, malformed data, 401/403 and service errors preserve durable truth and give a safe retry, correction, cancellation, re-preview, reauthorization, V1 Configuration handoff or Slice 34 Review/Recovery destination. | Shared shell errors exist, but Operations-specific recovery and deferred-boundary guidance do not. |
+| RO-8 | **Shared authority, coexistence and proof.** Central typed feature/entity/query boundaries use existing Python Application and `/api/v1/*` behavior, add only backward-compatible projections/admission needed by this journey, preserve V1 `/ui`, and prove exact request methods, RBAC, audit, limits, redaction, persistence and mutation invariants. | Slice 30–32 prove the architecture for read journeys; V2 operational admission and high-risk execution evidence are absent. |
 
 ## Required Surfaces
 
-1. **Library route surface.** A real `/ui-v2/library` landing plus supported Storage files,
-   FileIndex list and FileIndex detail routes use centralized typed route metadata, titles, active
-   navigation and safe deep-link/auth continuation.
-2. **Storage files surface.** Active runtime/Storage selection, read-only explanatory context,
-   Storage-relative breadcrumb, immediate directory/file entries, bounded previous/next behavior,
-   membership state and refresh/retry/empty presentation are complete.
-3. **FileIndex catalog surface.** Bounded list, meaningful text search and applicable
-   ResourceLibrary/Storage/discovery/processing/identity filters expose submitted filter state,
-   reset behavior, deterministic page movement and clear empty results.
-4. **File detail/explanation surface.** Source identity, discovery/stability, current occurrence,
-   processing disposition, recognition/metadata/policy/target/Result evidence, relevance/history,
-   related review/checkpoint state and available next destinations are grouped in operator language
-   and honestly degrade when absent, legacy, stale or truncated.
-5. **Cross-surface and migration surface.** FileIndex membership/by-source linkage composes physical
-   and indexed context. Non-migrated Scan/Preview/Organize/Reprocess/review/configuration actions are
-   clearly distinguished and may hand off to the current V1 Web UI without token or authority
-   transfer and without promising an unsupported deep link.
-6. **State, auth and responsive surface.** Shared shell connection/401/403 behavior combines with
-   Library-specific loading, empty, invalid-path/cursor, not-found, malformed and unavailable states;
-   keyboard focus/order and narrow/wide layouts remain usable.
-7. **Application/API authority surface.** Existing system-status, runtime Storage files, FileIndex
-   list/by-source/detail and their RBAC/redaction/root-confinement contracts remain authoritative.
-   Only a minimal backward-compatible read projection may be added if a required V2 view cannot be
-   expressed; no frontend-owned business decision, mutation or parallel API authority is allowed.
-8. **Test and documentation surface.** Entity/query/component/router tests and a built-artifact
-   browser journey cover the promised paths; relevant CURRENT Product Experience, Architecture and
-   operator documentation are reconciled only to implementation evidence.
+1. **Operations route and Dashboard surface.** A real `/ui-v2/operations` landing plus supported
+   Task, Job, manual-operation, Automation/schedule and Notification list/detail routes use central
+   route metadata, active navigation, safe deep-link/auth continuation and actionable Dashboard
+   links without placing authority-bearing values in URLs.
+2. **Task, Job and Worker surface.** Bounded list/filter/page and detail views distinguish admission,
+   processing and per-item/result state, expose readiness and pinned configuration evidence, link
+   exact related work/source context, and offer only authoritative cooperative controls.
+3. **Manual Scan/Preview surface.** Current Library selections and explicit ResourceLibrary-relative
+   scope compose into bounded admission, progress/detail and per-item findings. Scan semantics remain
+   source discovery/indexing; Preview is visibly full-pipeline DryRun with zero Storage mutation.
+4. **Manual Organize surface.** Durable intent and choice editing, exact Preview/detail/item
+   selection, separate explicit server-bound one-shot authorization, execution admission, progress,
+   per-item Result/effect certainty and truthful blocked/expired/stale outcomes form one Web journey.
+5. **Automation and schedule surface.** Definition list/detail/editor/copy/enable state, Active versus
+   Draft identity, validation, exact Preview/items, object-scoped checked activation, grant
+   eligibility/grant/revoke/audit, schedule state/audit, occurrence history and linked
+   Job/Task/Result context are operable without exposing raw grants or silently activating a Draft.
+6. **Notification surface.** Webhook list/detail/editor/enable state, secret-reference-only handling,
+   exact-revision test evidence, object-scoped checked activation, delivery list/filter/detail,
+   attempt/lease/dead-letter state and eligible retry/requeue/stale resolution are complete and
+   isolated from media execution.
+7. **State, auth and cross-surface surface.** Loading/empty/partial/queued/stale/conflict/unsupported/
+   uncertain/malformed/unavailable/401/403 states preserve context and offer valid recovery; Library,
+   Dashboard, Operations and deferred Review/Configuration destinations link truthfully.
+8. **Application/API authority and test surface.** Existing services remain authoritative for
+   scopes, transitions, Active snapshots, execution/grant admission, delivery recovery and audit.
+   Minimal API/application changes are allowed only when the required V2 journey cannot safely use
+   the current projection; automated and built-artifact evidence covers all required paths.
 
 ## Safety Invariants
 
-- Python Application/Domain services and `/api/v1/*` remain authoritative. Frontend filtering,
-  routing, labels or control visibility never grant RBAC permission, infer Active state, determine
-  current-source identity or override processing/result relevance.
-- The selected Storage and ResourceLibraries come from the exact immutable managed Active runtime
-  consumed by the backend. Drafts, stale frontend snapshots, local configuration files and merely
-  existing database rows are never presented as Active.
-- Real Storage browsing uses only Storage read ports/adapters, is confined to the selected configured
-  Storage root, accepts only normalized Storage-relative paths, bounds each page and remains lazy.
-  It does not expose or traverse arbitrary host paths, escape through symlinks, read media contents
-  or assume unsupported provider capabilities.
-- V2 Library GETs, rendering, prefetching, retry, navigation, search and detail reads create no Job,
-  Task, Provider request, authorization/grant, Reprocess request, review continuation, audit mutation
-  or Storage mutation. No hidden POST/PUT/PATCH/DELETE request is used to make a read surface work.
-- FileIndex discovery state and processing disposition remain independent and tied to the current
-  source occurrence/fingerprint semantics. Historical or unverified Results never become a current
-  outcome or authorize an action merely because a path or File ID matches.
-- Explanations are bounded and secret-free. Raw provider payloads, authorization headers, API keys,
-  cookies, passwords, proxy credentials, private endpoints, absolute adapter roots and unredacted
-  exceptions never enter the DOM, route, logs, screenshots or test artifacts.
+- Python Application/Domain services and `/api/v1/*` remain authoritative. Frontend state, labels,
+  hidden controls, cached previews or route parameters never grant RBAC permission, select an Active
+  configuration, validate a source, decide a policy/plan or authorize Storage mutation.
 - The API-principal Bearer token remains runtime-memory-only and absent from localStorage,
   sessionStorage, IndexedDB, cookies, URLs and handoff links. Disconnect clears authenticated query
-  state, including cached Library documents.
-- Scanner, Parser, Recognition, Metadata, Naming, Classification and Planner remain zero-mutation;
-  only OrganizerExecutor may invoke mutating Storage operations. RecognitionType C remains C when it
-  selects NamingPolicy A and ClassificationPolicy A. No silent overwrite/delete or operation
-  fallback is introduced.
-- No FFprobe/FFmpeg dependency or content probing is introduced. File technical tags remain
+  and mutation state, including any unsubmitted manual choices.
+- Routine V2 manual execution never asks for, returns to the browser or persists a raw remote
+  execution token/secret. Backend authority is short-lived, one-shot, principal/permission-bound,
+  exact-Preview/configuration/item/effect-scoped, auditable and atomically consumed or rejected at
+  durable admission. Existing CLI/API token support may remain for compatibility but is not the V2
+  journey.
+- Manual execution rechecks intent/Preview/item versions, Active/pinned configuration identity,
+  source occurrence/fingerprint, current conflicts, capabilities, limits and authority before
+  acquiring locks or mutation. Request bodies cannot supply arbitrary source/target paths,
+  operations, policy identities or provider payloads.
+- Scanner, Parser, Recognition, Metadata, Naming, Classification and Planner remain zero-mutation.
+  Preview/DryRun runs the complete applicable pipeline with zero Storage mutation. Only
+  OrganizerExecutor may call mutating Storage operations.
+- RecognitionType C remains C when it selects NamingPolicy A or ClassificationPolicy A. No route,
+  intent choice, Preview projection or execution reconstruction changes that identity.
+- Overwrite and source cleanup/delete require explicit policy, authority and operator intent; they
+  are never inferred or silent. HardLink/SoftLink never silently falls back to Copy or Move.
+- Source/destination/attachment locks, immutable snapshot pinning, queue/item limits, idempotency,
+  stale/concurrent fencing and per-item durable Results remain backend-enforced. Successful siblings
+  stay terminal, and partial or uncertain Storage effects are never automatically replayed.
+- Pause/cancel/resume is cooperative at supported boundaries. It never claims to interrupt an
+  in-flight Provider/Storage call, undo completed effects or convert uncertain mutation into safe
+  retry. Media recovery actions remain owned by Slice 34.
+- Automation Draft state is not Active runtime. Schedule enablement is separate from unattended
+  authority; grants are persistent, scoped, independently revocable and rechecked at every mutation
+  boundary. Revocation prevents future mutation without rewriting completed effects.
+- Webhook definitions contain deployment-owned secret references, never secret values. Tests are
+  explicit and read-only. Delivery recovery is exact-record, concurrency-fenced and cannot submit or
+  replay media work.
+- Reads, rendering, prefetch, refresh and navigation remain zero-side-effect. Mutations use explicit
+  methods and named user intent; malformed/401/403 handling does not retry a mutation automatically.
+- Explanations, logs, DOM, routes and test artifacts remain bounded and redacted. Credentials,
+  authorization headers, cookies, raw provider payloads/exceptions, private endpoints and absolute
+  host/adapter roots are not exposed.
+- No FFprobe/FFmpeg dependency or content probing is introduced. Technical tags remain
   filename/path-derived evidence only.
-- V1 `/ui`, existing API compatibility routes, static CSP/cache/security behavior and Python-only
+- V1 `/ui`, existing API compatibility routes, CSP/cache/security behavior and Python-only
   production serving remain intact. No Node production server, SSR, BFF, second HTTP service or CDN
   runtime dependency is introduced.
 - `config/alist.json`, production credentials, private endpoints, operator media and local runtime
@@ -191,22 +219,25 @@ Slice. Recovery preserves safe navigation context where practical and never repl
 
 ## Explicitly Deferred
 
-- Slice 33 Operations Workspace: expanded Dashboard, Tasks, Jobs, schedules, Automation,
-  Notifications and the complete Web-native interactive Scan/Preview/Organize and execution-
-  authorization journey. Slice 32 may explain or hand off to these existing V1 actions but does not
-  invoke them in V2.
-- Slice 34 Review & Recovery Workspace: Recognition/Metadata/Classification review, conflict,
-  checkpoint action submission, Reprocess and per-item/bounded-batch recovery. Slice 32 may display
-  bounded related state and available destinations but does not resolve or mutate them.
-- Slice 35 Configuration Administration: Storage/ResourceLibrary setup or correction, Configuration,
-  Settings, revision/test evidence, activation and managed object editing in V2.
-- Slice 36 final parity, comprehensive cross-feature accessibility evidence, supported `/ui` cutover
-  and V1 UI retirement.
-- File upload/download/content preview, file edit/rename/delete, arbitrary Storage mutation, recursive
-  tree loading, media streaming, thumbnails/posters/artwork fetch and general host-filesystem browsing.
-- New Storage or Metadata providers, FileIndex/domain/schema lifecycle redesign, background indexing,
-  full-text search infrastructure, Provider calls during reads or changes to recognition, naming,
-  classification, planning, organization, conflict or recovery semantics.
+- Slice 34 Review & Recovery Workspace: Recognition/Metadata/Classification review decisions,
+  conflict resolution, explicit Reprocess, checkpoint action submission/continuation, failed-stage
+  retry, manual recovery continuation, ignored-item transitions and per-item/bounded-batch media
+  recovery. Operations may show/link their state but does not perform these actions.
+- Slice 35 Configuration Administration: general managed Configuration/Settings navigation, object
+  lifecycle outside Automation Task Definitions and Webhook Definitions, revision comparison and
+  evidence administration, import/export and activation workflows outside the two object-scoped
+  checked activations owned here. Slice 33 may hand repair of dependent general configuration to the
+  current V1 Web surface.
+- Slice 36 final V1/V2 surface parity, global Logs/security/configuration-audit migration,
+  comprehensive cross-feature accessibility evidence, supported `/ui` cutover and V1 UI retirement.
+- Automatic retry/replay of uncertain media effects, rollback/undo of completed Storage operations,
+  mutation-history deletion, arbitrary bulk execution, a generic workflow designer and distributed
+  scheduling/Workers.
+- New Storage/Metadata/Notification providers, provider switching, email/chat/media-server native
+  notification transports, general Secret Store integration, mutation-based capability probes and
+  changes to recognition, metadata, naming, classification, planning or conflict semantics.
+- File upload/download/content preview, file edit/rename/delete, arbitrary Storage mutation, media
+  streaming, thumbnails/posters/artwork fetch and arbitrary host-filesystem browsing.
 - Built-in username/password identity, session/cookie authority, OIDC, reverse-proxy identity,
   token persistence/refresh/rotation or redesign of the current API-principal authentication model.
 - SSR, React Server Components, Node production serving, micro-frontends, CDN runtime dependencies,
@@ -214,228 +245,94 @@ Slice. Recovery preserves safe navigation context where practical and never repl
 
 ## Slice Acceptance Criteria
 
-1. An authenticated operator can enter or refresh each documented Library route, and an
-   unauthenticated deep entry returns through the memory-only connection boundary to the intended
-   safe route without leaking a token or losing the selected read context.
-2. Library clearly presents Storage files and FileIndex as different concepts. The first useful
-   Storage page can be reached by selecting an Active configured Storage without typing an internal
-   ID, while FileIndex opens as durable discovery state rather than live Storage contents.
-3. The operator can navigate Storage-relative directories/breadcrumbs and bounded pages, distinguish
-   directories/files, see useful file facts and membership, and recover from empty, path/cursor,
-   provider-read, configuration-unavailable and permission failures without a mutation or CLI step.
-4. The operator can submit, reset and revisit meaningful FileIndex search/filters, traverse stable
-   bounded results, and read discovery/stability separately from processing disposition and current
-   occurrence state.
-5. A selected indexed record has a refresh-safe detail view that renders available current and
-   historical explanation evidence, Result relevance and related state accurately, labels missing,
-   legacy/stale/truncated evidence truthfully, and does not expose secrets or raw protocol failures.
-6. Physical/indexed links work when uniquely and safely available. Missing, ambiguous, unavailable
-   or truncated membership does not navigate to the wrong record or synthesize certainty, and the
-   operator can return to a valid prior/parent Library context.
-7. Every operational or configuration next step outside the Slice is unavailable or uses an honest
-   current V1 Web continuation. Merely viewing, searching, retrying, refreshing, paging or navigating
-   V2 Library sends no work-admission/mutation request and creates no side effect.
-8. Loading, empty, malformed, 401, 403, not-found and unavailable states remain within the shell,
-   preserve useful context where safe, and offer a concrete retry/back/reset/reconnect/handoff path.
-9. Library data passes through centralized typed validation and query ownership; feature UI does not
-   duplicate auth/fetch/error policy, infer backend authority or introduce a second runtime/API.
-10. Automated unit/component/router/browser evidence covers the full read journey and key failures
-    at narrow and wide viewports, while focused Python and full regression gates prove existing API,
-    RBAC, root confinement, redaction, V1 coexistence and zero-mutation invariants remain intact.
+1. An authenticated operator can enter or refresh each documented Operations route from the shell,
+   Dashboard or Library; an unauthenticated deep entry returns through the memory-only connection
+   boundary without leaking a credential or replaying an action.
+2. Dashboard and Operations distinguish Worker/readiness, pending/admitted Job, processing Task and
+   per-item/result state. Bounded lists/details and cross-links remain truthful under empty, partial,
+   stale, malformed, 401/403 and unavailable responses.
+3. An authorized operator can submit an exact current-file or ResourceLibrary-relative Scan and a
+   complete Preview, follow their durable progress/findings, cancel when backend-eligible and prove
+   that Preview/analysis invokes no mutating Storage operation.
+4. Starting from recognizable V2 Library context, the operator can create/update a durable manual
+   intent, inspect and select exact immutable Preview items, understand targets/attachments/
+   conflicts/capabilities/destructive implications, and recover from stale choices or source state
+   by producing a fresh Preview rather than silently reusing old evidence.
+5. The operator can explicitly authorize and submit the selected manual operation entirely in Web,
+   receives a durable work identity promptly, follows independent item outcomes, and never issues,
+   sees, copies or persists a raw execution token. Backend tests prove exact binding, one-shot/
+   expiry/concurrency behavior, RBAC, limits, audit and rejection before mutation when stale.
+6. Only OrganizerExecutor executes reviewed Storage effects. Overwrite/delete/source cleanup require
+   explicit permission and intent; link capability failure has no implicit fallback; partial or
+   uncertain effects stay item-scoped and are never automatically retried.
+7. Automation Definitions can be operated through their complete bounded lifecycle with honest
+   Draft/Active state, validation, exact Preview, object-scoped checked activation, schedule/timezone
+   state, separate grant/revocation, occurrence history and linked work. An unactivated Draft,
+   enabled schedule or stale Preview alone never gains unattended mutation authority.
+8. Webhook Definitions, exact-revision tests, object-scoped checked activation and delivery state are
+   usable in V2 without exposing secret values. Retry/requeue/stale-lease actions require an eligible
+   exact delivery/version and do not alter definitions, sibling deliveries or completed media work.
+9. Task/Job and operation failures explain durable state, known effects and the concrete next valid
+   action. Cooperative lifecycle controls do not claim undo; Slice 34 media review/recovery actions
+   and Slice 35 general configuration repair are explicitly linked/handed off rather than imitated.
+10. Central typed API/query/mutation boundaries, component/router/browser tests, focused Python
+    integration/security tests and full regression/release gates prove V1 coexistence, exact request
+    methods, no automatic mutation replay, redaction, persistence and all Safety Invariants.
 
 ## Final Validation Expectations
 
-- `python3 scripts/check_governance.py` passes against the committed Slice 32 Contract and ACTIVE
-  Roadmap row, with no active Task before B planning and Base SHA `76de3f60…` unchanged.
+- `python3 scripts/check_governance.py` passes against the committed Slice 33 Contract and ACTIVE
+  Roadmap row, with no active Task before B planning and Base SHA `827c36b4…` unchanged.
 - Frontend lockfile/tooling gates pass: `npm --prefix web ci`, format check, TypeScript typecheck,
   ESLint, Vitest/React Testing Library, production Vite build and Playwright browser tests.
-- Focused built-artifact browser evidence covers Library landing and direct authenticated/
-  unauthenticated deep entry; Active Storage selection; root/directory/breadcrumb and bounded paging;
-  FileIndex search/filter/reset/list/detail/back; physical/indexed linkage; refresh-safe state; narrow
-  and wide keyboard use; empty/malformed/401/403/not-found/configuration/provider/path/cursor failures;
-  and an honest V1 continuation for deferred actions.
-- Browser/network evidence proves Library reads issue only the intended authenticated GET requests,
-  create no work or mutation, and keep tokens/secrets/private paths out of URLs, rendered output,
-  persistent browser stores, console output and captured artifacts.
-- Focused Python tests cover system-status Storage options, runtime Files browsing, FileIndex catalog,
-  by-source/detail/lifecycle projections, RBAC, Active-snapshot binding, root confinement, paging,
-  redaction, read-only side effects and malformed/unsupported query failures.
-- Existing Python API/security, Storage, FileIndex, RecognitionType C, zero-mutation pipeline, V1 UI,
-  static-serving and release-security regressions pass. The Docker release-security smoke test is run
-  at Slice Final when Docker is available and reported `UNAVAILABLE` rather than inferred when not.
+- Built-artifact browser evidence covers Operations landing and authenticated/unauthenticated deep
+  entry; actionable Dashboard links; Task/Job/Worker lists, details, paging and eligible lifecycle
+  controls; Library-to-Scan/Preview/Organize context; exact manual intent/Preview/authorization/
+  admission/result; Automation Draft/Active/preview/grant/schedule/occurrence state; Notification
+  definition/test/delivery recovery; narrow/wide keyboard use; and all specified failure states.
+- Browser/network evidence proves each action sends only the intended authenticated method/body,
+  never automatically repeats a mutation, and keeps Bearer credentials, raw execution authority,
+  secret values, private paths and provider payloads out of URLs, persistent stores, DOM, console and
+  captured artifacts.
+- Focused Python tests cover Dashboard/readiness, Task/Job/Scan/Preview/manual-intent projections,
+  Web-native one-shot execution admission and persistence, RBAC/limits/audit/stale fencing,
+  OrganizerExecutor-only mutation, Automation definition/Preview/grant/schedule/occurrence behavior,
+  Webhook definition/test/delivery recovery, redaction and backward-compatible API/V1 behavior.
+- Safety regressions explicitly cover Preview/DryRun zero mutation, exact source/snapshot/item
+  binding, conflict/capability checks, explicit overwrite/delete/source-cleanup authority, no link
+  fallback, one-shot expiry/concurrency, cooperative cancellation, no uncertain replay,
+  RecognitionType C preservation and notification/media isolation.
+- Any schema migration is forward-only, fail-closed and restart-tested against temporary copied
+  fixtures. Persisted admitted work, Task/Job/item outcomes, execution authority, Automation grants/
+  occurrences and delivery state survive the applicable API/Worker/Scheduler/Notification Worker
+  restart boundary without duplicate admission or mutation replay.
+- Existing Python API/security, Storage, FileIndex, recovery, V1 UI, static-serving and release-
+  security regressions pass. Docker release-security smoke is run at Slice Final when Docker is
+  available and reported `UNAVAILABLE` rather than inferred when not.
 - Normal quality gates pass: frontend formatting/type/lint/tests/build, Ruff format/check, full
   unittest discovery, compileall and `git diff --check`. Existing root-CWD private runtime state must
   not be deleted to make tests pass; use an isolated clean checkout when required and report both
   results truthfully.
-- Tests use local fakes and temporary state only; no production SMB/OpenList/S3/TMDB service,
-  credentials, user media or Internet access is required.
+- Tests use local fakes, local HTTP servers and temporary Storage/runtime/configuration state only;
+  no production SMB/OpenList/S3/TMDB/Webhook service, credentials, user media or Internet access is
+  required.
 - Before Slice Final, B inspects the full Base..Head diff, test deletions/skips/assertion weakening,
   unrelated files and tracked/private configuration. Final Closure evidence records actual totals,
   skips and unavailable gates without inference.
 
 ## Closure Packet
 
-~~~
-Slice: 32 — Library & Files Experience
-Base SHA: 76de3f60e223131a8b7db97a566d0ceaadd9b2a0
-Head SHA: ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99
-
-Required Outcomes:
-- RO-1 — COMPLETE: `/ui-v2/library`, `/library/files`, `/library/file-index` and
-  `/library/file-index/$fileId` are typed shell destinations with centralized route metadata,
-  refresh-safe view state and memory-only authentication continuation.
-- RO-2 — COMPLETE: the Storage Files journey selects configured Active Storage, browses bounded
-  Storage-relative directories and breadcrumbs, exposes membership state and recovers without
-  accepting a host path or starting work.
-- RO-3 — COMPLETE: FileIndex search, ResourceLibrary/Storage/discovery/processing/identity filters,
-  reset and stable bidirectional paging expose durable discovery separately from processing and
-  current-source state.
-- RO-4 — COMPLETE: FileIndex detail renders bounded current, historical, legacy and unavailable
-  source, occurrence, processing, pipeline, Result, review and checkpoint evidence without
-  reconstructing missing facts.
-- RO-5 — COMPLETE: an explicit authoritative by-source read opens only one current unique indexed
-  record, while detail offers physical context only for a matching enabled Active
-  ResourceLibrary-to-Storage binding; uncertain linkage remains non-navigating.
-- RO-6 — COMPLETE: Library-specific empty, malformed, unavailable, path/cursor, stale/not-found,
-  401 and 403 states retain orientation and provide bounded retry/back/reset/reconnect or current
-  V1 Web continuation without submitting work.
-- RO-7 — COMPLETE: System Status, Storage Files, FileIndex catalog, detail and by-source reads use
-  centralized strict entity/API/query boundaries and the shared authentication/RBAC lifecycle.
-- RO-8 — COMPLETE: unit, component, Python integration and built-artifact browser evidence proves
-  responsive keyboard use, GET-only zero-side-effect behavior, memory-only Bearer handling,
-  V1/V2 coexistence and Python-served production assets.
-
-Required Surfaces:
-- Library route surface — COMPLETE.
-- Storage files surface — COMPLETE.
-- FileIndex catalog surface — COMPLETE.
-- File detail/explanation surface — COMPLETE.
-- Cross-surface and migration surface — COMPLETE.
-- State, auth and responsive surface — COMPLETE.
-- Application/API authority surface — COMPLETE.
-- Test and documentation surface — COMPLETE for implementation and proof; A-owned factual
-  documentation reconciliation is listed below.
-
-Implemented:
-- A V2 Library landing and typed route family that truthfully separates fresh Active Storage files
-  from durable FileIndex records inside the shared responsive shell.
-- Bounded Active Storage selection, directory/file browsing, Storage-relative breadcrumbs,
-  deterministic paging, membership presentation and Library-specific recovery states.
-- A strict FileIndex catalog with submitted search/filter state, stable adjacent paging,
-  discovery/stability and processing/current-occurrence separation, and bounded identity facts.
-- A strict FileIndex detail model and view for source/library identity, occurrence/fingerprint
-  provenance, pipeline/policy/target evidence, current-versus-historical Results, reviews,
-  checkpoints, truncation, unavailable evidence and honest next destinations.
-- Explicit unique by-source resolution and safely gated physical/indexed navigation using the exact
-  managed Active Storage and enabled ResourceLibrary binding.
-- Shared authenticated GET/query ownership, dynamic route metadata, safe return context and local
-  fake/browser coverage without a Node production runtime or frontend-owned business authority.
-
-Tasks completed:
-- Task 32.1 — V2 Library Storage Files journey — PASS at
-  `b102145aedb3258532bcb7377b6f030abd880a51`.
-- Task 32.2 — V2 FileIndex discovery journey — PASS at
-  `e8a77fcae64bcda78fda46d29700e9794fdf9c7f`.
-- Task 32.3 — V2 FileIndex detail and physical/indexed context — PASS at
-  `ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99`.
-
-Final Tests:
-- `python3 scripts/check_governance.py` — PASS.
-- `npm --prefix web ci` — PASS; 254 packages installed, 255 audited, 0 vulnerabilities.
-- Frontend format/type/lint — PASS; Vitest/React Testing Library 191/191 in 17 files;
-  production Vite build PASS; Playwright Chromium 54/54.
-- Task 32.3 focused evidence — PASS: detail normalization 17/17, built-artifact detail journey
-  7/7 and focused Python catalog/API/Storage/lifecycle/static/security modules 76/76.
-- Ruff format/check — PASS; 301 files already formatted; compileall — PASS.
-- Root-CWD full unittest discovery — FAIL, 1417 run, 6 failures and 7 skips. The six failures read
-  ignored local runtime/configuration state instead of their fixture assumptions; Slice 32 changes
-  none of the failing test modules or the CLI/runtime-configuration paths involved, and no private
-  value is reproduced in this packet.
-- Full unittest discovery from a clean detached worktree at the exact Implementation Head — PASS,
-  1417 tests, 7 environment-gated skips. This is the valid isolated full-regression result and
-  demonstrates that the root-CWD failures are pre-existing/private-runtime-state effects unrelated
-  to Slice 32.
-- `python3 scripts/docker_release_security_smoke_test.py` — PASS with Docker available: clean
-  candidate image, four-service topology, non-root runtime, V1/V2 static coexistence, safe headers,
-  authentication/RBAC, exact Active snapshot, durable projections and zero-side-effect denial.
-- `git diff --check` — PASS for Task, Base..Implementation Head and B closure edit ranges.
-
-Safety Evidence:
-- Base..Implementation Head inspection found no test deletion/skip/assertion weakening, tracked
-  private configuration, credentials, binary artifacts or unrelated mutation behavior.
-- Browser request capture and the rejecting fake prove Library navigation, retry, paging, search,
-  detail and linkage issue authenticated bounded GETs only and create no Job, Task, Provider,
-  audit, execution-authority or Storage mutation request.
-- Storage paths remain normalized and relative; physical links require the exact Active Storage and
-  enabled ResourceLibrary binding. No host root, fingerprint value, provider payload, raw exception
-  or uncertain linkage is promoted into frontend authority.
-- Detail evidence/checkpoints pass through explicit bounded allowlists; Bearer material remains in
-  memory and absent from routes, DOM, persistent browser stores, handoff links, console output and
-  captured artifacts.
-- Existing Python RBAC, Active-snapshot, root-confinement, FileIndex relevance, V1 `/ui`, static
-  security, RecognitionType C and OrganizerExecutor-only mutation regressions remain covered; the
-  Docker smoke validates the exact release artifact.
-- Tests use local fakes, temporary state and an isolated clean worktree. `config/alist.json`, local
-  ignored runtime configuration, production credentials, private endpoints and operator media are
-  absent from Base..Implementation Head.
-
-Known Non-blocking Issues:
-- P2: pre-existing root-CWD test isolation permits six Python tests to consume ignored local
-  runtime/configuration state. The exact Implementation Head passes all 1417 tests in a clean Git
-  worktree; Slice 32 neither changes nor conceals the unrelated infrastructure behavior.
-- P3: existing sqlite `ResourceWarning` diagnostics and 7 environment-gated full-suite skips remain
-  unchanged. Frontend Vitest also emits non-failing jsdom `Window.scrollTo()` diagnostics.
-
-Explicitly Deferred:
-- Slice 33 Operations Workspace: expanded Dashboard, Tasks, Jobs, schedules, Automation,
-  Notifications and complete Web-native Scan/Preview/Organize/execution authorization.
-- Slice 34 Review & Recovery Workspace: review decisions, conflicts, checkpoint actions,
-  Reprocess and per-item/bounded-batch recovery mutations.
-- Slice 35 Configuration Administration: Storage/ResourceLibrary and other managed configuration,
-  Settings, revision/test evidence and activation in V2.
-- Slice 36 final parity, cross-feature accessibility evidence, supported `/ui` cutover and V1 UI
-  retirement.
-- Upload/download/content preview, streaming/artwork, recursive browsing, arbitrary filesystem or
-  Storage mutation, new providers, FileIndex/schema redesign, background/full-text indexing,
-  Provider calls during reads, auth redesign, SSR/BFF/Node production serving and the remaining
-  Contract deferrals.
-
-Documentation Reconciliation Needed:
-- None. A reconciled the current program status and delivered V2 Library facts in `README.md`, the
-  V2, product-experience, architecture, Roadmap and Progress documents, and the canonical Chinese
-  specification without changing stable product requirements.
-
-Decision: SLICE READY FOR A REVIEW
-~~~
+Pending implementation and B Slice Final validation.
 
 ## Review State
 
 ~~~
-Slice Status: PASS / CLOSED
-Implementation Head: ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99
-P0/P1 Defects: None
-Next Action: A SELECTS THE NEXT LARGE SLICE
+Slice Status: ACTIVE
+Implementation Head: Pending
+P0/P1 Defects: Unknown until implementation review
+Next Action: B PLANS FIRST TASK
 ~~~
 
 ## A Final Review
 
-~~~
-Reviewed Range: 76de3f60e223131a8b7db97a566d0ceaadd9b2a0..ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99
-Decision: PASS
-P0/P1 Blockers: None
-Closure Reconciliation:
-- All Required Outcomes and Required Surfaces are complete. The V2 Library journey has a real
-  authenticated entry, distinct Active Storage and FileIndex reads, bounded detail/linkage state,
-  actionable failure recovery and no hidden dependency on deferred mutation journeys.
-- Base..Implementation Head preserves Python and existing `/api/v1/*` authority, memory-only
-  Bearer/RBAC behavior, V1 `/ui` coexistence, Storage-relative confinement, GET-only Library reads
-  and OrganizerExecutor-only mutation. No test weakening, private configuration, credential or
-  unrelated artifact is present in the reviewed range.
-- A independently re-ran governance, focused Python authority/security tests (76/76), strict
-  frontend model tests (79/79), Library built-artifact browser journeys (38/38), Ruff on the changed
-  Python boundary and Base..Implementation Head diff checking. B's exact-head clean-worktree full
-  regression, complete frontend and Docker release-security evidence is credible; the documented
-  root-CWD local-configuration isolation issue remains non-blocking and pre-existing.
-- Current-status and CURRENT architecture/product facts were reconciled once at closure. Slices
-  33–36 and every Explicitly Deferred item remain deferred; no next Slice is activated here.
-~~~
+Pending B Closure Packet and `READY FOR A REVIEW` status.
