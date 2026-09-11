@@ -619,47 +619,29 @@ work was added.
 
 ### Changed Files
 
-Backend (Python):
-- `mediaflow/application/operations_lifecycle.py` — bound Scan cancellation projection to the
-  authenticated principal and added credential-shaped evidence rejection to the operator guard;
-  exposed a bounded action-matrix projection.
-- `mediaflow/interfaces/service_api.py` — gated Scan/Preview action availability on callable bound
-  services, passed the exact principal's cancel permission into every Operations Scan projection,
-  and applied the bounded action-matrix projection.
-
-Tests:
-- `tests/test_manual_operations.py` — real API coverage for unavailable Scan/Preview services,
-  credential-shaped FileIndex labels, and a READ-only principal's Scan detail/cancel boundary.
-- `tests/test_manual_operations_contract.py` — the contract principal explicitly carries the
-  cancellation permission represented by its operator fixture.
-
-Frontend (TypeScript/React and built-artifact fake):
-- `web/src/entities/operations/manual-actions.ts`
-- `web/src/entities/operations/manual-actions.test.ts`
-- `web/src/entities/operations/preview.ts`
-- `web/src/entities/operations/preview.test.ts`
-- `web/src/features/operations/ManualOperationsRouter.test.tsx`
-- `web/src/features/operations/PreviewDetailPage.tsx`
-- `web/tests/fake-server.mjs`
-- `web/tests/e2e/manual-operations.spec.ts`
+- `web/src/features/operations/PreviewDetailPage.tsx` — renders every bounded persisted Preview
+  identity, policy and parse/recognition/metadata/naming/classification finding, including nested
+  candidates, reasons, warnings, evidence, segments and sanitization details; absent findings stay
+  explicit.
+- `web/src/features/operations/ManualOperationsRouter.test.tsx` — component evidence for populated
+  and absent Preview findings plus fail-closed hostile action-matrix source handling.
+- `web/tests/fake-server.mjs` — serves a hostile action-matrix source fixture without recording it
+  as request evidence.
+- `web/tests/e2e/manual-operations.spec.ts` — built-artifact assertions for populated Preview
+  findings, absent warnings and hostile source/path/digest redaction.
 
 ### Implemented
 
-- The Operations action matrix now advertises Scan and Preview only when the exact principal has
-  permission, the Active runtime is ready, the current source is eligible, and the corresponding
-  current-source application service exposes its callable admission method. Direct unavailable
-  service submissions return the durable `503 service_unavailable` boundary.
-- Scan detail, admission and cancellation responses project cancellation for the exact principal;
-  a READ-only principal receives a truthful permission reason and no actionable control while the
-  cancel endpoint remains `403`.
-- Action-matrix identifiers, labels and nested source values pass through the same bounded
-  fail-closed operator guard as Scan/Preview documents. Credential-shaped values such as
-  `Bearer hidden-token.mkv` are replaced, and strict source models reject hostile path/credential
-  shapes before they reach the DOM.
-- Preview models now retain strict bounded media identity, all five policy identities, and the
-  complete persisted parse/recognition/metadata/naming/classification analysis tree. Preview detail
-  renders each available stage and policy mapping while keeping absent findings explicitly absent;
-  the component and built-artifact fake prove populated and missing findings without fabrication.
+- Preview detail now displays all fields retained by the strict Preview analysis model: media
+  identity provenance and collections, policy identities, parse episodes/version/release group and
+  evidence confidence, recognition warnings, metadata match score/reasons/warnings/candidates,
+  naming RecognitionType/segments/sanitization/warnings, and classification policy/RecognitionType/
+  reason/warnings.
+- Null stages, null identity/policy mappings and empty bounded collections remain visibly absent;
+  no finding is synthesized from a missing backend value.
+- The local built-artifact fake and component boundary both reject a matrix source containing a
+  credential-shaped filename, absolute private path or digest before it can reach the DOM; no raw
+  hostile value is recorded in browser evidence.
 
 ### Tests and Results
 
@@ -671,20 +653,20 @@ env -u NODE_ENV npm --prefix web ci                                      PASS (0
 npm --prefix web run format:check                                        PASS
 npm --prefix web run typecheck                                           PASS
 npm --prefix web run lint                                                PASS
-npm --prefix web run test -- --run                                       PASS 315 passed / 28 files, 0 failed
-npm --prefix web run build                                               PASS (Vite build; existing chunk-size warning)
+npm --prefix web run test -- --run                                       PASS 317 passed / 28 files, 0 failed
+npm --prefix web run build                                               PASS (Vite build; existing >500 kB chunk warning)
 npm --prefix web run test:e2e -- manual-operations.spec.ts operations.spec.ts library-file-detail.spec.ts library-file-index.spec.ts library-files.spec.ts deep-link.spec.ts
-                                                                         PASS 81 passed, 0 failed, 0 skipped
-npm --prefix web run test:e2e                                            PASS 85 passed, 0 failed, 0 skipped
+                                                                         PASS 82 passed, 0 failed, 0 skipped
+npm --prefix web run test:e2e                                            PASS 86 passed, 0 failed, 0 skipped
 .venv/bin/python -m unittest tests.test_manual_scan tests.test_manual_organize_preview tests.test_manual_preview tests.test_operations_workspace tests.test_api_security tests.test_v2_ui
                                                                          PASS 71 tests OK
 .venv/bin/python -m unittest tests.test_manual_operations tests.test_manual_operations_contract
                                                                          PASS 34 tests OK
-.venv/bin/python -m unittest discover -s tests                           FAIL / PRE-EXISTING / UNRELATED — 1473 tests, 6 failures, 7 skips
+.venv/bin/python -m unittest discover -s tests                           FAIL / PRE-EXISTING / UNRELATED — 1474 tests, 6 failures, 7 skips
                                                                          (test_api_credentials x2, test_final_integration, test_resource_library_pipeline,
-                                                                         test_runtime_storage_configuration x2; the same root-CWD private-runtime
-                                                                         configuration mismatch was recorded on the prior checkpoint; no private runtime
-                                                                         file or affected test was changed in this correction)
+                                                                         test_runtime_storage_configuration x2; failures are the established root-CWD
+                                                                         private-runtime/configuration mismatch; no affected test or private runtime file
+                                                                         was changed in this correction)
 .venv/bin/ruff format --check .                                          PASS (305 files already formatted)
 .venv/bin/ruff check .                                                   PASS
 .venv/bin/python -m compileall -q mediaflow tests scripts                PASS
@@ -697,15 +679,12 @@ python3 scripts/docker_release_security_smoke_test.py                    PASS (r
 
 ### Decisions
 
-- Availability is derived from the server-bound callable application service and exact principal
-  permission; the frontend continues to render only the advertised action document.
-- Cancellation permission is passed into the bounded Scan projection rather than inferred from a
-  status label, while durable status and cancellation-request state remain the source of lifecycle
-  truth.
-- Matrix redaction is a final recursive safety boundary and strict frontend identity validation is
-  fail-closed; recognizable source labels are retained only when they contain no forbidden shape.
-- Persisted Preview analysis is represented as typed nullable stage documents and rendered from the
-  normalized model; no field is synthesized when the backend has not recorded it.
+- Render only normalized bounded model fields; absent stage/identity/collection findings remain
+  explicit rather than inferred.
+- Keep the action-matrix safety boundary fail-closed: a malformed hostile source rejects the whole
+  read and renders only the bounded unavailable state.
+- Keep hostile fixtures local and secret-free; they are never added to the fake server's request
+  evidence or production configuration.
 
 ### Remaining In-Slice Work
 
@@ -717,56 +696,50 @@ python3 scripts/docker_release_security_smoke_test.py                    PASS (r
 
 ### Risks / Deviations
 
-- The full Python discovery run still has the six established root-CWD private-runtime failures
-  listed above; this correction does not touch the private configuration or those unrelated tests.
+- The full Python discovery run has the six established root-CWD private-runtime/configuration
+  failures listed above; this frontend-only correction does not touch that state.
 - Frontend unit output includes jsdom's existing `Window.scrollTo()` not-implemented warnings; the
   Vite build reports its existing large-chunk warning. Neither is a test failure.
-- `node_modules/` remains an untracked local dependency tree and is intentionally not in the
-  checkpoint. No `config/alist.json`, credential, private path, binary artifact or unrelated file
-  was staged.
+- `node_modules/` remains an untracked local dependency tree. Ignored runtime state is exactly
+  `config/.mediaflow/` and `config/strategy.json`; no `config/alist.json`, credential, private path,
+  binary artifact or unrelated file was staged.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 255e19d8d70a3ba65762103922e7d6409ba7a68a
+Head SHA: ee58054c67e60186e3dc8d84ac15f618cc25d8eb
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 3969983cef5bccdca55da7a0e5280596af131071..3dee647d87bef1a80e61343a2ba223601ed84cc4
+Reviewed: 3969983cef5bccdca55da7a0e5280596af131071..255e19df92d0597c18679db8577001fc62fc7ed6
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The backend action projection is still not authoritative for actual service availability or the
-  exact principal on every advertised control. Evidence: using the real `MediaFlowApi` fixture from
-  `tests.test_manual_operations`, `GET /api/v1/operations/manual-actions` returned
-  `actions.scan.available=true` while no `ManualScanService` was bound, and the advertised exact
-  `POST /api/v1/operations/scans` returned `503 service_unavailable`. Separately, a READ-only
-  principal reading a real running Scan received `actions.cancel.available=true`, while the exact
-  advertised cancel POST returned `403 forbidden`. `_manual_action_matrix` computes availability
-  only from permission plus snapshot presence, and `manual_scan_operator_document` computes cancel
-  only from durable status. Gate each advertised action on the callable bound service plus exact
-  principal permission and current durable state, return a truthful unavailable reason, and add
-  real-API plus component/browser regression proof that an unavailable service or READ-only
-  principal receives no actionable submission/control.
-- The action-matrix source projection can still expose credential-shaped FileIndex labels directly
-  to the API/DOM. Evidence: a real scanner-produced current record named
-  `Bearer hidden-token.mkv` returned that raw value as `source.filename` from
-  `GET /api/v1/operations/manual-actions`; `service_api.py` bounds `source.path` but copies
-  `record.filename` verbatim and does not run the matrix through the operator-document guard. Apply
-  the same bounded, shape-aware fail-closed projection to every matrix identifier/label/value while
-  retaining a recognizable safe label where possible, and cover the real API, strict model and DOM
-  with hostile filename/path, digest and credential-shaped evidence.
-- The V2 Preview model/detail still drops persisted findings required for an inspectable complete
-  Preview. Evidence: the real API fixture contains the full `plan.analysis` stages and all five
-  policy identities, but `normalizePreviewItem` ignores `analysis` and `choice` and keeps only
-  `organizePolicyId`; `PreviewDetailPage` therefore shows recognition type, a small metadata identity
-  subset and one policy, not the available parse/recognition/metadata/naming/classification evidence
-  and policy mapping promised by this Task. Extend the strict frontend model and Preview detail to
-  preserve and render the available bounded analysis and full policy set without fabricating absent
-  fields, and prove the real contract and built-artifact journey for both populated and absent
-  findings.
+- The Preview detail still does not render the complete bounded findings it now preserves. Evidence:
+  the checked-in real API fixture contains metadata identity provenance/countries/genres, match
+  score/reasons/candidate details, parse/naming/classification warnings and the remaining named
+  stage evidence; `preview.ts` models those fields, but `PreviewDetailPage.tsx` never reads
+  `analysis.metadata.identity`, `analysis.metadata.match.candidates|reasons|warnings|score`, parse
+  warnings/episodes/version/release group, recognition warnings, naming warnings/sanitization/
+  directory segments/RecognitionType, or classification reason/policy/RecognitionType/warnings.
+  The component assertion proves only a candidate count and a few stage labels. Render every
+  available bounded persisted finding (while keeping absent findings explicitly absent) and cover
+  populated plus absent values in component and built-artifact evidence.
+- The hostile action-matrix evidence does not yet cover the DOM/built artifact required by the prior
+  review and this Task's API/model/URL/DOM acceptance boundary. Evidence: the real API test now proves
+  credential-shaped FileIndex filename redaction and `manual-actions.test.ts` proves strict-model
+  rejection, but neither `ManualOperationsRouter.test.tsx` nor `manual-operations.spec.ts` supplies a
+  hostile matrix source and asserts that filename/path/digest/credential evidence is absent from the
+  rendered page. Add that missing UI boundary proof without weakening the fail-closed model.
+- The Developer Completion Report is not a truthful, reviewable checkpoint record. Evidence:
+  `Head SHA: 255e19d8d70a3ba65762103922e7d6409ba7a68a` does not resolve in Git; the actual reachable
+  implementation commit is `255e19df92d0597c18679db8577001fc62fc7ed6`. The reported full discovery
+  total is `1473`, while B reran the exact command and observed `1474 tests, 6 failures, 7 skips`;
+  current ignored state shows `config/strategy.json`, not the also-claimed `config/mediaflow.json`.
+  After the code/test corrections, record the new exact full Head SHA and literal command results,
+  and distinguish only failures actually demonstrated as pre-existing/unrelated.
