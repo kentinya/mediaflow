@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 33.2
 Parent Slice: 33
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3969983cef5bccdca55da7a0e5280596af131071
 Difficulty: High
 Test Level: T4
@@ -392,52 +392,268 @@ Status: READY FOR B REVIEW
 Head SHA: cb24a59fd8078af426d081b7288b818b58322f24
 ```
 
+## Developer Completion Report — correction round for B Decision FIX REQUIRED
+
+Fix scope: only the four blockers B listed under `Decision: FIX REQUIRED / Next: SAME TASK FIX
+LOOP`. Task ID, Task Base, Goal and Scope are unchanged; no acceptance criterion was reinterpreted
+and no P2/P3 item was added.
+
+### Changed Files
+
+Backend (Python):
+- `mediaflow/application/operations_lifecycle.py` — replaced the Preview plan projector with an
+  explicit shape-aware projection of the persisted plan document; added `_bounded_location`,
+  `_bounded_identifier`, `_bounded_label`, `_bounded_cursor`, `_bounded_counter`, `_bounded_number`,
+  `_bounded_media_identity`, `_bounded_preview_analysis` (+ parse/recognition/metadata/naming/
+  classification sub-projections), `_bounded_preview_destination`, `_bounded_attachment_list`,
+  `_bounded_conflict_list`, `_bounded_capabilities`, `_bounded_preview_execution_state` and the final
+  recursive `_bounded_operator_document` guard; extended `_bounded_evidence_text` to reject raw
+  fingerprint/digest values; rewrote `manual_scan_operator_document` to emit the exact bounded Scan
+  document (camelCase scope, real progress counters, bounded `errors`, aggregate `failure`, paging
+  window and a backend-advertised `actions.cancel`); `executionPlan`, source occurrence identity and
+  the configuration digest are no longer read at all.
+- `mediaflow/interfaces/service_api.py` — one canonical action matrix (`scopeKind`/`scopeId`,
+  `selectionRequired`, bounded `resourceLibraries` choices, per-action `modes`), scopeless/
+  ResourceLibrary-less discovery instead of `400`, and fixed the never-matching
+  `/api/v1/operations/scans/{id}`, `/cancel` and `/api/v1/operations/previews/{id}` route predicates
+  (`parts[:3]` compared against a 4-element list and a wrong `len(parts)`); the Scan detail route now
+  passes the paging window through in the canonical camelCase fields.
+
+Tests (Python):
+- `tests/test_manual_operations_contract.py` (new) — drives the real `MediaFlowApi` over a real
+  runtime configuration, `LocalStorage` source, scanner-produced FileIndex record and the real manual
+  Scan/Preview services; captures the action matrix, Scan admission/detail/paged detail and Preview
+  admission/detail/list documents, asserts they contain no forbidden evidence, asserts the
+  `MutationSpyStorage` adapters saw zero mutations, and compares the canonicalized documents with the
+  checked-in frontend fixture (regenerate with `MEDIAFLOW_UPDATE_FIXTURES=1`).
+- `tests/test_manual_operations.py` — action-matrix contract updated to the canonical camelCase shape
+  plus new controls (library discovery without an exact scope, unknown scope kind, file scope without
+  an exact source); new `HostileProjectionTests` calling `manual_preview_operator_document` with a
+  hostile persisted plan (raw 64-char fingerprint, `Authorization: Bearer hidden` in an attachment
+  filename, `/private/media/out.mkv` destination, `executionPlan`, UNC/host roots in conflict and
+  warning evidence, a fingerprint-named parse-evidence label) and
+  `manual_scan_operator_document` with bounded errors, paging fields and every cancellable/terminal
+  status.
+
+Frontend (TypeScript/React):
+- `web/src/entities/operations/scan.ts`, `preview.ts`, `manual-actions.ts` — strict models rewritten
+  to the exact real API documents (real progress counters and status vocabulary, bounded `errors`
+  objects, aggregate/item `failure` envelopes, `actions.cancel`, paging window for Scan; nullable
+  scope plus `{scopeKind, scopeId, itemCount}`, object `selection` and the nested
+  identity/policies/destination/attachments/conflicts/capabilities/warnings findings for Preview;
+  nullable `scopeKind` plus bounded `resourceLibraries` choices and per-action `modes` for the
+  matrix).
+- `web/src/entities/operations/__fixtures__/manual-operations.json` (new) — the real API documents,
+  consumed by the normalizer/component/browser evidence.
+- `web/src/entities/operations/manual-operations-contract.test.ts` (new) and the rewritten
+  `scan.test.ts`/`preview.test.ts`/`manual-actions.test.ts` — every case starts from the real API
+  fixture and mutates one field to prove fail-closed normalization.
+- `web/src/features/operations/ScanNewPage.tsx` — sends the backend-required `mode` from the
+  advertised modes, offers a bounded ResourceLibrary selector when the route carries no exact scope,
+  keeps the admitted state visible before continuing to the durable Scan detail.
+- `web/src/features/operations/PreviewNewPage.tsx` — same scope selector and admitted-state
+  behaviour.
+- `web/src/features/operations/ScanDetailPage.tsx` — renders the backend-advertised `actions.cancel`
+  only when available, real progress counters, bounded error/`failure` evidence and cursor-driven
+  paging (client-side cursor path, no local filtering).
+- `web/src/features/operations/PreviewDetailPage.tsx` — renders the persisted per-item findings
+  (target, capabilities, attachments, conflicts, warnings, failure) and never fabricates an absent
+  one.
+- `web/src/features/operations/OperationsLanding.tsx` — real bounded ResourceLibrary choice from the
+  discovery matrix; no Scan/Preview link is rendered before an exact scope is chosen or when the
+  backend does not advertise the action.
+- `web/src/features/library/LibraryLanding.tsx` — per-ResourceLibrary action links are rendered only
+  from the exact action matrix; otherwise the backend reason is shown.
+- `web/src/features/library/FileIndexDetailPage.tsx` — renders a manual action link only when the
+  backend advertises it; keeps the matrix read bound to the loaded record's ResourceLibrary.
+- `web/src/shared/api/api-client.ts` — matrix query may omit `scopeKind` for discovery; Scan
+  submission requires an explicit `mode`.
+- `web/src/features/operations/ManualOperationsRouter.test.tsx` (new) — 11 component/router tests
+  over the real route tree using the real API documents: scope gate on Operations, exact Scan body +
+  mode, keyboard activation, invalid scope, durable Scan detail with paging and backend-advertised
+  cancel, exactly one cancellation POST, Preview admission body and detail findings, Library/FileIndex
+  advertisement gating, unavailable-matrix recovery, and no authenticated read before connect.
+- `web/tests/fake-server.mjs` — additive bounded fake routes for the manual-actions matrix, Scan
+  admission/detail/cancel and Preview admission/list/detail with bounded request evidence at
+  `/__test__/manual-operations`; no existing route changed.
+- `web/tests/e2e/manual-operations.spec.ts` — replaced the conditional/`page.route` spec with 10
+  unconditional built-artifact tests (no fallbacks, no `waitForTimeout`): durable Scan paging,
+  admission (exact body, `Scan admitted`, durable detail), exactly one cancellation, Preview
+  admission/detail, authenticated and unauthenticated deep entry, read-only principal, unknown Scan
+  record, invalid scope and FileIndex action advertisement.
+- `web/tests/e2e/deep-link.spec.ts` — Prettier formatting only (no assertion change).
+
+### Implemented
+
+- One exact bounded document per action/result, produced by the backend and consumed unchanged by the
+  real client models: `manual-actions`, Scan admission/detail (including the paging window and the
+  backend-advertised cancellation control) and Preview admission/list/detail. The previously
+  unreachable Scan/Preview detail and cancel routes are now registered correctly.
+- Preview redaction is shape-aware for the persisted plan: only named operator-facing fields are
+  read, `executionPlan`/occurrence identity/configuration digest are never read, and a final
+  recursive guard drops forbidden keys and rejects fingerprint/digest/credential/endpoint/host-root
+  shapes anywhere in the produced document. Attachments and conflicts are projected as real objects
+  with bounded filenames/locations instead of being dropped or passed through.
+- Render-only-what-is-advertised: the Scan cancel control, the Library/FileIndex Scan/Preview links
+  and the Operations/Scan/Preview entry links all come from the backend action projection for the
+  exact principal and scope; a missing or unavailable projection renders the backend reason and no
+  control.
+- Every Scan/Preview submission uses an explicit authenticated method with an exact bounded body and
+  `retry: false`; nothing is replayed after a rejection and the admitted durable state is rendered.
+
+### Tests and Results
+
+Run from the repository root unless noted.
+
+```text
+python3 scripts/check_governance.py                                      PASS
+env -u NODE_ENV npm --prefix web ci                                      PASS (0 vulnerabilities)
+npm --prefix web run format:check                                        PASS (all matched files)
+npm --prefix web run typecheck                                           PASS
+npm --prefix web run lint                                                PASS
+npm --prefix web run test -- --run                                       PASS 313 passed / 28 files, 0 failed
+npm --prefix web run build                                               PASS (vite build)
+npm --prefix web run test:e2e -- manual-operations.spec.ts operations.spec.ts library-file-detail.spec.ts library-file-index.spec.ts library-files.spec.ts deep-link.spec.ts
+                                                                         PASS 80 passed, 0 failed, 0 skipped (all 7 spec files selected by the name filters)
+npm --prefix web run test:e2e                                            PASS 84 passed, 0 failed, 0 skipped
+.venv/bin/python -m unittest tests.test_manual_scan tests.test_manual_organize_preview tests.test_manual_preview tests.test_operations_workspace tests.test_api_security tests.test_v2_ui
+                                                                         PASS 71 tests OK
+.venv/bin/python -m unittest tests.test_manual_operations tests.test_manual_operations_contract
+                                                                         PASS 30 tests OK (new focused file: 4 tests)
+.venv/bin/python -m unittest discover -s tests                           FAIL 1470 tests, 6 failures, 7 skips — all six are the established root-CWD private-runtime-state
+                                                                         failures (test_api_credentials x2, test_final_integration, test_resource_library_pipeline,
+                                                                         test_runtime_storage_configuration x2); see Risks. The same changes run clean in an isolated
+                                                                         checkout: 1470 tests, OK (skipped=7), 0 failures
+.venv/bin/ruff format --check .                                          PASS (305 files already formatted)
+.venv/bin/ruff check .                                                   PASS
+.venv/bin/python -m compileall -q mediaflow tests scripts                PASS
+.venv/bin/python -m pip check                                            PASS ("No broken requirements found")
+.venv/bin/mediaflow --config config/strategy.example.json config validate            PASS
+.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate PASS
+git diff --check                                                         PASS (no whitespace errors)
+python3 scripts/docker_release_security_smoke_test.py                    FAIL / PRE-EXISTING / UNRELATED (Docker is available; compose fails at container creation with
+                                                                         "invalid mount config for type "bind": bind source path does not exist:
+                                                                         /tmp/mediaflow-smoke-security-*/mediaflow.json". The identical failure occurs on the reviewed
+                                                                         head b747da2 in a clean worktree that does not contain these changes.)
+```
+
+Additional focused evidence run for this report:
+
+```text
+for i in 1 2 3; do .venv/bin/python -m unittest tests.test_manual_operations_contract; done
+                                                                         PASS OK OK OK (fixture comparison is reproducible)
+```
+
+The golden fixture is proved against the real API on every run: `tests/test_manual_operations_contract.py`
+fails if the checked-in frontend fixture differs from what the real `MediaFlowApi` returns, and it
+asserts the response text contains no Bearer/fingerprint/digest/absolute-root/`executionPlan`
+evidence while still carrying the recognizable operator-facing source identity and relative target.
+
+### Decisions
+
+1. The backend document is the single contract; the frontend models were rewritten to the real
+   persisted shapes instead of adding adapter shapes in the normalizer. `mode`, the paging window,
+   `errors`, `failure`, `actions.cancel`, the Preview `{scopeKind,scopeId}` scope and the object
+   `selection` are emitted by the backend exactly once and consumed directly.
+2. Preview redaction is an explicit allowlist per nested document (plan, analysis stages, metadata
+   identity, destination, attachments, conflicts, capabilities) plus a recursive value guard, rather
+   than a generic recursive redactor: a generic redactor cannot distinguish "safe text that mentions a
+   path" from "raw executor input", and it dropped the required conflict objects.
+3. Absolute host roots are not published at all: the operator-facing target is the
+   MediaLibrary-relative destination (`storageId:relativePath`) and attachment/conflict locations are
+   reduced to their bounded path tail or filename.
+4. A scopeless or ResourceLibrary-less matrix request is a legitimate discovery state
+   (`selectionRequired: true`, no actionable submission, bounded `resourceLibraries` choices) instead
+   of a `400`; an unknown scope kind still fails closed with `400`.
+5. Scan cancellation is advertised by the backend for the exact durable state
+   (`pending|running|paused` and not already requested) and the page renders it only then.
+6. Scan item paging keeps a client-side cursor path: "Previous items" re-reads an already visited page
+   through its own forward cursor instead of relying on reverse-window reconstruction, so no page can
+   be duplicated or silently filtered in the browser.
+7. The fixture comparison canonicalizes timestamps, generated identifiers and opaque cursors, and
+   replaces the page-window source label of the paged ResourceLibrary document with a placeholder,
+   because which sibling lands on page one follows concurrent discovery order and is not part of the
+   API contract; the deterministic exact-file document keeps the real source identity.
+8. `MEDIAFLOW_UPDATE_FIXTURES=1` rewrites the fixture and then formats it with the frontend Prettier
+   so `npm --prefix web run format:check` stays green.
+
+### Remaining In-Slice Work
+
+- Manual intent/choice editing, item selection, execution authorization/admission, OrganizerExecutor
+  and Storage mutation remain the next Slice 33 manual Organize Task.
+- Automation definition/revision/grant/schedule/occurrence management and Notification
+  definition/test/delivery management remain later Slice 33 Tasks.
+- Slice 34 media review/recovery and Slice 35 general Configuration administration remain unchanged.
+
+### Risks / Deviations
+
+- `python3 scripts/docker_release_security_smoke_test.py` fails in this environment at Docker compose
+  container creation (missing bind source `/tmp/mediaflow-smoke-security-*/mediaflow.json`). The same
+  failure reproduces on the reviewed head `b747da2` in a clean worktree without these changes, so it is
+  reported `FAIL / PRE-EXISTING / UNRELATED`, not inferred as passing and not fixed in this Task.
+- `.venv/bin/python -m unittest discover -s tests` from the repository root reports 6 failures caused
+  by the root working directory's ignored private runtime configuration (`config/strategy.json`,
+  `config/mediaflow.json`): the CLI/diagnostic tests in `test_api_credentials`,
+  `test_final_integration`, `test_resource_library_pipeline` and `test_runtime_storage_configuration`
+  read the root CWD configuration. The same test discovery with these exact changes applied in a clean
+  isolated worktree (no root private runtime state) finishes `OK (skipped=7)`. No private runtime file
+  was deleted, moved or edited, and both results are reported.
+- The three durable-Scan browser tests intentionally share one deterministic fake record, so they run
+  as a serial group (paging → admission → cancel); the whole file, which is the required proof, always
+  passes.
+- `tests/test_manual_operations_contract.py` proves the fixture against the real API but requires a
+  local `npx`/Prettier only when regenerating the fixture; normal runs compare parsed JSON.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: a5d869619e7f46d4982d9ae8efa16804d9eedbed
+```
+
 ## B Review Result
 
 ```text
-Reviewed: 3969983cef5bccdca55da7a0e5280596af131071..ab25689f92501b7e7a8699448fef6bbc4247fa16
+Reviewed: 3969983cef5bccdca55da7a0e5280596af131071..b747da2f907da0c7860721f89adb3b579bdb220c
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The real Python API documents and the strict frontend models do not share one contract, so the
-  Web Scan/Preview journey cannot load or complete. Evidence: a real
-  `GET /api/v1/operations/manual-actions` response contains `scopeKind: "resource_library"` and
-  `runtime.configurationActive/configurationSnapshotId`, while
-  `manual-actions.ts` accepts `resourceLibrary` and requires `runtime.ready/condition/nextAction`;
-  `manual_scan.py` accepts only `full|incremental` and requires `mode`, while `ScanNewPage` omits it
-  and `scan.ts` accepts only `scan-only|scan-and-plan`; the Scan projection omits frontend-required
-  `errors` and paging fields; and the Preview API returns `previewed|blocked|stale|unavailable`, a
-  `{kind,id}` scope and nested `source/plan`, while `preview.ts` rejects those statuses and requires
-  `{scopeKind,scopeId}` plus fabricated flat item fields. Directly invoking the UI-shaped Scan
-  request produced `400 invalid_request: None is not a valid ScanMode`. Replace the divergent
-  fixtures/contracts with one bounded API shape used end-to-end, then prove actual API-produced
-  action, Scan and Preview payloads normalize and render successfully.
-- The Preview operator projection leaks forbidden execution/path evidence. Evidence: calling
-  `manual_preview_operator_document` with hostile persisted plan data returned the raw
-  `executionPlan.sourcePath`, `targetPath`, `sourceLibraryRoot`, nested destination path and
-  attachment path, including `/private/...`, a credential-bearing `smb://...` endpoint, Windows
-  root and UNC root. `_bounded_preview_plan` passes `executionPlan`, attachments, destination
-  objects, conflicts/warnings and most nested analysis through unchanged. Remove raw executor input
-  from the operator document and build an explicitly allowlisted, recursively bounded/redacted
-  findings projection; add hostile persisted-data/API/DOM tests for every nested field class.
-- Backend-advertised action authority and the promised entry/recovery journey are incomplete.
-  Evidence: `ScanDetailPage` displays Cancel for every frontend-derived non-terminal status instead
-  of an exact backend action projection; `LibraryLanding` always emits Scan/Preview links for enabled
-  libraries without the action matrix; `FileIndexDetailPage` binds the action lookup to optional URL
-  return context instead of the loaded authoritative record; and `OperationsLanding` has no manual
-  Scan/Preview entry. The added unguarded Library status read also broke malformed/unavailable
-  Library recovery. Make every actionable submission/control backend-advertised for the exact
-  principal/source/state, provide both required Operations and Library entry paths, and preserve
-  bounded loading/error/recovery behavior.
-- Required T4 proof does not pass and the completion report is not truthful. Independent focused
-  Playwright ran 70 tests with `65 passed, 5 failed`; full Playwright ran 74 with `69 passed, 5
-  failed` (deep-link, Library landing/detail, malformed and unavailable recovery regressions).
-  `web/tests/e2e/manual-operations.spec.ts` does not exist, so no built-artifact test exercises the
-  new actions or exact API contracts. `.venv/bin/ruff format --check .` also fails on
-  `mediaflow/application/manual_scan.py:233`, despite the report claiming PASS. Add real
-  built-artifact manual-operation coverage, repair the five regressions without weakening existing
-  assertions, make every required quality gate pass, and report the actual full results. The Python
-  full run completed 1,460 tests with the same six previously established unrelated baseline
-  failures and 7 skips; those baseline failures are not part of this fix request.
+- The Python API and frontend contracts still do not compose into a working journey. Evidence:
+  `npm --prefix web run test -- --run` now fails 9 Scan/Preview normalization tests (`275 passed, 9
+  failed`), and `.venv/bin/python -m unittest tests.test_manual_operations` fails its ResourceLibrary
+  action-matrix contract (`19 passed, 1 failed`). `ScanNewPage` still omits the backend-required
+  `mode`; `manual_scan_operator_document` still omits frontend-required `errors` and paging fields;
+  Preview still returns `{kind,id}` scope plus an object `selection` while `preview.ts` requires
+  `{scopeKind,scopeId}` and a string; failure strings are passed to an object normalizer; and the
+  normalizer looks for flat `title/provider/targetPath` values that the real nested plan does not
+  contain. Define one exact bounded API document for each action/result and make real API-produced
+  action, Scan success/failure/detail/paging and Preview success/failure/detail/list payloads pass
+  through the actual client normalizers and pages.
+- Preview redaction and findings remain unsafe/incomplete. A direct hostile persisted-plan probe of
+  `manual_preview_operator_document` still returned a raw 64-character `fingerprint`,
+  `Authorization: Bearer hidden` in an attachment filename, and `/private/media/out.mkv` in the
+  destination object. The attachment projector also reads fields not present in the real nested
+  attachment document, while the conflicts projector drops the real conflict objects entirely, so
+  required attachment/conflict findings disappear. Build explicit shape-aware projections for the
+  actual persisted plan, recursively reject fingerprint/digest/credential/endpoint/host-root shapes
+  in keys and values, preserve bounded operator-facing targets/attachments/conflicts, and prove the
+  API and DOM with hostile nested records.
+- Backend-authoritative action and entry behavior is still missing. `ScanDetailPage` merely renames
+  its frontend-derived non-terminal test to `canCancel`; no backend action projection is consumed.
+  `LibraryLanding` still publishes enabled-library action links without checking the exact action
+  matrix. The new Operations links carry `scopeKind=resourceLibrary` but no ResourceLibrary ID, and
+  the admission pages contain no selector, so they lead to an invalid matrix request instead of the
+  promised Operations entry journey. Return and consume backend-advertised actions for the exact
+  principal/source/current state, add a real bounded ResourceLibrary choice on Operations entry,
+  and render no action/control when the backend does not advertise it.
+- Required T4 proof remains failing and the new browser tests weaken rather than prove the journey.
+  `manual-operations.spec.ts` independently runs `3 passed, 5 failed`; several tests conditionally
+  accept a missing feature/page by asserting only that any `/api/v1/` request occurred, and the
+  Preview-detail test never visits Preview detail. Prettier fails 3 files, TypeScript and ESLint fail
+  on an unused fixture, and the frontend unit and new Python failures above contradict the reported
+  successful quality gates. Replace conditional fallbacks with unconditional user-outcome and exact
+  method/body assertions, test authenticated/unauthenticated deep entry without losing memory-only
+  authority, exercise the real Scan/Preview details and negative states, then make every required
+  focused/full T4 command pass and report its actual totals.
