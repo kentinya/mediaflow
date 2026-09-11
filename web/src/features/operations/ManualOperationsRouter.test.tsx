@@ -421,9 +421,27 @@ describe("Operations manual Scan/Preview journeys", () => {
     expect(screen.getByText("RecognitionType policy")).toBeVisible();
     expect(screen.getByText("type-A")).toBeVisible();
     expect(screen.getByText("Title candidate")).toBeVisible();
+    expect(screen.getAllByText("Episodes").length).toBeGreaterThan(0);
+    expect(screen.getByText("Version / release group")).toBeVisible();
+    expect(screen.getAllByText(/confidence high/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Japanese Animation/)).toBeVisible();
     expect(screen.getByText(/manual-preview/)).toBeVisible();
+    expect(screen.getAllByText("Warnings").length).toBeGreaterThan(0);
     expect(screen.getByText(/1 candidate\(s\)/)).toBeVisible();
+    expect(screen.getAllByText("Matched by").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("candidate_matcher").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Countries").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("JP").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Genres").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Animation").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/Candidate reached automatic threshold/),
+    ).toBeVisible();
+    expect(screen.getByText(/exact title yes/)).toBeVisible();
+    expect(screen.getByText(/exact year yes/)).toBeVisible();
+    expect(screen.getByText("Directory segments")).toBeVisible();
+    expect(screen.getByText("Sanitization changes")).toBeVisible();
+    expect(screen.getByText("RecognitionType / policy")).toBeVisible();
     expect(screen.getAllByText(/One \(2001\)\.mkv/).length).toBeGreaterThan(0);
     expect(
       screen.getByText("No sidecar attachment was planned for this item."),
@@ -432,6 +450,79 @@ describe("Operations manual Scan/Preview journeys", () => {
       screen.getByText("No conflict was recorded for this item."),
     ).toBeVisible();
     expect(screen.getByText("No warning was recorded.")).toBeVisible();
+  });
+
+  it("shows each absent persisted finding instead of inventing a value", async () => {
+    const absent = previewDocument("previewDetail", "preview-empty-findings");
+    const item = (absent["items"] as Json[])[0]!;
+    const plan = item["plan"] as Json;
+    plan["mediaIdentity"] = null;
+    plan["policies"] = null;
+    plan["analysis"] = {
+      parse: null,
+      recognition: null,
+      metadata: null,
+      naming: null,
+      classification: null,
+    };
+    recordingFetch((call) =>
+      call.url.startsWith("/api/v1/operations/previews/preview-empty-findings")
+        ? jsonResponse(absent)
+        : undefined,
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/preview/preview-empty-findings");
+
+    await screen.findByRole("heading", {
+      name: "Preview preview-empty-findings",
+    });
+    expect(screen.getByText("No policy mapping was recorded.")).toBeVisible();
+    expect(screen.getByText("No media identity was recorded.")).toBeVisible();
+    expect(screen.getByText("No parse finding was recorded.")).toBeVisible();
+    expect(
+      screen.getByText("No recognition finding was recorded."),
+    ).toBeVisible();
+    expect(screen.getByText("No metadata finding was recorded.")).toBeVisible();
+    expect(screen.getByText("No naming finding was recorded.")).toBeVisible();
+    expect(
+      screen.getByText("No classification finding was recorded."),
+    ).toBeVisible();
+    expect(screen.queryByText("candidate_matcher")).toBeNull();
+    expect(screen.queryByText("Japanese Animation")).toBeNull();
+  });
+
+  it("fails closed before a hostile action-matrix source can reach the DOM", async () => {
+    const hostile = document("actionMatrix");
+    hostile["source"] = {
+      digest: "a".repeat(64),
+      extension: "mkv",
+      fileId: "file-1",
+      filename: "Bearer hidden-token.mkv",
+      occurrenceState: "verified",
+      path: "/private/media/Bearer hidden-token.mkv",
+      resourceLibraryId: "library",
+      scanStatus: "ready",
+      sizeBytes: 12,
+      storageId: "local",
+    };
+    recordingFetch((call) =>
+      call.url.includes("/api/v1/operations/manual-actions")
+        ? jsonResponse(hostile)
+        : undefined,
+    );
+    authStore.setToken(TOKEN);
+    renderApp(
+      "/ui-v2/operations/scan/new?scopeKind=file&fileId=file-1&resourceLibraryId=library",
+    );
+
+    await screen.findByRole("heading", { name: "Action matrix unavailable" });
+    const rendered = globalThis.document.body.textContent ?? "";
+    expect(rendered).not.toContain("hidden-token");
+    expect(rendered).not.toContain("/private/");
+    expect(rendered).not.toContain("a".repeat(64));
+    expect(
+      screen.queryByRole("button", { name: "Submit bounded Scan" }),
+    ).toBeNull();
   });
 
   it("submits one exact bounded Preview body and lands on the durable detail", async () => {

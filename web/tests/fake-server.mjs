@@ -3528,14 +3528,29 @@ const server = createServer(async (req, res) => {
       objectType: "manual_action_matrix",
       path: "/api/v1/manual-actions",
     });
-    sendJson(
-      res,
-      200,
-      manualActionMatrixDocument(
-        { fileId, resourceLibraryId, scopeKind },
-        operationsPrincipal.permitted,
-      ),
+    const matrix = manualActionMatrixDocument(
+      { fileId, resourceLibraryId, scopeKind },
+      operationsPrincipal.permitted,
     );
+    // Deliberately hostile fixture for the browser boundary proof. The
+    // frontend must reject this source before any credential-shaped value,
+    // absolute path or digest can be rendered; the fake never records it as
+    // request evidence.
+    if (fileId === "hostile-source") {
+      matrix.source = {
+        digest: "a".repeat(64),
+        extension: "mkv",
+        fileId: "file-1",
+        filename: "Bearer hidden-token.mkv",
+        occurrenceState: "verified",
+        path: "/private/media/Bearer hidden-token.mkv",
+        resourceLibraryId: MANUAL_LIBRARY_ID,
+        scanStatus: "ready",
+        sizeBytes: 12,
+        storageId: MANUAL_STORAGE_ID,
+      };
+    }
+    sendJson(res, 200, matrix);
     return;
   }
 

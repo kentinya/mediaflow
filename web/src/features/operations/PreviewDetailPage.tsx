@@ -55,6 +55,10 @@ function numberLabel(value: number | null): string {
   return value === null ? "—" : String(value);
 }
 
+function listLabel(values: readonly (string | number)[]): string {
+  return values.length === 0 ? "—" : values.join(", ");
+}
+
 function PolicyFindings({
   policies,
 }: {
@@ -79,12 +83,61 @@ function PolicyFindings({
   );
 }
 
+function MediaIdentityFindings({
+  identity,
+  heading = "Media identity",
+}: {
+  readonly identity: ManualPreviewItemModel["mediaIdentity"];
+  readonly heading?: string;
+}) {
+  if (identity === null) {
+    return <p className="mf-dashboard-meta">No media identity was recorded.</p>;
+  }
+  return (
+    <>
+      <h4>{heading}</h4>
+      <dl>
+        <dt>Provider / ID</dt>
+        <dd>
+          {safeValue(identity.provider)} / {safeValue(identity.providerId)}
+        </dd>
+        <dt>Media type</dt>
+        <dd>{safeValue(identity.mediaType)}</dd>
+        <dt>Title / original title</dt>
+        <dd>
+          {safeValue(identity.title)} / {safeValue(identity.originalTitle)}
+        </dd>
+        <dt>Episode title</dt>
+        <dd>{safeValue(identity.episodeTitle)}</dd>
+        <dt>Matched by</dt>
+        <dd>{safeValue(identity.matchedBy)}</dd>
+        <dt>RecognitionType</dt>
+        <dd>{safeValue(identity.recognitionTypeId)}</dd>
+        <dt>Year / season / episode</dt>
+        <dd>
+          {numberLabel(identity.year)} / {numberLabel(identity.season)} /{" "}
+          {numberLabel(identity.episode)}
+        </dd>
+        <dt>Episodes</dt>
+        <dd>{listLabel(identity.episodes)}</dd>
+        <dt>Genres</dt>
+        <dd>{listLabel(identity.genres)}</dd>
+        <dt>Countries</dt>
+        <dd>{listLabel(identity.countries)}</dd>
+        <dt>Languages</dt>
+        <dd>{listLabel(identity.languages)}</dd>
+      </dl>
+    </>
+  );
+}
+
 function PipelineFindings({ item }: { readonly item: ManualPreviewItemModel }) {
   const analysis = item.analysis;
   return (
     <>
       <h4>Resolved policies</h4>
       <PolicyFindings policies={item.policies} />
+      <MediaIdentityFindings identity={item.mediaIdentity} />
       <h4>Pipeline analysis</h4>
       {analysis === null ? (
         <p className="mf-dashboard-meta">No pipeline analysis was recorded.</p>
@@ -107,6 +160,8 @@ function PipelineFindings({ item }: { readonly item: ManualPreviewItemModel }) {
                   {numberLabel(analysis.parse.season)} /{" "}
                   {numberLabel(analysis.parse.episode)}
                 </dd>
+                <dt>Episodes</dt>
+                <dd>{listLabel(analysis.parse.episodes)}</dd>
                 <dt>Resolution / source</dt>
                 <dd>
                   {safeValue(analysis.parse.resolution)} /{" "}
@@ -118,6 +173,11 @@ function PipelineFindings({ item }: { readonly item: ManualPreviewItemModel }) {
                   {safeValue(analysis.parse.audio)} /{" "}
                   {safeValue(analysis.parse.hdr)}
                 </dd>
+                <dt>Version / release group</dt>
+                <dd>
+                  {safeValue(analysis.parse.version)} /{" "}
+                  {safeValue(analysis.parse.releaseGroup)}
+                </dd>
                 <dt>Evidence</dt>
                 <dd>
                   {analysis.parse.evidence.length === 0
@@ -126,10 +186,17 @@ function PipelineFindings({ item }: { readonly item: ManualPreviewItemModel }) {
                         .map((evidence) =>
                           [evidence.field, evidence.value, evidence.source]
                             .filter((value): value is string => value !== null)
+                            .concat(
+                              evidence.confidence === null
+                                ? []
+                                : [`confidence ${evidence.confidence}`],
+                            )
                             .join(" · "),
                         )
                         .join("; ")}
                 </dd>
+                <dt>Warnings</dt>
+                <dd>{listLabel(analysis.parse.warnings)}</dd>
               </dl>
             )}
           </section>
@@ -164,6 +231,8 @@ function PipelineFindings({ item }: { readonly item: ManualPreviewItemModel }) {
                         )
                         .join("; ")}
                 </dd>
+                <dt>Warnings</dt>
+                <dd>{listLabel(analysis.recognition.warnings)}</dd>
               </dl>
             )}
           </section>
@@ -174,21 +243,62 @@ function PipelineFindings({ item }: { readonly item: ManualPreviewItemModel }) {
                 No metadata finding was recorded.
               </p>
             ) : (
-              <dl>
-                <dt>Available / status</dt>
-                <dd>
-                  {analysis.metadata.available ? "Yes" : "No"} /{" "}
-                  {safeValue(analysis.metadata.status)}
-                </dd>
-                <dt>Query</dt>
-                <dd>{safeValue(analysis.metadata.query)}</dd>
-                <dt>Match</dt>
-                <dd>
-                  {analysis.metadata.match === null
-                    ? "—"
-                    : `${safeValue(analysis.metadata.match.status)} · ${analysis.metadata.match.candidateCount} candidate(s)`}
-                </dd>
-              </dl>
+              <>
+                <dl>
+                  <dt>Available / status</dt>
+                  <dd>
+                    {analysis.metadata.available ? "Yes" : "No"} /{" "}
+                    {safeValue(analysis.metadata.status)}
+                  </dd>
+                  <dt>Query</dt>
+                  <dd>{safeValue(analysis.metadata.query)}</dd>
+                  <dt>Match</dt>
+                  <dd>
+                    {analysis.metadata.match === null
+                      ? "No metadata match was recorded."
+                      : `${safeValue(analysis.metadata.match.status)} · score ${numberLabel(analysis.metadata.match.score)} · ${analysis.metadata.match.candidateCount} candidate(s)`}
+                  </dd>
+                  {analysis.metadata.match && (
+                    <>
+                      <dt>Match reasons</dt>
+                      <dd>{listLabel(analysis.metadata.match.reasons)}</dd>
+                      <dt>Match warnings</dt>
+                      <dd>{listLabel(analysis.metadata.match.warnings)}</dd>
+                    </>
+                  )}
+                </dl>
+                <MediaIdentityFindings
+                  identity={analysis.metadata.identity}
+                  heading="Metadata identity"
+                />
+                {analysis.metadata.match && (
+                  <>
+                    <h5>Metadata candidates</h5>
+                    {analysis.metadata.match.candidates.length === 0 ? (
+                      <p className="mf-dashboard-meta">
+                        No metadata candidates were recorded.
+                      </p>
+                    ) : (
+                      <ul>
+                        {analysis.metadata.match.candidates.map(
+                          (candidate, index) => (
+                            <li key={`metadata-candidate-${index}`}>
+                              {safeValue(candidate.provider)} #{" "}
+                              {safeValue(candidate.providerId)} ·{" "}
+                              {safeValue(candidate.mediaType)} ·{" "}
+                              {safeValue(candidate.title)} (
+                              {numberLabel(candidate.year)}) · score{" "}
+                              {numberLabel(candidate.score)} · exact title{" "}
+                              {candidate.exactTitle ? "yes" : "no"} · exact year{" "}
+                              {candidate.exactYear ? "yes" : "no"}
+                            </li>
+                          ),
+                        )}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </>
             )}
           </section>
           <section>
@@ -204,13 +314,21 @@ function PipelineFindings({ item }: { readonly item: ManualPreviewItemModel }) {
                   {analysis.naming.available ? "Yes" : "No"} /{" "}
                   {safeValue(analysis.naming.policyId)}
                 </dd>
+                <dt>RecognitionType</dt>
+                <dd>{safeValue(analysis.naming.recognitionTypeId)}</dd>
                 <dt>Directory / filename</dt>
                 <dd>
                   {safeValue(analysis.naming.directory)} /{" "}
                   {safeValue(analysis.naming.filename)}
                 </dd>
+                <dt>Directory segments</dt>
+                <dd>{listLabel(analysis.naming.directorySegments)}</dd>
                 <dt>Reason</dt>
                 <dd>{safeValue(analysis.naming.reason)}</dd>
+                <dt>Sanitization changes</dt>
+                <dd>{listLabel(analysis.naming.sanitizationChanges)}</dd>
+                <dt>Warnings</dt>
+                <dd>{listLabel(analysis.naming.warnings)}</dd>
               </dl>
             )}
           </section>
@@ -226,6 +344,11 @@ function PipelineFindings({ item }: { readonly item: ManualPreviewItemModel }) {
                 <dd>
                   {analysis.classification.available ? "Yes" : "No"} /{" "}
                   {safeValue(analysis.classification.status)}
+                </dd>
+                <dt>RecognitionType / policy</dt>
+                <dd>
+                  {safeValue(analysis.classification.recognitionTypeId)} /{" "}
+                  {safeValue(analysis.classification.policyId)}
                 </dd>
                 <dt>MediaLibrary / relative path</dt>
                 <dd>
@@ -243,6 +366,10 @@ function PipelineFindings({ item }: { readonly item: ManualPreviewItemModel }) {
                     ? "—"
                     : analysis.classification.evidence.join("; ")}
                 </dd>
+                <dt>Reason</dt>
+                <dd>{safeValue(analysis.classification.reason)}</dd>
+                <dt>Warnings</dt>
+                <dd>{listLabel(analysis.classification.warnings)}</dd>
               </dl>
             )}
           </section>

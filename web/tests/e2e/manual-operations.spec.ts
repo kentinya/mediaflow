@@ -317,6 +317,12 @@ test("Zero-mutation Preview admission submits one exact request and lands on the
   await expect(
     page.getByText("Anime/One (2001)/One (2001).mkv").first(),
   ).toBeVisible();
+  await expect(page.getByText("candidate_matcher").first()).toBeVisible();
+  await expect(
+    page.getByText("Candidate reached automatic threshold"),
+  ).toBeVisible();
+  await expect(page.getByText("Directory segments")).toBeVisible();
+  await expect(page.getByText("No warning was recorded.")).toBeVisible();
 
   const submissions = (await manualEvidence(page))
     .slice(before)
@@ -456,6 +462,27 @@ test("Invalid Scan scope deep entry offers no submit control", async ({
   expect(scanPosts.filter((url) => url.includes("/api/v1/scans"))).toHaveLength(
     0,
   );
+});
+
+test("hostile action-matrix evidence never reaches the built-artifact DOM", async ({
+  page,
+}) => {
+  await page.goto(
+    "/ui-v2/operations/scan/new?scopeKind=file&fileId=hostile-source&resourceLibraryId=resources",
+  );
+  await connect(page, VIEWER_TOKEN);
+
+  await expect(
+    page.getByRole("heading", { name: "Action matrix unavailable" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Submit bounded Scan" }),
+  ).toHaveCount(0);
+
+  const rendered = await page.locator("body").textContent();
+  expect(rendered ?? "").not.toContain("hidden-token");
+  expect(rendered ?? "").not.toContain("/private/");
+  expect(rendered ?? "").not.toContain("a".repeat(64));
 });
 
 test("FileIndex detail advertises both backend-advertised manual actions", async ({
