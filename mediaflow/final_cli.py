@@ -12,7 +12,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -43,6 +43,10 @@ from mediaflow.application.file_recognition_request import FileRecognitionReques
 from mediaflow.application.file_replan_request import FileReplanRequestService
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.manual_ignore import ManualIgnoreService
+from mediaflow.application.manual_organize import ManualOrganizeIntentService
+from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
+from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_correction_continuation import (
@@ -1307,36 +1311,49 @@ def final_main(
                     # Resident worker: bind to current Active snapshot
                     if worker_snapshot is not None:
                         bound_snapshot_id, bound_snapshot_digest = worker_snapshot
-                worker_service = AutomationWorker(
-                    repository,
-                    lambda job, cancelled: _run_queued_workflow(
-                        job, arguments.config, cancelled, repository=repository
-                    ),
-                    NotificationPublisher(
+                with _manual_organize_worker_context(
+                    configuration, arguments.config, repository
+                ) as manual_organize_worker:
+                    worker_service = AutomationWorker(
                         repository,
-                        configuration.resolve_webhook_targets()
-                        if hasattr(configuration, "resolve_webhook_targets")
-                        else {},
-                    ),
-                    configuration_snapshot_id=bound_snapshot_id,
-                    configuration_snapshot_digest=bound_snapshot_digest,
-                    runtime_schema_version=SCHEMA_VERSION,
-                )
-                if arguments.worker_command == "run-next":
-                    job = worker_service.run_next()
-                    if job is None:
-                        stdout.write("No pending automation jobs\n")
-                        return 0
-                    stdout.write(render_job(job))
-                    return 0 if job.status.value in {"completed", "cancelled"} else 1
-                poll = arguments.poll_seconds or getattr(configuration, "worker_poll_seconds", 5.0)
-                processed = _run_resident(
-                    lambda stop: worker_service.run(
-                        stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
+                        lambda job, cancelled: _run_queued_workflow(
+                            job, arguments.config, cancelled, repository=repository
+                        ),
+                        NotificationPublisher(
+                            repository,
+                            configuration.resolve_webhook_targets()
+                            if hasattr(configuration, "resolve_webhook_targets")
+                            else {},
+                        ),
+                        configuration_snapshot_id=bound_snapshot_id,
+                        configuration_snapshot_digest=bound_snapshot_digest,
+                        runtime_schema_version=SCHEMA_VERSION,
+                        manual_organize_worker=manual_organize_worker,
                     )
-                )
-                stdout.write(f"Worker stopped; processed={processed}\n")
-                return 0
+                    if arguments.worker_command == "run-next":
+                        job = worker_service.run_next()
+                        if job is not None:
+                            stdout.write(render_job(job))
+                            return 0 if job.status.value in {"completed", "cancelled"} else 1
+                        execution = manual_organize_worker.run_next()
+                        if execution is None:
+                            stdout.write("No pending automation jobs\n")
+                            return 0
+                        stdout.write(
+                            f"Manual execution ID: {execution.execution_id}\n"
+                            f"Status: {execution.status.value}\n"
+                        )
+                        return 0 if execution.status.value in {"completed", "cancelled"} else 1
+                    poll = arguments.poll_seconds or getattr(
+                        configuration, "worker_poll_seconds", 5.0
+                    )
+                    processed = _run_resident(
+                        lambda stop: worker_service.run(
+                            stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
+                        )
+                    )
+                    stdout.write(f"Worker stopped; processed={processed}\n")
+                    return 0
         if arguments.command == "scheduler":
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 scheduler_service = IntervalScheduler(
@@ -3637,6 +3654,58 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
         else:
             with make_server(arguments.host, arguments.port, app) as server:
                 server.serve_forever()
+
+
+@contextmanager
+def _manual_organize_worker_context(configuration, configured_path: str | None, repository):
+    """Yield the resident Worker's admitted-manual-Organize runner.
+
+    The runner reconstructs the reviewed Preview, the pinned runtime snapshot
+    and the required Storage adapters from durable state, so it never shares
+    in-memory authority with the API request that admitted the work.  Every
+    runtime resource it opens is closed with the surrounding Worker lifetime.
+    """
+
+    bootstrap_document = _configuration_document(configured_path)
+    management_only = isinstance(configuration, ManagementBootstrapConfiguration)
+    with (
+        SQLiteFileIndexRepository(configuration.database_path) as file_index,
+        SQLiteConfigurationRepository(configuration.database_path) as configuration_repository,
+    ):
+        configuration_service = ManagedConfigurationService(
+            configuration_repository,
+            bootstrap_database_path=configuration.database_path,
+            bootstrap_document=bootstrap_document,
+            management_only=management_only,
+        )
+        catalog = FileCatalogService(
+            file_index,
+            tuple(
+                item.library_id
+                for item in getattr(configuration, "resource_libraries", ())
+                if item.enabled
+            ),
+            tuple(item.storage_id for item in getattr(configuration, "storage_definitions", ())),
+            task_repository=repository,
+        )
+        intents = ManualOrganizeIntentService(repository, catalog, configuration_service)
+        previews = ManualOrganizePreviewService(
+            repository,
+            intents,
+            catalog,
+            file_index=file_index,
+            configuration_service=configuration_service,
+            metadata_provider_registry_factory=LazyMetadataProviderRegistryFactory(
+                metadata_provider_registry_from_environment
+            ),
+        )
+        execution = ManualOrganizeExecutionService(
+            repository,
+            previews,
+            intents,
+            checkpoint_service=ProcessingCheckpointService(repository),
+        )
+        yield ManualOrganizeExecutionWorker(execution)
 
 
 def _run_resident(run: Callable[[Callable[[], bool]], int]) -> int:

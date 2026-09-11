@@ -786,6 +786,25 @@ export function FileIndexDetailView({
                       "not available"}
                   </p>
                 )}
+                {actionMatrix.model.actions.organize.available ? (
+                  <Link
+                    className="mf-button mf-button-primary"
+                    to="/operations/organize/new"
+                    search={{
+                      scopeKind: "file",
+                      fileId,
+                      resourceLibraryId: resourceLibraryId ?? undefined,
+                    }}
+                  >
+                    Prepare manual organize
+                  </Link>
+                ) : (
+                  <p className="mf-dashboard-meta">
+                    Manual organize unavailable:{" "}
+                    {actionMatrix.model.actions.organize.reason ??
+                      "not available"}
+                  </p>
+                )}
               </div>
             ) : (
               <p className="mf-dashboard-meta">

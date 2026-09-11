@@ -257,83 +257,141 @@ reports, credentials and unrelated files must not enter the checkpoint.
 
 ## Developer Completion Report
 
+> Correction loop (B Decision: FIX REQUIRED, Next: SAME TASK FIX LOOP). This report replaces the
+> rejected pass. Every blocker B listed is implemented here; this is a new correction commit after
+> the rejected checkpoint — no accepted history was amended.
+
 ### Changed Files
 
-- `mediaflow/interfaces/service_api.py` — Extended action matrix with `organize` action; added V2 operations organize routes (POST /organize, GET /organize/{previewId}, POST /organize/{previewId}/authorize, POST /organize/{previewId}/execute, GET /organize/executions)
-- `web/src/entities/operations/manual-actions.ts` — Added `organize` to `ManualActionMatrixModel` actions interface and normalization
-- `web/src/entities/operations/__fixtures__/manual-operations.json` — Updated fixture to include organize action
-- `tests/test_v2_manual_organize.py` — New Python test file for V2 manual organize journey
-- `web/tests/e2e/manual-organize.spec.ts` — New Playwright E2E test for built-artifact browser proof
+- `mediaflow/application/manual_organize_execution.py` — `admit()`/`execute(admit_only=)` split,
+  new Worker-side `run_admitted()` with per-item revalidation, guarded claim boundary, idempotent
+  `begin_web_execution()` one-action server-held authority, `fail_unstarted_execution()`, bounded
+  destructive-implication evidence.
+- `mediaflow/application/manual_organize_worker.py` (new) — resident Processing-Worker claim/lease
+  runner for admitted exact executions.
+- `mediaflow/application/automation.py` — Processing Worker loop can serve the admitted manual
+  execution queue; `evaluate_manual_organize_readiness()`; schema default 34.
+- `mediaflow/application/operations_lifecycle.py` — bounded intent/execution projections, bounded
+  manual-step error envelope, destructive implications and truthful effect summary.
+- `mediaflow/interfaces/service_api.py` — replaced the rejected organize routes with the V2 intent /
+  Preview / one-Execute / durable-outcome family and bounded `nextAction` projections.
+- `mediaflow/infrastructure/sqlite_runtime.py` — SCHEMA_VERSION 33→34, additive claim columns,
+  claim/begin/heartbeat/release methods, authority revocation.
+- `mediaflow/domain/task_persistence.py` — claim-boundary protocol methods.
+- `mediaflow/final_cli.py` — Worker command builds and serves the admitted-manual-execution runner.
+- `tests/test_v2_manual_organize.py` — rewritten T4 journey/safety suite (11 tests).
+- `tests/test_manual_operations_contract.py` + `web/src/entities/operations/__fixtures__/manual-operations.json`
+  — real-API golden capture extended with the organize journey documents.
+- `web/src/entities/operations/organize.ts` (new), `web/src/features/operations/organize-query.ts`,
+  `OrganizeNewPage.tsx`, `OrganizeIntentPage.tsx`, `OrganizePreviewPage.tsx`,
+  `OrganizeExecutionPage.tsx` (new), router/destination-model entries,
+  FileIndex/Preview/Operations entry links, `api-client.ts` organize boundary.
+- `web/src/features/operations/OrganizeRouter.test.tsx` (new), `web/tests/e2e/manual-organize.spec.ts`
+  (rewritten) and `web/tests/fake-server.mjs` (deterministic organize fake).
+- Test-only schema-version updates caused by the additive bump: `test_processing_worker_readiness`,
+  `test_api_security`, `test_automation_job_fencing`, `test_restart_fault_boundary`,
+  `test_stale_job_visibility`, `test_configuration_{classification,destination,destination_activation,destination_precheck,organize}`.
 
 ### Implemented
 
-- Backend action matrix now includes `organize` action alongside `scan` and `preview`, gated on `execute_manual_organize` permission
-- V2 operations organize route family: intent+preview admission (POST /organize), preview detail read (GET /organize/{previewId}), execution authorization (POST /organize/{previewId}/authorize), execution consumption (POST /organize/{previewId}/execute), execution discovery (GET /organize/executions)
-- Each organize route response includes `journey: "organize"` and bounded `nextAction`
-- Frontend entity model updated to normalize the organize action from the backend action matrix
-- Fixture updated to include the organize action in the contract test golden data
+1. Complete V2 journey: `/operations/organize/new` → durable intent
+   (`intents/{id}` with optimistic choice editing) → exact Preview (`previews/{id}`) → one Execute →
+   durable outcome (`executions/{id}`), registered centrally, deep-link/auth-continuation safe, and
+   reachable from FileIndex detail, ResourceLibrary Operations scope and eligible Preview detail.
+2. Backend-authoritative availability: the action matrix and every document advertise `available`,
+   `reason` and `nextAction` for the exact principal, scope, Active runtime, services and live
+   Worker; the frontend renders no control it was not granted.
+3. Durable queued admission: POST `.../previews/{id}/execute` creates and consumes short-lived
+   one-shot authority on the server, admits one durable execution + Task + Storage fences and
+   returns promptly. No token, digest, authorization id or path crosses the browser boundary;
+   repeated/concurrent submission resolves to the same execution.
+4. Worker-only execution: the resident Processing Worker claims admitted executions under a
+   durable lease, publishes the running mutation boundary through a claim-token-bound update,
+   rechecks source/runtime/policy/conflict/capability/locks immediately before each pending
+   mutation and only then calls OrganizerExecutor. A crash never auto-replays started work.
+5. Independent outcomes: pre-mutation rejections close only the affected item with effect certainty
+   `none`; siblings keep their own Result/effect evidence; uncertain effects are reported, never
+   replayed, and link to the Task and Review & Recovery.
+6. Destructive authority: Overwrite and source-cleanup requirements are projected from the exact
+   plan, default false, separately confirmed and rejected (`overwrite_authority_required`,
+   `source_cleanup_authority_required`, `scope_changed`) before any mutation. HardLink/SoftLink
+   capability gaps refuse execution instead of falling back to Copy/Move.
+7. RecognitionType C with Naming/Classification A remains C end to end (Preview plan, Task Result).
 
 ### Tests and Results
 
 ```text
-python3 scripts/check_governance.py                                              — PASS
-env -u NODE_ENV npm --prefix web run build                                       — PASS
-npm --prefix web run format:check                                                — PASS
-npm --prefix web run typecheck                                                   — PASS
-npm --prefix web run lint                                                        — PASS
-npm --prefix web run test -- --run                                               — PASS (317/317)
-.venv/bin/python -m unittest tests.test_v2_manual_organize                       — PASS (18/18)
-.venv/bin/python -m unittest tests.test_manual_organize_intent                   — PASS
-.venv/bin/python -m unittest tests.test_manual_organize_preview                  — PASS
-.venv/bin/python -m unittest tests.test_manual_organize_execution                — PASS
-.venv/bin/python -m unittest tests.test_execution_authorization                  — PASS
-.venv/bin/python -m unittest tests.test_queued_job_execution_boundary            — PASS
-.venv/bin/python -m unittest tests.test_organizer_mutation_authority             — PASS
-.venv/bin/python -m unittest tests.test_manual_operations                       — PASS
-.venv/bin/python -m unittest tests.test_operations_workspace                    — PASS
-.venv/bin/python -m unittest tests.test_api_security                            — PASS
-.venv/bin/python -m unittest tests.test_v2_ui                                    — PASS
-.venv/bin/python -m unittest tests.test_manual_operations_contract              — PASS (fixture updated)
-.venv/bin/python -m unittest discover -s tests                                  — 1492 tests, 6 FAIL / PRE-EXISTING / UNRELATED, 7 SKIP
-.venv/bin/ruff format --check .                                                 — PASS
-.venv/bin/ruff check .                                                           — PASS
-.venv/bin/python -m compileall -q mediaflow tests scripts                        — PASS
-.venv/bin/python -m pip check                                                    — PASS
-.venv/bin/mediaflow --config config/strategy.example.json config validate        — PASS
+python3 scripts/check_governance.py                                                — PASS
+env -u NODE_ENV npm --prefix web ci                                                — PASS
+npm --prefix web run format:check                                                  — PASS
+npm --prefix web run typecheck                                                     — PASS
+npm --prefix web run lint                                                          — PASS
+npm --prefix web run test -- --run                                                 — PASS (321/321, 29 files)
+npm --prefix web run build                                                         — PASS
+npm --prefix web run test:e2e -- manual-organize.spec.ts manual-operations.spec.ts operations.spec.ts library-file-detail.spec.ts deep-link.spec.ts
+                                                                                   — PASS
+npm --prefix web run test:e2e                                                      — PASS (91/91)
+.venv/bin/python -m unittest tests.test_v2_manual_organize                         — PASS (11/11)
+.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_execution_authorization tests.test_queued_job_execution_boundary tests.test_organizer_mutation_authority tests.test_manual_operations tests.test_operations_workspace tests.test_api_security tests.test_v2_ui tests.test_manual_operations_contract
+                                                                                   — PASS (168/168)
+.venv/bin/python -m unittest discover -s tests                                     — 1485 tests, 6 FAIL / PRE-EXISTING / ENVIRONMENT, 7 SKIP
+.venv/bin/ruff format --check .                                                    — PASS (307 files)
+.venv/bin/ruff check .                                                             — PASS
+.venv/bin/python -m compileall -q mediaflow tests scripts                          — PASS
+.venv/bin/python -m pip check                                                      — PASS
+.venv/bin/mediaflow --config config/strategy.example.json config validate          — PASS
 .venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate — PASS
-git diff --check                                                                 — PASS
+git diff --check                                                                   — PASS
+python3 scripts/docker_release_security_smoke_test.py                              — PASS
 ```
-
-Playwright E2E tests require a running build artifact server; the test file is created but not executed in this environment.
 
 ### Decisions
 
-- Added organize action to the existing action matrix rather than creating a separate endpoint; this keeps all V2 manual actions discoverable from one authoritative matrix
-- The organize action requires both `execute_manual_organize` and `manage_manual_organize` (=`submit_dry_run`) permissions, consistent with the two-step authorize→execute pattern
-- All V2 organize routes include `journey: "organize"` in the response for frontend routing distinction
-- The `organize` action in the frontend entity is gracefully normalized with a fallback default when absent from the backend, ensuring backward compatibility
-- Reused existing backend services (ManualOrganizeIntentService, ManualOrganizePreviewService, ManualOrganizeExecutionService) without modification
+- Admission and execution are separate durable boundaries: `execute()` keeps its synchronous V1/CLI
+  behavior (`admit_only=False`), while the Web journey uses `admit` + Worker `run_admitted`.
+- The Worker claim lives on `manual_executions` (additive SCHEMA_VERSION 34 columns) instead of a
+  second Job model, so an execution that already crossed the mutation boundary can never be
+  re-claimed by another Worker.
+- One Web action creates the one-shot authority server-side inside the same request that consumes
+  it through atomic admission; the browser submits only selection, optimistic version and explicit
+  destructive choices.
+- Repeated/concurrent submission of the same reviewed work returns the existing durable execution
+  and revokes the unused authority instead of creating a second Task.
+- Bounded operator projections (`manual_intent_operator_document`,
+  `manual_execution_operator_document`, `manual_step_error_document`) plus a new
+  `destructiveImplications` plan field replace the rejected raw documents.
 
 ### Remaining In-Slice Work
 
-- Frontend components for the complete organize journey (intent creation page, preview with item selection, execution confirmation, execution outcome/detail pages)
-- Frontend routes and router registration for `/operations/organize/*`
-- Frontend API queries/mutations for intent create/edit, preview generate, authorize, execute
-- Frontend TanStack Query wrappers for the new organize endpoints
-- Full Playwright E2E journey tests that drive the complete browser flow
-- Worker pickup integration for ADMITTED manual organize tasks (async execution path)
+- Automation definition/occurrence and Notification operation remain later Slice 33 Tasks.
+- Slice 34 owns conflict-resolution UI, checkpoint continuation and uncertain-effect recovery; this
+  Task shows durable state and truthful destinations only.
 
 ### Risks / Deviations
 
-- 6 pre-existing test failures confirmed unrelated to this Task (verified by running against clean Task Base): `test_storage_list_does_not_construct_or_connect`, `test_storage_check_is_read_only_and_isolates_failures`, `test_credential_check_is_redacted_config_only_and_reports_missing`, `test_legacy_credential_status_is_supported_without_secret_output`, `test_runtime_configuration_and_final_analyze_cli`, `test_scan_cli_needs_no_path_or_metadata_token`
-- Playwright E2E tests require a running built artifact server and could not be executed in this environment
-- The `actions` object on `ManualActionMatrixModel` is now typed as `{ scan, preview, organize }` which is a breaking change if any consumer accesses it without the organize key; the normalization handles missing organize gracefully
+- 6 full-regression failures are `FAIL / PRE-EXISTING / ENVIRONMENT`, not Task defects: they pass in
+  a clean Task-Base worktree, and reproduce at Task Base with this workspace's ignored local
+  `.mediaflow/mediaflow.sqlite3` (a managed Active revision with library `source`) resolved instead
+  of the test's temporary bootstrap document: `test_storage_list_does_not_construct_or_connect`,
+  `test_storage_check_is_read_only_and_isolates_failures`,
+  `test_credential_check_is_redacted_config_only_and_reports_missing`,
+  `test_legacy_credential_status_is_supported_without_secret_output`,
+  `test_runtime_configuration_and_final_analyze_cli`,
+  `test_scan_cli_needs_no_path_or_metadata_token`.
+- Running the T4 suite migrated the ignored local `.mediaflow/mediaflow.sqlite3` to schema 34
+  (additive, forward-only; older binaries now refuse it by design). No tracked file, media or
+  credential was touched.
+- The additive runtime schema change is covered by the in-repo forward migration and by
+  `test_restart_fault_boundary`/`test_api_security`/`test_processing_worker_readiness`, which now
+  bind to `SCHEMA_VERSION`; the Task's own focused suite exercises admission/Worker restart paths.
+- Docker acceptance was not needed for this Task's gates and was not run; `config/alist.json`
+  remains ignored/untracked and is absent from the checkpoint.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 81b1726425e1fa8f5212c5661e1fd48bd9f2bb1c
+Head SHA: 623b5b72138bf3957a1af365ace8be6fb6ce4e63
 ```
 
 ## B Review Result

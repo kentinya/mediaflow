@@ -155,7 +155,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                     supported_commands=("scan", "preview"),
                     configuration_snapshot_id=None,
                     configuration_snapshot_digest=None,
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=NOW - timedelta(hours=3),
                 )
                 # Worker-a heartbeats immediately before claiming so the claim-time
@@ -168,7 +168,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                     supported_commands=("scan", "preview"),
                     configuration_snapshot_id=None,
                     configuration_snapshot_digest=None,
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=NOW,
                 )
                 first_claimed = repository.claim_next_job(
@@ -215,7 +215,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                     supported_commands=("scan", "preview"),
                     configuration_snapshot_id=None,
                     configuration_snapshot_digest=None,
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=NOW,
                 )
                 claimed = repository.claim_next_job(NOW, worker_id="worker-a")
@@ -247,7 +247,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                     supported_commands=("scan",),
                     configuration_snapshot_id=None,
                     configuration_snapshot_digest=None,
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=NOW - timedelta(hours=2),
                 )
                 with self.assertRaises(AutomationClaimLost):
@@ -273,7 +273,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                     supported_commands=("scan",),
                     configuration_snapshot_id=None,
                     configuration_snapshot_digest=None,
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=NOW,
                 )
                 claimed_legacy = repository.claim_next_job(NOW, worker_id="worker-no-snapshot")
@@ -291,7 +291,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                     supported_commands=("scan",),
                     configuration_snapshot_id="cfg-b",
                     configuration_snapshot_digest="digest-b",
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=NOW,
                 )
                 self.assertIsNone(repository.claim_next_job(NOW, worker_id="worker-other-snapshot"))
@@ -303,7 +303,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                     supported_commands=("scan",),
                     configuration_snapshot_id="cfg-a",
                     configuration_snapshot_digest="digest-a",
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=NOW,
                 )
                 claimed = repository.claim_next_job(NOW, worker_id="worker-matching")
@@ -346,7 +346,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                     ),
                     configuration_snapshot_id="cfg-b",
                     configuration_snapshot_digest="digest-b",
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=NOW,
                 )
                 for _ in range(3):
@@ -365,7 +365,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                     ),
                     configuration_snapshot_id="cfg-a",
                     configuration_snapshot_digest="digest-a",
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=NOW,
                 )
                 for expected_command in (
@@ -406,7 +406,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                         supported_commands=hostile_cases["supported_commands"],
                         configuration_snapshot_id="cfg-a",
                         configuration_snapshot_digest="digest-a",
-                        runtime_schema_version=33,
+                        runtime_schema_version=SCHEMA_VERSION,
                         now=NOW,
                     )
                 # The hostile registration must not have produced any row.
@@ -432,7 +432,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                         supported_commands=("scan",),
                         configuration_snapshot_id="cfg-a",
                         configuration_snapshot_digest="digest-a",
-                        runtime_schema_version=33,
+                        runtime_schema_version=SCHEMA_VERSION,
                     )
                 rows = repository._connection.execute(
                     "SELECT COUNT(*) AS count FROM processing_workers"

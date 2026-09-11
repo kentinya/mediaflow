@@ -23,6 +23,10 @@ import { ScanNewPage } from "../features/operations/ScanNewPage";
 import { ScanDetailPage } from "../features/operations/ScanDetailPage";
 import { PreviewNewPage } from "../features/operations/PreviewNewPage";
 import { PreviewDetailPage } from "../features/operations/PreviewDetailPage";
+import { OrganizeNewPage } from "../features/operations/OrganizeNewPage";
+import { OrganizeIntentPage } from "../features/operations/OrganizeIntentPage";
+import { OrganizePreviewPage } from "../features/operations/OrganizePreviewPage";
+import { OrganizeExecutionPage } from "../features/operations/OrganizeExecutionPage";
 import { AppShell } from "../shared/ui/AppShell";
 import { AuthBoundary } from "../shared/auth/AuthBoundary";
 import { StatusBanner } from "../shared/ui/StatusBanner";
@@ -143,6 +147,30 @@ const previewDetailRoute = createRoute({
   component: PreviewDetailPage,
 });
 
+const organizeNewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/organize/new",
+  component: OrganizeNewPage,
+});
+
+const organizeIntentRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/organize/intent/$intentId",
+  component: OrganizeIntentPage,
+});
+
+const organizePreviewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/organize/preview/$previewId",
+  component: OrganizePreviewPage,
+});
+
+const organizeExecutionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/organize/execution/$executionId",
+  component: OrganizeExecutionPage,
+});
+
 const reviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "review",
@@ -171,6 +199,10 @@ const routeTree = rootRoute.addChildren([
   scanDetailRoute,
   previewNewRoute,
   previewDetailRoute,
+  organizeNewRoute,
+  organizeIntentRoute,
+  organizePreviewRoute,
+  organizeExecutionRoute,
   reviewRoute,
   configurationRoute,
 ]);

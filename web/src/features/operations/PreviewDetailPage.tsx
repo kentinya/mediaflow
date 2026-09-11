@@ -504,6 +504,18 @@ export function PreviewDetailPage() {
                   reviewed items is a separate explicit manual step.
                 </p>
               )}
+              {preview.executionState === "ready_for_explicit_authorization" &&
+                preview.intentId !== null && (
+                  <div className="mf-actions">
+                    <Link
+                      className="mf-button mf-button-primary"
+                      to="/operations/organize/intent/$intentId"
+                      params={{ intentId: preview.intentId }}
+                    >
+                      Review this intent and execute exact items
+                    </Link>
+                  </div>
+                )}
             </section>
             {preview.failure && (
               <section className="mf-count-section">

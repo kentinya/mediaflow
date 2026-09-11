@@ -7,7 +7,7 @@ import sqlite3
 import threading
 from collections.abc import Iterable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -202,7 +202,10 @@ from mediaflow.infrastructure.file_index_schema import (
 # Preview tables are additive migrations on the runtime schema.  The table
 # creation below is idempotent and upgrades older runtime databases without
 # rewriting existing rows.
-SCHEMA_VERSION = 33
+# 34 adds the durable Processing-Worker claim/lease columns on
+# ``manual_executions`` so an admitted exact manual Organize execution is
+# picked up by the resident Worker instead of running inside the API request.
+SCHEMA_VERSION = 34
 
 _ATTENTION_TASK_ITEM_STATUSES = (
     TaskItemStatus.WAITING_CONFIRM.value,
@@ -7328,6 +7331,58 @@ class SQLiteTaskRepository:
                 raise
         return len(rows)
 
+    def revoke_manual_execution_authorization(
+        self,
+        authorization_id: str,
+        now: datetime,
+        *,
+        actor: str | None = None,
+        reason: str = "request_rejected",
+    ) -> bool:
+        """Revoke one still-active one-shot authority that will never be consumed.
+
+        A server-held admission boundary that created authority for an action
+        which failed before admission must not leave a live execution
+        credential behind; only an ``active`` record can be revoked.
+        """
+
+        if not isinstance(authorization_id, str) or not authorization_id.strip():
+            raise ValueError("manual execution authorization ID is required")
+        if now.tzinfo is None:
+            raise ValueError("manual execution authorization revocation needs timezone")
+        bounded_reason = redact_manual_text(reason, limit=120)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self._connection.execute(
+                    "UPDATE manual_execution_authorizations SET status=? "
+                    "WHERE authorization_id=? AND status=?",
+                    (
+                        ManualExecutionAuthorizationStatus.REVOKED.value,
+                        authorization_id,
+                        ManualExecutionAuthorizationStatus.ACTIVE.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    self._connection.rollback()
+                    return False
+                self._insert_manual_execution_authorization_audit(
+                    ManualExecutionAuthorizationAudit(
+                        str(uuid4()),
+                        authorization_id,
+                        "revoked",
+                        now,
+                        actor,
+                        None,
+                        {"reason": bounded_reason},
+                    )
+                )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return True
+
     def admit_manual_execution(
         self,
         authorization: ManualExecutionAuthorization,
@@ -7538,8 +7593,10 @@ class SQLiteTaskRepository:
                         configuration_snapshot_digest, selected_item_ids_json,
                         unselected_item_ids_json, status, next_action, error,
                         allow_overwrite, allow_source_cleanup, created_at, updated_at,
-                        completed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        completed_at, worker_id, claim_token, claimed_at,
+                        claim_expires_at, attempts
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                              NULL, NULL, NULL, NULL, 0)""",
                     self._manual_execution_values(execution),
                 )
                 for item in items:
@@ -7634,6 +7691,172 @@ class SQLiteTaskRepository:
             selected_order = {item_id: index for index, item_id in enumerate(selected_ids)}
             items.sort(key=lambda value: selected_order.get(value.item_id, len(selected_order)))
         return self._manual_execution(row, tuple(items))
+
+    @staticmethod
+    def _require_claim_values(worker_id: str, claim_token: str, lease_seconds: float) -> None:
+        """Validate one Worker claim identity before any durable write."""
+
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200:
+            raise ValueError("manual execution claim worker identity is invalid")
+        if not isinstance(claim_token, str) or not claim_token.strip() or len(claim_token) > 512:
+            raise ValueError("manual execution claim token is invalid")
+        if (
+            isinstance(lease_seconds, bool)
+            or not isinstance(lease_seconds, int | float)
+            or not 0 < float(lease_seconds) <= 86_400
+        ):
+            raise ValueError("manual execution claim lease must be between 1 second and 1 day")
+
+    def claim_next_manual_execution(
+        self,
+        now: datetime,
+        *,
+        worker_id: str,
+        claim_token: str,
+        lease_seconds: float,
+    ) -> ManualExecution | None:
+        """Atomically lease the oldest admitted manual execution for one Worker.
+
+        Only an ``admitted`` execution whose previous claim (if any) has
+        expired can be leased, so a crashed Worker can never hand an execution
+        that already crossed the mutation boundary to a second Worker.  The
+        status itself is deliberately not advanced here: the lease is taken
+        first and only ``begin_manual_execution`` publishes the running
+        boundary immediately before OrganizerExecutor work starts.
+        """
+
+        self._require_claim_values(worker_id, claim_token, lease_seconds)
+        if now.tzinfo is None:
+            raise ValueError("manual execution claim timestamp needs timezone")
+        expires_at = now + timedelta(seconds=float(lease_seconds))
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT execution_id FROM manual_executions WHERE status=? "
+                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
+                "ORDER BY created_at, execution_id LIMIT 1",
+                (ManualExecutionStatus.ADMITTED.value, now.isoformat()),
+            ).fetchone()
+            if row is None:
+                return None
+            cursor = self._connection.execute(
+                "UPDATE manual_executions SET worker_id=?, claim_token=?, claimed_at=?, "
+                "claim_expires_at=?, attempts=attempts+1, updated_at=? "
+                "WHERE execution_id=? AND status=? "
+                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?)",
+                (
+                    worker_id,
+                    claim_token,
+                    now.isoformat(),
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                    row["execution_id"],
+                    ManualExecutionStatus.ADMITTED.value,
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+        return self.get_manual_execution(row["execution_id"])
+
+    def manual_execution_claim(self, execution_id: str) -> dict[str, object] | None:
+        """Read one durable Worker claim without reinterpreting its values."""
+
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT worker_id, claim_token, claimed_at, claim_expires_at, attempts "
+                "FROM manual_executions WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "workerId": row["worker_id"],
+            "claimToken": row["claim_token"],
+            "claimedAt": row["claimed_at"],
+            "claimExpiresAt": row["claim_expires_at"],
+            "attempts": int(row["attempts"]),
+        }
+
+    def begin_manual_execution(self, execution_id: str, claim_token: str, now: datetime) -> bool:
+        """Publish the running mutation boundary for the exact lease owner.
+
+        The guarded update is the fence between "nothing was mutated yet" and
+        "OrganizerExecutor may now run": a lease owner that no longer owns the
+        live claim, or an execution that already left ``admitted``, is never
+        promoted.
+        """
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("manual execution claim token is invalid")
+        if now.tzinfo is None:
+            raise ValueError("manual execution timestamp needs timezone")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE manual_executions SET status=?, updated_at=? "
+                "WHERE execution_id=? AND status=? AND claim_token=? "
+                "AND (claim_expires_at IS NULL OR claim_expires_at > ?)",
+                (
+                    ManualExecutionStatus.RUNNING.value,
+                    now.isoformat(),
+                    execution_id,
+                    ManualExecutionStatus.ADMITTED.value,
+                    claim_token,
+                    now.isoformat(),
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def heartbeat_manual_execution_claim(
+        self,
+        execution_id: str,
+        claim_token: str,
+        now: datetime,
+        lease_seconds: float,
+    ) -> bool:
+        """Extend the live lease of the Worker that owns this execution."""
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("manual execution claim token is invalid")
+        if now.tzinfo is None:
+            raise ValueError("manual execution claim timestamp needs timezone")
+        if (
+            isinstance(lease_seconds, bool)
+            or not isinstance(lease_seconds, int | float)
+            or not 0 < float(lease_seconds) <= 86_400
+        ):
+            raise ValueError("manual execution claim lease must be between 1 second and 1 day")
+        expires_at = now + timedelta(seconds=float(lease_seconds))
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE manual_executions SET claim_expires_at=? "
+                "WHERE execution_id=? AND claim_token=? AND status IN (?, ?)",
+                (
+                    expires_at.isoformat(),
+                    execution_id,
+                    claim_token,
+                    ManualExecutionStatus.ADMITTED.value,
+                    ManualExecutionStatus.RUNNING.value,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def release_manual_execution_claim(self, execution_id: str, claim_token: str) -> bool:
+        """Drop one lease that never crossed the mutation boundary."""
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("manual execution claim token is invalid")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE manual_executions SET worker_id=NULL, claim_token=NULL, "
+                "claimed_at=NULL, claim_expires_at=NULL "
+                "WHERE execution_id=? AND claim_token=? AND status=?",
+                (
+                    execution_id,
+                    claim_token,
+                    ManualExecutionStatus.ADMITTED.value,
+                ),
+            )
+        return cursor.rowcount == 1
 
     def update_manual_execution(self, execution: ManualExecution) -> None:
         with self._lock, self._connection:
@@ -8806,6 +9029,8 @@ class SQLiteTaskRepository:
                     allow_overwrite INTEGER NOT NULL DEFAULT 0,
                     allow_source_cleanup INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT,
+                    worker_id TEXT, claim_token TEXT, claimed_at TEXT,
+                    claim_expires_at TEXT, attempts INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
                     FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id),
                     FOREIGN KEY(authorization_id)
@@ -9291,6 +9516,23 @@ class SQLiteTaskRepository:
                 row["name"]
                 for row in self._connection.execute("PRAGMA table_info(automation_jobs)").fetchall()
             }
+            execution_columns = {
+                row["name"]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(manual_executions)"
+                ).fetchall()
+            }
+            for column, definition in (
+                ("worker_id", "TEXT"),
+                ("claim_token", "TEXT"),
+                ("claimed_at", "TEXT"),
+                ("claim_expires_at", "TEXT"),
+                ("attempts", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if column not in execution_columns:
+                    self._connection.execute(
+                        f"ALTER TABLE manual_executions ADD COLUMN {column} {definition}"
+                    )
             if "cancellation_requested" not in job_columns:
                 self._connection.execute(
                     "ALTER TABLE automation_jobs ADD COLUMN "

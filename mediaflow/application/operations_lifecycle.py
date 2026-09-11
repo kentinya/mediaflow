@@ -950,6 +950,322 @@ def manual_action_matrix_operator_document(document: dict[str, object]) -> dict[
     return _bounded_operator_document(document)
 
 
+def manual_step_error_document(error: object, *, fallback_code: str = "manual_organize_rejected"):
+    """One bounded, secret-free failure envelope for a manual Organize step.
+
+    A manual Organize step can fail with a domain error whose details contain a
+    configuration digest, a fingerprint or a host path.  The transport must
+    publish the actionable code and next action only, so the whole envelope is
+    projected through the same redaction boundary as the read documents.
+    """
+
+    status = getattr(error, "status", None)
+    if isinstance(status, bool) or not isinstance(status, int) or not 200 <= status <= 599:
+        status = 409
+    code = getattr(error, "code", None)
+    if not isinstance(code, str) or not code.strip():
+        code = fallback_code
+    raw_message = str(error).strip() if str(error).strip() else ""
+    message = (
+        _bounded_evidence_text(raw_message, limit=256)
+        or "the exact manual Organize step was rejected; nothing was changed"
+    )
+    raw_details = getattr(error, "details", None)
+    bounded = {
+        "status": status,
+        "code": _bounded_evidence_text(code, limit=64) or fallback_code,
+        "message": message,
+        "nextAction": _bounded_evidence_text(getattr(error, "next_action", None), limit=512),
+        "durableState": "rejected_without_mutation" if status < 500 else "rejection_unconfirmed",
+        "sideEffects": "none",
+        "retrySafe": status < 500,
+        "details": raw_details if isinstance(raw_details, dict) else {},
+    }
+    return _bounded_operator_document(bounded)
+
+
+def manual_intent_operator_document(document: dict[str, object]) -> dict[str, object]:
+    """Bounded manual Organize intent for the V2 Operations workspace.
+
+    The durable intent identity, optimistic ``version``/item versions, exact
+    server-resolved source identity, the enabled pinned RecognitionType and
+    policy options, per-item status/next action and the zero-mutation flag are
+    preserved.  Every fingerprint/digest, occurrence identity and raw durable
+    error is projected away by the explicit allowlist and the final recursive
+    guard, so the Web journey can edit choices without ever handling internal
+    authority material.
+    """
+
+    raw_items = document.get("items")
+    items = raw_items if isinstance(raw_items, list) else []
+    raw_options = document.get("options")
+    options = raw_options if isinstance(raw_options, dict) else {}
+    bounded = {
+        "intentId": _bounded_identifier(document.get("intentId")),
+        "actor": _bounded_identifier(document.get("actor")),
+        "status": _bounded_evidence_text(document.get("status"), limit=64),
+        "version": _bounded_counter(document.get("version")),
+        "configurationSnapshotId": _bounded_identifier(document.get("configurationSnapshotId")),
+        "createdAt": _bounded_evidence_text(document.get("createdAt"), limit=64),
+        "updatedAt": _bounded_evidence_text(document.get("updatedAt"), limit=64),
+        "nextAction": _bounded_evidence_text(document.get("nextAction")),
+        "failure": bounded_failure_document(
+            document.get("error") if isinstance(document.get("error"), str) else None
+        ),
+        "sideEffects": "none",
+        "zeroMutation": True,
+        "execution": "not_available_in_this_task",
+        "optionLimit": _MAX_OPERATOR_COLLECTION,
+        "options": {
+            "configurationSnapshotId": _bounded_identifier(options.get("configurationSnapshotId")),
+            "recognitionTypes": _bounded_recognition_option_list(options.get("recognitionTypes")),
+            "metadataPolicies": _bounded_policy_option_list(options.get("metadataPolicies")),
+            "namingPolicies": _bounded_policy_option_list(options.get("namingPolicies")),
+            "classificationPolicies": _bounded_policy_option_list(
+                options.get("classificationPolicies")
+            ),
+            "organizePolicies": _bounded_policy_option_list(options.get("organizePolicies")),
+        },
+        "items": [
+            _manual_intent_item_operator(item)
+            for item in items[:_MAX_OPERATOR_COLLECTION]
+            if isinstance(item, dict)
+        ],
+    }
+    return _bounded_operator_document(bounded)
+
+
+def _bounded_recognition_option_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list | tuple):
+        return []
+    bounded: list[dict[str, object]] = []
+    for item in list(value)[:_MAX_OPERATOR_COLLECTION]:
+        if not isinstance(item, dict):
+            continue
+        bounded.append(
+            {
+                "id": _bounded_identifier(item.get("id")),
+                "name": _bounded_label(item.get("name")),
+                "description": _bounded_evidence_text(item.get("description")),
+                "policyId": _bounded_identifier(item.get("policyId")),
+                "metadataPolicyId": _bounded_identifier(item.get("metadataPolicyId")),
+                "namingPolicyId": _bounded_identifier(item.get("namingPolicyId")),
+                "classificationPolicyId": _bounded_identifier(item.get("classificationPolicyId")),
+                "organizePolicyId": _bounded_identifier(item.get("organizePolicyId")),
+                "enabled": bool(item.get("enabled")),
+            }
+        )
+    return bounded
+
+
+def _bounded_policy_option_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list | tuple):
+        return []
+    bounded: list[dict[str, object]] = []
+    for item in list(value)[:_MAX_OPERATOR_COLLECTION]:
+        if not isinstance(item, dict):
+            continue
+        bounded.append(
+            {
+                "id": _bounded_identifier(item.get("id")),
+                "name": _bounded_label(item.get("name")),
+                "enabled": bool(item.get("enabled")),
+                "providerId": _bounded_identifier(item.get("providerId")),
+                "mediaType": _bounded_evidence_text(item.get("mediaType"), limit=32),
+                "operation": _bounded_evidence_text(item.get("operation"), limit=32),
+                "conflictStrategy": _bounded_evidence_text(item.get("conflictStrategy"), limit=32),
+            }
+        )
+    return bounded
+
+
+def _bounded_metadata_reference(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    reference = {
+        "provider": _bounded_identifier(value.get("provider")),
+        "providerId": _bounded_identifier(value.get("providerId")),
+        "mediaType": _bounded_evidence_text(value.get("mediaType"), limit=32),
+        "title": _bounded_label(value.get("title"), limit=192),
+        "year": _bounded_number(value.get("year"), maximum=9999),
+        "candidateRef": _bounded_identifier(value.get("candidateRef")),
+        "reviewRef": _bounded_identifier(value.get("reviewRef")),
+    }
+    return reference if any(item is not None for item in reference.values()) else None
+
+
+def _manual_intent_item_operator(item: dict[str, object]) -> dict[str, object]:
+    """One bounded intent item: identity, optimistic versions and current choice."""
+
+    raw_source = item.get("source")
+    source = raw_source if isinstance(raw_source, dict) else {}
+    raw_choice = item.get("choice")
+    choice = raw_choice if isinstance(raw_choice, dict) else {}
+    return {
+        "itemId": _bounded_identifier(item.get("itemId")),
+        "position": _bounded_counter(item.get("position")),
+        "version": _bounded_counter(item.get("version")),
+        "status": _bounded_evidence_text(item.get("status"), limit=64),
+        "failure": bounded_failure_document(
+            item.get("error") if isinstance(item.get("error"), str) else None
+        ),
+        "nextAction": _bounded_evidence_text(item.get("nextAction")),
+        "createdAt": _bounded_evidence_text(item.get("createdAt"), limit=64),
+        "updatedAt": _bounded_evidence_text(item.get("updatedAt"), limit=64),
+        "source": {
+            "fileId": _bounded_identifier(source.get("fileId")),
+            "storageId": _bounded_identifier(source.get("storageId")),
+            "resourceLibraryId": _bounded_identifier(source.get("resourceLibraryId")),
+            "path": _bounded_identity_path(source.get("path")),
+            "filename": _bounded_location(source.get("filename"), segments=1),
+            "extension": _bounded_evidence_text(source.get("extension"), limit=32),
+            "size": _bounded_number(source.get("size")),
+            "scanStatus": _bounded_evidence_text(source.get("scanStatus"), limit=64),
+            "occurrenceState": _bounded_evidence_text(source.get("occurrenceState"), limit=64),
+        },
+        "choice": {
+            "recognitionTypeId": _bounded_identifier(choice.get("recognitionTypeId")),
+            "metadata": _bounded_metadata_reference(choice.get("metadata")),
+            "namingPolicyId": _bounded_identifier(choice.get("namingPolicyId")),
+            "classificationPolicyId": _bounded_identifier(choice.get("classificationPolicyId")),
+            "organizePolicyId": _bounded_identifier(choice.get("organizePolicyId")),
+        },
+    }
+
+
+def manual_execution_operator_document(document: dict[str, object]) -> dict[str, object]:
+    """Bounded manual Organize execution outcome for the V2 Operations workspace.
+
+    Admission state, aggregate status, every selected, unselected or blocked
+    item identity, the linked Task/TaskItem/Result identities, known and
+    uncertain effects and the current next action are preserved.  Raw
+    source/target paths, plan payloads, fingerprints, configuration digests,
+    authority material and raw exceptions are never published.
+    """
+
+    raw_items = document.get("items")
+    items = raw_items if isinstance(raw_items, list) else []
+    raw_selection = document.get("selection")
+    selection = raw_selection if isinstance(raw_selection, dict) else {}
+    raw_destructive = document.get("destructiveAuthority")
+    destructive = raw_destructive if isinstance(raw_destructive, dict) else {}
+    selected_ids = _bounded_identifier_list(
+        selection.get("selectedItemIds", document.get("selectedItemIds"))
+    )
+    unselected_ids = _bounded_identifier_list(
+        selection.get("unselectedItemIds", document.get("unselectedItemIds"))
+    )
+    verified_items = sum(
+        1
+        for item in items
+        if isinstance(item, dict) and item.get("effectCertainty") == "verified_complete"
+    )
+    failed_items = sum(
+        1 for item in items if isinstance(item, dict) and item.get("status") == "failed"
+    )
+    bounded = {
+        "executionId": _bounded_identifier(document.get("executionId")),
+        "previewId": _bounded_identifier(document.get("previewId")),
+        "intentId": _bounded_identifier(document.get("intentId")),
+        "taskId": _bounded_identifier(document.get("taskId")),
+        "actor": _bounded_identifier(document.get("actor")),
+        "status": _bounded_evidence_text(document.get("status"), limit=64),
+        "intentVersion": _bounded_counter(document.get("intentVersion")),
+        "selectedItemIds": selected_ids,
+        "unselectedItemIds": unselected_ids,
+        "selectedItemCount": len(selected_ids),
+        "unselectedItemCount": len(unselected_ids),
+        "itemCount": _bounded_counter(len(items)),
+        "completedItemCount": verified_items,
+        "failedItemCount": failed_items,
+        "allowOverwrite": bool(destructive.get("allowOverwrite", document.get("allowOverwrite"))),
+        "allowSourceCleanup": bool(
+            destructive.get("allowSourceCleanup", document.get("allowSourceCleanup"))
+        ),
+        "createdAt": _bounded_evidence_text(document.get("createdAt"), limit=64),
+        "updatedAt": _bounded_evidence_text(document.get("updatedAt"), limit=64),
+        "completedAt": _bounded_evidence_text(document.get("completedAt"), limit=64),
+        "nextAction": _bounded_evidence_text(document.get("nextAction")),
+        "failure": bounded_failure_document(
+            document.get("error") if isinstance(document.get("error"), str) else None
+        ),
+        "knownEffects": _bounded_effect_summary(items),
+        "items": [
+            _manual_execution_item_operator(item)
+            for item in items[:_MAX_OPERATOR_COLLECTION]
+            if isinstance(item, dict)
+        ],
+    }
+    return _bounded_operator_document(bounded)
+
+
+def _bounded_effect_summary(items: list) -> dict[str, object]:
+    """One aggregate, secret-free statement about recorded effects."""
+
+    verified = 0
+    uncertain = 0
+    failed = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        certainty = item.get("effectCertainty")
+        status = item.get("status")
+        if status in {"admitted", "pending"}:
+            # Nothing was attempted for this item yet, so it is not an
+            # uncertain effect and must not be reported as one.
+            continue
+        if certainty == "verified_complete":
+            verified += 1
+        elif certainty in {"attempted_unverified", "unknown"}:
+            uncertain += 1
+        elif status == "failed":
+            failed += 1
+    return {
+        "verifiedItemCount": verified,
+        "uncertainItemCount": uncertain,
+        "failedWithoutEffectCount": failed,
+        "statement": (
+            "every recorded effect is verified and no item requires automatic replay"
+            if uncertain == 0 and failed == 0
+            else "one or more items require investigation; MediaFlow never replays an "
+            "uncertain mutation automatically"
+        ),
+    }
+
+
+def _manual_execution_item_operator(item: dict[str, object]) -> dict[str, object]:
+    return {
+        "itemId": _bounded_identifier(item.get("itemId")),
+        "taskItemId": _bounded_identifier(item.get("taskItemId")),
+        "taskId": _bounded_identifier(item.get("taskId")),
+        "position": _bounded_counter(item.get("position")),
+        "status": _bounded_evidence_text(item.get("status"), limit=64),
+        "stage": _bounded_evidence_text(item.get("stage"), limit=64),
+        "resultId": _bounded_identifier(item.get("resultId")),
+        "effectCertainty": _bounded_evidence_text(item.get("effectCertainty"), limit=64),
+        "completedOperations": _bounded_text_list(
+            item.get("completedOperations"), limit=64, maximum=32
+        ),
+        "uncertainEffects": _bounded_text_list(item.get("uncertainEffects"), limit=64, maximum=32),
+        "failure": bounded_failure_document(
+            item.get("error") if isinstance(item.get("error"), str) else None
+        ),
+        "nextAction": _bounded_evidence_text(item.get("nextAction")),
+        "effects": [
+            {
+                "action": _bounded_evidence_text(effect.get("action"), limit=64),
+                "operation": _bounded_evidence_text(effect.get("operation"), limit=64),
+                "verified": bool(effect.get("verified")),
+                "certainty": _bounded_evidence_text(effect.get("certainty"), limit=64),
+                "sourceLocation": _bounded_location(effect.get("sourcePath"), segments=2),
+                "destinationLocation": _bounded_location(effect.get("destinationPath"), segments=2),
+            }
+            for effect in _as_list(item.get("effects"))[:32]
+            if isinstance(effect, dict)
+        ],
+    }
+
+
 def _bounded_preview_execution_state(value: object) -> str | None:
     """Publish only the execution states this Task's backend can mean."""
 
@@ -1030,10 +1346,52 @@ def _bounded_preview_plan(plan: dict[str, object]) -> dict[str, object]:
         "conflicts": _bounded_conflict_list(plan.get("conflicts")),
         "warnings": _bounded_text_list(plan.get("warnings")),
         "planStatus": _bounded_evidence_text(plan.get("planStatus"), limit=64),
+        "destructiveImplications": _bounded_destructive_implications(plan),
         "zeroMutation": True,
         "executionState": _bounded_preview_execution_state(plan.get("executionState")),
         "bounded": True,
         "deterministic": True,
+    }
+
+
+def _bounded_destructive_implications(plan: dict[str, object]) -> dict[str, object]:
+    """Whether this exact plan needs explicit Overwrite/cleanup authority.
+
+    Only the two authorization booleans and one fixed explanation leave the
+    persisted exact executor input, so the operator can see the destructive
+    implication without any plan payload, path or fingerprint being published.
+    """
+
+    raw_execution = plan.get("executionPlan")
+    execution = raw_execution if isinstance(raw_execution, dict) else {}
+    raw_cleanup = execution.get("sourceDirectoryCleanup")
+    cleanup = raw_cleanup if isinstance(raw_cleanup, dict) else {}
+    overwrite_required = bool(execution.get("overwriteAuthorized"))
+    cleanup_required = cleanup.get("mode") not in {None, "", "none"}
+    if overwrite_required and cleanup_required:
+        statement = (
+            "this exact plan would replace an existing destination file and delete the "
+            "emptied source directories; both require separate explicit authority"
+        )
+    elif overwrite_required:
+        statement = (
+            "this exact plan would replace an existing destination file; it requires "
+            "separate explicit overwrite authority"
+        )
+    elif cleanup_required:
+        statement = (
+            "this exact plan would delete the emptied source directories after organizing; "
+            "it requires separate explicit source-cleanup authority"
+        )
+    else:
+        statement = (
+            "this exact plan replaces and deletes nothing; source media is preserved by the "
+            "reviewed operation"
+        )
+    return {
+        "overwriteRequired": overwrite_required,
+        "sourceCleanupRequired": cleanup_required,
+        "statement": statement,
     }
 
 

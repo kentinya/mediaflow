@@ -33,6 +33,10 @@ describe("destination model", () => {
       "Scan detail",
       "Start Preview",
       "Preview detail",
+      "Manual organize",
+      "Manual intent",
+      "Exact organize Preview",
+      "Organize execution",
     ]);
   });
 

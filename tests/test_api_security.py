@@ -356,7 +356,7 @@ class WorkerRouteSecurityTests(unittest.TestCase):
                     supported_commands=("scan",),
                     configuration_snapshot_id="cfg-1",
                     configuration_snapshot_digest="sha256:test",
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=now,
                 )
                 api = MediaFlowApi(
@@ -395,7 +395,7 @@ class WorkerRouteSecurityTests(unittest.TestCase):
                                 supported_commands=("scan",),
                                 configuration_snapshot_id="cfg-1",
                                 configuration_snapshot_digest="sha256:test",
-                                runtime_schema_version=33,
+                                runtime_schema_version=SCHEMA_VERSION,
                                 now=datetime.now(UTC),
                             )
 

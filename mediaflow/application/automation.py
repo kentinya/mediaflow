@@ -171,7 +171,10 @@ class ProcessingWorkerService:
         *,
         active_configuration_snapshot_id: str | None = None,
         active_configuration_snapshot_digest: str | None = None,
-        runtime_schema_version: int = 33,
+        # Kept in step with ``mediaflow.infrastructure.sqlite_runtime.SCHEMA_VERSION``:
+        # the application layer must not import the infrastructure module, and an
+        # additive runtime schema bump is expected to update both defaults.
+        runtime_schema_version: int = 34,
     ) -> None:
         self._repository = repository
         self._active_configuration_snapshot_id = active_configuration_snapshot_id
@@ -261,6 +264,8 @@ class ProcessingWorkerService:
         active_snapshot_digest: str | None = None,
         runtime_schema_version: int | None = None,
     ) -> dict[str, object]:
+        """Readiness for the queued Job queue bound to the current Active snapshot."""
+
         current_now = now or datetime.now(UTC)
         workers = self.list_workers(current_now)
         expected_snapshot_id = (
@@ -284,21 +289,12 @@ class ProcessingWorkerService:
         stopped_workers = [w for w in workers if w.status == WorkerStatus.STOPPED]
 
         if not live_workers:
-            if stale_workers:
-                condition = WorkerReadiness.STALE_WORKER.value
-                durable_state = "all registered processing workers have stale heartbeats"
-                next_action = "restart the resident worker process to resume queue consumption"
-            elif stopped_workers:
-                condition = WorkerReadiness.NO_WORKER.value
-                durable_state = (
-                    "registered processing workers are stopped; restart the resident "
-                    "worker service to resume queue consumption"
-                )
-                next_action = "restart the resident worker service"
-            else:
-                condition = WorkerReadiness.NO_WORKER.value
-                durable_state = "no processing worker is registered"
-                next_action = "start a resident worker with the active configuration"
+            unavailable = self._no_live_worker_condition(
+                stale_count=len(stale_workers), stopped_count=len(stopped_workers)
+            )
+            condition = unavailable["condition"]
+            durable_state = unavailable["durableState"]
+            next_action = unavailable["nextAction"]
             ready = False
         else:
             matching: list[object] = []
@@ -367,6 +363,119 @@ class ProcessingWorkerService:
             "expectedSchemaVersion": expected_schema_version,
         }
 
+    @staticmethod
+    def _no_live_worker_condition(*, stale_count: int, stopped_count: int) -> dict[str, str]:
+        """The bounded reason no live Worker can consume durable work."""
+
+        if stale_count:
+            return {
+                "condition": WorkerReadiness.STALE_WORKER.value,
+                "durableState": "all registered processing workers have stale heartbeats",
+                "nextAction": "restart the resident worker process to resume queue consumption",
+            }
+        if stopped_count:
+            return {
+                "condition": WorkerReadiness.NO_WORKER.value,
+                "durableState": (
+                    "registered processing workers are stopped; restart the resident "
+                    "worker service to resume queue consumption"
+                ),
+                "nextAction": "restart the resident worker service",
+            }
+        return {
+            "condition": WorkerReadiness.NO_WORKER.value,
+            "durableState": "no processing worker is registered",
+            "nextAction": "start a resident worker with the active configuration",
+        }
+
+    def evaluate_manual_organize_readiness(
+        self,
+        now: datetime | None = None,
+        *,
+        runtime_schema_version: int | None = None,
+    ) -> dict[str, object]:
+        """Readiness for the Worker-owned admitted manual Organize boundary.
+
+        An admitted manual execution carries its own immutable pinned
+        configuration snapshot, so the live Worker is not required to be bound
+        to the current Active snapshot.  What the operator journey does need is
+        a live, schema-compatible resident Worker that can claim the durable
+        execution at all.
+        """
+
+        current_now = now or datetime.now(UTC)
+        workers = self.list_workers(current_now)
+        live_workers = [w for w in workers if w.status == WorkerStatus.LIVE]
+        stale_workers = [w for w in workers if w.status == WorkerStatus.STALE]
+        stopped_workers = [w for w in workers if w.status == WorkerStatus.STOPPED]
+        expected_schema_version = (
+            runtime_schema_version
+            if runtime_schema_version is not None
+            else self._runtime_schema_version
+        )
+        matching = [
+            worker
+            for worker in live_workers
+            if expected_schema_version is None
+            or worker.runtime_schema_version == expected_schema_version
+        ]
+        if matching:
+            return {
+                "ready": True,
+                "condition": WorkerReadiness.READY.value,
+                "category": None,
+                "durableState": (
+                    "resident processing worker is live and can claim the admitted "
+                    "manual execution queue"
+                ),
+                "sideEffects": "none",
+                "retrySafe": True,
+                "nextAction": "none",
+                "asOf": current_now.isoformat(),
+                "liveWorkers": len(live_workers),
+                "staleWorkers": len(stale_workers),
+                "stoppedWorkers": len(stopped_workers),
+                "totalWorkers": len(workers),
+                "expectedSchemaVersion": expected_schema_version,
+            }
+        if live_workers:
+            return {
+                "ready": False,
+                "condition": WorkerReadiness.SCHEMA_MISMATCH.value,
+                "category": WorkerReadiness.SCHEMA_MISMATCH.value,
+                "durableState": (
+                    "registered workers are live but report a runtime schema that differs "
+                    "from the active application"
+                ),
+                "sideEffects": "none",
+                "retrySafe": True,
+                "nextAction": "restart resident worker services with the current MediaFlow image",
+                "asOf": current_now.isoformat(),
+                "liveWorkers": len(live_workers),
+                "staleWorkers": len(stale_workers),
+                "stoppedWorkers": len(stopped_workers),
+                "totalWorkers": len(workers),
+                "expectedSchemaVersion": expected_schema_version,
+            }
+        unavailable = self._no_live_worker_condition(
+            stale_count=len(stale_workers), stopped_count=len(stopped_workers)
+        )
+        return {
+            "ready": False,
+            "condition": unavailable["condition"],
+            "category": unavailable["condition"],
+            "durableState": unavailable["durableState"],
+            "sideEffects": "none",
+            "retrySafe": True,
+            "nextAction": unavailable["nextAction"],
+            "asOf": current_now.isoformat(),
+            "liveWorkers": 0,
+            "staleWorkers": len(stale_workers),
+            "stoppedWorkers": len(stopped_workers),
+            "totalWorkers": len(workers),
+            "expectedSchemaVersion": expected_schema_version,
+        }
+
 
 def evaluate_pending_job_operational_condition(
     readiness: dict[str, object],
@@ -398,7 +507,8 @@ class AutomationWorker:
         supported_commands: tuple[str, ...] | None = None,
         configuration_snapshot_id: str | None = None,
         configuration_snapshot_digest: str | None = None,
-        runtime_schema_version: int = 33,
+        runtime_schema_version: int = 34,
+        manual_organize_worker=None,
     ) -> None:
         self._repository = repository
         self._handler = handler
@@ -417,6 +527,11 @@ class AutomationWorker:
         self._configuration_snapshot_id = configuration_snapshot_id
         self._configuration_snapshot_digest = configuration_snapshot_digest
         self._runtime_schema_version = runtime_schema_version
+        # Optional admitted-manual-execution runner sharing this Worker's
+        # resident loop.  It owns its own durable claim/lease boundary and is
+        # always constructed with a real runtime Task repository, so a missing
+        # value simply means this Worker serves queued Jobs only.
+        self._manual_organize_worker = manual_organize_worker
         # Preserve the legacy in-process helper path unless the caller supplies
         # the identity needed for durable Worker ownership and snapshot fencing.
         self._worker_registration_enabled = (
@@ -645,7 +760,10 @@ class AutomationWorker:
                         f"processing worker {self._worker_id!r} lost registration or was stopped"
                     )
                 if self.run_next() is None:
-                    sleep(poll_seconds)
+                    if self._run_manual_organize_work():
+                        processed += 1
+                    else:
+                        sleep(poll_seconds)
                 else:
                     processed += 1
         finally:
@@ -654,6 +772,22 @@ class AutomationWorker:
             except Exception:
                 pass
         return processed
+
+    def _run_manual_organize_work(self) -> bool:
+        """Serve one admitted exact manual execution without holding a Job.
+
+        The runner records its own bounded, secret-free notice and durable
+        outcome, so a rejected execution never stops this Worker from serving
+        queued Jobs or other admitted executions.
+        """
+
+        runner = self._manual_organize_worker
+        if runner is None:
+            return False
+        try:
+            return runner.run_next() is not None
+        except Exception:
+            return False
 
 
 def _definition_cancellation_evidence(task_id: str | None) -> AutomationFailureEvidence:

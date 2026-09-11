@@ -55,8 +55,11 @@ from mediaflow.application.operations_lifecycle import (
     job_lifecycle_document,
     job_operator_document,
     manual_action_matrix_operator_document,
+    manual_execution_operator_document,
+    manual_intent_operator_document,
     manual_preview_operator_document,
     manual_scan_operator_document,
+    manual_step_error_document,
     require_cancellable,
     task_item_operator_document,
     task_lifecycle_document,
@@ -108,6 +111,7 @@ from mediaflow.domain.file_lifecycle import (
 )
 from mediaflow.domain.library import ScanMode
 from mediaflow.domain.logging import LogLevel
+from mediaflow.domain.manual_execution import ManualExecutionError, ManualExecutionStatus
 from mediaflow.domain.manual_organize import (
     ManualIntentError,
 )
@@ -143,6 +147,7 @@ from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     PersistentTaskStatus,
 )
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 from mediaflow.infrastructure.webhook import UrllibWebhookTransport
 from mediaflow.interfaces.operator_ui import ASSETS as OPERATOR_UI_ASSETS
 from mediaflow.interfaces.pagination import (
@@ -1524,219 +1529,220 @@ class MediaFlowApi:
                 200,
                 manual_preview_operator_document(self._manual_preview_document(preview)),
             )
-        # --- V2 Operations: Manual Organize journey ---
-        if parts == ["api", "v1", "operations", "organize"] and method == "POST":
+        # --- V2 Operations: manual Organize intent, exact Preview, one Execute action ---
+        if parts == ["api", "v1", "operations", "organize", "intents"] and method == "POST":
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            self._require_manual_execution(principal)
-            if (
-                self._manual_previews is None
-                or not callable(getattr(self._manual_previews, "create_current_from_index", None))
-                or self._manual_execution is None
-                or not callable(getattr(self._manual_execution, "authorize", None))
-            ):
+            if self._manual_intents is None:
                 return self._error(
                     start_response,
                     503,
                     "service_unavailable",
-                    "manual organize service is unavailable",
+                    "manual intent service is unavailable",
                     details={
-                        "durableState": "no_task_created",
+                        "durableState": "no_intent_created",
                         "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": (
+                            "restore a valid Active runtime and Task repository, then retry the "
+                            "same bounded selection"
+                        ),
                     },
                 )
-            self._require_empty_query(environ, "server-bound manual Organize")
+            self._require_empty_query(environ, "operations organize intent")
             document = self._document(environ)
-            allowed = {
-                "scopeKind",
-                "scope",
-                "fileId",
-                "resourceLibraryId",
-                "snapshotId",
-                "snapshotDigest",
-            }
+            allowed = {"scopeKind", "scope", "resourceLibraryId", "fileId", "itemIds"}
             if set(document).difference(allowed):
-                raise ValueError("server-bound Organize accepts only bounded scope identity fields")
+                raise ValueError(
+                    "operations organize intent accepts only bounded scope identity fields"
+                )
             raw_kind = document.get("scopeKind", document.get("scope"))
             if raw_kind == "resourceLibrary":
                 raw_kind = "resource_library"
             if raw_kind not in {"file", "resource_library"}:
-                raise ValueError("server-bound Organize scope must be file or resource_library")
-            for name in ("snapshotId", "snapshotDigest"):
-                if name in document and (
-                    not isinstance(document[name], str) or not document[name].strip()
-                ):
-                    raise ValueError(f"server-bound Organize {name} must be a non-empty string")
-            preview = self._manual_previews.create_current_from_index(
-                scope_kind=raw_kind,
-                file_id=document.get("fileId"),
-                resource_library_id=document.get("resourceLibraryId"),
-                snapshot_id=document.get("snapshotId"),
-                snapshot_digest=document.get("snapshotDigest"),
-                actor=principal.principal_id,
-            )
-            preview_doc = self._manual_preview_document(preview)
-            operator_doc = manual_preview_operator_document(preview_doc)
-            operator_doc["journey"] = "organize"
-            operator_doc["nextAction"] = (
-                "review the exact Preview and authorize execution"
-                if any(
-                    item.get("status") == "previewed"
-                    and item.get("executionState") == "ready_for_explicit_authorization"
-                    for item in operator_doc.get("items", [])
+                raise ValueError(
+                    "operations organize intent scope must be file or resource_library"
                 )
-                else "inspect Preview items; stale or blocked items need correction"
+            resource_library_id = document.get("resourceLibraryId")
+            if not isinstance(resource_library_id, str) or not resource_library_id.strip():
+                raise ValueError("operations organize intent requires resourceLibraryId")
+            if raw_kind == "file":
+                file_id = document.get("fileId")
+                if not isinstance(file_id, str) or not file_id.strip():
+                    raise ValueError("operations organize intent file scope requires fileId")
+                selected: list[object] = [file_id]
+            else:
+                if document.get("fileId") is not None:
+                    raise ValueError(
+                        "operations organize intent library scope cannot include fileId"
+                    )
+                raw_items = document.get("itemIds")
+                if not isinstance(raw_items, list) or not raw_items:
+                    raise ValueError(
+                        "operations organize intent requires itemIds for a library scope"
+                    )
+                if len(raw_items) > self._manual_intents.MAX_ITEMS:
+                    raise ValueError(
+                        "operations organize intent selection is over the supported item limit"
+                    )
+                selected = list(raw_items)
+            self._require_organize_selection(selected, resource_library_id)
+            try:
+                intent = self._manual_intents.create(selected, actor=principal.principal_id)
+            except ManualIntentError as error:
+                return self._manual_step_error(start_response, error)
+            return self._response(
+                start_response, 201, self._organize_intent_document(intent, principal)
             )
-            return self._response(start_response, 201, operator_doc)
         if (
-            len(parts) == 5
-            and parts[:4] == ["api", "v1", "operations", "organize"]
+            len(parts) == 6
+            and parts[:5] == ["api", "v1", "operations", "organize", "intents"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
-            if self._manual_previews is None:
+            if self._manual_intents is None:
                 return self._error(
                     start_response,
                     503,
                     "service_unavailable",
-                    "manual preview service is unavailable",
+                    "manual intent service is unavailable",
                 )
+            self._require_empty_query(environ, "operations organize intent detail")
             try:
-                preview = self._manual_previews.get_readonly(parts[4])
-            except ManualPreviewError as error:
-                if error.status == 404:
-                    return self._error(
-                        start_response,
-                        404,
-                        "preview_not_found",
-                        "manual Preview was not found",
-                        details={"nextAction": error.next_action},
-                    )
-                return self._error(
-                    start_response,
-                    error.status,
-                    error.code,
-                    str(error),
-                    details={"sideEffects": "none", **error.details},
-                )
-            operator_doc = manual_preview_operator_document(self._manual_preview_document(preview))
-            operator_doc["journey"] = "organize"
-            return self._response(start_response, 200, operator_doc)
+                intent = self._manual_intents.get(parts[5])
+            except ManualIntentError as error:
+                return self._manual_step_error(start_response, error)
+            return self._response(
+                start_response, 200, self._organize_intent_document(intent, principal)
+            )
         if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "operations", "organize"]
-            and parts[5] == "authorize"
+            len(parts) == 9
+            and parts[:5] == ["api", "v1", "operations", "organize", "intents"]
+            and parts[6] == "items"
+            and parts[8] == "choice"
             and method == "POST"
         ):
-            self._require_manual_execution(principal)
-            if self._manual_execution is None:
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._manual_intents is None:
                 return self._error(
                     start_response,
                     503,
                     "service_unavailable",
-                    "manual execution service is unavailable",
+                    "manual intent service is unavailable",
                 )
-            self._require_empty_query(environ, "operations organize authorize")
+            self._require_empty_query(environ, "operations organize choice")
             document = self._document(environ)
             allowed = {
-                "previewId",
-                "itemIds",
                 "expectedVersion",
-                "expectedItemVersions",
-                "snapshotId",
-                "snapshotDigest",
-                "confirmation",
-                "allowOverwrite",
-                "allowSourceCleanup",
-                "ttlSeconds",
-                "note",
+                "expectedItemVersion",
+                "recognitionTypeId",
+                "metadata",
+                "namingPolicyId",
+                "classificationPolicyId",
+                "organizePolicyId",
             }
-            if set(document).difference(allowed):
-                raise ValueError("operations organize authorize fields are invalid")
-            preview_id = parts[4]
-            if not isinstance(preview_id, str) or not preview_id.strip():
-                raise ValueError("operations organize previewId is required")
-            if "confirmation" not in document or document["confirmation"] is not True:
-                raise ValueError("operations organize authorization requires confirmation=true")
-            item_ids = document.get("itemIds")
-            if not isinstance(item_ids, list) or not item_ids:
-                raise ValueError("operations organize requires itemIds array")
-            expected_version = document.get("expectedVersion")
+            if set(document).difference(allowed) or "expectedVersion" not in document:
+                raise ValueError(
+                    "operations organize choice requires expectedVersion and bounded choice fields"
+                )
+            expected_version = document["expectedVersion"]
             if (
                 isinstance(expected_version, bool)
                 or not isinstance(expected_version, int)
                 or expected_version < 1
             ):
-                raise ValueError("operations organize expectedVersion must be a positive integer")
-            expected_item_versions = document.get("expectedItemVersions")
-            if not isinstance(expected_item_versions, (dict, list)):
                 raise ValueError(
-                    "operations organize expectedItemVersions must be an object or array"
+                    "operations organize choice expectedVersion must be a positive integer"
                 )
-            authorization = self._manual_execution.authorize(
-                preview_id,
-                item_ids,
-                expected_intent_version=expected_version,
-                expected_item_versions=expected_item_versions,
-                snapshot_id=document.get("snapshotId"),
-                snapshot_digest=document.get("snapshotDigest"),
-                actor=principal.principal_id,
-                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
-                confirmation=document["confirmation"],
-                allow_overwrite=document.get("allowOverwrite", False),
-                allow_source_cleanup=document.get("allowSourceCleanup", False),
-                ttl_seconds=document.get("ttlSeconds"),
-                note=document.get("note"),
-            )
-            auth_doc = self._manual_execution.authorization_document(authorization.authorization_id)
-            auth_doc["journey"] = "organize"
-            auth_doc["nextAction"] = (
-                "execute this exact authorization once with explicit confirmation"
-            )
-            return self._response(start_response, 201, auth_doc)
+            expected_item_version = document.get("expectedItemVersion")
+            if expected_item_version is not None and (
+                isinstance(expected_item_version, bool)
+                or not isinstance(expected_item_version, int)
+                or expected_item_version < 1
+            ):
+                raise ValueError(
+                    "operations organize choice expectedItemVersion must be a positive integer"
+                )
+            patch = {
+                name: document[name]
+                for name in (
+                    "recognitionTypeId",
+                    "metadata",
+                    "namingPolicyId",
+                    "classificationPolicyId",
+                    "organizePolicyId",
+                )
+                if name in document
+            }
+            if not patch:
+                raise ValueError("operations organize choice requires at least one choice field")
+            try:
+                intent = self._manual_intents.update_choice(
+                    parts[5],
+                    parts[7],
+                    patch,
+                    expected_version=expected_version,
+                    actor=principal.principal_id,
+                    expected_item_version=expected_item_version,
+                )
+            except ManualIntentError as error:
+                return self._manual_step_error(start_response, error)
+            operator_document = self._organize_intent_document(intent, principal)
+            operator_document["previewRequired"] = True
+            return self._response(start_response, 200, operator_document)
         if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "operations", "organize"]
-            and parts[5] == "execute"
+            len(parts) == 7
+            and parts[:5] == ["api", "v1", "operations", "organize", "intents"]
+            and parts[6] == "previews"
             and method == "POST"
         ):
-            self._require_manual_execution(principal)
-            if self._manual_execution is None:
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._manual_previews is None or not callable(
+                getattr(self._manual_previews, "create", None)
+            ):
                 return self._error(
                     start_response,
                     503,
                     "service_unavailable",
-                    "manual execution service is unavailable",
+                    "manual Preview service is unavailable",
+                    details={
+                        "durableState": "no_preview_created",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": (
+                            "restore a valid Active runtime and Preview services, then retry"
+                        ),
+                    },
                 )
-            self._require_empty_query(environ, "operations organize execute")
+            self._require_empty_query(environ, "operations organize preview")
             document = self._document(environ)
-            if set(document) != {"authorizationId", "confirmation"}:
+            if set(document) != {"expectedVersion"}:
                 raise ValueError(
-                    "operations organize execute requires authorizationId and confirmation"
+                    "operations organize Preview requires only the current intent version"
                 )
+            expected_version = document["expectedVersion"]
             if (
-                not isinstance(document["authorizationId"], str)
-                or not document["authorizationId"].strip()
-                or document["confirmation"] is not True
+                isinstance(expected_version, bool)
+                or not isinstance(expected_version, int)
+                or expected_version < 1
             ):
-                raise ValueError("operations organize execute requires confirmation=true")
-            authorization = self._manual_execution.get_authorization(document["authorizationId"])
-            if authorization.preview_id != parts[4]:
                 raise ValueError(
-                    "operations organize authorization does not belong to this Preview"
+                    "operations organize Preview expectedVersion must be a positive integer"
                 )
-            execution = self._manual_execution.execute(
-                authorization.authorization_id,
-                actor=principal.principal_id,
-                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
-                confirmation=document["confirmation"],
+            try:
+                preview = self._manual_previews.create(
+                    parts[5],
+                    None,
+                    expected_version=expected_version,
+                    actor=principal.principal_id,
+                )
+            except ManualPreviewError as error:
+                return self._manual_step_error(start_response, error)
+            return self._response(
+                start_response, 201, self._organize_preview_document(preview, principal)
             )
-            exec_doc = self._manual_execution.document(execution.execution_id)
-            exec_doc["journey"] = "organize"
-            return self._response(start_response, 200, exec_doc)
         if (
             len(parts) == 6
-            and parts[:4] == ["api", "v1", "operations", "organize"]
-            and parts[5] == "detail"
+            and parts[:5] == ["api", "v1", "operations", "organize", "previews"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -1745,59 +1751,145 @@ class MediaFlowApi:
                     start_response,
                     503,
                     "service_unavailable",
-                    "manual preview service is unavailable",
+                    "manual Preview service is unavailable",
                 )
-            self._require_empty_query(environ, "operations organize detail")
+            self._require_empty_query(environ, "operations organize Preview detail")
             try:
-                preview = self._manual_previews.get_readonly(parts[4])
+                preview = self._manual_previews.get_readonly(parts[5])
             except ManualPreviewError as error:
+                return self._manual_step_error(start_response, error)
+            return self._response(
+                start_response, 200, self._organize_preview_document(preview, principal)
+            )
+        if (
+            len(parts) == 7
+            and parts[:5] == ["api", "v1", "operations", "organize", "previews"]
+            and parts[6] == "execute"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            self._require_manual_execution(principal)
+            if self._manual_execution is None or not callable(
+                getattr(self._manual_execution, "begin_web_execution", None)
+            ):
                 return self._error(
                     start_response,
-                    error.status,
-                    error.code,
-                    str(error),
-                    details={"sideEffects": "none", **error.details},
+                    503,
+                    "service_unavailable",
+                    "manual organize execution service is unavailable",
+                    details={
+                        "durableState": "no_execution_admitted",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": (
+                            "restore the Active runtime, Task repository and admitted execution "
+                            "boundary, then request a fresh Preview"
+                        ),
+                    },
                 )
-            operator_doc = manual_preview_operator_document(self._manual_preview_document(preview))
-            operator_doc["journey"] = "organize"
-            return self._response(start_response, 200, operator_doc)
-        if (
-            len(parts) == 5
-            and parts[:4] == ["api", "v1", "operations", "organize"]
-            and parts[4] == "executions"
-            and method == "GET"
-        ):
+            self._require_empty_query(environ, "operations organize execute")
+            document = self._document(environ)
+            allowed = {
+                "confirmation",
+                "itemIds",
+                "expectedIntentVersion",
+                "allowOverwrite",
+                "allowSourceCleanup",
+            }
+            if set(document).difference(allowed):
+                raise ValueError(
+                    "operations organize execute accepts only bounded reviewed selection fields"
+                )
+            if document.get("confirmation") is not True:
+                raise ValueError("operations organize execute requires one explicit confirmation")
+            item_ids = document.get("itemIds")
+            if not isinstance(item_ids, list) or not item_ids:
+                raise ValueError("operations organize execute requires a selected itemIds array")
+            if len(item_ids) > self._manual_execution.MAX_ITEMS:
+                raise ValueError(
+                    "operations organize execute selection is over the supported item limit"
+                )
+            expected_version = document.get("expectedIntentVersion")
+            if (
+                isinstance(expected_version, bool)
+                or not isinstance(expected_version, int)
+                or expected_version < 1
+            ):
+                raise ValueError(
+                    "operations organize execute expectedIntentVersion must be a positive integer"
+                )
+            for name in ("allowOverwrite", "allowSourceCleanup"):
+                if name in document and not isinstance(document[name], bool):
+                    raise ValueError(f"operations organize execute {name} must be boolean")
+            try:
+                execution = self._manual_execution.begin_web_execution(
+                    parts[5],
+                    item_ids,
+                    expected_intent_version=expected_version,
+                    actor=principal.principal_id,
+                    confirmation=True,
+                    allow_overwrite=document.get("allowOverwrite", False),
+                    allow_source_cleanup=document.get("allowSourceCleanup", False),
+                )
+            except ManualExecutionError as error:
+                return self._manual_step_error(start_response, error)
+            return self._response(
+                start_response,
+                202 if execution.status is ManualExecutionStatus.ADMITTED else 200,
+                self._organize_execution_document(execution),
+            )
+        if parts == ["api", "v1", "operations", "organize", "executions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._manual_execution is None:
                 return self._error(
                     start_response,
                     503,
                     "service_unavailable",
-                    "manual execution service is unavailable",
+                    "manual organize execution service is unavailable",
                 )
-            self._require_empty_query(environ, "operations organize execution list")
             values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(values).difference({"previewId", "intentId", "limit"}) or any(
+                len(value) != 1 for value in values.values()
+            ):
+                raise ValueError(
+                    "operations organize execution list query contains unsupported fields"
+                )
+            limit = self._parse_bounded_limit(values.get("limit", ["50"])[0], "execution")
             preview_id = values.get("previewId", [None])[0]
             intent_id = values.get("intentId", [None])[0]
-            task_id = values.get("taskId", [None])[0]
-            if preview_id and callable(
-                getattr(self._manual_execution, "discovery_for_preview", None)
-            ):
-                discovery = self._manual_execution.discovery_for_preview(preview_id)
-            elif task_id and callable(getattr(self._manual_execution, "discovery_for_task", None)):
-                discovery = self._manual_execution.discovery_for_task(task_id)
-            elif intent_id and callable(
-                getattr(self._manual_execution, "discovery_for_intent", None)
-            ):
-                discovery = self._manual_execution.discovery_for_intent(intent_id)
-            else:
-                discovery = {"executions": []}
-            discovery["journey"] = "organize"
-            return self._response(start_response, 200, discovery)
+            reader = None
+            relation = None
+            if preview_id:
+                reader = getattr(self._manual_execution, "list_for_preview", None)
+                relation = preview_id
+            elif intent_id:
+                reader = getattr(self._manual_execution, "list_for_intent", None)
+                relation = intent_id
+            if reader is None or relation is None:
+                raise ValueError(
+                    "operations organize execution list requires previewId or intentId"
+                )
+            try:
+                executions = reader(relation, limit=limit)
+            except TypeError:
+                executions = reader(relation)
+            documents = [
+                self._organize_execution_document(value) for value in tuple(executions)[:limit]
+            ]
+            return self._response(
+                start_response,
+                200,
+                {
+                    "journey": "organize",
+                    "items": documents,
+                    "limit": limit,
+                    "total": len(documents),
+                    "truncated": len(tuple(executions)) > len(documents),
+                },
+            )
         if (
             len(parts) == 6
-            and parts[:4] == ["api", "v1", "operations", "organize"]
-            and parts[5] == "executions"
+            and parts[:5] == ["api", "v1", "operations", "organize", "executions"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -1806,27 +1898,14 @@ class MediaFlowApi:
                     start_response,
                     503,
                     "service_unavailable",
-                    "manual execution service is unavailable",
+                    "manual organize execution service is unavailable",
                 )
             self._require_empty_query(environ, "operations organize execution detail")
-            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-            preview_id = values.get("previewId", [None])[0]
-            intent_id = values.get("intentId", [None])[0]
-            task_id = values.get("taskId", [None])[0]
-            if preview_id and callable(
-                getattr(self._manual_execution, "discovery_for_preview", None)
-            ):
-                discovery = self._manual_execution.discovery_for_preview(preview_id)
-            elif task_id and callable(getattr(self._manual_execution, "discovery_for_task", None)):
-                discovery = self._manual_execution.discovery_for_task(task_id)
-            elif intent_id and callable(
-                getattr(self._manual_execution, "discovery_for_intent", None)
-            ):
-                discovery = self._manual_execution.discovery_for_intent(intent_id)
-            else:
-                discovery = {"executions": []}
-            discovery["journey"] = "organize"
-            return self._response(start_response, 200, discovery)
+            try:
+                execution = self._manual_execution.get(parts[5])
+            except ManualExecutionError as error:
+                return self._manual_step_error(start_response, error)
+            return self._response(start_response, 200, self._organize_execution_document(execution))
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._configuration_service is None or self._configuration_objects is None:
@@ -7540,15 +7619,31 @@ class MediaFlowApi:
         preview_service_ready = callable(
             getattr(self._manual_previews, "create_current_from_index", None)
         )
-        execution_service_ready = callable(getattr(self._manual_execution, "authorize", None))
+        intent_service_ready = callable(getattr(self._manual_intents, "create", None))
+        preview_intent_ready = callable(getattr(self._manual_previews, "create", None))
+        execution_service_ready = callable(
+            getattr(self._manual_execution, "begin_web_execution", None)
+        )
+        organize_worker = (
+            self._organize_worker_evidence()
+            if execution_service_ready
+            else {
+                "ready": False,
+                "condition": "execution_service_unavailable",
+                "durableState": "the admitted manual execution boundary is unavailable",
+                "nextAction": "restore the admitted execution services, then refresh",
+            }
+        )
         scan_available = can_scan and runtime_ready and scan_service_ready
         preview_available = can_preview and runtime_ready and preview_service_ready
         organize_available = (
             can_execute
             and can_preview
             and runtime_ready
-            and preview_service_ready
+            and intent_service_ready
+            and preview_intent_ready
             and execution_service_ready
+            and bool(organize_worker["ready"])
         )
         scan_reason = (
             None
@@ -7582,13 +7677,21 @@ class MediaFlowApi:
             None
             if organize_available
             else (
-                "the connected API principal does not hold the execute_manual_organize "
+                "the connected API principal does not hold the manage_manual_organize "
+                "permission required to build a manual intent"
+                if not can_preview
+                else "the connected API principal does not hold the execute_manual_organize "
                 "permission required for Organize"
                 if not can_execute
                 else "the Active runtime is unavailable for Organize"
                 if not runtime_ready
-                else "the current-source Preview or execution service is unavailable"
-                if not (preview_service_ready and execution_service_ready)
+                else "the manual intent, Preview or execution service is unavailable"
+                if not (intent_service_ready and preview_intent_ready and execution_service_ready)
+                else str(
+                    organize_worker.get("durableState")
+                    or "the resident Processing Worker cannot claim admitted work"
+                )
+                if not organize_worker["ready"]
                 else "Organize is unavailable"
             )
         )
@@ -7771,9 +7874,9 @@ class MediaFlowApi:
                             "available": organize_available,
                             "reason": organize_reason,
                             "method": "POST",
-                            "path": "/api/v1/operations/organize",
+                            "path": "/api/v1/operations/organize/intents",
                             "nextAction": (
-                                "review the exact Preview and authorize execution"
+                                "create a durable manual intent, then request an exact Preview"
                                 if organize_available
                                 else organize_reason
                             ),
@@ -8601,6 +8704,345 @@ class MediaFlowApi:
                 preview.preview_id
             )
         return redact_manual_value(document)
+
+    # --- V2 manual Organize journey projections ----------------------------
+
+    def _manual_step_error(self, start_response: Callable, error) -> list[bytes]:
+        """One bounded, secret-free failure for a manual Organize step."""
+
+        document = manual_step_error_document(error)
+        status = int(document.pop("status", 409))
+        return self._error(
+            start_response,
+            status,
+            str(document.pop("code", "manual_organize_rejected")),
+            str(document.pop("message", "the exact manual Organize step was rejected")),
+            details=document,
+        )
+
+    def _require_organize_selection(self, item_ids: list, resource_library_id: str) -> None:
+        """Resolve every selected FileIndex identity in its exact current scope.
+
+        The browser submits only FileIndex identities it already rendered; the
+        backend resolves each one through the current catalog inside the chosen
+        ResourceLibrary, so a stale, foreign or fabricated identity can never
+        become a durable manual intent.
+        """
+
+        catalog_reader = getattr(self._file_catalog, "show", None) if self._file_catalog else None
+        index_reader = (
+            getattr(self._file_index, "list_by_resource_library", None)
+            if self._file_index is not None
+            else None
+        )
+        seen: set[str] = set()
+        for raw in item_ids:
+            if not isinstance(raw, str) or not raw.strip() or len(raw) > 512:
+                raise ValueError(
+                    "operations organize selection contains an invalid FileIndex identity"
+                )
+            file_id = raw.strip()
+            if file_id in seen:
+                raise ValueError(
+                    "operations organize selection contains a duplicate FileIndex identity"
+                )
+            seen.add(file_id)
+            record = None
+            if callable(catalog_reader):
+                try:
+                    record = catalog_reader(file_id, resource_library_id=resource_library_id)
+                except LookupError:
+                    record = None
+                except Exception as error:
+                    raise ValueError(
+                        "the selected FileIndex scope could not be resolved from the current "
+                        "catalog"
+                    ) from error
+            if record is None and callable(index_reader):
+                for candidate in index_reader(resource_library_id):
+                    if getattr(candidate, "file_id", None) == file_id:
+                        record = candidate
+                        break
+            if record is None:
+                raise ValueError(
+                    "a selected FileIndex record is not current in the chosen ResourceLibrary"
+                )
+
+    def _organize_worker_evidence(self) -> dict[str, object]:
+        """Backend-authoritative Worker evidence for the admitted execution queue."""
+
+        if self._worker_service is None:
+            return {
+                "ready": False,
+                "condition": "worker_service_unavailable",
+                "durableState": "the Processing Worker service is unavailable",
+                "nextAction": ("restore the resident Processing Worker, then refresh this journey"),
+            }
+        readiness = self._worker_service.evaluate_manual_organize_readiness(
+            runtime_schema_version=SCHEMA_VERSION
+        )
+        return {
+            "ready": bool(readiness.get("ready")),
+            "condition": readiness.get("condition"),
+            "durableState": readiness.get("durableState"),
+            "nextAction": readiness.get("nextAction"),
+        }
+
+    def _organize_intent_document(self, intent, principal: ResolvedApiPrincipal) -> dict:
+        document = manual_intent_operator_document(intent.document(include_audit=False))
+        document["journey"] = "organize"
+        intent_id = document.get("intentId")
+        items = [item for item in document.get("items") or [] if isinstance(item, dict)]
+        open_intent = document.get("status") == "open"
+        ready_items = [item for item in items if item.get("status") == "ready"]
+        manage_permitted = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
+        execute_permitted = ApiPermission.EXECUTE_MANUAL_ORGANIZE in principal.permissions
+        choice_reason = self._organize_unavailable_reason(
+            manage_permitted,
+            ApiPermission.MANAGE_MANUAL_ORGANIZE,
+            "the connected API principal cannot edit this manual intent",
+        ) or (
+            None
+            if open_intent and items
+            else "this manual intent is closed and no longer accepts a choice edit"
+        )
+        preview_reason = self._organize_unavailable_reason(
+            manage_permitted,
+            ApiPermission.MANAGE_MANUAL_ORGANIZE,
+            "the connected API principal cannot create an exact Preview for this intent",
+        ) or (
+            None
+            if open_intent and ready_items and len(ready_items) == len(items)
+            else "every intent item must be current and ready before a zero-mutation Preview"
+        )
+        document["actions"] = {
+            "choice": {
+                "available": choice_reason is None,
+                "reason": choice_reason,
+                "method": "POST",
+                "path": (
+                    f"/api/v1/operations/organize/intents/{intent_id}/items/{{itemId}}/choice"
+                    if isinstance(intent_id, str) and intent_id
+                    else None
+                ),
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "a durable optimistic choice revision is stored and every earlier Preview "
+                    "of this intent becomes historical evidence"
+                ),
+                "nextAction": (
+                    "edit one item choice with its current intent and item versions"
+                    if choice_reason is None
+                    else "reopen this intent from current Files if its choices must change"
+                ),
+            },
+            "preview": {
+                "available": preview_reason is None,
+                "reason": preview_reason,
+                "method": "POST",
+                "path": (
+                    f"/api/v1/operations/organize/intents/{intent_id}/previews"
+                    if isinstance(intent_id, str) and intent_id
+                    else None
+                ),
+                "sideEffects": "none",
+                "durableOutcome": "a durable zero-mutation Preview revision is stored",
+                "nextAction": (
+                    "create a fresh exact Preview of the reviewed choices"
+                    if preview_reason is None
+                    else "reload the current intent and repair the blocked item evidence"
+                ),
+            },
+            "execute": {
+                "available": False,
+                "reason": (
+                    "exact execution is only offered from a current, complete Preview"
+                    if execute_permitted
+                    else "the connected API principal does not hold the "
+                    "execute_manual_organize permission"
+                ),
+                "method": None,
+                "path": None,
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": "create a fresh exact Preview after the last choice change",
+            },
+        }
+        document["limits"] = {"intentMaxItems": self._organize_intent_limit()}
+        return document
+
+    def _organize_preview_document(self, preview, principal: ResolvedApiPrincipal) -> dict:
+        document = manual_preview_operator_document(preview.document())
+        document["journey"] = "organize"
+        preview_id = document.get("previewId")
+        items = [item for item in document.get("items") or [] if isinstance(item, dict)]
+        executable = [
+            item
+            for item in items
+            if item.get("current") is True
+            and item.get("truncated") is False
+            and item.get("status") == "previewed"
+            and item.get("executionState") == "ready_for_explicit_authorization"
+        ]
+        blocked = len(items) - len(executable)
+        manage_permitted = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
+        execute_permitted = ApiPermission.EXECUTE_MANUAL_ORGANIZE in principal.permissions
+        worker = self._organize_worker_evidence()
+        reason: str | None = None
+        if not manage_permitted or not execute_permitted:
+            reason = (
+                "the connected API principal does not hold the permissions required to "
+                "execute reviewed manual work"
+            )
+        elif not document.get("current"):
+            reason = "this Preview is historical evidence and can no longer be executed"
+        elif document.get("truncated"):
+            reason = "this Preview is truncated and cannot authorize exact work"
+        elif not executable:
+            reason = "no Preview item is current, complete and executable"
+        elif not worker["ready"]:
+            reason = str(
+                worker.get("durableState")
+                or "the resident Processing Worker cannot claim admitted work"
+            )
+        document["executionCandidateItemIds"] = [item.get("itemId") for item in executable]
+        document["blockedItemCount"] = blocked
+        document["worker"] = worker
+        document["actions"] = {
+            "execute": {
+                "available": reason is None,
+                "reason": reason,
+                "method": "POST",
+                "path": (
+                    f"/api/v1/operations/organize/previews/{preview_id}/execute"
+                    if isinstance(preview_id, str) and preview_id
+                    else None
+                ),
+                "requiresConfirmation": True,
+                "sideEffects": "reported_per_item",
+                "durableOutcome": (
+                    "one durable admitted execution and its Processing Worker outcome are "
+                    "stored; only OrganizerExecutor may then mutate Storage"
+                ),
+                "nextAction": (
+                    "confirm one Execute action for the selected exact items"
+                    if reason is None
+                    else str(
+                        worker.get("nextAction")
+                        if not worker["ready"]
+                        else "request a fresh Preview after repairing the blocked items"
+                    )
+                ),
+            },
+            "intent": {
+                "available": isinstance(document.get("intentId"), str),
+                "reason": None,
+                "method": "GET",
+                "path": (
+                    f"/api/v1/operations/organize/intents/{document.get('intentId')}"
+                    if isinstance(document.get("intentId"), str)
+                    else None
+                ),
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": "reopen the durable intent to change a choice",
+            },
+        }
+        return document
+
+    def _organize_execution_document(self, execution) -> dict:
+        document = manual_execution_operator_document(execution.document())
+        document["journey"] = "organize"
+        execution_id = document.get("executionId")
+        status = document.get("status")
+        if status == "admitted":
+            next_action = (
+                "the reviewed work is durably admitted and waits for the resident Processing "
+                "Worker to claim it"
+            )
+            durable_state = "admitted"
+        elif status == "running":
+            next_action = (
+                "the resident Processing Worker owns this exact execution; refresh to read "
+                "each independent item outcome"
+            )
+            durable_state = "running"
+        elif status == "completed":
+            next_action = "inspect the verified per-item Results; no replay is required"
+            durable_state = "completed"
+        elif status == "partial_success":
+            next_action = (
+                "inspect each failed item and use Review & Recovery; uncertain effects are "
+                "never replayed automatically"
+            )
+            durable_state = "partially_completed"
+        elif status == "cancelled":
+            next_action = "this execution was cancelled; inspect the preserved item outcomes"
+            durable_state = "cancelled"
+        else:
+            next_action = (
+                "inspect each failed item, repair the cause and request a fresh Preview; "
+                "uncertain effects are never replayed automatically"
+            )
+            durable_state = "terminal_failure"
+        document["durableState"] = durable_state
+        document["nextAction"] = next_action
+        document["actions"] = {
+            "detail": {
+                "available": True,
+                "reason": None,
+                "method": "GET",
+                "path": (
+                    f"/api/v1/operations/organize/executions/{execution_id}"
+                    if isinstance(execution_id, str) and execution_id
+                    else None
+                ),
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": next_action,
+            },
+            "task": {
+                "available": isinstance(document.get("taskId"), str),
+                "reason": None,
+                "method": "GET",
+                "path": (
+                    f"/api/v1/operations/tasks/{document.get('taskId')}"
+                    if isinstance(document.get("taskId"), str)
+                    else None
+                ),
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": "inspect the durable Task and its per-item Results",
+            },
+            "recovery": {
+                "available": status in {"partial_success", "failed"},
+                "reason": (
+                    None
+                    if status in {"partial_success", "failed"}
+                    else "recovery is only offered for an execution with a failed item"
+                ),
+                "method": None,
+                "path": None,
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": (
+                    "open Review & Recovery to inspect the failed item; MediaFlow never "
+                    "replays an uncertain mutation automatically"
+                ),
+            },
+        }
+        return document
+
+    def _organize_unavailable_reason(
+        self, permitted: bool, permission: ApiPermission, message: str
+    ) -> str | None:
+        if permitted:
+            return None
+        return f"{message} (required permission: {permission.value})"
+
+    def _organize_intent_limit(self) -> int:
+        limit = getattr(self._manual_intents, "MAX_ITEMS", None)
+        return limit if isinstance(limit, int) else 0
 
     def _automation_preview_document(self, preview, *, item_limit: int = 100) -> dict:
         document = redact_manual_value(preview.document())

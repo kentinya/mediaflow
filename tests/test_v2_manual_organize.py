@@ -1,11 +1,23 @@
-"""V2 manual Organize journey tests.
+"""V2 Web-native manual Organize journey: admission, Worker execution, outcomes.
 
-Tests the complete Web-native manual organize admission and outcome journey:
-server-resolved selection, optimistic intent/item concurrency, exact Preview,
-one-shot principal/permission/version/item/effect/expiry binding, concurrent
-submission, pre-mutation rejection, explicit destructive authority, all operation
-types with no link fallback, independent sibling outcomes, uncertain-effect
-no-replay, redaction and V1 compatibility.
+This module drives the real ``MediaFlowApi`` over a real managed runtime, real
+``LocalStorage`` roots, scanner-produced FileIndex records, the real manual
+intent/Preview/execution services and the real admitted-execution Worker.  It
+proves the Slice 33 manual Organize journey end to end:
+
+``GET  /api/v1/operations/manual-actions``
+``POST /api/v1/operations/organize/intents``
+``GET  /api/v1/operations/organize/intents/{intentId}``
+``POST /api/v1/operations/organize/intents/{intentId}/items/{itemId}/choice``
+``POST /api/v1/operations/organize/intents/{intentId}/previews``
+``GET  /api/v1/operations/organize/previews/{previewId}``
+``POST /api/v1/operations/organize/previews/{previewId}/execute``
+``GET  /api/v1/operations/organize/executions/{executionId}``
+
+Every assertion is about durable behavior: no Storage mutation happens before
+admission, only the Processing Worker executes admitted work, exactly one
+execution exists per reviewed selection, a source that changed after admission
+fails without mutation and nothing is replayed automatically.
 """
 
 from __future__ import annotations
@@ -14,556 +26,930 @@ import io
 import json
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from contextlib import contextmanager
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
 
+from mediaflow.application.automation import ProcessingWorkerService
 from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
+from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
-from mediaflow.application.manual_scan import ManualScanService
-from mediaflow.domain.library import ResourceLibrary
-from mediaflow.domain.manual_organize import ManualConfigurationSnapshot
+from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
+from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+from mediaflow.application.scanner import StorageScanner
+from mediaflow.application.strategy_test import SyntheticMetadataProvider
+from mediaflow.domain.library import MediaLibrary, ResourceLibrary
+from mediaflow.domain.manual_execution import ManualExecutionStatus
+from mediaflow.domain.metadata import MediaCandidate, MediaType
+from mediaflow.domain.organizer import (
+    ConflictStrategy,
+    OrganizeOperationType,
+    RollbackPolicy,
+)
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.task_persistence import ConfirmationStatus, ConflictConfirmation
+from mediaflow.infrastructure.configuration_snapshot import build_configuration_snapshot
+from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.runtime_configuration import (
+    RuntimeConfiguration,
+    StorageDefinition,
+    with_managed_snapshot,
+)
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.test_manual_organize_preview import manual_snapshot
 
+SNAPSHOT_ID = "active-1"
+SNAPSHOT_DIGEST = "a" * 64
 NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+OPERATOR_TOKEN = "operator-token"
+VIEWER_TOKEN = "viewer-token"
+MANAGER_TOKEN = "manager-token"
+
+_FORBIDDEN_DOCUMENT_SUBSTRINGS = (
+    "Bearer ",
+    "fingerprint",
+    "digest",
+    "occurrenceId",
+    "executionPlan",
+    "/tmp/",
+    "smb://",
+    "http://",
+    "https://",
+    "one-time",
+)
 
 
-class FakeStorage:
-    def __init__(self, storage_id: str) -> None:
-        self._id = storage_id
-        self._files: dict[str, tuple[int, datetime]] = {}
+class RecordingStorage:
+    """LocalStorage passthrough that records every mutating call.
+
+    The journey must prove that the read-only stages never mutate Storage and
+    that the Worker path goes through ``OrganizerExecutor``.
+    """
+
+    def __init__(self, storage, *, can_hard_link: bool | None = None) -> None:
+        self._storage = storage
+        self._can_hard_link = can_hard_link
+        self.mutations: list[str] = []
 
     @property
-    def storage_id(self) -> str:
-        return self._id
+    def storage_id(self):
+        return self._storage.storage_id
 
-    def add_file(self, path: str, size: int, modified_at: datetime) -> None:
-        self._files[path] = (size, modified_at)
+    @property
+    def name(self):
+        return self._storage.name
+
+    @property
+    def read_only(self):
+        return self._storage.read_only
+
+    @property
+    def capabilities(self):
+        capabilities = self._storage.capabilities
+        if self._can_hard_link is None:
+            return capabilities
+        return replace(capabilities, can_hard_link=self._can_hard_link)
+
+    def __getattr__(self, name):
+        return getattr(self._storage, name)
+
+    def _record(self, operation: str, method, *args, **kwargs):
+        self.mutations.append(operation)
+        return method(*args, **kwargs)
+
+    def write(self, *args, **kwargs):
+        return self._record("write", self._storage.write, *args, **kwargs)
+
+    def create_directory(self, *args, **kwargs):
+        return self._record("create_directory", self._storage.create_directory, *args, **kwargs)
+
+    def move(self, *args, **kwargs):
+        return self._record("move", self._storage.move, *args, **kwargs)
+
+    def copy(self, *args, **kwargs):
+        return self._record("copy", self._storage.copy, *args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        return self._record("delete", self._storage.delete, *args, **kwargs)
+
+    def hard_link(self, *args, **kwargs):
+        return self._record("hard_link", self._storage.hard_link, *args, **kwargs)
+
+    def soft_link(self, *args, **kwargs):
+        return self._record("soft_link", self._storage.soft_link, *args, **kwargs)
 
 
-def _system_status_snapshot(libraries=()):
-    from mediaflow.infrastructure.configuration_snapshot import ConfigurationSnapshot
+class V2ManualOrganizeJourneyTests(unittest.TestCase):
+    maxDiff = None
 
-    rl_items = [
-        {
-            "id": getattr(rl, "library_id", rl.id if hasattr(rl, "id") else str(rl)),
-            "storage_id": getattr(rl, "storage_id", "source"),
-            "scan_mode": "manual",
-            "enabled": True,
-            "max_depth": 1,
-            "extension_count": 0,
-            "recognition_rule_set_id": None,
+    # --- fixture -----------------------------------------------------------
+
+    @contextmanager
+    def journey(
+        self,
+        *,
+        names: tuple[str, ...] = ("One.2001.mkv",),
+        target_files: tuple[str, ...] = (),
+        operation: OrganizeOperationType = OrganizeOperationType.MOVE,
+        conflict_strategy: ConflictStrategy = ConflictStrategy.MANUAL,
+        target_hard_link: bool | None = None,
+        register_worker: bool = True,
+    ):
+        with (
+            tempfile.TemporaryDirectory() as source_directory,
+            tempfile.TemporaryDirectory() as target_directory,
+            tempfile.TemporaryDirectory() as runtime_directory,
+        ):
+            source_root = Path(source_directory)
+            target_root = Path(target_directory)
+            candidates = []
+            for position, name in enumerate(names, start=1):
+                path = Path(name)
+                (source_root / path).parent.mkdir(parents=True, exist_ok=True)
+                (source_root / path).write_bytes((name.encode() + b"x" * 200)[:123])
+                candidates.append(
+                    MediaCandidate(
+                        "tmdb",
+                        str(100 + position),
+                        MediaType.MOVIE,
+                        path.stem.split(".", 1)[0],
+                        year=2001,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    )
+                )
+            for name in target_files:
+                target_path = target_root / Path(name)
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_bytes(b"existing-destination")
+
+            source_storage = LocalStorage("source", source_root)
+            target_storage = LocalStorage("target", target_root)
+            library = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
+
+            def scan_clock() -> datetime:
+                return datetime.now(UTC) + timedelta(hours=2)
+
+            index = InMemoryFileIndexRepository()
+            scan = StorageScanner({"source": source_storage}, index, clock=scan_clock).scan(library)
+            self.assertEqual("completed", scan.status.value)
+
+            strategy = development_strategy_configuration()
+            type_policies = list(strategy.recognition_type_policies)
+            c_index = next(
+                position
+                for position, value in enumerate(type_policies)
+                if value.recognition_type_id == "C"
+            )
+            c_policy = type_policies[c_index]
+            type_policies[c_index] = replace(
+                c_policy,
+                organize_policy=replace(
+                    c_policy.organize_policy,
+                    operation=operation,
+                    conflict_strategy=conflict_strategy,
+                    rollback=RollbackPolicy(False, True),
+                ),
+            )
+            strategy = replace(strategy, recognition_type_policies=tuple(type_policies))
+
+            configuration = RuntimeConfiguration(
+                strategy,
+                (
+                    StorageDefinition("source", "local", str(source_root), "Source"),
+                    StorageDefinition("target", "local", str(target_root), "Target"),
+                ),
+                (library,),
+                (),
+                (MediaLibrary("movies", "Movies", "target", "Movies"),),
+                str(Path(runtime_directory, "history.jsonl")),
+                str(Path(runtime_directory, "runtime.sqlite3")),
+            )
+            configuration = with_managed_snapshot(
+                configuration, snapshot_id=SNAPSHOT_ID, digest=SNAPSHOT_DIGEST
+            )
+            provider = SyntheticMetadataProvider(tuple(candidates))
+            source = RecordingStorage(source_storage)
+            target = RecordingStorage(target_storage, can_hard_link=target_hard_link)
+            repository = SQLiteTaskRepository(Path(runtime_directory, "runtime.sqlite3"))
+            try:
+                catalog = FileCatalogService(
+                    index,
+                    ("library",),
+                    ("source",),
+                    task_repository=repository,
+                )
+                intents = ManualOrganizeIntentService(
+                    repository,
+                    catalog,
+                    configuration_resolver=manual_snapshot,
+                )
+                previews = ManualOrganizePreviewService(
+                    repository,
+                    intents,
+                    catalog,
+                    configuration=configuration,
+                    file_index=index,
+                    providers=MetadataProviderRegistry((provider,)),
+                    storages={"source": source, "target": target},
+                )
+                execution = ManualOrganizeExecutionService(
+                    repository,
+                    previews,
+                    intents,
+                    checkpoint_service=ProcessingCheckpointService(repository),
+                    storages={"source": source, "target": target},
+                )
+                worker = ManualOrganizeExecutionWorker(
+                    execution, worker_id="worker-1", notice=lambda line: None
+                )
+                worker_service = ProcessingWorkerService(repository)
+                if register_worker:
+                    worker_service.register_worker(
+                        "worker-1",
+                        "worker one",
+                        10.0,
+                        ("scan", "preview", "organize"),
+                        configuration_snapshot_id=SNAPSHOT_ID,
+                        configuration_snapshot_digest=SNAPSHOT_DIGEST,
+                        runtime_schema_version=SCHEMA_VERSION,
+                    )
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(
+                        ResolvedApiPrincipal(
+                            "operator",
+                            OPERATOR_TOKEN,
+                            frozenset(
+                                {
+                                    ApiPermission.READ,
+                                    ApiPermission.SUBMIT_DRY_RUN,
+                                    ApiPermission.MANAGE_MANUAL_ORGANIZE,
+                                    ApiPermission.EXECUTE_MANUAL_ORGANIZE,
+                                }
+                            ),
+                        ),
+                        ResolvedApiPrincipal(
+                            "viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})
+                        ),
+                        ResolvedApiPrincipal(
+                            "manager",
+                            MANAGER_TOKEN,
+                            frozenset({ApiPermission.READ, ApiPermission.MANAGE_MANUAL_ORGANIZE}),
+                        ),
+                    ),
+                    system_status=build_configuration_snapshot(configuration),
+                    file_catalog=catalog,
+                    file_index=index,
+                    configuration_snapshot_id=SNAPSHOT_ID,
+                    configuration_snapshot_digest=SNAPSHOT_DIGEST,
+                    manual_intent_service=intents,
+                    manual_preview_service=previews,
+                    manual_execution_service=execution,
+                    worker_service=worker_service,
+                )
+                file_ids = tuple(
+                    record.file_id for record in index.list_by_resource_library("library")
+                )
+                yield SimpleNamespace(
+                    api=api,
+                    repository=repository,
+                    intents=intents,
+                    previews=previews,
+                    execution=execution,
+                    worker=worker,
+                    source=source,
+                    target=target,
+                    source_root=source_root,
+                    target_root=target_root,
+                    file_ids=file_ids,
+                    file_id=file_ids[0] if file_ids else None,
+                )
+            finally:
+                repository.close()
+
+    # --- helpers -----------------------------------------------------------
+
+    def _request(
+        self,
+        value,
+        path: str,
+        method: str = "GET",
+        body: dict | None = None,
+        *,
+        token: str = OPERATOR_TOKEN,
+    ) -> tuple[int, dict]:
+        statuses: list[str] = []
+        raw = json.dumps(body).encode() if body is not None else b""
+        path_info, _, query_string = path.partition("?")
+        environ = {
+            "REQUEST_METHOD": method,
+            "PATH_INFO": path_info,
+            "QUERY_STRING": query_string,
+            "CONTENT_LENGTH": str(len(raw)),
+            "REMOTE_ADDR": "127.0.0.1",
+            "wsgi.input": io.BytesIO(raw),
+            "CONTENT_TYPE": "application/json",
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
         }
-        for rl in libraries
-    ]
-    doc = {
-        "system": {"configuration_valid": True},
-        "storages": {"total": 0, "truncated": False, "items": []},
-        "resource_libraries": {
-            "total": len(rl_items),
-            "truncated": False,
-            "items": rl_items,
-        },
-        "media_libraries": {"total": 0, "truncated": False, "items": []},
-        "recognition_types": {"total": 0, "truncated": False, "items": []},
-        "recognition_rules": {"total": 0, "truncated": False, "items": []},
-        "recognition_type_policies": {"total": 0, "truncated": False, "items": []},
-        "metadata_policies": {"total": 0, "truncated": False, "items": []},
-        "naming_policies": {"total": 0, "truncated": False, "items": []},
-        "classification_policies": {"total": 0, "truncated": False, "items": []},
-        "organize_policies": {"total": 0, "truncated": False, "items": []},
-    }
-    return ConfigurationSnapshot(doc)
+        response = b"".join(value.api(environ, lambda status, headers: statuses.append(status)))
+        return int(statuses[0].split()[0]), json.loads(response)
 
+    def _create_reviewed_intent(self, value):
+        """Create one file-scoped intent and pin the RecognitionType C choices."""
 
-def _api(
-    permissions: frozenset[ApiPermission] = frozenset(
-        {
-            ApiPermission.READ,
-            ApiPermission.SUBMIT_DRY_RUN,
-            ApiPermission.MANAGE_MANUAL_ORGANIZE,
-            ApiPermission.EXECUTE_MANUAL_ORGANIZE,
+        status, intent = self._request(
+            value,
+            "/api/v1/operations/organize/intents",
+            "POST",
+            {
+                "scopeKind": "file",
+                "fileId": value.file_id,
+                "resourceLibraryId": "library",
+            },
+        )
+        self.assertEqual(201, status, intent)
+        item = intent["items"][0]
+        status, intent = self._request(
+            value,
+            f"/api/v1/operations/organize/intents/{intent['intentId']}"
+            f"/items/{item['itemId']}/choice",
+            "POST",
+            {
+                "expectedVersion": intent["version"],
+                "expectedItemVersion": item["version"],
+                "recognitionTypeId": "C",
+                "namingPolicyId": "A",
+                "classificationPolicyId": "A",
+                "organizePolicyId": "A",
+            },
+        )
+        self.assertEqual(200, status, intent)
+        self.assertEqual("C", intent["items"][0]["choice"]["recognitionTypeId"])
+        return intent
+
+    def _create_preview(self, value, intent):
+        status, preview = self._request(
+            value,
+            f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+            "POST",
+            {"expectedVersion": intent["version"]},
+        )
+        self.assertEqual(201, status, preview)
+        return preview
+
+    def _execute(self, value, preview, intent, **overrides):
+        body = {
+            "confirmation": True,
+            "itemIds": [item["itemId"] for item in preview["items"]],
+            "expectedIntentVersion": intent["version"],
         }
-    ),
-    library_value: ResourceLibrary | None = None,
-    storage: FakeStorage | None = None,
-    include_manual_scan: bool = True,
-    include_manual_preview: bool = True,
-) -> MediaFlowApi:
-    principal = ResolvedApiPrincipal("test-actor", "tok", permissions)
-    storage = storage or FakeStorage("source")
-    library_value = library_value or ResourceLibrary(
-        "library", "Library", "source", "", exclude_rules=()
-    )
-    index = InMemoryFileIndexRepository()
-    snapshot = _system_status_snapshot((library_value,))
-    repository = SQLiteTaskRepository(Path(tempfile.mkdtemp(), "test.sqlite3"))
-
-    catalog = FileCatalogService(
-        index,
-        ("library",),
-        ("source",),
-        task_repository=repository,
-    )
-
-    manual_snapshot = ManualConfigurationSnapshot(
-        "active-snap",
-        "active-digest",
-        (),
-        (),
-        (),
-        (),
-        (),
-    )
-
-    def _config_resolver():
-        return manual_snapshot
-
-    intents = ManualOrganizeIntentService(
-        repository,
-        catalog,
-        configuration_resolver=_config_resolver,
-    )
-    previews = (
-        ManualOrganizePreviewService(
-            repository,
-            intents,
-            catalog,
-            configuration=manual_snapshot,
-            file_index=index,
-            storages={"source": storage},
-        )
-        if include_manual_preview
-        else object()
-    )
-    scans = (
-        ManualScanService(
-            repository,
-            index,
-            resource_libraries=(library_value,),
-            storages={"source": storage},
-            configuration_snapshot_id="active-snap",
-            configuration_snapshot_digest="active-digest",
-            clock=lambda: NOW,
-            start_async=False,
-        )
-        if include_manual_scan
-        else None
-    )
-    return MediaFlowApi(
-        repository,
-        None,
-        principals=(principal,),
-        system_status=snapshot,
-        file_index=index,
-        configuration_snapshot_id="active-snap",
-        configuration_snapshot_digest="active-digest",
-        manual_intent_service=intents,
-        manual_preview_service=previews,
-        manual_scan_service=scans,
-    )
-
-
-def _request(api, path: str, method: str = "GET", body: dict | None = None):
-    status = []
-    headers = []
-    raw = json.dumps(body).encode() if body is not None else b""
-    if "?" in path:
-        path_info, query_string = path.split("?", 1)
-    else:
-        path_info, query_string = path, ""
-    environ = {
-        "REQUEST_METHOD": method,
-        "PATH_INFO": path_info,
-        "QUERY_STRING": query_string,
-        "CONTENT_LENGTH": str(len(raw)),
-        "REMOTE_ADDR": "127.0.0.1",
-        "wsgi.input": io.BytesIO(raw),
-        "CONTENT_TYPE": "application/json",
-        "HTTP_AUTHORIZATION": "Bearer tok",
-    }
-
-    def start_response(value, values):
-        status.append(value)
-        headers.extend(values)
-
-    resp_body = b"".join(api(environ, start_response))
-    return int(status[0].split()[0]), dict(headers), resp_body
-
-
-# ---------------------------------------------------------------------------
-# V2 Manual Organize Action Matrix Tests
-# ---------------------------------------------------------------------------
-
-
-class V2ManualOrganizeActionMatrixTests(unittest.TestCase):
-    """Test the V2 operations action matrix includes the organize action."""
-
-    def test_action_matrix_includes_organize_action(self) -> None:
-        api = _api()
-        status, _, body = _request(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
-        )
-        self.assertEqual(status, 200)
-        data = json.loads(body)
-        actions = data.get("actions", {})
-        self.assertIn("organize", actions)
-        organize = actions["organize"]
-        self.assertIn("available", organize)
-        self.assertIn("reason", organize)
-        self.assertIn("method", organize)
-        self.assertIn("path", organize)
-        self.assertEqual(organize["method"], "POST")
-        self.assertEqual(organize["path"], "/api/v1/operations/organize")
-
-    def test_action_matrix_organize_requires_execute_permission(self) -> None:
-        perms = frozenset(
-            {
-                ApiPermission.READ,
-                ApiPermission.MANAGE_MANUAL_ORGANIZE,
-                ApiPermission.SUBMIT_DRY_RUN,
-            }
-        )
-        api = _api(permissions=perms)
-        status, _, body = _request(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
-        )
-        self.assertEqual(status, 200)
-        data = json.loads(body)
-        organize = data.get("actions", {}).get("organize", {})
-        self.assertFalse(organize.get("available"))
-        self.assertIn("reason", organize)
-
-    def test_action_matrix_organize_requires_preview_permission(self) -> None:
-        # MANAGE_MANUAL_ORGANIZE and SUBMIT_DRY_RUN share the same permission
-        # value, so omit both to test the missing-preview-permission path.
-        perms = frozenset(
-            {
-                ApiPermission.READ,
-                ApiPermission.EXECUTE_MANUAL_ORGANIZE,
-            }
-        )
-        api = _api(permissions=perms)
-        status, _, body = _request(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
-        )
-        self.assertEqual(status, 200)
-        data = json.loads(body)
-        organize = data.get("actions", {}).get("organize", {})
-        self.assertFalse(organize.get("available"))
-
-    def test_action_matrix_no_scope_selects_required(self) -> None:
-        api = _api()
-        status, _, body = _request(api, "/api/v1/operations/manual-actions")
-        self.assertEqual(status, 200)
-        data = json.loads(body)
-        self.assertTrue(data.get("selectionRequired"))
-        organize = data.get("actions", {}).get("organize", {})
-        self.assertFalse(organize.get("available"))
-
-
-# ---------------------------------------------------------------------------
-# V2 Manual Organize Redaction Tests
-# ---------------------------------------------------------------------------
-
-
-class V2ManualOrganizeRedactionTests(unittest.TestCase):
-    """Ensure V2 organize documents contain no secret material."""
-
-    def test_preview_document_has_side_effects_none(self) -> None:
-        from mediaflow.application.operations_lifecycle import (
-            manual_preview_operator_document,
+        body.update(overrides)
+        return self._request(
+            value,
+            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+            "POST",
+            body,
         )
 
-        doc = manual_preview_operator_document(
-            {
-                "previewId": "p-1",
-                "intentId": "i-1",
-                "intentVersion": 1,
-                "configurationSnapshotId": "snap-1",
-                "configurationSnapshotDigest": "d-1",
-                "status": "previewed",
-                "items": [],
-                "sideEffects": "none",
-                "zeroMutation": True,
-                "executionState": "ready_for_explicit_authorization",
-            }
-        )
-        self.assertTrue(doc.get("zeroMutation"))
-        self.assertEqual(doc.get("sideEffects"), "none")
+    def _assert_secret_free(self, document: object, label: str) -> None:
+        encoded = json.dumps(document)
+        for forbidden in _FORBIDDEN_DOCUMENT_SUBSTRINGS:
+            self.assertNotIn(forbidden, encoded, f"{label} leaked {forbidden!r}")
+        self.assertNotIn("authorizationId", encoded, label)
 
-    def test_action_matrix_operator_document_redacts_secrets(self) -> None:
-        from mediaflow.application.operations_lifecycle import (
-            manual_action_matrix_operator_document,
-        )
+    # --- the journey -------------------------------------------------------
 
-        doc = manual_action_matrix_operator_document(
-            {
-                "actions": {
-                    "organize": {
-                        "available": True,
-                        "reason": None,
-                        "method": "POST",
-                        "path": "/api/v1/operations/organize",
-                        "nextAction": "authorize",
-                    },
-                },
-                "runtime": {"ready": True, "condition": "active"},
-                "source": {"fileId": "f-1", "path": "movies/test.mkv"},
-            }
-        )
-        doc_json = json.dumps(doc)
-        self.assertNotIn("Bearer", doc_json)
-        self.assertNotIn("password", doc_json.lower())
+    def test_web_journey_admits_one_execution_and_the_worker_completes_it(self) -> None:
+        with self.journey() as value:
+            status, matrix = self._request(
+                value,
+                "/api/v1/operations/manual-actions"
+                f"?scopeKind=file&fileId={value.file_id}&resourceLibraryId=library",
+            )
+            self.assertEqual(200, status)
+            organize = matrix["actions"]["organize"]
+            self.assertTrue(organize["available"], organize)
+            self.assertEqual("/api/v1/operations/organize/intents", organize["path"])
 
+            intent = self._create_reviewed_intent(value)
+            self.assertEqual("organize", intent["journey"])
+            self.assertTrue(intent["zeroMutation"])
+            self.assertEqual("open", intent["status"])
+            self.assertTrue(intent["actions"]["preview"]["available"], intent["actions"])
+            self.assertTrue(intent["options"]["recognitionTypes"])
+            self._assert_secret_free(intent, "intent")
 
-# ---------------------------------------------------------------------------
-# V2 Manual Organize Zero-Mutation Tests
-# ---------------------------------------------------------------------------
+            status, detail = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual(intent["version"], detail["version"])
 
+            preview = self._create_preview(value, intent)
+            self.assertEqual("previewed", preview["status"])
+            self.assertTrue(preview["current"])
+            self.assertTrue(preview["zeroMutation"])
+            self.assertEqual([intent["items"][0]["itemId"]], preview["executionCandidateItemIds"])
+            # RecognitionType C keeps its identity even though policies A/A are used.
+            self.assertEqual("C", preview["items"][0]["plan"]["recognitionType"])
+            self.assertTrue(preview["actions"]["execute"]["available"], preview["actions"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self._assert_secret_free(preview, "preview")
 
-class V2ManualOrganizeZeroMutationTests(unittest.TestCase):
-    """Prove the V2 Preview journey produces zero Storage mutation."""
+            status, execution = self._execute(value, preview, intent)
+            self.assertEqual(202, status, execution)
+            self.assertEqual("organize", execution["journey"])
+            self.assertEqual("admitted", execution["status"])
+            self.assertEqual("admitted", execution["durableState"])
+            self.assertTrue(execution["taskId"])
+            # Admission alone mutates nothing; the API request never runs the executor.
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertTrue((value.source_root / "One.2001.mkv").exists())
+            self._assert_secret_free(execution, "execution admission")
 
-    def test_preview_operator_document_always_declares_zero_mutation(self) -> None:
-        from mediaflow.application.operations_lifecycle import (
-            manual_preview_operator_document,
-        )
+            # A repeated submission of the same reviewed work is the same execution.
+            status, repeated = self._execute(value, preview, intent)
+            self.assertIn(status, (200, 202), repeated)
+            self.assertEqual(execution["executionId"], repeated["executionId"])
+            self.assertEqual(
+                1, len(value.repository.list_manual_executions_for_preview(preview["previewId"]))
+            )
 
-        for status_value in ("previewed", "partial", "blocked", "failed", "stale"):
-            doc = manual_preview_operator_document(
+            completed = value.worker.run_next()
+            self.assertIsNotNone(completed)
+            self.assertEqual(ManualExecutionStatus.COMPLETED, completed.status)
+            self.assertEqual(["delete"], value.source.mutations)
+            self.assertTrue(value.target.mutations)
+            self.assertFalse((value.source_root / "One.2001.mkv").exists())
+            moved = list(value.target_root.rglob("*.mkv"))
+            self.assertEqual(1, len(moved))
+            self.assertTrue(moved[0].name.startswith("One (2001)"))
+
+            status, outcome = self._request(
+                value,
+                f"/api/v1/operations/organize/executions/{execution['executionId']}",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual("completed", outcome["status"])
+            self.assertEqual("completed", outcome["durableState"])
+            self.assertEqual(1, outcome["knownEffects"]["verifiedItemCount"])
+            item = outcome["items"][0]
+            self.assertEqual("success", item["status"])
+            self.assertEqual("verified_complete", item["effectCertainty"])
+            self.assertTrue(item["resultId"])
+            self.assertTrue(item["taskItemId"])
+            self.assertFalse(outcome["actions"]["recovery"]["available"])
+            self._assert_secret_free(outcome, "execution outcome")
+
+            # No pending work remains and nothing is replayed.
+            self.assertIsNone(value.worker.run_next())
+            self.assertEqual(0, len(value.repository.list_jobs()))
+
+    def test_choice_edits_are_optimistic_and_invalidate_prior_previews(self) -> None:
+        with self.journey() as value:
+            intent = self._create_reviewed_intent(value)
+            preview = self._create_preview(value, intent)
+            item = intent["items"][0]
+
+            # A stale intent/item version is rejected atomically with no change.
+            status, error = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/items/{item['itemId']}/choice",
+                "POST",
                 {
-                    "previewId": "p-1",
-                    "intentId": "i-1",
-                    "intentVersion": 1,
-                    "configurationSnapshotId": "snap-1",
-                    "configurationSnapshotDigest": "d-1",
-                    "status": status_value,
-                    "items": [],
-                    "sideEffects": "none",
-                    "zeroMutation": True,
-                    "executionState": "not_available_in_this_task",
-                }
+                    "expectedVersion": 1,
+                    "expectedItemVersion": 1,
+                    "recognitionTypeId": "C",
+                },
             )
+            self.assertEqual(409, status)
+            self.assertEqual("manual_intent_conflict", error["error"]["code"])
+            self._assert_secret_free(error, "stale choice error")
+
+            # A cross-intent item identity fails closed.
+            status, error = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                "/items/unknown-item/choice",
+                "POST",
+                {"expectedVersion": intent["version"], "recognitionTypeId": "C"},
+            )
+            self.assertEqual(404, status)
+            self.assertEqual("item_not_found", error["error"]["code"])
+
+            # A real edit advances the item and intent versions and marks the
+            # earlier Preview as no longer current evidence.
+            status, edited = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/items/{item['itemId']}/choice",
+                "POST",
+                {
+                    "expectedVersion": intent["version"],
+                    "expectedItemVersion": item["version"],
+                    "recognitionTypeId": "A",
+                    "namingPolicyId": "A",
+                    "classificationPolicyId": "A",
+                    "organizePolicyId": "A",
+                },
+            )
+            self.assertEqual(200, status, edited)
+            self.assertTrue(edited["previewRequired"])
+            self.assertEqual("A", edited["items"][0]["choice"]["recognitionTypeId"])
+
+            status, stale_preview = self._request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview['previewId']}",
+            )
+            self.assertEqual(200, status)
+            self.assertFalse(stale_preview["actions"]["execute"]["available"])
+            status, error = self._execute(value, preview, intent)
+            self.assertIn(status, (400, 409))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual(
+                (), value.repository.list_manual_executions_for_preview(preview["previewId"])
+            )
+
+    def test_viewer_and_manager_without_execute_permission_render_no_control(self) -> None:
+        with self.journey() as value:
+            status, matrix = self._request(
+                value,
+                "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
+                token=VIEWER_TOKEN,
+            )
+            self.assertEqual(200, status)
+            self.assertFalse(matrix["actions"]["organize"]["available"])
+            self.assertIn("manage_manual_organize", matrix["actions"]["organize"]["reason"])
+            # A viewer cannot even create the durable intent.
+            status, error = self._request(
+                value,
+                "/api/v1/operations/organize/intents",
+                "POST",
+                {
+                    "scopeKind": "file",
+                    "fileId": value.file_id,
+                    "resourceLibraryId": "library",
+                },
+                token=VIEWER_TOKEN,
+            )
+            self.assertEqual(403, status)
+
+            # A manager may review and Preview but can never execute.
+            status, matrix = self._request(
+                value,
+                "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
+                token=MANAGER_TOKEN,
+            )
+            self.assertEqual(200, status)
+            self.assertFalse(matrix["actions"]["organize"]["available"])
+            self.assertIn("execute_manual_organize", matrix["actions"]["organize"]["reason"])
+            status, error = self._request(
+                value,
+                "/api/v1/operations/organize/intents",
+                "POST",
+                {
+                    "scopeKind": "file",
+                    "fileId": value.file_id,
+                    "resourceLibraryId": "library",
+                },
+                token=MANAGER_TOKEN,
+            )
+            self.assertEqual(201, status)
+            item = error["items"][0]
+            status, error = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{error['intentId']}"
+                f"/items/{item['itemId']}/choice",
+                "POST",
+                {
+                    "expectedVersion": 1,
+                    "expectedItemVersion": 1,
+                    "recognitionTypeId": "C",
+                    "namingPolicyId": "A",
+                    "classificationPolicyId": "A",
+                    "organizePolicyId": "A",
+                },
+                token=MANAGER_TOKEN,
+            )
+            self.assertEqual(200, status)
+            status, preview = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{error['intentId']}/previews",
+                "POST",
+                {"expectedVersion": error["version"]},
+                token=MANAGER_TOKEN,
+            )
+            self.assertEqual(201, status, preview)
+            self.assertFalse(preview["actions"]["execute"]["available"])
+            status, error = self._request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                "POST",
+                {
+                    "confirmation": True,
+                    "itemIds": [item["itemId"]],
+                    "expectedIntentVersion": preview["intentVersion"],
+                },
+                token=MANAGER_TOKEN,
+            )
+            self.assertEqual(403, status)
+            self.assertEqual(
+                0, len(value.repository.list_manual_executions_for_preview(preview["previewId"]))
+            )
+
+    def test_malformed_authority_fields_are_rejected_before_any_durable_state(self) -> None:
+        with self.journey() as value:
+            for body in (
+                {
+                    "scopeKind": "file",
+                    "fileId": value.file_id,
+                    "resourceLibraryId": "library",
+                    "sourceFingerprint": "0" * 64,
+                },
+                {
+                    "scopeKind": "file",
+                    "fileId": value.file_id,
+                    "resourceLibraryId": "library",
+                    "snapshotDigest": "0" * 64,
+                },
+                {
+                    "scopeKind": "resourceLibrary",
+                    "resourceLibraryId": "library",
+                },
+            ):
+                status, error = self._request(
+                    value, "/api/v1/operations/organize/intents", "POST", body
+                )
+                self.assertEqual(400, status, error)
+            self.assertEqual((), value.repository.list_manual_intents())
+
+            intent = self._create_reviewed_intent(value)
+            preview = self._create_preview(value, intent)
+            item_ids = [item["itemId"] for item in preview["items"]]
+            for body in (
+                {"itemIds": item_ids, "expectedIntentVersion": intent["version"]},
+                {
+                    "confirmation": True,
+                    "expectedIntentVersion": intent["version"],
+                },
+                {"confirmation": True, "itemIds": item_ids},
+                {
+                    "confirmation": True,
+                    "itemIds": item_ids,
+                    "expectedIntentVersion": intent["version"],
+                    "authorizationId": "browser-supplied",
+                },
+                {
+                    "confirmation": True,
+                    "itemIds": item_ids,
+                    "expectedIntentVersion": intent["version"],
+                    "allowOverwrite": "yes",
+                },
+            ):
+                status, error = self._request(
+                    value,
+                    f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                    "POST",
+                    body,
+                )
+                self.assertEqual(400, status, error)
+            self.assertEqual(
+                0, len(value.repository.list_manual_executions_for_preview(preview["previewId"]))
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_worker_claim_is_single_owner_and_never_replays_started_work(self) -> None:
+        with self.journey() as value:
+            intent = self._create_reviewed_intent(value)
+            preview = self._create_preview(value, intent)
+            status, execution = self._execute(value, preview, intent)
+            self.assertEqual(202, status, execution)
+            execution_id = execution["executionId"]
+
+            # Another Worker cannot steal a live claim.
+            reader = value.repository
+            self.assertIsNotNone(
+                reader.claim_next_manual_execution(
+                    datetime.now(UTC),
+                    worker_id="worker-2",
+                    claim_token="token-two",
+                    lease_seconds=60.0,
+                )
+            )
+            self.assertIsNone(
+                reader.claim_next_manual_execution(
+                    datetime.now(UTC),
+                    worker_id="worker-3",
+                    claim_token="token-three",
+                    lease_seconds=60.0,
+                )
+            )
+            self.assertIsNone(value.worker.run_next())
+            self.assertEqual([], value.source.mutations)
+
+            # Once the running boundary is published the execution is never
+            # claimable again, even after a Worker restart.
             self.assertTrue(
-                doc.get("zeroMutation"),
-                f"Preview with status={status_value} must declare zeroMutation=True",
+                reader.begin_manual_execution(execution_id, "token-two", datetime.now(UTC))
+            )
+            self.assertIsNone(
+                reader.claim_next_manual_execution(
+                    datetime.now(UTC) + timedelta(days=1),
+                    worker_id="worker-3",
+                    claim_token="token-three",
+                    lease_seconds=60.0,
+                )
+            )
+            self.assertIsNone(value.worker.run_next())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_pre_mutation_source_change_fails_the_item_without_mutation(self) -> None:
+        with self.journey() as value:
+            intent = self._create_reviewed_intent(value)
+            preview = self._create_preview(value, intent)
+            status, execution = self._execute(value, preview, intent)
+            self.assertEqual(202, status, execution)
+
+            # The reviewed source is replaced after admission.
+            source_file = value.source_root / "One.2001.mkv"
+            source_file.write_bytes(b"replaced-and-different" * 10)
+            completed = value.worker.run_next()
+            self.assertIsNotNone(completed)
+            self.assertEqual(ManualExecutionStatus.FAILED, completed.status)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            item = completed.items[0]
+            self.assertEqual("none", item.effect_certainty)
+            self.assertEqual("failed", item.status.value)
+
+            status, outcome = self._request(
+                value,
+                f"/api/v1/operations/organize/executions/{execution['executionId']}",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual("failed", outcome["status"])
+            self.assertEqual(0, outcome["knownEffects"]["verifiedItemCount"])
+            self.assertEqual(1, outcome["knownEffects"]["failedWithoutEffectCount"])
+            self.assertIn("never", outcome["knownEffects"]["statement"])
+            self.assertTrue(outcome["actions"]["recovery"]["available"])
+            self._assert_secret_free(outcome, "rejected execution")
+
+    def test_execute_action_withholds_itself_when_the_worker_is_unavailable(self) -> None:
+        with self.journey(register_worker=False) as value:
+            status, matrix = self._request(
+                value,
+                "/api/v1/operations/manual-actions"
+                f"?scopeKind=file&fileId={value.file_id}&resourceLibraryId=library",
+            )
+            self.assertEqual(200, status)
+            self.assertFalse(matrix["actions"]["organize"]["available"])
+            self.assertIn("worker", matrix["actions"]["organize"]["reason"].lower())
+
+            intent = self._create_reviewed_intent(value)
+            preview = self._create_preview(value, intent)
+            self.assertFalse(preview["actions"]["execute"]["available"])
+            self.assertFalse(preview["worker"]["ready"])
+
+    def test_recognition_type_c_is_preserved_in_the_executed_result(self) -> None:
+        with self.journey() as value:
+            intent = self._create_reviewed_intent(value)
+            preview = self._create_preview(value, intent)
+            status, execution = self._execute(value, preview, intent)
+            self.assertEqual(202, status, execution)
+            completed = value.worker.run_next()
+            self.assertIsNotNone(completed)
+            results = value.repository.list_results(completed.task_id)
+            self.assertEqual(1, len(results))
+            self.assertEqual("C", results[0].recognition_type)
+            self.assertEqual("A", results[0].naming_policy_id)
+            self.assertEqual("A", results[0].classification_policy_id)
+
+    def test_overwrite_requires_explicit_separate_authority(self) -> None:
+        with self.journey(
+            names=("One.2001.mkv",),
+            conflict_strategy=ConflictStrategy.OVERWRITE,
+        ) as value:
+            intent = self._create_reviewed_intent(value)
+            first = self._create_preview(value, intent)
+            raw = value.previews.get_readonly(first["previewId"])
+            destination = raw.items[0].plan["destination"]["path"]
+            collision = value.target_root / destination
+            collision.parent.mkdir(parents=True, exist_ok=True)
+            collision.write_bytes(b"existing-destination")
+
+            # The un-resolved collision blocks the exact plan; it is not offered
+            # as executable work and no authority broadens it.
+            blocked = self._create_preview(value, intent)
+            self.assertEqual([], blocked["executionCandidateItemIds"])
+            self.assertFalse(blocked["actions"]["execute"]["available"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # A recorded explicit overwrite decision makes the fresh exact plan
+            # executable, but the destructive effect still needs its own
+            # separate confirmation before any mutation.
+            raw = value.previews.get_readonly(blocked["previewId"])
+            plan = raw.items[0].plan
+            value.repository.create_confirmation(
+                ConflictConfirmation(
+                    str(uuid4()),
+                    "conflict-task",
+                    "conflict-item",
+                    plan["planId"],
+                    "DESTINATION_EXISTS",
+                    "source",
+                    plan["source"]["path"],
+                    "target",
+                    destination,
+                    "overwrite",
+                    ConfirmationStatus.RESOLVED,
+                    NOW,
+                    NOW,
+                    selected_strategy="overwrite",
+                    overwrite_authorized=True,
+                    actor="operator",
+                )
+            )
+            fresh = self._create_preview(value, intent)
+            implications = fresh["items"][0]["plan"]["destructiveImplications"]
+            self.assertTrue(implications["overwriteRequired"], implications)
+            self.assertTrue(fresh["actions"]["execute"]["available"], fresh["actions"])
+
+            # Without the explicit overwrite authority the exact work is refused
+            # and nothing is admitted or mutated.
+            status, error = self._execute(value, fresh, intent)
+            self.assertEqual(409, status, error)
+            self.assertEqual("overwrite_authority_required", error["error"]["code"], error)
+            self.assertEqual(
+                0, len(value.repository.list_manual_executions_for_preview(fresh["previewId"]))
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual(b"existing-destination", collision.read_bytes())
+
+            status, execution = self._execute(value, fresh, intent, allowOverwrite=True)
+            self.assertEqual(202, status, execution)
+            self.assertTrue(execution["allowOverwrite"])
+            completed = value.worker.run_next()
+            self.assertIsNotNone(completed)
+            self.assertEqual(ManualExecutionStatus.COMPLETED, completed.status)
+            self.assertIn("delete", value.source.mutations)
+            self.assertEqual(123, collision.stat().st_size)
+
+    def test_link_operation_never_falls_back_to_copy_or_move(self) -> None:
+        with self.journey(
+            operation=OrganizeOperationType.HARD_LINK,
+            target_hard_link=False,
+        ) as value:
+            intent = self._create_reviewed_intent(value)
+            preview = self._create_preview(value, intent)
+            capabilities = preview["items"][0]["plan"]["capabilities"]
+            self.assertEqual("capability_gap", capabilities["verdict"], capabilities)
+            self.assertTrue(capabilities["missing"], capabilities)
+            self.assertEqual([], preview["executionCandidateItemIds"])
+            self.assertFalse(preview["actions"]["execute"]["available"], preview["actions"])
+            status, error = self._execute(value, preview, intent)
+            self.assertGreaterEqual(status, 400)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual(
+                (), value.repository.list_manual_executions_for_preview(preview["previewId"])
             )
 
-    def test_organize_post_response_declares_zero_mutation(self) -> None:
-        """The V2 organize POST response through the operator document must
-        declare zero-mutation."""
-        from mediaflow.application.operations_lifecycle import (
-            manual_preview_operator_document,
-        )
-
-        doc = manual_preview_operator_document(
-            {
-                "previewId": "p-1",
-                "intentId": "i-1",
-                "intentVersion": 1,
-                "configurationSnapshotId": "snap-1",
-                "configurationSnapshotDigest": "d-1",
-                "status": "previewed",
-                "items": [
-                    {
-                        "previewItemId": "pi-1",
-                        "itemId": "item-1",
-                        "position": 0,
-                        "stage": "planning",
-                        "status": "previewed",
-                        "current": True,
-                        "truncated": False,
-                        "nextAction": "inspect plan",
-                        "sideEffects": "none",
-                        "zeroMutation": True,
-                        "executionState": "ready_for_explicit_authorization",
-                        "configurationSnapshotId": "snap-1",
-                        "source": {
-                            "fileId": "f-1",
-                            "storageId": "s-1",
-                            "resourceLibraryId": "rl-1",
-                            "path": "movies/test.mkv",
-                            "filename": "test.mkv",
-                            "extension": ".mkv",
-                            "size": 1000,
-                            "scanStatus": "ready",
-                            "occurrenceState": "verified",
-                        },
-                        "choice": {
-                            "recognitionTypeId": "type-a",
-                            "namingPolicyId": "naming-a",
-                            "classificationPolicyId": "class-a",
-                            "organizePolicyId": "org-move",
-                        },
-                        "plan": {
-                            "zeroMutation": True,
-                            "operation": "move",
-                        },
-                    }
-                ],
-                "sideEffects": "none",
-                "zeroMutation": True,
-                "executionState": "ready_for_explicit_authorization",
-            }
-        )
-        self.assertTrue(doc.get("zeroMutation"))
-        for item in doc.get("items", []):
-            self.assertTrue(item.get("zeroMutation"))
-            plan = item.get("plan")
-            if plan:
-                self.assertTrue(plan.get("zeroMutation"))
-
-
-# ---------------------------------------------------------------------------
-# V2 Manual Organize Execution Binding Tests
-# ---------------------------------------------------------------------------
-
-
-class V2ManualOrganizeExecutionBindingTests(unittest.TestCase):
-    """Prove one-shot principal/permission/version/item/effect/expiry binding."""
-
-    def test_authorize_requires_confirmation_true(self) -> None:
-        api = _api()
-        status, _, body = _request(
-            api,
-            "/api/v1/operations/organize/preview-1/authorize",
-            method="POST",
-            body={
-                "itemIds": ["item-1"],
-                "expectedVersion": 1,
-                "expectedItemVersions": {"item-1": 1},
-                "confirmation": False,
-            },
-        )
-        self.assertIn(status, (400, 409))
-
-    def test_execute_requires_confirmation_true(self) -> None:
-        api = _api()
-        status, _, body = _request(
-            api,
-            "/api/v1/operations/organize/preview-1/execute",
-            method="POST",
-            body={
-                "authorizationId": "auth-1",
-                "confirmation": False,
-            },
-        )
-        self.assertIn(status, (400, 409))
-
-    def test_authorize_requires_item_ids(self) -> None:
-        api = _api()
-        status, _, body = _request(
-            api,
-            "/api/v1/operations/organize/preview-1/authorize",
-            method="POST",
-            body={
-                "expectedVersion": 1,
-                "expectedItemVersions": {},
-                "confirmation": True,
-            },
-        )
-        self.assertIn(status, (400, 409))
-
-
-# ---------------------------------------------------------------------------
-# V2 Manual Organize Concurrency Tests
-# ---------------------------------------------------------------------------
-
-
-class V2ManualOrganizeConcurrencyTests(unittest.TestCase):
-    """Prove concurrent/consumed authorization is rejected."""
-
-    def test_execute_rejects_missing_authorization(self) -> None:
-        api = _api()
-        status, _, body = _request(
-            api,
-            "/api/v1/operations/organize/preview-1/execute",
-            method="POST",
-            body={
-                "authorizationId": "nonexistent-auth",
-                "confirmation": True,
-            },
-        )
-        self.assertIn(status, (404, 409))
-
-
-# ---------------------------------------------------------------------------
-# V2 Manual Organize Failure State Tests
-# ---------------------------------------------------------------------------
-
-
-class V2ManualOrganizeFailureStateTests(unittest.TestCase):
-    """Prove stale/not-found/unavailable failures yield actionable next action."""
-
-    def test_preview_detail_not_found_yields_error(self) -> None:
-        api = _api()
-        status, _, body = _request(
-            api,
-            "/api/v1/operations/organize/nonexistent-preview",
-        )
-        self.assertIn(status, (404, 503))
-
-    def test_organize_requires_permission(self) -> None:
-        from mediaflow.domain.security import ResolvedApiPrincipal
-
-        perms = frozenset({ApiPermission.READ})
-        principal = ResolvedApiPrincipal("viewer", "tok", perms)
-        repository = SQLiteTaskRepository(Path(tempfile.mkdtemp(), "test.sqlite3"))
-        api = MediaFlowApi(repository, None, principals=(principal,))
-        status, _, _ = _request(
-            api,
-            "/api/v1/operations/organize",
-            method="POST",
-            body={"scopeKind": "file", "fileId": "f-1", "resourceLibraryId": "library"},
-        )
-        self.assertIn(status, (401, 403))
-
-
-# ---------------------------------------------------------------------------
-# V2 Manual Organize V1 Compatibility Tests
-# ---------------------------------------------------------------------------
-
-
-class V2ManualOrganizeV1CompatibilityTests(unittest.TestCase):
-    """Prove V1 /ui and API routes remain intact alongside V2 organize."""
-
-    def test_v1_manual_intents_route_still_works(self) -> None:
-        api = _api()
-        status, _, body = _request(api, "/api/v1/manual-intents")
-        self.assertEqual(status, 200)
-
-    def test_v1_manual_previews_route_still_works(self) -> None:
-        api = _api()
-        status, _, body = _request(
-            api,
-            "/api/v1/manual-previews?scopeKind=resourceLibrary&scopeId=library",
-        )
-        self.assertEqual(status, 200)
-
-    def test_v1_dashboard_still_works(self) -> None:
-        api = _api()
-        status, _, body = _request(api, "/api/v1/dashboard")
-        self.assertEqual(status, 200)
-
-    def test_operations_manual_actions_still_includes_scan_and_preview(self) -> None:
-        api = _api()
-        status, _, body = _request(
-            api,
-            "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
-        )
-        self.assertEqual(status, 200)
-        data = json.loads(body)
-        actions = data.get("actions", {})
-        self.assertIn("scan", actions)
-        self.assertIn("preview", actions)
-        self.assertIn("organize", actions)
+    def test_v1_manual_routes_and_documents_remain_compatible(self) -> None:
+        with self.journey() as value:
+            status, body = self._request(
+                value,
+                f"/api/v1/files/{value.file_id}/manual-organize",
+                "POST",
+            )
+            self.assertEqual(201, status, body)
+            self.assertIn("intentId", body)
+            status, preview = self._request(
+                value,
+                f"/api/v1/manual-intents/{body['intentId']}/preview",
+                "POST",
+                {"expectedVersion": body["version"]},
+            )
+            self.assertEqual(201, status, preview)
+            status, dashboard = self._request(value, "/api/v1/dashboard")
+            self.assertEqual(200, status)
 
 
 if __name__ == "__main__":
