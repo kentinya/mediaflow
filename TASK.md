@@ -263,60 +263,64 @@ reports, credentials and unrelated files must not enter the checkpoint.
 
 ### Changed Files
 
-- `mediaflow/application/manual_organize_execution.py` — `admit()`/`execute(admit_only=)` split,
-  new Worker-side `run_admitted()` with per-item revalidation, guarded claim boundary, idempotent
-  `begin_web_execution()` one-action server-held authority, `fail_unstarted_execution()`, bounded
-  destructive-implication evidence.
-- `mediaflow/application/manual_organize_worker.py` (new) — resident Processing-Worker claim/lease
-  runner for admitted exact executions.
-- `mediaflow/application/automation.py` — Processing Worker loop can serve the admitted manual
-  execution queue; `evaluate_manual_organize_readiness()`; schema default 34.
-- `mediaflow/application/operations_lifecycle.py` — bounded intent/execution projections, bounded
-  manual-step error envelope, destructive implications and truthful effect summary.
-- `mediaflow/interfaces/service_api.py` — replaced the rejected organize routes with the V2 intent /
-  Preview / one-Execute / durable-outcome family and bounded `nextAction` projections.
-- `mediaflow/infrastructure/sqlite_runtime.py` — SCHEMA_VERSION 33→34, additive claim columns,
-  claim/begin/heartbeat/release methods, authority revocation.
-- `mediaflow/domain/task_persistence.py` — claim-boundary protocol methods.
-- `mediaflow/final_cli.py` — Worker command builds and serves the admitted-manual-execution runner.
-- `tests/test_v2_manual_organize.py` — rewritten T4 journey/safety suite (11 tests).
-- `tests/test_manual_operations_contract.py` + `web/src/entities/operations/__fixtures__/manual-operations.json`
-  — real-API golden capture extended with the organize journey documents.
-- `web/src/entities/operations/organize.ts` (new), `web/src/features/operations/organize-query.ts`,
-  `OrganizeNewPage.tsx`, `OrganizeIntentPage.tsx`, `OrganizePreviewPage.tsx`,
-  `OrganizeExecutionPage.tsx` (new), router/destination-model entries,
-  FileIndex/Preview/Operations entry links, `api-client.ts` organize boundary.
-- `web/src/features/operations/OrganizeRouter.test.tsx` (new), `web/tests/e2e/manual-organize.spec.ts`
-  (rewritten) and `web/tests/fake-server.mjs` (deterministic organize fake).
-- Test-only schema-version updates caused by the additive bump: `test_processing_worker_readiness`,
-  `test_api_security`, `test_automation_job_fencing`, `test_restart_fault_boundary`,
-  `test_stale_job_visibility`, `test_configuration_{classification,destination,destination_activation,destination_precheck,organize}`.
+Correction commit on top of the reviewed checkpoint `d359e9227facde241511baacf1438bee1def9a18`:
+
+- `mediaflow/application/manual_organize_execution.py` — `_existing_admitted_execution()` now
+  resolves only an *exactly equivalent* reviewed submission (same persisted-authority permission
+  and actor, intent/configuration binding, destructive authority and the exact selected item set
+  with identical per-item preview-item/version/source/plan fingerprints); new
+  `_is_equivalent_admitted_execution()` and `_execution_authorization_for_replay()`; fixed
+  `_preview()`'s `self._safe_error` → module-level `_safe_error` (an AttributeError that masked the
+  real reopen error with a crash instead of a bounded pre-mutation failure).
+- `web/src/entities/operations/organize.ts` — fail-closed action contract (bounded
+  `GET`/`POST` methods, bounded relative `/api/v1/...` routes that cannot traverse, bounded
+  `sideEffects`, offered action ⇔ method+route+no-reason, withheld action ⇔ reason,
+  confirmation only for a POST) and fail-closed execution items (bounded item statuses, effect
+  certainties, effect operation markers and `ATTACHMENT:` markers, `verified` ⇔
+  `verified_complete`, success/failure certainty cross-check, selection counts ⇔ identity lists,
+  duplicate candidate rejection, `uncertainEffects` bounded to the recorded statement).
+- `web/src/features/operations/OrganizeRouter.test.tsx` — corrected the withheld-Execute fixture to
+  the real backend contract and added two malformed-response suites (13 hostile variants) proving
+  no Execute control, no hostile value and no submission follows a malformed read.
+- `web/tests/e2e/manual-organize.spec.ts` — new malformed-bounded-document browser proof; reset
+  now asserts its own per-session scoping.
+- `web/tests/fake-server.mjs` — organize state and manual-request evidence are keyed per browser
+  session cookie, so two Playwright workers can no longer erase or observe another test's
+  evidence/state; the shared bucket keeps the deliberate serial Scan journeys; new hostile
+  `organize-preview-hostile-e2e-001` document.
+- `tests/test_v2_manual_organize.py` — fixture split into a reusable `_JourneyFixtureMixin`
+  (exposes `runtime_path`, `configuration`, `index`, `catalog`, extra `operator-two` principal);
+  new `ExactAdmissionResolutionTests` (6 regressions) and `SchemaAndRestartRecoveryTests`
+  (5 regressions, 22 tests total in the module).
 
 ### Implemented
 
-1. Complete V2 journey: `/operations/organize/new` → durable intent
-   (`intents/{id}` with optimistic choice editing) → exact Preview (`previews/{id}`) → one Execute →
-   durable outcome (`executions/{id}`), registered centrally, deep-link/auth-continuation safe, and
-   reachable from FileIndex detail, ResourceLibrary Operations scope and eligible Preview detail.
-2. Backend-authoritative availability: the action matrix and every document advertise `available`,
-   `reason` and `nextAction` for the exact principal, scope, Active runtime, services and live
-   Worker; the frontend renders no control it was not granted.
-3. Durable queued admission: POST `.../previews/{id}/execute` creates and consumes short-lived
-   one-shot authority on the server, admits one durable execution + Task + Storage fences and
-   returns promptly. No token, digest, authorization id or path crosses the browser boundary;
-   repeated/concurrent submission resolves to the same execution.
-4. Worker-only execution: the resident Processing Worker claims admitted executions under a
-   durable lease, publishes the running mutation boundary through a claim-token-bound update,
-   rechecks source/runtime/policy/conflict/capability/locks immediately before each pending
-   mutation and only then calls OrganizerExecutor. A crash never auto-replays started work.
-5. Independent outcomes: pre-mutation rejections close only the affected item with effect certainty
-   `none`; siblings keep their own Result/effect evidence; uncertain effects are reported, never
-   replayed, and link to the Task and Review & Recovery.
-6. Destructive authority: Overwrite and source-cleanup requirements are projected from the exact
-   plan, default false, separately confirmed and rejected (`overwrite_authority_required`,
-   `source_cleanup_authority_required`, `scope_changed`) before any mutation. HardLink/SoftLink
-   capability gaps refuse execution instead of falling back to Copy/Move.
-7. RecognitionType C with Naming/Classification A remains C end to end (Preview plan, Task Result).
+1. **Exact idempotent/concurrent resolution (blocker 1).** A repeated submission is folded into an
+   existing durable execution only when the persisted one-shot authority of that execution proves
+   the same permission and principal, the same intent/configuration-snapshot binding, the same
+   allowed overwrite/source-cleanup authority and exactly the same selected item set with identical
+   per-item bindings. Narrower, overlapping, differently bound, differently authorized or
+   different-principal submissions now fail with their own reason and never return another
+   operator's execution; the unused authority is still revoked.
+2. **Fail-closed V2 Organize normalization (blocker 2).** Unknown or contradictory action
+   method/path/availability/reason/confirmation data and unknown or contradictory execution item,
+   effect-certainty, effect-action, uncertain-effect or selection data now make the whole response
+   malformed: the UI renders the bounded malformed state, never an executable control, and no
+   hostile value reaches the DOM or the request boundary (component and built-artifact proof).
+3. **Schema/restart proof (blocker 3).** Copied-fixture coverage proves a real schema-33 database
+   with an existing admitted manual execution migrates forward to 34 in place and preserves that
+   work; a newer schema is refused as a pure read that leaves the file untouched; a failing
+   migration is atomic (version stays 33, no partially applied column survives) and completes after
+   the obstacle is repaired. Real repository/service reopen coverage rebuilds the whole service
+   graph on the reopened database: admitted work is reconstructed and run exactly once by the
+   resident Worker, and started/uncertain work is never reclaimed or replayed even long after the
+   original lease expired.
+4. **Concurrency-safe built-artifact gate (blocker 4).** Fake organize state and evidence are
+   scoped to each test's browser session, so `fullyParallel` workers cannot interfere; the focused
+   and full Playwright gates were rerun and pass end to end.
+5. **Direct root cause found and fixed while proving blocker 3:** `_preview()` called a
+   non-existent `self._safe_error`, so a Worker that lost its repository connection crashed with
+   `AttributeError` instead of publishing the bounded pre-mutation failure the contract requires.
 
 ### Tests and Results
 
@@ -326,15 +330,16 @@ env -u NODE_ENV npm --prefix web ci                                             
 npm --prefix web run format:check                                                  — PASS
 npm --prefix web run typecheck                                                     — PASS
 npm --prefix web run lint                                                          — PASS
-npm --prefix web run test -- --run                                                 — PASS (321/321, 29 files)
+npm --prefix web run test -- --run                                                 — PASS (323/323, 29 files)
 npm --prefix web run build                                                         — PASS
+npm --prefix web run test:e2e -- manual-organize.spec.ts                           — PASS (6/6)
 npm --prefix web run test:e2e -- manual-organize.spec.ts manual-operations.spec.ts operations.spec.ts library-file-detail.spec.ts deep-link.spec.ts
-                                                                                   — PASS
-npm --prefix web run test:e2e                                                      — PASS (91/91)
-.venv/bin/python -m unittest tests.test_v2_manual_organize                         — PASS (11/11)
-.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_execution_authorization tests.test_queued_job_execution_boundary tests.test_organizer_mutation_authority tests.test_manual_operations tests.test_operations_workspace tests.test_api_security tests.test_v2_ui tests.test_manual_operations_contract
-                                                                                   — PASS (168/168)
-.venv/bin/python -m unittest discover -s tests                                     — 1485 tests, 6 FAIL / PRE-EXISTING / ENVIRONMENT, 7 SKIP
+                                                                                   — PASS (57/57)
+npm --prefix web run test:e2e                                                      — PASS (92/92, twice)
+.venv/bin/python -m unittest tests.test_v2_manual_organize                         — PASS (22/22)
+.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_execution_authorization tests.test_queued_job_execution_boundary tests.test_organizer_mutation_authority tests.test_manual_operations tests.test_operations_workspace tests.test_api_security tests.test_v2_ui
+                                                                                   — PASS (153/153)
+.venv/bin/python -m unittest discover -s tests                                     — 1496 tests, 6 FAIL / PRE-EXISTING / UNRELATED, 7 SKIP
 .venv/bin/ruff format --check .                                                    — PASS (307 files)
 .venv/bin/ruff check .                                                             — PASS
 .venv/bin/python -m compileall -q mediaflow tests scripts                          — PASS
@@ -342,24 +347,27 @@ npm --prefix web run test:e2e                                                   
 .venv/bin/mediaflow --config config/strategy.example.json config validate          — PASS
 .venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate — PASS
 git diff --check                                                                   — PASS
-python3 scripts/docker_release_security_smoke_test.py                              — PASS
+python3 scripts/docker_release_security_smoke_test.py                              — FAIL / PRE-EXISTING / UNRELATED (environment)
 ```
 
 ### Decisions
 
-- Admission and execution are separate durable boundaries: `execute()` keeps its synchronous V1/CLI
-  behavior (`admit_only=False`), while the Web journey uses `admit` + Worker `run_admitted`.
-- The Worker claim lives on `manual_executions` (additive SCHEMA_VERSION 34 columns) instead of a
-  second Job model, so an execution that already crossed the mutation boundary can never be
-  re-claimed by another Worker.
-- One Web action creates the one-shot authority server-side inside the same request that consumes
-  it through atomic admission; the browser submits only selection, optimistic version and explicit
-  destructive choices.
-- Repeated/concurrent submission of the same reviewed work returns the existing durable execution
-  and revokes the unused authority instead of creating a second Task.
-- Bounded operator projections (`manual_intent_operator_document`,
-  `manual_execution_operator_document`, `manual_step_error_document`) plus a new
-  `destructiveImplications` plan field replace the rejected raw documents.
+- Exact-equivalence is proved against the *persisted* authority of the existing execution, not
+  only the request: permission is not a column on `manual_executions`, so loading the admitting
+  authority is the only way to bind it without another schema change.
+- The action contract deliberately allows the backend to keep publishing `method`/`path`/
+  `requiresConfirmation` on a withheld `execute` action (that is what the real API emits, and the
+  golden fixture pins it); the safety property enforced instead is that a withheld action carries a
+  reason and is never rendered as a control, and a confirmation can only ever ride a POST.
+- Effect `verified` is treated as derived evidence (`verified === verified_complete`) rather than an
+  independent flag, so a contradictory pair is malformed instead of a usable outcome.
+- The migration is made atomic by ordering, not by a new transaction wrapper: every ALTER runs
+  before the single `INSERT OR REPLACE INTO schema_version` inside the connection's transaction, so
+  a failure rolls back to the recorded older version and a repaired reopen migrates fully.
+- The fake-server session scoping reuses the browser context cookie jar that Playwright already
+  isolates per test, so no app code, route change or request interception is needed.
+- The full e2e gate was run twice after the isolation change to show the earlier 90 PASS / 1 FAIL
+  instability is gone, not merely absent from one lucky ordering.
 
 ### Remaining In-Slice Work
 
@@ -369,72 +377,67 @@ python3 scripts/docker_release_security_smoke_test.py                           
 
 ### Risks / Deviations
 
-- 6 full-regression failures are `FAIL / PRE-EXISTING / ENVIRONMENT`, not Task defects: they pass in
-  a clean Task-Base worktree, and reproduce at Task Base with this workspace's ignored local
-  `.mediaflow/mediaflow.sqlite3` (a managed Active revision with library `source`) resolved instead
-  of the test's temporary bootstrap document: `test_storage_list_does_not_construct_or_connect`,
+- 6 full-regression failures are `FAIL / PRE-EXISTING / UNRELATED`: `test_storage_list_does_not_construct_or_connect`,
   `test_storage_check_is_read_only_and_isolates_failures`,
   `test_credential_check_is_redacted_config_only_and_reports_missing`,
   `test_legacy_credential_status_is_supported_without_secret_output`,
   `test_runtime_configuration_and_final_analyze_cli`,
-  `test_scan_cli_needs_no_path_or_metadata_token`.
-- Running the T4 suite migrated the ignored local `.mediaflow/mediaflow.sqlite3` to schema 34
-  (additive, forward-only; older binaries now refuse it by design). No tracked file, media or
-  credential was touched.
-- The additive runtime schema change is covered by the in-repo forward migration and by
-  `test_restart_fault_boundary`/`test_api_security`/`test_processing_worker_readiness`, which now
-  bind to `SCHEMA_VERSION`; the Task's own focused suite exercises admission/Worker restart paths.
-- Docker acceptance was not needed for this Task's gates and was not run; `config/alist.json`
-  remains ignored/untracked and is absent from the checkpoint.
+  `test_scan_cli_needs_no_path_or_metadata_token`. They reproduce identically on a clean worktree
+  at this Task's reviewed base (1485 tests, same 6 failures), i.e. they are caused by this
+  workspace's ignored local `.mediaflow/mediaflow.sqlite3` being resolved instead of the tests'
+  temporary bootstrap document, not by this correction. The focused suites that bind to the
+  changed code (153 + 22 tests) pass.
+- `python3 scripts/docker_release_security_smoke_test.py` fails in this environment with
+  `invalid mount config for type "bind": bind source path does not exist` from the local Docker
+  daemon. The identical failure reproduces on a clean worktree at the reviewed base, so it is
+  `FAIL / PRE-EXISTING / UNRELATED` (host Docker bind-mount restriction), not a Task regression;
+  the judgement of whether that blocks the gate is B's.
+- Running the T4 suite migrates the ignored local `.mediaflow/mediaflow.sqlite3` to schema 34
+  (additive, forward-only by design). No tracked file, media file or credential was touched;
+  `config/alist.json` remains ignored/untracked and is absent from the checkpoint.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: d359e9227facde241511baacf1438bee1def9a18
+Head SHA: PENDING_COMMIT
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: e1dba1f87bb32cdcd573f565b6772e3da21823bf..5a666b394eccda6b55acb81af0b2ca8e9e2dcb89
+Reviewed: e1dba1f87bb32cdcd573f565b6772e3da21823bf..d359e9227facde241511baacf1438bee1def9a18
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The complete V2 Web-native Organize journey is absent. The actual implementation commit
-  `a53a10f43ffa586740729466984b733dc660a7f5` changes no V2 route, page, component, API client or
-  TanStack Query boundary, and the Developer report lists all of those surfaces as remaining work.
-  `web/tests/e2e/manual-organize.spec.ts` visits existing Preview/Operations pages rather than
-  creating/editing an intent, selecting exact Preview items, admitting work and following durable
-  outcomes. Implement and register the full refresh/deep-link-safe journey required by the Scope
-  and Acceptance Criteria, including authoritative unavailable/forbidden/failure/recovery states.
-- Durable queued admission and Worker-only execution are not implemented. The new execute handler
-  directly calls synchronous `ManualOrganizeExecutionService.execute()` in the API request; the
-  diff contains no Application, persistence or Processing Worker changes. Implement prompt durable
-  admission, atomic one-shot/idempotent concurrent submission, Worker lease/fence pickup and
-  restart-safe reconstruction/revalidation so OrganizerExecutor work never runs in the API thread
-  and duplicate submission cannot duplicate Tasks or mutation attempts.
-- The new authority/API boundary violates the required operator and redaction contract. It exposes
-  separate authorize and execute calls with repeated confirmation and a browser-supplied
-  `authorizationId`, accepts a browser-supplied `snapshotDigest`, and returns the existing full
-  authorization/execution documents containing configuration digests, fingerprints, source paths
-  and raw plan/effect material. In addition, frontend normalization supplies a fallback `organize`
-  action when the authoritative matrix omits it instead of failing closed. Replace this with one
-  meaningful Web Execute action backed by server-held authority and bounded operator projections;
-  reject missing/contradictory authority and strip every forbidden identifier/payload from API,
-  model, URL, DOM, console, audit and test artifacts.
-- The required success and safety proof is incomplete, and one required gate fails. Running
-  `npm --prefix web run test:e2e -- manual-organize.spec.ts` was available and produced 5 PASS / 1
-  FAIL: the zero-mutation test rejects the correct UI text “zero Storage mutation.” The 18 focused
-  Python tests pass, but cover mainly action exposure and malformed/rejection paths; they do not
-  prove successful intent editing, exact selection, queued admission, one-shot expiry/principal/
-  version/item/effect binding, concurrent consumption, Worker claim/fence/restart, pre-mutation
-  checks, four operations, attachments, destructive authority, link no-fallback, independent
-  outcomes, uncertain no-replay or RecognitionType C preservation. Correct/expand the focused and
-  built-artifact tests to exercise the real journey, then run and truthfully report every T4 gate.
-- The reported checkpoint SHA `81b1726425e1fa8f5212c5661e1fd48bd9f2bb1c` does not resolve to a
-  commit, and the report incorrectly marks runnable Playwright coverage unavailable. After the
-  correction commit, update the report with an existing full Head SHA and the actual command
-  results so the Task Base..Head boundary is reviewable.
+- Exact idempotent/concurrent resolution is over-broad. In
+  `ManualOrganizeExecutionService._existing_admitted_execution()`,
+  `selected.issubset(admitted)` can return an existing execution containing items the current Web
+  request did not select, and the match does not require the same actor, permission, intent/config
+  binding or allowed destructive effects. This violates the exact selected-set and principal-bound
+  authority criteria. Resolve only an exactly equivalent reviewed submission; a narrower,
+  overlapping, differently bound or differently authorized request must fail without returning an
+  unrelated execution. Add focused same/different-principal, exact/narrower/overlapping-selection
+  and effect-binding concurrency regressions.
+- The V2 Organize normalizer does not yet fail closed on the contradictory item/effect/action data
+  named by the Acceptance Criteria. `normalizeOrganizeAction()` accepts arbitrary method/path and
+  inconsistent available/reason/confirmation combinations, while `normalizeExecutionItem()`
+  accepts arbitrary status, effect certainty and effect action values. Enforce the bounded enums and
+  cross-field/action contract before rendering any executable control, and add component/browser
+  malformed-response tests proving no action or hostile value reaches the DOM or request boundary.
+- The schema/restart proof required for this schema-changing Task is absent. The checkpoint bumps
+  runtime schema 33→34, but the changed tests only update expected constants; the new Worker claim
+  test keeps one repository connection open and does not exercise an API/Worker process reopen.
+  Add temporary copied-fixture coverage for 33→34 forward migration (including existing manual
+  executions), newer-schema rejection and atomic migration failure, plus real repository/service
+  reopen coverage showing admitted work is reconstructed safely and started/uncertain work is not
+  reclaimed or replayed.
+- The required full built-artifact gate is not stable or passing. B ran
+  `npm --prefix web run test:e2e` and got 90 PASS / 1 FAIL at
+  `manual-organize.spec.ts:139`: the Execute journey completed, but the shared fake evidence array
+  contained zero `organize_execute` records. The per-test `reset-organize` endpoint clears global
+  state while Playwright uses two workers, so parallel tests can erase another test's evidence.
+  Isolate fake state/evidence per test or otherwise make the suite concurrency-safe, then rerun and
+  truthfully report both the focused and full Playwright gates.

@@ -1650,7 +1650,17 @@ const MANUAL_TERMINAL_SCAN_STATUSES = new Set([
   "cancelled",
 ]);
 // The bounded, secret-free request metadata a browser test may read back.
+//
+// Evidence is recorded per browser session: every Playwright test runs in its
+// own browser context, so the session cookie set by
+// `POST /__test__/reset-organize` gives each test exactly one bucket. Two
+// parallel workers therefore can never erase or observe another test's
+// evidence, which is what made the earlier shared-array design flaky under
+// `fullyParallel`. Requests without a session cookie still land in the shared
+// bucket so existing serial Scan journeys keep their deliberate shared state.
 const RECORDED_MANUAL_REQUESTS = [];
+const RECORDED_MANUAL_REQUESTS_BY_SESSION = new Map();
+const MANUAL_SESSION_COOKIE = "mf-e2e-session";
 const MANUAL_REQUEST_BODY_FIELDS = [
   "allowOverwrite",
   "allowSourceCleanup",
@@ -1690,7 +1700,14 @@ function boundedManualBody(fields) {
   return body;
 }
 
-function recordManualRequest({ body, method, objectId, objectType, path }) {
+function recordManualRequest({
+  body,
+  method,
+  objectId,
+  objectType,
+  path,
+  session,
+}) {
   const entry = { method, path, objectType };
   if (objectId !== null && objectId !== undefined) {
     entry.objectId = objectId;
@@ -1698,6 +1715,13 @@ function recordManualRequest({ body, method, objectId, objectType, path }) {
   const bounded = boundedManualBody(body ?? {});
   if (Object.keys(bounded).length > 0) {
     entry.body = bounded;
+  }
+  if (session !== null && session !== undefined) {
+    const bucket = RECORDED_MANUAL_REQUESTS_BY_SESSION.get(session);
+    if (bucket !== undefined) {
+      bucket.push(entry);
+      return;
+    }
   }
   RECORDED_MANUAL_REQUESTS.push(entry);
 }
@@ -1909,9 +1933,23 @@ function manualActionMatrixDocument(request, permitted) {
 const ORGANIZE_INTENT_ID = "organize-intent-e2e-001";
 const ORGANIZE_ITEM_ID = "organize-item-e2e-001";
 const ORGANIZE_PREVIEW_ID = "organize-preview-e2e-001";
+const ORGANIZE_HOSTILE_PREVIEW_ID = "organize-preview-hostile-e2e-001";
 const ORGANIZE_EXECUTION_ID = "organize-execution-e2e-001";
 const ORGANIZE_TASK_ID = "organize-task-e2e-001";
-const ORGANIZE_STATE = { executed: false, intentVersion: 1, itemVersion: 1 };
+// One mutable organize state per browser session: every Playwright test owns
+// exactly one context, so two parallel workers can never observe or advance
+// another test's intent/item versions.
+const ORGANIZE_STATES = new Map();
+
+function organizeState(session) {
+  const key = session ?? "shared";
+  let value = ORGANIZE_STATES.get(key);
+  if (value === undefined) {
+    value = { executed: false, intentVersion: 1, itemVersion: 1 };
+    ORGANIZE_STATES.set(key, value);
+  }
+  return value;
+}
 
 function organizeChoice(recognitionTypeId = "A") {
   return {
@@ -1923,7 +1961,7 @@ function organizeChoice(recognitionTypeId = "A") {
   };
 }
 
-function organizeIntentDocument() {
+function organizeIntentDocument(state) {
   return {
     actions: {
       choice: {
@@ -1984,7 +2022,7 @@ function organizeIntentDocument() {
         },
         status: "ready",
         updatedAt: MANUAL_RECORDED_AT,
-        version: ORGANIZE_STATE.itemVersion,
+        version: state.itemVersion,
       },
     ],
     journey: "organize",
@@ -2032,12 +2070,12 @@ function organizeIntentDocument() {
     sideEffects: "none",
     status: "open",
     updatedAt: MANUAL_RECORDED_AT,
-    version: ORGANIZE_STATE.intentVersion,
+    version: state.intentVersion,
     zeroMutation: true,
   };
 }
 
-function organizePreviewDocument() {
+function organizePreviewDocument(state) {
   const base = manualPreviewDocument({
     fileId: MANUAL_FILE_SCOPE.fileId,
     resourceLibraryId: MANUAL_FILE_SCOPE.resourceLibraryId,
@@ -2071,7 +2109,7 @@ function organizePreviewDocument() {
     blockedItemCount: 0,
     executionCandidateItemIds: [ORGANIZE_ITEM_ID],
     intentId: ORGANIZE_INTENT_ID,
-    intentVersion: ORGANIZE_STATE.intentVersion,
+    intentVersion: state.intentVersion,
     items: base.items.map((item) => ({
       ...item,
       itemId: ORGANIZE_ITEM_ID,
@@ -2097,7 +2135,7 @@ function organizePreviewDocument() {
   };
 }
 
-function organizeExecutionDocument(status) {
+function organizeExecutionDocument(status, state) {
   const finished = status !== "admitted";
   return {
     actions: {
@@ -2143,7 +2181,7 @@ function organizeExecutionDocument(status) {
     failedItemCount: 0,
     failure: null,
     intentId: ORGANIZE_INTENT_ID,
-    intentVersion: ORGANIZE_STATE.intentVersion,
+    intentVersion: state.intentVersion,
     itemCount: 1,
     items: [
       {
@@ -2739,6 +2777,22 @@ function bearerToken(req) {
   return header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
 }
 
+/** Read the per-test session id the browser context carries as a cookie. */
+function manualSession(req) {
+  const header = req.headers.cookie;
+  if (typeof header !== "string" || header.length === 0) {
+    return null;
+  }
+  for (const part of header.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === MANUAL_SESSION_COOKIE) {
+      const value = decodeURIComponent(rest.join("="));
+      return /^[A-Za-z0-9_-]{8,128}$/.test(value) ? value : null;
+    }
+  }
+  return null;
+}
+
 function sendJson(res, status, payload) {
   const body = Buffer.from(JSON.stringify(payload));
   res.writeHead(status, {
@@ -2784,6 +2838,11 @@ const CONTENT_TYPES = {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
   const token = bearerToken(req);
+  // One evidence/state bucket per browser session so parallel Playwright
+  // workers never erase or observe another test's fake state.
+  const session = manualSession(req);
+  const recordManualRequestForSession = (entry) =>
+    recordManualRequest({ ...entry, session });
   // The V2 Operations workspace reads the bounded /api/v1/operations/* alias;
   // the fake mirrors the authoritative Python contract by serving the same
   // bounded documents for both spellings.
@@ -3800,6 +3859,7 @@ const server = createServer(async (req, res) => {
     if (!operationsGuard(res)) {
       return;
     }
+    const state = organizeState(session);
     const parsed = await readBoundedJsonBody(req, res);
     if (!parsed.ok) {
       return;
@@ -3814,7 +3874,7 @@ const server = createServer(async (req, res) => {
       sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
     }
-    recordManualRequest({
+    recordManualRequestForSession({
       body: {
         fileId: fields.fileId,
         itemIds: Array.isArray(fields.itemIds) ? [...fields.itemIds] : null,
@@ -3826,9 +3886,9 @@ const server = createServer(async (req, res) => {
       objectType: "organize_intent",
       path: "/api/v1/organize/intents",
     });
-    ORGANIZE_STATE.intentVersion = 1;
-    ORGANIZE_STATE.itemVersion = 1;
-    sendJson(res, 201, organizeIntentDocument());
+    state.intentVersion = 1;
+    state.itemVersion = 1;
+    sendJson(res, 201, organizeIntentDocument(state));
     return;
   }
 
@@ -3839,13 +3899,14 @@ const server = createServer(async (req, res) => {
     if (!operationsGuard(res)) {
       return;
     }
-    recordManualRequest({
+    const state = organizeState(session);
+    recordManualRequestForSession({
       method: "GET",
       objectId: ORGANIZE_INTENT_ID,
       objectType: "organize_intent",
       path: "/api/v1/organize/intents/:intentId",
     });
-    sendJson(res, 200, organizeIntentDocument());
+    sendJson(res, 200, organizeIntentDocument(state));
     return;
   }
 
@@ -3857,12 +3918,13 @@ const server = createServer(async (req, res) => {
     if (!operationsGuard(res)) {
       return;
     }
+    const state = organizeState(session);
     const parsed = await readBoundedJsonBody(req, res);
     if (!parsed.ok) {
       return;
     }
     const fields = parsed.document;
-    recordManualRequest({
+    recordManualRequestForSession({
       body: {
         expectedItemVersion: fields.expectedItemVersion,
         expectedVersion: fields.expectedVersion,
@@ -3874,8 +3936,8 @@ const server = createServer(async (req, res) => {
       path: "/api/v1/organize/intents/:intentId/items/:itemId/choice",
     });
     if (
-      fields.expectedVersion !== ORGANIZE_STATE.intentVersion ||
-      fields.expectedItemVersion !== ORGANIZE_STATE.itemVersion
+      fields.expectedVersion !== state.intentVersion ||
+      fields.expectedItemVersion !== state.itemVersion
     ) {
       sendJson(res, 409, {
         error: {
@@ -3885,9 +3947,9 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    ORGANIZE_STATE.intentVersion += 1;
-    ORGANIZE_STATE.itemVersion += 1;
-    sendJson(res, 200, organizeIntentDocument());
+    state.intentVersion += 1;
+    state.itemVersion += 1;
+    sendJson(res, 200, organizeIntentDocument(state));
     return;
   }
 
@@ -3899,18 +3961,19 @@ const server = createServer(async (req, res) => {
     if (!operationsGuard(res)) {
       return;
     }
+    const state = organizeState(session);
     const parsed = await readBoundedJsonBody(req, res);
     if (!parsed.ok) {
       return;
     }
-    recordManualRequest({
+    recordManualRequestForSession({
       body: { expectedVersion: parsed.document.expectedVersion },
       method: "POST",
       objectId: ORGANIZE_INTENT_ID,
       objectType: "organize_preview",
       path: "/api/v1/organize/intents/:intentId/previews",
     });
-    if (parsed.document.expectedVersion !== ORGANIZE_STATE.intentVersion) {
+    if (parsed.document.expectedVersion !== state.intentVersion) {
       sendJson(res, 409, {
         error: {
           code: "manual_intent_conflict",
@@ -3919,7 +3982,7 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    sendJson(res, 201, organizePreviewDocument());
+    sendJson(res, 201, organizePreviewDocument(state));
     return;
   }
 
@@ -3930,13 +3993,44 @@ const server = createServer(async (req, res) => {
     if (!operationsGuard(res)) {
       return;
     }
-    recordManualRequest({
+    const state = organizeState(session);
+    recordManualRequestForSession({
       method: "GET",
       objectId: ORGANIZE_PREVIEW_ID,
       objectType: "organize_preview",
       path: "/api/v1/organize/previews/:previewId",
     });
-    sendJson(res, 200, organizePreviewDocument());
+    sendJson(res, 200, organizePreviewDocument(state));
+    return;
+  }
+
+  // A deliberately malformed bounded document: it mirrors the real contract's
+  // shape but carries an unmodelled action transport and an unknown item
+  // status, so the built artifact must render no Execute control and no
+  // hostile value anywhere in the DOM.
+  if (
+    url.pathname ===
+      `/api/v1/organize/previews/${ORGANIZE_HOSTILE_PREVIEW_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = organizeState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: ORGANIZE_HOSTILE_PREVIEW_ID,
+      objectType: "organize_preview",
+      path: "/api/v1/organize/previews/:previewId",
+    });
+    const hostile = organizePreviewDocument(state);
+    hostile["previewId"] = ORGANIZE_HOSTILE_PREVIEW_ID;
+    hostile["actions"]["execute"]["available"] = true;
+    hostile["actions"]["execute"]["reason"] = null;
+    hostile["actions"]["execute"]["method"] = "DELETE";
+    hostile["actions"]["execute"]["path"] = "https://attacker.example/execute";
+    hostile["items"][0]["status"] = "hacked";
+    sendJson(res, 200, hostile);
     return;
   }
 
@@ -3948,12 +4042,13 @@ const server = createServer(async (req, res) => {
     if (!operationsGuard(res)) {
       return;
     }
+    const state = organizeState(session);
     const parsed = await readBoundedJsonBody(req, res);
     if (!parsed.ok) {
       return;
     }
     const fields = parsed.document;
-    recordManualRequest({
+    recordManualRequestForSession({
       body: {
         confirmation: fields.confirmation === true,
         expectedIntentVersion: fields.expectedIntentVersion,
@@ -3969,18 +4064,18 @@ const server = createServer(async (req, res) => {
       !Array.isArray(fields.itemIds) ||
       fields.itemIds.length !== 1 ||
       fields.itemIds[0] !== ORGANIZE_ITEM_ID ||
-      fields.expectedIntentVersion !== ORGANIZE_STATE.intentVersion
+      fields.expectedIntentVersion !== state.intentVersion
     ) {
       sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
     }
     // One repeated submission resolves to the same durable execution.
-    const first = ORGANIZE_STATE.executed === false;
-    ORGANIZE_STATE.executed = true;
+    const first = state.executed === false;
+    state.executed = true;
     sendJson(
       res,
       first ? 202 : 200,
-      organizeExecutionDocument(first ? "admitted" : "completed"),
+      organizeExecutionDocument(first ? "admitted" : "completed", state),
     );
     return;
   }
@@ -3992,7 +4087,8 @@ const server = createServer(async (req, res) => {
     if (!operationsGuard(res)) {
       return;
     }
-    recordManualRequest({
+    const state = organizeState(session);
+    recordManualRequestForSession({
       method: "GET",
       objectId: ORGANIZE_EXECUTION_ID,
       objectType: "organize_execution",
@@ -4002,7 +4098,8 @@ const server = createServer(async (req, res) => {
       res,
       200,
       organizeExecutionDocument(
-        ORGANIZE_STATE.executed ? "completed" : "admitted",
+        state.executed ? "completed" : "admitted",
+        state,
       ),
     );
     return;
@@ -4051,7 +4148,7 @@ const server = createServer(async (req, res) => {
       sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
     }
-    recordManualRequest({
+    recordManualRequestForSession({
       body: { fileId, resourceLibraryId, scopeKind },
       method: "GET",
       objectId: fileId ?? resourceLibraryId,
@@ -4127,7 +4224,7 @@ const server = createServer(async (req, res) => {
       (fileId !== MANUAL_FILE_SCOPE.fileId ||
         resourceLibraryId !== MANUAL_FILE_SCOPE.resourceLibraryId)
     ) {
-      recordManualRequest({
+      recordManualRequestForSession({
         body: { fileId, mode, resourceLibraryId, scopeKind },
         method: "POST",
         objectId: fileId,
@@ -4147,7 +4244,7 @@ const server = createServer(async (req, res) => {
       scopeKind === "resourceLibrary" &&
       resourceLibraryId !== MANUAL_LIBRARY_ID
     ) {
-      recordManualRequest({
+      recordManualRequestForSession({
         body: { mode, resourceLibraryId, scopeKind },
         method: "POST",
         objectId: resourceLibraryId,
@@ -4170,7 +4267,7 @@ const server = createServer(async (req, res) => {
       scopeKind,
     });
     MANUAL_SCANS.set(record.taskId, record);
-    recordManualRequest({
+    recordManualRequestForSession({
       body: { fileId, mode, resourceLibraryId, scopeKind },
       method: "POST",
       objectId: record.taskId,
@@ -4202,7 +4299,7 @@ const server = createServer(async (req, res) => {
       sendJson(res, 404, { error: { code: "not_found" } });
       return;
     }
-    recordManualRequest({
+    recordManualRequestForSession({
       method: "POST",
       objectId: taskId,
       objectType: "scan",
@@ -4250,7 +4347,7 @@ const server = createServer(async (req, res) => {
     }
     const record = MANUAL_SCANS.get(taskId);
     if (record === undefined) {
-      recordManualRequest({
+      recordManualRequestForSession({
         method: "GET",
         objectId: taskId,
         objectType: "scan",
@@ -4268,7 +4365,7 @@ const server = createServer(async (req, res) => {
       sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
     }
-    recordManualRequest({
+    recordManualRequestForSession({
       body: { itemCursor: query.itemCursor, itemLimit: parsedLimit.itemLimit },
       method: "GET",
       objectId: taskId,
@@ -4325,7 +4422,7 @@ const server = createServer(async (req, res) => {
       (fileId !== MANUAL_FILE_SCOPE.fileId ||
         resourceLibraryId !== MANUAL_FILE_SCOPE.resourceLibraryId)
     ) {
-      recordManualRequest({
+      recordManualRequestForSession({
         body: { fileId, resourceLibraryId, scopeKind },
         method: "POST",
         objectId: fileId,
@@ -4345,7 +4442,7 @@ const server = createServer(async (req, res) => {
       scopeKind === "resourceLibrary" &&
       resourceLibraryId !== MANUAL_LIBRARY_ID
     ) {
-      recordManualRequest({
+      recordManualRequestForSession({
         body: { resourceLibraryId, scopeKind },
         method: "POST",
         objectId: resourceLibraryId,
@@ -4370,7 +4467,7 @@ const server = createServer(async (req, res) => {
     // Persisting the bounded preview document is the fake's read-back state;
     // Preview itself performs no Storage or media mutation.
     MANUAL_PREVIEWS.set(document.previewId, document);
-    recordManualRequest({
+    recordManualRequestForSession({
       body: { fileId, resourceLibraryId, scopeKind },
       method: "POST",
       objectId: document.previewId,
@@ -4414,7 +4511,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     const limit = parsedLimit.itemLimit ?? 20;
-    recordManualRequest({
+    recordManualRequestForSession({
       body: { scopeKind },
       method: "GET",
       objectId: scopeId,
@@ -4437,7 +4534,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     const previewId = decodeURIComponent(manualPreviewDetailMatch[1]);
-    recordManualRequest({
+    recordManualRequestForSession({
       method: "GET",
       objectId: previewId,
       objectType: "preview",
@@ -4453,18 +4550,37 @@ const server = createServer(async (req, res) => {
   }
 
   if (url.pathname === "/__test__/manual-operations" && req.method === "GET") {
-    sendJson(res, 200, { items: RECORDED_MANUAL_REQUESTS });
+    // Session-scoped evidence keeps each test's assertions independent even
+    // while two workers drive the same fake server.
+    sendJson(res, 200, {
+      items: [
+        ...RECORDED_MANUAL_REQUESTS,
+        ...(session === null
+          ? []
+          : (RECORDED_MANUAL_REQUESTS_BY_SESSION.get(session) ?? [])),
+      ],
+    });
     return;
   }
 
   // Deterministic per-test reset for the manual Organize fake state so the
-  // journey proof never depends on another test having run first.
+  // journey proof never depends on another test having run first. The reset is
+  // strictly scoped to the calling browser session: another test's evidence and
+  // state are never erased, so parallel workers stay isolated.
   if (url.pathname === "/__test__/reset-organize" && req.method === "POST") {
-    ORGANIZE_STATE.executed = false;
-    ORGANIZE_STATE.intentVersion = 1;
-    ORGANIZE_STATE.itemVersion = 1;
-    RECORDED_MANUAL_REQUESTS.length = 0;
-    sendJson(res, 200, { ok: true });
+    const sessionId =
+      session ?? `shared-${Math.random().toString(36).slice(2, 12)}`;
+    RECORDED_MANUAL_REQUESTS_BY_SESSION.set(sessionId, []);
+    ORGANIZE_STATES.set(sessionId, {
+      executed: false,
+      intentVersion: 1,
+      itemVersion: 1,
+    });
+    res.setHeader(
+      "Set-Cookie",
+      `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
+    );
+    sendJson(res, 200, { ok: true, session: sessionId });
     return;
   }
 

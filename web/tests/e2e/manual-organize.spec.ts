@@ -25,12 +25,15 @@ const VIEWER_TOKEN = "e2e-viewer-token";
 const READ_ONLY_TOKEN = "e2e-readonly-token";
 const INTENT_ID = "organize-intent-e2e-001";
 const PREVIEW_ID = "organize-preview-e2e-001";
+const HOSTILE_PREVIEW_ID = "organize-preview-hostile-e2e-001";
 const EXECUTION_ID = "organize-execution-e2e-001";
 
 test.beforeEach(async ({ page }) => {
-  // One deterministic fake state per test so the journey proof never depends
-  // on another test's choice revision having run first.
-  await page.request.post(`${BASE_URL}/__test__/reset-organize`);
+  // One deterministic fake state and one evidence bucket per test: the fake
+  // server scopes both to the browser session cookie it sets here, so two
+  // parallel workers can never erase or observe another test's evidence.
+  const reset = await page.request.post(`${BASE_URL}/__test__/reset-organize`);
+  expect(reset.status()).toBe(200);
 });
 
 interface ManualRequestEvidence {
@@ -42,6 +45,9 @@ interface ManualRequestEvidence {
 }
 
 async function manualEvidence(page: Page): Promise<ManualRequestEvidence[]> {
+  // `page.request` shares the browser context, so the per-test session cookie
+  // set by the reset above is sent here: this returns the shared bucket plus
+  // exactly this test's recorded requests, never another test's.
   const response = await page.request.get(
     `${BASE_URL}/__test__/manual-operations`,
   );
@@ -187,5 +193,32 @@ test.describe("manual organize journey", () => {
   }) => {
     await page.goto(`/ui-v2/operations/organize/intent/${INTENT_ID}`);
     await expect(page.getByRole("button", { name: "Connect" })).toBeVisible();
+  });
+
+  test("renders no Execute control for a malformed bounded document", async ({
+    page,
+  }) => {
+    // The fake serves a contract-shaped document with an unmodelled action
+    // route and an unknown item status. The built artifact must fail closed:
+    // the malformed read state replaces the journey, no Execute control is
+    // rendered, and no hostile value reaches the DOM.
+    await page.goto(`/ui-v2/operations/organize/preview/${HOSTILE_PREVIEW_ID}`);
+    await connect(page, VIEWER_TOKEN);
+
+    await expect(
+      page.getByText(/could not be understood as the expected contract/i),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Execute selected exact items" }),
+    ).toHaveCount(0);
+    const rendered = (await page.locator("main").textContent()) ?? "";
+    expect(rendered).not.toContain("attacker.example");
+    expect(rendered).not.toContain("hacked");
+    expect(rendered).not.toContain("DELETE");
+    // The page itself never submitted an execute request.
+    const evidence = await manualEvidence(page);
+    expect(
+      evidence.filter((entry) => entry.objectType === "organize_execute"),
+    ).toHaveLength(0);
   });
 });
