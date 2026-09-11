@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 33.3
 Parent Slice: 33
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: e1dba1f87bb32cdcd573f565b6772e3da21823bf
 Difficulty: High
 Test Level: T4
@@ -339,11 +339,44 @@ Head SHA: 81b1726425e1fa8f5212c5661e1fd48bd9f2bb1c
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
+Reviewed: e1dba1f87bb32cdcd573f565b6772e3da21823bf..5a666b394eccda6b55acb81af0b2ca8e9e2dcb89
+Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
-Next: PENDING
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+- The complete V2 Web-native Organize journey is absent. The actual implementation commit
+  `a53a10f43ffa586740729466984b733dc660a7f5` changes no V2 route, page, component, API client or
+  TanStack Query boundary, and the Developer report lists all of those surfaces as remaining work.
+  `web/tests/e2e/manual-organize.spec.ts` visits existing Preview/Operations pages rather than
+  creating/editing an intent, selecting exact Preview items, admitting work and following durable
+  outcomes. Implement and register the full refresh/deep-link-safe journey required by the Scope
+  and Acceptance Criteria, including authoritative unavailable/forbidden/failure/recovery states.
+- Durable queued admission and Worker-only execution are not implemented. The new execute handler
+  directly calls synchronous `ManualOrganizeExecutionService.execute()` in the API request; the
+  diff contains no Application, persistence or Processing Worker changes. Implement prompt durable
+  admission, atomic one-shot/idempotent concurrent submission, Worker lease/fence pickup and
+  restart-safe reconstruction/revalidation so OrganizerExecutor work never runs in the API thread
+  and duplicate submission cannot duplicate Tasks or mutation attempts.
+- The new authority/API boundary violates the required operator and redaction contract. It exposes
+  separate authorize and execute calls with repeated confirmation and a browser-supplied
+  `authorizationId`, accepts a browser-supplied `snapshotDigest`, and returns the existing full
+  authorization/execution documents containing configuration digests, fingerprints, source paths
+  and raw plan/effect material. In addition, frontend normalization supplies a fallback `organize`
+  action when the authoritative matrix omits it instead of failing closed. Replace this with one
+  meaningful Web Execute action backed by server-held authority and bounded operator projections;
+  reject missing/contradictory authority and strip every forbidden identifier/payload from API,
+  model, URL, DOM, console, audit and test artifacts.
+- The required success and safety proof is incomplete, and one required gate fails. Running
+  `npm --prefix web run test:e2e -- manual-organize.spec.ts` was available and produced 5 PASS / 1
+  FAIL: the zero-mutation test rejects the correct UI text “zero Storage mutation.” The 18 focused
+  Python tests pass, but cover mainly action exposure and malformed/rejection paths; they do not
+  prove successful intent editing, exact selection, queued admission, one-shot expiry/principal/
+  version/item/effect binding, concurrent consumption, Worker claim/fence/restart, pre-mutation
+  checks, four operations, attachments, destructive authority, link no-fallback, independent
+  outcomes, uncertain no-replay or RecognitionType C preservation. Correct/expand the focused and
+  built-artifact tests to exercise the real journey, then run and truthfully report every T4 gate.
+- The reported checkpoint SHA `81b1726425e1fa8f5212c5661e1fd48bd9f2bb1c` does not resolve to a
+  commit, and the report incorrectly marks runnable Playwright coverage unavailable. After the
+  correction commit, update the report with an existing full Head SHA and the actual command
+  results so the Task Base..Head boundary is reviewable.
