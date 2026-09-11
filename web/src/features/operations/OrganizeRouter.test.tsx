@@ -106,7 +106,27 @@ function previewDocument(): Json {
 function executionDocument(): Json {
   const value = document("organizeExecutionDetail");
   value["executionId"] = "execution-1";
+  // The transport must name the exact object it belongs to, exactly as the
+  // real backend emits it for the durable execution identity.
+  const actions = value["actions"] as Json;
+  (actions["detail"] as Json)["path"] =
+    "/api/v1/operations/organize/executions/execution-1";
   return value;
+}
+
+/** The exact Execute transport the backend advertises for one Preview. */
+function previewExecuteAction(): Json {
+  return {
+    available: true,
+    durableOutcome:
+      "one durable admitted execution and its Processing Worker outcome are stored; only OrganizerExecutor may then mutate Storage",
+    method: "POST",
+    nextAction: "confirm one Execute action for the selected exact items",
+    path: "/api/v1/operations/organize/previews/preview-1/execute",
+    reason: null,
+    requiresConfirmation: true,
+    sideEffects: "reported_per_item",
+  };
 }
 
 describe("V2 manual Organize journey", () => {
@@ -186,8 +206,7 @@ describe("V2 manual Organize journey", () => {
 
   it("admits exactly the selected exact items with one Execute action and no authority material", async () => {
     const user = userEvent.setup();
-    const execution = document("organizeExecutionDetail");
-    execution["executionId"] = "execution-1";
+    const execution = executionDocument();
     const { calls } = recordingFetch((call) => {
       if (
         call.url === "/api/v1/operations/organize/previews/preview-1" &&
@@ -457,6 +476,83 @@ describe("V2 manual Organize journey", () => {
       );
       const rendered = (await screen.findByRole("main")).textContent ?? "";
       expect(rendered).not.toMatch(/hacked|RM_RF_SLASH|rm -rf \/|totally/);
+      cleanup();
+      authStore.clearToken();
+    }
+  });
+
+  it("renders the valid uncertain-outcome evidence without calling it malformed", async () => {
+    // The executor records an attempted/unknown mutation with no verified
+    // effect as the bounded ``UNCERTAIN_EXECUTOR_INVOCATION`` marker. This is
+    // truthful, non-replayable evidence: the detail page must render it, not
+    // refuse the whole read.
+    const document = executionDocument();
+    const item = (document["items"] as Json[])[0];
+    item["status"] = "partial";
+    item["effectCertainty"] = "attempted_unverified";
+    item["completedOperations"] = ["UNCERTAIN_EXECUTOR_INVOCATION"];
+    item["uncertainEffects"] = ["executor_invocation"];
+    item["effects"] = [
+      {
+        action: "UNCERTAIN_EXECUTOR_INVOCATION",
+        certainty: "attempted_unverified",
+        destinationLocation: "One (2001)/One (2001).mkv",
+        operation: null,
+        sourceLocation: "One.2001.mkv",
+        verified: false,
+      },
+    ];
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/operations/organize/executions/execution-1") {
+        return jsonResponse(document);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/execution/execution-1");
+
+    await screen.findByRole("heading", { name: "Manual organize execution" });
+    const rendered = (await screen.findByRole("main")).textContent ?? "";
+    expect(rendered).toContain("UNCERTAIN_EXECUTOR_INVOCATION");
+    expect(rendered).not.toMatch(/could not be understood as the expected/);
+  });
+
+  it("renders no Execute control when the execute action names another route or method", async () => {
+    // The Execute control is rendered only from the mutating POST route of
+    // this exact Preview. A contradictory transport — a safe method or a route
+    // belonging to another object — is malformed, never an executable control.
+    const wrongTransports: readonly Json[] = [
+      { ...previewExecuteAction(), method: "GET" },
+      {
+        ...previewExecuteAction(),
+        path: "/api/v1/operations/organize/previews/other-preview/execute",
+      },
+      {
+        ...previewExecuteAction(),
+        path: "/api/v1/operations/tasks/task-1",
+      },
+    ];
+    for (const transport of wrongTransports) {
+      const document = previewDocument();
+      document["actions"] = { ...((document["actions"] as Json) ?? {}) };
+      (document["actions"] as Json)["execute"] = transport;
+      recordingFetch((call) => {
+        if (call.url === "/api/v1/operations/organize/previews/preview-1") {
+          return jsonResponse(document);
+        }
+        return undefined;
+      });
+      authStore.setToken(TOKEN);
+      renderApp("/ui-v2/operations/organize/preview/preview-1");
+
+      await screen.findByText(
+        /could not be understood as the expected contract/i,
+      );
+      expect(
+        screen.queryByRole("button", {
+          name: "Execute selected exact items",
+        }),
+      ).toBeNull();
       cleanup();
       authStore.clearToken();
     }

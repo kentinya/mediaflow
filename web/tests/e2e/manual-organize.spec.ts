@@ -26,6 +26,7 @@ const READ_ONLY_TOKEN = "e2e-readonly-token";
 const INTENT_ID = "organize-intent-e2e-001";
 const PREVIEW_ID = "organize-preview-e2e-001";
 const HOSTILE_PREVIEW_ID = "organize-preview-hostile-e2e-001";
+const MISBOUND_PREVIEW_ID = "organize-preview-misbound-e2e-001";
 const EXECUTION_ID = "organize-execution-e2e-001";
 
 test.beforeEach(async ({ page }) => {
@@ -216,6 +217,31 @@ test.describe("manual organize journey", () => {
     expect(rendered).not.toContain("hacked");
     expect(rendered).not.toContain("DELETE");
     // The page itself never submitted an execute request.
+    const evidence = await manualEvidence(page);
+    expect(
+      evidence.filter((entry) => entry.objectType === "organize_execute"),
+    ).toHaveLength(0);
+  });
+
+  test("renders no Execute control when the execute action names a wrong route or method", async ({
+    page,
+  }) => {
+    // The fake serves a contract-shaped document whose Execute action carries
+    // a safe method and a route belonging to another Preview. The built
+    // artifact must fail closed instead of rendering the fixed Execute control
+    // from a transport that does not belong to this object.
+    await page.goto(
+      `/ui-v2/operations/organize/preview/${MISBOUND_PREVIEW_ID}`,
+    );
+    await connect(page, VIEWER_TOKEN);
+
+    await expect(
+      page.getByText(/could not be understood as the expected contract/i),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Execute selected exact items" }),
+    ).toHaveCount(0);
+    // No execute request was ever submitted for this Preview.
     const evidence = await manualEvidence(page);
     expect(
       evidence.filter((entry) => entry.objectType === "organize_execute"),

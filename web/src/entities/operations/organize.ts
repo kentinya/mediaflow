@@ -103,10 +103,26 @@ export const ORGANIZE_EFFECT_ACTION_MARKERS = [
   "LINK",
   "NOOP",
   "SKIP",
+  /**
+   * The only uncertain-outcome marker the executor records: an attempted or
+   * unknown mutation with no verified effect. It is truthful, bounded,
+   * non-replayable evidence, never a malformed read.
+   */
+  "UNCERTAIN_EXECUTOR_INVOCATION",
 ] as const;
 
-/** The only uncertain-effect statement the backend records today. */
-export const ORGANIZE_UNCERTAIN_EFFECTS = ["mutation_outcome"] as const;
+/**
+ * The only uncertain-effect statements the backend records today. Each names
+ * one bounded boundary where a mutation may or may not have happened; the
+ * evidence is always non-replayable and must be reported, never normalized
+ * away as malformed.
+ */
+export const ORGANIZE_UNCERTAIN_EFFECTS = [
+  "mutation_outcome",
+  "executor_invocation",
+  "process_interruption",
+  "result_persistence",
+] as const;
 
 /** The methods an operator-facing action may ever advertise. */
 export const ORGANIZE_ACTION_METHODS = ["GET", "POST"] as const;
@@ -116,6 +132,93 @@ export const ORGANIZE_ACTION_SIDE_EFFECTS = [
   "none",
   "reported_per_item",
 ] as const;
+
+/**
+ * The exact action this boundary is normalizing.
+ *
+ * Each document publishes several different actions, so the transport is
+ * bound per kind: an Execute control may only be rendered from the mutating
+ * POST route of the object it belongs to, and a read-only action can never
+ * advertise a mutation, a confirmation or another object's route.
+ */
+export type OrganizeActionKind =
+  | "intent-choice"
+  | "intent-preview"
+  | "intent-execute"
+  | "preview-execute"
+  | "preview-intent"
+  | "execution-detail"
+  | "execution-task"
+  | "execution-recovery";
+
+interface OrganizeActionContract {
+  /** The one method this action may ever advertise (null = methodless). */
+  readonly method: "GET" | "POST" | null;
+  /** The bounded route prefix this action's path must live under. */
+  readonly pathPrefix: string | null;
+  /** Whether this action's confirmation flag must be true. */
+  readonly requiresConfirmation: boolean;
+}
+
+const INTENT_ROUTE = "/api/v1/operations/organize/intents/";
+const PREVIEW_EXECUTE_ROUTE = "/api/v1/operations/organize/previews/";
+const EXECUTION_ROUTE = "/api/v1/operations/organize/executions/";
+const TASK_ROUTE = "/api/v1/operations/tasks/";
+
+/**
+ * The exact transport contract the backend publishes per action kind.
+ * The Execute family always carries its mutating POST route and its explicit
+ * confirmation, even while it is withheld, so the frontend can never infer a
+ * broader authority than the backend advertised.
+ */
+export const ORGANIZE_ACTION_CONTRACTS: Readonly<
+  Record<OrganizeActionKind, OrganizeActionContract>
+> = {
+  "intent-choice": {
+    method: "POST",
+    pathPrefix: `${INTENT_ROUTE}`,
+    requiresConfirmation: false,
+  },
+  "intent-preview": {
+    method: "POST",
+    pathPrefix: `${INTENT_ROUTE}`,
+    requiresConfirmation: false,
+  },
+  "intent-execute": {
+    // Execution is never offered from an intent document: the backend always
+    // withholds it (exact execution is only ever offered from a current,
+    // complete Preview), so this action carries no transport at all and the
+    // page renders no Execute control from an intent.
+    method: null,
+    pathPrefix: null,
+    requiresConfirmation: false,
+  },
+  "preview-execute": {
+    method: "POST",
+    pathPrefix: `${PREVIEW_EXECUTE_ROUTE}`,
+    requiresConfirmation: true,
+  },
+  "preview-intent": {
+    method: "GET",
+    pathPrefix: `${INTENT_ROUTE}`,
+    requiresConfirmation: false,
+  },
+  "execution-detail": {
+    method: "GET",
+    pathPrefix: `${EXECUTION_ROUTE}`,
+    requiresConfirmation: false,
+  },
+  "execution-task": {
+    method: "GET",
+    pathPrefix: `${TASK_ROUTE}`,
+    requiresConfirmation: false,
+  },
+  "execution-recovery": {
+    method: null,
+    pathPrefix: null,
+    requiresConfirmation: false,
+  },
+};
 
 /** Operator actions are bounded, relative V2 API routes and nothing else. */
 const SAFE_ACTION_PATH = /^\/api\/v1\/[A-Za-z0-9_./{}<>-]{1,256}$/;
@@ -401,6 +504,8 @@ export function normalizeOrganizeFailure(
 export function normalizeOrganizeAction(
   value: unknown,
   field: string,
+  kind: OrganizeActionKind,
+  identity: string | null = null,
 ): OrganizeActionModel {
   const source = readRecord(value, field);
   let available: boolean;
@@ -427,11 +532,30 @@ export function normalizeOrganizeAction(
     if (path !== null && !isSafeActionPath(path)) {
       fail(`${field}.path`);
     }
-    // A confirmation is only ever asked for a mutating action, so a GET or
-    // methodless action can never advertise one. The backend publishes the
-    // confirmation flag with the bounded transport even while the action is
-    // withheld, so availability is deliberately not part of this contract.
-    if (requiresConfirmation && method !== "POST") {
+    // The transport is bound to the exact action being normalized, so an
+    // Execute control can only ever be rendered from an action that names the
+    // mutating POST route for that exact object, and a read-only action can
+    // never advertise a mutation or a confirmation.
+    const contract = ORGANIZE_ACTION_CONTRACTS[kind];
+    if (method !== contract.method) {
+      fail(`${field}.method`);
+    }
+    if (contract.pathPrefix === null) {
+      // A methodless action never carries an executable route.
+      if (path !== null) {
+        fail(`${field}.path`);
+      }
+    } else if (path !== null && !path.startsWith(contract.pathPrefix)) {
+      fail(`${field}.path`);
+    } else if (path !== null && identity !== null) {
+      const owned = `${contract.pathPrefix}${identity}`;
+      // A route naming another object is never this action's transport, so a
+      // malformed read can never be promoted into an executable control.
+      if (!(path === owned || path.startsWith(`${owned}/`))) {
+        fail(`${field}.path`);
+      }
+    }
+    if (requiresConfirmation !== contract.requiresConfirmation) {
       fail(`${field}.requiresConfirmation`);
     }
     if (available) {
@@ -608,6 +732,7 @@ export function normalizeOrganizeIntent(payload: unknown): OrganizeIntentModel {
     return fail("items");
   }
   const actions = readRecord(source["actions"], "actions");
+  const intentIdentity = optionalText(source, "intentId");
   return {
     intentId: text(source, "intentId"),
     actor: optionalText(source, "actor"),
@@ -626,9 +751,23 @@ export function normalizeOrganizeIntent(payload: unknown): OrganizeIntentModel {
     options: normalizeOptions(source["options"]),
     items: rawItems.map((item) => normalizeIntentItem(item)),
     actions: {
-      choice: normalizeOrganizeAction(actions["choice"], "actions.choice"),
-      preview: normalizeOrganizeAction(actions["preview"], "actions.preview"),
-      execute: normalizeOrganizeAction(actions["execute"], "actions.execute"),
+      choice: normalizeOrganizeAction(
+        actions["choice"],
+        "actions.choice",
+        "intent-choice",
+        intentIdentity,
+      ),
+      preview: normalizeOrganizeAction(
+        actions["preview"],
+        "actions.preview",
+        "intent-preview",
+        intentIdentity,
+      ),
+      execute: normalizeOrganizeAction(
+        actions["execute"],
+        "actions.execute",
+        "intent-execute",
+      ),
     },
   };
 }
@@ -667,6 +806,9 @@ export function normalizeOrganizePreview(
     executeAction: normalizeOrganizeAction(
       actions["execute"],
       "actions.execute",
+      "preview-execute",
+      // The Execute route must name this exact Preview, never another object.
+      preview.previewId,
     ),
   };
 }
@@ -827,6 +969,8 @@ export function normalizeOrganizeExecution(
   }
   const actions = readRecord(source["actions"], "actions");
   const knownEffects = readRecord(source["knownEffects"], "knownEffects");
+  const executionId = optionalText(source, "executionId");
+  const taskId = optionalText(source, "taskId");
   const selectedItemIds = stringList(source, "selectedItemIds");
   const unselectedItemIds = stringList(source, "unselectedItemIds");
   if (
@@ -839,10 +983,10 @@ export function normalizeOrganizeExecution(
     return fail("selection");
   }
   return {
-    executionId: text(source, "executionId"),
+    executionId: executionId ?? "",
     previewId: text(source, "previewId"),
     intentId: text(source, "intentId"),
-    taskId: text(source, "taskId"),
+    taskId: taskId ?? "",
     actor: optionalText(source, "actor"),
     status,
     durableState: text(source, "durableState"),
@@ -868,11 +1012,22 @@ export function normalizeOrganizeExecution(
     },
     items: rawItems.map((item) => normalizeExecutionItem(item)),
     actions: {
-      detail: normalizeOrganizeAction(actions["detail"], "actions.detail"),
-      task: normalizeOrganizeAction(actions["task"], "actions.task"),
+      detail: normalizeOrganizeAction(
+        actions["detail"],
+        "actions.detail",
+        "execution-detail",
+        executionId,
+      ),
+      task: normalizeOrganizeAction(
+        actions["task"],
+        "actions.task",
+        "execution-task",
+        taskId,
+      ),
       recovery: normalizeOrganizeAction(
         actions["recovery"],
         "actions.recovery",
+        "execution-recovery",
       ),
     },
   };
