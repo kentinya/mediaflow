@@ -71,6 +71,7 @@ export interface ManualActionMatrixModel {
   readonly actions: {
     readonly scan: ManualAction;
     readonly preview: ManualAction;
+    readonly organize: ManualAction;
   };
   readonly limits: {
     readonly previewMaxItems: number | null;
@@ -247,6 +248,17 @@ export function normalizeManualActionMatrix(
       actions: {
         scan: normalizeAction(actionsRaw["scan"], "actions.scan"),
         preview: normalizeAction(actionsRaw["preview"], "actions.preview"),
+        organize: normalizeAction(
+          actionsRaw["organize"] ?? {
+            available: false,
+            reason: "organize action not available",
+            method: null,
+            path: null,
+            nextAction: null,
+            modes: [],
+          },
+          "actions.organize",
+        ),
       },
       limits: (() => {
         const limitsRaw = readRecord(source["limits"], "limits");
