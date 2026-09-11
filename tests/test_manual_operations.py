@@ -295,6 +295,325 @@ class BoundedDocumentTests(unittest.TestCase):
         self.assertTrue(item["plan"].get("zeroMutation"))
 
 
+class HostileProjectionTests(unittest.TestCase):
+    """The bounded operator documents must survive hostile persisted records."""
+
+    def test_preview_projection_rejects_every_forbidden_nested_shape(self) -> None:
+        from mediaflow.application.operations_lifecycle import manual_preview_operator_document
+
+        raw = {
+            "previewId": "p1",
+            "intentId": "i1",
+            "actor": "test",
+            "intentVersion": 1,
+            "configurationSnapshotId": "snap1",
+            "configurationSnapshotDigest": "d" * 64,
+            "status": "previewed",
+            "current": True,
+            "createdAt": "2026-09-04T12:00:00Z",
+            "updatedAt": "2026-09-04T12:00:00Z",
+            "nextAction": "inspect items",
+            "error": None,
+            "sideEffects": "none",
+            "zeroMutation": True,
+            "executionState": "ready_for_explicit_authorization",
+            "truncated": False,
+            "scope": {"kind": "file", "id": "f1", "itemCount": 1},
+            "scopeKind": "file",
+            "scopeId": "f1",
+            "selection": {"selectedItemIds": ["it1"], "unselectedItemIds": []},
+            "items": [
+                {
+                    "previewItemId": "pi1",
+                    "previewId": "p1",
+                    "itemId": "it1",
+                    "position": 0,
+                    "stage": "planning",
+                    "status": "previewed",
+                    "current": True,
+                    "truncated": False,
+                    "nextAction": "ok",
+                    "error": None,
+                    "zeroMutation": True,
+                    "executionState": "ready_for_explicit_authorization",
+                    "configurationSnapshotId": "snap1",
+                    "configurationSnapshotDigest": "d" * 64,
+                    "sourceFingerprint": "a" * 64,
+                    "source": {
+                        "fileId": "f1",
+                        "storageId": "source",
+                        "resourceLibraryId": "library",
+                        "path": "movies/Test.mkv",
+                        "filename": "Test.mkv",
+                        "extension": "mkv",
+                        "size": 1024,
+                        "scanStatus": "ready",
+                        "occurrenceState": "verified",
+                        "occurrenceId": "occ-abc",
+                        "fingerprint": "a" * 64,
+                    },
+                    "choice": {
+                        "recognitionTypeId": "type-a",
+                        "namingPolicyId": "naming-a",
+                        "classificationPolicyId": "class-a",
+                        "organizePolicyId": "organize-a",
+                    },
+                    "plan": {
+                        "recognitionType": "type-a",
+                        "mediaIdentity": {
+                            "provider": "tmdb",
+                            "providerId": "129",
+                            "title": "One",
+                            "year": 2001,
+                        },
+                        "policies": {
+                            "recognitionTypePolicyId": "type-a",
+                            "metadataPolicyId": "metadata-a",
+                            "namingPolicyId": "naming-a",
+                            "classificationPolicyId": "class-a",
+                            "organizePolicyId": "organize-a",
+                        },
+                        "analysis": {
+                            "parse": {
+                                "titleCandidate": "One",
+                                "year": 2001,
+                                "evidence": [
+                                    {
+                                        "field": "fingerprint",
+                                        "value": "b" * 64,
+                                        "source": "filename",
+                                        "confidence": "high",
+                                    }
+                                ],
+                            },
+                            "recognition": {"status": "matched", "recognitionTypeId": "type-a"},
+                            "metadata": {"available": True, "query": "One"},
+                            "naming": {"available": True, "directory": "A", "filename": "One.mkv"},
+                            "classification": {"available": True, "relativePath": "A"},
+                        },
+                        "destination": {
+                            "storageId": "target",
+                            "mediaLibraryRoot": "/private/media",
+                            "relativePath": "A/One (2001)/One (2001).mkv",
+                            "path": "/private/media/out.mkv",
+                        },
+                        "operation": "move",
+                        "operationPolicy": "move",
+                        "attachments": [
+                            {
+                                "type": "subtitle",
+                                "source": {"storageId": "source", "path": "movies/Test.zh.srt"},
+                                "destination": {
+                                    "storageId": "target",
+                                    "path": "/private/media/out.mkv",
+                                },
+                                "operation": "link",
+                                "suffix": ".zh",
+                            },
+                            {
+                                "type": "subtitle",
+                                "source": {"storageId": "source", "path": "movies/Test.en.srt"},
+                                "destination": {
+                                    "storageId": "target",
+                                    "path": "/private/media/Authorization: Bearer hidden.srt",
+                                },
+                                "operation": "link",
+                                "suffix": ".en",
+                            },
+                        ],
+                        "executionPlan": {
+                            "planId": "plan-1",
+                            "sourceStorageId": "source",
+                            "sourcePath": "/private/media/in.mkv",
+                            "targetStorageId": "target",
+                            "targetPath": "/private/media/out.mkv",
+                            "mediaLibraryRoot": "/private/media",
+                            "sourceLibraryRoot": "/private/source",
+                        },
+                        "capabilities": {
+                            "required": ["can_copy"],
+                            "declared": ["can_copy"],
+                            "missing": [],
+                            "verdict": "ok",
+                        },
+                        "conflicts": [
+                            {
+                                "type": "target_exists",
+                                "source": "/private/media/in.mkv",
+                                "destination": "/private/media/out.mkv",
+                                "details": "an existing target was found",
+                            }
+                        ],
+                        "warnings": ["/private/media is not writable"],
+                        "planStatus": "ready",
+                        "zeroMutation": True,
+                        "executionState": "ready_for_explicit_authorization",
+                        "bounded": True,
+                        "deterministic": True,
+                    },
+                }
+            ],
+        }
+        bounded = manual_preview_operator_document(raw)
+        serialized = json.dumps(bounded)
+
+        # Forbidden evidence is gone from keys, values and nested structures.
+        self.assertNotIn("a" * 64, serialized)
+        self.assertNotIn("b" * 64, serialized)
+        self.assertNotIn("d" * 64, serialized)
+        self.assertNotIn("Bearer hidden", serialized)
+        self.assertNotIn("/private", serialized)
+        self.assertNotIn("executionPlan", serialized)
+        self.assertNotIn("sourceLibraryRoot", serialized)
+        self.assertNotIn("mediaLibraryRoot", serialized)
+        self.assertNotIn("occurrenceId", serialized)
+        self.assertNotIn("fingerprint", serialized)
+        self.assertNotIn("digest", serialized)
+
+        # The operator-facing findings survive the redaction.
+        item = bounded["items"][0]
+        self.assertEqual("A/One (2001)/One (2001).mkv", item["plan"]["destination"]["relativePath"])
+        self.assertEqual("target", item["plan"]["destination"]["storageId"])
+        self.assertEqual("One", item["plan"]["mediaIdentity"]["title"])
+        self.assertEqual("tmdb", item["plan"]["mediaIdentity"]["provider"])
+        self.assertEqual("A", item["plan"]["analysis"]["classification"]["relativePath"])
+        attachments = item["plan"]["attachments"]
+        self.assertEqual(2, len(attachments))
+        self.assertEqual("subtitle", attachments[0]["type"])
+        self.assertEqual("zh", attachments[0]["language"])
+        self.assertEqual("out.mkv", attachments[0]["filename"])
+        self.assertIsNotNone(attachments[1]["filename"])
+        self.assertNotIn("hidden", attachments[1]["filename"])
+        self.assertNotIn("Authorization", attachments[1]["filename"])
+        conflicts = item["plan"]["conflicts"]
+        self.assertEqual(1, len(conflicts))
+        self.assertEqual("target_exists", conflicts[0]["type"])
+        self.assertEqual("media/out.mkv", conflicts[0]["destination"])
+        self.assertTrue(item["zeroMutation"])
+        self.assertEqual("none", item["sideEffects"])
+
+    def test_scan_projection_bounds_errors_and_publishes_paging_and_actions(self) -> None:
+        from mediaflow.application.operations_lifecycle import manual_scan_operator_document
+
+        raw = {
+            "taskId": "t1",
+            "scopeKind": "resource_library",
+            "scopeId": "library",
+            "resourceLibraryId": "library",
+            "fileId": None,
+            "storageId": "source",
+            "sourcePath": "movies/Test.mkv",
+            "sourceOccurrenceId": "occ-abc",
+            "sourceFingerprint": "a" * 64,
+            "configurationSnapshotId": "snap1",
+            "configurationSnapshotDigest": "d" * 64,
+            "mode": "full",
+            "status": "partial_success",
+            "createdAt": "2026-09-04T12:00:00Z",
+            "updatedAt": "2026-09-04T12:00:00Z",
+            "cancellationRequested": False,
+            "progress": {
+                "directoriesVisited": 2,
+                "filesVisited": 5,
+                "mediaCandidates": 3,
+                "ignored": 1,
+                "unstable": 0,
+                "errors": 1,
+            },
+            "errors": [
+                {
+                    "code": "read_failed",
+                    "path": "/srv/private/media/bad.mkv",
+                    "operation": "list",
+                }
+            ],
+            "reconciliationComplete": False,
+            "failureStage": "discovery",
+            "knownEffects": "partial_discovery_only",
+            "retrySafe": True,
+            "nextAction": "inspect per-item outcomes",
+            "error": "manual Scan completed with discovery errors",
+            "itemLimit": 20,
+            "itemsTruncated": True,
+            "nextItemCursor": "eyJhIjoxfQ==",
+            "previousItemCursor": None,
+            "items": [
+                {
+                    "itemId": "i1",
+                    "taskId": "t1",
+                    "storageId": "source",
+                    "resourceLibraryId": "library",
+                    "sourcePath": "movies/Test.mkv",
+                    "fileId": "f1",
+                    "status": "ready",
+                    "change": "unchanged",
+                    "stage": "manual_scan_discovery",
+                    "createdAt": "2026-09-04T12:00:00Z",
+                    "updatedAt": "2026-09-04T12:00:00Z",
+                    "sourceOccurrenceId": "occ-abc",
+                    "sourceFingerprint": "a" * 64,
+                    "error": None,
+                    "knownEffects": "file_index_discovery_refreshed",
+                    "retrySafe": True,
+                    "nextAction": "inspect the refreshed FileIndex item",
+                }
+            ],
+        }
+        bounded = manual_scan_operator_document(raw)
+        serialized = json.dumps(bounded)
+
+        self.assertEqual("resourceLibrary", bounded["scopeKind"])
+        self.assertEqual(20, bounded["itemLimit"])
+        self.assertTrue(bounded["itemsTruncated"])
+        self.assertEqual("eyJhIjoxfQ==", bounded["nextItemCursor"])
+        self.assertIsNone(bounded["previousItemCursor"])
+        self.assertEqual("partial_success", bounded["status"])
+        self.assertEqual(1, len(bounded["errors"]))
+        self.assertEqual("media/bad.mkv", bounded["errors"][0]["path"])
+        self.assertIsNotNone(bounded["failure"])
+        self.assertFalse(bounded["actions"]["cancel"]["available"])
+        self.assertEqual("POST", bounded["actions"]["cancel"]["method"])
+        self.assertNotIn("a" * 64, serialized)
+        self.assertNotIn("d" * 64, serialized)
+        self.assertNotIn("/srv/private", serialized)
+        self.assertNotIn("sourceFingerprint", serialized)
+        self.assertNotIn("configurationSnapshotDigest", serialized)
+        self.assertEqual("movies/Test.mkv", bounded["items"][0]["sourcePath"])
+
+    def test_scan_projection_advertises_cancel_only_for_a_cancellable_state(self) -> None:
+        from mediaflow.application.operations_lifecycle import manual_scan_operator_document
+
+        base = {
+            "taskId": "t1",
+            "scopeKind": "file",
+            "scopeId": "f1",
+            "resourceLibraryId": "library",
+            "fileId": "f1",
+            "storageId": "source",
+            "sourcePath": "movies/Test.mkv",
+            "mode": "incremental",
+            "status": "running",
+            "createdAt": "2026-09-04T12:00:00Z",
+            "updatedAt": "2026-09-04T12:00:00Z",
+            "cancellationRequested": False,
+            "progress": {},
+            "errors": [],
+            "items": [],
+        }
+        running = manual_scan_operator_document(base)
+        self.assertTrue(running["actions"]["cancel"]["available"])
+        self.assertIsNone(running["actions"]["cancel"]["unavailableReason"])
+        self.assertIn("/api/v1/operations/scans/t1/cancel", running["actions"]["cancel"]["path"])
+
+        requested = manual_scan_operator_document({**base, "cancellationRequested": True})
+        self.assertFalse(requested["actions"]["cancel"]["available"])
+        self.assertIn("already been requested", requested["actions"]["cancel"]["unavailableReason"])
+
+        for status in ("completed", "failed", "cancelled", "partial_success"):
+            terminal = manual_scan_operator_document({**base, "status": status})
+            self.assertFalse(terminal["actions"]["cancel"]["available"])
+
+
 class ServerBoundScanTests(unittest.TestCase):
     def setUp(self) -> None:
         self.storage = FakeStorage("source")
@@ -490,8 +809,30 @@ class ActionMatrixTests(unittest.TestCase):
             "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
         )
         self.assertEqual(200, status)
-        self.assertEqual("resource_library", body["scopeKind"])
+        self.assertEqual("resourceLibrary", body["scopeKind"])
+        self.assertEqual("library", body["scopeId"])
+        self.assertFalse(body["selectionRequired"])
         self.assertTrue(body["actions"]["scan"]["available"])
+        self.assertEqual(["full", "incremental"], body["actions"]["scan"]["modes"])
+
+    def test_library_discovery_matrix_offers_no_action_without_a_selection(self) -> None:
+        api = self._make_api()
+        status, body = _get(
+            api,
+            "/api/v1/operations/manual-actions?scopeKind=resourceLibrary",
+        )
+        self.assertEqual(200, status)
+        self.assertEqual("resourceLibrary", body["scopeKind"])
+        self.assertIsNone(body["scopeId"])
+        self.assertTrue(body["selectionRequired"])
+        self.assertIsNone(body["source"])
+        self.assertFalse(body["actions"]["scan"]["available"])
+        self.assertFalse(body["actions"]["preview"]["available"])
+        self.assertIn("select an exact ResourceLibrary", body["actions"]["scan"]["reason"])
+        self.assertEqual(
+            ["library"], [item["resourceLibraryId"] for item in body["resourceLibraries"]]
+        )
+        self.assertTrue(body["resourceLibraries"][0]["enabled"])
 
     def test_viewer_without_scan_permission(self) -> None:
         api = self._make_api(permissions=frozenset({ApiPermission.READ}))
@@ -512,6 +853,23 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertFalse(body["actions"]["scan"]["available"])
         self.assertFalse(body["actions"]["preview"]["available"])
+
+    def test_unknown_scope_kind_fails_closed(self) -> None:
+        api = self._make_api()
+        status, body = _get(
+            api,
+            "/api/v1/operations/manual-actions?scopeKind=host_path",
+        )
+        self.assertEqual(400, status)
+        self.assertEqual("invalid_request", body["error"]["code"])
+
+    def test_file_scope_requires_an_exact_source_identity(self) -> None:
+        api = self._make_api()
+        status, _ = _get(
+            api,
+            "/api/v1/operations/manual-actions?scopeKind=file&resourceLibraryId=library",
+        )
+        self.assertEqual(400, status)
 
     def test_resource_library_not_enabled(self) -> None:
         disabled = ResourceLibrary(

@@ -1,11 +1,14 @@
 /**
- * Bounded preview detail page: shows the preview aggregate status, items
- * with source/choice/plan, zero-mutation badge and configuration pin
- * (snapshotId only, no digest).
+ * Bounded Preview detail page: shows the preview aggregate status, the exact
+ * source scope, the item findings the backend persisted (recognition,
+ * metadata identity, policies, bounded proposed target, attachments,
+ * capabilities, conflicts, warnings) and the configuration pin (snapshot ID
+ * only, no digest).
  *
- * Preview is visibly DryRun/analysis, produces no Storage mutation and
- * no execution authority. This page never starts, continues or replays
- * processing.
+ * Preview is visibly DryRun/analysis, produces no Storage mutation and no
+ * execution authority. This page never starts, continues or replays
+ * processing, and it renders only what the backend document contains: an
+ * absent finding stays visibly absent instead of being fabricated.
  */
 
 import { useParams } from "@tanstack/react-router";
@@ -30,6 +33,18 @@ function StatusBadge({ status }: { readonly status: string }) {
 
 function safeValue(value: string | null): string {
   return value === null || value === "" ? "—" : value;
+}
+
+function targetLabel(item: {
+  readonly targetStorageId: string | null;
+  readonly targetPath: string | null;
+}): string {
+  if (item.targetPath === null) {
+    return "—";
+  }
+  return item.targetStorageId === null
+    ? item.targetPath
+    : `${item.targetStorageId}:${item.targetPath}`;
 }
 
 export function PreviewDetailPage() {
@@ -78,7 +93,7 @@ export function PreviewDetailPage() {
                 <h2>Preview {preview.previewId}</h2>
                 <p className="mf-dashboard-meta">
                   Bounded preview document · scope:{" "}
-                  {displayEnum(preview.scopeKind)} ·{" "}
+                  {preview.scopeKind ? displayEnum(preview.scopeKind) : "—"} ·{" "}
                   <span className="mf-status-badge">Zero-mutation</span>
                 </p>
               </div>
@@ -98,9 +113,11 @@ export function PreviewDetailPage() {
                     : "Not confirmed"}
                 </dd>
                 <dt>Scope kind</dt>
-                <dd>{displayEnum(preview.scopeKind)}</dd>
+                <dd>
+                  {preview.scopeKind ? displayEnum(preview.scopeKind) : "—"}
+                </dd>
                 <dt>Scope ID</dt>
-                <dd>{preview.scopeId}</dd>
+                <dd>{safeValue(preview.scopeId)}</dd>
                 <dt>Actor</dt>
                 <dd>{preview.actor}</dd>
                 <dt>Current</dt>
@@ -134,16 +151,12 @@ export function PreviewDetailPage() {
                 <dd>{preview.sideEffects}</dd>
                 <dt>Truncated</dt>
                 <dd>{preview.truncated ? "Yes" : "No"}</dd>
+                <dt>Selected items</dt>
+                <dd>{preview.selection.selectedItemIds.length}</dd>
                 {preview.executionState && (
                   <>
                     <dt>Execution state</dt>
                     <dd>{displayEnum(preview.executionState)}</dd>
-                  </>
-                )}
-                {preview.selection && (
-                  <>
-                    <dt>Selection</dt>
-                    <dd>{preview.selection}</dd>
                   </>
                 )}
                 {preview.nextAction && (
@@ -153,7 +166,26 @@ export function PreviewDetailPage() {
                   </>
                 )}
               </dl>
+              {preview.executionState === "not_available_in_this_task" && (
+                <p className="mf-dashboard-meta">
+                  This Preview carries no execution authority: organizing the
+                  reviewed items is a separate explicit manual step.
+                </p>
+              )}
             </section>
+            {preview.failure && (
+              <section className="mf-count-section">
+                <h3>Failure</h3>
+                <dl>
+                  <dt>Category</dt>
+                  <dd>{preview.failure.category}</dd>
+                  <dt>What happened</dt>
+                  <dd>{preview.failure.message}</dd>
+                  <dt>Next action</dt>
+                  <dd>{preview.failure.nextAction}</dd>
+                </dl>
+              </section>
+            )}
             <section className="mf-count-section">
               <h3>Items ({preview.items.length})</h3>
               {preview.items.length === 0 ? (
@@ -182,7 +214,8 @@ export function PreviewDetailPage() {
                         <tr key={item.itemId}>
                           <td>{item.itemId}</td>
                           <td>
-                            {item.sourceStorageId}:{item.sourcePath}
+                            {safeValue(item.sourceStorageId)}:
+                            {safeValue(item.sourcePath)}
                           </td>
                           <td>{safeValue(item.recognitionType)}</td>
                           <td>{safeValue(item.title)}</td>
@@ -190,7 +223,7 @@ export function PreviewDetailPage() {
                             {safeValue(item.provider)}
                             {item.providerId ? ` #${item.providerId}` : ""}
                           </td>
-                          <td>{safeValue(item.targetPath)}</td>
+                          <td>{targetLabel(item)}</td>
                           <td>{safeValue(item.organizePolicy)}</td>
                           <td>
                             <StatusBadge status={item.status} />
@@ -207,6 +240,88 @@ export function PreviewDetailPage() {
                 </div>
               )}
             </section>
+            {preview.items.map((item) => (
+              <section
+                className="mf-count-section"
+                key={`detail-${item.itemId}`}
+              >
+                <h3>
+                  Findings for {item.title ?? item.sourcePath ?? item.itemId}
+                </h3>
+                <dl>
+                  <dt>Stage</dt>
+                  <dd>{displayEnum(item.stage)}</dd>
+                  <dt>Plan status</dt>
+                  <dd>{safeValue(item.planStatus)}</dd>
+                  <dt>Target</dt>
+                  <dd>{targetLabel(item)}</dd>
+                  <dt>Capabilities</dt>
+                  <dd>
+                    {item.capabilities
+                      ? `${safeValue(item.capabilities.verdict)}${
+                          item.capabilities.missing.length > 0
+                            ? ` — missing: ${item.capabilities.missing.join(", ")}`
+                            : ""
+                        }`
+                      : "—"}
+                  </dd>
+                </dl>
+                <h4>Attachments ({item.attachments.length})</h4>
+                {item.attachments.length === 0 ? (
+                  <p className="mf-dashboard-meta">
+                    No sidecar attachment was planned for this item.
+                  </p>
+                ) : (
+                  <ul>
+                    {item.attachments.map((attachment, index) => (
+                      <li key={`${item.itemId}-attachment-${index}`}>
+                        {safeValue(attachment.type)}
+                        {attachment.language
+                          ? ` · language ${attachment.language}`
+                          : ""}
+                        {attachment.operation
+                          ? ` · ${attachment.operation}`
+                          : ""}
+                        {attachment.filename ? ` · ${attachment.filename}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <h4>Conflicts ({item.conflicts.length})</h4>
+                {item.conflicts.length === 0 ? (
+                  <p className="mf-dashboard-meta">
+                    No conflict was recorded for this item.
+                  </p>
+                ) : (
+                  <ul>
+                    {item.conflicts.map((conflict, index) => (
+                      <li key={`${item.itemId}-conflict-${index}`}>
+                        {safeValue(conflict.type)}
+                        {conflict.destination
+                          ? ` · target ${conflict.destination}`
+                          : ""}
+                        {conflict.details ? ` · ${conflict.details}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <h4>Warnings ({item.warnings.length})</h4>
+                {item.warnings.length === 0 ? (
+                  <p className="mf-dashboard-meta">No warning was recorded.</p>
+                ) : (
+                  <ul>
+                    {item.warnings.map((warning, index) => (
+                      <li key={`${item.itemId}-warning-${index}`}>{warning}</li>
+                    ))}
+                  </ul>
+                )}
+                {item.failure && (
+                  <p className="mf-dashboard-meta">
+                    {item.failure.message} — {item.failure.nextAction}
+                  </p>
+                )}
+              </section>
+            ))}
             <div className="mf-actions">
               <Link className="mf-button mf-button-secondary" to="/operations">
                 Back to Operations

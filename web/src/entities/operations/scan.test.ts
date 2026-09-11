@@ -1,59 +1,43 @@
 import { describe, expect, it } from "vitest";
+import fixture from "./__fixtures__/manual-operations.json";
 import { normalizeManualScan, normalizeManualScanItem } from "./scan";
 
-const NOW = "2026-08-22T12:00:00+00:00";
-const LATER = "2026-08-22T12:06:00+00:00";
+type Json = Record<string, unknown>;
 
-function scanPayload(overrides: Record<string, unknown> = {}) {
-  return {
-    taskId: "scan-1",
-    scopeKind: "file",
-    scopeId: "file-1",
-    resourceLibraryId: "movies",
-    fileId: "file-1",
-    storageId: "local",
-    sourcePath: "movie.mkv",
-    mode: "scan-only",
-    status: "completed",
-    configurationSnapshotId: "snap-1",
-    createdAt: NOW,
-    updatedAt: LATER,
-    cancellationRequested: false,
-    progress: { total: 3, completed: 2, failed: 1 },
-    errors: [],
-    reconciliationComplete: true,
-    failureStage: null,
-    knownEffects: "2 items indexed",
-    retrySafe: true,
-    nextAction: null,
-    sideEffects: "no Storage mutation",
-    items: [
-      {
-        itemId: "item-1",
-        storageId: "local",
-        resourceLibraryId: "movies",
-        sourcePath: "movie1.mkv",
-        status: "success",
-        stage: "completed",
-        createdAt: NOW,
-        updatedAt: LATER,
-        failure: null,
-      },
-    ],
-    itemLimit: 20,
-    itemCursor: null,
-    ...overrides,
-  };
+const documents = fixture as unknown as Record<string, Json>;
+
+/**
+ * Every case below starts from the exact document the real Python API returned
+ * (see `manual-operations-contract.test.ts`) and then mutates one field, so a
+ * malformed or hostile payload is rejected against the real contract instead of
+ * a hand-written approximation of it.
+ */
+function scanPayload(overrides: Json = {}): Json {
+  const base = JSON.parse(JSON.stringify(documents["scanDetail"])) as Record<
+    string,
+    unknown
+  >;
+  return { ...base, ...overrides };
 }
 
 describe("normalizeManualScan", () => {
-  it("accepts a modelled scan document", () => {
+  it("accepts the real API scan document", () => {
     const model = normalizeManualScan(scanPayload());
-    expect(model.taskId).toBe("scan-1");
     expect(model.status).toBe("completed");
-    expect(model.progress.total).toBe(3);
+    expect(model.mode).toBe("incremental");
+    expect(model.progress.filesVisited).toBe(1);
     expect(model.items).toHaveLength(1);
-    expect(model.items[0]?.status).toBe("success");
+    expect(model.items[0]?.status).toBe("ready");
+    expect(model.actions.cancel.available).toBe(false);
+  });
+
+  it("accepts the real API admission document", () => {
+    const model = normalizeManualScan(
+      JSON.parse(JSON.stringify(documents["scanAdmission"])) as Json,
+    );
+    expect(model.status).toBe("running");
+    expect(model.items).toEqual([]);
+    expect(model.actions.cancel.available).toBe(true);
   });
 
   it("rejects an unknown status instead of casting it", () => {
@@ -62,11 +46,38 @@ describe("normalizeManualScan", () => {
     ).toThrow();
   });
 
-  it("rejects contradictory progress", () => {
+  it("rejects an unknown mode instead of casting it", () => {
+    expect(() =>
+      normalizeManualScan(scanPayload({ mode: "scan-only" })),
+    ).toThrow();
+    expect(() => normalizeManualScan(scanPayload({ mode: null }))).toThrow();
+  });
+
+  it("rejects an unknown scope kind", () => {
+    expect(() =>
+      normalizeManualScan(scanPayload({ scopeKind: "resource_library" })),
+    ).toThrow();
+  });
+
+  it("rejects contradictory progress counters", () => {
     expect(() =>
       normalizeManualScan(
         scanPayload({
-          progress: { total: 1, completed: 1, failed: 1 },
+          progress: {
+            directoriesVisited: 1,
+            filesVisited: 1,
+            mediaCandidates: 2,
+            ignored: 0,
+            unstable: 0,
+            errors: 0,
+          },
+        }),
+      ),
+    ).toThrow();
+    expect(() =>
+      normalizeManualScan(
+        scanPayload({
+          progress: { filesVisited: -1, mediaCandidates: 0 },
         }),
       ),
     ).toThrow();
@@ -81,25 +92,33 @@ describe("normalizeManualScan", () => {
     ).toThrow();
   });
 
-  it("rejects non-array items", () => {
+  it("rejects non-array items or errors", () => {
     expect(() =>
       normalizeManualScan(scanPayload({ items: "not-array" })),
     ).toThrow();
+    expect(() =>
+      normalizeManualScan(scanPayload({ errors: "not-array" })),
+    ).toThrow();
   });
 
-  it("normalizes scan failure explanation on items", () => {
+  it("rejects a scan without the backend-advertised cancel action", () => {
+    expect(() => normalizeManualScan(scanPayload({ actions: {} }))).toThrow();
+    expect(() =>
+      normalizeManualScan(
+        scanPayload({
+          actions: { cancel: { available: "yes" } },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it("normalizes bounded failure explanation on items", () => {
     const model = normalizeManualScan(
       scanPayload({
         items: [
           {
-            itemId: "item-1",
-            storageId: "local",
-            resourceLibraryId: "movies",
-            sourcePath: "movie1.mkv",
-            status: "failed",
-            stage: "scan",
-            createdAt: NOW,
-            updatedAt: LATER,
+            ...(scanPayload()["items"] as Json[])[0],
+            status: "error",
             failure: {
               category: "storage",
               message: "source unavailable",
@@ -109,6 +128,7 @@ describe("normalizeManualScan", () => {
         ],
       }),
     );
+    expect(model.items[0]?.status).toBe("error");
     expect(model.items[0]?.failure?.category).toBe("storage");
     expect(model.items[0]?.failure?.nextAction).toBe(
       "restore the source Storage",
@@ -130,34 +150,31 @@ describe("normalizeManualScan", () => {
     expect(serialized).not.toContain("fingerprint-value");
   });
 
-  it("accepts a null fileId for resourceLibrary scope", () => {
+  it("accepts a ResourceLibrary scope document with no file identity", () => {
     const model = normalizeManualScan(
-      scanPayload({
-        scopeKind: "resourceLibrary",
-        fileId: null,
-        resourceLibraryId: "movies",
-      }),
+      JSON.parse(JSON.stringify(documents["scanLibraryDetail"])) as Json,
     );
     expect(model.scopeKind).toBe("resourceLibrary");
     expect(model.fileId).toBeNull();
+    expect(model.sourcePath).toBeNull();
+    expect(model.itemsTruncated).toBe(true);
+    expect(model.nextItemCursor).not.toBeNull();
   });
 });
 
 describe("normalizeManualScanItem", () => {
-  it("normalizes a scan item", () => {
-    const item = normalizeManualScanItem({
-      itemId: "item-1",
-      storageId: "local",
-      resourceLibraryId: "movies",
-      sourcePath: "movie.mkv",
-      status: "success",
-      stage: "completed",
-      createdAt: NOW,
-      updatedAt: LATER,
-      failure: null,
-    });
-    expect(item.itemId).toBe("item-1");
-    expect(item.sourcePath).toBe("movie.mkv");
+  it("normalizes one real API scan item", () => {
+    const rawItems = scanPayload()["items"] as Json[];
+    const item = normalizeManualScanItem(rawItems[0]);
+    expect(item.status).toBe("ready");
+    expect(item.sourcePath).toBe("One.2001.mkv");
     expect(item.failure).toBeNull();
+  });
+
+  it("rejects an item with an unknown discovery status", () => {
+    const rawItems = scanPayload()["items"] as Json[];
+    expect(() =>
+      normalizeManualScanItem({ ...rawItems[0], status: "success" }),
+    ).toThrow();
   });
 });

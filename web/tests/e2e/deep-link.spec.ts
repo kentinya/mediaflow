@@ -133,10 +133,7 @@ test("connect from a real deep link continues to that exact allowlisted route", 
   await expect(page).toHaveTitle("Library | MediaFlow");
   await expect(
     page.getByRole("link", { name: "Library", exact: true }),
-  ).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
+  ).toHaveAttribute("aria-current", "page");
   await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
 });
 

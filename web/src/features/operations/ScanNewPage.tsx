@@ -1,11 +1,16 @@
 /**
  * Scan admission page: shows the backend action matrix for the exact
  * authenticated principal, current source/scope and runtime readiness,
- * then submits a bounded server-bound scan admission.
+ * then submits one bounded server-bound scan admission.
  *
- * After admission the operator is redirected to the Task detail page for
- * the newly created scan work. This page never holds the browser request
- * open and never auto-replays a rejected admission.
+ * The operator selects the exact ResourceLibrary scope (when the route does
+ * not already carry one) and the bounded Scan mode from what the backend
+ * advertises. Nothing is defaulted locally, no action is offered when the
+ * backend does not advertise it, and a rejected admission is never replayed:
+ * the operator must read the current state again and submit anew.
+ *
+ * After admission the operator is sent to the durable Scan detail for the
+ * newly created work. This page never holds the browser request open.
  */
 
 import { useState } from "react";
@@ -19,6 +24,8 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
+import type { ManualActionMatrixModel } from "../../entities/operations/manual-actions";
+import type { ScanMode } from "../../entities/operations/scan";
 
 function displayEnum(value: string): string {
   return value
@@ -30,29 +37,14 @@ function displayEnum(value: string): string {
 function SourceIdentity({
   matrix,
 }: {
-  readonly matrix: {
-    readonly scopeKind: string;
-    readonly fileId: string | null;
-    readonly resourceLibraryId: string | null;
-    readonly source: {
-      readonly fileId: string | null;
-      readonly storageId: string | null;
-      readonly resourceLibraryId: string | null;
-      readonly path: string | null;
-      readonly filename: string | null;
-      readonly extension: string | null;
-      readonly sizeBytes: number | null;
-      readonly occurrenceState: string | null;
-      readonly scanStatus: string | null;
-    };
-  };
+  readonly matrix: ManualActionMatrixModel;
 }) {
   return (
     <section className="mf-count-section">
       <h3>Source identity</h3>
       <dl>
         <dt>Scope kind</dt>
-        <dd>{displayEnum(matrix.scopeKind)}</dd>
+        <dd>{matrix.scopeKind ? displayEnum(matrix.scopeKind) : "—"}</dd>
         {matrix.fileId && (
           <>
             <dt>File ID</dt>
@@ -65,31 +57,31 @@ function SourceIdentity({
             <dd>{matrix.resourceLibraryId}</dd>
           </>
         )}
-        {matrix.source.filename && (
+        {matrix.source?.filename && (
           <>
             <dt>Filename</dt>
             <dd>{matrix.source.filename}</dd>
           </>
         )}
-        {matrix.source.path && (
+        {matrix.source?.path && (
           <>
             <dt>Storage-relative path</dt>
             <dd>{matrix.source.path}</dd>
           </>
         )}
-        {matrix.source.storageId && (
+        {matrix.source?.storageId && (
           <>
             <dt>Storage</dt>
             <dd>{matrix.source.storageId}</dd>
           </>
         )}
-        {matrix.source.occurrenceState && (
+        {matrix.source?.occurrenceState && (
           <>
             <dt>Occurrence state</dt>
             <dd>{displayEnum(matrix.source.occurrenceState)}</dd>
           </>
         )}
-        {matrix.source.scanStatus && (
+        {matrix.source?.scanStatus && (
           <>
             <dt>Scan status</dt>
             <dd>{displayEnum(matrix.source.scanStatus)}</dd>
@@ -131,7 +123,11 @@ function ActionAvailability({
 
 export function ScanNewPage() {
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
-  const scopeKind = String(searchParams.scopeKind ?? "");
+  const rawScopeKind = String(searchParams.scopeKind ?? "");
+  const scopeKind =
+    rawScopeKind === "file" || rawScopeKind === "resourceLibrary"
+      ? (rawScopeKind as "file" | "resourceLibrary")
+      : null;
   const fileId = searchParams.fileId ? String(searchParams.fileId) : undefined;
   const resourceLibraryId = searchParams.resourceLibraryId
     ? String(searchParams.resourceLibraryId)
@@ -140,17 +136,14 @@ export function ScanNewPage() {
   const token = useAuthToken();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [mode, setMode] = useState<ScanMode>("full");
 
   const matrixQuery = useQuery(
-    manualActionsQueryOptions(
-      token,
-      {
-        scopeKind: scopeKind as "file" | "resourceLibrary",
-        fileId: fileId ?? null,
-        resourceLibraryId: resourceLibraryId ?? null,
-      },
-      scopeKind === "file" || scopeKind === "resourceLibrary",
-    ),
+    manualActionsQueryOptions(token, {
+      scopeKind,
+      fileId: fileId ?? null,
+      resourceLibraryId: resourceLibraryId ?? null,
+    }),
   );
 
   const [admissionResult, setAdmissionResult] = useState<{
@@ -160,15 +153,16 @@ export function ScanNewPage() {
   } | null>(null);
 
   const scanMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (exactMode: ScanMode) =>
       submitServerBoundScan(token, {
         scopeKind: scopeKind as "file" | "resourceLibrary",
         fileId: fileId ?? null,
         resourceLibraryId: resourceLibraryId ?? null,
+        mode: exactMode,
       }),
     retry: false,
     onMutate: () => setAdmissionResult(null),
-    onSuccess: (result) => {
+    onSuccess: (result, submittedMode) => {
       if (result.ok) {
         void queryClient.invalidateQueries({
           queryKey: [workerReadinessQueryKey],
@@ -178,26 +172,29 @@ export function ScanNewPage() {
           message: "Scan admitted successfully",
           taskId: result.model.taskId,
         });
-        // Redirect to the task detail page after a brief moment
-        setTimeout(() => {
+        // The admitted durable state stays visible for a moment before the
+        // operator is continued to the durable Scan detail; nothing is
+        // resubmitted and the explicit link below remains available.
+        window.setTimeout(() => {
           void navigate({
-            to: "/operations/tasks/$taskId",
+            to: "/operations/scan/$taskId",
             params: { taskId: result.model.taskId },
           });
-        }, 500);
+        }, 600);
       } else {
         setAdmissionResult({
           ok: false,
           message:
             result.code === "transport_unavailable"
               ? "The scan admission could not reach the API. Nothing was started."
-              : `Scan admission was rejected (${result.code}). Reload and try again.`,
+              : `Scan admission was rejected (${result.code}). Reload the current state and submit again — nothing is retried automatically.`,
         });
       }
+      void submittedMode;
     },
   });
 
-  const isValidScope = scopeKind === "file" || scopeKind === "resourceLibrary";
+  const selectedResourceLibraryId = resourceLibraryId ?? "";
 
   return (
     <AuthorizedReadBoundary
@@ -229,6 +226,19 @@ export function ScanNewPage() {
           );
         }
         const matrix = data.model;
+        const advertisedModes = matrix.actions.scan.modes;
+        const exactScopeChosen =
+          scopeKind === "file"
+            ? Boolean(fileId && resourceLibraryId)
+            : scopeKind === "resourceLibrary"
+              ? Boolean(resourceLibraryId)
+              : false;
+        const canSubmit =
+          matrix.actions.scan.available &&
+          exactScopeChosen &&
+          advertisedModes.includes(mode) &&
+          !scanMutation.isPending;
+
         return (
           <div className="mf-dashboard">
             <header className="mf-dashboard-head">
@@ -242,23 +252,60 @@ export function ScanNewPage() {
               </div>
               <RefreshControl onRefresh={refresh} refreshing={isFetching} />
             </header>
-            {!isValidScope && (
+            {!exactScopeChosen && (
               <StatusBanner variant="error" title="Invalid scope">
                 <p>
-                  A valid scopeKind (file or resourceLibrary) with the
-                  appropriate identifier is required.
+                  Select one exact current FileIndex item or one configured
+                  ResourceLibrary before submitting a Scan.
                 </p>
-                <div className="mf-actions">
-                  <Link
-                    className="mf-button mf-button-secondary"
-                    to="/operations"
-                  >
-                    Back to Operations
-                  </Link>
-                </div>
               </StatusBanner>
             )}
-            {isValidScope && (
+            {matrix.selectionRequired && (
+              <section className="mf-count-section">
+                <h3>ResourceLibrary scope</h3>
+                <p className="mf-dashboard-meta">
+                  The backend lists the ResourceLibraries this principal may
+                  scan. Choose one exact scope; no action is available before
+                  that choice.
+                </p>
+                <p>
+                  <label htmlFor="scan-resource-library">
+                    ResourceLibrary scope
+                  </label>{" "}
+                  <select
+                    id="scan-resource-library"
+                    aria-label="ResourceLibrary scope"
+                    value={selectedResourceLibraryId}
+                    onChange={(event) => {
+                      const chosen = event.target.value;
+                      void navigate({
+                        to: "/operations/scan/new",
+                        search: chosen
+                          ? {
+                              scopeKind: "resourceLibrary" as const,
+                              resourceLibraryId: chosen,
+                            }
+                          : { scopeKind: "resourceLibrary" as const },
+                        replace: true,
+                      });
+                    }}
+                  >
+                    <option value="">Choose a ResourceLibrary</option>
+                    {matrix.resourceLibraries.map((library) => (
+                      <option
+                        key={library.resourceLibraryId}
+                        value={library.resourceLibraryId}
+                        disabled={!library.enabled}
+                      >
+                        {library.resourceLibraryId}
+                        {library.enabled ? "" : " (disabled)"}
+                      </option>
+                    ))}
+                  </select>
+                </p>
+              </section>
+            )}
+            {exactScopeChosen && (
               <>
                 <section className="mf-count-section">
                   <h3>Runtime readiness</h3>
@@ -284,6 +331,23 @@ export function ScanNewPage() {
                     reason={matrix.actions.scan.reason}
                     nextAction={matrix.actions.scan.nextAction}
                   />
+                  <p>
+                    <label htmlFor="scan-mode">Scan mode</label>{" "}
+                    <select
+                      id="scan-mode"
+                      aria-label="Scan mode"
+                      value={mode}
+                      onChange={(event) =>
+                        setMode(event.target.value as ScanMode)
+                      }
+                    >
+                      {advertisedModes.map((value) => (
+                        <option key={value} value={value}>
+                          {displayEnum(value)}
+                        </option>
+                      ))}
+                    </select>
+                  </p>
                 </section>
                 <section className="mf-count-section">
                   <h3>Preview action</h3>
@@ -298,38 +362,38 @@ export function ScanNewPage() {
                     nextAction={matrix.actions.preview.nextAction}
                   />
                 </section>
-                <div className="mf-actions">
-                  <Button
-                    type="button"
-                    disabled={
-                      !matrix.actions.scan.available || scanMutation.isPending
-                    }
-                    onClick={() => scanMutation.mutate()}
-                  >
-                    {scanMutation.isPending
-                      ? "Submitting…"
-                      : "Submit bounded Scan"}
-                  </Button>
+              </>
+            )}
+            <div className="mf-actions">
+              <Button
+                type="button"
+                disabled={!canSubmit}
+                onClick={() => scanMutation.mutate(mode)}
+              >
+                {scanMutation.isPending ? "Submitting…" : "Submit bounded Scan"}
+              </Button>
+              <Link className="mf-button mf-button-secondary" to="/operations">
+                Back to Operations
+              </Link>
+            </div>
+            {admissionResult !== null && (
+              <StatusBanner
+                variant={admissionResult.ok ? "success" : "error"}
+                title={
+                  admissionResult.ok ? "Scan admitted" : "Scan admission failed"
+                }
+              >
+                <p>{admissionResult.message}</p>
+                {admissionResult.taskId && (
                   <Link
                     className="mf-button mf-button-secondary"
-                    to="/operations"
+                    to="/operations/scan/$taskId"
+                    params={{ taskId: admissionResult.taskId }}
                   >
-                    Back to Operations
+                    Open the durable Scan detail
                   </Link>
-                </div>
-                {admissionResult !== null && (
-                  <StatusBanner
-                    variant={admissionResult.ok ? "success" : "error"}
-                    title={
-                      admissionResult.ok
-                        ? "Scan admitted"
-                        : "Scan admission failed"
-                    }
-                  >
-                    <p>{admissionResult.message}</p>
-                  </StatusBanner>
                 )}
-              </>
+              </StatusBanner>
             )}
           </div>
         );
