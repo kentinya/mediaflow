@@ -105,6 +105,7 @@ from mediaflow.domain.file_lifecycle import (
     OccurrenceState,
     ProcessingDisposition,
 )
+from mediaflow.domain.library import ScanMode
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_organize import (
     ManualIntentError,
@@ -1302,18 +1303,21 @@ class MediaFlowApi:
                 manual_scan_operator_document(
                     {
                         **scan.document(),
-                        "task_id": scan.task_id,
-                        "scope_kind": scan.scope_kind.value,
-                        "resource_library_id": scan.resource_library_id,
-                        "file_id": scan.file_id,
-                        "source_occurrence_id": scan.source_occurrence_id,
-                        "source_fingerprint": scan.source_fingerprint,
+                        "taskId": scan.task_id,
+                        "scopeKind": scan.scope_kind.value,
+                        "scopeId": scan.scope_id,
+                        "resourceLibraryId": scan.resource_library_id,
+                        "fileId": scan.file_id,
+                        "storageId": scan.storage_id,
+                        "sourcePath": scan.source_path,
+                        "sourceOccurrenceId": scan.source_occurrence_id,
+                        "sourceFingerprint": scan.source_fingerprint,
                     }
                 ),
             )
         if (
-            len(parts) == 4
-            and parts[:3] == ["api", "v1", "operations", "scans"]
+            len(parts) == 5
+            and parts[:4] == ["api", "v1", "operations", "scans"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -1330,26 +1334,28 @@ class MediaFlowApi:
                 cursor.position if cursor and cursor.direction is CursorDirection.PREVIOUS else None
             )
             value = binding.manual_scans.detail_document(
-                parts[3], limit=limit, after=after, before=before
+                parts[4], limit=limit, after=after, before=before
             )
             items = value.get("items", [])
             has_previous = bool(value.pop("_has_previous_items", False))
             has_next = bool(value.pop("_has_next_items", False))
-            value["previous_item_cursor"] = None
-            value["next_item_cursor"] = None
-            if has_previous:
-                value["previous_item_cursor"] = self._manual_scan_cursor(
-                    items, direction=CursorDirection.PREVIOUS
-                )
-            if has_next:
-                value["next_item_cursor"] = self._manual_scan_cursor(
-                    items, direction=CursorDirection.NEXT
-                )
+            value["itemLimit"] = value.pop("item_limit", limit)
+            value["itemsTruncated"] = bool(value.pop("items_truncated", False)) or has_next
+            value["nextItemCursor"] = self._manual_scan_cursor(
+                items, direction=CursorDirection.NEXT
+            )
+            value["previousItemCursor"] = self._manual_scan_cursor(
+                items, direction=CursorDirection.PREVIOUS
+            )
+            if not has_previous:
+                value["previousItemCursor"] = None
+            if not has_next:
+                value["nextItemCursor"] = None
             return self._response(start_response, 200, manual_scan_operator_document(value))
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "operations", "scans"]
-            and parts[4] == "cancel"
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "operations", "scans"]
+            and parts[5] == "cancel"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.CANCEL_JOB)
@@ -1362,7 +1368,7 @@ class MediaFlowApi:
                     "service_unavailable",
                     "manual Scan service is unavailable",
                 )
-            scan = binding.manual_scans.cancel(parts[3])
+            scan = binding.manual_scans.cancel(parts[4])
             return self._response(
                 start_response, 200, manual_scan_operator_document(scan.document())
             )
@@ -1469,8 +1475,8 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 4
-            and parts[:3] == ["api", "v1", "operations", "previews"]
+            len(parts) == 5
+            and parts[:4] == ["api", "v1", "operations", "previews"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -1482,7 +1488,7 @@ class MediaFlowApi:
                     "current-source Preview service is unavailable",
                 )
             try:
-                preview = self._manual_previews.get_readonly(parts[3])
+                preview = self._manual_previews.get_readonly(parts[4])
             except ManualPreviewError as error:
                 if error.status == 404:
                     return self._error(
@@ -7171,7 +7177,14 @@ class MediaFlowApi:
         principal: ResolvedApiPrincipal,
         binding: _ApiRuntimeBinding,
     ):
-        """Action matrix projection for the V2 Manual Scan/Preview surfaces."""
+        """Action matrix projection for the V2 Manual Scan/Preview surfaces.
+
+        The matrix is authoritative for the exact authenticated principal, the
+        exact current source/scope and runtime readiness.  It is also the
+        bounded discovery surface for the ResourceLibrary choices the operator
+        may select: a request without an exact scope reports
+        ``selectionRequired`` and offers no actionable submission.
+        """
 
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
         if set(values).difference({"scopeKind", "scope", "fileId", "resourceLibraryId"}) or any(
@@ -7183,8 +7196,19 @@ class MediaFlowApi:
         resource_library_id = values.get("resourceLibraryId", [None])[0]
         if raw_kind == "resourceLibrary":
             raw_kind = "resource_library"
-        if raw_kind not in {"file", "resource_library"}:
+        if (
+            raw_kind is None
+            and isinstance(resource_library_id, str)
+            and resource_library_id.strip()
+        ):
+            raw_kind = "resource_library"
+        if raw_kind is not None and raw_kind not in {"file", "resource_library"}:
             raise ValueError("manual action matrix scopeKind must be file or resource_library")
+        if raw_kind is None and file_id is not None:
+            raise ValueError("manual action matrix file scope requires scopeKind=file")
+        if raw_kind == "file" and not isinstance(resource_library_id, str):
+            raise ValueError("manual action matrix resourceLibraryId is required for file scope")
+
         can_scan = ApiPermission.SUBMIT_DRY_RUN in principal.permissions
         can_preview = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
         configuration_snapshot_id = getattr(binding, "snapshot_id", None)
@@ -7217,8 +7241,7 @@ class MediaFlowApi:
                 else "Preview is unavailable"
             )
         )
-        source: dict[str, object] = {}
-        # Resolve the resource libraries from the system_status snapshot.
+        # Resolve the ResourceLibrary choices from the system_status snapshot.
         sys_doc = {}
         system_status = getattr(binding, "system_status", None)
         if system_status is not None and callable(getattr(system_status, "as_document", None)):
@@ -7232,13 +7255,30 @@ class MediaFlowApi:
         for rl in raw_rls:
             if isinstance(rl, dict) and isinstance(rl.get("id"), str):
                 rl_map[rl["id"]] = rl
-        if raw_kind == "file":
+        resource_libraries = [
+            {
+                "resourceLibraryId": rl["id"],
+                "storageId": rl.get("storage_id"),
+                "scanMode": rl.get("scan_mode"),
+                "enabled": bool(rl.get("enabled", False)),
+                "reason": (
+                    None
+                    if rl.get("enabled", False)
+                    else "this ResourceLibrary is disabled in the Active configuration"
+                ),
+            }
+            for rl in list(rl_map.values())[:100]
+        ]
+        source: dict[str, object] = {}
+        selection_required = raw_kind is None
+        if raw_kind is None:
+            scan_available = False
+            preview_available = False
+            scan_reason = "select an exact ResourceLibrary scope before submitting a Scan"
+            preview_reason = "select an exact ResourceLibrary scope before running a Preview"
+        elif raw_kind == "file":
             if not isinstance(file_id, str) or not file_id.strip():
                 raise ValueError("manual action matrix fileId is required for file scope")
-            if not isinstance(resource_library_id, str) or not resource_library_id.strip():
-                raise ValueError(
-                    "manual action matrix resourceLibraryId is required for file scope"
-                )
             # Check ResourceLibrary availability.
             rl_info = rl_map.get(resource_library_id)
             if rl_info is None or not rl_info.get("enabled", False):
@@ -7298,28 +7338,37 @@ class MediaFlowApi:
             if file_id is not None:
                 raise ValueError("manual action matrix file scope is required for resource_library")
             if not isinstance(resource_library_id, str) or not resource_library_id.strip():
-                raise ValueError(
-                    "manual action matrix resourceLibraryId is required for library scope"
-                )
-            rl_info = rl_map.get(resource_library_id)
-            if rl_info is None or not rl_info.get("enabled", False):
+                # Bounded discovery: the operator has not selected an exact
+                # ResourceLibrary yet, so nothing is actionable.
+                selection_required = True
                 scan_available = False
                 preview_available = False
-                scan_reason = "the configured ResourceLibrary is not available"
-                preview_reason = "the configured ResourceLibrary is not available"
+                scan_reason = "select an exact ResourceLibrary scope before submitting a Scan"
+                preview_reason = "select an exact ResourceLibrary scope before running a Preview"
             else:
-                source = {
-                    "resourceLibraryId": resource_library_id,
-                    "storageId": rl_info.get("storage_id"),
-                }
+                rl_info = rl_map.get(resource_library_id)
+                if rl_info is None or not rl_info.get("enabled", False):
+                    scan_available = False
+                    preview_available = False
+                    scan_reason = "the configured ResourceLibrary is not available"
+                    preview_reason = "the configured ResourceLibrary is not available"
+                else:
+                    source = {
+                        "resourceLibraryId": resource_library_id,
+                        "storageId": rl_info.get("storage_id"),
+                    }
+        scope_id = file_id if raw_kind == "file" else resource_library_id
         return self._response(
             start_response,
             200,
             {
                 "scopeKind": "resourceLibrary" if raw_kind == "resource_library" else raw_kind,
+                "scopeId": scope_id if isinstance(scope_id, str) and scope_id else None,
                 "fileId": file_id if raw_kind == "file" else None,
                 "resourceLibraryId": resource_library_id,
+                "selectionRequired": bool(selection_required),
                 "source": source if source else None,
+                "resourceLibraries": resource_libraries,
                 "runtime": {
                     "ready": runtime_ready,
                     "condition": (
@@ -7336,6 +7385,7 @@ class MediaFlowApi:
                         "method": "POST",
                         "path": "/api/v1/operations/scans",
                         "nextAction": ("submit a bounded Scan" if scan_available else scan_reason),
+                        "modes": [mode.value for mode in ScanMode],
                     },
                     "preview": {
                         "available": preview_available,
@@ -7345,6 +7395,7 @@ class MediaFlowApi:
                         "nextAction": (
                             "run a zero-mutation Preview" if preview_available else preview_reason
                         ),
+                        "modes": [],
                     },
                 },
                 "limits": {

@@ -23,6 +23,7 @@ import {
 import { fileDetailQueryOptions } from "./file-detail-query";
 import { systemStatusQueryOptions } from "./system-status-query";
 import { manualActionsQueryOptions } from "../operations/manual-actions-query";
+import type { ManualActionMatrixModel } from "../../entities/operations/manual-actions";
 
 function displayEnum(value: string): string {
   return value
@@ -670,21 +671,8 @@ export interface FileIndexDetailViewProps {
   readonly onRetry: () => void;
   readonly onRefresh: () => void;
   readonly actionMatrix:
-    | {
-        readonly ok: boolean;
-        readonly model?: {
-          readonly actions: {
-            readonly scan: {
-              readonly available: boolean;
-              readonly reason: string | null;
-            };
-            readonly preview: {
-              readonly available: boolean;
-              readonly reason: string | null;
-            };
-          };
-        };
-      }
+    | { readonly ok: true; readonly model: ManualActionMatrixModel }
+    | { readonly ok: false; readonly failure: unknown }
     | undefined;
   readonly actionMatrixPending: boolean;
   readonly resourceLibraryId: string | null;
@@ -761,37 +749,37 @@ export function FileIndexDetailView({
               </p>
             ) : actionMatrix?.ok && actionMatrix.model ? (
               <div className="mf-actions">
-                <Link
-                  className={`mf-button ${actionMatrix.model.actions.scan.available ? "mf-button-primary" : "mf-button-secondary"}`}
-                  to="/operations/scan/new"
-                  search={{
-                    scopeKind: "file",
-                    fileId,
-                    resourceLibraryId: resourceLibraryId ?? undefined,
-                  }}
-                  aria-disabled={!actionMatrix.model.actions.scan.available}
-                >
-                  Start bounded Scan
-                </Link>
-                {actionMatrix.model.actions.scan.available ? null : (
+                {actionMatrix.model.actions.scan.available ? (
+                  <Link
+                    className="mf-button mf-button-primary"
+                    to="/operations/scan/new"
+                    search={{
+                      scopeKind: "file",
+                      fileId,
+                      resourceLibraryId: resourceLibraryId ?? undefined,
+                    }}
+                  >
+                    Start bounded Scan
+                  </Link>
+                ) : (
                   <p className="mf-dashboard-meta">
                     Scan unavailable:{" "}
                     {actionMatrix.model.actions.scan.reason ?? "not available"}
                   </p>
                 )}
-                <Link
-                  className={`mf-button ${actionMatrix.model.actions.preview.available ? "mf-button-primary" : "mf-button-secondary"}`}
-                  to="/operations/preview/new"
-                  search={{
-                    scopeKind: "file",
-                    fileId,
-                    resourceLibraryId: resourceLibraryId ?? undefined,
-                  }}
-                  aria-disabled={!actionMatrix.model.actions.preview.available}
-                >
-                  Run zero-mutation Preview
-                </Link>
-                {actionMatrix.model.actions.preview.available ? null : (
+                {actionMatrix.model.actions.preview.available ? (
+                  <Link
+                    className="mf-button mf-button-primary"
+                    to="/operations/preview/new"
+                    search={{
+                      scopeKind: "file",
+                      fileId,
+                      resourceLibraryId: resourceLibraryId ?? undefined,
+                    }}
+                  >
+                    Run zero-mutation Preview
+                  </Link>
+                ) : (
                   <p className="mf-dashboard-meta">
                     Preview unavailable:{" "}
                     {actionMatrix.model.actions.preview.reason ??
@@ -846,7 +834,7 @@ export function FileIndexDetailPage() {
   const recordResourceLibraryId =
     detail.data?.ok === true
       ? detail.data.model.record.resourceLibraryId
-      : returnContext.resourceLibrary ?? null;
+      : (returnContext.resourceLibrary ?? null);
   const actionMatrixQuery = useQuery(
     manualActionsQueryOptions(
       token,
@@ -937,13 +925,7 @@ export function FileIndexDetailPage() {
                   refreshStatus();
                   refresh();
                 }}
-                actionMatrix={
-                  actionMatrixQuery.data
-                    ? actionMatrixQuery.data.ok
-                      ? { ok: true, model: actionMatrixQuery.data.model }
-                      : { ok: false }
-                    : undefined
-                }
+                actionMatrix={actionMatrixQuery.data}
                 actionMatrixPending={actionMatrixQuery.isPending}
                 resourceLibraryId={returnContext.resourceLibrary ?? null}
               />

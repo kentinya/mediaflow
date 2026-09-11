@@ -1427,6 +1427,7 @@ import {
 import {
   normalizeManualScan,
   type ManualScanModel,
+  type ScanMode,
 } from "../../entities/operations/scan";
 import {
   normalizeManualPreview,
@@ -1438,7 +1439,8 @@ import {
 // --- Manual action matrix ---
 
 export interface ManualActionMatrixQueryOptions {
-  readonly scopeKind: "file" | "resourceLibrary";
+  /** Omitted for the bounded ResourceLibrary discovery read. */
+  readonly scopeKind?: "file" | "resourceLibrary" | null;
   readonly fileId?: string | null;
   readonly resourceLibraryId?: string | null;
 }
@@ -1447,11 +1449,12 @@ export function manualActionMatrixUrl(
   options: ManualActionMatrixQueryOptions,
 ): string {
   const params = new URLSearchParams();
-  params.set("scopeKind", options.scopeKind);
+  if (options.scopeKind) params.set("scopeKind", options.scopeKind);
   if (options.fileId) params.set("fileId", options.fileId);
   if (options.resourceLibraryId)
     params.set("resourceLibraryId", options.resourceLibraryId);
-  return `/api/v1/operations/manual-actions?${params.toString()}`;
+  const query = params.toString();
+  return `/api/v1/operations/manual-actions${query ? `?${query}` : ""}`;
 }
 
 export async function fetchManualActionMatrix(
@@ -1502,7 +1505,11 @@ export interface SubmitScanOptions {
   readonly scopeKind: "file" | "resourceLibrary";
   readonly fileId?: string | null;
   readonly resourceLibraryId?: string | null;
-  readonly mode?: string | null;
+  /**
+   * The exact bounded Scan mode the backend requires. The operator selects it
+   * from the modes the action matrix advertises; nothing is defaulted here.
+   */
+  readonly mode: ScanMode;
 }
 
 export type SubmitScanResult =
@@ -1516,11 +1523,11 @@ export async function submitServerBoundScan(
 ): Promise<SubmitScanResult> {
   const body: Record<string, string> = {
     scopeKind: options.scopeKind,
+    mode: options.mode,
   };
   if (options.fileId) body.fileId = options.fileId;
   if (options.resourceLibraryId)
     body.resourceLibraryId = options.resourceLibraryId;
-  if (options.mode) body.mode = options.mode;
 
   let response: Response;
   try {

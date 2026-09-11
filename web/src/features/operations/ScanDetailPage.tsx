@@ -29,13 +29,17 @@ function StatusBadge({ status }: { readonly status: string }) {
   return <span className="mf-status-badge">{status}</span>;
 }
 
+/** One bounded page of independent per-item Scan outcomes. */
+export const SCAN_ITEM_PAGE_SIZE = 20;
+
 export function ScanDetailPage() {
   const { taskId } = useParams({ strict: false }) as { taskId: string };
   const token = useAuthToken();
-  const [itemCursor, setItemCursor] = useState<string | null>(null);
-  const [itemDirection, setItemDirection] = useState<"forward" | "backward">(
-    "forward",
-  );
+  // The visited cursor path is kept client-side so "Previous items" always
+  // re-reads an exact already-visited page through its forward cursor: the
+  // browser never filters, reorders or splices a page window locally.
+  const [itemCursors, setItemCursors] = useState<(string | null)[]>([null]);
+  const itemCursor = itemCursors[itemCursors.length - 1] ?? null;
   const [cancelResult, setCancelResult] = useState<{
     ok: boolean;
     message: string;
@@ -44,7 +48,7 @@ export function ScanDetailPage() {
   const query = useQuery(
     manualScanDetailQueryOptions(token, {
       taskId,
-      itemLimit: 20,
+      itemLimit: SCAN_ITEM_PAGE_SIZE,
       itemCursor,
     }),
   );
@@ -73,18 +77,18 @@ export function ScanDetailPage() {
   });
 
   const goItemsForward = useCallback(() => {
-    if (query.data?.ok === true && query.data.model.itemCursor) {
-      setItemCursor(query.data.model.itemCursor);
-      setItemDirection("forward");
+    const read = query.data;
+    if (read !== undefined && read.ok && read.model.nextItemCursor !== null) {
+      const next = read.model.nextItemCursor;
+      setItemCursors((current) => [...current, next]);
     }
   }, [query.data]);
 
   const goItemsBackward = useCallback(() => {
-    if (query.data?.ok === true && itemCursor !== null) {
-      setItemCursor(null);
-      setItemDirection("backward");
-    }
-  }, [query.data, itemCursor]);
+    setItemCursors((current) =>
+      current.length > 1 ? current.slice(0, -1) : current,
+    );
+  }, []);
 
   return (
     <AuthorizedReadBoundary
@@ -116,13 +120,9 @@ export function ScanDetailPage() {
           );
         }
         const scan = data.model;
-        const isTerminal = [
-          "completed",
-          "partial_success",
-          "failed",
-          "cancelled",
-        ].includes(scan.status);
-        const canCancel = !isTerminal && !scan.cancellationRequested;
+        // The cooperative control is rendered only when the backend
+        // advertises it for this exact durable Scan state and principal.
+        const cancelAction = scan.actions.cancel;
 
         return (
           <div className="mf-dashboard">
@@ -153,10 +153,10 @@ export function ScanDetailPage() {
                 <dd>{scan.storageId}</dd>
                 <dt>Progress</dt>
                 <dd>
-                  {scan.progress.completed} / {scan.progress.total} completed
-                  {scan.progress.failed > 0
-                    ? ` (${scan.progress.failed} failed)`
-                    : ""}
+                  {scan.progress.filesVisited} file(s) visited ·{" "}
+                  {scan.progress.mediaCandidates} media candidate(s) ·{" "}
+                  {scan.progress.ignored} ignored · {scan.progress.unstable}{" "}
+                  unstable · {scan.progress.errors} error(s)
                 </dd>
                 <dt>Created</dt>
                 <dd>{scan.createdAt}</dd>
@@ -201,12 +201,29 @@ export function ScanDetailPage() {
                 )}
               </dl>
             </section>
+            {scan.failure && (
+              <section className="mf-count-section">
+                <h3>Failure</h3>
+                <dl>
+                  <dt>Category</dt>
+                  <dd>{scan.failure.category}</dd>
+                  <dt>What happened</dt>
+                  <dd>{scan.failure.message}</dd>
+                  <dt>Next action</dt>
+                  <dd>{scan.failure.nextAction}</dd>
+                </dl>
+              </section>
+            )}
             {scan.errors.length > 0 && (
               <section className="mf-count-section">
                 <h3>Errors</h3>
                 <ul>
                   {scan.errors.map((error, index) => (
-                    <li key={index}>{error}</li>
+                    <li key={`${error.code}-${index}`}>
+                      {error.code}
+                      {error.path ? ` · ${error.path}` : ""}
+                      {error.operation ? ` · ${error.operation}` : ""}
+                    </li>
                   ))}
                 </ul>
               </section>
@@ -257,7 +274,7 @@ export function ScanDetailPage() {
                     <button
                       type="button"
                       className="mf-button mf-button-secondary"
-                      disabled={!itemCursor}
+                      disabled={itemCursors.length <= 1}
                       onClick={goItemsBackward}
                     >
                       Previous items
@@ -265,31 +282,51 @@ export function ScanDetailPage() {
                     <button
                       type="button"
                       className="mf-button mf-button-secondary"
-                      disabled={
-                        itemDirection === "forward"
-                          ? scan.itemCursor === null
-                          : !itemCursor
-                      }
+                      disabled={scan.nextItemCursor === null}
                       onClick={goItemsForward}
                     >
                       Next items
                     </button>
                   </div>
+                  {scan.itemsTruncated && (
+                    <p className="mf-dashboard-meta">
+                      More per-item outcomes exist than this page shows; use the
+                      paging controls to read them. Successful siblings stay
+                      visible.
+                    </p>
+                  )}
                 </>
               )}
             </section>
-            {canCancel && (
-              <div className="mf-actions">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={cancelMutation.isPending}
-                  onClick={() => cancelMutation.mutate(scan.taskId)}
-                >
-                  {cancelMutation.isPending ? "Cancelling…" : "Request cancel"}
-                </Button>
-              </div>
-            )}
+            <section className="mf-count-section">
+              <h3>Cooperative control</h3>
+              {cancelAction.available ? (
+                <div className="mf-actions">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={cancelMutation.isPending}
+                    onClick={() => cancelMutation.mutate(scan.taskId)}
+                  >
+                    {cancelMutation.isPending
+                      ? "Cancelling…"
+                      : "Request cancel"}
+                  </Button>
+                </div>
+              ) : (
+                <p className="mf-dashboard-meta">
+                  Cancellation is not available for this Scan
+                  {cancelAction.unavailableReason
+                    ? `: ${cancelAction.unavailableReason}`
+                    : ""}
+                </p>
+              )}
+              {cancelAction.available && (
+                <p className="mf-dashboard-meta">
+                  {cancelAction.durableOutcome}
+                </p>
+              )}
+            </section>
             {cancelResult !== null && (
               <StatusBanner
                 variant={cancelResult.ok ? "success" : "error"}

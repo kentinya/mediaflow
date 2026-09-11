@@ -12,6 +12,7 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
+import type { ManualActionMatrixModel } from "../../entities/operations/manual-actions";
 import { submitServerBoundPreview } from "../../shared/api/api-client";
 import { manualActionsQueryOptions } from "./manual-actions-query";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -29,33 +30,18 @@ function displayEnum(value: string): string {
 function SourceIdentity({
   matrix,
 }: {
-  readonly matrix: {
-    readonly scopeKind: string;
-    readonly fileId: string | null;
-    readonly resourceLibraryId: string | null;
-    readonly source: {
-      readonly fileId: string | null;
-      readonly storageId: string | null;
-      readonly resourceLibraryId: string | null;
-      readonly path: string | null;
-      readonly filename: string | null;
-      readonly extension: string | null;
-      readonly sizeBytes: number | null;
-      readonly occurrenceState: string | null;
-      readonly scanStatus: string | null;
-    };
-  };
+  readonly matrix: ManualActionMatrixModel;
 }) {
   return (
     <section className="mf-count-section">
       <h3>Source identity</h3>
       <dl>
         <dt>Scope kind</dt>
-        <dd>{displayEnum(matrix.scopeKind)}</dd>
-        {matrix.fileId && (
+        <dd>{matrix.scopeKind ? displayEnum(matrix.scopeKind) : "—"}</dd>
+        {matrix.source?.fileId && (
           <>
             <dt>File ID</dt>
-            <dd>{matrix.fileId}</dd>
+            <dd>{matrix.source.fileId}</dd>
           </>
         )}
         {matrix.resourceLibraryId && (
@@ -64,31 +50,31 @@ function SourceIdentity({
             <dd>{matrix.resourceLibraryId}</dd>
           </>
         )}
-        {matrix.source.filename && (
+        {matrix.source?.filename && (
           <>
             <dt>Filename</dt>
             <dd>{matrix.source.filename}</dd>
           </>
         )}
-        {matrix.source.path && (
+        {matrix.source?.path && (
           <>
             <dt>Storage-relative path</dt>
             <dd>{matrix.source.path}</dd>
           </>
         )}
-        {matrix.source.storageId && (
+        {matrix.source?.storageId && (
           <>
             <dt>Storage</dt>
             <dd>{matrix.source.storageId}</dd>
           </>
         )}
-        {matrix.source.occurrenceState && (
+        {matrix.source?.occurrenceState && (
           <>
             <dt>Occurrence state</dt>
             <dd>{displayEnum(matrix.source.occurrenceState)}</dd>
           </>
         )}
-        {matrix.source.scanStatus && (
+        {matrix.source?.scanStatus && (
           <>
             <dt>Scan status</dt>
             <dd>{displayEnum(matrix.source.scanStatus)}</dd>
@@ -130,7 +116,11 @@ function ActionAvailability({
 
 export function PreviewNewPage() {
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
-  const scopeKind = String(searchParams.scopeKind ?? "");
+  const rawScopeKind = String(searchParams.scopeKind ?? "");
+  const scopeKind =
+    rawScopeKind === "file" || rawScopeKind === "resourceLibrary"
+      ? (rawScopeKind as "file" | "resourceLibrary")
+      : null;
   const fileId = searchParams.fileId ? String(searchParams.fileId) : undefined;
   const resourceLibraryId = searchParams.resourceLibraryId
     ? String(searchParams.resourceLibraryId)
@@ -140,15 +130,11 @@ export function PreviewNewPage() {
   const navigate = useNavigate();
 
   const matrixQuery = useQuery(
-    manualActionsQueryOptions(
-      token,
-      {
-        scopeKind: scopeKind as "file" | "resourceLibrary",
-        fileId: fileId ?? null,
-        resourceLibraryId: resourceLibraryId ?? null,
-      },
-      scopeKind === "file" || scopeKind === "resourceLibrary",
-    ),
+    manualActionsQueryOptions(token, {
+      scopeKind,
+      fileId: fileId ?? null,
+      resourceLibraryId: resourceLibraryId ?? null,
+    }),
   );
 
   const [admissionResult, setAdmissionResult] = useState<{
@@ -173,26 +159,34 @@ export function PreviewNewPage() {
           message: "Preview admitted successfully",
           previewId: result.model.previewId,
         });
-        // Redirect to the preview detail page after a brief moment
-        setTimeout(() => {
+        // The admitted durable state stays visible for a moment before the
+        // operator is continued to the durable Preview detail; nothing is
+        // resubmitted.
+        window.setTimeout(() => {
           void navigate({
             to: "/operations/preview/$previewId",
             params: { previewId: result.model.previewId },
           });
-        }, 500);
+        }, 600);
       } else {
         setAdmissionResult({
           ok: false,
           message:
             result.code === "transport_unavailable"
               ? "The preview admission could not reach the API. Nothing was started."
-              : `Preview admission was rejected (${result.code}). Reload and try again.`,
+              : `Preview admission was rejected (${result.code}). Reload the current state and submit again — nothing is retried automatically.`,
         });
       }
     },
   });
 
-  const isValidScope = scopeKind === "file" || scopeKind === "resourceLibrary";
+  const selectedResourceLibraryId = resourceLibraryId ?? "";
+  const isValidScope =
+    scopeKind === "file"
+      ? Boolean(fileId && resourceLibraryId)
+      : scopeKind === "resourceLibrary"
+        ? Boolean(resourceLibraryId)
+        : false;
 
   return (
     <AuthorizedReadBoundary
@@ -237,11 +231,11 @@ export function PreviewNewPage() {
               </div>
               <RefreshControl onRefresh={refresh} refreshing={isFetching} />
             </header>
-            {!isValidScope && (
+            {(matrix.selectionRequired || !isValidScope) && (
               <StatusBanner variant="error" title="Invalid scope">
                 <p>
-                  A valid scopeKind (file or resourceLibrary) with the
-                  appropriate identifier is required.
+                  Select one exact current FileIndex item or one configured
+                  ResourceLibrary before running a Preview.
                 </p>
                 <div className="mf-actions">
                   <Link
@@ -252,6 +246,51 @@ export function PreviewNewPage() {
                   </Link>
                 </div>
               </StatusBanner>
+            )}
+            {matrix.selectionRequired && (
+              <section className="mf-count-section">
+                <h3>ResourceLibrary scope</h3>
+                <p className="mf-dashboard-meta">
+                  The backend lists the ResourceLibraries this principal may
+                  preview. Choose one exact scope; no action is available before
+                  that choice.
+                </p>
+                <p>
+                  <label htmlFor="preview-resource-library">
+                    ResourceLibrary scope
+                  </label>{" "}
+                  <select
+                    id="preview-resource-library"
+                    aria-label="ResourceLibrary scope"
+                    value={selectedResourceLibraryId}
+                    onChange={(event) => {
+                      const chosen = event.target.value;
+                      void navigate({
+                        to: "/operations/preview/new",
+                        search: chosen
+                          ? {
+                              scopeKind: "resourceLibrary" as const,
+                              resourceLibraryId: chosen,
+                            }
+                          : { scopeKind: "resourceLibrary" as const },
+                        replace: true,
+                      });
+                    }}
+                  >
+                    <option value="">Choose a ResourceLibrary</option>
+                    {matrix.resourceLibraries.map((library) => (
+                      <option
+                        key={library.resourceLibraryId}
+                        value={library.resourceLibraryId}
+                        disabled={!library.enabled}
+                      >
+                        {library.resourceLibraryId}
+                        {library.enabled ? "" : " (disabled)"}
+                      </option>
+                    ))}
+                  </select>
+                </p>
+              </section>
             )}
             {isValidScope && (
               <>

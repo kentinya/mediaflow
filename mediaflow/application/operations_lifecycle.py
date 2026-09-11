@@ -60,6 +60,16 @@ TASK_CANCELLABLE_STATUSES = frozenset(
         PersistentTaskStatus.PAUSED,
     }
 )
+# The manual Scan document is a bounded string projection, so its
+# cancellation eligibility is derived from the same durable status set.
+_SCAN_CANCELLABLE_STATUSES = frozenset(status.value for status in TASK_CANCELLABLE_STATUSES)
+
+# The only execution states this Task's backend can truthfully mean.  A
+# persisted Preview record written by another version cannot promote itself
+# into a stronger claim through the operator document.
+_PREVIEW_EXECUTION_STATES = frozenset(
+    {"not_available_in_this_task", "ready_for_explicit_authorization"}
+)
 JOB_TERMINAL_STATUSES = frozenset(
     {
         AutomationJobStatus.COMPLETED,
@@ -85,6 +95,31 @@ _EVIDENCE_PATH_SHAPES = (
     re.compile(r"\b[A-Za-z]:[\\/]"),
     re.compile(r"\\\\"),
 )
+
+# A content fingerprint/digest is a raw evidence identity: it is never an
+# operator-facing value, and a persisted plan can carry one inside otherwise
+# ordinary analysis, attachment or conflict text.  The shape (a long hex run)
+# is rejected anywhere in an operator string, while normal identifiers such as
+# the 32-hex TaskItem IDs this backend derives stay valid.
+_EVIDENCE_DIGEST_SHAPES = (re.compile(r"(?<![0-9A-Za-z])[0-9A-Fa-f]{64,128}(?![0-9A-Za-z])"),)
+
+# Keys that never belong to an operator document.  The projection below reads
+# an explicit allowlist, so this is the recursive safety net for a nested
+# record that reaches the document through a path the allowlist does not name.
+_FORBIDDEN_OPERATOR_KEY = re.compile(
+    r"(fingerprint|digest|occurrence_?id|token|secret|authorization|cookie"
+    r"|password|credential|endpoint)",
+    re.IGNORECASE,
+)
+
+# Backend-authored action metadata whose ``path`` is a documented API route
+# rather than a Storage location.  The recursive safety net still bounds its
+# text, but it must not mistake the route for an absolute host path.
+_OPERATOR_ROUTE_KEYS = frozenset({"actions"})
+
+_MAX_OPERATOR_IDENTIFIER = 256
+_MAX_OPERATOR_CURSOR = 1024
+_MAX_OPERATOR_COLLECTION = 100
 
 # The bounded operator-safe replacement published when a durable evidence
 # field contains one of the shapes above.  It never carries the original
@@ -284,22 +319,183 @@ def _contains_evidence_path_shape(text: str) -> bool:
     return any(pattern.search(text) is not None for pattern in _EVIDENCE_PATH_SHAPES)
 
 
+def _contains_evidence_digest_shape(text: str) -> bool:
+    """Whether text still carries a fingerprint/digest identity shape."""
+
+    return any(pattern.search(text) is not None for pattern in _EVIDENCE_DIGEST_SHAPES)
+
+
 def _bounded_evidence_text(value: str | None, *, limit: int = _MAX_BOUNDED_TEXT) -> str | None:
     """Bound one already-structured evidence string or fail closed.
 
     A credential-shaped value is replaced in place.  If the field still
-    contains an absolute host/adapter path, a UNC root or a scheme endpoint
-    after that redaction, the whole field is replaced with a bounded
-    operator-safe constant: the shapes are open-ended, so laundering a
-    detected value token by token cannot prove nothing slipped through.
+    contains an absolute host/adapter path, a UNC root, a scheme endpoint or a
+    raw fingerprint/digest identity after that redaction, the whole field is
+    replaced with a bounded operator-safe constant: the shapes are open-ended,
+    so laundering a detected value token by token cannot prove nothing slipped
+    through.
     """
 
     if value is None:
         return None
     text = redact_manual_text(value, limit=limit)
-    if _contains_evidence_path_shape(text):
+    if _contains_evidence_path_shape(text) or _contains_evidence_digest_shape(text):
         return _REDACTED_EVIDENCE
     return text or None
+
+
+def _bounded_identifier(value: object, *, limit: int = _MAX_OPERATOR_IDENTIFIER) -> str | None:
+    """Project one short operator identifier or fail closed.
+
+    Durable identifier columns are normally opaque short values, but an
+    externally written row can hold a fingerprint, an absolute host path or a
+    credential-shaped value in the same column.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return _REDACTED_EVIDENCE
+    text = value.strip()
+    if not text:
+        return None
+    if len(text) > limit or any(character.isspace() for character in text):
+        return _REDACTED_EVIDENCE
+    if redact_manual_text(text) != text:
+        return _REDACTED_EVIDENCE
+    if _contains_evidence_path_shape(text) or _contains_evidence_digest_shape(text):
+        return _REDACTED_EVIDENCE
+    return text
+
+
+def _bounded_location(value: object, *, segments: int = 2) -> str | None:
+    """A recognizable tail of a Storage location without its host root.
+
+    Scan errors, plan conflicts and attachment destinations can hold an
+    absolute host path.  Publishing the last path segments keeps the operator
+    evidence recognizable while the deployment root, endpoint and any
+    credential-shaped filename value stay out of the document.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return _REDACTED_EVIDENCE
+    text = value.strip().replace("\\", "/")
+    if not text:
+        return None
+    parts = [part for part in text.split("/") if part not in {"", ".", ".."}]
+    if not parts:
+        return None
+    tail = "/".join(parts[-segments:])
+    if redact_manual_text(tail) != tail:
+        return _REDACTED_EVIDENCE
+    return _bounded_evidence_text(tail, limit=192)
+
+
+def _bounded_label(value: object, *, limit: int = 64) -> str | None:
+    """Bound one short evidence label that must not name a raw identity.
+
+    Parse/recognition evidence carries an operator-readable field or rule
+    label.  A persisted record can label one of those entries with the name of
+    a fingerprint/digest/credential field, so the label is rejected exactly
+    like a forbidden key instead of being published as ordinary text.
+    """
+
+    text = _bounded_evidence_text(value, limit=limit)
+    if text is None:
+        return None
+    if _FORBIDDEN_OPERATOR_KEY.search(text):
+        return _REDACTED_EVIDENCE
+    return text
+
+
+def _bounded_cursor(value: object) -> str | None:
+    """Project one opaque paging cursor without reinterpreting its bytes."""
+
+    if not isinstance(value, str) or not value or len(value) > _MAX_OPERATOR_CURSOR:
+        return None
+    if any(character.isspace() for character in value):
+        return None
+    return value
+
+
+def _bounded_counter(value: object) -> int:
+    """Project one bounded non-negative counter, never inventing progress."""
+
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def _bounded_number(value: object, *, maximum: int = 10**9) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if value != value or value in {float("inf"), float("-inf")}:
+        return None
+    if abs(value) > maximum:
+        return None
+    return value
+
+
+def _bounded_text_list(
+    value: object, *, limit: int = 256, maximum: int = _MAX_OPERATOR_COLLECTION
+) -> list[str]:
+    """Project a bounded list of already-structured evidence strings."""
+
+    if not isinstance(value, list | tuple):
+        return []
+    bounded: list[str] = []
+    for item in list(value)[:maximum]:
+        text = _bounded_evidence_text(item, limit=limit) if isinstance(item, str) else None
+        if text is not None:
+            bounded.append(text)
+    return bounded
+
+
+def _bounded_identifier_list(
+    value: object, *, maximum: int = _MAX_OPERATOR_COLLECTION
+) -> list[str]:
+    if not isinstance(value, list | tuple):
+        return []
+    bounded: list[str] = []
+    for item in list(value)[:maximum]:
+        identifier = _bounded_identifier(item)
+        if identifier is not None:
+            bounded.append(identifier)
+    return bounded
+
+
+def _bounded_operator_document(value: object, *, guard_routes: bool = True) -> object:
+    """Recursively prove one produced operator document is secret-free.
+
+    The projections above are explicit allowlists, so this walk is a safety
+    net: any nested key that names a fingerprint, digest, occurrence identity
+    or credential is dropped, and any remaining string is bounded, credential
+    redacted and rejected when it still carries a digest identity or (outside
+    a documented API route) an absolute host/adapter location.
+    """
+
+    if isinstance(value, dict):
+        document: dict[str, object] = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or _FORBIDDEN_OPERATOR_KEY.search(key):
+                continue
+            document[key] = _bounded_operator_document(
+                item, guard_routes=guard_routes and key not in _OPERATOR_ROUTE_KEYS
+            )
+        return document
+    if isinstance(value, list | tuple):
+        return [_bounded_operator_document(item, guard_routes=guard_routes) for item in value]
+    if isinstance(value, str):
+        if not value:
+            return value
+        if _contains_evidence_digest_shape(value) or redact_manual_text(value) != value:
+            return _REDACTED_EVIDENCE
+        if guard_routes and _contains_evidence_path_shape(value):
+            return _REDACTED_EVIDENCE
+        return redact_manual_text(value, limit=_MAX_BOUNDED_TEXT) or value
+    return value
 
 
 def _bounded_identity_path(value: object | None) -> str | None:
@@ -489,271 +685,608 @@ def job_operator_document(job: AutomationJob) -> dict[str, object]:
     }
 
 
-def manual_scan_operator_document(document: dict[str, object]) -> dict[str, object]:
-    """Bounded manual Scan detail embedded in the Operations Task detail.
+_SCAN_PROGRESS_FIELDS = (
+    "directoriesVisited",
+    "filesVisited",
+    "mediaCandidates",
+    "ignored",
+    "unstable",
+    "errors",
+)
+_SCAN_ITEM_LIMIT_MAXIMUM = 100
 
-    The Scan's own durable state, progress and per-item outcome are preserved.
-    The source occurrence identity, every fingerprint value, the configuration
-    digest and any raw scan error text are not.
+
+def _bounded_scan_error(value: object) -> dict[str, object] | None:
+    """One bounded per-file Scan discovery error without its host root."""
+
+    if not isinstance(value, dict):
+        return None
+    return {
+        "code": _bounded_evidence_text(value.get("code"), limit=64) or "scan_error",
+        "path": _bounded_location(value.get("path")),
+        "operation": _bounded_evidence_text(value.get("operation"), limit=64),
+    }
+
+
+def _bounded_scan_item(item: dict[str, object]) -> dict[str, object]:
+    """One bounded per-item Scan discovery outcome."""
+
+    return {
+        "itemId": item.get("itemId"),
+        "taskId": item.get("taskId"),
+        "storageId": item.get("storageId"),
+        "resourceLibraryId": item.get("resourceLibraryId"),
+        "sourcePath": _bounded_identity_path(item.get("sourcePath")),
+        "fileId": item.get("fileId"),
+        "status": _bounded_evidence_text(item.get("status"), limit=64),
+        "change": _bounded_evidence_text(item.get("change"), limit=64),
+        "stage": _bounded_evidence_text(item.get("stage"), limit=64),
+        "createdAt": _bounded_evidence_text(item.get("createdAt"), limit=64),
+        "updatedAt": _bounded_evidence_text(item.get("updatedAt"), limit=64),
+        "knownEffects": _bounded_evidence_text(item.get("knownEffects")),
+        "retrySafe": bool(item.get("retrySafe")),
+        "nextAction": _bounded_evidence_text(item.get("nextAction")),
+        "failure": bounded_failure_document(
+            item.get("error") if isinstance(item.get("error"), str) else None
+        ),
+        "sideEffects": "none",
+    }
+
+
+def manual_scan_operator_document(document: dict[str, object]) -> dict[str, object]:
+    """One bounded manual Scan admission/detail document.
+
+    This is the exact document the V2 Operations workspace reads for both the
+    admission response and the refreshable detail: the Scan's own durable
+    state, progress counters, bounded per-file discovery errors, per-item
+    outcomes and paging window are preserved, while the source occurrence
+    identity, every fingerprint/digest value, the configuration digest and any
+    raw scan error text or absolute host path are not.
+
+    The cancellation control is backend-advertised for the exact durable Scan
+    state so the workspace never derives eligibility from a status label.
     """
 
     raw_items = document.get("items")
     items = raw_items if isinstance(raw_items, list) else []
-    return {
-        "taskId": document.get("taskId"),
-        "scopeKind": document.get("scopeKind"),
+    raw_errors = document.get("errors")
+    errors = raw_errors if isinstance(raw_errors, list) else []
+    raw_progress = document.get("progress")
+    progress = raw_progress if isinstance(raw_progress, dict) else {}
+    scope_kind = document.get("scopeKind")
+    if scope_kind == "resource_library":
+        scope_kind = "resourceLibrary"
+    task_id = document.get("taskId")
+    status = _bounded_evidence_text(document.get("status"), limit=64)
+    cancellation_requested = bool(document.get("cancellationRequested"))
+    cancellable = (
+        isinstance(status, str)
+        and status in _SCAN_CANCELLABLE_STATUSES
+        and not cancellation_requested
+    )
+    item_limit = document.get("itemLimit")
+    if isinstance(item_limit, bool) or not isinstance(item_limit, int):
+        item_limit = None
+    else:
+        item_limit = max(1, min(item_limit, _SCAN_ITEM_LIMIT_MAXIMUM))
+    bounded = {
+        "taskId": task_id,
+        "scopeKind": scope_kind,
         "scopeId": document.get("scopeId"),
         "resourceLibraryId": document.get("resourceLibraryId"),
         "fileId": document.get("fileId"),
         "storageId": document.get("storageId"),
         "sourcePath": _bounded_identity_path(document.get("sourcePath")),
-        "mode": document.get("mode"),
-        "status": document.get("status"),
+        "mode": _bounded_evidence_text(document.get("mode"), limit=64),
+        "status": status,
         # The immutable revision identity is the pin evidence; the digest is a
         # fingerprint and stays out of the Operations document.
         "configurationSnapshotId": document.get("configurationSnapshotId"),
-        "createdAt": document.get("createdAt"),
-        "updatedAt": document.get("updatedAt"),
-        "cancellationRequested": bool(document.get("cancellationRequested")),
-        "progress": dict(document.get("progress") or {}),
+        "createdAt": _bounded_evidence_text(document.get("createdAt"), limit=64),
+        "updatedAt": _bounded_evidence_text(document.get("updatedAt"), limit=64),
+        "cancellationRequested": cancellation_requested,
+        "progress": {
+            field: _bounded_counter(progress.get(field)) for field in _SCAN_PROGRESS_FIELDS
+        },
+        "errors": [
+            error for error in (_bounded_scan_error(value) for value in errors) if error is not None
+        ],
         "reconciliationComplete": bool(document.get("reconciliationComplete")),
-        "failureStage": document.get("failureStage"),
-        "knownEffects": document.get("knownEffects"),
+        "failureStage": _bounded_evidence_text(document.get("failureStage"), limit=64),
+        "knownEffects": _bounded_evidence_text(document.get("knownEffects")),
         "retrySafe": bool(document.get("retrySafe")),
-        "nextAction": document.get("nextAction"),
+        "nextAction": _bounded_evidence_text(document.get("nextAction")),
+        "failure": bounded_failure_document(
+            document.get("error") if isinstance(document.get("error"), str) else None
+        ),
         "sideEffects": "none",
+        "actions": {
+            "cancel": _action(
+                action="cancel",
+                label="Request cancel",
+                path=(
+                    f"/api/v1/operations/scans/{task_id}/cancel"
+                    if isinstance(task_id, str) and task_id
+                    else "/api/v1/operations/scans"
+                ),
+                available=cancellable,
+                unavailable_reason=(
+                    None
+                    if cancellable
+                    else (
+                        "cancellation has already been requested for this Scan"
+                        if cancellation_requested
+                        else "a task in this state no longer accepts a cancellation request"
+                    )
+                ),
+                durable_outcome=(
+                    "a durable cancellation request is stored; the Scan stops at the next "
+                    "cooperative discovery boundary, an already running Storage read is not "
+                    "interrupted and every recorded item outcome is kept"
+                ),
+                side_effects="none",
+                next_action=(
+                    "request cancellation, then refresh the Scan to read the durable outcome"
+                    if cancellable
+                    else "refresh the Scan; a terminal or already cancelled Scan keeps its "
+                    "recorded item outcomes"
+                ),
+            )
+        },
+        "itemLimit": item_limit,
+        "itemsTruncated": bool(document.get("itemsTruncated")),
+        "nextItemCursor": _bounded_cursor(document.get("nextItemCursor")),
+        "previousItemCursor": _bounded_cursor(document.get("previousItemCursor")),
         "items": [
-            {
-                "itemId": item.get("itemId"),
-                "taskId": item.get("taskId"),
-                "storageId": item.get("storageId"),
-                "resourceLibraryId": item.get("resourceLibraryId"),
-                "sourcePath": _bounded_identity_path(item.get("sourcePath")),
-                "fileId": item.get("fileId"),
-                "status": item.get("status"),
-                "change": item.get("change"),
-                "stage": item.get("stage"),
-                "createdAt": item.get("createdAt"),
-                "updatedAt": item.get("updatedAt"),
-                "knownEffects": item.get("knownEffects"),
-                "retrySafe": bool(item.get("retrySafe")),
-                "nextAction": item.get("nextAction"),
-                "sideEffects": "none",
-            }
-            for item in items
+            _bounded_scan_item(item)
+            for item in items[:_SCAN_ITEM_LIMIT_MAXIMUM]
             if isinstance(item, dict)
         ],
     }
+    return _bounded_operator_document(bounded)
 
 
 def manual_preview_operator_document(document: dict[str, object]) -> dict[str, object]:
     """Bounded manual Preview detail for the V2 Operations workspace.
 
-    The aggregate status, source scope, configuration pin and per-item
-    plan/analysis projections are preserved.  Every fingerprint value,
-    configuration digest, occurrence identity and raw source evidence
-    version is stripped; the bounded source path is redacted when it
-    contains an absolute host root, a private endpoint or a credential-
-    shaped value.
+    The aggregate status, exact source scope, configuration pin, item
+    identities and the shape-aware plan findings (recognition, metadata
+    identity, policies, bounded destination, attachments, capabilities,
+    conflicts and warnings) are preserved.  Every fingerprint/digest value,
+    occurrence identity, raw executor input and absolute host root is
+    projected away, and the result is proven by a final recursive guard.
     """
 
     raw_items = document.get("items")
     items = raw_items if isinstance(raw_items, list) else []
-    scope = document.get("scope") if isinstance(document.get("scope"), dict) else None
-    selection = document.get("selection") if isinstance(document.get("selection"), dict) else None
     scope_kind = document.get("scopeKind")
     if scope_kind == "resource_library":
         scope_kind = "resourceLibrary"
-    return {
+    scope_id = document.get("scopeId")
+    raw_selection = document.get("selection")
+    selection = raw_selection if isinstance(raw_selection, dict) else {}
+    bounded = {
         "previewId": document.get("previewId"),
         "intentId": document.get("intentId"),
         "actor": document.get("actor"),
         "intentVersion": document.get("intentVersion"),
-        "status": document.get("status"),
+        "status": _bounded_evidence_text(document.get("status"), limit=64),
         "current": bool(document.get("current")),
-        "createdAt": document.get("createdAt"),
-        "updatedAt": document.get("updatedAt"),
-        "nextAction": document.get("nextAction"),
-        "error": document.get("error"),
+        "createdAt": _bounded_evidence_text(document.get("createdAt"), limit=64),
+        "updatedAt": _bounded_evidence_text(document.get("updatedAt"), limit=64),
+        "nextAction": _bounded_evidence_text(document.get("nextAction")),
+        "failure": bounded_failure_document(
+            document.get("error") if isinstance(document.get("error"), str) else None
+        ),
         "sideEffects": "none",
         "zeroMutation": True,
-        "executionState": document.get("executionState"),
+        "executionState": _bounded_preview_execution_state(document.get("executionState")),
         "truncated": bool(document.get("truncated")),
-        "scope": scope,
-        "scopeKind": scope_kind,
-        "scopeId": document.get("scopeId"),
-        "selection": selection,
-        "configurationSnapshotId": document.get("configurationSnapshotId"),
-        "items": [_manual_preview_item_operator(item) for item in items if isinstance(item, dict)],
+        "scope": (
+            {
+                "scopeKind": _bounded_evidence_text(scope_kind, limit=64),
+                "scopeId": _bounded_identifier(scope_id),
+                "itemCount": len(items),
+            }
+            if isinstance(scope_kind, str) and scope_kind
+            else None
+        ),
+        "scopeKind": _bounded_evidence_text(scope_kind, limit=64),
+        "scopeId": _bounded_identifier(scope_id),
+        "selection": {
+            "selectedItemIds": _bounded_identifier_list(selection.get("selectedItemIds")),
+            "unselectedItemIds": _bounded_identifier_list(selection.get("unselectedItemIds")),
+        },
+        "configurationSnapshotId": _bounded_identifier(document.get("configurationSnapshotId")),
+        "items": [
+            _manual_preview_item_operator(item)
+            for item in items[:_MAX_OPERATOR_COLLECTION]
+            if isinstance(item, dict)
+        ],
     }
+    return _bounded_operator_document(bounded)
+
+
+def _bounded_preview_execution_state(value: object) -> str | None:
+    """Publish only the execution states this Task's backend can mean."""
+
+    if isinstance(value, str) and value in _PREVIEW_EXECUTION_STATES:
+        return value
+    return None
 
 
 def _manual_preview_item_operator(item: dict[str, object]) -> dict[str, object]:
-    """Bounded one-item projection for the V2 Preview operator surface."""
+    """Shape-aware one-item projection for the V2 Preview operator surface."""
 
-    source = item.get("source") if isinstance(item.get("source"), dict) else {}
-    plan = item.get("plan") if isinstance(item.get("plan"), dict) else None
+    raw_source = item.get("source")
+    source = raw_source if isinstance(raw_source, dict) else {}
+    raw_choice = item.get("choice")
+    choice = raw_choice if isinstance(raw_choice, dict) else {}
+    raw_plan = item.get("plan")
+    plan = raw_plan if isinstance(raw_plan, dict) else None
     return {
         "previewItemId": item.get("previewItemId"),
-        "previewId": item.get("previewId"),
         "itemId": item.get("itemId"),
-        "position": item.get("position"),
-        "stage": item.get("stage"),
-        "status": item.get("status"),
-        "createdAt": item.get("createdAt"),
-        "updatedAt": item.get("updatedAt"),
+        "position": _bounded_counter(item.get("position")),
+        "stage": _bounded_evidence_text(item.get("stage"), limit=64),
+        "status": _bounded_evidence_text(item.get("status"), limit=64),
         "current": bool(item.get("current")),
         "truncated": bool(item.get("truncated")),
-        "nextAction": item.get("nextAction"),
-        "error": item.get("error"),
+        "nextAction": _bounded_evidence_text(item.get("nextAction")),
+        "failure": bounded_failure_document(
+            item.get("error") if isinstance(item.get("error"), str) else None
+        ),
         "sideEffects": "none",
         "zeroMutation": True,
-        "executionState": item.get("executionState"),
+        "executionState": _bounded_preview_execution_state(item.get("executionState")),
+        "configurationSnapshotId": _bounded_identifier(item.get("configurationSnapshotId")),
         "source": {
-            "fileId": source.get("fileId"),
-            "storageId": source.get("storageId"),
-            "resourceLibraryId": source.get("resourceLibraryId"),
+            "fileId": _bounded_identifier(source.get("fileId")),
+            "storageId": _bounded_identifier(source.get("storageId")),
+            "resourceLibraryId": _bounded_identifier(source.get("resourceLibraryId")),
             "path": _bounded_identity_path(source.get("path")),
-            "filename": source.get("filename"),
-            "extension": source.get("extension"),
-            "size": source.get("size"),
-            "scanStatus": source.get("scanStatus"),
-            "occurrenceState": source.get("occurrenceState"),
+            "filename": _bounded_location(source.get("filename"), segments=1),
+            "extension": _bounded_evidence_text(source.get("extension"), limit=32),
+            "size": _bounded_number(source.get("size")),
+            "scanStatus": _bounded_evidence_text(source.get("scanStatus"), limit=64),
+            "occurrenceState": _bounded_evidence_text(source.get("occurrenceState"), limit=64),
         },
-        "choice": item.get("choice"),
-        "configurationSnapshotId": item.get("configurationSnapshotId"),
+        "choice": {
+            "recognitionTypeId": _bounded_identifier(choice.get("recognitionTypeId")),
+            "namingPolicyId": _bounded_identifier(choice.get("namingPolicyId")),
+            "classificationPolicyId": _bounded_identifier(choice.get("classificationPolicyId")),
+            "organizePolicyId": _bounded_identifier(choice.get("organizePolicyId")),
+        },
         "plan": _bounded_preview_plan(plan) if plan is not None else None,
     }
 
 
 def _bounded_preview_plan(plan: dict[str, object]) -> dict[str, object]:
-    """Strip fingerprints, raw provider evidence and forbidden execution input from a preview plan.
+    """Shape-aware projection of the persisted Preview plan document.
 
-    Every nested value is recursively bounded: a persistent plan may hold raw
-    ``executionPlan`` content, attachment paths, absolute destination paths,
-    Windows/UNC roots, scheme endpoints, credential-shaped values, provider
-    payloads or arbitrary analysis text.  Only an explicitly allowlisted,
-    recursively bounded projection is published to the operator.
+    The persisted plan is the one written by ``ManualOrganizePreviewService``:
+    it holds source identity, media identity, the analysis stages, the
+    resolved policies, the destination, the operation, attachments,
+    capabilities, conflicts, warnings and the raw ``executionPlan`` executor
+    input.  Only the named operator-facing fields below are published; the raw
+    executor input is never read, so ``sourcePath``/``targetPath``/
+    ``sourceLibraryRoot`` cannot reach the document even when a persisted
+    record was written by another version or by hand.
     """
 
-    result: dict[str, object] = {}
-    for key in (
-        "source",
-        "recognitionType",
-        "policies",
-        "analysis",
-        "destination",
-        "operation",
-        "attachments",
-        "executionPlan",
-        "capabilities",
-        "conflicts",
-        "warnings",
-        "planStatus",
-        "zeroMutation",
-        "executionState",
-        "bounded",
-        "deterministic",
-    ):
-        if key in plan:
-            value = plan[key]
-            if key == "destination":
-                result[key] = _bounded_identity_path(value) if isinstance(value, str) else value
-            elif key == "source" and isinstance(value, dict):
-                result[key] = {
-                    "fileId": value.get("fileId"),
-                    "storageId": value.get("storageId"),
-                    "resourceLibraryId": value.get("resourceLibraryId"),
-                    "path": _bounded_identity_path(value.get("path")),
-                    "filename": value.get("filename"),
+    return {
+        "recognitionType": _bounded_identifier(plan.get("recognitionType")),
+        "mediaIdentity": _bounded_media_identity(plan.get("mediaIdentity")),
+        "policies": _bounded_policy_map(plan.get("policies")),
+        "analysis": _bounded_preview_analysis(plan.get("analysis")),
+        "destination": _bounded_preview_destination(plan.get("destination")),
+        "operation": _bounded_evidence_text(plan.get("operation"), limit=64),
+        "operationPolicy": _bounded_evidence_text(plan.get("operationPolicy"), limit=64),
+        "attachments": _bounded_attachment_list(plan.get("attachments")),
+        "capabilities": _bounded_capabilities(plan.get("capabilities")),
+        "conflicts": _bounded_conflict_list(plan.get("conflicts")),
+        "warnings": _bounded_text_list(plan.get("warnings")),
+        "planStatus": _bounded_evidence_text(plan.get("planStatus"), limit=64),
+        "zeroMutation": True,
+        "executionState": _bounded_preview_execution_state(plan.get("executionState")),
+        "bounded": True,
+        "deterministic": True,
+    }
+
+
+def _bounded_preview_destination(value: object) -> dict[str, object] | None:
+    """The MediaLibrary-relative proposed target, never its host root."""
+
+    if not isinstance(value, dict):
+        return None
+    return {
+        "storageId": _bounded_identifier(value.get("storageId")),
+        "relativePath": _bounded_identity_path(value.get("relativePath")),
+        "filename": _bounded_location(value.get("path"), segments=1),
+    }
+
+
+def _bounded_policy_map(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        field: _bounded_identifier(value.get(field))
+        for field in (
+            "recognitionTypePolicyId",
+            "metadataPolicyId",
+            "namingPolicyId",
+            "classificationPolicyId",
+            "organizePolicyId",
+        )
+    }
+
+
+def _bounded_media_identity(value: object) -> dict[str, object] | None:
+    """Provider identity evidence: the actual movie/show match, not a payload."""
+
+    if not isinstance(value, dict):
+        return None
+    identity: dict[str, object] = {
+        field: _bounded_evidence_text(value.get(field), limit=192)
+        for field in (
+            "provider",
+            "providerId",
+            "mediaType",
+            "title",
+            "originalTitle",
+            "episodeTitle",
+            "matchedBy",
+            "recognitionTypeId",
+        )
+    }
+    identity.update(
+        {
+            field: _bounded_number(value.get(field), maximum=100000)
+            for field in ("year", "season", "episode")
+        }
+    )
+    identity.update(
+        {
+            field: _bounded_text_list(value.get(field), limit=64, maximum=50)
+            for field in ("episodes", "genres", "countries", "languages")
+        }
+    )
+    return identity
+
+
+def _bounded_preview_analysis(value: object) -> dict[str, object] | None:
+    """Shape-aware projection of the complete parse→classification analysis."""
+
+    if not isinstance(value, dict):
+        return None
+    return {
+        "parse": _bounded_parse_analysis(value.get("parse")),
+        "recognition": _bounded_recognition_analysis(value.get("recognition")),
+        "metadata": _bounded_metadata_analysis(value.get("metadata")),
+        "naming": _bounded_naming_analysis(value.get("naming")),
+        "classification": _bounded_classification_analysis(value.get("classification")),
+    }
+
+
+def _bounded_parse_analysis(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    document: dict[str, object] = {
+        field: _bounded_evidence_text(value.get(field), limit=128)
+        for field in (
+            "titleCandidate",
+            "resolution",
+            "source",
+            "videoCodec",
+            "audio",
+            "hdr",
+            "version",
+            "releaseGroup",
+        )
+    }
+    document.update(
+        {
+            field: _bounded_number(value.get(field), maximum=100000)
+            for field in ("year", "season", "episode")
+        }
+    )
+    document["episodes"] = [
+        episode
+        for episode in (
+            _bounded_number(item, maximum=100000) for item in _as_list(value.get("episodes"))
+        )
+        if episode is not None
+    ]
+    document["evidence"] = [
+        {
+            "field": _bounded_label(item.get("field")),
+            "value": _bounded_evidence_text(item.get("value"), limit=192),
+            "source": _bounded_label(item.get("source")),
+            "confidence": _bounded_evidence_text(item.get("confidence"), limit=32),
+        }
+        for item in _as_list(value.get("evidence"))[:_MAX_OPERATOR_COLLECTION]
+        if isinstance(item, dict)
+    ]
+    document["warnings"] = _bounded_text_list(value.get("warnings"))
+    return document
+
+
+def _bounded_recognition_analysis(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "status": _bounded_evidence_text(value.get("status"), limit=64),
+        "recognitionTypeId": _bounded_identifier(value.get("recognitionTypeId")),
+        "ruleId": _bounded_identifier(value.get("ruleId")),
+        "score": _bounded_number(value.get("score"), maximum=100000),
+        "confidence": _bounded_evidence_text(value.get("confidence"), limit=32),
+        "reasons": [
+            {
+                "code": _bounded_label(item.get("code")),
+                "message": _bounded_evidence_text(item.get("message")),
+            }
+            for item in _as_list(value.get("reasons"))[:_MAX_OPERATOR_COLLECTION]
+            if isinstance(item, dict)
+        ],
+        "warnings": _bounded_text_list(value.get("warnings")),
+    }
+
+
+def _bounded_metadata_analysis(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    document: dict[str, object] = {
+        "available": bool(value.get("available")),
+        "status": _bounded_evidence_text(value.get("status"), limit=64),
+        "query": _bounded_evidence_text(value.get("query"), limit=192),
+        "identity": _bounded_media_identity(value.get("identity")),
+    }
+    raw_match = value.get("match")
+    if isinstance(raw_match, dict):
+        document["match"] = {
+            "status": _bounded_evidence_text(raw_match.get("status"), limit=64),
+            "score": _bounded_number(raw_match.get("score"), maximum=100000),
+            "reasons": _bounded_text_list(raw_match.get("reasons")),
+            "warnings": _bounded_text_list(raw_match.get("warnings")),
+            "candidateCount": _bounded_counter(raw_match.get("candidateCount")),
+            "candidates": [
+                {
+                    "provider": _bounded_evidence_text(item.get("provider"), limit=64),
+                    "providerId": _bounded_evidence_text(item.get("providerId"), limit=64),
+                    "mediaType": _bounded_evidence_text(item.get("mediaType"), limit=64),
+                    "title": _bounded_evidence_text(item.get("title"), limit=192),
+                    "year": _bounded_number(item.get("year"), maximum=100000),
+                    "score": _bounded_number(item.get("score"), maximum=100000),
+                    "exactTitle": bool(item.get("exactTitle")),
+                    "exactYear": bool(item.get("exactYear")),
                 }
-            elif key == "executionPlan":
-                # Raw executor input (sourcePath, targetPath, root) must
-                # never reach the operator document.
-                continue
-            elif key == "attachments":
-                result[key] = _bounded_attachment_list(value)
-            elif key in ("conflicts", "warnings") and isinstance(value, list):
-                result[key] = _bounded_text_list(value)
-            elif key == "analysis" and isinstance(value, dict):
-                result[key] = _bounded_analysis(value)
-            else:
-                result[key] = _recursively_bounded(value)
-    return result
+                for item in _as_list(raw_match.get("candidates"))[:_MAX_OPERATOR_COLLECTION]
+                if isinstance(item, dict)
+            ],
+        }
+    else:
+        document["match"] = None
+    return document
+
+
+def _bounded_naming_analysis(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "available": bool(value.get("available")),
+        "reason": _bounded_evidence_text(value.get("reason"), limit=192),
+        "policyId": _bounded_identifier(value.get("policyId")),
+        "recognitionTypeId": _bounded_identifier(value.get("recognitionTypeId")),
+        "directory": _bounded_identity_path(value.get("directory")),
+        "directorySegments": [
+            segment
+            for segment in (
+                _bounded_identity_path(item) for item in _as_list(value.get("directorySegments"))
+            )
+            if segment is not None
+        ],
+        "filename": _bounded_location(value.get("filename"), segments=1),
+        "warnings": _bounded_text_list(value.get("warnings")),
+        "sanitizationChanges": _bounded_text_list(value.get("sanitizationChanges"), limit=192),
+    }
+
+
+def _bounded_classification_analysis(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "available": bool(value.get("available")),
+        "reason": _bounded_evidence_text(value.get("reason"), limit=192),
+        "status": _bounded_evidence_text(value.get("status"), limit=64),
+        "policyId": _bounded_identifier(value.get("policyId")),
+        "recognitionTypeId": _bounded_identifier(value.get("recognitionTypeId")),
+        "mediaLibraryId": _bounded_identifier(value.get("mediaLibraryId")),
+        "relativePath": _bounded_identity_path(value.get("relativePath")),
+        "matchedRuleId": _bounded_identifier(value.get("matchedRuleId")),
+        "matchedRuleName": _bounded_evidence_text(value.get("matchedRuleName"), limit=128),
+        "evidence": _bounded_text_list(value.get("evidence"), limit=192),
+        "warnings": _bounded_text_list(value.get("warnings")),
+    }
+
+
+def _bounded_capabilities(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "verdict": _bounded_evidence_text(value.get("verdict"), limit=64),
+        "required": _bounded_text_list(value.get("required"), limit=64),
+        "declared": _bounded_text_list(value.get("declared"), limit=64),
+        "missing": _bounded_text_list(value.get("missing"), limit=64),
+    }
 
 
 def _bounded_attachment_list(value: object) -> list[dict[str, object]]:
-    """Project attachment evidence with redacted paths."""
+    """Project the persisted attachment plans with bounded operator labels.
 
-    if not isinstance(value, list):
-        return []
+    The persisted attachment document is ``{type, source{storageId,path},
+    destination{storageId,path}, operation, suffix}``.  The absolute
+    destination location is replaced by its bounded filename, so a
+    credential-bearing or private path in the same column cannot reach the
+    document while the operator still sees which sidecar is planned.
+    """
+
     bounded: list[dict[str, object]] = []
-    for item in value:
+    for item in _as_list(value)[:_MAX_OPERATOR_COLLECTION]:
         if not isinstance(item, dict):
             continue
+        raw_source = item.get("source")
+        source = raw_source if isinstance(raw_source, dict) else {}
+        raw_destination = item.get("destination")
+        destination = raw_destination if isinstance(raw_destination, dict) else {}
+        suffix = _bounded_evidence_text(item.get("suffix"), limit=64)
         bounded.append(
             {
-                "kind": _bounded_evidence_text(item.get("kind"), limit=96),
-                "language": _bounded_evidence_text(item.get("language"), limit=64),
-                "sourcePath": _bounded_identity_path(item.get("sourcePath")),
-                "filename": item.get("filename"),
-                "extension": item.get("extension"),
+                "type": _bounded_evidence_text(item.get("type"), limit=64),
+                "operation": _bounded_evidence_text(item.get("operation"), limit=64),
+                "suffix": suffix,
+                "language": _attachment_language(suffix),
+                "filename": _bounded_location(destination.get("path"), segments=1)
+                or _bounded_location(source.get("path"), segments=1),
+                "storageId": _bounded_identifier(destination.get("storageId"))
+                or _bounded_identifier(source.get("storageId")),
             }
         )
     return bounded
 
 
-def _bounded_text_list(value: object) -> list[str]:
-    """Project a list of evidence strings with host/credential redaction."""
+def _attachment_language(suffix: str | None) -> str | None:
+    """The preserved language suffix of one attachment, when it is one."""
 
-    if not isinstance(value, list):
-        return []
-    return [
-        _bounded_evidence_text(item, limit=256)
-        for item in value
-        if isinstance(item, str) and _bounded_evidence_text(item, limit=256) is not None
-    ]
-
-
-def _bounded_analysis(value: dict[str, object]) -> dict[str, object]:
-    """Project nested analysis evidence with recursive redaction."""
-
-    result: dict[str, object] = {}
-    for key, item in value.items():
-        if isinstance(item, str):
-            result[key] = _bounded_evidence_text(item)
-        elif isinstance(item, dict):
-            result[key] = _recursively_bounded(item)
-        elif isinstance(item, list):
-            result[key] = _recursively_bounded_list(item)
-        else:
-            result[key] = item
-    return result
+    if not isinstance(suffix, str):
+        return None
+    value = suffix.strip().lstrip(".")
+    if not value or not re.fullmatch(r"[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?", value):
+        return None
+    return value
 
 
-def _recursively_bounded(value: object) -> object:
-    """Recursively redact a value tree, failing closed on forbidden shapes."""
+def _bounded_conflict_list(value: object) -> list[dict[str, object]]:
+    """Preserve the persisted conflict findings without their host roots."""
 
-    if value is None or isinstance(value, bool | int | float):
-        return value
-    if isinstance(value, str):
-        return _bounded_evidence_text(value)
-    if isinstance(value, dict):
-        return _recursively_bounded_dict(value)
-    if isinstance(value, (list, tuple)):
-        return _recursively_bounded_list(value)
-    return _REDACTED_EVIDENCE
-
-
-def _recursively_bounded_dict(value: dict) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, item in value.items():
-        result[key] = _recursively_bounded(item)
-    return result
+    bounded: list[dict[str, object]] = []
+    for item in _as_list(value)[:_MAX_OPERATOR_COLLECTION]:
+        if not isinstance(item, dict):
+            continue
+        bounded.append(
+            {
+                "type": _bounded_evidence_text(item.get("type"), limit=64),
+                "source": _bounded_location(item.get("source")),
+                "destination": _bounded_location(item.get("destination")),
+                "details": _bounded_evidence_text(item.get("details")),
+            }
+        )
+    return bounded
 
 
-def _recursively_bounded_list(value: list | tuple) -> list[object]:
-    return [_recursively_bounded(item) for item in value]
+def _as_list(value: object) -> list:
+    if isinstance(value, list | tuple):
+        return list(value)
+    return []
 
 
 # --------------------------------------------------------------------------

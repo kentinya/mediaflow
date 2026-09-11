@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { systemStatusQueryOptions } from "./system-status-query";
+import { manualActionsQueryOptions } from "../operations/manual-actions-query";
 
 /**
  * Library landing for the two deliberately separate read journeys. Neither
@@ -13,12 +14,72 @@ import { systemStatusQueryOptions } from "./system-status-query";
  * operations flow can reach the Task/Job workspace without copying an
  * identifier, a path or an authority value into a URL.
  *
- * For each ResourceLibrary in the Active runtime, the landing offers
- * bounded Scan and Preview admission links so the operator can start
- * work directly from the Library.  The status read is deferred until the
- * operator indicates intent to start work, so a transient status failure
- * never breaks the core Library navigation.
+ * For each ResourceLibrary in the Active runtime, the landing offers a
+ * bounded Scan and Preview admission entry only when the backend action
+ * matrix advertises that action for the exact principal and scope.  The
+ * status read is deferred until the operator indicates intent to start work,
+ * so a transient status failure never breaks the core Library navigation, and
+ * an unadvertised action renders the backend reason instead of a control.
  */
+function ResourceLibraryActions({
+  resourceLibraryId,
+}: {
+  readonly resourceLibraryId: string;
+}) {
+  const token = useAuthToken();
+  const matrixQuery = useQuery(
+    manualActionsQueryOptions(token, {
+      scopeKind: "resourceLibrary",
+      resourceLibraryId,
+    }),
+  );
+
+  if (matrixQuery.data === undefined) {
+    return (
+      <p className="mf-dashboard-meta">
+        Checking backend action availability for this ResourceLibrary.
+      </p>
+    );
+  }
+  if (!matrixQuery.data.ok) {
+    return (
+      <p className="mf-dashboard-meta">
+        Action availability could not be loaded. No action is offered.
+      </p>
+    );
+  }
+  const { actions } = matrixQuery.data.model;
+  return (
+    <div className="mf-actions">
+      {actions.scan.available ? (
+        <Link
+          className="mf-button mf-button-secondary"
+          to="/operations/scan/new"
+          search={{ scopeKind: "resourceLibrary", resourceLibraryId }}
+        >
+          Start bounded Scan
+        </Link>
+      ) : (
+        <p className="mf-dashboard-meta">
+          Scan unavailable: {actions.scan.reason ?? "not available"}
+        </p>
+      )}
+      {actions.preview.available ? (
+        <Link
+          className="mf-button mf-button-secondary"
+          to="/operations/preview/new"
+          search={{ scopeKind: "resourceLibrary", resourceLibraryId }}
+        >
+          Run zero-mutation Preview
+        </Link>
+      ) : (
+        <p className="mf-dashboard-meta">
+          Preview unavailable: {actions.preview.reason ?? "not available"}
+        </p>
+      )}
+    </div>
+  );
+}
 export function LibraryLanding() {
   const token = useAuthToken();
   const [showResourceLibraries, setShowResourceLibraries] = useState(false);
@@ -108,28 +169,7 @@ export function LibraryLanding() {
                 <dt>Storage</dt>
                 <dd>{library.storageId}</dd>
               </dl>
-              <div className="mf-actions">
-                <Link
-                  className="mf-button mf-button-secondary"
-                  to="/operations/scan/new"
-                  search={{
-                    scopeKind: "resourceLibrary",
-                    resourceLibraryId: library.id,
-                  }}
-                >
-                  Start bounded Scan
-                </Link>
-                <Link
-                  className="mf-button mf-button-secondary"
-                  to="/operations/preview/new"
-                  search={{
-                    scopeKind: "resourceLibrary",
-                    resourceLibraryId: library.id,
-                  }}
-                >
-                  Run zero-mutation Preview
-                </Link>
-              </div>
+              <ResourceLibraryActions resourceLibraryId={library.id} />
             </div>
           ))}
         </section>

@@ -1611,6 +1611,805 @@ function fileBySourceDocument(storageId, path) {
   return null;
 }
 
+// --- Manual Scan / Preview fake state ---
+//
+// The V2 Operations workspace reads the bounded /api/v1/operations/* alias for
+// the manual action matrix, the bounded Scan admission/detail/cancel routes and
+// the zero-mutation Preview routes. The fake keeps deterministic, internally
+// consistent state (`scan-e2e-001`, `preview-e2e-001`) whose documents mirror
+// the committed `manual-operations.json` fixture field names and value types
+// exactly. Only bounded, secret-free request metadata is recorded for the
+// browser proof; no Bearer value, fingerprint or raw body is ever stored.
+
+const MANUAL_SCAN_TASK_ID = "scan-e2e-001";
+const MANUAL_PREVIEW_ID = "preview-e2e-001";
+const MANUAL_LIBRARY_ID = "resources";
+const MANUAL_STORAGE_ID = "local-media";
+const MANUAL_RECORDED_AT = "2026-09-04T12:00:00+00:00";
+const MANUAL_CONFIGURATION_SNAPSHOT_ID = "active-1";
+const MANUAL_PREVIEW_MAX_ITEMS = 100;
+const MANUAL_ITEM_LIMIT_MAX = 100;
+const MANUAL_CURSOR_MAX_LENGTH = 256;
+const MANUAL_REQUEST_FIELD_MAX_LENGTH = 256;
+const MANUAL_REQUEST_BODY_MAX_BYTES = 4096;
+const MANUAL_SCAN_MODES = ["full", "incremental"];
+const MANUAL_SCAN_ACTION_PATH = "/api/v1/operations/scans";
+const MANUAL_PREVIEW_ACTION_PATH = "/api/v1/operations/previews";
+const MANUAL_FILE_SCOPE = {
+  fileId: "file-index-example",
+  resourceLibraryId: MANUAL_LIBRARY_ID,
+};
+const MANUAL_UNKNOWN_SOURCE_REASON =
+  "the current FileIndex source was not found";
+const MANUAL_UNKNOWN_LIBRARY_REASON =
+  "the ResourceLibrary is not enabled in the Active configuration";
+const MANUAL_TERMINAL_SCAN_STATUSES = new Set([
+  "completed",
+  "partial_success",
+  "failed",
+  "cancelled",
+]);
+// The bounded, secret-free request metadata a browser test may read back.
+const RECORDED_MANUAL_REQUESTS = [];
+const MANUAL_REQUEST_BODY_FIELDS = [
+  "fileId",
+  "itemCursor",
+  "itemLimit",
+  "mode",
+  "resourceLibraryId",
+  "scopeKind",
+];
+
+const MANUAL_RESOURCE_LIBRARY_CHOICES = [
+  {
+    enabled: true,
+    reason: null,
+    resourceLibraryId: MANUAL_LIBRARY_ID,
+    scanMode: "full",
+    storageId: MANUAL_STORAGE_ID,
+  },
+];
+
+function boundedManualBody(fields) {
+  const body = {};
+  for (const key of MANUAL_REQUEST_BODY_FIELDS) {
+    const value = fields[key];
+    if (value === null || value === undefined || value === "") {
+      continue;
+    }
+    body[key] = value;
+  }
+  return body;
+}
+
+function recordManualRequest({ body, method, objectId, objectType, path }) {
+  const entry = { method, path, objectType };
+  if (objectId !== null && objectId !== undefined) {
+    entry.objectId = objectId;
+  }
+  const bounded = boundedManualBody(body ?? {});
+  if (Object.keys(bounded).length > 0) {
+    entry.body = bounded;
+  }
+  RECORDED_MANUAL_REQUESTS.push(entry);
+}
+
+function readBoundedQuery(url, allowedFields) {
+  const values = {};
+  for (const key of url.searchParams.keys()) {
+    if (!allowedFields.includes(key)) {
+      return null;
+    }
+    if (url.searchParams.getAll(key).length !== 1) {
+      return null;
+    }
+    values[key] = url.searchParams.get(key);
+  }
+  return values;
+}
+
+function boundedManualRequestFields(document, allowedFields) {
+  const fields = {};
+  for (const [key, value] of Object.entries(document)) {
+    if (!allowedFields.includes(key)) {
+      return null;
+    }
+    if (
+      typeof value !== "string" ||
+      value.length === 0 ||
+      value.length > MANUAL_REQUEST_FIELD_MAX_LENGTH
+    ) {
+      return null;
+    }
+    fields[key] = value;
+  }
+  return fields;
+}
+
+function parseBoundedItemLimit(raw) {
+  if (raw === undefined) {
+    return { itemLimit: null, ok: true };
+  }
+  const parsed = Number(raw);
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < 1 ||
+    parsed > MANUAL_ITEM_LIMIT_MAX ||
+    raw.trim() !== String(parsed)
+  ) {
+    return { ok: false };
+  }
+  return { itemLimit: parsed, ok: true };
+}
+
+function readBoundedJsonBody(req, res) {
+  let raw = "";
+  let overflow = false;
+  req.on("data", (chunk) => {
+    if (raw.length + chunk.length > MANUAL_REQUEST_BODY_MAX_BYTES) {
+      overflow = true;
+      return;
+    }
+    raw += String(chunk);
+  });
+  return new Promise((resolve) => {
+    req.on("end", () => {
+      let document = null;
+      if (!overflow && raw.length > 0) {
+        try {
+          document = JSON.parse(raw);
+        } catch {
+          document = null;
+        }
+      }
+      if (
+        document === null ||
+        typeof document !== "object" ||
+        Array.isArray(document)
+      ) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        resolve({ ok: false });
+        return;
+      }
+      resolve({ document, ok: true });
+    });
+  });
+}
+
+function manualActionDocument({ available, modes, nextAction, path, reason }) {
+  return {
+    available,
+    method: "POST",
+    modes,
+    nextAction,
+    path,
+    reason,
+  };
+}
+
+function manualPermissionReason(permission) {
+  return `the connected API principal does not hold the permission required to ${permission}`;
+}
+
+function manualActionMatrixDocument(request, permitted) {
+  const discovery = request.resourceLibraryId === null;
+  const fileScope = request.scopeKind === "file";
+  const knownFileSource =
+    request.fileId === MANUAL_FILE_SCOPE.fileId &&
+    request.resourceLibraryId === MANUAL_FILE_SCOPE.resourceLibraryId;
+  const knownLibrary = request.resourceLibraryId === MANUAL_LIBRARY_ID;
+
+  let stateReason = null;
+  let source = null;
+  if (fileScope) {
+    if (knownFileSource) {
+      source = {
+        extension: "mkv",
+        fileId: MANUAL_FILE_SCOPE.fileId,
+        filename: "One.2001.mkv",
+        occurrenceState: "verified",
+        path: "Movies/One.2001.mkv",
+        resourceLibraryId: MANUAL_FILE_SCOPE.resourceLibraryId,
+        scanStatus: "ready",
+        sizeBytes: 12,
+        storageId: MANUAL_STORAGE_ID,
+      };
+    } else {
+      stateReason = MANUAL_UNKNOWN_SOURCE_REASON;
+    }
+  } else if (!discovery && !knownLibrary) {
+    stateReason = MANUAL_UNKNOWN_LIBRARY_REASON;
+  }
+
+  const selectReason =
+    "select an exact ResourceLibrary scope before submitting a Scan";
+  const selectPreviewReason =
+    "select an exact ResourceLibrary scope before running a Preview";
+  const scanReason = discovery
+    ? selectReason
+    : permitted
+      ? stateReason
+      : manualPermissionReason("submit a bounded Scan");
+  const previewReason = discovery
+    ? selectPreviewReason
+    : permitted
+      ? stateReason
+      : manualPermissionReason("run a zero-mutation Preview");
+  const scanAvailable = permitted && stateReason === null && !discovery;
+  const previewAvailable = permitted && stateReason === null && !discovery;
+
+  return {
+    actions: {
+      preview: manualActionDocument({
+        available: previewAvailable,
+        modes: [],
+        nextAction:
+          previewAvailable || discovery
+            ? "run a zero-mutation Preview"
+            : (previewReason ?? "the Preview action is not available"),
+        path: MANUAL_PREVIEW_ACTION_PATH,
+        reason: previewReason,
+      }),
+      scan: manualActionDocument({
+        available: scanAvailable,
+        modes: MANUAL_SCAN_MODES,
+        nextAction:
+          scanAvailable || discovery
+            ? "submit a bounded Scan"
+            : (scanReason ?? "the Scan action is not available"),
+        path: MANUAL_SCAN_ACTION_PATH,
+        reason: scanReason,
+      }),
+    },
+    fileId: fileScope ? request.fileId : null,
+    limits: { previewMaxItems: MANUAL_PREVIEW_MAX_ITEMS },
+    resourceLibraries: MANUAL_RESOURCE_LIBRARY_CHOICES,
+    resourceLibraryId: discovery ? null : request.resourceLibraryId,
+    runtime: {
+      condition: "configuration_active",
+      nextAction: null,
+      ready: true,
+    },
+    scopeId: discovery
+      ? null
+      : fileScope
+        ? request.fileId
+        : request.resourceLibraryId,
+    scopeKind: discovery ? "resourceLibrary" : request.scopeKind,
+    selectionRequired: discovery,
+    source: discovery ? null : source,
+  };
+}
+
+function manualScanItems(count) {
+  return Array.from({ length: count }, (_, index) => {
+    const number = String(index + 1).padStart(3, "0");
+    return {
+      change: "unchanged",
+      createdAt: MANUAL_RECORDED_AT,
+      failure: null,
+      fileId: `file-index-${number}`,
+      itemId: `scan-item-${number}`,
+      knownEffects: "file_index_discovery_refreshed",
+      nextAction: "inspect the refreshed FileIndex item",
+      resourceLibraryId: MANUAL_LIBRARY_ID,
+      retrySafe: true,
+      sideEffects: "none",
+      sourcePath: `Movies/Title-${number}.mkv`,
+      stage: "manual_scan_discovery",
+      status: "ready",
+      storageId: MANUAL_STORAGE_ID,
+      taskId: MANUAL_SCAN_TASK_ID,
+      updatedAt: MANUAL_RECORDED_AT,
+    };
+  });
+}
+
+// Enough durable discovery items that any bounded itemLimit (1..100) leaves a
+// real second page for the browser paging proof.
+const MANUAL_SCAN_LIBRARY_ITEMS = manualScanItems(101);
+
+function manualScanLibraryRecord() {
+  return {
+    cancellationRequested: false,
+    configurationSnapshotId: MANUAL_CONFIGURATION_SNAPSHOT_ID,
+    createdAt: MANUAL_RECORDED_AT,
+    errors: [],
+    failure: null,
+    failureStage: null,
+    fileId: null,
+    items: MANUAL_SCAN_LIBRARY_ITEMS,
+    knownEffects: "file_index_discovery_refreshed",
+    mode: "full",
+    progress: {
+      directoriesVisited: 1,
+      errors: 0,
+      filesVisited: MANUAL_SCAN_LIBRARY_ITEMS.length,
+      ignored: 0,
+      mediaCandidates: MANUAL_SCAN_LIBRARY_ITEMS.length,
+      unstable: 0,
+    },
+    reconciliationComplete: true,
+    resourceLibraryId: MANUAL_LIBRARY_ID,
+    retrySafe: true,
+    scopeId: MANUAL_LIBRARY_ID,
+    scopeKind: "resourceLibrary",
+    sourcePath: null,
+    status: "completed",
+    storageId: MANUAL_STORAGE_ID,
+    taskId: MANUAL_SCAN_TASK_ID,
+    updatedAt: MANUAL_RECORDED_AT,
+  };
+}
+
+function manualScanRunningRecord({
+  scopeKind,
+  fileId,
+  resourceLibraryId,
+  mode,
+}) {
+  if (scopeKind === "resourceLibrary") {
+    return {
+      ...manualScanLibraryRecord(),
+      knownEffects: "none",
+      mode,
+      reconciliationComplete: false,
+      resourceLibraryId,
+      scopeId: resourceLibraryId,
+      status: "running",
+    };
+  }
+  return {
+    cancellationRequested: false,
+    configurationSnapshotId: MANUAL_CONFIGURATION_SNAPSHOT_ID,
+    createdAt: MANUAL_RECORDED_AT,
+    errors: [],
+    failure: null,
+    failureStage: null,
+    fileId,
+    items: [
+      {
+        change: "unchanged",
+        createdAt: MANUAL_RECORDED_AT,
+        failure: null,
+        fileId,
+        itemId: "scan-item-001",
+        knownEffects: "file_index_discovery_refreshed",
+        nextAction: "inspect the refreshed FileIndex item",
+        resourceLibraryId,
+        retrySafe: true,
+        sideEffects: "none",
+        sourcePath: "Movies/Example.mkv",
+        stage: "manual_scan_discovery",
+        status: "ready",
+        storageId: MANUAL_STORAGE_ID,
+        taskId: MANUAL_SCAN_TASK_ID,
+        updatedAt: MANUAL_RECORDED_AT,
+      },
+    ],
+    knownEffects: "none",
+    mode,
+    progress: {
+      directoriesVisited: 0,
+      errors: 0,
+      filesVisited: 1,
+      ignored: 0,
+      mediaCandidates: 1,
+      unstable: 0,
+    },
+    reconciliationComplete: false,
+    resourceLibraryId,
+    retrySafe: true,
+    scopeId: fileId,
+    scopeKind: "file",
+    sourcePath: "Movies/Example.mkv",
+    status: "running",
+    storageId: MANUAL_STORAGE_ID,
+    taskId: MANUAL_SCAN_TASK_ID,
+    updatedAt: MANUAL_RECORDED_AT,
+  };
+}
+
+// The deterministic durable Scan the deep-link proof reads before any admission
+// replaces it with the exact admitted scope and mode.
+const MANUAL_SCANS = new Map([
+  [MANUAL_SCAN_TASK_ID, manualScanLibraryRecord()],
+]);
+const MANUAL_PREVIEWS = new Map();
+
+function encodeManualItemCursor(taskId, itemLimit, offset) {
+  return Buffer.from(
+    JSON.stringify({ itemLimit, offset, taskId, version: 1 }),
+    "utf8",
+  ).toString("base64url");
+}
+
+// A cursor is opaque to the browser and bound to one exact task, page size and
+// page boundary. An unknown, foreign, stale-page-size, non-boundary or
+// out-of-range cursor is rejected with 400 instead of silently returning a
+// different page window.
+function decodeManualItemCursor(raw, taskId, itemLimit, totalItems) {
+  if (
+    typeof raw !== "string" ||
+    raw.length === 0 ||
+    raw.length > MANUAL_CURSOR_MAX_LENGTH
+  ) {
+    return null;
+  }
+  try {
+    const document = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    if (
+      document === null ||
+      typeof document !== "object" ||
+      document.version !== 1 ||
+      document.taskId !== taskId ||
+      document.itemLimit !== itemLimit ||
+      !Number.isInteger(document.offset) ||
+      document.offset < 0 ||
+      document.offset >= totalItems ||
+      document.offset % itemLimit !== 0
+    ) {
+      return null;
+    }
+    return document.offset;
+  } catch {
+    return null;
+  }
+}
+
+function manualScanPage(record, itemLimit, itemCursor) {
+  if (itemLimit === null) {
+    return {
+      itemLimit: null,
+      items: record.items,
+      itemsTruncated: false,
+      nextItemCursor: null,
+      previousItemCursor: null,
+    };
+  }
+  let offset = 0;
+  if (itemCursor !== null) {
+    offset = decodeManualItemCursor(
+      itemCursor,
+      record.taskId,
+      itemLimit,
+      record.items.length,
+    );
+    if (offset === null) {
+      return null;
+    }
+  }
+  const next =
+    offset + itemLimit < record.items.length ? offset + itemLimit : null;
+  const previous = offset > 0 ? Math.max(0, offset - itemLimit) : null;
+  return {
+    itemLimit,
+    items: record.items.slice(offset, offset + itemLimit),
+    itemsTruncated: next !== null,
+    nextItemCursor:
+      next === null
+        ? null
+        : encodeManualItemCursor(record.taskId, itemLimit, next),
+    previousItemCursor:
+      previous === null
+        ? null
+        : encodeManualItemCursor(record.taskId, itemLimit, previous),
+  };
+}
+
+function manualScanCancelAction(record) {
+  const terminal = MANUAL_TERMINAL_SCAN_STATUSES.has(record.status);
+  const requested = record.cancellationRequested === true;
+  let unavailableReason = null;
+  if (terminal) {
+    unavailableReason =
+      "a task in this state no longer accepts a cancellation request";
+  } else if (requested) {
+    unavailableReason =
+      "a durable cancellation request is already stored; the Scan reaches cancelled at its own cooperative boundary";
+  }
+  return {
+    action: "cancel",
+    available: !terminal && !requested,
+    confirmationRequired: false,
+    cooperative: true,
+    durableOutcome:
+      "a durable cancellation request is stored; the Scan stops at the next cooperative discovery boundary, an already running Storage read is not interrupted and every recorded item outcome is kept",
+    label: "Request cancel",
+    method: "POST",
+    nextAction: terminal
+      ? "refresh the Scan; a terminal or already cancelled Scan keeps its recorded item outcomes"
+      : "request cancellation, then refresh the Scan to read the durable outcome",
+    path: `/api/v1/operations/scans/${record.taskId}/cancel`,
+    retrySafe: false,
+    sideEffects: "none",
+    unavailableReason,
+  };
+}
+
+function manualScanNextAction(record) {
+  if (record.status === "cancelled") {
+    return "the Scan is cancelled and every recorded item outcome is kept";
+  }
+  if (record.status === "completed") {
+    return "inspect refreshed FileIndex state and choose a current item for Preview";
+  }
+  return "inspect the persisted Scan Task while discovery is running";
+}
+
+function manualScanDocument(record, page) {
+  return {
+    actions: { cancel: manualScanCancelAction(record) },
+    cancellationRequested: record.cancellationRequested,
+    configurationSnapshotId: record.configurationSnapshotId,
+    createdAt: record.createdAt,
+    errors: record.errors,
+    failure: record.failure,
+    failureStage: record.failureStage,
+    fileId: record.fileId,
+    itemLimit: page.itemLimit,
+    items: page.items,
+    itemsTruncated: page.itemsTruncated,
+    knownEffects: record.knownEffects,
+    mode: record.mode,
+    nextAction: manualScanNextAction(record),
+    nextItemCursor: page.nextItemCursor,
+    previousItemCursor: page.previousItemCursor,
+    progress: record.progress,
+    reconciliationComplete: record.reconciliationComplete,
+    resourceLibraryId: record.resourceLibraryId,
+    retrySafe: record.retrySafe,
+    scopeId: record.scopeId,
+    scopeKind: record.scopeKind,
+    sideEffects: "none",
+    sourcePath: record.sourcePath,
+    status: record.status,
+    storageId: record.storageId,
+    taskId: record.taskId,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function manualScanAdmissionDocument(record) {
+  return manualScanDocument(record, {
+    itemLimit: null,
+    items: [],
+    itemsTruncated: false,
+    nextItemCursor: null,
+    previousItemCursor: null,
+  });
+}
+
+function manualPreviewIdentity() {
+  return {
+    countries: ["JP"],
+    episode: null,
+    episodeTitle: null,
+    episodes: [],
+    genres: ["Animation"],
+    languages: [],
+    matchedBy: "candidate_matcher",
+    mediaType: "movie",
+    originalTitle: null,
+    provider: "tmdb",
+    providerId: "129",
+    recognitionTypeId: "A",
+    season: null,
+    title: "One",
+    year: 2001,
+  };
+}
+
+// The persisted findings of one zero-mutation plan: the complete parse,
+// recognition, metadata, naming and classification analysis, bounded to
+// operator-facing values. No executor input, fingerprint, digest, occurrence
+// identity or host path is part of this document.
+function manualPreviewPlan() {
+  return {
+    analysis: {
+      classification: {
+        available: true,
+        evidence: ["media_type=movie", "genre=Animation", "country=JP"],
+        matchedRuleId: "anime-movie",
+        matchedRuleName: "Japanese Animation",
+        mediaLibraryId: "movies",
+        policyId: "A",
+        reason: null,
+        recognitionTypeId: "A",
+        relativePath: "Anime",
+        status: "classified",
+        warnings: [],
+      },
+      metadata: {
+        available: true,
+        identity: manualPreviewIdentity(),
+        match: {
+          candidateCount: 1,
+          candidates: [
+            {
+              exactTitle: true,
+              exactYear: true,
+              mediaType: "movie",
+              provider: "tmdb",
+              providerId: "129",
+              score: 100.0,
+              title: "One",
+              year: 2001,
+            },
+          ],
+          reasons: ["Candidate reached automatic threshold"],
+          score: 100.0,
+          status: "matched",
+          warnings: [],
+        },
+        query: "One",
+        status: "matched",
+      },
+      naming: {
+        available: true,
+        directory: "One (2001)",
+        directorySegments: ["One (2001)"],
+        filename: "One (2001).mkv",
+        policyId: "A",
+        reason: null,
+        recognitionTypeId: "A",
+        sanitizationChanges: [],
+        warnings: [],
+      },
+      parse: {
+        audio: null,
+        episode: null,
+        episodes: [],
+        evidence: [
+          {
+            confidence: "high",
+            field: "title_candidate",
+            source: "filename",
+            value: "One",
+          },
+          {
+            confidence: "high",
+            field: "year",
+            source: "filename",
+            value: "2001",
+          },
+        ],
+        hdr: null,
+        releaseGroup: null,
+        resolution: null,
+        season: null,
+        source: null,
+        titleCandidate: "One",
+        version: null,
+        videoCodec: null,
+        warnings: [],
+        year: 2001,
+      },
+      recognition: {
+        confidence: "1.0",
+        reasons: [
+          { code: "MANUAL_PREVIEW", message: "Pinned by manual Preview" },
+        ],
+        recognitionTypeId: "A",
+        ruleId: "manual-preview",
+        score: 100,
+        status: "matched",
+        warnings: [],
+      },
+    },
+    attachments: [],
+    bounded: true,
+    capabilities: {
+      declared: ["can_copy", "can_delete"],
+      missing: [],
+      required: ["can_copy", "can_delete"],
+      verdict: "ok",
+    },
+    conflicts: [],
+    destination: {
+      filename: "One (2001).mkv",
+      relativePath: "Anime/One (2001)/One (2001).mkv",
+      storageId: "target",
+    },
+    deterministic: true,
+    executionState: "ready_for_explicit_authorization",
+    mediaIdentity: manualPreviewIdentity(),
+    operation: "MOVE",
+    operationPolicy: "move",
+    planStatus: "ready",
+    policies: {
+      classificationPolicyId: "A",
+      metadataPolicyId: "A",
+      namingPolicyId: "A",
+      organizePolicyId: "A",
+      recognitionTypePolicyId: "type-A",
+    },
+    recognitionType: "A",
+    warnings: [],
+    zeroMutation: true,
+  };
+}
+
+function manualPreviewDocument({
+  fileId,
+  resourceLibraryId,
+  scopeId,
+  scopeKind,
+}) {
+  const itemId = "preview-item-e2e-001";
+  return {
+    actor: "e2e-operator",
+    configurationSnapshotId: MANUAL_CONFIGURATION_SNAPSHOT_ID,
+    createdAt: MANUAL_RECORDED_AT,
+    current: true,
+    executionState: "ready_for_explicit_authorization",
+    failure: null,
+    intentId: "preview-intent-e2e-001",
+    intentVersion: 1,
+    items: [
+      {
+        choice: {
+          classificationPolicyId: "A",
+          namingPolicyId: "A",
+          organizePolicyId: "A",
+          recognitionTypeId: "A",
+        },
+        configurationSnapshotId: MANUAL_CONFIGURATION_SNAPSHOT_ID,
+        current: true,
+        executionState: "ready_for_explicit_authorization",
+        failure: null,
+        itemId,
+        nextAction:
+          "inspect this exact zero-mutation plan; authorize selected items for execution",
+        plan: manualPreviewPlan(),
+        position: 0,
+        previewItemId: itemId,
+        sideEffects: "none",
+        source: {
+          extension: "mkv",
+          fileId: fileId ?? MANUAL_FILE_SCOPE.fileId,
+          filename: "One.2001.mkv",
+          occurrenceState: "verified",
+          path: "Movies/One.2001.mkv",
+          resourceLibraryId,
+          scanStatus: "ready",
+          size: 12,
+          storageId: MANUAL_STORAGE_ID,
+        },
+        stage: "planning",
+        status: "previewed",
+        truncated: false,
+        zeroMutation: true,
+      },
+    ],
+    nextAction:
+      "inspect each exact plan; authorize selected items for execution",
+    previewId: MANUAL_PREVIEW_ID,
+    scope: { itemCount: 1, scopeId, scopeKind },
+    scopeId,
+    scopeKind,
+    selection: { selectedItemIds: [itemId], unselectedItemIds: [] },
+    sideEffects: "none",
+    status: "previewed",
+    truncated: false,
+    updatedAt: MANUAL_RECORDED_AT,
+    zeroMutation: true,
+  };
+}
+
+function manualPreviewListDocument({ limit, scopeId, scopeKind }) {
+  const items = [...MANUAL_PREVIEWS.values()].filter(
+    (preview) => preview.scopeKind === scopeKind && preview.scopeId === scopeId,
+  );
+  return {
+    items: items.slice(0, limit),
+    limit,
+    scopeId,
+    scopeKind,
+    total: items.length,
+  };
+}
+
 function bearerToken(req) {
   const header = req.headers.authorization ?? "";
   return header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
@@ -2669,6 +3468,428 @@ const server = createServer(async (req, res) => {
       ],
       count: 1,
     });
+    return;
+  }
+
+  // --- Manual Scan / Preview bounded routes ---
+  //
+  // These mirror the authoritative Python contract: one bounded action matrix
+  // for the exact principal and scope, a bounded Scan admission with
+  // deterministic durable state, cooperative cancellation, and a zero-mutation
+  // Preview. Only bounded, secret-free request metadata is recorded for the
+  // built-artifact browser proof. The optional `scope` request field and the
+  // Preview `snapshotId`/`snapshotDigest` fields are accepted but never change
+  // the bounded scope this fake binds from the explicit identifiers, and no
+  // digest value is ever echoed back into a response document.
+
+  if (url.pathname === "/api/v1/manual-actions" && req.method === "GET") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const query = readBoundedQuery(url, [
+      "scopeKind",
+      "scope",
+      "fileId",
+      "resourceLibraryId",
+    ]);
+    if (query === null) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const scopeKind = query.scopeKind ?? null;
+    if (
+      scopeKind !== null &&
+      scopeKind !== "file" &&
+      scopeKind !== "resourceLibrary"
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const fileId = query.fileId ?? null;
+    const resourceLibraryId = query.resourceLibraryId ?? null;
+    if (
+      scopeKind === "file" &&
+      (fileId === null || resourceLibraryId === null)
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    recordManualRequest({
+      body: { fileId, resourceLibraryId, scopeKind },
+      method: "GET",
+      objectId: fileId ?? resourceLibraryId,
+      objectType: "manual_action_matrix",
+      path: "/api/v1/manual-actions",
+    });
+    sendJson(
+      res,
+      200,
+      manualActionMatrixDocument(
+        { fileId, resourceLibraryId, scopeKind },
+        operationsPrincipal.permitted,
+      ),
+    );
+    return;
+  }
+
+  if (url.pathname === "/api/v1/scans" && req.method === "POST") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    if (!operationsPrincipal.permitted) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const body = await readBoundedJsonBody(req, res);
+    if (!body.ok) {
+      return;
+    }
+    const fields = boundedManualRequestFields(body.document, [
+      "scopeKind",
+      "scope",
+      "fileId",
+      "resourceLibraryId",
+      "mode",
+    ]);
+    if (fields === null) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const scopeKind = fields.scopeKind;
+    const mode = fields.mode;
+    const fileId = fields.fileId ?? null;
+    const resourceLibraryId = fields.resourceLibraryId ?? null;
+    if (
+      (scopeKind !== "file" && scopeKind !== "resourceLibrary") ||
+      (mode !== "full" && mode !== "incremental") ||
+      (scopeKind === "resourceLibrary" && fileId !== null) ||
+      (scopeKind === "file" &&
+        (fileId === null || resourceLibraryId === null)) ||
+      (scopeKind === "resourceLibrary" && resourceLibraryId === null)
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    if (
+      scopeKind === "file" &&
+      (fileId !== MANUAL_FILE_SCOPE.fileId ||
+        resourceLibraryId !== MANUAL_FILE_SCOPE.resourceLibraryId)
+    ) {
+      recordManualRequest({
+        body: { fileId, mode, resourceLibraryId, scopeKind },
+        method: "POST",
+        objectId: fileId,
+        objectType: "scan",
+        path: "/api/v1/scans",
+      });
+      sendJson(res, 409, {
+        details: { fileId, resourceLibraryId, scopeKind },
+        error: {
+          code: "source_not_found",
+          message: MANUAL_UNKNOWN_SOURCE_REASON,
+        },
+      });
+      return;
+    }
+    if (
+      scopeKind === "resourceLibrary" &&
+      resourceLibraryId !== MANUAL_LIBRARY_ID
+    ) {
+      recordManualRequest({
+        body: { mode, resourceLibraryId, scopeKind },
+        method: "POST",
+        objectId: resourceLibraryId,
+        objectType: "scan",
+        path: "/api/v1/scans",
+      });
+      sendJson(res, 409, {
+        details: { resourceLibraryId, scopeKind },
+        error: {
+          code: "resource_library_not_found",
+          message: MANUAL_UNKNOWN_LIBRARY_REASON,
+        },
+      });
+      return;
+    }
+    const record = manualScanRunningRecord({
+      fileId,
+      mode,
+      resourceLibraryId,
+      scopeKind,
+    });
+    MANUAL_SCANS.set(record.taskId, record);
+    recordManualRequest({
+      body: { fileId, mode, resourceLibraryId, scopeKind },
+      method: "POST",
+      objectId: record.taskId,
+      objectType: "scan",
+      path: "/api/v1/scans",
+    });
+    sendJson(res, 202, manualScanAdmissionDocument(record));
+    return;
+  }
+
+  const manualScanCancelMatch = url.pathname.match(
+    /^\/api\/v1\/scans\/([^/]+)\/cancel$/,
+  );
+  if (manualScanCancelMatch && req.method === "POST") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    if (!operationsPrincipal.permitted) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const taskId = decodeURIComponent(manualScanCancelMatch[1]);
+    const record = MANUAL_SCANS.get(taskId);
+    if (record === undefined) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    recordManualRequest({
+      method: "POST",
+      objectId: taskId,
+      objectType: "scan",
+      path: `/api/v1/scans/${taskId}/cancel`,
+    });
+    if (
+      MANUAL_TERMINAL_SCAN_STATUSES.has(record.status) ||
+      record.cancellationRequested === true
+    ) {
+      sendJson(res, 409, { error: { code: "lifecycle_conflict" } });
+      return;
+    }
+    record.status = "cancelled";
+    record.cancellationRequested = true;
+    record.updatedAt = bumpTimestamp(record.updatedAt);
+    sendJson(
+      res,
+      200,
+      manualScanDocument(record, manualScanPage(record, null, null)),
+    );
+    return;
+  }
+
+  const manualScanDetailMatch = url.pathname.match(
+    /^\/api\/v1\/scans\/([^/]+)$/,
+  );
+  if (manualScanDetailMatch && req.method === "GET") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const taskId = decodeURIComponent(manualScanDetailMatch[1]);
+    const query = readBoundedQuery(url, ["itemLimit", "itemCursor"]);
+    if (query === null) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const parsedLimit = parseBoundedItemLimit(query.itemLimit);
+    if (!parsedLimit.ok) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const record = MANUAL_SCANS.get(taskId);
+    if (record === undefined) {
+      recordManualRequest({
+        method: "GET",
+        objectId: taskId,
+        objectType: "scan",
+        path: `/api/v1/scans/${taskId}`,
+      });
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    const page = manualScanPage(
+      record,
+      parsedLimit.itemLimit,
+      query.itemCursor ?? null,
+    );
+    if (page === null) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    recordManualRequest({
+      body: { itemCursor: query.itemCursor, itemLimit: parsedLimit.itemLimit },
+      method: "GET",
+      objectId: taskId,
+      objectType: "scan",
+      path: `/api/v1/scans/${taskId}`,
+    });
+    sendJson(res, 200, manualScanDocument(record, page));
+    return;
+  }
+
+  if (url.pathname === "/api/v1/previews" && req.method === "POST") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    if (!operationsPrincipal.permitted) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const body = await readBoundedJsonBody(req, res);
+    if (!body.ok) {
+      return;
+    }
+    const fields = boundedManualRequestFields(body.document, [
+      "scopeKind",
+      "scope",
+      "fileId",
+      "resourceLibraryId",
+      "snapshotId",
+      "snapshotDigest",
+    ]);
+    if (fields === null) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const scopeKind = fields.scopeKind;
+    const fileId = fields.fileId ?? null;
+    const resourceLibraryId = fields.resourceLibraryId ?? null;
+    if (
+      (scopeKind !== "file" && scopeKind !== "resourceLibrary") ||
+      (scopeKind === "resourceLibrary" && fileId !== null) ||
+      (scopeKind === "file" &&
+        (fileId === null || resourceLibraryId === null)) ||
+      (scopeKind === "resourceLibrary" && resourceLibraryId === null)
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    if (
+      scopeKind === "file" &&
+      (fileId !== MANUAL_FILE_SCOPE.fileId ||
+        resourceLibraryId !== MANUAL_FILE_SCOPE.resourceLibraryId)
+    ) {
+      recordManualRequest({
+        body: { fileId, resourceLibraryId, scopeKind },
+        method: "POST",
+        objectId: fileId,
+        objectType: "preview",
+        path: "/api/v1/previews",
+      });
+      sendJson(res, 409, {
+        details: { fileId, resourceLibraryId, scopeKind },
+        error: {
+          code: "source_not_found",
+          message: MANUAL_UNKNOWN_SOURCE_REASON,
+        },
+      });
+      return;
+    }
+    if (
+      scopeKind === "resourceLibrary" &&
+      resourceLibraryId !== MANUAL_LIBRARY_ID
+    ) {
+      recordManualRequest({
+        body: { resourceLibraryId, scopeKind },
+        method: "POST",
+        objectId: resourceLibraryId,
+        objectType: "preview",
+        path: "/api/v1/previews",
+      });
+      sendJson(res, 409, {
+        details: { resourceLibraryId, scopeKind },
+        error: {
+          code: "resource_library_not_found",
+          message: MANUAL_UNKNOWN_LIBRARY_REASON,
+        },
+      });
+      return;
+    }
+    const document = manualPreviewDocument({
+      fileId,
+      resourceLibraryId,
+      scopeId: scopeKind === "file" ? fileId : resourceLibraryId,
+      scopeKind,
+    });
+    // Persisting the bounded preview document is the fake's read-back state;
+    // Preview itself performs no Storage or media mutation.
+    MANUAL_PREVIEWS.set(document.previewId, document);
+    recordManualRequest({
+      body: { fileId, resourceLibraryId, scopeKind },
+      method: "POST",
+      objectId: document.previewId,
+      objectType: "preview",
+      path: "/api/v1/previews",
+    });
+    sendJson(res, 201, document);
+    return;
+  }
+
+  if (url.pathname === "/api/v1/previews" && req.method === "GET") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const query = readBoundedQuery(url, [
+      "limit",
+      "resourceLibraryId",
+      "scopeId",
+      "scopeKind",
+    ]);
+    if (query === null) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const parsedLimit = parseBoundedItemLimit(query.limit);
+    if (!parsedLimit.ok) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    let scopeKind = query.scopeKind ?? null;
+    let scopeId = query.scopeId ?? null;
+    if (scopeId === null && query.resourceLibraryId !== undefined) {
+      scopeKind = "resourceLibrary";
+      scopeId = query.resourceLibraryId;
+    }
+    if (
+      scopeId === null ||
+      (scopeKind !== "file" && scopeKind !== "resourceLibrary")
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const limit = parsedLimit.itemLimit ?? 20;
+    recordManualRequest({
+      body: { scopeKind },
+      method: "GET",
+      objectId: scopeId,
+      objectType: "preview_list",
+      path: "/api/v1/previews",
+    });
+    sendJson(
+      res,
+      200,
+      manualPreviewListDocument({ limit, scopeId, scopeKind }),
+    );
+    return;
+  }
+
+  const manualPreviewDetailMatch = url.pathname.match(
+    /^\/api\/v1\/previews\/([^/]+)$/,
+  );
+  if (manualPreviewDetailMatch && req.method === "GET") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const previewId = decodeURIComponent(manualPreviewDetailMatch[1]);
+    recordManualRequest({
+      method: "GET",
+      objectId: previewId,
+      objectType: "preview",
+      path: `/api/v1/previews/${previewId}`,
+    });
+    const document = MANUAL_PREVIEWS.get(previewId);
+    if (document === undefined) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    sendJson(res, 200, document);
+    return;
+  }
+
+  if (url.pathname === "/__test__/manual-operations" && req.method === "GET") {
+    sendJson(res, 200, { items: RECORDED_MANUAL_REQUESTS });
     return;
   }
 
