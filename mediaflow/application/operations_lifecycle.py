@@ -546,6 +546,122 @@ def manual_scan_operator_document(document: dict[str, object]) -> dict[str, obje
     }
 
 
+def manual_preview_operator_document(document: dict[str, object]) -> dict[str, object]:
+    """Bounded manual Preview detail for the V2 Operations workspace.
+
+    The aggregate status, source scope, configuration pin and per-item
+    plan/analysis projections are preserved.  Every fingerprint value,
+    configuration digest, occurrence identity and raw source evidence
+    version is stripped; the bounded source path is redacted when it
+    contains an absolute host root, a private endpoint or a credential-
+    shaped value.
+    """
+
+    raw_items = document.get("items")
+    items = raw_items if isinstance(raw_items, list) else []
+    scope = document.get("scope") if isinstance(document.get("scope"), dict) else None
+    selection = document.get("selection") if isinstance(document.get("selection"), dict) else None
+    return {
+        "previewId": document.get("previewId"),
+        "intentId": document.get("intentId"),
+        "actor": document.get("actor"),
+        "intentVersion": document.get("intentVersion"),
+        "status": document.get("status"),
+        "current": bool(document.get("current")),
+        "createdAt": document.get("createdAt"),
+        "updatedAt": document.get("updatedAt"),
+        "nextAction": document.get("nextAction"),
+        "error": document.get("error"),
+        "sideEffects": "none",
+        "zeroMutation": True,
+        "executionState": document.get("executionState"),
+        "truncated": bool(document.get("truncated")),
+        "scope": scope,
+        "scopeKind": document.get("scopeKind"),
+        "scopeId": document.get("scopeId"),
+        "selection": selection,
+        "configurationSnapshotId": document.get("configurationSnapshotId"),
+        "items": [_manual_preview_item_operator(item) for item in items if isinstance(item, dict)],
+    }
+
+
+def _manual_preview_item_operator(item: dict[str, object]) -> dict[str, object]:
+    """Bounded one-item projection for the V2 Preview operator surface."""
+
+    source = item.get("source") if isinstance(item.get("source"), dict) else {}
+    plan = item.get("plan") if isinstance(item.get("plan"), dict) else None
+    return {
+        "previewItemId": item.get("previewItemId"),
+        "previewId": item.get("previewId"),
+        "itemId": item.get("itemId"),
+        "position": item.get("position"),
+        "stage": item.get("stage"),
+        "status": item.get("status"),
+        "createdAt": item.get("createdAt"),
+        "updatedAt": item.get("updatedAt"),
+        "current": bool(item.get("current")),
+        "truncated": bool(item.get("truncated")),
+        "nextAction": item.get("nextAction"),
+        "error": item.get("error"),
+        "sideEffects": "none",
+        "zeroMutation": True,
+        "executionState": item.get("executionState"),
+        "source": {
+            "fileId": source.get("fileId"),
+            "storageId": source.get("storageId"),
+            "resourceLibraryId": source.get("resourceLibraryId"),
+            "path": _bounded_identity_path(source.get("path")),
+            "filename": source.get("filename"),
+            "extension": source.get("extension"),
+            "size": source.get("size"),
+            "scanStatus": source.get("scanStatus"),
+            "occurrenceState": source.get("occurrenceState"),
+        },
+        "choice": item.get("choice"),
+        "configurationSnapshotId": item.get("configurationSnapshotId"),
+        "plan": _bounded_preview_plan(plan) if plan is not None else None,
+    }
+
+
+def _bounded_preview_plan(plan: dict[str, object]) -> dict[str, object]:
+    """Strip fingerprints and raw provider evidence from a preview plan."""
+
+    result: dict[str, object] = {}
+    for key in (
+        "source",
+        "recognitionType",
+        "policies",
+        "analysis",
+        "destination",
+        "operation",
+        "attachments",
+        "executionPlan",
+        "capabilities",
+        "conflicts",
+        "warnings",
+        "planStatus",
+        "zeroMutation",
+        "executionState",
+        "bounded",
+        "deterministic",
+    ):
+        if key in plan:
+            value = plan[key]
+            if key == "destination":
+                result[key] = _bounded_identity_path(value) if isinstance(value, str) else value
+            elif key == "source" and isinstance(value, dict):
+                result[key] = {
+                    "fileId": value.get("fileId"),
+                    "storageId": value.get("storageId"),
+                    "resourceLibraryId": value.get("resourceLibraryId"),
+                    "path": _bounded_identity_path(value.get("path")),
+                    "filename": value.get("filename"),
+                }
+            else:
+                result[key] = value
+    return result
+
+
 # --------------------------------------------------------------------------
 # Backend-computed lifecycle control projection
 # --------------------------------------------------------------------------

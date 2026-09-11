@@ -29,6 +29,10 @@ describe("destination model", () => {
       "Task detail",
       "Job list",
       "Job detail",
+      "Start Scan",
+      "Scan detail",
+      "Start Preview",
+      "Preview detail",
     ]);
   });
 

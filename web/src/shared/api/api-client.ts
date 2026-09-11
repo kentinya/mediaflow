@@ -1415,3 +1415,429 @@ export async function fetchWorkerList(
     throw new OperationsApiError("malformed");
   }
 }
+
+// ---------------------------------------------------------------------------
+// Manual Scan / Preview API functions
+// ---------------------------------------------------------------------------
+
+import {
+  normalizeManualActionMatrix,
+  type ManualActionMatrixModel,
+} from "../../entities/operations/manual-actions";
+import {
+  normalizeManualScan,
+  type ManualScanModel,
+} from "../../entities/operations/scan";
+import {
+  normalizeManualPreview,
+  normalizeManualPreviewListPage,
+  type ManualPreviewModel,
+  type ManualPreviewListPage,
+} from "../../entities/operations/preview";
+
+// --- Manual action matrix ---
+
+export interface ManualActionMatrixQueryOptions {
+  readonly scopeKind: "file" | "resourceLibrary";
+  readonly fileId?: string | null;
+  readonly resourceLibraryId?: string | null;
+}
+
+export function manualActionMatrixUrl(
+  options: ManualActionMatrixQueryOptions,
+): string {
+  const params = new URLSearchParams();
+  params.set("scopeKind", options.scopeKind);
+  if (options.fileId) params.set("fileId", options.fileId);
+  if (options.resourceLibraryId)
+    params.set("resourceLibraryId", options.resourceLibraryId);
+  return `/api/v1/operations/manual-actions?${params.toString()}`;
+}
+
+export async function fetchManualActionMatrix(
+  token: string | null,
+  options: ManualActionMatrixQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OperationsRead<ManualActionMatrixModel>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(manualActionMatrixUrl(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeManualActionMatrix(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+// --- Submit server-bound scan ---
+
+export interface SubmitScanOptions {
+  readonly scopeKind: "file" | "resourceLibrary";
+  readonly fileId?: string | null;
+  readonly resourceLibraryId?: string | null;
+  readonly mode?: string | null;
+}
+
+export type SubmitScanResult =
+  | { readonly ok: true; readonly model: ManualScanModel }
+  | { readonly ok: false; readonly status: number; readonly code: string };
+
+export async function submitServerBoundScan(
+  token: string | null,
+  options: SubmitScanOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<SubmitScanResult> {
+  const body: Record<string, string> = {
+    scopeKind: options.scopeKind,
+  };
+  if (options.fileId) body.fileId = options.fileId;
+  if (options.resourceLibraryId)
+    body.resourceLibraryId = options.resourceLibraryId;
+  if (options.mode) body.mode = options.mode;
+
+  let response: Response;
+  try {
+    response = await fetchImpl("/api/v1/operations/scans", {
+      method: "POST",
+      headers: operationsMutationHeaders(token),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    let code = "request_rejected";
+    try {
+      const errBody = await response.json();
+      const error = errBody?.error;
+      if (typeof error?.code === "string") code = error.code;
+    } catch {
+      // ignore
+    }
+    return { ok: false, status: response.status, code };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  try {
+    return { ok: true, model: normalizeManualScan(payload) };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+// --- Fetch scan detail ---
+
+export interface ScanDetailQueryOptions {
+  readonly taskId: string;
+  readonly itemLimit?: number;
+  readonly itemCursor?: string | null;
+}
+
+export type ScanDetailRead =
+  | { readonly ok: true; readonly model: ManualScanModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchManualScanDetail(
+  token: string | null,
+  options: ScanDetailQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<ScanDetailRead> {
+  if (!isSafeIdentifier(options.taskId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  const params = new URLSearchParams();
+  if (options.itemLimit !== undefined)
+    params.set("itemLimit", String(options.itemLimit));
+  if (options.itemCursor) params.set("itemCursor", options.itemCursor);
+  const qs = params.toString();
+  const url = `/api/v1/operations/scans/${encodeURIComponent(options.taskId)}${qs ? `?${qs}` : ""}`;
+
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeManualScan(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+// --- Cancel scan ---
+
+export type CancelScanResult =
+  | { readonly ok: true; readonly model: ManualScanModel }
+  | { readonly ok: false; readonly status: number; readonly code: string };
+
+export async function submitManualScanCancellation(
+  token: string | null,
+  taskId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<CancelScanResult> {
+  if (!isSafeIdentifier(taskId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/scans/${encodeURIComponent(taskId)}/cancel`,
+      {
+        method: "POST",
+        headers: operationsMutationHeaders(token),
+      },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    let code = "request_rejected";
+    try {
+      const errBody = await response.json();
+      const error = errBody?.error;
+      if (typeof error?.code === "string") code = error.code;
+    } catch {
+      // ignore
+    }
+    return { ok: false, status: response.status, code };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  try {
+    return { ok: true, model: normalizeManualScan(payload) };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+// --- Submit server-bound preview ---
+
+export interface SubmitPreviewOptions {
+  readonly scopeKind: "file" | "resourceLibrary";
+  readonly fileId?: string | null;
+  readonly resourceLibraryId?: string | null;
+  readonly snapshotId?: string | null;
+  readonly snapshotDigest?: string | null;
+}
+
+export type SubmitPreviewResult =
+  | { readonly ok: true; readonly model: ManualPreviewModel }
+  | { readonly ok: false; readonly status: number; readonly code: string };
+
+export async function submitServerBoundPreview(
+  token: string | null,
+  options: SubmitPreviewOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<SubmitPreviewResult> {
+  const body: Record<string, string> = {
+    scopeKind: options.scopeKind,
+  };
+  if (options.fileId) body.fileId = options.fileId;
+  if (options.resourceLibraryId)
+    body.resourceLibraryId = options.resourceLibraryId;
+  if (options.snapshotId) body.snapshotId = options.snapshotId;
+  if (options.snapshotDigest) body.snapshotDigest = options.snapshotDigest;
+
+  let response: Response;
+  try {
+    response = await fetchImpl("/api/v1/operations/previews", {
+      method: "POST",
+      headers: operationsMutationHeaders(token),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    let code = "request_rejected";
+    try {
+      const errBody = await response.json();
+      const error = errBody?.error;
+      if (typeof error?.code === "string") code = error.code;
+    } catch {
+      // ignore
+    }
+    return { ok: false, status: response.status, code };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  try {
+    return { ok: true, model: normalizeManualPreview(payload) };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+// --- Fetch preview list ---
+
+export interface ManualPreviewListQueryOptions {
+  readonly scopeKind: string;
+  readonly scopeId: string;
+  readonly limit?: number;
+}
+
+export async function fetchManualPreviews(
+  token: string | null,
+  options: ManualPreviewListQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OperationsRead<ManualPreviewListPage>> {
+  const params = new URLSearchParams();
+  params.set("scopeKind", options.scopeKind);
+  params.set("scopeId", options.scopeId);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/previews?${params.toString()}`,
+      {
+        method: "GET",
+        headers: operationsHeaders(token),
+      },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeManualPreviewListPage(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+// --- Fetch preview detail ---
+
+export type PreviewDetailRead =
+  | { readonly ok: true; readonly model: ManualPreviewModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchManualPreviewDetail(
+  token: string | null,
+  previewId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<PreviewDetailRead> {
+  if (!isSafeIdentifier(previewId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/previews/${encodeURIComponent(previewId)}`,
+      {
+        method: "GET",
+        headers: operationsHeaders(token),
+      },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeManualPreview(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}

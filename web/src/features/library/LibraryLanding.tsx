@@ -1,4 +1,7 @@
 import { Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { useAuthToken } from "../../shared/api/auth-context";
+import { systemStatusQueryOptions } from "./system-status-query";
 
 /**
  * Library landing for the two deliberately separate read journeys. Neither
@@ -7,8 +10,17 @@ import { Link } from "@tanstack/react-router";
  * A bounded Operations cross-link is offered so an operator in the daily
  * operations flow can reach the Task/Job workspace without copying an
  * identifier, a path or an authority value into a URL.
+ *
+ * For each ResourceLibrary in the Active runtime, the landing offers
+ * bounded Scan and Preview admission links so the operator can start
+ * work directly from the Library.
  */
 export function LibraryLanding() {
+  const token = useAuthToken();
+  const statusQuery = useQuery(systemStatusQueryOptions(token));
+  const resourceLibraries =
+    statusQuery.data?.resourceLibraries.filter((lib) => lib.enabled) ?? [];
+
   return (
     <div className="mf-library-landing">
       <h2>Library</h2>
@@ -46,6 +58,49 @@ export function LibraryLanding() {
           </Link>
         </li>
       </ul>
+      {resourceLibraries.length > 0 && (
+        <section className="mf-count-section">
+          <h3>ResourceLibrary actions</h3>
+          <p>
+            Start a bounded Scan or run a zero-mutation Preview for each
+            configured ResourceLibrary. Scan discovers and indexes source files;
+            Preview runs the complete pipeline with zero Storage mutation.
+          </p>
+          {resourceLibraries.map((library) => (
+            <div key={library.id} className="mf-count-section">
+              <h4>{library.name ?? library.id}</h4>
+              <dl>
+                <dt>ResourceLibrary</dt>
+                <dd>{library.id}</dd>
+                <dt>Storage</dt>
+                <dd>{library.storageId}</dd>
+              </dl>
+              <div className="mf-actions">
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/operations/scan/new"
+                  search={{
+                    scopeKind: "resourceLibrary",
+                    resourceLibraryId: library.id,
+                  }}
+                >
+                  Start bounded Scan
+                </Link>
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/operations/preview/new"
+                  search={{
+                    scopeKind: "resourceLibrary",
+                    resourceLibraryId: library.id,
+                  }}
+                >
+                  Run zero-mutation Preview
+                </Link>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
       <section className="mf-count-section">
         <h3>Operations</h3>
         <p>

@@ -474,6 +474,69 @@ class ManualOrganizePreviewService:
     create_current_preview = create_current
     create_source_preview = create_current
 
+    def create_current_from_index(
+        self,
+        *,
+        scope_kind: str,
+        actor: str,
+        file_id: str | None = None,
+        resource_library_id: str | None = None,
+        snapshot_id: str | None = None,
+        snapshot_digest: str | None = None,
+    ) -> ManualOrganizePreview:
+        """Preview exact current FileIndex source using server-resolved identity.
+
+        The browser never receives or echoes a raw fingerprint or occurrence
+        identity.  At admission the backend resolves the exact current
+        FileIndex record and delegates to ``create_current`` with the
+        server-resolved occurrence/fingerprint, where the existing live
+        recheck rejects stale or replaced sources.
+        """
+        kind = self._current_scope_kind(scope_kind)
+        if kind == "file":
+            if not self._valid_scope_id(file_id):
+                raise ManualPreviewError(
+                    "current file Preview requires fileId",
+                    code="malformed_selection",
+                    next_action="select one current FileIndex item and reload its occurrence",
+                )
+            if not self._valid_scope_id(resource_library_id):
+                raise ManualPreviewError(
+                    "current file Preview requires resourceLibraryId",
+                    code="malformed_selection",
+                    next_action=(
+                        "select one current FileIndex item from a configured ResourceLibrary"
+                    ),
+                )
+            record = self._current_file_record(file_id, resource_library_id)
+            self._assert_current_record(record)
+            self._current_snapshot(snapshot_id, snapshot_digest)
+            return self.create_current(
+                scope_kind="file",
+                actor=actor,
+                file_id=file_id,
+                resource_library_id=resource_library_id,
+                occurrence_id=record.occurrence_id,
+                fingerprint=record.fingerprint,
+                snapshot_id=snapshot_id,
+                snapshot_digest=snapshot_digest,
+            )
+        else:
+            if not self._valid_scope_id(resource_library_id):
+                raise ManualPreviewError(
+                    "ResourceLibrary Preview requires resourceLibraryId",
+                    code="malformed_selection",
+                    next_action="select one configured ResourceLibrary and retry Preview",
+                )
+            self._current_snapshot(snapshot_id, snapshot_digest)
+            return self.create_current(
+                scope_kind="resource_library",
+                actor=actor,
+                resource_library_id=resource_library_id,
+                snapshot_id=snapshot_id,
+                snapshot_digest=snapshot_digest,
+            )
+
     def list_current(
         self, scope_kind: str, scope_id: str, *, limit: int = 100
     ) -> tuple[ManualOrganizePreview, ...]:

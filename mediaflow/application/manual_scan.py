@@ -174,6 +174,100 @@ class ManualScanService:
             ) from error
         return self.admit(request, actor=actor, start=start)
 
+    def admit_current_document(
+        self, document: Mapping[str, object], *, actor: str = "operator", start: bool | None = None
+    ) -> ManualScanTask:
+        """Admit a bounded Scan using server-resolved current source identity.
+
+        The browser never receives or echoes a raw fingerprint or occurrence
+        identity.  At admission the backend resolves the exact current
+        FileIndex record, requires verified+ready state, and rechecks the
+        live Storage occurrence before publishing durable work.
+        """
+        if not isinstance(document, Mapping):
+            raise ManualScanError(
+                "invalid_request",
+                "manual Scan request must be an object",
+                status=400,
+                next_action="submit one bounded Scan scope and an explicit mode",
+            )
+        allowed = {"scopeKind", "scope", "resourceLibraryId", "fileId", "mode"}
+        if set(document).difference(allowed):
+            raise ManualScanError(
+                "invalid_request",
+                "server-bound manual Scan accepts only bounded scope identity and mode",
+                status=400,
+                next_action="remove path, operation, Provider, and execution fields",
+            )
+        raw_kind = document.get("scopeKind", document.get("scope"))
+        if raw_kind == "resourceLibrary":
+            raw_kind = ManualScanScopeKind.RESOURCE_LIBRARY.value
+        try:
+            kind = ManualScanScopeKind(raw_kind)
+            mode = ScanMode(document.get("mode"))
+            resource_library_id = document.get("resourceLibraryId")
+            file_id = document.get("fileId")
+        except (TypeError, ValueError) as error:
+            raise ManualScanError(
+                "invalid_request",
+                redact_manual_text(error),
+                status=400,
+                next_action=(
+                    "submit one configured ResourceLibrary or exact current FileIndex scope"
+                ),
+            ) from error
+        if kind is ManualScanScopeKind.FILE:
+            if not isinstance(file_id, str) or not file_id.strip():
+                raise ManualScanError(
+                    "invalid_request",
+                    "server-bound file Scan requires fileId",
+                    status=400,
+                    next_action="select one current FileIndex item and submit its fileId",
+                )
+            if not isinstance(resource_library_id, str) or not resource_library_id.strip():
+                raise ManualScanError(
+                    "invalid_request",
+                    "server-bound file Scan requires resourceLibraryId",
+                    status=400,
+                    next_action=(
+                        "select one current FileIndex item from a configured "
+                        "ResourceLibrary"
+                    ),
+                )
+            record = self._require_current_file_direct(file_id, resource_library_id)
+            request = ManualScanRequest(
+                kind,
+                resource_library_id,
+                mode,
+                file_id=file_id,
+                source_occurrence_id=record.occurrence_id,
+                source_fingerprint=record.fingerprint,
+            )
+            # Recheck live Storage before publishing durable work.
+            library = self._require_library(resource_library_id)
+            self._recheck_live_source(record, library)
+        else:
+            if any(value is not None for value in (file_id,)):
+                raise ManualScanError(
+                    "invalid_request",
+                    "ResourceLibrary Scan cannot include fileId",
+                    status=400,
+                    next_action="remove fileId for a ResourceLibrary scope Scan",
+                )
+            if not isinstance(resource_library_id, str) or not resource_library_id.strip():
+                raise ManualScanError(
+                    "invalid_request",
+                    "server-bound ResourceLibrary Scan requires resourceLibraryId",
+                    status=400,
+                    next_action="select one configured ResourceLibrary",
+                )
+            request = ManualScanRequest(
+                kind,
+                resource_library_id,
+                mode,
+            )
+        return self.admit(request, actor=actor, start=start)
+
     def admit(
         self,
         request: ManualScanRequest,
@@ -881,6 +975,97 @@ class ManualScanService:
                 ),
             )
         return record
+
+    def _require_current_file_direct(self, file_id: str, resource_library_id: str):
+        """Resolve the current FileIndex record by file ID without request-supplied identity.
+
+        Returns the record when it is a verified, ready current occurrence;
+        raises a fail-closed ManualScanError otherwise.
+        """
+        lister = getattr(self._file_index, "list_by_resource_library", None)
+        if not callable(lister):
+            raise ManualScanError(
+                "file_index_unavailable",
+                "FileIndex current-source lookup is unavailable",
+                status=503,
+                durable_state="no_task_created",
+                next_action="restore FileIndex persistence, then refresh and retry",
+            )
+        values = tuple(
+            record for record in lister(resource_library_id) if record.file_id == file_id
+        )
+        if not values:
+            raise ManualScanError(
+                "source_not_found",
+                "current FileIndex source was not found",
+                status=404,
+                durable_state="no_task_created",
+                next_action="refresh FileIndex and select an existing current source item",
+            )
+        if len(values) != 1:
+            raise ManualScanError(
+                "source_ambiguous",
+                "FileIndex file ID is ambiguous in this ResourceLibrary",
+                status=409,
+                durable_state="no_task_created",
+                next_action="scope the request to one unambiguous current FileIndex item",
+            )
+        record = values[0]
+        if (
+            record.occurrence_state is not OccurrenceState.VERIFIED
+            or record.scan_status is not FileScanStatus.READY
+            or not record.occurrence_id
+            or not record.fingerprint
+        ):
+            raise ManualScanError(
+                "source_not_ready",
+                "FileIndex source is not a verified ready current occurrence",
+                status=409,
+                durable_state="no_task_created",
+                next_action=(
+                    "complete a ResourceLibrary Scan, then select the refreshed current source"
+                ),
+            )
+        return record
+
+    def _recheck_live_source(self, record, library) -> None:
+        """Recheck the live Storage occurrence before publishing durable work.
+
+        Ensures the FileIndex record still matches the live Storage entry
+        so a removed or replaced file is rejected before the Task is created.
+        """
+        try:
+            storage = self._storage_map({library.storage_id}).get(library.storage_id)
+            if storage is None:
+                raise ValueError("configured Storage is unavailable")
+            entry = storage.stat(record.path)
+            if entry.entry_type is not StorageEntryType.FILE:
+                raise ValueError("current source is no longer a file in Storage")
+            from mediaflow.domain.file_lifecycle import source_fingerprint
+
+            observed = source_fingerprint(record.storage_id, record.resource_library_id, entry)
+            if (
+                observed.state is not OccurrenceState.VERIFIED
+                or observed.value != record.fingerprint
+            ):
+                raise ManualScanError(
+                    "source_stale",
+                    "current source occurrence changed after discovery",
+                    status=409,
+                    durable_state="no_task_created",
+                    next_action="refresh FileIndex and select the current source before scanning",
+                )
+        except ManualScanError:
+            raise
+        except (StorageError, ValueError, OSError) as error:
+            raise ManualScanError(
+                "source_unavailable",
+                "the current source Storage is unavailable for live recheck",
+                status=503,
+                durable_state="no_task_created",
+                next_action="restore the configured Storage/root, then retry the same bounded Scan",
+                details={"reason": redact_manual_text(error, limit=160)},
+            ) from error
 
     def _storage_map(self, storage_ids: set[str] | None = None) -> dict[str, Storage]:
         if self._storage_factory is not None:
