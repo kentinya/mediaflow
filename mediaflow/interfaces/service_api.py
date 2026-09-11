@@ -1524,6 +1524,309 @@ class MediaFlowApi:
                 200,
                 manual_preview_operator_document(self._manual_preview_document(preview)),
             )
+        # --- V2 Operations: Manual Organize journey ---
+        if parts == ["api", "v1", "operations", "organize"] and method == "POST":
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            self._require_manual_execution(principal)
+            if (
+                self._manual_previews is None
+                or not callable(getattr(self._manual_previews, "create_current_from_index", None))
+                or self._manual_execution is None
+                or not callable(getattr(self._manual_execution, "authorize", None))
+            ):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual organize service is unavailable",
+                    details={
+                        "durableState": "no_task_created",
+                        "sideEffects": "none",
+                    },
+                )
+            self._require_empty_query(environ, "server-bound manual Organize")
+            document = self._document(environ)
+            allowed = {
+                "scopeKind",
+                "scope",
+                "fileId",
+                "resourceLibraryId",
+                "snapshotId",
+                "snapshotDigest",
+            }
+            if set(document).difference(allowed):
+                raise ValueError("server-bound Organize accepts only bounded scope identity fields")
+            raw_kind = document.get("scopeKind", document.get("scope"))
+            if raw_kind == "resourceLibrary":
+                raw_kind = "resource_library"
+            if raw_kind not in {"file", "resource_library"}:
+                raise ValueError("server-bound Organize scope must be file or resource_library")
+            for name in ("snapshotId", "snapshotDigest"):
+                if name in document and (
+                    not isinstance(document[name], str) or not document[name].strip()
+                ):
+                    raise ValueError(f"server-bound Organize {name} must be a non-empty string")
+            preview = self._manual_previews.create_current_from_index(
+                scope_kind=raw_kind,
+                file_id=document.get("fileId"),
+                resource_library_id=document.get("resourceLibraryId"),
+                snapshot_id=document.get("snapshotId"),
+                snapshot_digest=document.get("snapshotDigest"),
+                actor=principal.principal_id,
+            )
+            preview_doc = self._manual_preview_document(preview)
+            operator_doc = manual_preview_operator_document(preview_doc)
+            operator_doc["journey"] = "organize"
+            operator_doc["nextAction"] = (
+                "review the exact Preview and authorize execution"
+                if any(
+                    item.get("status") == "previewed"
+                    and item.get("executionState") == "ready_for_explicit_authorization"
+                    for item in operator_doc.get("items", [])
+                )
+                else "inspect Preview items; stale or blocked items need correction"
+            )
+            return self._response(start_response, 201, operator_doc)
+        if (
+            len(parts) == 5
+            and parts[:4] == ["api", "v1", "operations", "organize"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._manual_previews is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual preview service is unavailable",
+                )
+            try:
+                preview = self._manual_previews.get_readonly(parts[4])
+            except ManualPreviewError as error:
+                if error.status == 404:
+                    return self._error(
+                        start_response,
+                        404,
+                        "preview_not_found",
+                        "manual Preview was not found",
+                        details={"nextAction": error.next_action},
+                    )
+                return self._error(
+                    start_response,
+                    error.status,
+                    error.code,
+                    str(error),
+                    details={"sideEffects": "none", **error.details},
+                )
+            operator_doc = manual_preview_operator_document(self._manual_preview_document(preview))
+            operator_doc["journey"] = "organize"
+            return self._response(start_response, 200, operator_doc)
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "operations", "organize"]
+            and parts[5] == "authorize"
+            and method == "POST"
+        ):
+            self._require_manual_execution(principal)
+            if self._manual_execution is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual execution service is unavailable",
+                )
+            self._require_empty_query(environ, "operations organize authorize")
+            document = self._document(environ)
+            allowed = {
+                "previewId",
+                "itemIds",
+                "expectedVersion",
+                "expectedItemVersions",
+                "snapshotId",
+                "snapshotDigest",
+                "confirmation",
+                "allowOverwrite",
+                "allowSourceCleanup",
+                "ttlSeconds",
+                "note",
+            }
+            if set(document).difference(allowed):
+                raise ValueError("operations organize authorize fields are invalid")
+            preview_id = parts[4]
+            if not isinstance(preview_id, str) or not preview_id.strip():
+                raise ValueError("operations organize previewId is required")
+            if "confirmation" not in document or document["confirmation"] is not True:
+                raise ValueError("operations organize authorization requires confirmation=true")
+            item_ids = document.get("itemIds")
+            if not isinstance(item_ids, list) or not item_ids:
+                raise ValueError("operations organize requires itemIds array")
+            expected_version = document.get("expectedVersion")
+            if (
+                isinstance(expected_version, bool)
+                or not isinstance(expected_version, int)
+                or expected_version < 1
+            ):
+                raise ValueError("operations organize expectedVersion must be a positive integer")
+            expected_item_versions = document.get("expectedItemVersions")
+            if not isinstance(expected_item_versions, (dict, list)):
+                raise ValueError(
+                    "operations organize expectedItemVersions must be an object or array"
+                )
+            authorization = self._manual_execution.authorize(
+                preview_id,
+                item_ids,
+                expected_intent_version=expected_version,
+                expected_item_versions=expected_item_versions,
+                snapshot_id=document.get("snapshotId"),
+                snapshot_digest=document.get("snapshotDigest"),
+                actor=principal.principal_id,
+                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                confirmation=document["confirmation"],
+                allow_overwrite=document.get("allowOverwrite", False),
+                allow_source_cleanup=document.get("allowSourceCleanup", False),
+                ttl_seconds=document.get("ttlSeconds"),
+                note=document.get("note"),
+            )
+            auth_doc = self._manual_execution.authorization_document(authorization.authorization_id)
+            auth_doc["journey"] = "organize"
+            auth_doc["nextAction"] = (
+                "execute this exact authorization once with explicit confirmation"
+            )
+            return self._response(start_response, 201, auth_doc)
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "operations", "organize"]
+            and parts[5] == "execute"
+            and method == "POST"
+        ):
+            self._require_manual_execution(principal)
+            if self._manual_execution is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual execution service is unavailable",
+                )
+            self._require_empty_query(environ, "operations organize execute")
+            document = self._document(environ)
+            if set(document) != {"authorizationId", "confirmation"}:
+                raise ValueError(
+                    "operations organize execute requires authorizationId and confirmation"
+                )
+            if (
+                not isinstance(document["authorizationId"], str)
+                or not document["authorizationId"].strip()
+                or document["confirmation"] is not True
+            ):
+                raise ValueError("operations organize execute requires confirmation=true")
+            authorization = self._manual_execution.get_authorization(document["authorizationId"])
+            if authorization.preview_id != parts[4]:
+                raise ValueError(
+                    "operations organize authorization does not belong to this Preview"
+                )
+            execution = self._manual_execution.execute(
+                authorization.authorization_id,
+                actor=principal.principal_id,
+                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                confirmation=document["confirmation"],
+            )
+            exec_doc = self._manual_execution.document(execution.execution_id)
+            exec_doc["journey"] = "organize"
+            return self._response(start_response, 200, exec_doc)
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "operations", "organize"]
+            and parts[5] == "detail"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._manual_previews is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual preview service is unavailable",
+                )
+            self._require_empty_query(environ, "operations organize detail")
+            try:
+                preview = self._manual_previews.get_readonly(parts[4])
+            except ManualPreviewError as error:
+                return self._error(
+                    start_response,
+                    error.status,
+                    error.code,
+                    str(error),
+                    details={"sideEffects": "none", **error.details},
+                )
+            operator_doc = manual_preview_operator_document(self._manual_preview_document(preview))
+            operator_doc["journey"] = "organize"
+            return self._response(start_response, 200, operator_doc)
+        if (
+            len(parts) == 5
+            and parts[:4] == ["api", "v1", "operations", "organize"]
+            and parts[4] == "executions"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._manual_execution is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual execution service is unavailable",
+                )
+            self._require_empty_query(environ, "operations organize execution list")
+            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            preview_id = values.get("previewId", [None])[0]
+            intent_id = values.get("intentId", [None])[0]
+            task_id = values.get("taskId", [None])[0]
+            if preview_id and callable(
+                getattr(self._manual_execution, "discovery_for_preview", None)
+            ):
+                discovery = self._manual_execution.discovery_for_preview(preview_id)
+            elif task_id and callable(getattr(self._manual_execution, "discovery_for_task", None)):
+                discovery = self._manual_execution.discovery_for_task(task_id)
+            elif intent_id and callable(
+                getattr(self._manual_execution, "discovery_for_intent", None)
+            ):
+                discovery = self._manual_execution.discovery_for_intent(intent_id)
+            else:
+                discovery = {"executions": []}
+            discovery["journey"] = "organize"
+            return self._response(start_response, 200, discovery)
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "operations", "organize"]
+            and parts[5] == "executions"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._manual_execution is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual execution service is unavailable",
+                )
+            self._require_empty_query(environ, "operations organize execution detail")
+            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            preview_id = values.get("previewId", [None])[0]
+            intent_id = values.get("intentId", [None])[0]
+            task_id = values.get("taskId", [None])[0]
+            if preview_id and callable(
+                getattr(self._manual_execution, "discovery_for_preview", None)
+            ):
+                discovery = self._manual_execution.discovery_for_preview(preview_id)
+            elif task_id and callable(getattr(self._manual_execution, "discovery_for_task", None)):
+                discovery = self._manual_execution.discovery_for_task(task_id)
+            elif intent_id and callable(
+                getattr(self._manual_execution, "discovery_for_intent", None)
+            ):
+                discovery = self._manual_execution.discovery_for_intent(intent_id)
+            else:
+                discovery = {"executions": []}
+            discovery["journey"] = "organize"
+            return self._response(start_response, 200, discovery)
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._configuration_service is None or self._configuration_objects is None:
@@ -7228,6 +7531,7 @@ class MediaFlowApi:
 
         can_scan = ApiPermission.SUBMIT_DRY_RUN in principal.permissions
         can_preview = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
+        can_execute = ApiPermission.EXECUTE_MANUAL_ORGANIZE in principal.permissions
         configuration_snapshot_id = getattr(binding, "snapshot_id", None)
         # Determine runtime readiness: the binding has a snapshot_id when a
         # configuration has been activated and loaded.
@@ -7236,8 +7540,16 @@ class MediaFlowApi:
         preview_service_ready = callable(
             getattr(self._manual_previews, "create_current_from_index", None)
         )
+        execution_service_ready = callable(getattr(self._manual_execution, "authorize", None))
         scan_available = can_scan and runtime_ready and scan_service_ready
         preview_available = can_preview and runtime_ready and preview_service_ready
+        organize_available = (
+            can_execute
+            and can_preview
+            and runtime_ready
+            and preview_service_ready
+            and execution_service_ready
+        )
         scan_reason = (
             None
             if scan_available
@@ -7264,6 +7576,20 @@ class MediaFlowApi:
                 else "the current-source Preview service is unavailable"
                 if not preview_service_ready
                 else "Preview is unavailable"
+            )
+        )
+        organize_reason = (
+            None
+            if organize_available
+            else (
+                "the connected API principal does not hold the execute_manual_organize "
+                "permission required for Organize"
+                if not can_execute
+                else "the Active runtime is unavailable for Organize"
+                if not runtime_ready
+                else "the current-source Preview or execution service is unavailable"
+                if not (preview_service_ready and execution_service_ready)
+                else "Organize is unavailable"
             )
         )
         # Resolve the ResourceLibrary choices from the system_status snapshot.
@@ -7299,8 +7625,10 @@ class MediaFlowApi:
         if raw_kind is None:
             scan_available = False
             preview_available = False
+            organize_available = False
             scan_reason = "select an exact ResourceLibrary scope before submitting a Scan"
             preview_reason = "select an exact ResourceLibrary scope before running a Preview"
+            organize_reason = "select an exact scope before organizing"
         elif raw_kind == "file":
             if not isinstance(file_id, str) or not file_id.strip():
                 raise ValueError("manual action matrix fileId is required for file scope")
@@ -7309,8 +7637,10 @@ class MediaFlowApi:
             if rl_info is None or not rl_info.get("enabled", False):
                 scan_available = False
                 preview_available = False
+                organize_available = False
                 scan_reason = "the configured ResourceLibrary is not available"
                 preview_reason = "the configured ResourceLibrary is not available"
+                organize_reason = "the configured ResourceLibrary is not available"
             else:
                 # Resolve the FileIndex record.
                 file_index = self._file_index
@@ -7326,8 +7656,10 @@ class MediaFlowApi:
                 if record is None:
                     scan_available = False
                     preview_available = False
+                    organize_available = False
                     scan_reason = "the current FileIndex source was not found"
                     preview_reason = "the current FileIndex source was not found"
+                    organize_reason = "the current FileIndex source was not found"
                 elif (
                     getattr(record, "occurrence_state", None) != OccurrenceState.VERIFIED
                     or getattr(record, "scan_status", None) != FileScanStatus.READY
@@ -7336,8 +7668,12 @@ class MediaFlowApi:
                 ):
                     scan_available = False
                     preview_available = False
+                    organize_available = False
                     scan_reason = "the FileIndex source is not a verified ready current occurrence"
                     preview_reason = (
+                        "the FileIndex source is not a verified ready current occurrence"
+                    )
+                    organize_reason = (
                         "the FileIndex source is not a verified ready current occurrence"
                     )
                 else:
@@ -7368,15 +7704,19 @@ class MediaFlowApi:
                 selection_required = True
                 scan_available = False
                 preview_available = False
+                organize_available = False
                 scan_reason = "select an exact ResourceLibrary scope before submitting a Scan"
                 preview_reason = "select an exact ResourceLibrary scope before running a Preview"
+                organize_reason = "select an exact ResourceLibrary scope before organizing"
             else:
                 rl_info = rl_map.get(resource_library_id)
                 if rl_info is None or not rl_info.get("enabled", False):
                     scan_available = False
                     preview_available = False
+                    organize_available = False
                     scan_reason = "the configured ResourceLibrary is not available"
                     preview_reason = "the configured ResourceLibrary is not available"
+                    organize_reason = "the configured ResourceLibrary is not available"
                 else:
                     source = {
                         "resourceLibraryId": resource_library_id,
@@ -7424,6 +7764,18 @@ class MediaFlowApi:
                                 "run a zero-mutation Preview"
                                 if preview_available
                                 else preview_reason
+                            ),
+                            "modes": [],
+                        },
+                        "organize": {
+                            "available": organize_available,
+                            "reason": organize_reason,
+                            "method": "POST",
+                            "path": "/api/v1/operations/organize",
+                            "nextAction": (
+                                "review the exact Preview and authorize execution"
+                                if organize_available
+                                else organize_reason
                             ),
                             "modes": [],
                         },

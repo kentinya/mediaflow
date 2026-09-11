@@ -1,6 +1,14 @@
 {
   "actionMatrix": {
     "actions": {
+      "organize": {
+        "available": false,
+        "method": "POST",
+        "modes": [],
+        "nextAction": "the connected API principal does not hold the execute_manual_organize permission required for Organize",
+        "path": "/api/v1/operations/organize",
+        "reason": "the connected API principal does not hold the execute_manual_organize permission required for Organize"
+      },
       "preview": {
         "available": true,
         "method": "POST",
@@ -725,6 +733,14 @@
   },
   "resourceLibraryDiscovery": {
     "actions": {
+      "organize": {
+        "available": false,
+        "method": "POST",
+        "modes": [],
+        "nextAction": "select an exact ResourceLibrary scope before organizing",
+        "path": "/api/v1/operations/organize",
+        "reason": "select an exact ResourceLibrary scope before organizing"
+      },
       "preview": {
         "available": false,
         "method": "POST",
