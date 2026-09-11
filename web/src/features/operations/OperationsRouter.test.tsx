@@ -357,11 +357,16 @@ describe("Operations router journeys", () => {
   });
 
   it("renders no credential, private path or fingerprint from a hostile historical record", async () => {
-    // A legacy row may still hold a credential, a private absolute path and a
-    // configured fingerprint. The bounded Operations read projects none of
-    // them, and the page must therefore show none of them either.
+    // A legacy row may still hold a credential, a private absolute path, a
+    // private endpoint, an absolute host directory, a Windows adapter root
+    // and a configured fingerprint. The bounded Operations read projects none
+    // of them, and the page must therefore show none of them either.
+    const hostileRecord =
+      "Authorization: Bearer topsecret /home/alice/private.mkv " +
+      "https://private.example/api /mnt/private-library " +
+      "C:\\Users\\alice\\media";
     const hostile = taskDetailPayload({
-      error: "Authorization: Bearer topsecret /home/alice/private.mkv",
+      error: hostileRecord,
       configuration_snapshot_digest:
         "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
       source_display: "/srv/media/private.mkv",
@@ -382,7 +387,7 @@ describe("Operations router journeys", () => {
           destination_storage_id: null,
           destination_path: null,
           execution_status: null,
-          error: "Authorization: Bearer topsecret /home/alice/private.mkv",
+          error: hostileRecord,
           source_display: "/srv/media/private.mkv",
           checkpoint: null,
         },
@@ -402,6 +407,9 @@ describe("Operations router journeys", () => {
     const rendered = document.body.textContent ?? "";
     expect(rendered).not.toContain("topsecret");
     expect(rendered).not.toContain("/home/alice");
+    expect(rendered).not.toContain("https://private.example");
+    expect(rendered).not.toContain("/mnt/private-library");
+    expect(rendered).not.toContain("C:\\Users\\alice");
     expect(rendered).not.toContain("/srv/media");
     expect(rendered).not.toContain("deadbeef");
     expect(rendered).not.toContain("fingerprint-value");
