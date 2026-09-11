@@ -35,11 +35,15 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+from mediaflow.application.automation import ProcessingWorkerService
 from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
+from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
 from mediaflow.application.manual_scan import ManualScanService
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
@@ -227,6 +231,28 @@ class ManualOperationsContractTests(unittest.TestCase):
                     clock=scan_clock,
                     start_async=False,
                 )
+                execution = ManualOrganizeExecutionService(
+                    repository,
+                    previews,
+                    intents,
+                    checkpoint_service=ProcessingCheckpointService(repository),
+                    # The Worker path executes against the real LocalStorage roots;
+                    # the preview spies above stay in place so the zero-mutation
+                    # Preview evidence is still proven by observation.
+                    storages={"source": source_storage, "target": target_storage},
+                )
+                organize_worker = ManualOrganizeExecutionWorker(
+                    execution, worker_id="contract-worker", notice=lambda line: None
+                )
+                worker_service = ProcessingWorkerService(repository)
+                worker_service.register_worker(
+                    "contract-worker",
+                    "contract worker",
+                    30.0,
+                    ("scan", "preview", "organize"),
+                    configuration_snapshot_id=SNAPSHOT_ID,
+                    configuration_snapshot_digest=SNAPSHOT_DIGEST,
+                )
                 api = MediaFlowApi(
                     repository,
                     None,
@@ -239,6 +265,7 @@ class ManualOperationsContractTests(unittest.TestCase):
                                     ApiPermission.READ,
                                     ApiPermission.SUBMIT_DRY_RUN,
                                     ApiPermission.MANAGE_MANUAL_ORGANIZE,
+                                    ApiPermission.EXECUTE_MANUAL_ORGANIZE,
                                     ApiPermission.CANCEL_JOB,
                                 }
                             ),
@@ -251,11 +278,16 @@ class ManualOperationsContractTests(unittest.TestCase):
                     manual_intent_service=intents,
                     manual_preview_service=previews,
                     manual_scan_service=scans,
+                    manual_execution_service=execution,
+                    worker_service=worker_service,
                 )
                 yield SimpleNamespace(
                     api=api,
                     repository=repository,
                     scans=scans,
+                    previews=previews,
+                    execution=execution,
+                    organize_worker=organize_worker,
                     record=record,
                     source=source,
                     target=target,
@@ -355,6 +387,82 @@ class ManualOperationsContractTests(unittest.TestCase):
         )
         self.assertEqual(200, status)
 
+        # --- V2 manual Organize: intent -> exact Preview -> one Execute action ---
+        status, organize_intent = _request(
+            api,
+            "/api/v1/operations/organize/intents",
+            method="POST",
+            body={
+                "scopeKind": "file",
+                "fileId": file_id,
+                "resourceLibraryId": "library",
+            },
+        )
+        self.assertEqual(201, status)
+        intent_item = organize_intent["items"][0]
+        status, organize_intent_choice = _request(
+            api,
+            f"/api/v1/operations/organize/intents/{organize_intent['intentId']}"
+            f"/items/{intent_item['itemId']}/choice",
+            method="POST",
+            body={
+                "expectedVersion": organize_intent["version"],
+                "expectedItemVersion": intent_item["version"],
+                "recognitionTypeId": "A",
+                "namingPolicyId": "A",
+                "classificationPolicyId": "A",
+                "organizePolicyId": "A",
+            },
+        )
+        self.assertEqual(200, status)
+        status, organize_preview = _request(
+            api,
+            f"/api/v1/operations/organize/intents/{organize_intent['intentId']}/previews",
+            method="POST",
+            body={"expectedVersion": organize_intent_choice["version"]},
+        )
+        self.assertEqual(201, status)
+        status, organize_preview_detail = _request(
+            api, f"/api/v1/operations/organize/previews/{organize_preview['previewId']}"
+        )
+        self.assertEqual(200, status)
+        # Everything up to and including the exact Preview is proven
+        # zero-mutation by observation: the spy adapter raises on any write.
+        self.assertEqual([], value.source.mutations)
+        self.assertEqual([], value.target.mutations)
+        self.assertTrue(Path(value.source_root, "One.2001.mkv").exists())
+        # The Worker path is the only mutating boundary, so it is handed the
+        # real LocalStorage roots for the final leg of the journey.
+        value.previews._storages = {
+            "source": value.source.storage,
+            "target": value.target.storage,
+        }
+        status, organize_execution = _request(
+            api,
+            f"/api/v1/operations/organize/previews/{organize_preview['previewId']}/execute",
+            method="POST",
+            body={
+                "confirmation": True,
+                "itemIds": [intent_item["itemId"]],
+                "expectedIntentVersion": organize_intent_choice["version"],
+            },
+        )
+        self.assertEqual(202, status)
+        # Drive the admitted execution through the real Processing Worker.
+        completed = value.organize_worker.run_next()
+        self.assertIsNotNone(completed)
+        status, organize_execution_detail = _request(
+            api,
+            f"/api/v1/operations/organize/executions/{organize_execution['executionId']}",
+        )
+        self.assertEqual(200, status)
+        status, organize_execution_list = _request(
+            api,
+            "/api/v1/operations/organize/executions",
+            query=f"previewId={organize_preview['previewId']}",
+        )
+        self.assertEqual(200, status)
+
         return {
             "actionMatrix": action_matrix,
             "resourceLibraryDiscovery": discovery_matrix,
@@ -364,16 +472,22 @@ class ManualOperationsContractTests(unittest.TestCase):
             "previewAdmission": preview_admission,
             "previewDetail": preview_detail,
             "previewList": preview_list,
+            "organizeIntent": organize_intent,
+            "organizeIntentChoice": organize_intent_choice,
+            "organizePreview": organize_preview,
+            "organizePreviewDetail": organize_preview_detail,
+            "organizeExecution": organize_execution,
+            "organizeExecutionDetail": organize_execution_detail,
+            "organizeExecutionList": organize_execution_list,
         }
 
     def test_real_api_documents_match_the_frontend_fixture(self) -> None:
         with self.fixture() as value:
             captured = _canonical(self._capture(value))
-            # Preview is zero-mutation: the adapter raises on any mutating call.
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
-            self.assertEqual([], list(value.target_root.rglob("*")))
-            self.assertTrue(Path(value.source_root, "One.2001.mkv").exists())
+            # Only the admitted exact execution, claimed by the resident
+            # Processing Worker, moved the reviewed source.
+            self.assertFalse(Path(value.source_root, "One.2001.mkv").exists())
+            self.assertTrue(list(value.target_root.rglob("*.mkv")))
 
         if os.environ.get("MEDIAFLOW_UPDATE_FIXTURES") == "1":
             FIXTURE_PATH.parent.mkdir(parents=True, exist_ok=True)

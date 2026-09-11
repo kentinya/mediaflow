@@ -119,6 +119,18 @@ function ManualOperationsSection({
               Run zero-mutation Preview
             </Link>
           )}
+          {matrix.actions.organize.available && (
+            <Link
+              className="mf-button mf-button-secondary"
+              to="/operations/organize/new"
+              search={{
+                scopeKind: "resourceLibrary",
+                resourceLibraryId: matrix.resourceLibraryId ?? undefined,
+              }}
+            >
+              Prepare manual organize
+            </Link>
+          )}
         </nav>
       )}
     </section>

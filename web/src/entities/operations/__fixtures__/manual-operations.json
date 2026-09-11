@@ -2,12 +2,12 @@
   "actionMatrix": {
     "actions": {
       "organize": {
-        "available": false,
+        "available": true,
         "method": "POST",
         "modes": [],
-        "nextAction": "the connected API principal does not hold the execute_manual_organize permission required for Organize",
-        "path": "/api/v1/operations/organize",
-        "reason": "the connected API principal does not hold the execute_manual_organize permission required for Organize"
+        "nextAction": "create a durable manual intent, then request an exact Preview",
+        "path": "/api/v1/operations/organize/intents",
+        "reason": null
       },
       "preview": {
         "available": true,
@@ -58,6 +58,1192 @@
       "sizeBytes": 12,
       "storageId": "source"
     }
+  },
+  "organizeExecution": {
+    "actions": {
+      "detail": {
+        "available": true,
+        "durableOutcome": null,
+        "method": "GET",
+        "nextAction": "the reviewed work is durably admitted and waits for the resident Processing Worker to claim it",
+        "path": "/api/v1/operations/organize/executions/<uuid>",
+        "reason": null,
+        "sideEffects": "none"
+      },
+      "recovery": {
+        "available": false,
+        "durableOutcome": null,
+        "method": null,
+        "nextAction": "open Review & Recovery to inspect the failed item; MediaFlow never replays an uncertain mutation automatically",
+        "path": null,
+        "reason": "recovery is only offered for an execution with a failed item",
+        "sideEffects": "none"
+      },
+      "task": {
+        "available": true,
+        "durableOutcome": null,
+        "method": "GET",
+        "nextAction": "inspect the durable Task and its per-item Results",
+        "path": "/api/v1/operations/tasks/<uuid>",
+        "reason": null,
+        "sideEffects": "none"
+      }
+    },
+    "actor": "contract-operator",
+    "allowOverwrite": false,
+    "allowSourceCleanup": false,
+    "completedAt": null,
+    "completedItemCount": 0,
+    "createdAt": "2026-09-04T12:00:00+00:00",
+    "durableState": "admitted",
+    "executionId": "<uuid>",
+    "failedItemCount": 0,
+    "failure": null,
+    "intentId": "<uuid>",
+    "intentVersion": 2,
+    "itemCount": 1,
+    "items": [
+      {
+        "completedOperations": [],
+        "effectCertainty": "unknown",
+        "effects": [],
+        "failure": null,
+        "itemId": "<uuid>",
+        "nextAction": "admission committed; reconcile this execution before any mutation if startup is interrupted",
+        "position": 0,
+        "resultId": null,
+        "stage": "admitted",
+        "status": "admitted",
+        "taskId": "<uuid>",
+        "taskItemId": "<uuid>",
+        "uncertainEffects": []
+      }
+    ],
+    "journey": "organize",
+    "knownEffects": {
+      "failedWithoutEffectCount": 0,
+      "statement": "every recorded effect is verified and no item requires automatic replay",
+      "uncertainItemCount": 0,
+      "verifiedItemCount": 0
+    },
+    "nextAction": "the reviewed work is durably admitted and waits for the resident Processing Worker to claim it",
+    "previewId": "<uuid>",
+    "selectedItemCount": 1,
+    "selectedItemIds": ["<uuid>"],
+    "status": "admitted",
+    "taskId": "<uuid>",
+    "unselectedItemCount": 0,
+    "unselectedItemIds": [],
+    "updatedAt": "2026-09-04T12:00:00+00:00"
+  },
+  "organizeExecutionDetail": {
+    "actions": {
+      "detail": {
+        "available": true,
+        "durableOutcome": null,
+        "method": "GET",
+        "nextAction": "inspect the verified per-item Results; no replay is required",
+        "path": "/api/v1/operations/organize/executions/<uuid>",
+        "reason": null,
+        "sideEffects": "none"
+      },
+      "recovery": {
+        "available": false,
+        "durableOutcome": null,
+        "method": null,
+        "nextAction": "open Review & Recovery to inspect the failed item; MediaFlow never replays an uncertain mutation automatically",
+        "path": null,
+        "reason": "recovery is only offered for an execution with a failed item",
+        "sideEffects": "none"
+      },
+      "task": {
+        "available": true,
+        "durableOutcome": null,
+        "method": "GET",
+        "nextAction": "inspect the durable Task and its per-item Results",
+        "path": "/api/v1/operations/tasks/<uuid>",
+        "reason": null,
+        "sideEffects": "none"
+      }
+    },
+    "actor": "contract-operator",
+    "allowOverwrite": false,
+    "allowSourceCleanup": false,
+    "completedAt": "2026-09-04T12:00:00+00:00",
+    "completedItemCount": 1,
+    "createdAt": "2026-09-04T12:00:00+00:00",
+    "durableState": "completed",
+    "executionId": "<uuid>",
+    "failedItemCount": 0,
+    "failure": null,
+    "intentId": "<uuid>",
+    "intentVersion": 2,
+    "itemCount": 1,
+    "items": [
+      {
+        "completedOperations": ["CREATE_DIRECTORY", "MOVE"],
+        "effectCertainty": "verified_complete",
+        "effects": [
+          {
+            "action": "CREATE_DIRECTORY",
+            "certainty": "verified_complete",
+            "destinationLocation": "Anime/One (2001)",
+            "operation": null,
+            "sourceLocation": "One.2001.mkv",
+            "verified": true
+          },
+          {
+            "action": "MOVE",
+            "certainty": "verified_complete",
+            "destinationLocation": "One (2001)/One (2001).mkv",
+            "operation": null,
+            "sourceLocation": "One.2001.mkv",
+            "verified": true
+          }
+        ],
+        "failure": null,
+        "itemId": "<uuid>",
+        "nextAction": "inspect the verified Result; no recovery replay is required",
+        "position": 0,
+        "resultId": "<uuid>",
+        "stage": "completed",
+        "status": "success",
+        "taskId": "<uuid>",
+        "taskItemId": "<uuid>",
+        "uncertainEffects": []
+      }
+    ],
+    "journey": "organize",
+    "knownEffects": {
+      "failedWithoutEffectCount": 0,
+      "statement": "every recorded effect is verified and no item requires automatic replay",
+      "uncertainItemCount": 0,
+      "verifiedItemCount": 1
+    },
+    "nextAction": "inspect the verified per-item Results; no replay is required",
+    "previewId": "<uuid>",
+    "selectedItemCount": 1,
+    "selectedItemIds": ["<uuid>"],
+    "status": "completed",
+    "taskId": "<uuid>",
+    "unselectedItemCount": 0,
+    "unselectedItemIds": [],
+    "updatedAt": "2026-09-04T12:00:00+00:00"
+  },
+  "organizeExecutionList": {
+    "items": [
+      {
+        "actions": {
+          "detail": {
+            "available": true,
+            "durableOutcome": null,
+            "method": "GET",
+            "nextAction": "inspect the verified per-item Results; no replay is required",
+            "path": "/api/v1/operations/organize/executions/<uuid>",
+            "reason": null,
+            "sideEffects": "none"
+          },
+          "recovery": {
+            "available": false,
+            "durableOutcome": null,
+            "method": null,
+            "nextAction": "open Review & Recovery to inspect the failed item; MediaFlow never replays an uncertain mutation automatically",
+            "path": null,
+            "reason": "recovery is only offered for an execution with a failed item",
+            "sideEffects": "none"
+          },
+          "task": {
+            "available": true,
+            "durableOutcome": null,
+            "method": "GET",
+            "nextAction": "inspect the durable Task and its per-item Results",
+            "path": "/api/v1/operations/tasks/<uuid>",
+            "reason": null,
+            "sideEffects": "none"
+          }
+        },
+        "actor": "contract-operator",
+        "allowOverwrite": false,
+        "allowSourceCleanup": false,
+        "completedAt": "2026-09-04T12:00:00+00:00",
+        "completedItemCount": 1,
+        "createdAt": "2026-09-04T12:00:00+00:00",
+        "durableState": "completed",
+        "executionId": "<uuid>",
+        "failedItemCount": 0,
+        "failure": null,
+        "intentId": "<uuid>",
+        "intentVersion": 2,
+        "itemCount": 1,
+        "items": [
+          {
+            "completedOperations": ["CREATE_DIRECTORY", "MOVE"],
+            "effectCertainty": "verified_complete",
+            "effects": [
+              {
+                "action": "CREATE_DIRECTORY",
+                "certainty": "verified_complete",
+                "destinationLocation": "Anime/One (2001)",
+                "operation": null,
+                "sourceLocation": "One.2001.mkv",
+                "verified": true
+              },
+              {
+                "action": "MOVE",
+                "certainty": "verified_complete",
+                "destinationLocation": "One (2001)/One (2001).mkv",
+                "operation": null,
+                "sourceLocation": "One.2001.mkv",
+                "verified": true
+              }
+            ],
+            "failure": null,
+            "itemId": "<uuid>",
+            "nextAction": "inspect the verified Result; no recovery replay is required",
+            "position": 0,
+            "resultId": "<uuid>",
+            "stage": "completed",
+            "status": "success",
+            "taskId": "<uuid>",
+            "taskItemId": "<uuid>",
+            "uncertainEffects": []
+          }
+        ],
+        "journey": "organize",
+        "knownEffects": {
+          "failedWithoutEffectCount": 0,
+          "statement": "every recorded effect is verified and no item requires automatic replay",
+          "uncertainItemCount": 0,
+          "verifiedItemCount": 1
+        },
+        "nextAction": "inspect the verified per-item Results; no replay is required",
+        "previewId": "<uuid>",
+        "selectedItemCount": 1,
+        "selectedItemIds": ["<uuid>"],
+        "status": "completed",
+        "taskId": "<uuid>",
+        "unselectedItemCount": 0,
+        "unselectedItemIds": [],
+        "updatedAt": "2026-09-04T12:00:00+00:00"
+      }
+    ],
+    "journey": "organize",
+    "limit": 50,
+    "total": 1,
+    "truncated": false
+  },
+  "organizeIntent": {
+    "actions": {
+      "choice": {
+        "available": true,
+        "durableOutcome": "a durable optimistic choice revision is stored and every earlier Preview of this intent becomes historical evidence",
+        "method": "POST",
+        "nextAction": "edit one item choice with its current intent and item versions",
+        "path": "/api/v1/operations/organize/intents/<uuid>/items/{itemId}/choice",
+        "reason": null,
+        "sideEffects": "none"
+      },
+      "execute": {
+        "available": false,
+        "durableOutcome": null,
+        "method": null,
+        "nextAction": "create a fresh exact Preview after the last choice change",
+        "path": null,
+        "reason": "exact execution is only offered from a current, complete Preview",
+        "sideEffects": "none"
+      },
+      "preview": {
+        "available": true,
+        "durableOutcome": "a durable zero-mutation Preview revision is stored",
+        "method": "POST",
+        "nextAction": "create a fresh exact Preview of the reviewed choices",
+        "path": "/api/v1/operations/organize/intents/<uuid>/previews",
+        "reason": null,
+        "sideEffects": "none"
+      }
+    },
+    "actor": "contract-operator",
+    "configurationSnapshotId": "active-1",
+    "createdAt": "2026-09-04T12:00:00+00:00",
+    "execution": "not_available_in_this_task",
+    "failure": null,
+    "intentId": "<uuid>",
+    "items": [
+      {
+        "choice": {
+          "classificationPolicyId": "A",
+          "metadata": null,
+          "namingPolicyId": "A",
+          "organizePolicyId": "A",
+          "recognitionTypeId": "A"
+        },
+        "createdAt": "2026-09-04T12:00:00+00:00",
+        "failure": null,
+        "itemId": "<uuid>",
+        "nextAction": "continue to a later manual Preview",
+        "position": 0,
+        "source": {
+          "extension": "mkv",
+          "fileId": "<hex-id>",
+          "filename": "One.2001.mkv",
+          "occurrenceState": "verified",
+          "path": "One.2001.mkv",
+          "resourceLibraryId": "library",
+          "scanStatus": "ready",
+          "size": 12,
+          "storageId": "source"
+        },
+        "status": "ready",
+        "updatedAt": "2026-09-04T12:00:00+00:00",
+        "version": 1
+      }
+    ],
+    "journey": "organize",
+    "limits": {
+      "intentMaxItems": 100
+    },
+    "nextAction": "continue to a later manual Preview",
+    "optionLimit": 100,
+    "options": {
+      "classificationPolicies": [
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "A",
+          "mediaType": null,
+          "name": "Movie classification",
+          "operation": null,
+          "providerId": null
+        },
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "B",
+          "mediaType": null,
+          "name": "TV classification",
+          "operation": null,
+          "providerId": null
+        }
+      ],
+      "configurationSnapshotId": "active-1",
+      "metadataPolicies": [
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "A",
+          "mediaType": "movie",
+          "name": "Movie metadata",
+          "operation": null,
+          "providerId": "tmdb"
+        },
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "B",
+          "mediaType": "tv",
+          "name": "TV metadata",
+          "operation": null,
+          "providerId": "tmdb"
+        },
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "C",
+          "mediaType": "movie",
+          "name": "Special metadata",
+          "operation": null,
+          "providerId": "tmdb"
+        }
+      ],
+      "namingPolicies": [
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "A",
+          "mediaType": "movie",
+          "name": "Movie naming",
+          "operation": null,
+          "providerId": null
+        },
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "B",
+          "mediaType": "tv",
+          "name": "TV naming",
+          "operation": null,
+          "providerId": null
+        }
+      ],
+      "organizePolicies": [
+        {
+          "conflictStrategy": "manual",
+          "enabled": true,
+          "id": "A",
+          "mediaType": null,
+          "name": "Move",
+          "operation": "move",
+          "providerId": null
+        },
+        {
+          "conflictStrategy": "skip",
+          "enabled": true,
+          "id": "B",
+          "mediaType": null,
+          "name": "Copy",
+          "operation": "copy",
+          "providerId": null
+        }
+      ],
+      "recognitionTypes": [
+        {
+          "classificationPolicyId": "A",
+          "description": null,
+          "enabled": true,
+          "id": "A",
+          "metadataPolicyId": "A",
+          "name": "Movie",
+          "namingPolicyId": "A",
+          "organizePolicyId": "A",
+          "policyId": "type-A"
+        },
+        {
+          "classificationPolicyId": "B",
+          "description": null,
+          "enabled": true,
+          "id": "B",
+          "metadataPolicyId": "B",
+          "name": "TV",
+          "namingPolicyId": "B",
+          "organizePolicyId": "B",
+          "policyId": "type-B"
+        },
+        {
+          "classificationPolicyId": "A",
+          "description": null,
+          "enabled": true,
+          "id": "C",
+          "metadataPolicyId": "C",
+          "name": "Special",
+          "namingPolicyId": "A",
+          "organizePolicyId": "A",
+          "policyId": "type-C"
+        }
+      ]
+    },
+    "sideEffects": "none",
+    "status": "open",
+    "updatedAt": "2026-09-04T12:00:00+00:00",
+    "version": 1,
+    "zeroMutation": true
+  },
+  "organizeIntentChoice": {
+    "actions": {
+      "choice": {
+        "available": true,
+        "durableOutcome": "a durable optimistic choice revision is stored and every earlier Preview of this intent becomes historical evidence",
+        "method": "POST",
+        "nextAction": "edit one item choice with its current intent and item versions",
+        "path": "/api/v1/operations/organize/intents/<uuid>/items/{itemId}/choice",
+        "reason": null,
+        "sideEffects": "none"
+      },
+      "execute": {
+        "available": false,
+        "durableOutcome": null,
+        "method": null,
+        "nextAction": "create a fresh exact Preview after the last choice change",
+        "path": null,
+        "reason": "exact execution is only offered from a current, complete Preview",
+        "sideEffects": "none"
+      },
+      "preview": {
+        "available": true,
+        "durableOutcome": "a durable zero-mutation Preview revision is stored",
+        "method": "POST",
+        "nextAction": "create a fresh exact Preview of the reviewed choices",
+        "path": "/api/v1/operations/organize/intents/<uuid>/previews",
+        "reason": null,
+        "sideEffects": "none"
+      }
+    },
+    "actor": "contract-operator",
+    "configurationSnapshotId": "active-1",
+    "createdAt": "2026-09-04T12:00:00+00:00",
+    "execution": "not_available_in_this_task",
+    "failure": null,
+    "intentId": "<uuid>",
+    "items": [
+      {
+        "choice": {
+          "classificationPolicyId": "A",
+          "metadata": null,
+          "namingPolicyId": "A",
+          "organizePolicyId": "A",
+          "recognitionTypeId": "A"
+        },
+        "createdAt": "2026-09-04T12:00:00+00:00",
+        "failure": null,
+        "itemId": "<uuid>",
+        "nextAction": "continue to a later manual Preview",
+        "position": 0,
+        "source": {
+          "extension": "mkv",
+          "fileId": "<hex-id>",
+          "filename": "One.2001.mkv",
+          "occurrenceState": "verified",
+          "path": "One.2001.mkv",
+          "resourceLibraryId": "library",
+          "scanStatus": "ready",
+          "size": 12,
+          "storageId": "source"
+        },
+        "status": "ready",
+        "updatedAt": "2026-09-04T12:00:00+00:00",
+        "version": 2
+      }
+    ],
+    "journey": "organize",
+    "limits": {
+      "intentMaxItems": 100
+    },
+    "nextAction": "continue to a later manual Preview",
+    "optionLimit": 100,
+    "options": {
+      "classificationPolicies": [
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "A",
+          "mediaType": null,
+          "name": "Movie classification",
+          "operation": null,
+          "providerId": null
+        },
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "B",
+          "mediaType": null,
+          "name": "TV classification",
+          "operation": null,
+          "providerId": null
+        }
+      ],
+      "configurationSnapshotId": "active-1",
+      "metadataPolicies": [
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "A",
+          "mediaType": "movie",
+          "name": "Movie metadata",
+          "operation": null,
+          "providerId": "tmdb"
+        },
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "B",
+          "mediaType": "tv",
+          "name": "TV metadata",
+          "operation": null,
+          "providerId": "tmdb"
+        },
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "C",
+          "mediaType": "movie",
+          "name": "Special metadata",
+          "operation": null,
+          "providerId": "tmdb"
+        }
+      ],
+      "namingPolicies": [
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "A",
+          "mediaType": "movie",
+          "name": "Movie naming",
+          "operation": null,
+          "providerId": null
+        },
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "B",
+          "mediaType": "tv",
+          "name": "TV naming",
+          "operation": null,
+          "providerId": null
+        }
+      ],
+      "organizePolicies": [
+        {
+          "conflictStrategy": "manual",
+          "enabled": true,
+          "id": "A",
+          "mediaType": null,
+          "name": "Move",
+          "operation": "move",
+          "providerId": null
+        },
+        {
+          "conflictStrategy": "skip",
+          "enabled": true,
+          "id": "B",
+          "mediaType": null,
+          "name": "Copy",
+          "operation": "copy",
+          "providerId": null
+        }
+      ],
+      "recognitionTypes": [
+        {
+          "classificationPolicyId": "A",
+          "description": null,
+          "enabled": true,
+          "id": "A",
+          "metadataPolicyId": "A",
+          "name": "Movie",
+          "namingPolicyId": "A",
+          "organizePolicyId": "A",
+          "policyId": "type-A"
+        },
+        {
+          "classificationPolicyId": "B",
+          "description": null,
+          "enabled": true,
+          "id": "B",
+          "metadataPolicyId": "B",
+          "name": "TV",
+          "namingPolicyId": "B",
+          "organizePolicyId": "B",
+          "policyId": "type-B"
+        },
+        {
+          "classificationPolicyId": "A",
+          "description": null,
+          "enabled": true,
+          "id": "C",
+          "metadataPolicyId": "C",
+          "name": "Special",
+          "namingPolicyId": "A",
+          "organizePolicyId": "A",
+          "policyId": "type-C"
+        }
+      ]
+    },
+    "previewRequired": true,
+    "sideEffects": "none",
+    "status": "open",
+    "updatedAt": "2026-09-04T12:00:00+00:00",
+    "version": 2,
+    "zeroMutation": true
+  },
+  "organizePreview": {
+    "actions": {
+      "execute": {
+        "available": true,
+        "durableOutcome": "one durable admitted execution and its Processing Worker outcome are stored; only OrganizerExecutor may then mutate Storage",
+        "method": "POST",
+        "nextAction": "confirm one Execute action for the selected exact items",
+        "path": "/api/v1/operations/organize/previews/<uuid>/execute",
+        "reason": null,
+        "requiresConfirmation": true,
+        "sideEffects": "reported_per_item"
+      },
+      "intent": {
+        "available": true,
+        "durableOutcome": null,
+        "method": "GET",
+        "nextAction": "reopen the durable intent to change a choice",
+        "path": "/api/v1/operations/organize/intents/<uuid>",
+        "reason": null,
+        "sideEffects": "none"
+      }
+    },
+    "actor": "contract-operator",
+    "blockedItemCount": 0,
+    "configurationSnapshotId": "active-1",
+    "createdAt": "2026-09-04T12:00:00+00:00",
+    "current": true,
+    "executionCandidateItemIds": ["<uuid>"],
+    "executionState": "ready_for_explicit_authorization",
+    "failure": null,
+    "intentId": "<uuid>",
+    "intentVersion": 2,
+    "items": [
+      {
+        "choice": {
+          "classificationPolicyId": "A",
+          "namingPolicyId": "A",
+          "organizePolicyId": "A",
+          "recognitionTypeId": "A"
+        },
+        "configurationSnapshotId": "active-1",
+        "current": true,
+        "executionState": "ready_for_explicit_authorization",
+        "failure": null,
+        "itemId": "<uuid>",
+        "nextAction": "inspect this exact zero-mutation plan; authorize selected items for execution",
+        "plan": {
+          "analysis": {
+            "classification": {
+              "available": true,
+              "evidence": ["media_type=movie", "genre=Animation", "country=JP"],
+              "matchedRuleId": "anime-movie",
+              "matchedRuleName": "Japanese Animation",
+              "mediaLibraryId": "movies",
+              "policyId": "A",
+              "reason": null,
+              "recognitionTypeId": "A",
+              "relativePath": "Anime",
+              "status": "classified",
+              "warnings": []
+            },
+            "metadata": {
+              "available": true,
+              "identity": {
+                "countries": ["JP"],
+                "episode": null,
+                "episodeTitle": null,
+                "episodes": [],
+                "genres": ["Animation"],
+                "languages": [],
+                "matchedBy": "candidate_matcher",
+                "mediaType": "movie",
+                "originalTitle": null,
+                "provider": "tmdb",
+                "providerId": "129",
+                "recognitionTypeId": "A",
+                "season": null,
+                "title": "One",
+                "year": 2001
+              },
+              "match": {
+                "candidateCount": 1,
+                "candidates": [
+                  {
+                    "exactTitle": true,
+                    "exactYear": true,
+                    "mediaType": "movie",
+                    "provider": "tmdb",
+                    "providerId": "129",
+                    "score": 100.0,
+                    "title": "One",
+                    "year": 2001
+                  }
+                ],
+                "reasons": ["Candidate reached automatic threshold"],
+                "score": 100.0,
+                "status": "matched",
+                "warnings": []
+              },
+              "query": "One",
+              "status": "matched"
+            },
+            "naming": {
+              "available": true,
+              "directory": "One (2001)",
+              "directorySegments": ["One (2001)"],
+              "filename": "One (2001).mkv",
+              "policyId": "A",
+              "reason": null,
+              "recognitionTypeId": "A",
+              "sanitizationChanges": [],
+              "warnings": []
+            },
+            "parse": {
+              "audio": null,
+              "episode": null,
+              "episodes": [],
+              "evidence": [
+                {
+                  "confidence": "high",
+                  "field": "title_candidate",
+                  "source": "filename",
+                  "value": "One"
+                },
+                {
+                  "confidence": "high",
+                  "field": "year",
+                  "source": "filename",
+                  "value": "2001"
+                }
+              ],
+              "hdr": null,
+              "releaseGroup": null,
+              "resolution": null,
+              "season": null,
+              "source": null,
+              "titleCandidate": "One",
+              "version": null,
+              "videoCodec": null,
+              "warnings": [],
+              "year": 2001
+            },
+            "recognition": {
+              "confidence": "1.0",
+              "reasons": [
+                {
+                  "code": "MANUAL_PREVIEW",
+                  "message": "Pinned by manual Preview"
+                }
+              ],
+              "recognitionTypeId": "A",
+              "ruleId": "manual-preview",
+              "score": 100,
+              "status": "matched",
+              "warnings": []
+            }
+          },
+          "attachments": [],
+          "bounded": true,
+          "capabilities": {
+            "declared": ["can_copy", "can_delete"],
+            "missing": [],
+            "required": ["can_copy", "can_delete"],
+            "verdict": "ok"
+          },
+          "conflicts": [],
+          "destination": {
+            "filename": "One (2001).mkv",
+            "relativePath": "Anime/One (2001)/One (2001).mkv",
+            "storageId": "target"
+          },
+          "destructiveImplications": {
+            "overwriteRequired": false,
+            "sourceCleanupRequired": false,
+            "statement": "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation"
+          },
+          "deterministic": true,
+          "executionState": "ready_for_explicit_authorization",
+          "mediaIdentity": {
+            "countries": ["JP"],
+            "episode": null,
+            "episodeTitle": null,
+            "episodes": [],
+            "genres": ["Animation"],
+            "languages": [],
+            "matchedBy": "candidate_matcher",
+            "mediaType": "movie",
+            "originalTitle": null,
+            "provider": "tmdb",
+            "providerId": "129",
+            "recognitionTypeId": "A",
+            "season": null,
+            "title": "One",
+            "year": 2001
+          },
+          "operation": "MOVE",
+          "operationPolicy": "move",
+          "planStatus": "ready",
+          "policies": {
+            "classificationPolicyId": "A",
+            "metadataPolicyId": "A",
+            "namingPolicyId": "A",
+            "organizePolicyId": "A",
+            "recognitionTypePolicyId": "type-A"
+          },
+          "recognitionType": "A",
+          "warnings": [],
+          "zeroMutation": true
+        },
+        "position": 0,
+        "previewItemId": "<uuid>",
+        "sideEffects": "none",
+        "source": {
+          "extension": "mkv",
+          "fileId": "<hex-id>",
+          "filename": "One.2001.mkv",
+          "occurrenceState": "verified",
+          "path": "One.2001.mkv",
+          "resourceLibraryId": "library",
+          "scanStatus": "ready",
+          "size": 12,
+          "storageId": "source"
+        },
+        "stage": "planning",
+        "status": "previewed",
+        "truncated": false,
+        "zeroMutation": true
+      }
+    ],
+    "journey": "organize",
+    "nextAction": "inspect each exact plan; authorize selected items for execution",
+    "previewId": "<uuid>",
+    "scope": null,
+    "scopeId": null,
+    "scopeKind": null,
+    "selection": {
+      "selectedItemIds": ["<uuid>"],
+      "unselectedItemIds": []
+    },
+    "sideEffects": "none",
+    "status": "previewed",
+    "truncated": false,
+    "updatedAt": "2026-09-04T12:00:00+00:00",
+    "worker": {
+      "condition": "ready",
+      "durableState": "resident processing worker is live and can claim the admitted manual execution queue",
+      "nextAction": "none",
+      "ready": true
+    },
+    "zeroMutation": true
+  },
+  "organizePreviewDetail": {
+    "actions": {
+      "execute": {
+        "available": true,
+        "durableOutcome": "one durable admitted execution and its Processing Worker outcome are stored; only OrganizerExecutor may then mutate Storage",
+        "method": "POST",
+        "nextAction": "confirm one Execute action for the selected exact items",
+        "path": "/api/v1/operations/organize/previews/<uuid>/execute",
+        "reason": null,
+        "requiresConfirmation": true,
+        "sideEffects": "reported_per_item"
+      },
+      "intent": {
+        "available": true,
+        "durableOutcome": null,
+        "method": "GET",
+        "nextAction": "reopen the durable intent to change a choice",
+        "path": "/api/v1/operations/organize/intents/<uuid>",
+        "reason": null,
+        "sideEffects": "none"
+      }
+    },
+    "actor": "contract-operator",
+    "blockedItemCount": 0,
+    "configurationSnapshotId": "active-1",
+    "createdAt": "2026-09-04T12:00:00+00:00",
+    "current": true,
+    "executionCandidateItemIds": ["<uuid>"],
+    "executionState": "ready_for_explicit_authorization",
+    "failure": null,
+    "intentId": "<uuid>",
+    "intentVersion": 2,
+    "items": [
+      {
+        "choice": {
+          "classificationPolicyId": "A",
+          "namingPolicyId": "A",
+          "organizePolicyId": "A",
+          "recognitionTypeId": "A"
+        },
+        "configurationSnapshotId": "active-1",
+        "current": true,
+        "executionState": "ready_for_explicit_authorization",
+        "failure": null,
+        "itemId": "<uuid>",
+        "nextAction": "inspect this exact zero-mutation plan; authorize selected items for execution",
+        "plan": {
+          "analysis": {
+            "classification": {
+              "available": true,
+              "evidence": ["media_type=movie", "genre=Animation", "country=JP"],
+              "matchedRuleId": "anime-movie",
+              "matchedRuleName": "Japanese Animation",
+              "mediaLibraryId": "movies",
+              "policyId": "A",
+              "reason": null,
+              "recognitionTypeId": "A",
+              "relativePath": "Anime",
+              "status": "classified",
+              "warnings": []
+            },
+            "metadata": {
+              "available": true,
+              "identity": {
+                "countries": ["JP"],
+                "episode": null,
+                "episodeTitle": null,
+                "episodes": [],
+                "genres": ["Animation"],
+                "languages": [],
+                "matchedBy": "candidate_matcher",
+                "mediaType": "movie",
+                "originalTitle": null,
+                "provider": "tmdb",
+                "providerId": "129",
+                "recognitionTypeId": "A",
+                "season": null,
+                "title": "One",
+                "year": 2001
+              },
+              "match": {
+                "candidateCount": 1,
+                "candidates": [
+                  {
+                    "exactTitle": true,
+                    "exactYear": true,
+                    "mediaType": "movie",
+                    "provider": "tmdb",
+                    "providerId": "129",
+                    "score": 100.0,
+                    "title": "One",
+                    "year": 2001
+                  }
+                ],
+                "reasons": ["Candidate reached automatic threshold"],
+                "score": 100.0,
+                "status": "matched",
+                "warnings": []
+              },
+              "query": "One",
+              "status": "matched"
+            },
+            "naming": {
+              "available": true,
+              "directory": "One (2001)",
+              "directorySegments": ["One (2001)"],
+              "filename": "One (2001).mkv",
+              "policyId": "A",
+              "reason": null,
+              "recognitionTypeId": "A",
+              "sanitizationChanges": [],
+              "warnings": []
+            },
+            "parse": {
+              "audio": null,
+              "episode": null,
+              "episodes": [],
+              "evidence": [
+                {
+                  "confidence": "high",
+                  "field": "title_candidate",
+                  "source": "filename",
+                  "value": "One"
+                },
+                {
+                  "confidence": "high",
+                  "field": "year",
+                  "source": "filename",
+                  "value": "2001"
+                }
+              ],
+              "hdr": null,
+              "releaseGroup": null,
+              "resolution": null,
+              "season": null,
+              "source": null,
+              "titleCandidate": "One",
+              "version": null,
+              "videoCodec": null,
+              "warnings": [],
+              "year": 2001
+            },
+            "recognition": {
+              "confidence": "1.0",
+              "reasons": [
+                {
+                  "code": "MANUAL_PREVIEW",
+                  "message": "Pinned by manual Preview"
+                }
+              ],
+              "recognitionTypeId": "A",
+              "ruleId": "manual-preview",
+              "score": 100,
+              "status": "matched",
+              "warnings": []
+            }
+          },
+          "attachments": [],
+          "bounded": true,
+          "capabilities": {
+            "declared": ["can_copy", "can_delete"],
+            "missing": [],
+            "required": ["can_copy", "can_delete"],
+            "verdict": "ok"
+          },
+          "conflicts": [],
+          "destination": {
+            "filename": "One (2001).mkv",
+            "relativePath": "Anime/One (2001)/One (2001).mkv",
+            "storageId": "target"
+          },
+          "destructiveImplications": {
+            "overwriteRequired": false,
+            "sourceCleanupRequired": false,
+            "statement": "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation"
+          },
+          "deterministic": true,
+          "executionState": "ready_for_explicit_authorization",
+          "mediaIdentity": {
+            "countries": ["JP"],
+            "episode": null,
+            "episodeTitle": null,
+            "episodes": [],
+            "genres": ["Animation"],
+            "languages": [],
+            "matchedBy": "candidate_matcher",
+            "mediaType": "movie",
+            "originalTitle": null,
+            "provider": "tmdb",
+            "providerId": "129",
+            "recognitionTypeId": "A",
+            "season": null,
+            "title": "One",
+            "year": 2001
+          },
+          "operation": "MOVE",
+          "operationPolicy": "move",
+          "planStatus": "ready",
+          "policies": {
+            "classificationPolicyId": "A",
+            "metadataPolicyId": "A",
+            "namingPolicyId": "A",
+            "organizePolicyId": "A",
+            "recognitionTypePolicyId": "type-A"
+          },
+          "recognitionType": "A",
+          "warnings": [],
+          "zeroMutation": true
+        },
+        "position": 0,
+        "previewItemId": "<uuid>",
+        "sideEffects": "none",
+        "source": {
+          "extension": "mkv",
+          "fileId": "<hex-id>",
+          "filename": "One.2001.mkv",
+          "occurrenceState": "verified",
+          "path": "One.2001.mkv",
+          "resourceLibraryId": "library",
+          "scanStatus": "ready",
+          "size": 12,
+          "storageId": "source"
+        },
+        "stage": "planning",
+        "status": "previewed",
+        "truncated": false,
+        "zeroMutation": true
+      }
+    ],
+    "journey": "organize",
+    "nextAction": "inspect each exact plan; authorize selected items for execution",
+    "previewId": "<uuid>",
+    "scope": null,
+    "scopeId": null,
+    "scopeKind": null,
+    "selection": {
+      "selectedItemIds": ["<uuid>"],
+      "unselectedItemIds": []
+    },
+    "sideEffects": "none",
+    "status": "previewed",
+    "truncated": false,
+    "updatedAt": "2026-09-04T12:00:00+00:00",
+    "worker": {
+      "condition": "ready",
+      "durableState": "resident processing worker is live and can claim the admitted manual execution queue",
+      "nextAction": "none",
+      "ready": true
+    },
+    "zeroMutation": true
   },
   "previewAdmission": {
     "actor": "contract-operator",
@@ -206,6 +1392,11 @@
             "filename": "One (2001).mkv",
             "relativePath": "Anime/One (2001)/One (2001).mkv",
             "storageId": "target"
+          },
+          "destructiveImplications": {
+            "overwriteRequired": false,
+            "sourceCleanupRequired": false,
+            "statement": "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation"
           },
           "deterministic": true,
           "executionState": "ready_for_explicit_authorization",
@@ -426,6 +1617,11 @@
             "filename": "One (2001).mkv",
             "relativePath": "Anime/One (2001)/One (2001).mkv",
             "storageId": "target"
+          },
+          "destructiveImplications": {
+            "overwriteRequired": false,
+            "sourceCleanupRequired": false,
+            "statement": "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation"
           },
           "deterministic": true,
           "executionState": "ready_for_explicit_authorization",
@@ -653,6 +1849,11 @@
                 "relativePath": "Anime/One (2001)/One (2001).mkv",
                 "storageId": "target"
               },
+              "destructiveImplications": {
+                "overwriteRequired": false,
+                "sourceCleanupRequired": false,
+                "statement": "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation"
+              },
               "deterministic": true,
               "executionState": "ready_for_explicit_authorization",
               "mediaIdentity": {
@@ -738,7 +1939,7 @@
         "method": "POST",
         "modes": [],
         "nextAction": "select an exact ResourceLibrary scope before organizing",
-        "path": "/api/v1/operations/organize",
+        "path": "/api/v1/operations/organize/intents",
         "reason": "select an exact ResourceLibrary scope before organizing"
       },
       "preview": {

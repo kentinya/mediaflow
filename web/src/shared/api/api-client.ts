@@ -1435,6 +1435,16 @@ import {
   type ManualPreviewModel,
   type ManualPreviewListPage,
 } from "../../entities/operations/preview";
+import {
+  normalizeOrganizeExecution,
+  normalizeOrganizeExecutionList,
+  normalizeOrganizeIntent,
+  normalizeOrganizePreview,
+  type OrganizeExecutionListPage,
+  type OrganizeExecutionModel,
+  type OrganizeIntentModel,
+  type OrganizePreviewModel,
+} from "../../entities/operations/organize";
 
 // --- Manual action matrix ---
 
@@ -1844,6 +1854,419 @@ export async function fetchManualPreviewDetail(
   }
   try {
     return { ok: true, model: normalizeManualPreview(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Manual Organize: durable intent, exact Preview, one Execute action, outcome
+// ---------------------------------------------------------------------------
+
+/**
+ * Bounded mutation outcome. Every mutation in this journey returns the exact
+ * status and the backend `error.code` so the page can render a truthful
+ * recovery action; nothing is retried automatically.
+ */
+export type OrganizeMutationResult<T> =
+  | { readonly ok: true; readonly status: number; readonly model: T }
+  | { readonly ok: false; readonly status: number; readonly code: string };
+
+async function readErrorCode(response: Response): Promise<string> {
+  try {
+    const body = (await response.clone().json()) as {
+      error?: { code?: unknown };
+    };
+    const code = body?.error?.code;
+    return typeof code === "string" && code.length > 0
+      ? code
+      : "request_rejected";
+  } catch {
+    return "request_rejected";
+  }
+}
+
+async function submitOrganizeMutation<T>(
+  token: string | null,
+  url: string,
+  body: Record<string, unknown>,
+  normalize: (payload: unknown) => T,
+  fetchImpl: FetchLike,
+): Promise<OrganizeMutationResult<T>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: "POST",
+      headers: operationsMutationHeaders(token),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      code: await readErrorCode(response),
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  try {
+    return { ok: true, status: response.status, model: normalize(payload) };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+export interface SubmitOrganizeIntentOptions {
+  readonly scopeKind: "file" | "resourceLibrary";
+  readonly fileId?: string | null;
+  readonly resourceLibraryId?: string | null;
+  /** Current FileIndex identities for a ResourceLibrary-scoped selection. */
+  readonly itemIds?: readonly string[] | null;
+}
+
+export async function submitOrganizeIntent(
+  token: string | null,
+  options: SubmitOrganizeIntentOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<OrganizeIntentModel>> {
+  const body: Record<string, unknown> = { scopeKind: options.scopeKind };
+  if (options.fileId) {
+    body.fileId = options.fileId;
+  }
+  if (options.resourceLibraryId) {
+    body.resourceLibraryId = options.resourceLibraryId;
+  }
+  if (options.itemIds && options.itemIds.length > 0) {
+    body.itemIds = [...options.itemIds];
+  }
+  return submitOrganizeMutation(
+    token,
+    "/api/v1/operations/organize/intents",
+    body,
+    normalizeOrganizeIntent,
+    fetchImpl,
+  );
+}
+
+export type OrganizeIntentRead =
+  | { readonly ok: true; readonly model: OrganizeIntentModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchOrganizeIntent(
+  token: string | null,
+  intentId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeIntentRead> {
+  if (!isSafeIdentifier(intentId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/organize/intents/${encodeURIComponent(intentId)}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeOrganizeIntent(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export interface UpdateOrganizeChoiceOptions {
+  readonly intentId: string;
+  readonly itemId: string;
+  readonly expectedVersion: number;
+  readonly expectedItemVersion: number;
+  readonly recognitionTypeId?: string;
+  readonly namingPolicyId?: string;
+  readonly classificationPolicyId?: string;
+  readonly organizePolicyId?: string;
+}
+
+export async function updateOrganizeChoice(
+  token: string | null,
+  options: UpdateOrganizeChoiceOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<OrganizeIntentModel>> {
+  if (
+    !isSafeIdentifier(options.intentId) ||
+    !isSafeIdentifier(options.itemId)
+  ) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  const body: Record<string, unknown> = {
+    expectedVersion: options.expectedVersion,
+    expectedItemVersion: options.expectedItemVersion,
+  };
+  for (const field of [
+    "recognitionTypeId",
+    "namingPolicyId",
+    "classificationPolicyId",
+    "organizePolicyId",
+  ] as const) {
+    const value = options[field];
+    if (value !== undefined) {
+      body[field] = value;
+    }
+  }
+  return submitOrganizeMutation(
+    token,
+    `/api/v1/operations/organize/intents/${encodeURIComponent(options.intentId)}/items/${encodeURIComponent(options.itemId)}/choice`,
+    body,
+    normalizeOrganizeIntent,
+    fetchImpl,
+  );
+}
+
+export interface SubmitOrganizePreviewOptions {
+  readonly intentId: string;
+  readonly expectedVersion: number;
+}
+
+export async function submitOrganizePreview(
+  token: string | null,
+  options: SubmitOrganizePreviewOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<OrganizePreviewModel>> {
+  if (!isSafeIdentifier(options.intentId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    `/api/v1/operations/organize/intents/${encodeURIComponent(options.intentId)}/previews`,
+    { expectedVersion: options.expectedVersion },
+    normalizeOrganizePreview,
+    fetchImpl,
+  );
+}
+
+export type OrganizePreviewRead =
+  | { readonly ok: true; readonly model: OrganizePreviewModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchOrganizePreviewDetail(
+  token: string | null,
+  previewId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizePreviewRead> {
+  if (!isSafeIdentifier(previewId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/organize/previews/${encodeURIComponent(previewId)}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeOrganizePreview(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export interface ExecuteOrganizePreviewOptions {
+  readonly previewId: string;
+  readonly itemIds: readonly string[];
+  readonly expectedIntentVersion: number;
+  readonly allowOverwrite?: boolean;
+  readonly allowSourceCleanup?: boolean;
+}
+
+/**
+ * The one meaningful Web Execute action.
+ *
+ * The browser sends only the reviewed selection, its optimistic intent
+ * version, the explicit confirmation and the destructive choices the operator
+ * actually made. Everything else (short-lived one-shot authority, digests,
+ * tokens and plans) stays on the server.
+ */
+export async function executeOrganizePreview(
+  token: string | null,
+  options: ExecuteOrganizePreviewOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<OrganizeExecutionModel>> {
+  if (!isSafeIdentifier(options.previewId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  const body: Record<string, unknown> = {
+    confirmation: true,
+    itemIds: [...options.itemIds],
+    expectedIntentVersion: options.expectedIntentVersion,
+  };
+  if (options.allowOverwrite === true) {
+    body.allowOverwrite = true;
+  }
+  if (options.allowSourceCleanup === true) {
+    body.allowSourceCleanup = true;
+  }
+  return submitOrganizeMutation(
+    token,
+    `/api/v1/operations/organize/previews/${encodeURIComponent(options.previewId)}/execute`,
+    body,
+    normalizeOrganizeExecution,
+    fetchImpl,
+  );
+}
+
+export type OrganizeExecutionRead =
+  | { readonly ok: true; readonly model: OrganizeExecutionModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchOrganizeExecution(
+  token: string | null,
+  executionId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeExecutionRead> {
+  if (!isSafeIdentifier(executionId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/organize/executions/${encodeURIComponent(executionId)}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeOrganizeExecution(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export interface OrganizeExecutionListQueryOptions {
+  readonly previewId?: string | null;
+  readonly intentId?: string | null;
+  readonly limit?: number;
+}
+
+export async function fetchOrganizeExecutions(
+  token: string | null,
+  options: OrganizeExecutionListQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OperationsRead<OrganizeExecutionListPage>> {
+  const params = new URLSearchParams();
+  if (options.previewId) {
+    params.set("previewId", options.previewId);
+  }
+  if (options.intentId) {
+    params.set("intentId", options.intentId);
+  }
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  if (params.toString().length === 0) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/organize/executions?${params.toString()}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeOrganizeExecutionList(payload) };
   } catch {
     throw new OperationsApiError("malformed");
   }

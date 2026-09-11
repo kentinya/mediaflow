@@ -38,7 +38,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     TaskItemStatus,
 )
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
 
@@ -180,7 +180,7 @@ class RestartFaultBoundaryTests(unittest.TestCase):
                     supported_commands=("scan", "preview"),
                     configuration_snapshot_id="revision-1",
                     configuration_snapshot_digest=DIGEST,
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=old,
                 )
                 first_process.heartbeat_worker("worker-a", old)
@@ -199,7 +199,7 @@ class RestartFaultBoundaryTests(unittest.TestCase):
                     supported_commands=("scan", "preview"),
                     configuration_snapshot_id="revision-1",
                     configuration_snapshot_digest=DIGEST,
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=NOW,
                 )
                 current_claim = second_process.claim_next_job(NOW, worker_id="worker-b")

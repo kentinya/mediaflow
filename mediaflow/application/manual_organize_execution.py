@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
@@ -58,6 +58,7 @@ from mediaflow.domain.organizer import (
 from mediaflow.domain.storage import StorageEntry, StorageEntryType, StorageError, StorageErrorCode
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
+    PersistentTaskItem,
     PersistentTaskStatus,
     TaskItemStatus,
 )
@@ -65,6 +66,24 @@ from mediaflow.domain.task_persistence import (
 _MAX_TEXT = 512
 _MAX_TTL_SECONDS = 900
 _MAX_EFFECTS = 256
+_CLAIM_LEASE_SECONDS = 300.0
+_TERMINAL_ITEM_STATUSES = frozenset(
+    {
+        ManualExecutionItemStatus.SUCCESS,
+        ManualExecutionItemStatus.SKIPPED,
+        ManualExecutionItemStatus.FAILED,
+        ManualExecutionItemStatus.PARTIAL,
+        ManualExecutionItemStatus.CANCELLED,
+    }
+)
+_TERMINAL_EXECUTION_STATUSES = frozenset(
+    {
+        ManualExecutionStatus.COMPLETED,
+        ManualExecutionStatus.PARTIAL_SUCCESS,
+        ManualExecutionStatus.FAILED,
+        ManualExecutionStatus.CANCELLED,
+    }
+)
 _CONCURRENT_PREFLIGHT_ERROR_CODES = frozenset(
     {
         "attachment_source_missing",
@@ -278,6 +297,103 @@ class ManualOrganizeExecutionService:
     issue_authorization = authorize
     authorize_preview = authorize
 
+    def begin_web_execution(
+        self,
+        preview_id: str,
+        item_ids: Sequence[str],
+        *,
+        expected_intent_version: int,
+        actor: str,
+        permission: str = "execute_manual_organize",
+        confirmation: bool,
+        allow_overwrite: bool = False,
+        allow_source_cleanup: bool = False,
+    ) -> ManualExecution:
+        """Serve one meaningful Web Execute action with server-held authority.
+
+        The browser never receives, submits, persists or logs an execution
+        token, a digest or an authorization identifier.  This boundary creates
+        the short-lived one-shot authority on the server for the exact reviewed
+        Preview, selected item set, pinned configuration and item versions and
+        allowed effects, then consumes it through atomic admission.  A repeated
+        or concurrent submission of the same reviewed work resolves to that one
+        durable execution instead of creating a second Task or mutation
+        attempt.
+        """
+
+        authority = self.authorize(
+            preview_id,
+            item_ids,
+            expected_intent_version=expected_intent_version,
+            expected_item_versions=None,
+            actor=actor,
+            permission=permission,
+            confirmation=confirmation,
+            allow_overwrite=allow_overwrite,
+            allow_source_cleanup=allow_source_cleanup,
+        )
+        try:
+            return self.admit(
+                authority.authorization_id,
+                actor=actor,
+                permission=permission,
+                confirmation=True,
+            )
+        except ManualExecutionError as error:
+            existing = self._existing_admitted_execution(authority, error)
+            # A repeated or concurrent submission must not leave a second live
+            # one-shot credential behind when its work was never admitted.
+            self._revoke_unused_authority(authority, error)
+            if existing is None:
+                raise
+            return existing
+
+    execute_web = begin_web_execution
+    web_execute = begin_web_execution
+
+    def _existing_admitted_execution(
+        self, authority: ManualExecutionAuthorization, error: ManualExecutionError
+    ) -> ManualExecution | None:
+        """Resolve one repeated/concurrent submission to its single durable execution."""
+
+        if getattr(error, "code", None) not in {
+            "duplicate_execution",
+            "concurrent_execution",
+            "authorization_consumed",
+        }:
+            return None
+        reader = getattr(self._repository, "list_manual_executions_for_preview", None)
+        if not callable(reader):
+            return None
+        selected = {scope.item_id for scope in authority.scope}
+        try:
+            values = reader(authority.preview_id, limit=10)
+        except Exception:
+            return None
+        for value in values:
+            admitted = {item.item_id for item in value.items}
+            if selected.issubset(admitted):
+                return value
+        return None
+
+    def _revoke_unused_authority(
+        self, authority: ManualExecutionAuthorization, error: ManualExecutionError
+    ) -> None:
+        revoke = getattr(self._repository, "revoke_manual_execution_authorization", None)
+        if not callable(revoke):
+            return
+        try:
+            revoke(
+                authority.authorization_id,
+                self._clock(),
+                actor=authority.actor,
+                reason=getattr(error, "code", "manual_execution_rejected"),
+            )
+        except Exception:
+            # The unused authority still expires through its TTL; a revocation
+            # bookkeeping failure must not replace the operator-facing reason.
+            return
+
     def get_authorization(
         self, authorization_id: str, *, expire: bool = True
     ) -> ManualExecutionAuthorization:
@@ -307,7 +423,7 @@ class ManualOrganizeExecutionService:
         document["links"] = self._authorization_links(value)
         return redact_manual_value(document)
 
-    def execute(
+    def admit(
         self,
         authorization_id: str,
         *,
@@ -315,6 +431,37 @@ class ManualOrganizeExecutionService:
         permission: str = "execute_manual_organize",
         confirmation: bool,
     ) -> ManualExecution:
+        """Consume exact authority and persist the admitted execution only.
+
+        The complete read-only preflight (current source, pinned runtime,
+        reviewed policies, conflicts and Storage capabilities) still runs for
+        every selected item, and atomic admission still commits the durable
+        execution, Task scope, item outcomes and Storage fences.  What this
+        boundary deliberately never does is invoke ``OrganizerExecutor``: the
+        resident Processing Worker owns that part of the boundary.
+        """
+
+        return self.execute(
+            authorization_id,
+            actor=actor,
+            permission=permission,
+            confirmation=confirmation,
+            admit_only=True,
+        )
+
+    def execute(
+        self,
+        authorization_id: str,
+        *,
+        actor: str,
+        permission: str = "execute_manual_organize",
+        confirmation: bool,
+        admit_only: bool = False,
+    ) -> ManualExecution:
+        if not isinstance(admit_only, bool):
+            raise ManualExecutionError(
+                "manual execution admit_only flag is invalid", code="malformed_request"
+            )
         actor = self._actor(actor)
         permission = self._permission(permission)
         self._require_confirmation(confirmation)
@@ -453,6 +600,10 @@ class ManualOrganizeExecutionService:
                 status=503,
             )
         admitted = admit(authority, execution, execution_items, locks, now)
+        if admit_only:
+            # The durable execution is committed and waiting for the resident
+            # Processing Worker; this boundary never calls OrganizerExecutor.
+            return admitted
         try:
             if not self._locks_owned(admitted.task_id, locks):
                 raise ManualExecutionError(
@@ -611,6 +762,438 @@ class ManualOrganizeExecutionService:
 
     consume = execute
     execute_authorized = execute
+
+    # --- durable Processing-Worker execution boundary ----------------------
+
+    def run_admitted(
+        self,
+        execution_id: str,
+        *,
+        worker_id: str | None = None,
+        claim_token: str | None = None,
+        heartbeat: Callable[[], bool] | None = None,
+        lease_seconds: float = _CLAIM_LEASE_SECONDS,
+    ) -> ManualExecution:
+        """Run one already admitted exact execution as its Processing Worker.
+
+        The reviewed Preview items, the pinned runtime snapshot and the
+        server-held authority are reconstructed from durable state; no request
+        value participates.  ``claim_token`` fences the transition from
+        "nothing was mutated yet" to "OrganizerExecutor may run" so a second
+        Worker can never take over an execution that already crossed the
+        mutation boundary, and every pending item is rechecked immediately
+        before its own not-yet-performed mutation.  A recheck failure publishes
+        one truthful pre-mutation failure for that item only; independent
+        siblings keep their own outcome.
+        """
+
+        execution = self.get(execution_id)
+        if execution.status in {
+            ManualExecutionStatus.COMPLETED,
+            ManualExecutionStatus.PARTIAL_SUCCESS,
+            ManualExecutionStatus.FAILED,
+            ManualExecutionStatus.CANCELLED,
+        }:
+            return execution
+        if execution.status is not ManualExecutionStatus.ADMITTED:
+            raise ManualExecutionError(
+                "the manual execution is already owned by another execution boundary",
+                code="concurrent_execution",
+                next_action="inspect the durable execution; automatic replay is refused",
+            )
+        if claim_token is not None:
+            beginner = getattr(self._repository, "begin_manual_execution", None)
+            if not callable(beginner):
+                raise ManualExecutionError(
+                    "the Processing Worker claim boundary is unavailable",
+                    code="execution_unavailable",
+                    status=503,
+                    next_action="restore the runtime Task repository, then retry",
+                )
+            if not beginner(execution.execution_id, claim_token, self._clock()):
+                raise ManualExecutionError(
+                    "the manual execution lease is no longer owned by this Worker",
+                    code="concurrent_execution",
+                    next_action="inspect the durable execution; automatic replay is refused",
+                )
+        del worker_id, lease_seconds
+        execution = replace(
+            execution,
+            status=ManualExecutionStatus.RUNNING,
+            next_action=(
+                "the Processing Worker owns this exact execution; inspect each independent "
+                "item outcome"
+            ),
+            updated_at=self._clock(),
+        )
+        self._repository.update_manual_execution(execution)
+        authority = self._load_execution_authority(execution)
+        try:
+            selected, storages, intent, runtime = self._reconstruct_reviewed_scope(authority)
+        except ManualExecutionError as error:
+            return self._fail_pending_before_mutation(execution, error)
+        return self._run_worker_items(
+            execution,
+            selected,
+            storages=storages,
+            intent=intent,
+            runtime=runtime,
+            authority=authority,
+            heartbeat=heartbeat,
+        )
+
+    run_claimed_execution = run_admitted
+
+    def list_for_preview(self, preview_id: str, *, limit: int = 100) -> tuple[ManualExecution, ...]:
+        """Durable executions of one reviewed Preview, newest first (bounded)."""
+
+        reader = getattr(self._repository, "list_manual_executions_for_preview", None)
+        return tuple(reader(preview_id, limit=limit)) if callable(reader) else ()
+
+    def list_for_intent(self, intent_id: str, *, limit: int = 100) -> tuple[ManualExecution, ...]:
+        """Durable executions of one manual intent (bounded)."""
+
+        reader = getattr(self._repository, "list_manual_executions_for_intent", None)
+        return tuple(reader(intent_id, limit=limit)) if callable(reader) else ()
+
+    def _load_execution_authority(self, execution) -> ManualExecutionAuthorization:
+        """Reload the exact consumed one-shot authority that admitted the execution."""
+
+        getter = getattr(self._repository, "get_manual_execution_authorization", None)
+        value = getter(execution.authorization_id) if callable(getter) else None
+        if value is None or value.execution_id != execution.execution_id:
+            raise ManualExecutionError(
+                "the admitted execution no longer has its exact persisted authority",
+                code="authorization_unavailable",
+                status=503,
+                next_action="inspect the durable execution; automatic replay is refused",
+            )
+        if (
+            value.preview_id != execution.preview_id
+            or value.intent_version != execution.intent_version
+            or value.configuration_snapshot_id != execution.configuration_snapshot_id
+            or value.configuration_snapshot_digest != execution.configuration_snapshot_digest
+            or value.allow_overwrite != execution.allow_overwrite
+            or value.allow_source_cleanup != execution.allow_source_cleanup
+        ):
+            raise ManualExecutionError(
+                "the admitted execution authority binding changed",
+                code="authorization_changed",
+                next_action="inspect the durable execution; automatic replay is refused",
+            )
+        return value
+
+    def _reconstruct_reviewed_scope(self, authority):
+        """Reload the exact reviewed items, pinned runtime and Storage adapters."""
+
+        preview = self._preview(authority.preview_id)
+        self._validate_preview_parent(
+            preview, authority.configuration_snapshot_id, authority.configuration_snapshot_digest
+        )
+        intent = self._intent(authority.intent_id)
+        selected = self._selected_authorized_items(preview, authority)
+        runtime = self._load_runtime(
+            authority.configuration_snapshot_id, authority.configuration_snapshot_digest
+        )
+        storage_ids: set[str] = set()
+        for item in selected:
+            storage_ids.update(self._plan_storage_ids(item.plan))
+        storages = self._create_storages(runtime, storage_ids)
+        return selected, storages, intent, runtime
+
+    def _fail_pending_before_mutation(
+        self, execution: ManualExecution, error: ManualExecutionError
+    ) -> ManualExecution:
+        """Publish one truthful pre-mutation failure for every unfinished item.
+
+        The recheck found that the exact reviewed work can no longer run.  No
+        Storage mutation happened, so every unfinished item is closed with
+        effect certainty ``none`` and a fresh-Preview next action instead of
+        silently claiming success or leaving the execution running forever.
+        """
+
+        plans = {item.item_id: self._recovery_plan(item) for item in execution.items}
+        return self._reconcile_unfinished(
+            execution,
+            plans,
+            audit_action="worker_recheck_rejected",
+            audit_details={
+                "boundary": "before_organizer_executor",
+                "code": getattr(error, "code", "manual_execution_rejected"),
+            },
+        )
+
+    def fail_unstarted_execution(self, execution_id: str, error: BaseException) -> ManualExecution:
+        """Close an execution a Worker claimed but could not start.
+
+        Nothing in this boundary invokes ``OrganizerExecutor``.  Each item that
+        never published its running boundary is closed with effect certainty
+        ``none``; an item that already published ``running`` keeps the existing
+        investigation-only handoff.  The result is a durable outcome an
+        operator can act on instead of work that silently returns to the queue.
+        """
+
+        execution = self.get(execution_id)
+        if execution.status not in {
+            ManualExecutionStatus.ADMITTED,
+            ManualExecutionStatus.RUNNING,
+        }:
+            return execution
+        bounded = (
+            error
+            if isinstance(error, ManualExecutionError)
+            else ManualExecutionError(
+                _safe_error(error),
+                code="execution_unavailable",
+                status=503,
+                next_action="inspect the durable execution; automatic replay is refused",
+            )
+        )
+        return self._fail_pending_before_mutation(execution, bounded)
+
+    def _run_worker_items(
+        self,
+        execution: ManualExecution,
+        selected: Sequence,
+        *,
+        storages,
+        intent,
+        runtime,
+        authority: ManualExecutionAuthorization,
+        heartbeat: Callable[[], bool] | None,
+    ) -> ManualExecution:
+        for preview_item in selected:
+            execution = self.get(execution.execution_id)
+            item = next(
+                (value for value in execution.items if value.item_id == preview_item.item_id),
+                None,
+            )
+            if item is None or item.status in _TERMINAL_ITEM_STATUSES:
+                continue
+            if heartbeat is not None and not heartbeat():
+                raise ManualExecutionError(
+                    "the Processing Worker lease was lost before the next mutation",
+                    code="claim_lost",
+                    next_action="inspect the durable execution; automatic replay is refused",
+                )
+            try:
+                self._current_source(intent, preview_item)
+                self._validate_plan_authority(
+                    preview_item.plan, authority.allow_overwrite, authority.allow_source_cleanup
+                )
+                plan = self._plan_from_document(preview_item.plan, preview_item, runtime)
+                self._validate_runtime_policy(plan, preview_item, runtime)
+                self._validate_current_storage(plan, preview_item, authority, storages)
+            except ManualExecutionError as error:
+                execution = self._publish_pre_mutation_failure(execution, item, error, storages)
+                continue
+            locks = self._plan_locks(plan)
+            if not self._locks_owned(execution.task_id, locks):
+                execution = self._publish_pre_mutation_failure(
+                    execution,
+                    item,
+                    ManualExecutionError(
+                        "the exact Storage fence was lost before execution",
+                        code="concurrent_execution",
+                        next_action="inspect the durable Task and request a fresh Preview",
+                    ),
+                    storages,
+                )
+                continue
+            execution = self._mutate_worker_item(execution, item, plan, locks, storages)
+        return self.get(execution.execution_id)
+
+    def _publish_pre_mutation_failure(
+        self,
+        execution: ManualExecution,
+        item: ManualExecutionItem,
+        error: ManualExecutionError,
+        storages,
+    ) -> ManualExecution:
+        """Close one item that was rechecked and refused before any mutation."""
+
+        plan = self._recovery_plan(item)
+        result = ExecutionResult(
+            ExecutionStatus.FAILED,
+            plan.operation,
+            plan.source,
+            plan.target,
+            plan_id=plan.plan_id,
+            resolved_destination=plan.target,
+            errors=(_safe_error(error),),
+            effect_certainty=ExecutionEffectCertainty.NONE,
+        )
+        return self._publish_item_outcome(
+            execution,
+            item,
+            plan,
+            result,
+            self._plan_locks(plan),
+            stage="revalidation_failed",
+            storages=storages,
+        )
+
+    def _mutate_worker_item(
+        self,
+        execution: ManualExecution,
+        item: ManualExecutionItem,
+        plan: OrganizePlan,
+        locks: Sequence[tuple[str, str]],
+        storages,
+    ) -> ManualExecution:
+        """Publish the running boundary, run OrganizerExecutor once, then record it."""
+
+        now = self._clock()
+        task_item = self._repository.get_item(item.task_item_id)
+        if task_item is None:
+            raise ManualExecutionError(
+                "admitted Task scope could not be reloaded",
+                code="execution_unavailable",
+                status=503,
+            )
+        running_item = replace(
+            item,
+            status=ManualExecutionItemStatus.RUNNING,
+            stage="organizing",
+            updated_at=now,
+        )
+        running_task_item = replace(
+            task_item,
+            status=TaskItemStatus.PROCESSING,
+            stage="organizing",
+            attempts=task_item.attempts + 1,
+            updated_at=now,
+        )
+        try:
+            self._repository.upsert_item(running_task_item)
+            self._repository.update_manual_execution_item(running_item)
+        except Exception:
+            self._reconcile_unfinished(
+                execution,
+                {item.item_id: plan},
+                audit_action="execution_start_interrupted",
+                audit_details={"boundary": "before_organizer_executor"},
+            )
+            raise
+        result = (
+            self._execute_plan(plan, storages)
+            if self._locks_owned(execution.task_id, locks)
+            else ExecutionResult(
+                ExecutionStatus.FAILED,
+                plan.operation,
+                plan.source,
+                plan.target,
+                plan_id=plan.plan_id,
+                resolved_destination=plan.target,
+                errors=("the exact Storage fence was lost before mutation",),
+                effect_certainty=ExecutionEffectCertainty.NONE,
+            )
+        )
+        return self._publish_item_outcome(
+            execution,
+            item,
+            plan,
+            result,
+            locks,
+            task_item=running_task_item,
+            storages=storages,
+        )
+
+    def _publish_item_outcome(
+        self,
+        execution: ManualExecution,
+        item: ManualExecutionItem,
+        plan: OrganizePlan,
+        result: ExecutionResult,
+        locks: Sequence[tuple[str, str]],
+        *,
+        stage: str | None = None,
+        task_item: PersistentTaskItem | None = None,
+        storages=None,
+    ) -> ManualExecution:
+        """Persist exactly one independent item outcome with its Result and effects."""
+
+        result_record = self._result_record(execution, item, plan, result)
+        effects = self._effects(item, plan, result)
+        terminal_item = replace(
+            item,
+            status=self._item_status(result.status),
+            stage=stage or self._item_stage(result),
+            result_id=result_record.result_id,
+            effect_certainty=result.effect_certainty.value,
+            completed_operations=result.completed_operations,
+            uncertain_effects=result.uncertain_effects,
+            error=self._result_error(result),
+            next_action=self._next_action(result),
+            effects=effects,
+            updated_at=self._clock(),
+        )
+        current_task_item = task_item or self._repository.get_item(item.task_item_id)
+        task = self._repository.get_task(execution.task_id)
+        if current_task_item is None or task is None:
+            raise ManualExecutionError(
+                "admitted Task scope could not be reloaded",
+                code="execution_unavailable",
+                status=503,
+            )
+        terminal_task_item = replace(
+            current_task_item,
+            status=self._task_item_status(terminal_item.status),
+            stage=terminal_item.stage,
+            updated_at=terminal_item.updated_at,
+            plan_id=plan.plan_id,
+            destination_storage_id=plan.target_storage_id,
+            destination_path=plan.target,
+            execution_status=result.status.value,
+            error=terminal_item.error,
+        )
+        current_items = tuple(
+            terminal_item if value.item_id == terminal_item.item_id else value
+            for value in execution.items
+        )
+        execution = replace(
+            execution,
+            items=current_items,
+            **self._aggregate_execution(current_items),
+            updated_at=terminal_item.updated_at,
+        )
+        task = self._task_after_item(task, terminal_task_item, current_items, execution)
+        try:
+            self._repository.complete_manual_execution_item(
+                execution,
+                terminal_item,
+                terminal_task_item,
+                task,
+                result_record,
+                effects,
+                tuple(locks),
+            )
+        except Exception:
+            recovery_execution = replace(
+                execution,
+                items=tuple(
+                    item if value.item_id == terminal_item.item_id else value
+                    for value in execution.items
+                ),
+            )
+            uncertain_result = self._uncertain_publication_result(result)
+            self._reconcile_unfinished(
+                recovery_execution,
+                {value.item_id: self._recovery_plan(value) for value in recovery_execution.items},
+                uncertain_results={terminal_item.item_id: uncertain_result},
+                storages=storages,
+                audit_action="result_publication_interrupted",
+                audit_details={"boundary": "after_organizer_executor"},
+            )
+            raise
+        loaded = self._repository.get_manual_execution(execution.execution_id)
+        if loaded is None:
+            raise ManualExecutionError(
+                "manual execution could not be reloaded after publication",
+                code="execution_unavailable",
+                status=503,
+            )
+        return loaded
 
     def get(self, execution_id: str) -> ManualExecution:
         getter = getattr(self._repository, "get_manual_execution", None)

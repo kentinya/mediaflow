@@ -158,6 +158,45 @@ const childDestinationData = [
     description: "Bounded preview document, items and zero-mutation evidence.",
     dynamicPrefix: "/operations/preview/" as const,
   },
+  {
+    id: "operations-organize-new",
+    label: "Manual organize",
+    path: "/operations/organize/new",
+    title: "Manual organize | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Create a durable manual organize intent from one exact scope.",
+  },
+  {
+    id: "operations-organize-intent",
+    label: "Manual intent",
+    path: "/operations/organize/intent/$intentId",
+    title: "Manual intent | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Durable manual intent choices, previews and refresh-safe continuation.",
+    dynamicPrefix: "/operations/organize/intent/" as const,
+  },
+  {
+    id: "operations-organize-preview",
+    label: "Exact organize Preview",
+    path: "/operations/organize/preview/$previewId",
+    title: "Exact organize Preview | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Exact reviewed items, destructive implications and one Execute action.",
+    dynamicPrefix: "/operations/organize/preview/" as const,
+  },
+  {
+    id: "operations-organize-execution",
+    label: "Organize execution",
+    path: "/operations/organize/execution/$executionId",
+    title: "Organize execution | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Durable admitted execution, Worker outcome and independent item results.",
+    dynamicPrefix: "/operations/organize/execution/" as const,
+  },
 ] as const;
 
 export type DestinationAvailability = "implemented" | "migration";
@@ -393,9 +432,21 @@ export function allowlistedDestinationSearch(
     setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
+  if (path === "/operations/organize/new") {
+    // The manual Organize entry carries only its bounded scope parameters.
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    setSafe(allowed, "scopeKind", current.get("scopeKind"));
+    setSafe(allowed, "fileId", current.get("fileId"));
+    setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
   if (
     path === "/operations/scan/$taskId" ||
-    path === "/operations/preview/$previewId"
+    path === "/operations/preview/$previewId" ||
+    path === "/operations/organize/intent/$intentId" ||
+    path === "/operations/organize/preview/$previewId" ||
+    path === "/operations/organize/execution/$executionId"
   ) {
     // Detail routes carry no search state.
     return null;

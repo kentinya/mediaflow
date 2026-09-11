@@ -1652,10 +1652,18 @@ const MANUAL_TERMINAL_SCAN_STATUSES = new Set([
 // The bounded, secret-free request metadata a browser test may read back.
 const RECORDED_MANUAL_REQUESTS = [];
 const MANUAL_REQUEST_BODY_FIELDS = [
+  "allowOverwrite",
+  "allowSourceCleanup",
+  "confirmation",
+  "expectedIntentVersion",
+  "expectedItemVersion",
+  "expectedVersion",
   "fileId",
+  "itemIds",
   "itemCursor",
   "itemLimit",
   "mode",
+  "recognitionTypeId",
   "resourceLibraryId",
   "scopeKind",
 ];
@@ -1840,6 +1848,16 @@ function manualActionMatrixDocument(request, permitted) {
 
   return {
     actions: {
+      organize: manualActionDocument({
+        available: permitted && stateReason === null && !discovery,
+        modes: [],
+        nextAction:
+          permitted && stateReason === null && !discovery
+            ? "create a durable manual intent, then request an exact Preview"
+            : (previewReason ?? "the Organize action is not available"),
+        path: "/api/v1/operations/organize/intents",
+        reason: permitted ? stateReason : previewReason,
+      }),
       preview: manualActionDocument({
         available: previewAvailable,
         modes: [],
@@ -1878,6 +1896,305 @@ function manualActionMatrixDocument(request, permitted) {
     scopeKind: discovery ? "resourceLibrary" : request.scopeKind,
     selectionRequired: discovery,
     source: discovery ? null : source,
+  };
+}
+
+// --- V2 manual Organize bounded fixtures ----------------------------------
+//
+// One deterministic, secret-free intent -> exact Preview -> admitted execution
+// journey. The fake owns no authority material: it never issues, echoes or
+// records a token, digest, fingerprint or raw plan, and one repeated Execute
+// resolves to the same durable execution identity.
+
+const ORGANIZE_INTENT_ID = "organize-intent-e2e-001";
+const ORGANIZE_ITEM_ID = "organize-item-e2e-001";
+const ORGANIZE_PREVIEW_ID = "organize-preview-e2e-001";
+const ORGANIZE_EXECUTION_ID = "organize-execution-e2e-001";
+const ORGANIZE_TASK_ID = "organize-task-e2e-001";
+const ORGANIZE_STATE = { executed: false, intentVersion: 1, itemVersion: 1 };
+
+function organizeChoice(recognitionTypeId = "A") {
+  return {
+    classificationPolicyId: "A",
+    metadata: null,
+    namingPolicyId: "A",
+    organizePolicyId: "A",
+    recognitionTypeId,
+  };
+}
+
+function organizeIntentDocument() {
+  return {
+    actions: {
+      choice: {
+        available: true,
+        durableOutcome:
+          "a durable optimistic choice revision is stored and every earlier Preview of this intent becomes historical evidence",
+        method: "POST",
+        nextAction:
+          "edit one item choice with its current intent and item versions",
+        path: `/api/v1/operations/organize/intents/${ORGANIZE_INTENT_ID}/items/{itemId}/choice`,
+        reason: null,
+        sideEffects: "none",
+      },
+      execute: {
+        available: false,
+        durableOutcome: null,
+        method: null,
+        nextAction: "create a fresh exact Preview after the last choice change",
+        path: null,
+        reason:
+          "exact execution is only offered from a current, complete Preview",
+        sideEffects: "none",
+      },
+      preview: {
+        available: true,
+        durableOutcome: "a durable zero-mutation Preview revision is stored",
+        method: "POST",
+        nextAction: "create a fresh exact Preview of the reviewed choices",
+        path: `/api/v1/operations/organize/intents/${ORGANIZE_INTENT_ID}/previews`,
+        reason: null,
+        sideEffects: "none",
+      },
+    },
+    actor: "e2e-operator",
+    configurationSnapshotId: MANUAL_CONFIGURATION_SNAPSHOT_ID,
+    createdAt: MANUAL_RECORDED_AT,
+    execution: "not_available_in_this_task",
+    failure: null,
+    intentId: ORGANIZE_INTENT_ID,
+    items: [
+      {
+        choice: organizeChoice(),
+        createdAt: MANUAL_RECORDED_AT,
+        failure: null,
+        itemId: ORGANIZE_ITEM_ID,
+        nextAction: "continue to a later manual Preview",
+        position: 0,
+        source: {
+          extension: "mkv",
+          fileId: MANUAL_FILE_SCOPE.fileId,
+          filename: "One.2001.mkv",
+          occurrenceState: "verified",
+          path: "Movies/One.2001.mkv",
+          resourceLibraryId: MANUAL_FILE_SCOPE.resourceLibraryId,
+          scanStatus: "ready",
+          size: 12,
+          storageId: MANUAL_STORAGE_ID,
+        },
+        status: "ready",
+        updatedAt: MANUAL_RECORDED_AT,
+        version: ORGANIZE_STATE.itemVersion,
+      },
+    ],
+    journey: "organize",
+    nextAction: "continue to a later manual Preview",
+    optionLimit: 100,
+    options: {
+      classificationPolicies: [
+        { enabled: true, id: "A", name: "Movie classification" },
+      ],
+      configurationSnapshotId: MANUAL_CONFIGURATION_SNAPSHOT_ID,
+      metadataPolicies: [
+        {
+          enabled: true,
+          id: "A",
+          mediaType: "movie",
+          name: "Movie metadata",
+          providerId: "tmdb",
+        },
+      ],
+      namingPolicies: [
+        { enabled: true, id: "A", mediaType: "movie", name: "Movie naming" },
+      ],
+      organizePolicies: [
+        {
+          conflictStrategy: "manual",
+          enabled: true,
+          id: "A",
+          name: "Move",
+          operation: "move",
+        },
+      ],
+      recognitionTypes: [
+        {
+          classificationPolicyId: "A",
+          description: "",
+          enabled: true,
+          id: "A",
+          metadataPolicyId: "A",
+          name: "Movie",
+          namingPolicyId: "A",
+          organizePolicyId: "A",
+        },
+      ],
+    },
+    sideEffects: "none",
+    status: "open",
+    updatedAt: MANUAL_RECORDED_AT,
+    version: ORGANIZE_STATE.intentVersion,
+    zeroMutation: true,
+  };
+}
+
+function organizePreviewDocument() {
+  const base = manualPreviewDocument({
+    fileId: MANUAL_FILE_SCOPE.fileId,
+    resourceLibraryId: MANUAL_FILE_SCOPE.resourceLibraryId,
+    scopeId: MANUAL_FILE_SCOPE.fileId,
+    scopeKind: "file",
+  });
+  return {
+    ...base,
+    actions: {
+      execute: {
+        available: true,
+        durableOutcome:
+          "one durable admitted execution and its Processing Worker outcome are stored; only OrganizerExecutor may then mutate Storage",
+        method: "POST",
+        nextAction: "confirm one Execute action for the selected exact items",
+        path: `/api/v1/operations/organize/previews/${ORGANIZE_PREVIEW_ID}/execute`,
+        reason: null,
+        requiresConfirmation: true,
+        sideEffects: "reported_per_item",
+      },
+      intent: {
+        available: true,
+        durableOutcome: null,
+        method: "GET",
+        nextAction: "reopen the durable intent to change a choice",
+        path: `/api/v1/operations/organize/intents/${ORGANIZE_INTENT_ID}`,
+        reason: null,
+        sideEffects: "none",
+      },
+    },
+    blockedItemCount: 0,
+    executionCandidateItemIds: [ORGANIZE_ITEM_ID],
+    intentId: ORGANIZE_INTENT_ID,
+    intentVersion: ORGANIZE_STATE.intentVersion,
+    items: base.items.map((item) => ({
+      ...item,
+      itemId: ORGANIZE_ITEM_ID,
+      plan: {
+        ...item.plan,
+        destructiveImplications: {
+          overwriteRequired: false,
+          sourceCleanupRequired: false,
+          statement:
+            "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation",
+        },
+      },
+    })),
+    journey: "organize",
+    previewId: ORGANIZE_PREVIEW_ID,
+    worker: {
+      condition: "ready",
+      durableState:
+        "resident processing worker is live and can claim the admitted manual execution queue",
+      nextAction: "none",
+      ready: true,
+    },
+  };
+}
+
+function organizeExecutionDocument(status) {
+  const finished = status !== "admitted";
+  return {
+    actions: {
+      detail: {
+        available: true,
+        durableOutcome: null,
+        method: "GET",
+        nextAction: finished
+          ? "inspect the verified per-item Results; no replay is required"
+          : "the reviewed work is durably admitted and waits for the resident Processing Worker to claim it",
+        path: `/api/v1/operations/organize/executions/${ORGANIZE_EXECUTION_ID}`,
+        reason: null,
+        sideEffects: "none",
+      },
+      recovery: {
+        available: false,
+        durableOutcome: null,
+        method: null,
+        nextAction:
+          "open Review & Recovery to inspect the failed item; MediaFlow never replays an uncertain mutation automatically",
+        path: null,
+        reason: "recovery is only offered for an execution with a failed item",
+        sideEffects: "none",
+      },
+      task: {
+        available: true,
+        durableOutcome: null,
+        method: "GET",
+        nextAction: "inspect the durable Task and its per-item Results",
+        path: `/api/v1/operations/tasks/${ORGANIZE_TASK_ID}`,
+        reason: null,
+        sideEffects: "none",
+      },
+    },
+    actor: "e2e-operator",
+    allowOverwrite: false,
+    allowSourceCleanup: false,
+    completedAt: finished ? MANUAL_RECORDED_AT : null,
+    completedItemCount: finished ? 1 : 0,
+    createdAt: MANUAL_RECORDED_AT,
+    durableState: status,
+    executionId: ORGANIZE_EXECUTION_ID,
+    failedItemCount: 0,
+    failure: null,
+    intentId: ORGANIZE_INTENT_ID,
+    intentVersion: ORGANIZE_STATE.intentVersion,
+    itemCount: 1,
+    items: [
+      {
+        completedOperations: finished ? ["CREATE_DIRECTORY", "MOVE"] : [],
+        effectCertainty: finished ? "verified_complete" : "unknown",
+        effects: finished
+          ? [
+              {
+                action: "MOVE",
+                certainty: "verified_complete",
+                destinationLocation: "One (2001)/One (2001).mkv",
+                operation: null,
+                sourceLocation: "One.2001.mkv",
+                verified: true,
+              },
+            ]
+          : [],
+        failure: null,
+        itemId: ORGANIZE_ITEM_ID,
+        nextAction: finished
+          ? "inspect the verified Result; no recovery replay is required"
+          : "wait for the Processing Worker to claim this exact execution",
+        position: 0,
+        resultId: finished ? "result-e2e-001" : null,
+        stage: finished ? "completed" : "admitted",
+        status: finished ? "success" : "admitted",
+        taskId: ORGANIZE_TASK_ID,
+        taskItemId: "organize-task-item-e2e-001",
+        uncertainEffects: [],
+      },
+    ],
+    journey: "organize",
+    knownEffects: {
+      failedWithoutEffectCount: 0,
+      statement: finished
+        ? "every recorded effect is verified and no item requires automatic replay"
+        : "no Storage effect has been recorded yet",
+      uncertainItemCount: 0,
+      verifiedItemCount: finished ? 1 : 0,
+    },
+    nextAction: finished
+      ? "inspect the verified per-item Results; no replay is required"
+      : "the reviewed work is durably admitted and waits for the resident Processing Worker to claim it",
+    previewId: ORGANIZE_PREVIEW_ID,
+    selectedItemCount: 1,
+    selectedItemIds: [ORGANIZE_ITEM_ID],
+    status,
+    taskId: ORGANIZE_TASK_ID,
+    unselectedItemCount: 0,
+    unselectedItemIds: [],
+    updatedAt: MANUAL_RECORDED_AT,
   };
 }
 
@@ -3478,6 +3795,219 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // --- V2 manual Organize bounded routes ---
+  if (url.pathname === "/api/v1/organize/intents" && req.method === "POST") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const fields = parsed.document;
+    const scopeKind = fields.scopeKind ?? null;
+    const resourceLibraryId = fields.resourceLibraryId ?? null;
+    if (
+      (scopeKind !== "file" && scopeKind !== "resourceLibrary") ||
+      typeof resourceLibraryId !== "string"
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    recordManualRequest({
+      body: {
+        fileId: fields.fileId,
+        itemIds: Array.isArray(fields.itemIds) ? [...fields.itemIds] : null,
+        resourceLibraryId,
+        scopeKind,
+      },
+      method: "POST",
+      objectId: ORGANIZE_INTENT_ID,
+      objectType: "organize_intent",
+      path: "/api/v1/organize/intents",
+    });
+    ORGANIZE_STATE.intentVersion = 1;
+    ORGANIZE_STATE.itemVersion = 1;
+    sendJson(res, 201, organizeIntentDocument());
+    return;
+  }
+
+  if (
+    url.pathname === `/api/v1/organize/intents/${ORGANIZE_INTENT_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    recordManualRequest({
+      method: "GET",
+      objectId: ORGANIZE_INTENT_ID,
+      objectType: "organize_intent",
+      path: "/api/v1/organize/intents/:intentId",
+    });
+    sendJson(res, 200, organizeIntentDocument());
+    return;
+  }
+
+  if (
+    url.pathname ===
+      `/api/v1/organize/intents/${ORGANIZE_INTENT_ID}/items/${ORGANIZE_ITEM_ID}/choice` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const fields = parsed.document;
+    recordManualRequest({
+      body: {
+        expectedItemVersion: fields.expectedItemVersion,
+        expectedVersion: fields.expectedVersion,
+        recognitionTypeId: fields.recognitionTypeId,
+      },
+      method: "POST",
+      objectId: ORGANIZE_ITEM_ID,
+      objectType: "organize_choice",
+      path: "/api/v1/organize/intents/:intentId/items/:itemId/choice",
+    });
+    if (
+      fields.expectedVersion !== ORGANIZE_STATE.intentVersion ||
+      fields.expectedItemVersion !== ORGANIZE_STATE.itemVersion
+    ) {
+      sendJson(res, 409, {
+        error: {
+          code: "manual_intent_conflict",
+          message: "manual intent version is stale; no choice was changed",
+        },
+      });
+      return;
+    }
+    ORGANIZE_STATE.intentVersion += 1;
+    ORGANIZE_STATE.itemVersion += 1;
+    sendJson(res, 200, organizeIntentDocument());
+    return;
+  }
+
+  if (
+    url.pathname ===
+      `/api/v1/organize/intents/${ORGANIZE_INTENT_ID}/previews` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    recordManualRequest({
+      body: { expectedVersion: parsed.document.expectedVersion },
+      method: "POST",
+      objectId: ORGANIZE_INTENT_ID,
+      objectType: "organize_preview",
+      path: "/api/v1/organize/intents/:intentId/previews",
+    });
+    if (parsed.document.expectedVersion !== ORGANIZE_STATE.intentVersion) {
+      sendJson(res, 409, {
+        error: {
+          code: "manual_intent_conflict",
+          message: "manual intent version is stale; no Preview was created",
+        },
+      });
+      return;
+    }
+    sendJson(res, 201, organizePreviewDocument());
+    return;
+  }
+
+  if (
+    url.pathname === `/api/v1/organize/previews/${ORGANIZE_PREVIEW_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    recordManualRequest({
+      method: "GET",
+      objectId: ORGANIZE_PREVIEW_ID,
+      objectType: "organize_preview",
+      path: "/api/v1/organize/previews/:previewId",
+    });
+    sendJson(res, 200, organizePreviewDocument());
+    return;
+  }
+
+  if (
+    url.pathname ===
+      `/api/v1/organize/previews/${ORGANIZE_PREVIEW_ID}/execute` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const fields = parsed.document;
+    recordManualRequest({
+      body: {
+        confirmation: fields.confirmation === true,
+        expectedIntentVersion: fields.expectedIntentVersion,
+        itemIds: Array.isArray(fields.itemIds) ? [...fields.itemIds] : null,
+      },
+      method: "POST",
+      objectId: ORGANIZE_PREVIEW_ID,
+      objectType: "organize_execute",
+      path: "/api/v1/organize/previews/:previewId/execute",
+    });
+    if (
+      fields.confirmation !== true ||
+      !Array.isArray(fields.itemIds) ||
+      fields.itemIds.length !== 1 ||
+      fields.itemIds[0] !== ORGANIZE_ITEM_ID ||
+      fields.expectedIntentVersion !== ORGANIZE_STATE.intentVersion
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    // One repeated submission resolves to the same durable execution.
+    const first = ORGANIZE_STATE.executed === false;
+    ORGANIZE_STATE.executed = true;
+    sendJson(
+      res,
+      first ? 202 : 200,
+      organizeExecutionDocument(first ? "admitted" : "completed"),
+    );
+    return;
+  }
+
+  if (
+    url.pathname === `/api/v1/organize/executions/${ORGANIZE_EXECUTION_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    recordManualRequest({
+      method: "GET",
+      objectId: ORGANIZE_EXECUTION_ID,
+      objectType: "organize_execution",
+      path: "/api/v1/organize/executions/:executionId",
+    });
+    sendJson(
+      res,
+      200,
+      organizeExecutionDocument(
+        ORGANIZE_STATE.executed ? "completed" : "admitted",
+      ),
+    );
+    return;
+  }
+
   // --- Manual Scan / Preview bounded routes ---
   //
   // These mirror the authoritative Python contract: one bounded action matrix
@@ -3924,6 +4454,17 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname === "/__test__/manual-operations" && req.method === "GET") {
     sendJson(res, 200, { items: RECORDED_MANUAL_REQUESTS });
+    return;
+  }
+
+  // Deterministic per-test reset for the manual Organize fake state so the
+  // journey proof never depends on another test having run first.
+  if (url.pathname === "/__test__/reset-organize" && req.method === "POST") {
+    ORGANIZE_STATE.executed = false;
+    ORGANIZE_STATE.intentVersion = 1;
+    ORGANIZE_STATE.itemVersion = 1;
+    RECORDED_MANUAL_REQUESTS.length = 0;
+    sendJson(res, 200, { ok: true });
     return;
   }
 

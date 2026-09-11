@@ -25,7 +25,7 @@ from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 
@@ -92,7 +92,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
             supported_commands=("scan", "process"),
             configuration_snapshot_id="cfg-1",
             configuration_snapshot_digest="digest-1",
-            runtime_schema_version=33,
+            runtime_schema_version=SCHEMA_VERSION,
             now=datetime.now(UTC),
         )
         self.assertEqual(registered.worker_id, worker_id)
@@ -100,7 +100,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
         self.assertEqual(registered.heartbeat_interval_seconds, 2.0)
         self.assertEqual(registered.supported_commands, ("scan", "process"))
         self.assertEqual(registered.status, WorkerStatus.LIVE)
-        self.assertEqual(registered.runtime_schema_version, 33)
+        self.assertEqual(registered.runtime_schema_version, SCHEMA_VERSION)
         self.assertEqual(registered.configuration_snapshot_id, "cfg-1")
         self.assertEqual(registered.configuration_snapshot_digest, "digest-1")
         self.assertEqual(registered.registered_at, registered.last_heartbeat_at)
@@ -113,7 +113,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
             supported_commands=("scan", "process"),
             configuration_snapshot_id="cfg-1",
             configuration_snapshot_digest="digest-1",
-            runtime_schema_version=33,
+            runtime_schema_version=SCHEMA_VERSION,
             now=datetime.now(UTC),
         )
         # registered_at is preserved on re-registration; last_heartbeat_at is updated
@@ -170,7 +170,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
             supported_commands=("scan", "preview"),
             configuration_snapshot_id="cfg-1",
             configuration_snapshot_digest="sha256:test",
-            runtime_schema_version=33,
+            runtime_schema_version=SCHEMA_VERSION,
             now=datetime.now(UTC),
         )
         status, document = _request(self.api, "GET", "/api/v1/workers", token="api-secret")
@@ -227,7 +227,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
                     supported_commands=("scan",),
                     configuration_snapshot_id=first.revision_id,
                     configuration_snapshot_digest=first.digest,
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=datetime.now(UTC),
                 )
                 changed = json.loads(json.dumps(document))
@@ -255,7 +255,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
                 self.assertEqual(readiness["activeSnapshotDigest"], second.digest)
                 self.assertFalse(readiness["ready"])
                 self.assertEqual(readiness["condition"], WorkerReadiness.SNAPSHOT_MISMATCH.value)
-                self.assertEqual(readiness["expectedRuntimeSchemaVersion"], 33)
+                self.assertEqual(readiness["expectedRuntimeSchemaVersion"], SCHEMA_VERSION)
 
     def test_cli_worker_registration_binds_current_active_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -290,7 +290,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
                 self.assertEqual(len(workers), 1)
                 self.assertEqual(workers[0].configuration_snapshot_id, active.revision_id)
                 self.assertEqual(workers[0].configuration_snapshot_digest, active.digest)
-                self.assertEqual(workers[0].runtime_schema_version, 33)
+                self.assertEqual(workers[0].runtime_schema_version, SCHEMA_VERSION)
 
     # AC2: Liveness and readiness
     def test_heartbeat_progression_and_stale_evaluation(self) -> None:
@@ -356,7 +356,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
         self.assertFalse(readiness["ready"])
         self.assertEqual(readiness["condition"], WorkerReadiness.SCHEMA_MISMATCH.value)
         self.assertIn("schema", readiness["durableState"])
-        self.assertEqual(readiness["expectedSchemaVersion"], 33)
+        self.assertEqual(readiness["expectedSchemaVersion"], SCHEMA_VERSION)
 
     def test_stopped_worker_is_not_reported_as_never_registered(self) -> None:
         self.service.register_worker(

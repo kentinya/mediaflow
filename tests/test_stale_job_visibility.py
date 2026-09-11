@@ -11,7 +11,7 @@ from mediaflow.domain.automation import AutomationCommand, AutomationJob, Automa
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.configuration_snapshot import build_configuration_snapshot
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.operator_ui import APP_JS
 from mediaflow.interfaces.service_api import MediaFlowApi
 
@@ -152,7 +152,7 @@ class StaleJobVisibilityTests(unittest.TestCase):
                     supported_commands=("scan",),
                     configuration_snapshot_id="cfg-1",
                     configuration_snapshot_digest="sha256:test",
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=NOW,
                 )
                 # Create running job owned by w-123
@@ -194,7 +194,7 @@ class StaleJobVisibilityTests(unittest.TestCase):
                     supported_commands=("scan",),
                     configuration_snapshot_id="cfg-1",
                     configuration_snapshot_digest="sha256:test",
-                    runtime_schema_version=33,
+                    runtime_schema_version=SCHEMA_VERSION,
                     now=NOW - timedelta(hours=3),
                 )
                 job = dataclasses.replace(
