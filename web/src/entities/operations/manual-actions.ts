@@ -84,6 +84,9 @@ export class ManualActionsNormalizationError extends Error {
   }
 }
 
+const FORBIDDEN_IDENTITY_SHAPE =
+  /(?:\b(?:bearer|basic)\s+[^\s,;]+|(?:[0-9a-f]{64,128})|^[\\/]|^[A-Za-z]:[\\/]|^[A-Za-z][A-Za-z0-9+.-]*:\/\/|\.\.(?:[\\/]|$))/i;
+
 function fail(): never {
   throw new ManualActionsNormalizationError();
 }
@@ -105,6 +108,18 @@ function optionalText(
   } catch {
     return fail();
   }
+}
+
+/** Reject a hostile identity/path value instead of allowing it into the DOM. */
+function safeIdentityText(
+  source: Record<string, unknown>,
+  field: string,
+): string | null {
+  const value = optionalText(source, field);
+  if (value !== null && FORBIDDEN_IDENTITY_SHAPE.test(value)) {
+    return fail();
+  }
+  return value;
 }
 
 function flag(source: Record<string, unknown>, field: string): boolean {
@@ -154,12 +169,12 @@ function normalizeActionSource(value: unknown): ManualActionSource {
   const source = readRecord(value, "source");
   try {
     return {
-      fileId: optionalText(source, "fileId"),
-      storageId: optionalText(source, "storageId"),
-      resourceLibraryId: optionalText(source, "resourceLibraryId"),
-      path: optionalText(source, "path"),
-      filename: optionalText(source, "filename"),
-      extension: optionalText(source, "extension"),
+      fileId: safeIdentityText(source, "fileId"),
+      storageId: safeIdentityText(source, "storageId"),
+      resourceLibraryId: safeIdentityText(source, "resourceLibraryId"),
+      path: safeIdentityText(source, "path"),
+      filename: safeIdentityText(source, "filename"),
+      extension: safeIdentityText(source, "extension"),
       sizeBytes: optionalCount(source, "sizeBytes"),
       occurrenceState: optionalText(source, "occurrenceState"),
       scanStatus: optionalText(source, "scanStatus"),
@@ -175,8 +190,9 @@ function normalizeResourceLibraryChoice(
   const source = readRecord(value, "resourceLibraries[]");
   try {
     return {
-      resourceLibraryId: text(source, "resourceLibraryId"),
-      storageId: optionalText(source, "storageId"),
+      resourceLibraryId:
+        safeIdentityText(source, "resourceLibraryId") ?? fail(),
+      storageId: safeIdentityText(source, "storageId"),
       scanMode: optionalText(source, "scanMode"),
       enabled: flag(source, "enabled"),
       reason: optionalText(source, "reason"),
@@ -209,9 +225,9 @@ export function normalizeManualActionMatrix(
   try {
     return {
       scopeKind,
-      scopeId: optionalText(source, "scopeId"),
-      fileId: optionalText(source, "fileId"),
-      resourceLibraryId: optionalText(source, "resourceLibraryId"),
+      scopeId: safeIdentityText(source, "scopeId"),
+      fileId: safeIdentityText(source, "fileId"),
+      resourceLibraryId: safeIdentityText(source, "resourceLibraryId"),
       selectionRequired: flag(source, "selectionRequired"),
       source:
         source["source"] === null || source["source"] === undefined

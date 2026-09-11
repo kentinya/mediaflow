@@ -14,6 +14,10 @@
 import { useParams } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import type {
+  ManualPreviewItemModel,
+  ManualPreviewPoliciesModel,
+} from "../../entities/operations/preview";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { manualPreviewDetailQueryOptions } from "./manual-preview-query";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -45,6 +49,207 @@ function targetLabel(item: {
   return item.targetStorageId === null
     ? item.targetPath
     : `${item.targetStorageId}:${item.targetPath}`;
+}
+
+function numberLabel(value: number | null): string {
+  return value === null ? "—" : String(value);
+}
+
+function PolicyFindings({
+  policies,
+}: {
+  readonly policies: ManualPreviewPoliciesModel | null;
+}) {
+  if (policies === null) {
+    return <p className="mf-dashboard-meta">No policy mapping was recorded.</p>;
+  }
+  return (
+    <dl>
+      <dt>RecognitionType policy</dt>
+      <dd>{safeValue(policies.recognitionTypePolicyId)}</dd>
+      <dt>Metadata policy</dt>
+      <dd>{safeValue(policies.metadataPolicyId)}</dd>
+      <dt>Naming policy</dt>
+      <dd>{safeValue(policies.namingPolicyId)}</dd>
+      <dt>Classification policy</dt>
+      <dd>{safeValue(policies.classificationPolicyId)}</dd>
+      <dt>Organize policy</dt>
+      <dd>{safeValue(policies.organizePolicyId)}</dd>
+    </dl>
+  );
+}
+
+function PipelineFindings({ item }: { readonly item: ManualPreviewItemModel }) {
+  const analysis = item.analysis;
+  return (
+    <>
+      <h4>Resolved policies</h4>
+      <PolicyFindings policies={item.policies} />
+      <h4>Pipeline analysis</h4>
+      {analysis === null ? (
+        <p className="mf-dashboard-meta">No pipeline analysis was recorded.</p>
+      ) : (
+        <>
+          <section>
+            <h5>Parse</h5>
+            {analysis.parse === null ? (
+              <p className="mf-dashboard-meta">
+                No parse finding was recorded.
+              </p>
+            ) : (
+              <dl>
+                <dt>Title candidate</dt>
+                <dd>{safeValue(analysis.parse.titleCandidate)}</dd>
+                <dt>Year</dt>
+                <dd>{numberLabel(analysis.parse.year)}</dd>
+                <dt>Season / episode</dt>
+                <dd>
+                  {numberLabel(analysis.parse.season)} /{" "}
+                  {numberLabel(analysis.parse.episode)}
+                </dd>
+                <dt>Resolution / source</dt>
+                <dd>
+                  {safeValue(analysis.parse.resolution)} /{" "}
+                  {safeValue(analysis.parse.source)}
+                </dd>
+                <dt>Codec / audio / HDR</dt>
+                <dd>
+                  {safeValue(analysis.parse.videoCodec)} /{" "}
+                  {safeValue(analysis.parse.audio)} /{" "}
+                  {safeValue(analysis.parse.hdr)}
+                </dd>
+                <dt>Evidence</dt>
+                <dd>
+                  {analysis.parse.evidence.length === 0
+                    ? "—"
+                    : analysis.parse.evidence
+                        .map((evidence) =>
+                          [evidence.field, evidence.value, evidence.source]
+                            .filter((value): value is string => value !== null)
+                            .join(" · "),
+                        )
+                        .join("; ")}
+                </dd>
+              </dl>
+            )}
+          </section>
+          <section>
+            <h5>Recognition</h5>
+            {analysis.recognition === null ? (
+              <p className="mf-dashboard-meta">
+                No recognition finding was recorded.
+              </p>
+            ) : (
+              <dl>
+                <dt>Status / type</dt>
+                <dd>
+                  {safeValue(analysis.recognition.status)} /{" "}
+                  {safeValue(analysis.recognition.recognitionTypeId)}
+                </dd>
+                <dt>Rule / confidence / score</dt>
+                <dd>
+                  {safeValue(analysis.recognition.ruleId)} /{" "}
+                  {safeValue(analysis.recognition.confidence)} /{" "}
+                  {numberLabel(analysis.recognition.score)}
+                </dd>
+                <dt>Reasons</dt>
+                <dd>
+                  {analysis.recognition.reasons.length === 0
+                    ? "—"
+                    : analysis.recognition.reasons
+                        .map((reason) =>
+                          [reason.code, reason.message]
+                            .filter((value): value is string => value !== null)
+                            .join(": "),
+                        )
+                        .join("; ")}
+                </dd>
+              </dl>
+            )}
+          </section>
+          <section>
+            <h5>Metadata</h5>
+            {analysis.metadata === null ? (
+              <p className="mf-dashboard-meta">
+                No metadata finding was recorded.
+              </p>
+            ) : (
+              <dl>
+                <dt>Available / status</dt>
+                <dd>
+                  {analysis.metadata.available ? "Yes" : "No"} /{" "}
+                  {safeValue(analysis.metadata.status)}
+                </dd>
+                <dt>Query</dt>
+                <dd>{safeValue(analysis.metadata.query)}</dd>
+                <dt>Match</dt>
+                <dd>
+                  {analysis.metadata.match === null
+                    ? "—"
+                    : `${safeValue(analysis.metadata.match.status)} · ${analysis.metadata.match.candidateCount} candidate(s)`}
+                </dd>
+              </dl>
+            )}
+          </section>
+          <section>
+            <h5>Naming</h5>
+            {analysis.naming === null ? (
+              <p className="mf-dashboard-meta">
+                No naming finding was recorded.
+              </p>
+            ) : (
+              <dl>
+                <dt>Available / policy</dt>
+                <dd>
+                  {analysis.naming.available ? "Yes" : "No"} /{" "}
+                  {safeValue(analysis.naming.policyId)}
+                </dd>
+                <dt>Directory / filename</dt>
+                <dd>
+                  {safeValue(analysis.naming.directory)} /{" "}
+                  {safeValue(analysis.naming.filename)}
+                </dd>
+                <dt>Reason</dt>
+                <dd>{safeValue(analysis.naming.reason)}</dd>
+              </dl>
+            )}
+          </section>
+          <section>
+            <h5>Classification</h5>
+            {analysis.classification === null ? (
+              <p className="mf-dashboard-meta">
+                No classification finding was recorded.
+              </p>
+            ) : (
+              <dl>
+                <dt>Available / status</dt>
+                <dd>
+                  {analysis.classification.available ? "Yes" : "No"} /{" "}
+                  {safeValue(analysis.classification.status)}
+                </dd>
+                <dt>MediaLibrary / relative path</dt>
+                <dd>
+                  {safeValue(analysis.classification.mediaLibraryId)} /{" "}
+                  {safeValue(analysis.classification.relativePath)}
+                </dd>
+                <dt>Matched rule</dt>
+                <dd>
+                  {safeValue(analysis.classification.matchedRuleId)} /{" "}
+                  {safeValue(analysis.classification.matchedRuleName)}
+                </dd>
+                <dt>Evidence</dt>
+                <dd>
+                  {analysis.classification.evidence.length === 0
+                    ? "—"
+                    : analysis.classification.evidence.join("; ")}
+                </dd>
+              </dl>
+            )}
+          </section>
+        </>
+      )}
+    </>
+  );
 }
 
 export function PreviewDetailPage() {
@@ -320,6 +525,7 @@ export function PreviewDetailPage() {
                     {item.failure.message} — {item.failure.nextAction}
                   </p>
                 )}
+                <PipelineFindings item={item} />
               </section>
             ))}
             <div className="mf-actions">

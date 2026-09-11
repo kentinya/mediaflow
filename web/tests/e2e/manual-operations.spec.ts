@@ -185,6 +185,23 @@ test.describe.serial("durable Scan state", () => {
     });
   });
 
+  test("a read-only Scan detail advertises no cancellation control", async ({
+    page,
+  }) => {
+    await page.goto(`/ui-v2/operations/scan/${SCAN_TASK_ID}`);
+    await connect(page, READ_ONLY_TOKEN);
+
+    await expect(
+      page.getByRole("heading", { name: `Scan ${SCAN_TASK_ID}` }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Request cancel" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText(/cancel_job permission required/),
+    ).toBeVisible();
+  });
+
   test("Scan detail requests exactly one cooperative cancellation", async ({
     page,
   }) => {

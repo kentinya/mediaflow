@@ -54,6 +54,7 @@ from mediaflow.application.operations_lifecycle import (
     bounded_identity_path,
     job_lifecycle_document,
     job_operator_document,
+    manual_action_matrix_operator_document,
     manual_preview_operator_document,
     manual_scan_operator_document,
     require_cancellable,
@@ -1312,7 +1313,8 @@ class MediaFlowApi:
                         "sourcePath": scan.source_path,
                         "sourceOccurrenceId": scan.source_occurrence_id,
                         "sourceFingerprint": scan.source_fingerprint,
-                    }
+                    },
+                    cancel_permitted=ApiPermission.CANCEL_JOB in principal.permissions,
                 ),
             )
         if (
@@ -1351,7 +1353,14 @@ class MediaFlowApi:
                 value["previousItemCursor"] = None
             if not has_next:
                 value["nextItemCursor"] = None
-            return self._response(start_response, 200, manual_scan_operator_document(value))
+            return self._response(
+                start_response,
+                200,
+                manual_scan_operator_document(
+                    value,
+                    cancel_permitted=ApiPermission.CANCEL_JOB in principal.permissions,
+                ),
+            )
         if (
             len(parts) == 6
             and parts[:4] == ["api", "v1", "operations", "scans"]
@@ -1370,7 +1379,12 @@ class MediaFlowApi:
                 )
             scan = binding.manual_scans.cancel(parts[4])
             return self._response(
-                start_response, 200, manual_scan_operator_document(scan.document())
+                start_response,
+                200,
+                manual_scan_operator_document(
+                    scan.document(),
+                    cancel_permitted=ApiPermission.CANCEL_JOB in principal.permissions,
+                ),
             )
         if parts == ["api", "v1", "operations", "previews"] and method == "POST":
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
@@ -5435,7 +5449,10 @@ class MediaFlowApi:
                     manual_scan.pop("_has_previous_items", None)
                     manual_scan.pop("_has_next_items", None)
                     if operations_projection:
-                        manual_scan = manual_scan_operator_document(manual_scan)
+                        manual_scan = manual_scan_operator_document(
+                            manual_scan,
+                            cancel_permitted=ApiPermission.CANCEL_JOB in principal.permissions,
+                        )
                 except ManualScanError as error:
                     if error.code != "task_not_found":
                         raise
@@ -7215,8 +7232,12 @@ class MediaFlowApi:
         # Determine runtime readiness: the binding has a snapshot_id when a
         # configuration has been activated and loaded.
         runtime_ready = bool(configuration_snapshot_id)
-        scan_available = can_scan and runtime_ready
-        preview_available = can_preview and runtime_ready
+        scan_service_ready = callable(getattr(binding.manual_scans, "admit_current_document", None))
+        preview_service_ready = callable(
+            getattr(self._manual_previews, "create_current_from_index", None)
+        )
+        scan_available = can_scan and runtime_ready and scan_service_ready
+        preview_available = can_preview and runtime_ready and preview_service_ready
         scan_reason = (
             None
             if scan_available
@@ -7226,6 +7247,8 @@ class MediaFlowApi:
                 if not can_scan
                 else "the Active runtime is unavailable for Scan"
                 if not runtime_ready
+                else "the manual Scan service is unavailable"
+                if not scan_service_ready
                 else "Scan is unavailable"
             )
         )
@@ -7238,6 +7261,8 @@ class MediaFlowApi:
                 if not can_preview
                 else "the Active runtime is unavailable for Preview"
                 if not runtime_ready
+                else "the current-source Preview service is unavailable"
+                if not preview_service_ready
                 else "Preview is unavailable"
             )
         )
@@ -7361,47 +7386,53 @@ class MediaFlowApi:
         return self._response(
             start_response,
             200,
-            {
-                "scopeKind": "resourceLibrary" if raw_kind == "resource_library" else raw_kind,
-                "scopeId": scope_id if isinstance(scope_id, str) and scope_id else None,
-                "fileId": file_id if raw_kind == "file" else None,
-                "resourceLibraryId": resource_library_id,
-                "selectionRequired": bool(selection_required),
-                "source": source if source else None,
-                "resourceLibraries": resource_libraries,
-                "runtime": {
-                    "ready": runtime_ready,
-                    "condition": (
-                        "configuration_active" if runtime_ready else "configuration_unavailable"
-                    ),
-                    "nextAction": (
-                        None if runtime_ready else "restore or activate a valid Active runtime"
-                    ),
-                },
-                "actions": {
-                    "scan": {
-                        "available": scan_available,
-                        "reason": scan_reason,
-                        "method": "POST",
-                        "path": "/api/v1/operations/scans",
-                        "nextAction": ("submit a bounded Scan" if scan_available else scan_reason),
-                        "modes": [mode.value for mode in ScanMode],
-                    },
-                    "preview": {
-                        "available": preview_available,
-                        "reason": preview_reason,
-                        "method": "POST",
-                        "path": "/api/v1/operations/previews",
-                        "nextAction": (
-                            "run a zero-mutation Preview" if preview_available else preview_reason
+            manual_action_matrix_operator_document(
+                {
+                    "scopeKind": "resourceLibrary" if raw_kind == "resource_library" else raw_kind,
+                    "scopeId": scope_id if isinstance(scope_id, str) and scope_id else None,
+                    "fileId": file_id if raw_kind == "file" else None,
+                    "resourceLibraryId": resource_library_id,
+                    "selectionRequired": bool(selection_required),
+                    "source": source if source else None,
+                    "resourceLibraries": resource_libraries,
+                    "runtime": {
+                        "ready": runtime_ready,
+                        "condition": (
+                            "configuration_active" if runtime_ready else "configuration_unavailable"
                         ),
-                        "modes": [],
+                        "nextAction": (
+                            None if runtime_ready else "restore or activate a valid Active runtime"
+                        ),
                     },
-                },
-                "limits": {
-                    "previewMaxItems": MAX_MANUAL_PREVIEW_ITEMS if can_preview else 0,
-                },
-            },
+                    "actions": {
+                        "scan": {
+                            "available": scan_available,
+                            "reason": scan_reason,
+                            "method": "POST",
+                            "path": "/api/v1/operations/scans",
+                            "nextAction": (
+                                "submit a bounded Scan" if scan_available else scan_reason
+                            ),
+                            "modes": [mode.value for mode in ScanMode],
+                        },
+                        "preview": {
+                            "available": preview_available,
+                            "reason": preview_reason,
+                            "method": "POST",
+                            "path": "/api/v1/operations/previews",
+                            "nextAction": (
+                                "run a zero-mutation Preview"
+                                if preview_available
+                                else preview_reason
+                            ),
+                            "modes": [],
+                        },
+                    },
+                    "limits": {
+                        "previewMaxItems": MAX_MANUAL_PREVIEW_ITEMS if can_preview else 0,
+                    },
+                }
+            ),
         )
 
     @staticmethod

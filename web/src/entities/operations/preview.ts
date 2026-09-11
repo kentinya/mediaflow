@@ -85,6 +85,136 @@ export interface ManualPreviewDestinationModel {
   readonly filename: string | null;
 }
 
+/** Bounded provider/media identity evidence retained by the Preview plan. */
+export interface ManualPreviewMediaIdentityModel {
+  readonly provider: string | null;
+  readonly providerId: string | null;
+  readonly mediaType: string | null;
+  readonly title: string | null;
+  readonly originalTitle: string | null;
+  readonly episodeTitle: string | null;
+  readonly matchedBy: string | null;
+  readonly recognitionTypeId: string | null;
+  readonly year: number | null;
+  readonly season: number | null;
+  readonly episode: number | null;
+  readonly episodes: readonly number[];
+  readonly genres: readonly string[];
+  readonly countries: readonly string[];
+  readonly languages: readonly string[];
+}
+
+/** All policy identities resolved for one bounded Preview plan. */
+export interface ManualPreviewPoliciesModel {
+  readonly recognitionTypePolicyId: string | null;
+  readonly metadataPolicyId: string | null;
+  readonly namingPolicyId: string | null;
+  readonly classificationPolicyId: string | null;
+  readonly organizePolicyId: string | null;
+}
+
+export interface ManualPreviewAnalysisEvidenceModel {
+  readonly field: string | null;
+  readonly value: string | null;
+  readonly source: string | null;
+  readonly confidence: string | null;
+}
+
+export interface ManualPreviewParseAnalysisModel {
+  readonly titleCandidate: string | null;
+  readonly year: number | null;
+  readonly season: number | null;
+  readonly episode: number | null;
+  readonly episodes: readonly number[];
+  readonly resolution: string | null;
+  readonly source: string | null;
+  readonly videoCodec: string | null;
+  readonly audio: string | null;
+  readonly hdr: string | null;
+  readonly version: string | null;
+  readonly releaseGroup: string | null;
+  readonly evidence: readonly ManualPreviewAnalysisEvidenceModel[];
+  readonly warnings: readonly string[];
+}
+
+export interface ManualPreviewRecognitionReasonModel {
+  readonly code: string | null;
+  readonly message: string | null;
+}
+
+export interface ManualPreviewRecognitionAnalysisModel {
+  readonly status: string | null;
+  readonly recognitionTypeId: string | null;
+  readonly ruleId: string | null;
+  readonly score: number | null;
+  readonly confidence: string | null;
+  readonly reasons: readonly ManualPreviewRecognitionReasonModel[];
+  readonly warnings: readonly string[];
+}
+
+export interface ManualPreviewMetadataCandidateModel {
+  readonly provider: string | null;
+  readonly providerId: string | null;
+  readonly mediaType: string | null;
+  readonly title: string | null;
+  readonly year: number | null;
+  readonly score: number | null;
+  readonly exactTitle: boolean;
+  readonly exactYear: boolean;
+}
+
+export interface ManualPreviewMetadataMatchModel {
+  readonly status: string | null;
+  readonly score: number | null;
+  readonly reasons: readonly string[];
+  readonly warnings: readonly string[];
+  readonly candidateCount: number;
+  readonly candidates: readonly ManualPreviewMetadataCandidateModel[];
+}
+
+export interface ManualPreviewMetadataAnalysisModel {
+  readonly available: boolean;
+  readonly status: string | null;
+  readonly query: string | null;
+  readonly identity: ManualPreviewMediaIdentityModel | null;
+  readonly match: ManualPreviewMetadataMatchModel | null;
+}
+
+export interface ManualPreviewNamingAnalysisModel {
+  readonly available: boolean;
+  readonly reason: string | null;
+  readonly policyId: string | null;
+  readonly recognitionTypeId: string | null;
+  readonly directory: string | null;
+  readonly directorySegments: readonly string[];
+  readonly filename: string | null;
+  readonly warnings: readonly string[];
+  readonly sanitizationChanges: readonly string[];
+}
+
+export interface ManualPreviewClassificationAnalysisModel {
+  readonly available: boolean;
+  readonly reason: string | null;
+  readonly status: string | null;
+  readonly policyId: string | null;
+  readonly recognitionTypeId: string | null;
+  readonly mediaLibraryId: string | null;
+  readonly relativePath: string | null;
+  readonly matchedRuleId: string | null;
+  readonly matchedRuleName: string | null;
+  readonly evidence: readonly string[];
+  readonly warnings: readonly string[];
+}
+
+/** Complete bounded parse → recognition → metadata → naming → classification evidence. */
+export interface ManualPreviewAnalysisModel {
+  readonly parse: ManualPreviewParseAnalysisModel | null;
+  readonly recognition: ManualPreviewRecognitionAnalysisModel | null;
+  readonly metadata: ManualPreviewMetadataAnalysisModel | null;
+  readonly naming: ManualPreviewNamingAnalysisModel | null;
+  readonly classification: ManualPreviewClassificationAnalysisModel | null;
+}
+
 /** Bounded per-item preview findings. */
 export interface ManualPreviewItemModel {
   readonly itemId: string;
@@ -106,6 +236,9 @@ export interface ManualPreviewItemModel {
   readonly title: string | null;
   readonly provider: string | null;
   readonly providerId: string | null;
+  readonly mediaIdentity: ManualPreviewMediaIdentityModel | null;
+  readonly policies: ManualPreviewPoliciesModel | null;
+  readonly analysis: ManualPreviewAnalysisModel | null;
   readonly targetStorageId: string | null;
   readonly targetPath: string | null;
   readonly organizePolicy: string | null;
@@ -305,6 +438,312 @@ function normalizeDestination(
   }
 }
 
+function optionalNumberValue(value: unknown): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    Math.abs(value) > 1_000_000_000
+  ) {
+    return fail();
+  }
+  return value;
+}
+
+function optionalNumberList(
+  source: Record<string, unknown>,
+  field: string,
+): number[] {
+  const raw = source[field];
+  if (raw === null || raw === undefined) {
+    return [];
+  }
+  if (!Array.isArray(raw) || raw.length > 100) {
+    return fail();
+  }
+  return raw.map((value) => {
+    const number = optionalNumberValue(value);
+    return number === null ? fail() : number;
+  });
+}
+
+function optionalStringList(
+  source: Record<string, unknown>,
+  field: string,
+  maxItems = 100,
+): string[] {
+  const raw = source[field];
+  if (raw === null || raw === undefined) {
+    return [];
+  }
+  if (!Array.isArray(raw) || raw.length > maxItems) {
+    return fail();
+  }
+  return [...normalizeTextArray(raw, field, maxItems)];
+}
+
+function normalizeMediaIdentity(
+  value: unknown,
+): ManualPreviewMediaIdentityModel | null {
+  const source = optionalRecord(value, "plan.mediaIdentity");
+  if (source === null) {
+    return null;
+  }
+  try {
+    return {
+      provider: optionalText(source, "provider"),
+      providerId: optionalText(source, "providerId"),
+      mediaType: optionalText(source, "mediaType"),
+      title: optionalText(source, "title"),
+      originalTitle: optionalText(source, "originalTitle"),
+      episodeTitle: optionalText(source, "episodeTitle"),
+      matchedBy: optionalText(source, "matchedBy"),
+      recognitionTypeId: optionalText(source, "recognitionTypeId"),
+      year: optionalNumberValue(source["year"]),
+      season: optionalNumberValue(source["season"]),
+      episode: optionalNumberValue(source["episode"]),
+      episodes: optionalNumberList(source, "episodes"),
+      genres: optionalStringList(source, "genres"),
+      countries: optionalStringList(source, "countries"),
+      languages: optionalStringList(source, "languages"),
+    };
+  } catch {
+    return fail();
+  }
+}
+
+function normalizePolicies(value: unknown): ManualPreviewPoliciesModel | null {
+  const source = optionalRecord(value, "plan.policies");
+  if (source === null) {
+    return null;
+  }
+  try {
+    return {
+      recognitionTypePolicyId: optionalText(source, "recognitionTypePolicyId"),
+      metadataPolicyId: optionalText(source, "metadataPolicyId"),
+      namingPolicyId: optionalText(source, "namingPolicyId"),
+      classificationPolicyId: optionalText(source, "classificationPolicyId"),
+      organizePolicyId: optionalText(source, "organizePolicyId"),
+    };
+  } catch {
+    return fail();
+  }
+}
+
+function normalizeParseAnalysis(
+  value: unknown,
+): ManualPreviewParseAnalysisModel | null {
+  const source = optionalRecord(value, "analysis.parse");
+  if (source === null) {
+    return null;
+  }
+  try {
+    const rawEvidence = source["evidence"] ?? [];
+    if (!Array.isArray(rawEvidence) || rawEvidence.length > 100) {
+      return fail();
+    }
+    return {
+      titleCandidate: optionalText(source, "titleCandidate"),
+      year: optionalNumberValue(source["year"]),
+      season: optionalNumberValue(source["season"]),
+      episode: optionalNumberValue(source["episode"]),
+      episodes: optionalNumberList(source, "episodes"),
+      resolution: optionalText(source, "resolution"),
+      source: optionalText(source, "source"),
+      videoCodec: optionalText(source, "videoCodec"),
+      audio: optionalText(source, "audio"),
+      hdr: optionalText(source, "hdr"),
+      version: optionalText(source, "version"),
+      releaseGroup: optionalText(source, "releaseGroup"),
+      evidence: rawEvidence.map((item, index) => {
+        const evidence = readRecord(item, `analysis.parse.evidence[${index}]`);
+        return {
+          field: optionalText(evidence, "field"),
+          value: optionalText(evidence, "value"),
+          source: optionalText(evidence, "source"),
+          confidence: optionalText(evidence, "confidence"),
+        };
+      }),
+      warnings: optionalStringList(source, "warnings"),
+    };
+  } catch {
+    return fail();
+  }
+}
+
+function normalizeRecognitionAnalysis(
+  value: unknown,
+): ManualPreviewRecognitionAnalysisModel | null {
+  const source = optionalRecord(value, "analysis.recognition");
+  if (source === null) {
+    return null;
+  }
+  try {
+    const rawReasons = source["reasons"] ?? [];
+    if (!Array.isArray(rawReasons) || rawReasons.length > 100) {
+      return fail();
+    }
+    return {
+      status: optionalText(source, "status"),
+      recognitionTypeId: optionalText(source, "recognitionTypeId"),
+      ruleId: optionalText(source, "ruleId"),
+      score: optionalNumberValue(source["score"]),
+      confidence: optionalText(source, "confidence"),
+      reasons: rawReasons.map((item, index) => {
+        const reason = readRecord(
+          item,
+          `analysis.recognition.reasons[${index}]`,
+        );
+        return {
+          code: optionalText(reason, "code"),
+          message: optionalText(reason, "message"),
+        };
+      }),
+      warnings: optionalStringList(source, "warnings"),
+    };
+  } catch {
+    return fail();
+  }
+}
+
+function normalizeMetadataMatch(
+  value: unknown,
+): ManualPreviewMetadataMatchModel | null {
+  const source = optionalRecord(value, "analysis.metadata.match");
+  if (source === null) {
+    return null;
+  }
+  const rawCandidates = source["candidates"] ?? [];
+  if (!Array.isArray(rawCandidates) || rawCandidates.length > 100) {
+    return fail();
+  }
+  try {
+    return {
+      status: optionalText(source, "status"),
+      score: optionalNumberValue(source["score"]),
+      reasons: optionalStringList(source, "reasons"),
+      warnings: optionalStringList(source, "warnings"),
+      candidateCount: normalizeBoundedCount(
+        source["candidateCount"],
+        "candidateCount",
+      ),
+      candidates: rawCandidates.map((item, index) => {
+        const candidate = readRecord(
+          item,
+          `analysis.metadata.match.candidates[${index}]`,
+        );
+        return {
+          provider: optionalText(candidate, "provider"),
+          providerId: optionalText(candidate, "providerId"),
+          mediaType: optionalText(candidate, "mediaType"),
+          title: optionalText(candidate, "title"),
+          year: optionalNumberValue(candidate["year"]),
+          score: optionalNumberValue(candidate["score"]),
+          exactTitle: normalizeBoolean(
+            candidate["exactTitle"],
+            "candidate.exactTitle",
+          ),
+          exactYear: normalizeBoolean(
+            candidate["exactYear"],
+            "candidate.exactYear",
+          ),
+        };
+      }),
+    };
+  } catch {
+    return fail();
+  }
+}
+
+function normalizeMetadataAnalysis(
+  value: unknown,
+): ManualPreviewMetadataAnalysisModel | null {
+  const source = optionalRecord(value, "analysis.metadata");
+  if (source === null) {
+    return null;
+  }
+  try {
+    return {
+      available: normalizeBoolean(source["available"], "metadata.available"),
+      status: optionalText(source, "status"),
+      query: optionalText(source, "query"),
+      identity: normalizeMediaIdentity(source["identity"]),
+      match: normalizeMetadataMatch(source["match"]),
+    };
+  } catch {
+    return fail();
+  }
+}
+
+function normalizeNamingAnalysis(
+  value: unknown,
+): ManualPreviewNamingAnalysisModel | null {
+  const source = optionalRecord(value, "analysis.naming");
+  if (source === null) {
+    return null;
+  }
+  try {
+    return {
+      available: normalizeBoolean(source["available"], "naming.available"),
+      reason: optionalText(source, "reason"),
+      policyId: optionalText(source, "policyId"),
+      recognitionTypeId: optionalText(source, "recognitionTypeId"),
+      directory: optionalText(source, "directory"),
+      directorySegments: optionalStringList(source, "directorySegments"),
+      filename: optionalText(source, "filename"),
+      warnings: optionalStringList(source, "warnings"),
+      sanitizationChanges: optionalStringList(source, "sanitizationChanges"),
+    };
+  } catch {
+    return fail();
+  }
+}
+
+function normalizeClassificationAnalysis(
+  value: unknown,
+): ManualPreviewClassificationAnalysisModel | null {
+  const source = optionalRecord(value, "analysis.classification");
+  if (source === null) {
+    return null;
+  }
+  try {
+    return {
+      available: normalizeBoolean(
+        source["available"],
+        "classification.available",
+      ),
+      reason: optionalText(source, "reason"),
+      status: optionalText(source, "status"),
+      policyId: optionalText(source, "policyId"),
+      recognitionTypeId: optionalText(source, "recognitionTypeId"),
+      mediaLibraryId: optionalText(source, "mediaLibraryId"),
+      relativePath: optionalText(source, "relativePath"),
+      matchedRuleId: optionalText(source, "matchedRuleId"),
+      matchedRuleName: optionalText(source, "matchedRuleName"),
+      evidence: optionalStringList(source, "evidence"),
+      warnings: optionalStringList(source, "warnings"),
+    };
+  } catch {
+    return fail();
+  }
+}
+
+function normalizeAnalysis(value: unknown): ManualPreviewAnalysisModel | null {
+  const source = optionalRecord(value, "plan.analysis");
+  if (source === null) {
+    return null;
+  }
+  return {
+    parse: normalizeParseAnalysis(source["parse"]),
+    recognition: normalizeRecognitionAnalysis(source["recognition"]),
+    metadata: normalizeMetadataAnalysis(source["metadata"]),
+    naming: normalizeNamingAnalysis(source["naming"]),
+    classification: normalizeClassificationAnalysis(source["classification"]),
+  };
+}
+
 function normalizePreviewItem(value: unknown): ManualPreviewItemModel {
   const source = readRecord(value, "preview_item");
   const sourceRecord = readRecord(source["source"], "item.source");
@@ -326,14 +765,11 @@ function normalizePreviewItem(value: unknown): ManualPreviewItemModel {
 
   try {
     const destination = normalizeDestination(plan?.["destination"] ?? null);
-    const policies = optionalRecord(
-      plan?.["policies"] ?? null,
-      "plan.policies",
-    );
-    const mediaIdentity = optionalRecord(
+    const policies = normalizePolicies(plan?.["policies"] ?? null);
+    const mediaIdentity = normalizeMediaIdentity(
       plan?.["mediaIdentity"] ?? null,
-      "plan.mediaIdentity",
     );
+    const analysis = normalizeAnalysis(plan?.["analysis"] ?? null);
     return {
       itemId: text(source, "itemId"),
       previewItemId: text(source, "previewItemId"),
@@ -352,18 +788,15 @@ function normalizePreviewItem(value: unknown): ManualPreviewItemModel {
       resourceLibraryId: optionalText(sourceRecord, "resourceLibraryId"),
       recognitionType:
         plan === null ? null : optionalText(plan, "recognitionType"),
-      title:
-        mediaIdentity === null ? null : optionalText(mediaIdentity, "title"),
-      provider:
-        mediaIdentity === null ? null : optionalText(mediaIdentity, "provider"),
-      providerId:
-        mediaIdentity === null
-          ? null
-          : optionalText(mediaIdentity, "providerId"),
+      title: mediaIdentity === null ? null : mediaIdentity.title,
+      provider: mediaIdentity === null ? null : mediaIdentity.provider,
+      providerId: mediaIdentity === null ? null : mediaIdentity.providerId,
+      mediaIdentity,
+      policies,
+      analysis,
       targetStorageId: destination?.storageId ?? null,
       targetPath: destination?.relativePath ?? null,
-      organizePolicy:
-        policies === null ? null : optionalText(policies, "organizePolicyId"),
+      organizePolicy: policies === null ? null : policies.organizePolicyId,
       planStatus: plan === null ? null : optionalText(plan, "planStatus"),
       destination,
       attachments: rawAttachments.map((item) => normalizeAttachment(item)),

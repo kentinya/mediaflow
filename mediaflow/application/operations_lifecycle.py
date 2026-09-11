@@ -103,6 +103,12 @@ _EVIDENCE_PATH_SHAPES = (
 # the 32-hex TaskItem IDs this backend derives stay valid.
 _EVIDENCE_DIGEST_SHAPES = (re.compile(r"(?<![0-9A-Za-z])[0-9A-Fa-f]{64,128}(?![0-9A-Za-z])"),)
 
+# A credential can occur in an operator-facing filename or label without an
+# ``Authorization:`` assignment (for example ``Bearer secret.mkv``).  Treat
+# the scheme plus its value as credential-shaped evidence and fail closed just
+# like the assignment forms handled by ``redact_manual_text``.
+_EVIDENCE_CREDENTIAL_SHAPES = (re.compile(r"(?i)\b(?:bearer|basic)\s+[^\s,;]+"),)
+
 # Keys that never belong to an operator document.  The projection below reads
 # an explicit allowlist, so this is the recursive safety net for a nested
 # record that reaches the document through a path the allowlist does not name.
@@ -325,6 +331,12 @@ def _contains_evidence_digest_shape(text: str) -> bool:
     return any(pattern.search(text) is not None for pattern in _EVIDENCE_DIGEST_SHAPES)
 
 
+def _contains_evidence_credential_shape(text: str) -> bool:
+    """Whether bounded evidence still carries an auth-scheme value."""
+
+    return any(pattern.search(text) is not None for pattern in _EVIDENCE_CREDENTIAL_SHAPES)
+
+
 def _bounded_evidence_text(value: str | None, *, limit: int = _MAX_BOUNDED_TEXT) -> str | None:
     """Bound one already-structured evidence string or fail closed.
 
@@ -339,7 +351,11 @@ def _bounded_evidence_text(value: str | None, *, limit: int = _MAX_BOUNDED_TEXT)
     if value is None:
         return None
     text = redact_manual_text(value, limit=limit)
-    if _contains_evidence_path_shape(text) or _contains_evidence_digest_shape(text):
+    if (
+        _contains_evidence_path_shape(text)
+        or _contains_evidence_digest_shape(text)
+        or _contains_evidence_credential_shape(text)
+    ):
         return _REDACTED_EVIDENCE
     return text or None
 
@@ -490,7 +506,11 @@ def _bounded_operator_document(value: object, *, guard_routes: bool = True) -> o
     if isinstance(value, str):
         if not value:
             return value
-        if _contains_evidence_digest_shape(value) or redact_manual_text(value) != value:
+        if (
+            _contains_evidence_digest_shape(value)
+            or _contains_evidence_credential_shape(value)
+            or redact_manual_text(value) != value
+        ):
             return _REDACTED_EVIDENCE
         if guard_routes and _contains_evidence_path_shape(value):
             return _REDACTED_EVIDENCE
@@ -733,7 +753,9 @@ def _bounded_scan_item(item: dict[str, object]) -> dict[str, object]:
     }
 
 
-def manual_scan_operator_document(document: dict[str, object]) -> dict[str, object]:
+def manual_scan_operator_document(
+    document: dict[str, object], *, cancel_permitted: bool = True
+) -> dict[str, object]:
     """One bounded manual Scan admission/detail document.
 
     This is the exact document the V2 Operations workspace reads for both the
@@ -744,7 +766,8 @@ def manual_scan_operator_document(document: dict[str, object]) -> dict[str, obje
     raw scan error text or absolute host path are not.
 
     The cancellation control is backend-advertised for the exact durable Scan
-    state so the workspace never derives eligibility from a status label.
+    state and authenticated principal so the workspace never derives
+    eligibility from a status label or a local permission guess.
     """
 
     raw_items = document.get("items")
@@ -760,10 +783,25 @@ def manual_scan_operator_document(document: dict[str, object]) -> dict[str, obje
     status = _bounded_evidence_text(document.get("status"), limit=64)
     cancellation_requested = bool(document.get("cancellationRequested"))
     cancellable = (
-        isinstance(status, str)
+        cancel_permitted
+        and isinstance(status, str)
         and status in _SCAN_CANCELLABLE_STATUSES
         and not cancellation_requested
     )
+    cancel_unavailable_reason = (
+        None
+        if cancel_permitted
+        else (
+            "the connected API principal does not hold the cancel_job permission "
+            "required for this control"
+        )
+    )
+    if cancel_unavailable_reason is None and not cancellable:
+        cancel_unavailable_reason = (
+            "cancellation has already been requested for this Scan"
+            if cancellation_requested
+            else "a task in this state no longer accepts a cancellation request"
+        )
     item_limit = document.get("itemLimit")
     if isinstance(item_limit, bool) or not isinstance(item_limit, int):
         item_limit = None
@@ -810,15 +848,7 @@ def manual_scan_operator_document(document: dict[str, object]) -> dict[str, obje
                     else "/api/v1/operations/scans"
                 ),
                 available=cancellable,
-                unavailable_reason=(
-                    None
-                    if cancellable
-                    else (
-                        "cancellation has already been requested for this Scan"
-                        if cancellation_requested
-                        else "a task in this state no longer accepts a cancellation request"
-                    )
-                ),
+                unavailable_reason=cancel_unavailable_reason,
                 durable_outcome=(
                     "a durable cancellation request is stored; the Scan stops at the next "
                     "cooperative discovery boundary, an already running Storage read is not "
@@ -905,6 +935,19 @@ def manual_preview_operator_document(document: dict[str, object]) -> dict[str, o
         ],
     }
     return _bounded_operator_document(bounded)
+
+
+def manual_action_matrix_operator_document(document: dict[str, object]) -> dict[str, object]:
+    """Prove the backend-computed manual action matrix is operator-safe.
+
+    ``MediaFlowApi`` constructs this document from the exact principal,
+    runtime binding and current source.  Keep the transport projection behind
+    the same recursive key/value guard used by Scan and Preview so a malformed
+    FileIndex label, ResourceLibrary identifier or status value cannot bypass
+    the redaction boundary.
+    """
+
+    return _bounded_operator_document(document)
 
 
 def _bounded_preview_execution_state(value: object) -> str | None:
@@ -1775,6 +1818,7 @@ __all__ = [
     "job_failure_document",
     "job_lifecycle_document",
     "job_operator_document",
+    "manual_action_matrix_operator_document",
     "manual_scan_operator_document",
     "require_cancellable",
     "summarize_effects",

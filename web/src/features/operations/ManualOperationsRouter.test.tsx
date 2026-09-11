@@ -378,6 +378,26 @@ describe("Operations manual Scan/Preview journeys", () => {
     expect(posted[0]?.body).toBeNull();
   });
 
+  it("does not render a Scan cancel control when the backend denies this principal", async () => {
+    const readOnly = scanDocument("scanAdmission", "scan-1");
+    const actions = readOnly["actions"] as Json;
+    const cancel = actions["cancel"] as Json;
+    cancel["available"] = false;
+    cancel["unavailableReason"] =
+      "the connected API principal does not hold the cancel_job permission required for this control";
+    recordingFetch((call) =>
+      call.url.startsWith("/api/v1/operations/scans/scan-1")
+        ? jsonResponse(readOnly)
+        : undefined,
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/scan/scan-1");
+
+    await screen.findByRole("heading", { name: "Scan scan-1" });
+    expect(screen.queryByRole("button", { name: "Request cancel" })).toBeNull();
+    expect(screen.getByText(/cancel_job permission required/)).toBeVisible();
+  });
+
   it("renders the persisted Preview findings without fabricating absent ones", async () => {
     recordingFetch((call) =>
       call.url.startsWith("/api/v1/operations/previews/preview-e2e-001")
@@ -398,6 +418,13 @@ describe("Operations manual Scan/Preview journeys", () => {
     expect(
       screen.getByRole("heading", { name: "Findings for One" }),
     ).toBeVisible();
+    expect(screen.getByText("RecognitionType policy")).toBeVisible();
+    expect(screen.getByText("type-A")).toBeVisible();
+    expect(screen.getByText("Title candidate")).toBeVisible();
+    expect(screen.getByText(/Japanese Animation/)).toBeVisible();
+    expect(screen.getByText(/manual-preview/)).toBeVisible();
+    expect(screen.getByText(/1 candidate\(s\)/)).toBeVisible();
+    expect(screen.getAllByText(/One \(2001\)\.mkv/).length).toBeGreaterThan(0);
     expect(
       screen.getByText("No sidecar attachment was planned for this item."),
     ).toBeVisible();
