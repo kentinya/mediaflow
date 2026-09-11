@@ -203,7 +203,10 @@ describe("normalizeJobDetail", () => {
   it("never carries a hostile historical record into the model", () => {
     const model = normalizeJobDetail(
       job({
-        error: "Authorization: Bearer topsecret /home/alice/private.mkv",
+        error:
+          "Authorization: Bearer topsecret /home/alice/private.mkv " +
+          "https://private.example/api /mnt/private-library " +
+          "C:\\Users\\alice\\media",
         failure_category: "workflow_cancelled",
         failure_next_action: "Authorization: Bearer topsecret",
         definition_fingerprint: "fingerprint-value",
@@ -215,6 +218,9 @@ describe("normalizeJobDetail", () => {
     const serialized = JSON.stringify(model);
     expect(serialized).not.toContain("topsecret");
     expect(serialized).not.toContain("/home/alice");
+    expect(serialized).not.toContain("https://private.example");
+    expect(serialized).not.toContain("/mnt/private-library");
+    expect(serialized).not.toContain("C:\\Users\\alice");
     expect(serialized).not.toContain("/srv/media");
     expect(serialized).not.toContain("deadbeef");
     expect(serialized).not.toContain("fingerprint-value");

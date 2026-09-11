@@ -4992,34 +4992,24 @@ class SQLiteTaskRepository:
             raise AutomationClaimLost("automation Job claim ownership was lost")
         with self._lock, self._connection:
             # An accepted cooperative cancellation is a durable operator decision:
-            # the terminal commit of a claimed Job must never overwrite it.  A
-            # completion or failure that arrives after the request was durably
-            # admitted is converted into the same cancelled outcome the Worker's
-            # own cancellation boundary publishes (the linked Task keeps its own
-            # truthful per-item state), so an accepted request can never be lost
-            # and reported as success.  The claim fencing below is unchanged.
-            row = self._connection.execute(
-                "SELECT cancellation_requested FROM automation_jobs "
-                "WHERE job_id=? AND status=? AND claim_token=?",
-                (job.job_id, AutomationJobStatus.RUNNING.value, job.claim_token),
-            ).fetchone()
-            if row is None:
-                return False
-            if row["cancellation_requested"] and job.status is not AutomationJobStatus.CANCELLED:
-                now = datetime.now(UTC)
-                job = replace(
-                    job,
-                    status=AutomationJobStatus.CANCELLED,
-                    cancellation_requested=True,
-                    updated_at=now,
-                    completed_at=now,
-                    error=job.error or "workflow cancelled",
-                )
+            # the terminal commit of a claimed Job must never overwrite it.  The
+            # transition is one database-atomic statement: the same UPDATE folds
+            # the row's *current* cancellation flag into the terminal outcome, so
+            # a completion or failure that races a cancellation accepted by any
+            # other connection or process becomes the same cancelled outcome the
+            # Worker's own cancellation boundary publishes (the linked Task keeps
+            # its own truthful per-item state).  A Python SELECT before the
+            # UPDATE would not establish writer serialization across separate
+            # connections, so no such read happens here: the CASE expressions
+            # below are evaluated against the stored row inside the statement
+            # itself, and the claim fencing is unchanged.
             cursor = self._connection.execute(
-                "UPDATE automation_jobs SET command=?, status=?, created_at=?, updated_at=?, "
-                "limit_value=?, started_at=?, completed_at=?, task_id=?, error=?, "
-                "cancellation_requested=?, schedule_id=?, execute_authorized=?, claim_token=NULL, "
-                "worker_id=?, "
+                "UPDATE automation_jobs SET command=?, "
+                "status=CASE WHEN cancellation_requested=1 THEN ? ELSE ? END, "
+                "created_at=?, updated_at=?, limit_value=?, started_at=?, completed_at=?, "
+                "task_id=?, error=CASE WHEN cancellation_requested=1 THEN ? ELSE ? END, "
+                "cancellation_requested=CASE WHEN cancellation_requested=1 THEN 1 ELSE ? END, "
+                "schedule_id=?, execute_authorized=?, claim_token=NULL, worker_id=?, "
                 "configuration_snapshot_id=?, configuration_snapshot_digest=?, "
                 "failure_category=?, failure_durable_state=?, failure_side_effects=?, "
                 "failure_retry_safe=?, failure_next_action=?, definition_id=?, "
@@ -5027,7 +5017,14 @@ class SQLiteTaskRepository:
                 "resource_library_id=?, source_scope=?, configuration_snapshot_version=? "
                 "WHERE job_id=? AND status=? AND claim_token=? AND worker_id IS ?",
                 (
-                    *self._job_values(job)[1:13],
+                    self._job_values(job)[1],
+                    AutomationJobStatus.CANCELLED.value,
+                    job.status.value,
+                    *self._job_values(job)[3:9],
+                    job.error or "workflow cancelled",
+                    job.error,
+                    int(job.cancellation_requested),
+                    *self._job_values(job)[11:13],
                     job.worker_id,
                     *self._job_values(job)[15:],
                     job.job_id,
@@ -5037,7 +5034,15 @@ class SQLiteTaskRepository:
                 ),
             )
             if cursor.rowcount == 1:
-                self._finalize_automation_definition_occurrence_locked(job)
+                # The occurrence projection must follow the outcome the database
+                # really committed, so it is read back from the same transaction
+                # instead of assuming the submitted terminal status.
+                row = self._connection.execute(
+                    "SELECT * FROM automation_jobs WHERE job_id=?", (job.job_id,)
+                ).fetchone()
+                if row is not None:
+                    self._finalize_automation_definition_occurrence_locked(self._job(row))
+        return cursor.rowcount == 1
         return cursor.rowcount == 1
 
     def _finalize_automation_definition_occurrence_locked(self, job: AutomationJob) -> None:

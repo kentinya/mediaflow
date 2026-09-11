@@ -229,12 +229,16 @@ const TASK_RESULTS = [
 const FAKE_TASKS = [
   {
     // This first fixture deliberately also carries the historical legacy fields
-    // a real row may still hold (a raw durable error, a configured snapshot
-    // fingerprint and a display root). They are not part of the bounded
-    // Operations projection the V2 client models, so the browser proof can
-    // assert they never reach the DOM or the console.
+    // a real row may still hold (a raw durable error carrying a credential, a
+    // private endpoint, absolute host directories and a Windows adapter root,
+    // plus a configured snapshot fingerprint and a display root). They are not
+    // part of the bounded Operations projection the V2 client models, so the
+    // browser proof can assert they never reach the DOM or the console.
     task_id: "task-001",
-    error: "Authorization: Bearer topsecret /home/alice/private.mkv",
+    error:
+      "Authorization: Bearer topsecret /home/alice/private.mkv " +
+      "https://private.example/api /mnt/private-library " +
+      "C:\\Users\\alice\\media",
     failureExplanation: {
       category: "storage",
       message: "the source Storage became unavailable",

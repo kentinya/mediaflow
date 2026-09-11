@@ -138,6 +138,56 @@ class OperatorJobCancellationTests(unittest.TestCase):
         self.assertEqual(persisted.task_id, "task-completed")
         self.assertIsNone(persisted.claim_token)
 
+    def test_terminal_commit_folds_an_accepted_cancellation_across_two_connections(self) -> None:
+        """The exact interleaving B demonstrated, across real connections.
+
+        One connection owns the Worker's terminal commit; a second connection
+        over the same database durably accepts the cancellation while the
+        Worker is between reading the row and writing its terminal outcome.
+        The fold must happen inside the single terminal UPDATE statement
+        itself, so no read-then-write seam exists to lose the request: the
+        row becomes ``cancelled`` with the request flag kept, and the terminal
+        commit is still reported as accepted.
+        """
+
+        worker = SQLiteTaskRepository(Path(self.directory.name, "runtime.sqlite3"))
+        try:
+            service = AutomationJobService(self.repository)
+            service.submit("scan")
+            claimed = worker.claim_next_job(datetime.now(UTC))
+            assert claimed is not None
+            # The second connection durably accepts the cancellation for the
+            # exact state the Worker last observed.
+            self.repository.request_job_cancellation(
+                claimed.job_id,
+                datetime.now(UTC),
+                expected_version=job_control_version(claimed),
+            )
+            accepted = self.repository.get_job(claimed.job_id)
+            self.assertEqual(accepted.status, AutomationJobStatus.RUNNING)
+            self.assertTrue(accepted.cancellation_requested)
+            # The Worker's own connection then submits the already-in-flight
+            # workflow as COMPLETED, exactly as B's paused interleaving did.
+            finished = replace(
+                claimed,
+                status=AutomationJobStatus.COMPLETED,
+                completed_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+                task_id="task-completed",
+            )
+            self.assertTrue(worker.complete_claimed_job(finished))
+            persisted = worker.get_job(claimed.job_id)
+            self.assertEqual(persisted.status, AutomationJobStatus.CANCELLED)
+            self.assertTrue(persisted.cancellation_requested)
+            self.assertEqual(persisted.task_id, "task-completed")
+            self.assertIsNone(persisted.claim_token)
+            # The other connection sees the same durable folded outcome.
+            self.assertEqual(
+                self.repository.get_job(claimed.job_id).status, AutomationJobStatus.CANCELLED
+            )
+        finally:
+            worker.close()
+
     def test_failed_terminal_commit_also_cannot_overwrite_an_accepted_cancellation(self) -> None:
         service = AutomationJobService(self.repository)
         service.submit("preview")

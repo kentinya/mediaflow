@@ -72,11 +72,28 @@ _UNCERTAIN_CERTAINTY = "attempted_unverified"
 _VERIFIED_CERTAINTY = "verified_complete"
 _MAX_BOUNDED_TEXT = 512
 
-# A file path in durable evidence text would expose the deployment's host or
-# adapter layout, so the bounded projection replaces it.  The pattern requires a
-# directory chain ending in a dotted file name, so ordinary prose and API
-# spellings are unaffected.
-_ABSOLUTE_FILE_PATH = re.compile(r"/(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+\.[A-Za-z0-9]+")
+# Absolute host/adapter paths, UNC roots and scheme endpoints in durable
+# evidence text would expose the deployment's host or adapter layout, so the
+# bounded projection fails closed on these shapes.  The shapes are open-ended
+# (POSIX directories without a dotted file name, Windows adapter roots, any
+# ``scheme://`` endpoint, UNC roots), so detection is deliberately broader
+# than any single spelling and the whole field is replaced: a false positive
+# only costs benign detail, while a false negative would leak a host value.
+_EVIDENCE_PATH_SHAPES = (
+    re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://"),
+    re.compile(r"(?:^|[\s(\[\"'])/[^\s\"']"),
+    re.compile(r"\b[A-Za-z]:[\\/]"),
+    re.compile(r"\\\\"),
+)
+
+# The bounded operator-safe replacement published when a durable evidence
+# field contains one of the shapes above.  It never carries the original
+# value, and it is a plain string so the strict frontend models keep their
+# documented shape.
+_REDACTED_EVIDENCE = (
+    "[redacted: the recorded evidence contained a credential, private "
+    "endpoint or absolute host path]"
+)
 
 # The reason resume is withheld.  The existing architecture has no durable
 # queued command that continues one exact paused Task scope: the resident
@@ -261,18 +278,27 @@ def bounded_failure_document(value: str | None) -> dict[str, object] | None:
     }
 
 
-def _bounded_evidence_text(value: str | None, *, limit: int = _MAX_BOUNDED_TEXT) -> str | None:
-    """Bound one already-structured evidence string without changing its meaning.
+def _contains_evidence_path_shape(text: str) -> bool:
+    """Whether bounded evidence text still contains a forbidden host shape."""
 
-    A credential-shaped value and an absolute file path are replaced, so a
-    legacy or externally written row cannot smuggle either through structured
-    failure evidence.
+    return any(pattern.search(text) is not None for pattern in _EVIDENCE_PATH_SHAPES)
+
+
+def _bounded_evidence_text(value: str | None, *, limit: int = _MAX_BOUNDED_TEXT) -> str | None:
+    """Bound one already-structured evidence string or fail closed.
+
+    A credential-shaped value is replaced in place.  If the field still
+    contains an absolute host/adapter path, a UNC root or a scheme endpoint
+    after that redaction, the whole field is replaced with a bounded
+    operator-safe constant: the shapes are open-ended, so laundering a
+    detected value token by token cannot prove nothing slipped through.
     """
 
     if value is None:
         return None
-    text = redact_manual_text(value, limit=_MAX_BOUNDED_TEXT)
-    text = _ABSOLUTE_FILE_PATH.sub("[redacted-path]", text)
+    text = redact_manual_text(value, limit=limit)
+    if _contains_evidence_path_shape(text):
+        return _REDACTED_EVIDENCE
     return text or None
 
 
@@ -281,9 +307,10 @@ def _bounded_identity_path(value: object | None) -> str | None:
 
     The Operations projection assumes source/destination identities are
     Storage-relative, but a legacy or externally written row can hold an
-    absolute host/adapter root, a private endpoint or a credential-shaped
-    value in the same column.  Only a provably relative identity is published;
-    anything else is replaced with the bounded redaction marker.
+    absolute host/adapter root, a UNC root, a private endpoint or a
+    credential-shaped value in the same column.  Only a provably relative
+    identity is published; anything else is replaced with the bounded
+    redaction marker.
     """
 
     if not isinstance(value, str):
@@ -298,6 +325,7 @@ def _bounded_identity_path(value: object | None) -> str | None:
         or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", text) is not None
         or ".." in segments
         or redact_manual_text(text) != text
+        or _contains_evidence_path_shape(text)
     ):
         return "[redacted-path]"
     return text

@@ -201,6 +201,9 @@ test("the operations read and the rendered page stay free of a hostile historica
   for (const hostile of [
     "topsecret",
     "/home/alice",
+    "https://private.example",
+    "/mnt/private-library",
+    "C:\\Users\\alice",
     "/srv/media",
     "deadbeef",
     "fingerprint-value",

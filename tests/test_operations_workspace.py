@@ -1003,15 +1003,19 @@ class OperationsControlFencingTests(unittest.TestCase):
             )
         )
         # A syntactically valid durable failure envelope whose structured
-        # fields smuggle a credential and an absolute host path: the envelope
-        # must be published only after the same bounded scrubbing as every
-        # other evidence branch.
+        # fields smuggle a credential, a private endpoint, absolute host
+        # directories and a Windows adapter root: the envelope must be
+        # published only after the same bounded scrubbing as every other
+        # evidence branch, and no forbidden shape may survive in any form.
         envelope = "mediaflow-failure-v1:" + json.dumps(
             {
                 "category": "storage_failure",
                 "message": "Authorization: Bearer topsecret",
-                "durableState": "effects were recorded under /home/alice/private.mkv",
-                "sideEffects": "Authorization: Bearer topsecret",
+                "durableState": (
+                    "effects were recorded under /home/alice/private.mkv and "
+                    "https://private.example/api"
+                ),
+                "sideEffects": "moved /mnt/private-library and C:\\Users\\alice\\media",
                 "retrySafe": False,
                 "nextAction": "inspect /home/alice/private.mkv",
             },
@@ -1072,7 +1076,16 @@ class OperationsControlFencingTests(unittest.TestCase):
             )
         )
 
-        forbidden = ("topsecret", "/home/alice", "/srv/media", "fingerprint-value", fingerprint)
+        forbidden = (
+            "topsecret",
+            "/home/alice",
+            "/srv/media",
+            "https://private.example",
+            "/mnt/private-library",
+            "C:\\Users\\alice",
+            "fingerprint-value",
+            fingerprint,
+        )
         operations_reads = (
             ("/api/v1/operations/tasks", ""),
             (f"/api/v1/operations/tasks/{task.task_id}", ""),
@@ -1110,15 +1123,29 @@ class OperationsControlFencingTests(unittest.TestCase):
         hostile_results = {result["item_id"]: result for result in detail["results"]}
         self.assertEqual(hostile_results["item-path"]["source_path"], "[redacted-path]")
         self.assertEqual(hostile_results["item-path"]["destination_path"], "[redacted-path]")
-        # The decoded envelope is still published as bounded failure evidence,
-        # with its credential and host-path content replaced.
+        # The decoded envelope is still published as bounded failure evidence.
+        # The credential-only field keeps its bounded per-token redaction; every
+        # field that carried a private endpoint, an absolute host directory or
+        # a Windows adapter root fails closed to the operator-safe constant and
+        # never carries the original value.
         status, envelope_document, _ = request(
             self.api, "GET", "/api/v1/operations/jobs/job-envelope"
         )
         self.assertEqual(status, 200)
-        self.assertEqual(envelope_document["failure"]["category"], "storage_failure")
-        self.assertIn("[redacted]", envelope_document["failure"]["message"])
-        self.assertIn("[redacted-path]", envelope_document["failure"]["durableState"])
+        envelope_failure = envelope_document["failure"]
+        redacted_evidence = (
+            "[redacted: the recorded evidence contained a credential, private "
+            "endpoint or absolute host path]"
+        )
+        self.assertEqual(envelope_failure["category"], "storage_failure")
+        self.assertEqual(envelope_failure["message"], "Authorization: [redacted]")
+        self.assertEqual(envelope_failure["durableState"], redacted_evidence)
+        self.assertEqual(envelope_failure["sideEffects"], redacted_evidence)
+        self.assertEqual(envelope_failure["nextAction"], redacted_evidence)
+        self.assertNotIn("topsecret", json.dumps(envelope_document))
+        self.assertNotIn("private.example", json.dumps(envelope_document))
+        self.assertNotIn("private-library", json.dumps(envelope_document))
+        self.assertNotIn("alice", json.dumps(envelope_document))
 
         # The pre-existing compatibility document keeps its historical fields.
         # It keeps the configured display root the V1 operator UI renders and the
