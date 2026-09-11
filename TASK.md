@@ -333,7 +333,7 @@ Playwright E2E tests require a running build artifact server; the test file is c
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: ffa060779df269d8c8f5b20f62677b825e1a888f
+Head SHA: 81b1726425e1fa8f5212c5661e1fd48bd9f2bb1c
 ```
 
 ## B Review Result
