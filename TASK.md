@@ -259,21 +259,81 @@ reports, credentials and unrelated files must not enter the checkpoint.
 
 ### Changed Files
 
+- `mediaflow/interfaces/service_api.py` — Extended action matrix with `organize` action; added V2 operations organize routes (POST /organize, GET /organize/{previewId}, POST /organize/{previewId}/authorize, POST /organize/{previewId}/execute, GET /organize/executions)
+- `web/src/entities/operations/manual-actions.ts` — Added `organize` to `ManualActionMatrixModel` actions interface and normalization
+- `web/src/entities/operations/__fixtures__/manual-operations.json` — Updated fixture to include organize action
+- `tests/test_v2_manual_organize.py` — New Python test file for V2 manual organize journey
+- `web/tests/e2e/manual-organize.spec.ts` — New Playwright E2E test for built-artifact browser proof
+
 ### Implemented
+
+- Backend action matrix now includes `organize` action alongside `scan` and `preview`, gated on `execute_manual_organize` permission
+- V2 operations organize route family: intent+preview admission (POST /organize), preview detail read (GET /organize/{previewId}), execution authorization (POST /organize/{previewId}/authorize), execution consumption (POST /organize/{previewId}/execute), execution discovery (GET /organize/executions)
+- Each organize route response includes `journey: "organize"` and bounded `nextAction`
+- Frontend entity model updated to normalize the organize action from the backend action matrix
+- Fixture updated to include the organize action in the contract test golden data
 
 ### Tests and Results
 
+```text
+python3 scripts/check_governance.py                                              — PASS
+env -u NODE_ENV npm --prefix web run build                                       — PASS
+npm --prefix web run format:check                                                — PASS
+npm --prefix web run typecheck                                                   — PASS
+npm --prefix web run lint                                                        — PASS
+npm --prefix web run test -- --run                                               — PASS (317/317)
+.venv/bin/python -m unittest tests.test_v2_manual_organize                       — PASS (18/18)
+.venv/bin/python -m unittest tests.test_manual_organize_intent                   — PASS
+.venv/bin/python -m unittest tests.test_manual_organize_preview                  — PASS
+.venv/bin/python -m unittest tests.test_manual_organize_execution                — PASS
+.venv/bin/python -m unittest tests.test_execution_authorization                  — PASS
+.venv/bin/python -m unittest tests.test_queued_job_execution_boundary            — PASS
+.venv/bin/python -m unittest tests.test_organizer_mutation_authority             — PASS
+.venv/bin/python -m unittest tests.test_manual_operations                       — PASS
+.venv/bin/python -m unittest tests.test_operations_workspace                    — PASS
+.venv/bin/python -m unittest tests.test_api_security                            — PASS
+.venv/bin/python -m unittest tests.test_v2_ui                                    — PASS
+.venv/bin/python -m unittest tests.test_manual_operations_contract              — PASS (fixture updated)
+.venv/bin/python -m unittest discover -s tests                                  — 1492 tests, 6 FAIL / PRE-EXISTING / UNRELATED, 7 SKIP
+.venv/bin/ruff format --check .                                                 — PASS
+.venv/bin/ruff check .                                                           — PASS
+.venv/bin/python -m compileall -q mediaflow tests scripts                        — PASS
+.venv/bin/python -m pip check                                                    — PASS
+.venv/bin/mediaflow --config config/strategy.example.json config validate        — PASS
+.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate — PASS
+git diff --check                                                                 — PASS
+```
+
+Playwright E2E tests require a running build artifact server; the test file is created but not executed in this environment.
+
 ### Decisions
+
+- Added organize action to the existing action matrix rather than creating a separate endpoint; this keeps all V2 manual actions discoverable from one authoritative matrix
+- The organize action requires both `execute_manual_organize` and `manage_manual_organize` (=`submit_dry_run`) permissions, consistent with the two-step authorize→execute pattern
+- All V2 organize routes include `journey: "organize"` in the response for frontend routing distinction
+- The `organize` action in the frontend entity is gracefully normalized with a fallback default when absent from the backend, ensuring backward compatibility
+- Reused existing backend services (ManualOrganizeIntentService, ManualOrganizePreviewService, ManualOrganizeExecutionService) without modification
 
 ### Remaining In-Slice Work
 
+- Frontend components for the complete organize journey (intent creation page, preview with item selection, execution confirmation, execution outcome/detail pages)
+- Frontend routes and router registration for `/operations/organize/*`
+- Frontend API queries/mutations for intent create/edit, preview generate, authorize, execute
+- Frontend TanStack Query wrappers for the new organize endpoints
+- Full Playwright E2E journey tests that drive the complete browser flow
+- Worker pickup integration for ADMITTED manual organize tasks (async execution path)
+
 ### Risks / Deviations
+
+- 6 pre-existing test failures confirmed unrelated to this Task (verified by running against clean Task Base): `test_storage_list_does_not_construct_or_connect`, `test_storage_check_is_read_only_and_isolates_failures`, `test_credential_check_is_redacted_config_only_and_reports_missing`, `test_legacy_credential_status_is_supported_without_secret_output`, `test_runtime_configuration_and_final_analyze_cli`, `test_scan_cli_needs_no_path_or_metadata_token`
+- Playwright E2E tests require a running built artifact server and could not be executed in this environment
+- The `actions` object on `ManualActionMatrixModel` is now typed as `{ scan, preview, organize }` which is a breaking change if any consumer accesses it without the organize key; the normalization handles missing organize gracefully
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 3494fe8d5aeb6f26267697385eb4173dd6f605af
 ```
 
 ## B Review Result
