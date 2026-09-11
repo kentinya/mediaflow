@@ -103,6 +103,12 @@ function previewDocument(): Json {
   return value;
 }
 
+function executionDocument(): Json {
+  const value = document("organizeExecutionDetail");
+  value["executionId"] = "execution-1";
+  return value;
+}
+
 describe("V2 manual Organize journey", () => {
   it("renders the durable intent, saves one optimistic choice edit and creates the exact Preview", async () => {
     const user = userEvent.setup();
@@ -251,8 +257,9 @@ describe("V2 manual Organize journey", () => {
   it("renders no executable control when the backend withholds the Execute action", async () => {
     const preview = previewDocument();
     const actions = preview["actions"] as Json;
-    (actions["execute"] as Json)["available"] = false;
-    (actions["execute"] as Json)["reason"] =
+    const withheld = actions["execute"] as Json;
+    withheld["available"] = false;
+    withheld["reason"] =
       "registered workers are live but report a runtime schema that differs from the active application";
     const worker = preview["worker"] as Json;
     worker["ready"] = false;
@@ -304,5 +311,154 @@ describe("V2 manual Organize journey", () => {
     expect(calls.filter((call) => call.url.endsWith("/execute")).length).toBe(
       1,
     );
+  });
+
+  it("fails closed on malformed action and selection data without rendering a control", async () => {
+    const previewRequests = { count: 0 };
+    // Each malformed variant must make the whole Preview read malformed so no
+    // executable control, hostile value or execution request can follow.
+    const malformedVariants: Array<(value: Json) => void> = [
+      // An offered action without its exact transport method.
+      (value) => {
+        ((value["actions"] as Json)["execute"] as Json)["method"] = null;
+      },
+      // An offered action without its bounded relative route.
+      (value) => {
+        ((value["actions"] as Json)["execute"] as Json)["path"] = null;
+      },
+      // An offered action that also claims a reason is contradictory.
+      (value) => {
+        ((value["actions"] as Json)["execute"] as Json)["reason"] =
+          "not really offered";
+      },
+      // An absolute, non-API path must never become a route.
+      (value) => {
+        ((value["actions"] as Json)["execute"] as Json)["path"] =
+          "https://attacker.example/execute";
+      },
+      // A traversal-shaped relative route is rejected too.
+      (value) => {
+        ((value["actions"] as Json)["execute"] as Json)["path"] =
+          "/api/v1/../../operations/organize/previews/preview-1/execute";
+      },
+      // A withholding action must still explain itself.
+      (value) => {
+        const action = (value["actions"] as Json)["execute"] as Json;
+        action["available"] = false;
+        action["reason"] = null;
+      },
+      // A confirmation is only ever asked for a mutating action.
+      (value) => {
+        const action = (value["actions"] as Json)["execute"] as Json;
+        action["requiresConfirmation"] = true;
+        action["method"] = "GET";
+      },
+      // A selection that contradicts its own identity list is malformed.
+      (value) => {
+        value["executionCandidateItemIds"] = ["item-1", "item-1"];
+      },
+    ];
+
+    for (const mutate of malformedVariants) {
+      const document = previewDocument();
+      mutate(document);
+      const { calls } = recordingFetch((call) => {
+        if (call.url === "/api/v1/operations/organize/previews/preview-1") {
+          previewRequests.count += 1;
+          return jsonResponse(document);
+        }
+        return undefined;
+      });
+      authStore.setToken(TOKEN);
+      renderApp("/ui-v2/operations/organize/preview/preview-1");
+
+      // The bounded malformed read state replaces the journey, so no Execute
+      // control and no hostile value can reach the DOM.
+      await screen.findByText(
+        /could not be understood as the expected contract/i,
+      );
+      expect(
+        screen.queryByRole("button", {
+          name: "Execute selected exact items",
+        }),
+      ).toBeNull();
+      const rendered = (await screen.findByRole("main")).textContent ?? "";
+      expect(rendered).not.toMatch(/attacker\.example|hacked/);
+      // Nothing was ever submitted for a document the model refused.
+      expect(
+        calls.filter((call) => call.url.endsWith("/execute")),
+      ).toHaveLength(0);
+      cleanup();
+      authStore.clearToken();
+    }
+    expect(previewRequests.count).toBe(malformedVariants.length);
+  });
+
+  it("fails closed on malformed execution item and effect data", async () => {
+    const malformedVariants: Array<(value: Json) => void> = [
+      // An unknown execution item status is never modelled.
+      (value) => {
+        (value["items"] as Json[])[0]["status"] = "hacked";
+      },
+      // An unknown effect certainty is never modelled.
+      (value) => {
+        (value["items"] as Json[])[0]["effectCertainty"] = "totally_verified";
+      },
+      // A verified success is never reported with uncertain certainty.
+      (value) => {
+        (value["items"] as Json[])[0]["effectCertainty"] = "unknown";
+      },
+      // A verified flag contradicting its certainty is malformed evidence.
+      (value) => {
+        (value["items"] as Json[])[0]["effects"] = [
+          {
+            action: "MOVE",
+            certainty: "attempted_unverified",
+            destinationLocation: "One (2001)/One (2001).mkv",
+            operation: null,
+            sourceLocation: "One.2001.mkv",
+            verified: true,
+          },
+        ];
+      },
+      // An arbitrary effect action marker is never modelled.
+      (value) => {
+        (value["items"] as Json[])[0]["effects"] = [
+          {
+            action: "RM_RF_SLASH",
+            certainty: "verified_complete",
+            destinationLocation: "One (2001)/One (2001).mkv",
+            operation: null,
+            sourceLocation: "One.2001.mkv",
+            verified: true,
+          },
+        ];
+      },
+      // An unknown uncertain-effect statement is never modelled.
+      (value) => {
+        (value["items"] as Json[])[0]["uncertainEffects"] = ["rm -rf /"];
+      },
+    ];
+
+    for (const mutate of malformedVariants) {
+      const document = executionDocument();
+      mutate(document);
+      recordingFetch((call) => {
+        if (call.url === "/api/v1/operations/organize/executions/execution-1") {
+          return jsonResponse(document);
+        }
+        return undefined;
+      });
+      authStore.setToken(TOKEN);
+      renderApp("/ui-v2/operations/organize/execution/execution-1");
+
+      await screen.findByText(
+        /could not be understood as the expected contract/i,
+      );
+      const rendered = (await screen.findByRole("main")).textContent ?? "";
+      expect(rendered).not.toMatch(/hacked|RM_RF_SLASH|rm -rf \/|totally/);
+      cleanup();
+      authStore.clearToken();
+    }
   });
 });

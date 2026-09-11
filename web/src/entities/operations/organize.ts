@@ -58,6 +58,77 @@ export const ORGANIZE_CONFLICT_STRATEGIES = [
   "manual",
 ] as const;
 
+/**
+ * Closed sets the backend can truthfully publish for an execution item.
+ *
+ * Every value mirrors the durable Python domain exactly: item statuses come
+ * from ``ManualExecutionItemStatus``, effect certainty from
+ * ``ExecutionEffectCertainty`` and operation/effect markers from the
+ * ``OrganizerExecutor`` evidence vocabulary. An unknown or contradictory value
+ * makes the whole response malformed so no executable control is rendered and
+ * no hostile string reaches the DOM.
+ */
+export const ORGANIZE_EXECUTION_ITEM_STATUSES = [
+  "admitted",
+  "running",
+  "success",
+  "skipped",
+  "failed",
+  "partial",
+  "cancelled",
+] as const;
+
+export const ORGANIZE_EFFECT_CERTAINTIES = [
+  "verified_complete",
+  "attempted_unverified",
+  "none",
+  "unknown",
+] as const;
+
+export const ORGANIZE_EFFECT_OPERATIONS = [
+  "create_directory",
+  "move",
+  "copy",
+  "hard_link",
+  "soft_link",
+  "delete",
+] as const;
+
+/** Executor operation markers recorded as durable per-item effect evidence. */
+export const ORGANIZE_EFFECT_ACTION_MARKERS = [
+  "CREATE_DIRECTORY",
+  "DELETE_DIRECTORY",
+  "MOVE",
+  "COPY",
+  "LINK",
+  "NOOP",
+  "SKIP",
+] as const;
+
+/** The only uncertain-effect statement the backend records today. */
+export const ORGANIZE_UNCERTAIN_EFFECTS = ["mutation_outcome"] as const;
+
+/** The methods an operator-facing action may ever advertise. */
+export const ORGANIZE_ACTION_METHODS = ["GET", "POST"] as const;
+
+/** The side-effect statements an operator-facing action may ever advertise. */
+export const ORGANIZE_ACTION_SIDE_EFFECTS = [
+  "none",
+  "reported_per_item",
+] as const;
+
+/** Operator actions are bounded, relative V2 API routes and nothing else. */
+const SAFE_ACTION_PATH = /^\/api\/v1\/[A-Za-z0-9_./{}<>-]{1,256}$/;
+
+/** A bounded relative route can never traverse outside the V2 API root. */
+function isSafeActionPath(value: string): boolean {
+  if (!SAFE_ACTION_PATH.test(value)) {
+    return false;
+  }
+  const segments = value.replace(/^\/api\/v1\//, "").split("/");
+  return !segments.some((segment) => segment === "" || segment === "..");
+}
+
 export interface OrganizeFailureModel {
   readonly category: string;
   readonly message: string;
@@ -335,22 +406,59 @@ export function normalizeOrganizeAction(
   let available: boolean;
   try {
     available = normalizeBoolean(source["available"], `${field}.available`);
+    const reason = optionalText(source, "reason");
+    const method = optionalText(source, "method");
+    const path = optionalText(source, "path");
+    const requiresConfirmation =
+      source["requiresConfirmation"] === undefined
+        ? false
+        : flag(source, "requiresConfirmation");
+    const sideEffects = optionalText(source, "sideEffects");
+    if (sideEffects !== null) {
+      normalizeEnum(
+        sideEffects,
+        `${field}.sideEffects`,
+        ORGANIZE_ACTION_SIDE_EFFECTS,
+      );
+    }
+    if (method !== null) {
+      normalizeEnum(method, `${field}.method`, ORGANIZE_ACTION_METHODS);
+    }
+    if (path !== null && !isSafeActionPath(path)) {
+      fail(`${field}.path`);
+    }
+    // A confirmation is only ever asked for a mutating action, so a GET or
+    // methodless action can never advertise one. The backend publishes the
+    // confirmation flag with the bounded transport even while the action is
+    // withheld, so availability is deliberately not part of this contract.
+    if (requiresConfirmation && method !== "POST") {
+      fail(`${field}.requiresConfirmation`);
+    }
+    if (available) {
+      // An offered action must name its exact method and its bounded relative
+      // route and never carry a contradictory reason.
+      if (method === null || path === null || reason !== null) {
+        fail(`${field}.available`);
+      }
+    } else if (reason === null) {
+      // A withheld action must explain itself; the backend may still publish
+      // its bounded method/route as descriptive context, but the frontend
+      // renders no control from it.
+      fail(`${field}.available`);
+    }
+    return {
+      available,
+      reason,
+      method,
+      path,
+      nextAction: optionalText(source, "nextAction"),
+      sideEffects,
+      durableOutcome: optionalText(source, "durableOutcome"),
+      requiresConfirmation,
+    };
   } catch {
     return fail(field);
   }
-  return {
-    available,
-    reason: optionalText(source, "reason"),
-    method: optionalText(source, "method"),
-    path: optionalText(source, "path"),
-    nextAction: optionalText(source, "nextAction"),
-    sideEffects: optionalText(source, "sideEffects"),
-    durableOutcome: optionalText(source, "durableOutcome"),
-    requiresConfirmation:
-      source["requiresConfirmation"] === undefined
-        ? false
-        : flag(source, "requiresConfirmation"),
-  };
 }
 
 function normalizeRecognitionOption(
@@ -536,11 +644,19 @@ export function normalizeOrganizePreview(
     return fail("executionCandidateItemIds");
   }
   const workerSource = readRecord(source["worker"], "worker");
+  const executionCandidateItemIds = rawCandidates.map((value, index) =>
+    normalizeBoundedText(value, `executionCandidateItemIds[${index}]`),
+  );
+  if (
+    new Set(executionCandidateItemIds).size !== executionCandidateItemIds.length
+  ) {
+    // The exact selection must name each reviewed item once; a duplicated or
+    // contradictory candidate list is malformed evidence, never a selection.
+    return fail("executionCandidateItemIds");
+  }
   return {
     ...preview,
-    executionCandidateItemIds: rawCandidates.map((value, index) =>
-      normalizeBoundedText(value, `executionCandidateItemIds[${index}]`),
-    ),
+    executionCandidateItemIds,
     blockedItemCount: count(source, "blockedItemCount"),
     worker: {
       ready: flag(workerSource, "ready"),
@@ -555,15 +671,73 @@ export function normalizeOrganizePreview(
   };
 }
 
+/** One durable effect marker, or a bounded attachment marker with its type. */
+function normalizeEffectAction(value: unknown, field: string): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string" || value.length === 0 || value.length > 256) {
+    return fail(field);
+  }
+  if ((ORGANIZE_EFFECT_ACTION_MARKERS as readonly string[]).includes(value)) {
+    return value;
+  }
+  const attachment = value.match(/^ATTACHMENT:([a-z_]+):(.+)$/);
+  if (attachment === null || attachment[2] === undefined) {
+    return fail(field);
+  }
+  const [, attachmentType, attachmentPath] = attachment;
+  if (attachmentType === undefined || attachmentPath === undefined) {
+    return fail(field);
+  }
+  if (attachmentPath.includes("..") || attachmentPath.includes("//")) {
+    return fail(field);
+  }
+  return value;
+}
+
+function normalizeEffectMarkerList(
+  source: Record<string, unknown>,
+  field: string,
+): readonly string[] {
+  return stringList(source, field).map((value, index) => {
+    const marker = normalizeEffectAction(value, `${field}[${index}]`);
+    return marker ?? value;
+  });
+}
+
 function normalizeExecutionEffect(
   value: unknown,
 ): OrganizeExecutionEffectModel {
   const source = readRecord(value, "execution.items[].effects[]");
+  const action = normalizeEffectAction(
+    source["action"],
+    "execution.items[].effects[].action",
+  );
+  const operation = optionalText(source, "operation");
+  if (operation !== null) {
+    normalizeEnum(
+      operation,
+      "execution.items[].effects[].operation",
+      ORGANIZE_EFFECT_OPERATIONS,
+    );
+  }
+  const certainty = normalizeEnum(
+    source["certainty"],
+    "execution.items[].effects[].certainty",
+    ORGANIZE_EFFECT_CERTAINTIES,
+  );
+  const verified = flag(source, "verified");
+  if (verified !== (certainty === "verified_complete")) {
+    // ``verified`` is derived from the durable effect certainty, so a
+    // contradictory pair is malformed evidence rather than a usable outcome.
+    fail("execution.items[].effects[].verified");
+  }
   return {
-    action: optionalText(source, "action"),
-    operation: optionalText(source, "operation"),
-    verified: flag(source, "verified"),
-    certainty: optionalText(source, "certainty"),
+    action,
+    operation,
+    verified,
+    certainty,
     sourceLocation: optionalText(source, "sourceLocation"),
     destinationLocation: optionalText(source, "destinationLocation"),
   };
@@ -575,19 +749,61 @@ function normalizeExecutionItem(value: unknown): OrganizeExecutionItemModel {
   if (!Array.isArray(rawEffects) || rawEffects.length > 100) {
     return fail("execution.items[].effects");
   }
+  const status = normalizeEnum(
+    source["status"],
+    "execution.items[].status",
+    ORGANIZE_EXECUTION_ITEM_STATUSES,
+  );
+  const effectCertainty = normalizeEnum(
+    source["effectCertainty"],
+    "execution.items[].effectCertainty",
+    ORGANIZE_EFFECT_CERTAINTIES,
+  );
+  if (
+    (status === "success" && effectCertainty !== "verified_complete") ||
+    (status === "failed" && effectCertainty === "verified_complete")
+  ) {
+    // A verified success is never reported as uncertain and a failed item is
+    // never reported as a verified complete mutation.
+    fail("execution.items[].effectCertainty");
+  }
+  const effects = rawEffects.map((effect) => normalizeExecutionEffect(effect));
+  for (const effect of effects) {
+    if (effect.action !== null && status === "admitted") {
+      // Nothing was attempted for an admitted item, so it cannot carry
+      // recorded effect evidence yet.
+      fail("execution.items[].effects");
+    }
+    if (status === "running" && effect.action !== null) {
+      fail("execution.items[].effects");
+    }
+  }
   return {
     itemId: text(source, "itemId"),
     taskId: optionalText(source, "taskId"),
     taskItemId: optionalText(source, "taskItemId"),
-    status: text(source, "status"),
+    status,
     stage: optionalText(source, "stage"),
     resultId: optionalText(source, "resultId"),
-    effectCertainty: optionalText(source, "effectCertainty"),
-    completedOperations: stringList(source, "completedOperations"),
-    uncertainEffects: stringList(source, "uncertainEffects"),
+    effectCertainty,
+    completedOperations: normalizeEffectMarkerList(
+      source,
+      "completedOperations",
+    ),
+    uncertainEffects: (() => {
+      const values = stringList(source, "uncertainEffects");
+      for (const value of values) {
+        normalizeEnum(
+          value,
+          "execution.items[].uncertainEffects",
+          ORGANIZE_UNCERTAIN_EFFECTS,
+        );
+      }
+      return values;
+    })(),
     failure: normalizeOrganizeFailure(source["failure"], "items[].failure"),
     nextAction: optionalText(source, "nextAction"),
-    effects: rawEffects.map((effect) => normalizeExecutionEffect(effect)),
+    effects,
   };
 }
 
@@ -611,6 +827,17 @@ export function normalizeOrganizeExecution(
   }
   const actions = readRecord(source["actions"], "actions");
   const knownEffects = readRecord(source["knownEffects"], "knownEffects");
+  const selectedItemIds = stringList(source, "selectedItemIds");
+  const unselectedItemIds = stringList(source, "unselectedItemIds");
+  if (
+    selectedItemIds.length !== count(source, "selectedItemCount") ||
+    unselectedItemIds.length !== count(source, "unselectedItemCount") ||
+    selectedItemIds.some((value) => unselectedItemIds.includes(value))
+  ) {
+    // A selection that contradicts its own counts, or that both selected and
+    // unselected one item, is malformed durable evidence.
+    return fail("selection");
+  }
   return {
     executionId: text(source, "executionId"),
     previewId: text(source, "previewId"),
@@ -620,8 +847,8 @@ export function normalizeOrganizeExecution(
     status,
     durableState: text(source, "durableState"),
     intentVersion: count(source, "intentVersion"),
-    selectedItemIds: stringList(source, "selectedItemIds"),
-    unselectedItemIds: stringList(source, "unselectedItemIds"),
+    selectedItemIds,
+    unselectedItemIds,
     selectedItemCount: count(source, "selectedItemCount"),
     unselectedItemCount: count(source, "unselectedItemCount"),
     completedItemCount: count(source, "completedItemCount"),

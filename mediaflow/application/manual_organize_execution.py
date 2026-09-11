@@ -354,9 +354,26 @@ class ManualOrganizeExecutionService:
     def _existing_admitted_execution(
         self, authority: ManualExecutionAuthorization, error: ManualExecutionError
     ) -> ManualExecution | None:
-        """Resolve one repeated/concurrent submission to its single durable execution."""
+        """Resolve one repeated submission to its single *exactly equivalent* execution.
 
-        if getattr(error, "code", None) not in {
+        A repeated or concurrent submission may only be folded into an existing
+        durable execution when that execution reviewed the *same* principal,
+        intent/configuration/item versions and destructive authority over
+        *exactly* the same selected item set.  Any narrower, overlapping,
+        differently bound or differently authorized request is a different
+        reviewed submission: it must fail with its own reason instead of
+        silently returning work the operator never selected.  The two
+        concurrency outcomes are treated differently on purpose:
+
+        * ``authorization_consumed`` means this request's own one-shot
+          authority was consumed, so the linked execution is the exact answer;
+        * ``duplicate_execution``/``concurrent_execution`` mean a *different*
+          submission won the durable fence first, which is only equivalent when
+          the winner persisted the identical reviewed binding.
+        """
+
+        code = getattr(error, "code", None)
+        if code not in {
             "duplicate_execution",
             "concurrent_execution",
             "authorization_consumed",
@@ -365,16 +382,87 @@ class ManualOrganizeExecutionService:
         reader = getattr(self._repository, "list_manual_executions_for_preview", None)
         if not callable(reader):
             return None
-        selected = {scope.item_id for scope in authority.scope}
         try:
             values = reader(authority.preview_id, limit=10)
         except Exception:
             return None
         for value in values:
-            admitted = {item.item_id for item in value.items}
-            if selected.issubset(admitted):
+            if self._is_equivalent_admitted_execution(value, authority):
                 return value
         return None
+
+    def _is_equivalent_admitted_execution(
+        self, execution: ManualExecution, authority: ManualExecutionAuthorization
+    ) -> bool:
+        """Prove one durable execution is the same reviewed submission as this authority.
+
+        The permission binding is proved from the persisted one-shot authority
+        that admitted the existing execution: a missing, unlinked or
+        differently authorized record fails closed instead of resolving.
+        """
+
+        if not isinstance(execution, ManualExecution):
+            return False
+        authorization = self._execution_authorization_for_replay(execution)
+        if (
+            authorization is None
+            or authorization.permission != authority.permission
+            or authorization.actor != authority.actor
+            or authorization.preview_id != authority.preview_id
+        ):
+            return False
+        selected = {scope.item_id for scope in authority.scope}
+        if not selected:
+            return False
+        if set(execution.selected_item_ids) != selected:
+            return False
+        if execution.preview_id != authority.preview_id:
+            return False
+        if execution.intent_id != authority.intent_id:
+            return False
+        if execution.intent_version != authority.intent_version:
+            return False
+        if execution.configuration_snapshot_id != authority.configuration_snapshot_id:
+            return False
+        if execution.configuration_snapshot_digest != authority.configuration_snapshot_digest:
+            return False
+        if execution.actor != authority.actor:
+            return False
+        if execution.allow_overwrite != authority.allow_overwrite:
+            return False
+        if execution.allow_source_cleanup != authority.allow_source_cleanup:
+            return False
+        scopes = {scope.item_id: scope for scope in authority.scope}
+        if {item.item_id for item in execution.items} != selected:
+            return False
+        for item in execution.items:
+            scope = scopes[item.item_id]
+            if (
+                item.preview_item_id != scope.preview_item_id
+                or item.item_version != scope.item_version
+                or item.source_fingerprint != scope.source_fingerprint
+                or item.plan_fingerprint != scope.plan_fingerprint
+            ):
+                return False
+        return True
+
+    def _execution_authorization_for_replay(
+        self, execution: ManualExecution
+    ) -> ManualExecutionAuthorization | None:
+        """Load the exact persisted authority that admitted one execution."""
+
+        if execution.authorization_id is None:
+            return None
+        getter = getattr(self._repository, "get_manual_execution_authorization", None)
+        if not callable(getter):
+            return None
+        try:
+            authorization = getter(execution.authorization_id)
+        except Exception:
+            return None
+        if authorization is None or authorization.execution_id != execution.execution_id:
+            return None
+        return authorization
 
     def _revoke_unused_authority(
         self, authority: ManualExecutionAuthorization, error: ManualExecutionError
@@ -1472,7 +1560,7 @@ class ManualOrganizeExecutionService:
                     status=404,
                 ) from error
             raise ManualExecutionError(
-                self._safe_error(error),
+                _safe_error(error),
                 code=getattr(error, "code", "preview_unavailable"),
                 status=getattr(error, "status", 409),
                 next_action=getattr(
