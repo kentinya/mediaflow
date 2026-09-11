@@ -22,11 +22,13 @@ import {
 } from "../shared/normalize";
 
 export const PREVIEW_STATUSES = [
-  "pending",
-  "running",
-  "completed",
+  "previewed",
   "partial",
+  "blocked",
   "failed",
+  "stale",
+  "unavailable",
+  "cancelled",
 ] as const;
 export type PreviewStatus = (typeof PREVIEW_STATUSES)[number];
 
@@ -134,18 +136,29 @@ function normalizePreviewFailure(
 function normalizePreviewItem(value: unknown): ManualPreviewItemModel {
   const source = readRecord(value, "preview_item");
   try {
+    const sourceObj = readRecord(source["source"], "source");
+    const plan = source["plan"];
+    const planObj =
+      plan !== null && plan !== undefined
+        ? readRecord(plan, "plan")
+        : ({} as Record<string, unknown>);
+    const choice = source["choice"];
+    const choiceObj =
+      choice !== null && choice !== undefined
+        ? readRecord(choice, "choice")
+        : ({} as Record<string, unknown>);
     return {
       itemId: text(source, "itemId"),
-      sourceStorageId: text(source, "sourceStorageId"),
-      sourcePath: text(source, "sourcePath"),
-      recognitionType: optionalText(source, "recognitionType"),
-      title: optionalText(source, "title"),
-      provider: optionalText(source, "provider"),
-      providerId: optionalText(source, "providerId"),
-      targetPath: optionalText(source, "targetPath"),
-      organizePolicy: optionalText(source, "organizePolicy"),
+      sourceStorageId: text(sourceObj, "storageId"),
+      sourcePath: text(sourceObj, "path"),
+      recognitionType: optionalText(planObj, "recognitionType"),
+      title: optionalText(planObj, "title"),
+      provider: optionalText(planObj, "provider"),
+      providerId: optionalText(planObj, "providerId"),
+      targetPath: optionalText(planObj, "targetPath"),
+      organizePolicy: optionalText(choiceObj, "organizePolicyId"),
       status: text(source, "status"),
-      failure: normalizePreviewFailure(source["failure"]),
+      failure: normalizePreviewFailure(source["error"]),
     };
   } catch {
     return fail();

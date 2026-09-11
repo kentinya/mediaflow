@@ -124,12 +124,16 @@ test("connect from a real deep link continues to that exact allowlisted route", 
   await page.getByRole("button", { name: "Connect" }).click();
   // Connecting continues to the exact route that was opened, not a default.
   await expect(page).toHaveURL(/\/ui-v2\/library$/);
-  await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Library", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Open Storage files" }),
   ).toHaveAttribute("href", "/ui-v2/library/files");
   await expect(page).toHaveTitle("Library | MediaFlow");
-  await expect(page.getByRole("link", { name: "Library" })).toHaveAttribute(
+  await expect(
+    page.getByRole("link", { name: "Library", exact: true }),
+  ).toHaveAttribute(
     "aria-current",
     "page",
   );

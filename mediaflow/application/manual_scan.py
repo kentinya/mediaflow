@@ -230,8 +230,7 @@ class ManualScanService:
                     "server-bound file Scan requires resourceLibraryId",
                     status=400,
                     next_action=(
-                        "select one current FileIndex item from a configured "
-                        "ResourceLibrary"
+                        "select one current FileIndex item from a configured ResourceLibrary"
                     ),
                 )
             record = self._require_current_file_direct(file_id, resource_library_id)

@@ -39,7 +39,9 @@ test("Library landing truthfully separates Storage files from FileIndex", async 
   await connectAs(page, VIEWER_TOKEN);
   await page.getByRole("link", { name: "Library" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/library$/);
-  await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Library", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Storage files" }),
   ).toBeVisible();

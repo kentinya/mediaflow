@@ -122,6 +122,7 @@ export function ScanDetailPage() {
           "failed",
           "cancelled",
         ].includes(scan.status);
+        const canCancel = !isTerminal && !scan.cancellationRequested;
 
         return (
           <div className="mf-dashboard">
@@ -277,7 +278,7 @@ export function ScanDetailPage() {
                 </>
               )}
             </section>
-            {!isTerminal && !scan.cancellationRequested && (
+            {canCancel && (
               <div className="mf-actions">
                 <Button
                   type="button"

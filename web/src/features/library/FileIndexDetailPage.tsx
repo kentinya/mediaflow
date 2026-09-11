@@ -841,15 +841,21 @@ export function FileIndexDetailPage() {
   );
 
   // Fetch the manual action matrix for this file
+  // Use the loaded record's resourceLibraryId when available, falling back to
+  // the URL return context for when the detail hasn't loaded yet.
+  const recordResourceLibraryId =
+    detail.data?.ok === true
+      ? detail.data.model.record.resourceLibraryId
+      : returnContext.resourceLibrary ?? null;
   const actionMatrixQuery = useQuery(
     manualActionsQueryOptions(
       token,
       {
         scopeKind: "file",
         fileId,
-        resourceLibraryId: returnContext.resourceLibrary ?? null,
+        resourceLibraryId: recordResourceLibraryId,
       },
-      statusReady,
+      statusReady && recordResourceLibraryId !== null,
     ),
   );
 

@@ -28,7 +28,7 @@ export const SCAN_STATUSES = [
 ] as const;
 export type ScanStatus = (typeof SCAN_STATUSES)[number];
 
-export const SCAN_MODES = ["scan-only", "scan-and-plan"] as const;
+export const SCAN_MODES = ["full", "incremental"] as const;
 export type ScanMode = (typeof SCAN_MODES)[number];
 
 /** Bounded per-item scan outcome. */

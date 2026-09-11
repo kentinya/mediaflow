@@ -1462,7 +1462,9 @@ class MediaFlowApi:
                     ],
                     "limit": limit,
                     "total": len(items),
-                    "scopeKind": scope_kind,
+                    "scopeKind": "resourceLibrary"
+                    if scope_kind == "resource_library"
+                    else scope_kind,
                     "scopeId": scope_id,
                 },
             )
@@ -4007,7 +4009,7 @@ class MediaFlowApi:
                     "items": [self._manual_preview_document(value) for value in previews],
                     "limit": limit,
                     "total": len(previews),
-                    "scopeKind": "resource_library",
+                    "scopeKind": "resourceLibrary",
                     "scopeId": parts[3],
                 },
             )
@@ -4352,7 +4354,9 @@ class MediaFlowApi:
                     "items": [self._manual_preview_document(value) for value in items],
                     "limit": limit,
                     "total": len(items),
-                    "scopeKind": scope_kind,
+                    "scopeKind": "resourceLibrary"
+                    if scope_kind == "resource_library"
+                    else scope_kind,
                     "scopeId": scope_id,
                 },
             )
@@ -7312,13 +7316,18 @@ class MediaFlowApi:
             start_response,
             200,
             {
-                "scopeKind": raw_kind,
+                "scopeKind": "resourceLibrary" if raw_kind == "resource_library" else raw_kind,
                 "fileId": file_id if raw_kind == "file" else None,
                 "resourceLibraryId": resource_library_id,
                 "source": source if source else None,
                 "runtime": {
-                    "configurationActive": runtime_ready,
-                    "configurationSnapshotId": configuration_snapshot_id,
+                    "ready": runtime_ready,
+                    "condition": (
+                        "configuration_active" if runtime_ready else "configuration_unavailable"
+                    ),
+                    "nextAction": (
+                        None if runtime_ready else "restore or activate a valid Active runtime"
+                    ),
                 },
                 "actions": {
                     "scan": {

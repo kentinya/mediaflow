@@ -4,6 +4,10 @@
  * Shows Worker readiness, task and job summary counts with links to list views,
  * and the most recent failures. All data comes from existing API endpoints; no
  * state is fabricated and no mutation is performed.
+ *
+ * For daily manual operations, the landing offers bounded Scan and Preview
+ * admission links so the operator can start work directly from Operations.
+ * The ResourceLibrary scope is selected on the admission page itself.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -64,6 +68,31 @@ export function OperationsLanding() {
                   to="/operations/jobs"
                 >
                   Jobs
+                </Link>
+              </nav>
+            </section>
+            <section className="mf-count-section">
+              <h3>Manual operations</h3>
+              <p className="mf-dashboard-meta">
+                Start a bounded Scan or run a zero-mutation Preview from a
+                selected ResourceLibrary scope. Scan discovers and indexes
+                source files; Preview runs the complete pipeline with zero
+                Storage mutation.
+              </p>
+              <nav className="mf-actions" aria-label="Manual operations">
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/operations/scan/new"
+                  search={{ scopeKind: "resourceLibrary" }}
+                >
+                  Start bounded Scan
+                </Link>
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/operations/preview/new"
+                  search={{ scopeKind: "resourceLibrary" }}
+                >
+                  Run zero-mutation Preview
                 </Link>
               </nav>
             </section>
