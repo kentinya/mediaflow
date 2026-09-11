@@ -240,67 +240,68 @@ checkpoint.
 
 ### Changed Files
 
-This second correction round changes the files listed below relative to the first corrected
-checkpoint `16dc2864b1c8fade8c7b8fb7fccb3ca44f54fddb` (Task Base `aae640b` plus both previously
-reviewed rounds). It fixes exactly the two B blockers and their direct root causes; everything
-from the earlier rounds remains in place.
+This third correction round changes the files listed below relative to the second corrected
+checkpoint `4289d1456593dcfac43d51355e8d12647a3a71bc` (Task Base `aae640b` plus all previously
+reviewed rounds). It fixes exactly the two new B blockers and their direct root causes.
 
 **Modified files:**
-- `mediaflow/infrastructure/sqlite_runtime.py` — `complete_claimed_job` now fences the terminal
-  commit of a claimed Job against the durable cancellation flag: a completion or failure that
-  arrives after an accepted cancellation is converted into the same cancelled outcome the
-  Worker's own boundary publishes (claim fencing unchanged, failure evidence preserved)
-- `mediaflow/application/operations_lifecycle.py` — `job_failure_document` scrubs a decoded
-  durable failure envelope through the same bounded credential/path redaction as classified
-  evidence; failure categories are path-scrubbed; new fail-closed `_bounded_identity_path`
-  projects only provably Storage-relative source/destination identities in the TaskItem,
-  Result and manual-Scan projections
-- `mediaflow/interfaces/service_api.py` — the legacy `/api/v1/*` compatibility item/result
-  documents apply the same identity projection, so a hostile persisted identity column cannot
-  leak through either read (the V1-rendered `source_display` and the pinned
-  `configuration_snapshot_digest` are unchanged)
-- `tests/test_operator_job_cancellation.py` — two deterministic cancel-versus-terminal-commit
-  tests (COMPLETED and FAILED races) binding the claim-time `job_control_version`
-- `tests/test_operations_workspace.py` — the real-API hostile-record proof extended with a
-  syntactically valid `mediaflow-failure-v1` envelope carrying a credential and a private path,
-  and TaskItem/Result rows carrying absolute host paths in their identity columns; the
-  relative-identity and bounded-evidence assertions are preserved and strengthened
-
-Unchanged from the previous rounds: the filter-bound cursor scope, destination-model
-allowlists, Dashboard/Library links, list/detail pages, styles and all other entity/API tests.
+- `mediaflow/infrastructure/sqlite_runtime.py` — `complete_claimed_job` is now one
+  database-atomic statement: the same `UPDATE` reads the row's *current* cancellation flag in
+  `CASE` expressions and folds it into the terminal outcome (status → `cancelled`, request flag
+  kept, the arriving commit's error/failure evidence preserved), so no read-then-write seam
+  exists; the definition occurrence is finalized from the outcome actually committed, read back
+  inside the same transaction
+- `mediaflow/application/operations_lifecycle.py` — `_bounded_evidence_text` fails closed on
+  the full forbidden shape set (any `scheme://` endpoint, absolute POSIX path segment with or
+  without a dotted file name, Windows drive/adapter root, UNC root) by replacing the whole
+  evidence field with a bounded operator-safe constant; `_bounded_identity_path` applies the
+  same shape detection
+- `tests/test_operator_job_cancellation.py` — deterministic two-connection
+  cancel-versus-terminal-commit test over real separate `SQLiteTaskRepository` connections
+- `tests/test_operations_workspace.py` — the encoded-envelope hostile job now carries the
+  endpoint, the absolute host directories and the Windows adapter root; field-level assertions
+  prove the bounded constant replaces those fields while the credential-only field keeps its
+  per-token redaction
+- `web/src/entities/operations/task.test.ts`, `web/src/entities/operations/job.test.ts` — the
+  model-level hostile record now carries the endpoint/directory/Windows-root forms and must
+  expose none of them
+- `web/src/features/operations/OperationsRouter.test.tsx` — the router/DOM proof uses the same
+  extended hostile record
+- `web/tests/fake-server.mjs`, `web/tests/e2e/operations.spec.ts` — the built-artifact browser
+  proof's hostile legacy document carries the new forms and the DOM/console assertions reject
+  them
 
 ### Implemented
 
-- **Terminal commits can no longer overwrite an accepted cancellation (B blocker 1).**
-  `complete_claimed_job` first reads the durable row inside the same transaction, fenced on
-  `job_id + status=running + claim_token + worker_id`. If the cancellation flag is set and the
-  submitted commit is not itself the cancelled outcome, the commit is rewritten in memory to
-  `status=cancelled, cancellation_requested=true` (error text and any recorded failure evidence
-  of the arriving commit are preserved, and a pure completion becomes
-  `error="workflow cancelled"` like the Worker's own cancellation boundary) before the UPDATE
-  runs. The linked Task keeps its own truthful per-item state. A stale commit with a wrong
-  token still returns `False` exactly as before, and the accepted request can never be lost and
-  reported as success.
-- **Every structured failure branch is scrubbed (B blocker 2, envelopes).** A decoded
-  `mediaflow-failure-v1` envelope is no longer trusted as-is: `job_failure_document` publishes
-  it only after the same `_bounded_evidence_text` pass used for classified evidence, so a
-  credential-shaped value in `message`/`sideEffects` and an absolute host path in
-  `durableState`/`nextAction` are replaced while the category and structure survive. The
-  `failure_category` branch uses the same bounded pass instead of a bare credential-only
-  redaction.
-- **Persisted identities fail closed (B blocker 2, identity columns).** New
-  `bounded_identity_path` publishes a persisted `source_path`/`destination_path` only when it is
-  a provably Storage-relative identity (relative, no drive/scheme/backslash/`..` segment, within
-  the bounded length, credential-free); anything else — absolute host/adapter roots, private
-  endpoints, credential-shaped values, non-strings — becomes `[redacted-path]`. It is applied in
-  the TaskItem and Result Operations projections, the manual-Scan `sourcePath` fields of the
-  Operations document, and the legacy compatibility item/result documents, so no Task/Job read
-  can echo a hostile identity column.
-- **Deterministic regression tests for the exact boundaries B demonstrated.** Two
-  cancel-versus-terminal-commit tests on a real claimed SQLite Job, and the extended real-API
-  hostile-record proof covering encoded envelopes and hostile identity columns end to end
-  (list, detail and legacy reads; relative identities and bounded failure evidence stay
-  visible).
+- **One database-atomic terminal commit (B blocker 1).** The previous correction converted the
+  arriving terminal commit in Python after a `SELECT cancellation_requested`; B demonstrated
+  with two `SQLiteTaskRepository` connections that a Python `SELECT` does not establish writer
+  serialization across connections, so a cancellation durably accepted between that `SELECT`
+  and the terminal `UPDATE` could still be overwritten. The fix removes the seam entirely: the
+  terminal commit is a single `UPDATE` whose `SET` list evaluates
+  `CASE WHEN cancellation_requested=1` against the stored row *inside the statement*, folding an
+  accepted request into `status='cancelled'`, `cancellation_requested=1` and
+  `error=<arriving error or 'workflow cancelled'>`, while a clean commit writes the arriving
+  values unchanged. The claim fencing (`status=running AND claim_token=? AND worker_id IS ?`) is
+  unchanged, and the definition-occurrence projection now follows the outcome the database
+  really committed (read back inside the same transaction), so a folded commit publishes the
+  cancelled occurrence, not the submitted one.
+- **Fail-closed evidence scrubbing for every host shape (B blocker 2).** The previous regex
+  only replaced a POSIX chain ending in a dotted file name, so a private endpoint
+  (`https://private.example/api`), bare absolute directories (`/home/alice/private`,
+  `/mnt/private-library`) and a Windows adapter root (`C:\Users\alice\media`) survived in a
+  decoded envelope. Detection is now a closed set of open-ended shape patterns (scheme
+  endpoints, absolute POSIX path segments, drive roots, UNC roots) and, because laundering a
+  detected value token by token cannot prove nothing slipped through, any field still carrying
+  one of the shapes is replaced wholesale with the bounded operator-safe constant
+  (`[redacted: the recorded evidence contained a credential, private endpoint or absolute host
+  path]`), which never carries the original value. Credential-shaped values keep the existing
+  in-place per-token redaction. `_bounded_identity_path` runs the same detection, so an
+  identity column carrying any of the forms is the `[redacted-path]` marker.
+- **Extended layered hostile-record proof (both blockers).** Two-connection interleaving test
+  for the exact pause point B used, and the endpoint/directory/Windows-root forms asserted
+  absent at every layer: the real API reads (list, detail, legacy), the strict frontend models,
+  the router-rendered DOM and the built-artifact browser page (DOM, console, fetched URLs).
 
 ### Tests and Results
 
@@ -321,8 +322,8 @@ npm --prefix web run test:e2e                                          → PASS 
     tests.test_operator_job_cancellation tests.test_task_pause_resume
     tests.test_processing_worker_readiness tests.test_api_security
     tests.test_dashboard tests.test_v2_ui
-    tests.test_operations_workspace                                    → PASS (96 tests)
-.venv/bin/python -m unittest discover -s tests                         → 1439 ran, 6 failed,
+    tests.test_operations_workspace                                    → PASS (97 tests)
+.venv/bin/python -m unittest discover -s tests                         → 1440 ran, 6 failed,
                                                                           7 skipped; the 6
                                                                           failures are
                                                                           PRE-EXISTING/UNRELATED
@@ -344,47 +345,52 @@ python3 scripts/docker_release_security_smoke_test.py                  → PASS 
 
 New focused coverage added by this correction round (all passing):
 
-- `tests.test_operator_job_cancellation` — two deterministic cancel-versus-terminal-commit
-  tests: an accepted running-Job cancellation survives a COMPLETED `complete_claimed_job` (row
-  becomes `cancelled`, request flag stays set, claim released, linked `task_id` preserved) and
-  also survives a FAILED terminal commit (status fenced, the workflow's own failure evidence
-  kept truthful).
-- `tests.test_operations_workspace` — the hostile-record sweep now also covers a valid encoded
-  failure envelope (credential in `message`/`sideEffects`, private path in
-  `durableState`/`nextAction`) and TaskItem/Result identity columns holding absolute host
-  paths; every Operations and legacy read must contain neither value, the envelope must still
-  publish as bounded evidence (`[redacted]`/`[redacted-path]` in the right fields), and the
-  hostile identities must project as `[redacted-path]` while the provably relative
-  `movie.mkv` identity stays visible.
+- `tests.test_operator_job_cancellation` — `test_terminal_commit_folds_an_accepted_cancellation_
+  across_two_connections`: one connection owns the Worker's terminal commit, a second connection
+  over the same database durably accepts the cancellation for the exact state the Worker last
+  observed (the pause point B used), and the Worker's own connection then submits the
+  in-flight workflow as COMPLETED; the row must become `cancelled` with the request flag kept
+  and the linked `task_id` preserved, the terminal commit still reported as accepted, and both
+  connections must observe the same durable folded outcome.
+- `tests.test_operations_workspace` — the hostile envelope job now carries all four B forms
+  (`https://private.example/api`, `/home/alice/private`-style directories,
+  `/mnt/private-library`, `C:\Users\alice\media`) across `message`/`durableState`/
+  `sideEffects`/`nextAction`; every Operations read rejects all of them, the endpoint/path/root
+  fields equal the bounded operator-safe constant, and the credential-only field keeps its
+  per-token redaction.
+- Frontend: the entity model suites, the router DOM suite and the built-artifact browser suite
+  all use the extended hostile record (credential + endpoint + absolute directories + Windows
+  adapter root + fingerprint + display root) and must expose none of its values, while the
+  provably relative `movie.mkv` identity stays visible.
 
 ### Decisions
 
-1. **The accepted cancellation wins at the Job level; per-item truth stays in the Task.** When
-   a terminal commit races an accepted cancellation, the Job becomes `cancelled` — the same
-   outcome the Worker's own cancellation boundary publishes — while the linked Task keeps its
-   own status, items and Results. A genuinely failed workflow that also raced a cancellation
-   keeps its recorded `error` and failure evidence under the cancelled status, so the operator
-   sees both truths instead of losing the accepted request. A pure completion becomes
-   `error="workflow cancelled"`, matching the existing `AutomationCancelled` convention.
-2. **The fence is an in-transaction read plus the unchanged fenced UPDATE, not a new SQL
-   predicate.** Reading the flag inside the same lock/transaction is race-free (SQLite serializes
-   writers) and keeps the existing claim fencing (`status=running AND claim_token=?
-   AND worker_id IS ?`) byte-for-byte, so the stale-claim, wrong-owner and requeue guarantees
-   tested in `test_automation_job_fencing` are untouched.
-3. **Identity columns fail closed to `[redacted-path]`, not to omission.** The bounded marker
-   keeps the document shape the strict frontend models require (they validate `source_path` as a
-   string) while never publishing an unverified identity; provably relative identities still
-   render as before (`movie.mkv` proof retained).
-4. **The same identity rule was applied to the legacy compatibility item/result documents.**
-   The B evidence leak existed in the persisted columns, so bounding them only in the Operations
-   projection would leave the same hostile row leaking through `/api/v1/tasks/{id}`. A legit
-   relative identity is unchanged there; the V1-rendered `source_display` and the pinned
-   configuration digest are untouched, so no V1 contract change occurs.
-5. **Unchanged from the previous rounds:** atomic execution-path-scoped controls, cooperative
-   cancellation observed at item boundaries, digest-free strict frontend models, the
-   `/api/v1/operations/*` bounded read alias, command-family filtering with filter-bound
-   cursors, one retry-disabled `mutateLifecycle`, and `resume` still advertised unavailable
-   rather than fabricated.
+1. **The fold lives in the SQL statement, not in Python.** Any Python-side read of the flag
+   establishes a read-then-write seam that a second connection can exploit, exactly as B
+   demonstrated. The single `UPDATE` with `CASE WHEN cancellation_requested=1` against the
+   stored row is atomic under SQLite's writer serialization for any connection count, and the
+   claim fencing stays byte-for-byte unchanged, so the existing stale-claim/wrong-owner/requeue
+   guarantees in `test_automation_job_fencing` remain untouched (all still pass).
+2. **The occurrence projection follows the committed outcome.** Because the terminal status is
+   now decided inside the statement, the code no longer knows at Python level which branch the
+   database took; it re-reads the row inside the same transaction and finalizes the Automation
+   definition occurrence from the actually committed status, so a folded commit publishes a
+   cancelled occurrence with truthful Task evidence instead of the submitted one.
+3. **Detection + whole-field fail closed, not token laundering.** Host path/endpoint shapes are
+   open-ended (POSIX directories without a dotted name, drive roots, UNC roots, any scheme), so
+   a replacing regex can always be beaten by a new spelling — which is what B demonstrated.
+   The implementation now detects with a deliberately broader closed shape set and replaces the
+   whole evidence field with a fixed bounded constant when any shape survives; a false positive
+   only costs benign detail, while a false negative would leak a host value. Credential values
+   keep the proven in-place per-token redaction.
+4. **The same shape detection backs the identity projection.** `_bounded_identity_path` already
+   failed closed on absolute/scheme/drive/`..`/credential values; it now also runs the shared
+   shape scan, so an identity column carrying any forbidden form is `[redacted-path]`.
+5. **Unchanged from the previous rounds:** the bounded `/api/v1/operations/*` read alias, the
+   legacy compatibility documents' deliberate fields (`source_display`, pinned digest),
+   execution-path-scoped controls, digest-free strict frontend models, filter-bound cursors,
+   one retry-disabled `mutateLifecycle`, and `resume` still advertised unavailable rather than
+   fabricated.
 
 ### Remaining In-Slice Work
 
@@ -400,39 +406,42 @@ New focused coverage added by this correction round (all passing):
 - **Pre-existing Python failures (6), unrelated to this Task — re-proved this round.**
   `tests.test_api_credentials` (2), `tests.test_final_integration` (1),
   `tests.test_resource_library_pipeline` (1) and `tests.test_runtime_storage_configuration` (2)
-  fail in this root working directory with the same set of failures and the same private-CWD
-  driver documented by the previous round (private local runtime configuration that exists only
+  fail in this root working directory with exactly the same failure set and the same private-CWD
+  driver documented by the previous rounds (private local runtime configuration that exists only
   in this root working directory; no changed module is exercised by their failing assertions).
-  This correction's diff touches only `sqlite_runtime.complete_claimed_job`, the Operations
-  projection in `operations_lifecycle`, the compatibility item/result documents in
-  `service_api`, and two focused test files — none of the four failing modules. Direct proof
-  from the previous round (a detached Task Base worktree reproducing exactly these 6 failures)
-  remains valid; `FAIL / PRE-EXISTING / UNRELATED`; the PASS judgement is B's.
+  This round's diff touches only `complete_claimed_job`, the Operations evidence/identity
+  scrubbing, and test/fake files — none of the four failing modules. The detached Task Base
+  worktree proof from the first round remains valid.
+  `FAIL / PRE-EXISTING / UNRELATED`; the PASS judgement is B's.
 - **Docker release-security smoke PASSED, but only over a committed tree and with one
-  environment caveat.** The harness builds its candidate image from `git archive HEAD`, so it
-  was run after the implementation checkpoint `4289d14` was committed; it passed end to end
-  (build, image/Compose inspection, four-service stack, RBAC/redaction probes, managed
-  activation, Worker restart, durable-evidence scan). The environment caveat: the harness's
-  bind-mount sources must be visible to the Docker daemon, and this session's sandboxed `/tmp`
-  is not, so the smoke only succeeds when its `TMPDIR` points into a daemon-visible path (run
-  here with `TMPDIR=/root/mediaflow/.smoke-tmp`, removed afterwards; the direct `/tmp` runs fail
-  with `bind source path does not exist` before any product code is exercised — an environment
-  limitation, not a product failure).
-- **Residual compatibility surface B may want to rule on** (unchanged from the previous round):
+  environment caveat** (unchanged from the previous round): the harness builds its candidate
+  image from `git archive HEAD`, so it was run after the implementation checkpoint `461b11e` was
+  committed; it passed end to end (build, image/Compose inspection, four-service stack,
+  RBAC/redaction probes, managed activation, Worker restart, durable-evidence scan). The
+  environment caveat: the harness's bind-mount sources must be visible to the Docker daemon,
+  and this session's sandboxed `/tmp` is not, so the smoke only succeeds when its `TMPDIR`
+  points into a daemon-visible path (run here with `TMPDIR=/root/mediaflow/.smoke-tmp`, removed
+  afterwards; the direct `/tmp` runs fail with `bind source path does not exist` before any
+  product code is exercised — an environment limitation, not a product failure).
+- **Residual compatibility surface B may want to rule on** (unchanged from the previous rounds):
   the legacy `GET /api/v1/tasks/{id}` and `GET /api/v1/jobs/{id}` documents still carry
   `configuration_snapshot_digest` (a pre-existing configuration-pin test asserts the exact
   value) and the task-item `source_display` the V1 operator UI renders. The V2 Operations
   workspace never reads those documents, and its own projection carries neither.
+- **Evidence over-redaction trade-off.** A structured failure field that legitimately mentioned
+  a public provider URL would now be replaced wholesale by the bounded constant; the closed
+  failure vocabulary explains provider failures without URLs, and the alternative (laundering
+  URLs per token) is exactly the fragility B rejected. No existing test relied on such content.
 - **`resume` remains a CLI workflow.** Per Task scope, an unsupported transition is advertised
   unavailable with an actionable reason instead of being fabricated.
-- **Backward compatibility** (unchanged from the previous round): an empty body on the legacy
+- **Backward compatibility** (unchanged from the previous rounds): an empty body on the legacy
   cancel endpoints still succeeds; V1 `/ui` and the pre-existing compatibility documents are
   untouched apart from the redactions B required; cursors minted before this change without a
   filter scope are rejected only when a filter is submitted.
 
 ### Checkpoint
 
-The implementation checkpoint `4289d1456593dcfac43d51355e8d12647a3a71bc` (recorded above as
+The implementation checkpoint `461b11e0957da40cdd3461e0d8bccfc486c462c3` (recorded above as
 `Head SHA`) is the coherent correction commit for this Task: it carries the code and the tests
 of this correction round, and it is the SHA the release-security smoke ran against. The
 follow-up `docs(task)` commit records this report and the SHA itself and changes no product
@@ -442,42 +451,38 @@ child of the implementation checkpoint).
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 4289d1456593dcfac43d51355e8d12647a3a71bc
+Head SHA: 461b11e0957da40cdd3461e0d8bccfc486c462c3
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: aae640bd7111e9089bb67eb5fef8dbf50c2d85b8..10a79850934cf03ca2f991b70dd1e64c3f9e188f
+Reviewed: aae640bd7111e9089bb67eb5fef8dbf50c2d85b8..0b1a447fb4256d4e3b76b032287a4f4c9dd81f56
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- Running Job cancellation is still vulnerable to a cancel-versus-terminal-commit race, so an
-  accepted durable request can be lost and reported as success. Evidence: B claimed a real SQLite
-  Job, called `request_job_cancellation(..., expected_version=job_control_version(claimed))`, then
-  submitted the already-in-flight claimed Job as `COMPLETED` through `complete_claimed_job()`.
-  The cancellation first persisted as `status=running, cancellation_requested=True`, but the stale
-  completion returned `True` and the final row became `status=completed,
-  cancellation_requested=False`. `complete_claimed_job()` fences status/claim/worker but not the
-  cancellation flag, leaving a race after `AutomationWorker`'s final cancellation poll. Make the
-  terminal commit unable to overwrite an accepted cancellation (while preserving claim fencing and
-  truthful Task/Job outcome), and add a deterministic cancel-versus-completion test for this exact
-  boundary.
-- The bounded Operations projection still permits hostile persisted data to expose credentials and
-  absolute host paths. Evidence: B stored a syntactically valid `mediaflow-failure-v1` Job envelope
-  whose message/side-effects contained `Authorization: Bearer topsecret` and whose durable/next
-  fields contained `/home/alice/private.mkv`; `GET
-  /api/v1/operations/jobs/job-envelope` returned HTTP 200 with both values verbatim because
-  `job_failure_document()` returns decoded envelopes without scrubbing. B also stored absolute
-  `source_path` values on a TaskItem and Result; `GET
-  /api/v1/operations/tasks/task-path` returned `/home/alice/private.mkv` verbatim because the
-  allowlisted projection assumes, but does not validate or bound, Storage-relative identities.
-  Scrub every structured failure branch and fail closed or safely project persisted source/
-  destination identities so credentials, private endpoints and absolute host/adapter roots cannot
-  reach the Operations API/model/DOM. Extend the real-API hostile-record proof to cover encoded
-  envelopes and hostile identity columns, not only plain errors/display roots.
+- Job cancellation is still not atomic across the real API/Worker connection boundary. Evidence:
+  B used two `SQLiteTaskRepository` instances over the same database and paused the Worker's
+  `complete_claimed_job()` after its new `SELECT cancellation_requested` but before its terminal
+  `UPDATE`; the second connection then durably accepted cancellation as `status=running,
+  cancellation_requested=True`. The original terminal update subsequently returned `True` and the
+  final row became `status=completed, cancellation_requested=False`. A Python SQLite `SELECT` does
+  not establish the claimed writer serialization here, and the UPDATE still does not bind or fold
+  the current cancellation flag. Make cancellation-versus-terminal-commit one database-atomic
+  transition across separate connections/processes, and add a deterministic two-connection test
+  that proves an accepted cancellation cannot be overwritten in this interleaving.
+- Structured failure evidence is still not bounded against the full forbidden path/endpoint set.
+  Evidence: B stored a valid `mediaflow-failure-v1` Job envelope containing
+  `https://private.example/api`, the absolute directories `/home/alice/private` and
+  `/mnt/private-library`, and the Windows adapter root `C:\\Users\\alice\\media`; `GET
+  /api/v1/operations/jobs/job-paths` returned HTTP 200 with all four values in its `failure`
+  document. `_bounded_evidence_text()` only replaces a narrow POSIX path pattern ending in a dotted
+  filename, so the new envelope scrubbing does not satisfy the prohibition on private endpoints and
+  absolute host/adapter roots. Fail closed to bounded operator-safe evidence for these forms (without
+  exposing the original value) and extend the real API/model/DOM hostile-record proof beyond one
+  `.mkv` POSIX path.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
