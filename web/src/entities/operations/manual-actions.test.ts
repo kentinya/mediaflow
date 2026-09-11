@@ -170,4 +170,24 @@ describe("normalizeManualActionMatrix", () => {
     expect(serialized).not.toContain("secret-fingerprint-value");
     expect(serialized).not.toContain("topsecret");
   });
+
+  it("rejects hostile known source identity values before they reach the DOM", () => {
+    expect(() =>
+      normalizeManualActionMatrix(
+        actionMatrixPayload({
+          source: {
+            fileId: "file-1",
+            storageId: "local",
+            resourceLibraryId: "movies",
+            path: "/private/media/movie.mkv",
+            filename: "Bearer hidden-token.mkv",
+            extension: "mkv",
+            sizeBytes: 10,
+            occurrenceState: "verified",
+            scanStatus: "ready",
+          },
+        }),
+      ),
+    ).toThrow();
+  });
 });

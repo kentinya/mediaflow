@@ -37,6 +37,22 @@ describe("normalizeManualPreview", () => {
     expect(model.items).toHaveLength(1);
     expect(model.items[0]?.title).toBe("One");
     expect(model.items[0]?.targetPath).toBe("Anime/One (2001)/One (2001).mkv");
+    expect(model.items[0]?.policies).toEqual({
+      recognitionTypePolicyId: "type-A",
+      metadataPolicyId: "A",
+      namingPolicyId: "A",
+      classificationPolicyId: "A",
+      organizePolicyId: "A",
+    });
+    expect(model.items[0]?.analysis?.parse?.titleCandidate).toBe("One");
+    expect(model.items[0]?.analysis?.recognition?.ruleId).toBe(
+      "manual-preview",
+    );
+    expect(model.items[0]?.analysis?.metadata?.match?.candidateCount).toBe(1);
+    expect(model.items[0]?.analysis?.naming?.filename).toBe("One (2001).mkv");
+    expect(model.items[0]?.analysis?.classification?.matchedRuleName).toBe(
+      "Japanese Animation",
+    );
   });
 
   it("rejects an unknown status instead of casting it", () => {
@@ -208,6 +224,8 @@ describe("normalizeManualPreviewItem", () => {
     expect(item.attachments).toEqual([]);
     expect(item.conflicts).toEqual([]);
     expect(item.capabilities).toBeNull();
+    expect(item.policies).toBeNull();
+    expect(item.analysis).toBeNull();
     expect(item.failure?.category).toBe("conflict");
   });
 });

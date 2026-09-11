@@ -239,6 +239,7 @@ class ManualOperationsContractTests(unittest.TestCase):
                                     ApiPermission.READ,
                                     ApiPermission.SUBMIT_DRY_RUN,
                                     ApiPermission.MANAGE_MANUAL_ORGANIZE,
+                                    ApiPermission.CANCEL_JOB,
                                 }
                             ),
                         ),

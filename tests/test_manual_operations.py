@@ -110,6 +110,8 @@ def _api(
     index: InMemoryFileIndexRepository | None = None,
     library_value: ResourceLibrary | None = None,
     storage: FakeStorage | None = None,
+    include_manual_scan: bool = True,
+    include_manual_preview: bool = True,
 ) -> MediaFlowApi:
     from mediaflow.application.file_catalog import FileCatalogService
     from mediaflow.application.manual_organize import ManualOrganizeIntentService
@@ -151,13 +153,31 @@ def _api(
         catalog,
         configuration_resolver=_config_resolver,
     )
-    previews = ManualOrganizePreviewService(
-        repository,
-        intents,
-        catalog,
-        configuration=manual_snapshot,
-        file_index=index,
-        storages={"source": storage},
+    previews = (
+        ManualOrganizePreviewService(
+            repository,
+            intents,
+            catalog,
+            configuration=manual_snapshot,
+            file_index=index,
+            storages={"source": storage},
+        )
+        if include_manual_preview
+        else object()
+    )
+    scans = (
+        ManualScanService(
+            repository,
+            index,
+            resource_libraries=(library_value,),
+            storages={"source": storage},
+            configuration_snapshot_id="active-snap",
+            configuration_snapshot_digest="active-digest",
+            clock=lambda: NOW,
+            start_async=False,
+        )
+        if include_manual_scan
+        else None
     )
     return MediaFlowApi(
         repository,
@@ -169,6 +189,7 @@ def _api(
         configuration_snapshot_digest="active-digest",
         manual_intent_service=intents,
         manual_preview_service=previews,
+        manual_scan_service=scans,
     )
 
 
@@ -802,6 +823,75 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertTrue(body["actions"]["scan"]["available"])
         self.assertTrue(body["actions"]["preview"]["available"])
 
+    def test_action_matrix_with_unavailable_scan_service_offers_no_submission(self) -> None:
+        """An advertised action must have a callable bound application service."""
+
+        api = _api(
+            permissions=frozenset(
+                {
+                    ApiPermission.READ,
+                    ApiPermission.SUBMIT_DRY_RUN,
+                    ApiPermission.MANAGE_MANUAL_ORGANIZE,
+                }
+            ),
+            index=self.index,
+            library_value=self.library_value,
+            storage=self.storage,
+            include_manual_scan=False,
+        )
+        status, body = _get(
+            api,
+            "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
+        )
+        self.assertEqual(200, status)
+        self.assertFalse(body["actions"]["scan"]["available"])
+        self.assertIn("Scan service is unavailable", body["actions"]["scan"]["reason"])
+        post_status, post_body = _post(
+            api,
+            "/api/v1/operations/scans",
+            {
+                "scopeKind": "resourceLibrary",
+                "resourceLibraryId": "library",
+                "mode": "full",
+            },
+        )
+        self.assertEqual(503, post_status)
+        self.assertEqual("service_unavailable", post_body["error"]["code"])
+
+    def test_action_matrix_with_unavailable_preview_service_offers_no_submission(self) -> None:
+        """Preview availability also requires its bound application service."""
+
+        api = _api(
+            permissions=frozenset(
+                {
+                    ApiPermission.READ,
+                    ApiPermission.SUBMIT_DRY_RUN,
+                    ApiPermission.MANAGE_MANUAL_ORGANIZE,
+                }
+            ),
+            index=self.index,
+            library_value=self.library_value,
+            storage=self.storage,
+            include_manual_preview=False,
+        )
+        status, body = _get(
+            api,
+            "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
+        )
+        self.assertEqual(200, status)
+        self.assertFalse(body["actions"]["preview"]["available"])
+        self.assertIn("Preview service is unavailable", body["actions"]["preview"]["reason"])
+        post_status, post_body = _post(
+            api,
+            "/api/v1/operations/previews",
+            {
+                "scopeKind": "resourceLibrary",
+                "resourceLibraryId": "library",
+            },
+        )
+        self.assertEqual(503, post_status)
+        self.assertEqual("service_unavailable", post_body["error"]["code"])
+
     def test_library_scope_action_matrix(self) -> None:
         api = self._make_api()
         status, body = _get(
@@ -887,6 +977,98 @@ class ActionMatrixTests(unittest.TestCase):
         )
         self.assertEqual(200, status)
         self.assertFalse(body["actions"]["scan"]["available"])
+
+    def test_action_matrix_redacts_credential_shaped_file_labels(self) -> None:
+        """A FileIndex filename cannot bypass the Operations redaction boundary."""
+
+        self.storage.add_file("Bearer hidden-token.mkv", 10, NOW - timedelta(hours=2))
+        from mediaflow.application.scanner import StorageScanner
+
+        StorageScanner({"source": self.storage}, self.index, clock=lambda: NOW).scan(
+            self.library_value
+        )
+        record = self.index.find_by_path("source", "library", "Bearer hidden-token.mkv")
+        self.assertIsNotNone(record)
+        api = self._make_api()
+        status, body = _get(
+            api,
+            f"/api/v1/operations/manual-actions?scopeKind=file&fileId={record.file_id}&resourceLibraryId=library",
+        )
+        self.assertEqual(200, status)
+        serialized = json.dumps(body)
+        self.assertNotIn("hidden-token", serialized)
+        self.assertNotIn("Bearer hidden-token", serialized)
+        self.assertEqual(
+            "[redacted: the recorded evidence contained a credential, private endpoint "
+            "or absolute host path]",
+            body["source"]["filename"],
+        )
+
+
+class PrincipalBoundScanProjectionTests(unittest.TestCase):
+    def test_read_only_scan_detail_does_not_advertise_cancel(self) -> None:
+        """Scan lifecycle controls are projected for the authenticated principal."""
+
+        storage = FakeStorage("source")
+        storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
+        library = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
+        index = InMemoryFileIndexRepository()
+        from mediaflow.application.scanner import StorageScanner
+
+        StorageScanner({"source": storage}, index, clock=lambda: NOW).scan(library)
+        operator = ResolvedApiPrincipal(
+            "operator",
+            "operator-token",
+            frozenset({ApiPermission.READ, ApiPermission.SUBMIT_DRY_RUN, ApiPermission.CANCEL_JOB}),
+        )
+        viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                service = ManualScanService(
+                    repository,
+                    index,
+                    resource_libraries=(library,),
+                    storages={"source": storage},
+                    configuration_snapshot_id="active-snap",
+                    configuration_snapshot_digest="active-digest",
+                    clock=lambda: NOW,
+                    start_async=False,
+                )
+                api = MediaFlowApi(
+                    repository,
+                    None,
+                    principals=(operator, viewer),
+                    manual_scan_service=service,
+                )
+                status, admitted = _post(
+                    api,
+                    "/api/v1/operations/scans",
+                    {
+                        "scopeKind": "resourceLibrary",
+                        "resourceLibraryId": "library",
+                        "mode": "full",
+                    },
+                    token="operator-token",
+                )
+                self.assertEqual(202, status)
+                task_id = admitted["taskId"]
+                status, detail = _get(
+                    api,
+                    f"/api/v1/operations/scans/{task_id}",
+                    token="viewer-token",
+                )
+                self.assertEqual(200, status)
+                self.assertFalse(detail["actions"]["cancel"]["available"])
+                self.assertIn(
+                    "cancel_job permission", detail["actions"]["cancel"]["unavailableReason"]
+                )
+                cancel_status, cancel_body = _post(
+                    api,
+                    f"/api/v1/operations/scans/{task_id}/cancel",
+                    token="viewer-token",
+                )
+                self.assertEqual(403, cancel_status)
+                self.assertEqual("forbidden", cancel_body["error"]["code"])
 
 
 class ServerBoundPreviewTests(unittest.TestCase):

@@ -2097,11 +2097,14 @@ function manualScanPage(record, itemLimit, itemCursor) {
   };
 }
 
-function manualScanCancelAction(record) {
+function manualScanCancelAction(record, permitted = true) {
   const terminal = MANUAL_TERMINAL_SCAN_STATUSES.has(record.status);
   const requested = record.cancellationRequested === true;
   let unavailableReason = null;
-  if (terminal) {
+  if (!permitted) {
+    unavailableReason =
+      "the connected API principal does not hold the cancel_job permission required for this control";
+  } else if (terminal) {
     unavailableReason =
       "a task in this state no longer accepts a cancellation request";
   } else if (requested) {
@@ -2110,7 +2113,7 @@ function manualScanCancelAction(record) {
   }
   return {
     action: "cancel",
-    available: !terminal && !requested,
+    available: permitted && !terminal && !requested,
     confirmationRequired: false,
     cooperative: true,
     durableOutcome:
@@ -2137,9 +2140,9 @@ function manualScanNextAction(record) {
   return "inspect the persisted Scan Task while discovery is running";
 }
 
-function manualScanDocument(record, page) {
+function manualScanDocument(record, page, permitted = true) {
   return {
-    actions: { cancel: manualScanCancelAction(record) },
+    actions: { cancel: manualScanCancelAction(record, permitted) },
     cancellationRequested: record.cancellationRequested,
     configurationSnapshotId: record.configurationSnapshotId,
     createdAt: record.createdAt,
@@ -2170,14 +2173,18 @@ function manualScanDocument(record, page) {
   };
 }
 
-function manualScanAdmissionDocument(record) {
-  return manualScanDocument(record, {
-    itemLimit: null,
-    items: [],
-    itemsTruncated: false,
-    nextItemCursor: null,
-    previousItemCursor: null,
-  });
+function manualScanAdmissionDocument(record, permitted = true) {
+  return manualScanDocument(
+    record,
+    {
+      itemLimit: null,
+      items: [],
+      itemsTruncated: false,
+      nextItemCursor: null,
+      previousItemCursor: null,
+    },
+    permitted,
+  );
 }
 
 function manualPreviewIdentity() {
@@ -3625,7 +3632,11 @@ const server = createServer(async (req, res) => {
       objectType: "scan",
       path: "/api/v1/scans",
     });
-    sendJson(res, 202, manualScanAdmissionDocument(record));
+    sendJson(
+      res,
+      202,
+      manualScanAdmissionDocument(record, operationsPrincipal.permitted),
+    );
     return;
   }
 
@@ -3665,7 +3676,11 @@ const server = createServer(async (req, res) => {
     sendJson(
       res,
       200,
-      manualScanDocument(record, manualScanPage(record, null, null)),
+      manualScanDocument(
+        record,
+        manualScanPage(record, null, null),
+        operationsPrincipal.permitted,
+      ),
     );
     return;
   }
@@ -3715,7 +3730,11 @@ const server = createServer(async (req, res) => {
       objectType: "scan",
       path: `/api/v1/scans/${taskId}`,
     });
-    sendJson(res, 200, manualScanDocument(record, page));
+    sendJson(
+      res,
+      200,
+      manualScanDocument(record, page, operationsPrincipal.permitted),
+    );
     return;
   }
 
