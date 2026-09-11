@@ -391,7 +391,7 @@ python3 scripts/docker_release_security_smoke_test.py                           
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: d359e92
+Head SHA: d359e9227facde241511baacf1438bee1def9a18
 ```
 
 ## B Review Result
