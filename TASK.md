@@ -311,7 +311,7 @@ Quality gates:
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: d557252
+Head SHA: 7f25a1f
 ```
 
 ## B Review Result
