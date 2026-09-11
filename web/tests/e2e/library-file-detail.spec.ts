@@ -44,7 +44,7 @@ test("catalog detail preserves query context and exposes bounded evidence", asyn
     "Related reviews",
     "Organize evidence",
     "Reprocess eligibility",
-    "Current actions (explanatory)",
+    "Manual operations",
   ]) {
     await expect(page.getByRole("heading", { name: heading })).toBeVisible();
   }

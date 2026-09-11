@@ -561,6 +561,9 @@ def manual_preview_operator_document(document: dict[str, object]) -> dict[str, o
     items = raw_items if isinstance(raw_items, list) else []
     scope = document.get("scope") if isinstance(document.get("scope"), dict) else None
     selection = document.get("selection") if isinstance(document.get("selection"), dict) else None
+    scope_kind = document.get("scopeKind")
+    if scope_kind == "resource_library":
+        scope_kind = "resourceLibrary"
     return {
         "previewId": document.get("previewId"),
         "intentId": document.get("intentId"),
@@ -577,7 +580,7 @@ def manual_preview_operator_document(document: dict[str, object]) -> dict[str, o
         "executionState": document.get("executionState"),
         "truncated": bool(document.get("truncated")),
         "scope": scope,
-        "scopeKind": document.get("scopeKind"),
+        "scopeKind": scope_kind,
         "scopeId": document.get("scopeId"),
         "selection": selection,
         "configurationSnapshotId": document.get("configurationSnapshotId"),
@@ -624,7 +627,14 @@ def _manual_preview_item_operator(item: dict[str, object]) -> dict[str, object]:
 
 
 def _bounded_preview_plan(plan: dict[str, object]) -> dict[str, object]:
-    """Strip fingerprints and raw provider evidence from a preview plan."""
+    """Strip fingerprints, raw provider evidence and forbidden execution input from a preview plan.
+
+    Every nested value is recursively bounded: a persistent plan may hold raw
+    ``executionPlan`` content, attachment paths, absolute destination paths,
+    Windows/UNC roots, scheme endpoints, credential-shaped values, provider
+    payloads or arbitrary analysis text.  Only an explicitly allowlisted,
+    recursively bounded projection is published to the operator.
+    """
 
     result: dict[str, object] = {}
     for key in (
@@ -657,9 +667,93 @@ def _bounded_preview_plan(plan: dict[str, object]) -> dict[str, object]:
                     "path": _bounded_identity_path(value.get("path")),
                     "filename": value.get("filename"),
                 }
+            elif key == "executionPlan":
+                # Raw executor input (sourcePath, targetPath, root) must
+                # never reach the operator document.
+                continue
+            elif key == "attachments":
+                result[key] = _bounded_attachment_list(value)
+            elif key in ("conflicts", "warnings") and isinstance(value, list):
+                result[key] = _bounded_text_list(value)
+            elif key == "analysis" and isinstance(value, dict):
+                result[key] = _bounded_analysis(value)
             else:
-                result[key] = value
+                result[key] = _recursively_bounded(value)
     return result
+
+
+def _bounded_attachment_list(value: object) -> list[dict[str, object]]:
+    """Project attachment evidence with redacted paths."""
+
+    if not isinstance(value, list):
+        return []
+    bounded: list[dict[str, object]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        bounded.append(
+            {
+                "kind": _bounded_evidence_text(item.get("kind"), limit=96),
+                "language": _bounded_evidence_text(item.get("language"), limit=64),
+                "sourcePath": _bounded_identity_path(item.get("sourcePath")),
+                "filename": item.get("filename"),
+                "extension": item.get("extension"),
+            }
+        )
+    return bounded
+
+
+def _bounded_text_list(value: object) -> list[str]:
+    """Project a list of evidence strings with host/credential redaction."""
+
+    if not isinstance(value, list):
+        return []
+    return [
+        _bounded_evidence_text(item, limit=256)
+        for item in value
+        if isinstance(item, str) and _bounded_evidence_text(item, limit=256) is not None
+    ]
+
+
+def _bounded_analysis(value: dict[str, object]) -> dict[str, object]:
+    """Project nested analysis evidence with recursive redaction."""
+
+    result: dict[str, object] = {}
+    for key, item in value.items():
+        if isinstance(item, str):
+            result[key] = _bounded_evidence_text(item)
+        elif isinstance(item, dict):
+            result[key] = _recursively_bounded(item)
+        elif isinstance(item, list):
+            result[key] = _recursively_bounded_list(item)
+        else:
+            result[key] = item
+    return result
+
+
+def _recursively_bounded(value: object) -> object:
+    """Recursively redact a value tree, failing closed on forbidden shapes."""
+
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    if isinstance(value, str):
+        return _bounded_evidence_text(value)
+    if isinstance(value, dict):
+        return _recursively_bounded_dict(value)
+    if isinstance(value, (list, tuple)):
+        return _recursively_bounded_list(value)
+    return _REDACTED_EVIDENCE
+
+
+def _recursively_bounded_dict(value: dict) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, item in value.items():
+        result[key] = _recursively_bounded(item)
+    return result
+
+
+def _recursively_bounded_list(value: list | tuple) -> list[object]:
+    return [_recursively_bounded(item) for item in value]
 
 
 # --------------------------------------------------------------------------

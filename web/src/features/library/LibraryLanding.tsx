@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
+import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { systemStatusQueryOptions } from "./system-status-query";
 
 /**
@@ -13,24 +15,38 @@ import { systemStatusQueryOptions } from "./system-status-query";
  *
  * For each ResourceLibrary in the Active runtime, the landing offers
  * bounded Scan and Preview admission links so the operator can start
- * work directly from the Library.
+ * work directly from the Library.  The status read is deferred until the
+ * operator indicates intent to start work, so a transient status failure
+ * never breaks the core Library navigation.
  */
 export function LibraryLanding() {
   const token = useAuthToken();
-  const statusQuery = useQuery(systemStatusQueryOptions(token));
+  const [showResourceLibraries, setShowResourceLibraries] = useState(false);
+  const statusQuery = useQuery({
+    ...systemStatusQueryOptions(token),
+    enabled: showResourceLibraries && token !== null,
+  });
   const resourceLibraries =
     statusQuery.data?.resourceLibraries.filter((lib) => lib.enabled) ?? [];
 
   return (
     <div className="mf-library-landing">
-      <h2>Library</h2>
-      <p>
-        Choose whether to inspect the configured Active Storage directly or the
-        durable FileIndex records MediaFlow keeps about discovered files. The
-        two are different views of MediaFlow state: Storage files is a live,
-        bounded read of the configured Storage; FileIndex is the discovery
-        record.
-      </p>
+      <header className="mf-dashboard-head">
+        <div>
+          <h2>Library</h2>
+          <p className="mf-dashboard-meta">
+            Choose whether to inspect the configured Active Storage directly or
+            the durable FileIndex records MediaFlow keeps about discovered
+            files.
+          </p>
+        </div>
+        {showResourceLibraries && (
+          <RefreshControl
+            onRefresh={() => void statusQuery.refetch()}
+            refreshing={statusQuery.isFetching}
+          />
+        )}
+      </header>
       <ul className="mf-library-choices">
         <li className="mf-library-choice">
           <h3>Storage files</h3>
@@ -58,7 +74,24 @@ export function LibraryLanding() {
           </Link>
         </li>
       </ul>
-      {resourceLibraries.length > 0 && (
+      {!showResourceLibraries ? (
+        <section className="mf-count-section">
+          <h3>ResourceLibrary actions</h3>
+          <p className="mf-dashboard-meta">
+            Start a bounded Scan or run a zero-mutation Preview for each
+            configured ResourceLibrary.
+          </p>
+          <div className="mf-actions">
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={() => setShowResourceLibraries(true)}
+            >
+              Show ResourceLibrary actions
+            </button>
+          </div>
+        </section>
+      ) : resourceLibraries.length > 0 ? (
         <section className="mf-count-section">
           <h3>ResourceLibrary actions</h3>
           <p>
@@ -99,6 +132,13 @@ export function LibraryLanding() {
               </div>
             </div>
           ))}
+        </section>
+      ) : (
+        <section className="mf-count-section">
+          <h3>ResourceLibrary actions</h3>
+          <p className="mf-dashboard-meta">
+            No enabled ResourceLibraries are configured for Scan or Preview.
+          </p>
         </section>
       )}
       <section className="mf-count-section">
