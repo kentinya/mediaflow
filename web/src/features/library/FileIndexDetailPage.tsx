@@ -22,6 +22,7 @@ import {
 } from "./file-index-query";
 import { fileDetailQueryOptions } from "./file-detail-query";
 import { systemStatusQueryOptions } from "./system-status-query";
+import { manualActionsQueryOptions } from "../operations/manual-actions-query";
 
 function displayEnum(value: string): string {
   return value
@@ -629,11 +630,12 @@ export function FileIndexDetailSections({
         )}
       </section>
       <section aria-labelledby="detail-actions">
-        <h4 id="detail-actions">Current actions (explanatory)</h4>
+        <h4 id="detail-actions">Manual operations</h4>
         <p className="mf-dashboard-meta">
-          V2 does not execute organize actions. The labels below describe what
-          the current Web UI reports as admissible for this record; none of them
-          is available here.
+          The actions below are computed by the backend for the exact
+          authenticated principal, current source and runtime readiness. Scan
+          discovers and indexes source files; Preview runs the complete pipeline
+          with zero Storage mutation.
         </p>
         {model.currentActions.length === 0 ? (
           <p>No current action is admissible for this record.</p>
@@ -648,8 +650,7 @@ export function FileIndexDetailSections({
                 ·{" "}
                 {action.confirmationRequired
                   ? "confirmation required"
-                  : "no confirmation required"}{" "}
-                · not available in V2
+                  : "no confirmation required"}
               </li>
             ))}
           </ul>
@@ -668,6 +669,25 @@ export interface FileIndexDetailViewProps {
   readonly returnContext: FileIndexCatalogSearchState;
   readonly onRetry: () => void;
   readonly onRefresh: () => void;
+  readonly actionMatrix:
+    | {
+        readonly ok: boolean;
+        readonly model?: {
+          readonly actions: {
+            readonly scan: {
+              readonly available: boolean;
+              readonly reason: string | null;
+            };
+            readonly preview: {
+              readonly available: boolean;
+              readonly reason: string | null;
+            };
+          };
+        };
+      }
+    | undefined;
+  readonly actionMatrixPending: boolean;
+  readonly resourceLibraryId: string | null;
 }
 
 export function FileIndexDetailView({
@@ -679,6 +699,9 @@ export function FileIndexDetailView({
   returnContext,
   onRetry,
   onRefresh,
+  actionMatrix,
+  actionMatrixPending,
+  resourceLibraryId,
 }: FileIndexDetailViewProps) {
   const backUrl = catalogReturnUrl(returnContext);
   const backActions = (
@@ -730,6 +753,58 @@ export function FileIndexDetailView({
       ) : (
         <>
           <FileIndexDetailSections model={detail.model} />
+          <section className="mf-count-section">
+            <h3>Actions for this file</h3>
+            {actionMatrixPending ? (
+              <p className="mf-dashboard-meta">
+                Loading action availability from the backend.
+              </p>
+            ) : actionMatrix?.ok && actionMatrix.model ? (
+              <div className="mf-actions">
+                <Link
+                  className={`mf-button ${actionMatrix.model.actions.scan.available ? "mf-button-primary" : "mf-button-secondary"}`}
+                  to="/operations/scan/new"
+                  search={{
+                    scopeKind: "file",
+                    fileId,
+                    resourceLibraryId: resourceLibraryId ?? undefined,
+                  }}
+                  aria-disabled={!actionMatrix.model.actions.scan.available}
+                >
+                  Start bounded Scan
+                </Link>
+                {actionMatrix.model.actions.scan.available ? null : (
+                  <p className="mf-dashboard-meta">
+                    Scan unavailable:{" "}
+                    {actionMatrix.model.actions.scan.reason ?? "not available"}
+                  </p>
+                )}
+                <Link
+                  className={`mf-button ${actionMatrix.model.actions.preview.available ? "mf-button-primary" : "mf-button-secondary"}`}
+                  to="/operations/preview/new"
+                  search={{
+                    scopeKind: "file",
+                    fileId,
+                    resourceLibraryId: resourceLibraryId ?? undefined,
+                  }}
+                  aria-disabled={!actionMatrix.model.actions.preview.available}
+                >
+                  Run zero-mutation Preview
+                </Link>
+                {actionMatrix.model.actions.preview.available ? null : (
+                  <p className="mf-dashboard-meta">
+                    Preview unavailable:{" "}
+                    {actionMatrix.model.actions.preview.reason ??
+                      "not available"}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="mf-dashboard-meta">
+                Action availability could not be loaded. No actions are offered.
+              </p>
+            )}
+          </section>
           <div className="mf-actions">
             <StorageBackLink status={status} model={detail.model} />
           </div>
@@ -761,6 +836,19 @@ export function FileIndexDetailPage() {
       token,
       fileId,
       returnContext.resourceLibrary,
+      statusReady,
+    ),
+  );
+
+  // Fetch the manual action matrix for this file
+  const actionMatrixQuery = useQuery(
+    manualActionsQueryOptions(
+      token,
+      {
+        scopeKind: "file",
+        fileId,
+        resourceLibraryId: returnContext.resourceLibrary ?? null,
+      },
       statusReady,
     ),
   );
@@ -843,6 +931,15 @@ export function FileIndexDetailPage() {
                   refreshStatus();
                   refresh();
                 }}
+                actionMatrix={
+                  actionMatrixQuery.data
+                    ? actionMatrixQuery.data.ok
+                      ? { ok: true, model: actionMatrixQuery.data.model }
+                      : { ok: false }
+                    : undefined
+                }
+                actionMatrixPending={actionMatrixQuery.isPending}
+                resourceLibraryId={returnContext.resourceLibrary ?? null}
               />
             )}
           </AuthorizedReadBoundary>

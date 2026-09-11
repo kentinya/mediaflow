@@ -124,6 +124,40 @@ const childDestinationData = [
     description: "Job admission state, linked Task and Worker ownership.",
     dynamicPrefix: "/operations/jobs/" as const,
   },
+  {
+    id: "operations-scan-new",
+    label: "Start Scan",
+    path: "/operations/scan/new",
+    title: "Start Scan | MediaFlow",
+    availability: "implemented" as const,
+    description: "Submit a bounded server-bound Scan admission.",
+  },
+  {
+    id: "operations-scan-detail",
+    label: "Scan detail",
+    path: "/operations/scan/$taskId",
+    title: "Scan detail | MediaFlow",
+    availability: "implemented" as const,
+    description: "Bounded scan document, progress and per-item findings.",
+    dynamicPrefix: "/operations/scan/" as const,
+  },
+  {
+    id: "operations-preview-new",
+    label: "Start Preview",
+    path: "/operations/preview/new",
+    title: "Start Preview | MediaFlow",
+    availability: "implemented" as const,
+    description: "Submit a bounded zero-mutation Preview admission.",
+  },
+  {
+    id: "operations-preview-detail",
+    label: "Preview detail",
+    path: "/operations/preview/$previewId",
+    title: "Preview detail | MediaFlow",
+    availability: "implemented" as const,
+    description: "Bounded preview document, items and zero-mutation evidence.",
+    dynamicPrefix: "/operations/preview/" as const,
+  },
 ] as const;
 
 export type DestinationAvailability = "implemented" | "migration";
@@ -349,6 +383,22 @@ export function allowlistedDestinationSearch(
       COMMAND_FILTER_TOKEN,
     );
     return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
+  if (path === "/operations/scan/new" || path === "/operations/preview/new") {
+    // Admission routes carry only their bounded scope parameters.
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    setSafe(allowed, "scopeKind", current.get("scopeKind"));
+    setSafe(allowed, "fileId", current.get("fileId"));
+    setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
+  if (
+    path === "/operations/scan/$taskId" ||
+    path === "/operations/preview/$previewId"
+  ) {
+    // Detail routes carry no search state.
+    return null;
   }
   return null;
 }

@@ -54,6 +54,7 @@ from mediaflow.application.operations_lifecycle import (
     bounded_identity_path,
     job_lifecycle_document,
     job_operator_document,
+    manual_preview_operator_document,
     manual_scan_operator_document,
     require_cancellable,
     task_item_operator_document,
@@ -99,10 +100,18 @@ from mediaflow.domain.configuration_management import (
     RuntimeSnapshotUnavailable,
 )
 from mediaflow.domain.failure import failure_document
-from mediaflow.domain.file_lifecycle import FileIndexLifecycleError, ProcessingDisposition
+from mediaflow.domain.file_lifecycle import (
+    FileIndexLifecycleError,
+    OccurrenceState,
+    ProcessingDisposition,
+)
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_organize import (
     ManualIntentError,
+)
+from mediaflow.domain.manual_organize_preview import (
+    MAX_MANUAL_PREVIEW_ITEMS,
+    ManualPreviewError,
 )
 from mediaflow.domain.manual_safety import redact_manual_text, redact_manual_value
 from mediaflow.domain.metadata_correction import (
@@ -1262,6 +1271,237 @@ class MediaFlowApi:
             and not worker_route
         ):
             binding = self._refresh_configuration_binding()
+        # --- V2 Manual Scan/Preview operations routes (bounded, server-bound) ---
+        if parts == ["api", "v1", "operations", "manual-actions"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            return self._manual_action_matrix(start_response, environ, principal, binding)
+        if parts == ["api", "v1", "operations", "scans"] and method == "POST":
+            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+            self._require_empty_query(environ, "server-bound manual Scan")
+            if binding.manual_scans is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual Scan service is unavailable",
+                    details={
+                        "durableState": "no_task_created",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": (
+                            "restore a valid Active runtime and Task repository, then retry"
+                        ),
+                    },
+                )
+            scan = binding.manual_scans.admit_current_document(
+                self._document(environ), actor=principal.principal_id
+            )
+            return self._response(
+                start_response,
+                202,
+                manual_scan_operator_document(
+                    {
+                        **scan.document(),
+                        "task_id": scan.task_id,
+                        "scope_kind": scan.scope_kind.value,
+                        "resource_library_id": scan.resource_library_id,
+                        "file_id": scan.file_id,
+                        "source_occurrence_id": scan.source_occurrence_id,
+                        "source_fingerprint": scan.source_fingerprint,
+                    }
+                ),
+            )
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "v1", "operations", "scans"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if binding.manual_scans is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual Scan service is unavailable",
+                )
+            limit, cursor = self._manual_scan_detail_page(environ)
+            after = cursor.position if cursor and cursor.direction is CursorDirection.NEXT else None
+            before = (
+                cursor.position if cursor and cursor.direction is CursorDirection.PREVIOUS else None
+            )
+            value = binding.manual_scans.detail_document(
+                parts[3], limit=limit, after=after, before=before
+            )
+            items = value.get("items", [])
+            has_previous = bool(value.pop("_has_previous_items", False))
+            has_next = bool(value.pop("_has_next_items", False))
+            value["previous_item_cursor"] = None
+            value["next_item_cursor"] = None
+            if has_previous:
+                value["previous_item_cursor"] = self._manual_scan_cursor(
+                    items, direction=CursorDirection.PREVIOUS
+                )
+            if has_next:
+                value["next_item_cursor"] = self._manual_scan_cursor(
+                    items, direction=CursorDirection.NEXT
+                )
+            return self._response(start_response, 200, manual_scan_operator_document(value))
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "operations", "scans"]
+            and parts[4] == "cancel"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.CANCEL_JOB)
+            self._require_empty_query(environ, "server-bound Scan cancellation")
+            self._require_empty_body(environ, "server-bound Scan cancellation")
+            if binding.manual_scans is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual Scan service is unavailable",
+                )
+            scan = binding.manual_scans.cancel(parts[3])
+            return self._response(
+                start_response, 200, manual_scan_operator_document(scan.document())
+            )
+        if parts == ["api", "v1", "operations", "previews"] and method == "POST":
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._manual_previews is None or not callable(
+                getattr(self._manual_previews, "create_current_from_index", None)
+            ):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "current-source Preview service is unavailable",
+                )
+            self._require_empty_query(environ, "server-bound current-source Preview")
+            document = self._document(environ)
+            allowed = {
+                "scopeKind",
+                "scope",
+                "resourceLibraryId",
+                "fileId",
+                "snapshotId",
+                "snapshotDigest",
+            }
+            if set(document).difference(allowed):
+                raise ValueError(
+                    "server-bound Preview accepts only bounded scope identity and snapshot fields"
+                )
+            raw_kind = document.get("scopeKind", document.get("scope"))
+            if raw_kind == "resourceLibrary":
+                raw_kind = "resource_library"
+            if raw_kind not in {"file", "resource_library"}:
+                raise ValueError("server-bound Preview scope must be file or resource_library")
+            for name in ("snapshotId", "snapshotDigest"):
+                if name in document and (
+                    not isinstance(document[name], str) or not document[name].strip()
+                ):
+                    raise ValueError(f"server-bound Preview {name} must be a non-empty string")
+            preview = self._manual_previews.create_current_from_index(
+                scope_kind=raw_kind,
+                file_id=document.get("fileId"),
+                resource_library_id=document.get("resourceLibraryId"),
+                snapshot_id=document.get("snapshotId"),
+                snapshot_digest=document.get("snapshotDigest"),
+                actor=principal.principal_id,
+            )
+            return self._response(
+                start_response,
+                201,
+                manual_preview_operator_document(self._manual_preview_document(preview)),
+            )
+        if parts == ["api", "v1", "operations", "previews"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if self._manual_previews is None or not callable(
+                getattr(self._manual_previews, "list_current", None)
+            ):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "current-source Preview service is unavailable",
+                )
+            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(values).difference(
+                {
+                    "scopeKind",
+                    "scopeId",
+                    "resourceLibraryId",
+                    "limit",
+                }
+            ) or any(len(value) != 1 for value in values.values()):
+                raise ValueError("server-bound Preview list query contains unsupported fields")
+            limit = self._parse_bounded_limit(values.get("limit", ["100"])[0], "Preview")
+            scope_kind = values.get("scopeKind", [None])[0]
+            scope_id = values.get("scopeId", [None])[0]
+            resource_library_id = values.get("resourceLibraryId", [None])[0]
+            if scope_kind == "resourceLibrary":
+                scope_kind = "resource_library"
+            if resource_library_id is not None and scope_id is not None:
+                if scope_kind not in (None, "resource_library"):
+                    raise ValueError("server-bound Preview list scope_kind is invalid")
+                scope_kind = "resource_library"
+                scope_id = resource_library_id
+            elif resource_library_id is not None:
+                scope_kind = "resource_library"
+                scope_id = resource_library_id
+            if not scope_kind or not scope_id:
+                raise ValueError("server-bound Preview list requires scopeKind and scopeId")
+            items = self._manual_previews.list_current(scope_kind, scope_id, limit=limit)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "items": [
+                        manual_preview_operator_document(self._manual_preview_document(value))
+                        for value in items
+                    ],
+                    "limit": limit,
+                    "total": len(items),
+                    "scopeKind": scope_kind,
+                    "scopeId": scope_id,
+                },
+            )
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "v1", "operations", "previews"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._manual_previews is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "current-source Preview service is unavailable",
+                )
+            try:
+                preview = self._manual_previews.get_readonly(parts[3])
+            except ManualPreviewError as error:
+                if error.status == 404:
+                    return self._error(
+                        start_response,
+                        404,
+                        "preview_not_found",
+                        "manual Preview was not found",
+                        details={"nextAction": error.next_action},
+                    )
+                return self._error(
+                    start_response,
+                    error.status,
+                    error.code,
+                    str(error),
+                    details={"sideEffects": "none", **error.details},
+                )
+            return self._response(
+                start_response,
+                200,
+                manual_preview_operator_document(self._manual_preview_document(preview)),
+            )
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._configuration_service is None or self._configuration_objects is None:
@@ -6918,6 +7158,190 @@ class MediaFlowApi:
             datetime.fromisoformat(raw_timestamp),
             record_id,
             direction,
+        )
+
+    def _manual_action_matrix(
+        self,
+        start_response: Callable,
+        environ: dict,
+        principal: ResolvedApiPrincipal,
+        binding: _ApiRuntimeBinding,
+    ):
+        """Action matrix projection for the V2 Manual Scan/Preview surfaces."""
+
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"scopeKind", "scope", "fileId", "resourceLibraryId"}) or any(
+            len(value) != 1 for value in values.values()
+        ):
+            raise ValueError("manual action matrix query contains unsupported fields")
+        raw_kind = values.get("scopeKind", values.get("scope", [None]))[0]
+        file_id = values.get("fileId", [None])[0]
+        resource_library_id = values.get("resourceLibraryId", [None])[0]
+        if raw_kind == "resourceLibrary":
+            raw_kind = "resource_library"
+        if raw_kind not in {"file", "resource_library"}:
+            raise ValueError("manual action matrix scopeKind must be file or resource_library")
+        can_scan = ApiPermission.SUBMIT_DRY_RUN in principal.permissions
+        can_preview = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
+        configuration_snapshot_id = getattr(binding, "snapshot_id", None)
+        # Determine runtime readiness: the binding has a snapshot_id when a
+        # configuration has been activated and loaded.
+        runtime_ready = bool(configuration_snapshot_id)
+        scan_available = can_scan and runtime_ready
+        preview_available = can_preview and runtime_ready
+        scan_reason = (
+            None
+            if scan_available
+            else (
+                "the connected API principal does not hold the submit_dry_run permission "
+                "required for Scan"
+                if not can_scan
+                else "the Active runtime is unavailable for Scan"
+                if not runtime_ready
+                else "Scan is unavailable"
+            )
+        )
+        preview_reason = (
+            None
+            if preview_available
+            else (
+                "the connected API principal does not hold the manage_manual_organize "
+                "permission required for Preview"
+                if not can_preview
+                else "the Active runtime is unavailable for Preview"
+                if not runtime_ready
+                else "Preview is unavailable"
+            )
+        )
+        source: dict[str, object] = {}
+        # Resolve the resource libraries from the system_status snapshot.
+        sys_doc = {}
+        system_status = getattr(binding, "system_status", None)
+        if system_status is not None and callable(getattr(system_status, "as_document", None)):
+            sys_doc = system_status.as_document()
+        raw_rls = (
+            sys_doc.get("resource_libraries", {}).get("items", [])
+            if isinstance(sys_doc.get("resource_libraries"), dict)
+            else []
+        )
+        rl_map: dict[str, dict] = {}
+        for rl in raw_rls:
+            if isinstance(rl, dict) and isinstance(rl.get("id"), str):
+                rl_map[rl["id"]] = rl
+        if raw_kind == "file":
+            if not isinstance(file_id, str) or not file_id.strip():
+                raise ValueError("manual action matrix fileId is required for file scope")
+            if not isinstance(resource_library_id, str) or not resource_library_id.strip():
+                raise ValueError(
+                    "manual action matrix resourceLibraryId is required for file scope"
+                )
+            # Check ResourceLibrary availability.
+            rl_info = rl_map.get(resource_library_id)
+            if rl_info is None or not rl_info.get("enabled", False):
+                scan_available = False
+                preview_available = False
+                scan_reason = "the configured ResourceLibrary is not available"
+                preview_reason = "the configured ResourceLibrary is not available"
+            else:
+                # Resolve the FileIndex record.
+                file_index = self._file_index
+                lister = (
+                    getattr(file_index, "list_by_resource_library", None) if file_index else None
+                )
+                record = None
+                if callable(lister):
+                    for candidate in lister(resource_library_id):
+                        if getattr(candidate, "file_id", None) == file_id:
+                            record = candidate
+                            break
+                if record is None:
+                    scan_available = False
+                    preview_available = False
+                    scan_reason = "the current FileIndex source was not found"
+                    preview_reason = "the current FileIndex source was not found"
+                elif (
+                    getattr(record, "occurrence_state", None) != OccurrenceState.VERIFIED
+                    or getattr(record, "scan_status", None) != FileScanStatus.READY
+                    or not getattr(record, "occurrence_id", None)
+                    or not getattr(record, "fingerprint", None)
+                ):
+                    scan_available = False
+                    preview_available = False
+                    scan_reason = "the FileIndex source is not a verified ready current occurrence"
+                    preview_reason = (
+                        "the FileIndex source is not a verified ready current occurrence"
+                    )
+                else:
+                    source = {
+                        "fileId": file_id,
+                        "resourceLibraryId": resource_library_id,
+                        "storageId": getattr(record, "storage_id", None),
+                        "path": bounded_identity_path(getattr(record, "path", None)),
+                        "filename": getattr(record, "filename", None),
+                        "sizeBytes": getattr(record, "size", None),
+                        "occurrenceState": getattr(
+                            getattr(record, "occurrence_state", None),
+                            "value",
+                            getattr(record, "occurrence_state", None),
+                        ),
+                        "scanStatus": getattr(
+                            getattr(record, "scan_status", None),
+                            "value",
+                            getattr(record, "scan_status", None),
+                        ),
+                    }
+        else:
+            if file_id is not None:
+                raise ValueError("manual action matrix file scope is required for resource_library")
+            if not isinstance(resource_library_id, str) or not resource_library_id.strip():
+                raise ValueError(
+                    "manual action matrix resourceLibraryId is required for library scope"
+                )
+            rl_info = rl_map.get(resource_library_id)
+            if rl_info is None or not rl_info.get("enabled", False):
+                scan_available = False
+                preview_available = False
+                scan_reason = "the configured ResourceLibrary is not available"
+                preview_reason = "the configured ResourceLibrary is not available"
+            else:
+                source = {
+                    "resourceLibraryId": resource_library_id,
+                    "storageId": rl_info.get("storage_id"),
+                }
+        return self._response(
+            start_response,
+            200,
+            {
+                "scopeKind": raw_kind,
+                "fileId": file_id if raw_kind == "file" else None,
+                "resourceLibraryId": resource_library_id,
+                "source": source if source else None,
+                "runtime": {
+                    "configurationActive": runtime_ready,
+                    "configurationSnapshotId": configuration_snapshot_id,
+                },
+                "actions": {
+                    "scan": {
+                        "available": scan_available,
+                        "reason": scan_reason,
+                        "method": "POST",
+                        "path": "/api/v1/operations/scans",
+                        "nextAction": ("submit a bounded Scan" if scan_available else scan_reason),
+                    },
+                    "preview": {
+                        "available": preview_available,
+                        "reason": preview_reason,
+                        "method": "POST",
+                        "path": "/api/v1/operations/previews",
+                        "nextAction": (
+                            "run a zero-mutation Preview" if preview_available else preview_reason
+                        ),
+                    },
+                },
+                "limits": {
+                    "previewMaxItems": MAX_MANUAL_PREVIEW_ITEMS if can_preview else 0,
+                },
+            },
         )
 
     @staticmethod

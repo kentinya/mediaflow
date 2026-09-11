@@ -19,6 +19,10 @@ import { TaskListPage } from "../features/operations/TaskListPage";
 import { TaskDetailPage } from "../features/operations/TaskDetailPage";
 import { JobListPage } from "../features/operations/JobListPage";
 import { JobDetailPage } from "../features/operations/JobDetailPage";
+import { ScanNewPage } from "../features/operations/ScanNewPage";
+import { ScanDetailPage } from "../features/operations/ScanDetailPage";
+import { PreviewNewPage } from "../features/operations/PreviewNewPage";
+import { PreviewDetailPage } from "../features/operations/PreviewDetailPage";
 import { AppShell } from "../shared/ui/AppShell";
 import { AuthBoundary } from "../shared/auth/AuthBoundary";
 import { StatusBanner } from "../shared/ui/StatusBanner";
@@ -115,6 +119,30 @@ const jobDetailRoute = createRoute({
   component: JobDetailPage,
 });
 
+const scanNewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/scan/new",
+  component: ScanNewPage,
+});
+
+const scanDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/scan/$taskId",
+  component: ScanDetailPage,
+});
+
+const previewNewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/preview/new",
+  component: PreviewNewPage,
+});
+
+const previewDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/preview/$previewId",
+  component: PreviewDetailPage,
+});
+
 const reviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "review",
@@ -139,6 +167,10 @@ const routeTree = rootRoute.addChildren([
   taskDetailRoute,
   jobListRoute,
   jobDetailRoute,
+  scanNewRoute,
+  scanDetailRoute,
+  previewNewRoute,
+  previewDetailRoute,
   reviewRoute,
   configurationRoute,
 ]);
