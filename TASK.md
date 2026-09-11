@@ -263,64 +263,62 @@ reports, credentials and unrelated files must not enter the checkpoint.
 
 ### Changed Files
 
-Correction commit on top of the reviewed checkpoint `d359e9227facde241511baacf1438bee1def9a18`:
+Second correction commit on top of the reviewed checkpoint
+`5306c4371684125e769f75b9f20585fe61fddadd`:
 
-- `mediaflow/application/manual_organize_execution.py` — `_existing_admitted_execution()` now
-  resolves only an *exactly equivalent* reviewed submission (same persisted-authority permission
-  and actor, intent/configuration binding, destructive authority and the exact selected item set
-  with identical per-item preview-item/version/source/plan fingerprints); new
-  `_is_equivalent_admitted_execution()` and `_execution_authorization_for_replay()`; fixed
-  `_preview()`'s `self._safe_error` → module-level `_safe_error` (an AttributeError that masked the
-  real reopen error with a crash instead of a bounded pre-mutation failure).
-- `web/src/entities/operations/organize.ts` — fail-closed action contract (bounded
-  `GET`/`POST` methods, bounded relative `/api/v1/...` routes that cannot traverse, bounded
-  `sideEffects`, offered action ⇔ method+route+no-reason, withheld action ⇔ reason,
-  confirmation only for a POST) and fail-closed execution items (bounded item statuses, effect
-  certainties, effect operation markers and `ATTACHMENT:` markers, `verified` ⇔
-  `verified_complete`, success/failure certainty cross-check, selection counts ⇔ identity lists,
-  duplicate candidate rejection, `uncertainEffects` bounded to the recorded statement).
-- `web/src/features/operations/OrganizeRouter.test.tsx` — corrected the withheld-Execute fixture to
-  the real backend contract and added two malformed-response suites (13 hostile variants) proving
-  no Execute control, no hostile value and no submission follows a malformed read.
-- `web/tests/e2e/manual-organize.spec.ts` — new malformed-bounded-document browser proof; reset
-  now asserts its own per-session scoping.
-- `web/tests/fake-server.mjs` — organize state and manual-request evidence are keyed per browser
-  session cookie, so two Playwright workers can no longer erase or observe another test's
-  evidence/state; the shared bucket keeps the deliberate serial Scan journeys; new hostile
-  `organize-preview-hostile-e2e-001` document.
-- `tests/test_v2_manual_organize.py` — fixture split into a reusable `_JourneyFixtureMixin`
-  (exposes `runtime_path`, `configuration`, `index`, `catalog`, extra `operator-two` principal);
-  new `ExactAdmissionResolutionTests` (6 regressions) and `SchemaAndRestartRecoveryTests`
-  (5 regressions, 22 tests total in the module).
+- `mediaflow/application/manual_organize_execution.py` — `_existing_admitted_execution()` now reads
+  the full bounded discovery window (`limit=MAX_MANUAL_EXECUTION_ITEMS`, the same 100-item bound as
+  the Preview itself) so an exact repeat resolves regardless of its position among disjoint
+  admissions; new `_durable_preview()` reads the immutable durable Preview record, and the Worker's
+  `_reconstruct_reviewed_scope()` uses it, while `_preview()` keeps the read-time staleness
+  projection that `authorize()` and Web admission rely on.
+- `web/src/entities/operations/organize.ts` — `normalizeOrganizeAction()` now takes the exact
+  action kind and its object identity and validates the per-kind transport contract (method, route
+  prefix, that object's own route, confirmation); the effect vocabulary is completed with the
+  backend's `UNCERTAIN_EXECUTOR_INVOCATION` marker and all four bounded `uncertainEffects`
+  statements.
+- `web/src/features/operations/OrganizeRouter.test.tsx` — the execution fixture binds its transport
+  to its own identity as the real backend emits it; added a valid uncertain-outcome rendering
+  regression and a wrong-safe-route/method regression (3 Execute-transport variants).
+- `web/tests/fake-server.mjs` + `web/tests/e2e/manual-organize.spec.ts` — new
+  `organize-preview-misbound-e2e-001` fake route and built-artifact regression proving the Execute
+  control is not rendered from a safe method or another Preview's route.
+- `tests/test_v2_manual_organize.py` — new `test_exact_repeat_resolves_across_the_full_preview_bound`
+  regression (11 disjoint one-item admissions, then an exact repeat of the oldest one).
 
 ### Implemented
 
-1. **Exact idempotent/concurrent resolution (blocker 1).** A repeated submission is folded into an
-   existing durable execution only when the persisted one-shot authority of that execution proves
-   the same permission and principal, the same intent/configuration-snapshot binding, the same
-   allowed overwrite/source-cleanup authority and exactly the same selected item set with identical
-   per-item bindings. Narrower, overlapping, differently bound, differently authorized or
-   different-principal submissions now fail with their own reason and never return another
-   operator's execution; the unused authority is still revoked.
-2. **Fail-closed V2 Organize normalization (blocker 2).** Unknown or contradictory action
-   method/path/availability/reason/confirmation data and unknown or contradictory execution item,
-   effect-certainty, effect-action, uncertain-effect or selection data now make the whole response
-   malformed: the UI renders the bounded malformed state, never an executable control, and no
-   hostile value reaches the DOM or the request boundary (component and built-artifact proof).
-3. **Schema/restart proof (blocker 3).** Copied-fixture coverage proves a real schema-33 database
-   with an existing admitted manual execution migrates forward to 34 in place and preserves that
-   work; a newer schema is refused as a pure read that leaves the file untouched; a failing
-   migration is atomic (version stays 33, no partially applied column survives) and completes after
-   the obstacle is repaired. Real repository/service reopen coverage rebuilds the whole service
-   graph on the reopened database: admitted work is reconstructed and run exactly once by the
-   resident Worker, and started/uncertain work is never reclaimed or replayed even long after the
-   original lease expired.
-4. **Concurrency-safe built-artifact gate (blocker 4).** Fake organize state and evidence are
-   scoped to each test's browser session, so `fullyParallel` workers cannot interfere; the focused
-   and full Playwright gates were rerun and pass end to end.
-5. **Direct root cause found and fixed while proving blocker 3:** `_preview()` called a
-   non-existent `self._safe_error`, so a Worker that lost its repository connection crashed with
-   `AttributeError` instead of publishing the bounded pre-mutation failure the contract requires.
+1. **Exact repeat resolves across the full bounded Preview (blocker 1).** The resolver's discovery
+   read was truncated to the newest 10 executions, so an exact repeat of the oldest of 11 disjoint
+   one-item admissions was refused as `duplicate_execution` instead of resolving. The read now
+   covers the whole supported 100-item Preview bound, with the exact principal/permission/
+   intent/configuration/effect/item binding unchanged, and the new regression proves 11 disjoint
+   admissions plus an older exact repeat produce exactly 11 executions, one mutation each, and no
+   double-admission of any sibling item.
+2. **Truthful uncertain-effect evidence (blocker 2, evidence).** The executor records
+   `UNCERTAIN_EXECUTOR_INVOCATION` for an attempted/unverified or unknown mutation with no verified
+   effect; the normalizer omitted it, so a partial/uncertain execution detail was rendered as a
+   malformed read. The marker and the full bounded `uncertainEffects` vocabulary
+   (`mutation_outcome`, `executor_invocation`, `process_interruption`, `result_persistence`) are
+   now modelled, and a component regression proves the uncertain outcome renders as
+   non-replayable evidence instead of an error.
+3. **Action transport bound to the action being normalized (blocker 2, authority).**
+   `normalizeOrganizeAction()` accepted either GET or POST and any syntactically safe `/api/v1/*`
+   path for every action, so an Execute control could be rendered from a contradictory transport.
+   Each action kind now carries its own contract — the mutating POST route of its own object plus
+   its explicit confirmation for the Execute family, the read-only GET route for detail/task/intent
+   actions and no transport at all for the intent-level (always withheld) execute and for recovery —
+   and a route naming another object is malformed. Component and built-artifact regressions prove
+   no Execute control and no submission follows a wrong-safe-route/method document.
+4. **Direct root cause found while reproducing the blocker.** Reproducing the 11-item journey
+   surfaced that the Worker's scope reload used the Preview service's read projection: after the
+   first sibling run recorded its Result, that projection derived "inputs changed" and made every
+   remaining execution fail `preview_stale` before any mutation. `_durable_preview()` now reads the
+   immutable durable record for the Worker only; `authorize()` and Web admission keep the read-time
+   projection, so the existing invariant that a partially organized Preview requires a fresh
+   Preview for the surviving sibling is preserved (proven by
+   `tests.test_manual_organize_execution.test_current_source_resource_library_partial_organize_isolates_siblings`,
+   which failed under the first attempt at this fix and passes again).
 
 ### Tests and Results
 
@@ -330,16 +328,14 @@ env -u NODE_ENV npm --prefix web ci                                             
 npm --prefix web run format:check                                                  — PASS
 npm --prefix web run typecheck                                                     — PASS
 npm --prefix web run lint                                                          — PASS
-npm --prefix web run test -- --run                                                 — PASS (323/323, 29 files)
+npm --prefix web run test -- --run                                                 — PASS (325/325, 29 files)
 npm --prefix web run build                                                         — PASS
-npm --prefix web run test:e2e -- manual-organize.spec.ts                           — PASS (6/6)
-npm --prefix web run test:e2e -- manual-organize.spec.ts manual-operations.spec.ts operations.spec.ts library-file-detail.spec.ts deep-link.spec.ts
-                                                                                   — PASS (57/57)
-npm --prefix web run test:e2e                                                      — PASS (92/92, twice)
-.venv/bin/python -m unittest tests.test_v2_manual_organize                         — PASS (22/22)
+npm --prefix web run test:e2e -- manual-organize.spec.ts                           — PASS (7/7)
+npm --prefix web run test:e2e                                                      — PASS (93/93)
+.venv/bin/python -m unittest tests.test_v2_manual_organize                         — PASS (23/23)
 .venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_execution_authorization tests.test_queued_job_execution_boundary tests.test_organizer_mutation_authority tests.test_manual_operations tests.test_operations_workspace tests.test_api_security tests.test_v2_ui
                                                                                    — PASS (153/153)
-.venv/bin/python -m unittest discover -s tests                                     — 1496 tests, 6 FAIL / PRE-EXISTING / UNRELATED, 7 SKIP
+.venv/bin/python -m unittest discover -s tests                                     — 1497 tests, 6 FAIL / PRE-EXISTING / UNRELATED, 7 SKIP
 .venv/bin/ruff format --check .                                                    — PASS (307 files)
 .venv/bin/ruff check .                                                             — PASS
 .venv/bin/python -m compileall -q mediaflow tests scripts                          — PASS
@@ -352,22 +348,20 @@ python3 scripts/docker_release_security_smoke_test.py                           
 
 ### Decisions
 
-- Exact-equivalence is proved against the *persisted* authority of the existing execution, not
-  only the request: permission is not a column on `manual_executions`, so loading the admitting
-  authority is the only way to bind it without another schema change.
-- The action contract deliberately allows the backend to keep publishing `method`/`path`/
-  `requiresConfirmation` on a withheld `execute` action (that is what the real API emits, and the
-  golden fixture pins it); the safety property enforced instead is that a withheld action carries a
-  reason and is never rendered as a control, and a confirmation can only ever ride a POST.
-- Effect `verified` is treated as derived evidence (`verified === verified_complete`) rather than an
-  independent flag, so a contradictory pair is malformed instead of a usable outcome.
-- The migration is made atomic by ordering, not by a new transaction wrapper: every ALTER runs
-  before the single `INSERT OR REPLACE INTO schema_version` inside the connection's transaction, so
-  a failure rolls back to the recorded older version and a repaired reopen migrates fully.
-- The fake-server session scoping reuses the browser context cookie jar that Playwright already
-  isolates per test, so no app code, route change or request interception is needed.
-- The full e2e gate was run twice after the isolation change to show the earlier 90 PASS / 1 FAIL
-  instability is gone, not merely absent from one lucky ordering.
+- The discovery window is sized by the domain bound (`MAX_MANUAL_EXECUTION_ITEMS`, the same bound
+  the Preview enforces) rather than an arbitrary page size, so the resolver can never truncate away
+  an exactly equivalent submission.
+- The Worker reads the durable Preview record through `_durable_preview()` instead of the service
+  read projection: the read-time staleness projection is a genuine operator-facing guarantee (a
+  partially organized Preview must not authorize its surviving sibling), but it is derived from
+  result evidence the already-admitted execution does not depend on, and the Worker's own per-item
+  source/runtime/policy/capability/conflict/fence revalidation is the exact authority at the
+  mutation boundary. The two reads are deliberately separate methods so the distinction is explicit.
+- The action contract is declared per action kind with the object identity passed in, rather than a
+  global method/path allowlist: that is what actually prevents an Execute control from being
+  rendered from a safe method or another object's route.
+- The intent-level execute action is modelled as always transport-less, matching the real backend,
+  which never offers execution from an intent document; the golden fixture pins that contract.
 
 ### Remaining In-Slice Work
 
@@ -383,15 +377,15 @@ python3 scripts/docker_release_security_smoke_test.py                           
   `test_legacy_credential_status_is_supported_without_secret_output`,
   `test_runtime_configuration_and_final_analyze_cli`,
   `test_scan_cli_needs_no_path_or_metadata_token`. They reproduce identically on a clean worktree
-  at this Task's reviewed base (1485 tests, same 6 failures), i.e. they are caused by this
-  workspace's ignored local `.mediaflow/mediaflow.sqlite3` being resolved instead of the tests'
-  temporary bootstrap document, not by this correction. The focused suites that bind to the
-  changed code (153 + 22 tests) pass.
+  at this Task's reviewed base and are caused by this workspace's ignored local
+  `.mediaflow/mediaflow.sqlite3` being resolved instead of the tests' temporary bootstrap
+  document, not by this correction. The focused suites that bind to the changed code
+  (153 + 23 tests) pass.
 - `python3 scripts/docker_release_security_smoke_test.py` fails in this environment with
   `invalid mount config for type "bind": bind source path does not exist` from the local Docker
-  daemon. The identical failure reproduces on a clean worktree at the reviewed base, so it is
-  `FAIL / PRE-EXISTING / UNRELATED` (host Docker bind-mount restriction), not a Task regression;
-  the judgement of whether that blocks the gate is B's.
+  daemon; the identical failure reproduces on a clean worktree at the reviewed base, so it is
+  `FAIL / PRE-EXISTING / UNRELATED` (host Docker bind-mount restriction). Whether that blocks the
+  gate is B's judgement.
 - Running the T4 suite migrates the ignored local `.mediaflow/mediaflow.sqlite3` to schema 34
   (additive, forward-only by design). No tracked file, media file or credential was touched;
   `config/alist.json` remains ignored/untracked and is absent from the checkpoint.
@@ -400,44 +394,34 @@ python3 scripts/docker_release_security_smoke_test.py                           
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 5306c4371684125e769f75b9f20585fe61fddadd
+Head SHA: PENDING_COMMIT
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: e1dba1f87bb32cdcd573f565b6772e3da21823bf..d359e9227facde241511baacf1438bee1def9a18
+Reviewed: e1dba1f87bb32cdcd573f565b6772e3da21823bf..5306c4371684125e769f75b9f20585fe61fddadd
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- Exact idempotent/concurrent resolution is over-broad. In
-  `ManualOrganizeExecutionService._existing_admitted_execution()`,
-  `selected.issubset(admitted)` can return an existing execution containing items the current Web
-  request did not select, and the match does not require the same actor, permission, intent/config
-  binding or allowed destructive effects. This violates the exact selected-set and principal-bound
-  authority criteria. Resolve only an exactly equivalent reviewed submission; a narrower,
-  overlapping, differently bound or differently authorized request must fail without returning an
-  unrelated execution. Add focused same/different-principal, exact/narrower/overlapping-selection
-  and effect-binding concurrency regressions.
-- The V2 Organize normalizer does not yet fail closed on the contradictory item/effect/action data
-  named by the Acceptance Criteria. `normalizeOrganizeAction()` accepts arbitrary method/path and
-  inconsistent available/reason/confirmation combinations, while `normalizeExecutionItem()`
-  accepts arbitrary status, effect certainty and effect action values. Enforce the bounded enums and
-  cross-field/action contract before rendering any executable control, and add component/browser
-  malformed-response tests proving no action or hostile value reaches the DOM or request boundary.
-- The schema/restart proof required for this schema-changing Task is absent. The checkpoint bumps
-  runtime schema 33→34, but the changed tests only update expected constants; the new Worker claim
-  test keeps one repository connection open and does not exercise an API/Worker process reopen.
-  Add temporary copied-fixture coverage for 33→34 forward migration (including existing manual
-  executions), newer-schema rejection and atomic migration failure, plus real repository/service
-  reopen coverage showing admitted work is reconstructed safely and started/uncertain work is not
-  reclaimed or replayed.
-- The required full built-artifact gate is not stable or passing. B ran
-  `npm --prefix web run test:e2e` and got 90 PASS / 1 FAIL at
-  `manual-organize.spec.ts:139`: the Execute journey completed, but the shared fake evidence array
-  contained zero `organize_execute` records. The per-test `reset-organize` endpoint clears global
-  state while Playwright uses two workers, so parallel tests can erase another test's evidence.
-  Isolate fake state/evidence per test or otherwise make the suite concurrency-safe, then rerun and
-  truthfully report both the focused and full Playwright gates.
+- Exact repeated admission is still not idempotent across the full bounded Preview. B created one
+  11-item Preview, admitted 11 disjoint one-item executions, then repeated the first exact
+  submission: all admissions returned 202, but the repeat returned 409 `duplicate_execution`
+  instead of the original execution, while 11 executions remained. The cause is
+  `_existing_admitted_execution()` reading only the newest 10 executions. Resolve an exactly
+  equivalent submission regardless of its position within the supported 100-item Preview bound,
+  without weakening the exact principal/permission/intent/configuration/effect/item binding, and
+  add a regression with more than 10 disjoint executions plus an older exact repeat.
+- The corrected V2 normalizer rejects valid backend uncertain-effect evidence and still does not
+  bind action metadata to the action being normalized. `ManualOrganizeExecutionService._effects()`
+  emits `UNCERTAIN_EXECUTOR_INVOCATION` for an attempted/unverified or unknown mutation with no
+  recorded effect, and `manual_execution_operator_document()` preserves that bounded marker, but
+  `ORGANIZE_EFFECT_ACTION_MARKERS` omits it, so the required partial/uncertain execution detail is
+  rendered as a malformed read instead of truthful non-replayable evidence. In addition,
+  `normalizeOrganizeAction()` accepts either GET or POST and any syntactically safe `/api/v1/*`
+  path for every action; an Execute action can therefore advertise a contradictory method/path and
+  still render the fixed Execute control. Model the complete bounded backend effect vocabulary and
+  validate each action's exact method/path/confirmation contract before rendering; add valid
+  uncertain-outcome and wrong-safe-route/method component plus built-artifact regressions.

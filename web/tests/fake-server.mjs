@@ -1934,6 +1934,7 @@ const ORGANIZE_INTENT_ID = "organize-intent-e2e-001";
 const ORGANIZE_ITEM_ID = "organize-item-e2e-001";
 const ORGANIZE_PREVIEW_ID = "organize-preview-e2e-001";
 const ORGANIZE_HOSTILE_PREVIEW_ID = "organize-preview-hostile-e2e-001";
+const ORGANIZE_MISBOUND_PREVIEW_ID = "organize-preview-misbound-e2e-001";
 const ORGANIZE_EXECUTION_ID = "organize-execution-e2e-001";
 const ORGANIZE_TASK_ID = "organize-task-e2e-001";
 // One mutable organize state per browser session: every Playwright test owns
@@ -4031,6 +4032,36 @@ const server = createServer(async (req, res) => {
     hostile["actions"]["execute"]["path"] = "https://attacker.example/execute";
     hostile["items"][0]["status"] = "hacked";
     sendJson(res, 200, hostile);
+    return;
+  }
+
+  // A contract-shaped document whose Execute action names a *safe* method and
+  // a route belonging to another Preview. Both are malformed transports, so
+  // the built artifact must render no Execute control and submit nothing.
+  if (
+    url.pathname ===
+      `/api/v1/organize/previews/${ORGANIZE_MISBOUND_PREVIEW_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = organizeState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: ORGANIZE_MISBOUND_PREVIEW_ID,
+      objectType: "organize_preview",
+      path: "/api/v1/organize/previews/:previewId",
+    });
+    const misbound = organizePreviewDocument(state);
+    misbound["previewId"] = ORGANIZE_MISBOUND_PREVIEW_ID;
+    misbound["actions"]["execute"]["available"] = true;
+    misbound["actions"]["execute"]["reason"] = null;
+    misbound["actions"]["execute"]["method"] = "GET";
+    misbound["actions"]["execute"]["requiresConfirmation"] = true;
+    misbound["actions"]["execute"]["path"] =
+      `/api/v1/organize/previews/another-preview/execute`;
+    sendJson(res, 200, misbound);
     return;
   }
 

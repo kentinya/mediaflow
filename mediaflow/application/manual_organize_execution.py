@@ -383,7 +383,12 @@ class ManualOrganizeExecutionService:
         if not callable(reader):
             return None
         try:
-            values = reader(authority.preview_id, limit=10)
+            # The read must cover every disjoint execution the supported
+            # Preview size can produce: an exact repeat of the *oldest* of
+            # MAX_ITEMS one-item admissions is still the same reviewed
+            # submission and must resolve, so this is never truncated to the
+            # newest few rows.
+            values = reader(authority.preview_id, limit=MAX_MANUAL_EXECUTION_ITEMS)
         except Exception:
             return None
         for value in values:
@@ -972,9 +977,14 @@ class ManualOrganizeExecutionService:
         return value
 
     def _reconstruct_reviewed_scope(self, authority):
-        """Reload the exact reviewed items, pinned runtime and Storage adapters."""
+        """Reload the exact reviewed items, pinned runtime and Storage adapters.
 
-        preview = self._preview(authority.preview_id)
+        The Worker already owns a durably admitted execution, so this reload
+        reads the immutable Preview record (see ``_durable_preview``) and relies
+        on the per-item revalidation below instead of a read-time projection.
+        """
+
+        preview = self._durable_preview(authority.preview_id)
         self._validate_preview_parent(
             preview, authority.configuration_snapshot_id, authority.configuration_snapshot_digest
         )
@@ -1548,6 +1558,15 @@ class ManualOrganizeExecutionService:
         return links
 
     def _preview(self, preview_id):
+        """Read one exact Preview with its normal read-time staleness projection.
+
+        ``authorize()`` and the Web admission boundary rely on this projection:
+        once part of a reviewed scope has been organized, the recorded per-item
+        Result changes that source's evidence versions, the read derives "this
+        item's inputs changed" and the surviving sibling must be re-analyzed
+        under a fresh Preview instead of being authorized against the old one.
+        """
+
         try:
             return self._preview_service.get(preview_id)
         except ManualExecutionError:
@@ -1570,6 +1589,46 @@ class ManualOrganizeExecutionService:
                 ),
                 details=getattr(error, "details", {}),
             ) from error
+
+    def _durable_preview(self, preview_id):
+        """Read one immutable durable Preview without any read-time projection.
+
+        The Worker reloads the reviewed Preview *after* admission, and it may
+        do so while sibling executions of the same Preview are still queued: an
+        earlier run records a per-item Result, which changes that source's
+        result-evidence versions, so a service read projection can legitimately
+        derive "this item's inputs changed" and turn the whole reload into
+        stale evidence this execution never depends on.  The executor's own
+        revalidation is the exact, per-item authority — it re-checks each
+        item's source identity, pinned runtime, policy, capability, conflicts
+        and Storage fence immediately before that item's own mutation — so the
+        Worker's scope reload reads the immutable durable record instead, and a
+        genuinely stale reviewed item is still refused by
+        ``_selected_authorized_items`` and the pre-mutation checks.
+        """
+
+        try:
+            repository = getattr(self._preview_service, "_repository", None)
+            reader = getattr(repository, "get_manual_preview", None)
+            if callable(reader):
+                value = reader(preview_id)
+                if value is not None:
+                    return value
+        except ManualExecutionError:
+            raise
+        except Exception as error:
+            raise ManualExecutionError(
+                _safe_error(error),
+                code=getattr(error, "code", "preview_unavailable"),
+                status=getattr(error, "status", 409),
+                next_action=getattr(
+                    error,
+                    "next_action",
+                    "reload the manual intent and request a fresh Preview",
+                ),
+                details=getattr(error, "details", {}),
+            ) from error
+        return self._preview(preview_id)
 
     def _intent(self, intent_id):
         if self._intent_service is None:

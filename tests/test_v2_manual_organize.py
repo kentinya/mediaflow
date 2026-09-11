@@ -1047,6 +1047,62 @@ class ExactAdmissionResolutionTests(_JourneyFixtureMixin, _ExactAdmissionMixin, 
     def _executions(self, value, preview_id):
         return value.repository.list_manual_executions_for_preview(preview_id)
 
+    def test_exact_repeat_resolves_across_the_full_preview_bound(self) -> None:
+        """An exact repeat resolves even past the newest few durable executions."""
+
+        # MAX_ITEMS + 1 disjoint one-item admissions push the oldest execution
+        # out of any bounded "newest few" read.
+        names = tuple(f"Show{index}.2001.mkv" for index in range(1, 12))
+        with self.journey(names=names) as value:
+            self.assertGreater(len(value.file_ids), 10)
+            intent = self._reviewed_multi_item(value, names)
+            preview = self._create_preview(value, intent)
+            self.assertEqual(len(names), len(preview["items"]))
+
+            admitted_ids = []
+            for item in preview["items"]:
+                status, execution = self._execute(
+                    value,
+                    preview,
+                    intent,
+                    itemIds=[item["itemId"]],
+                )
+                self.assertEqual(202, status, execution)
+                admitted_ids.append(execution["executionId"])
+            self.assertEqual(len(set(admitted_ids)), len(admitted_ids))
+            self.assertEqual(len(names), len(self._executions(value, preview["previewId"])))
+
+            # The exact repeat of the *oldest* admission is the same reviewed
+            # submission and must resolve to it, not be refused as a duplicate.
+            oldest = admitted_ids[0]
+            status, repeated = self._execute(
+                value,
+                preview,
+                intent,
+                itemIds=[preview["items"][0]["itemId"]],
+            )
+            self.assertIn(status, (200, 202), repeated)
+            self.assertEqual(oldest, repeated["executionId"])
+            self.assertEqual(len(names), len(self._executions(value, preview["previewId"])))
+
+            # The repeat consumed only its own one-shot authority; no sibling
+            # item was admitted a second time and nothing was mutated yet.
+            for other in preview["items"][1:]:
+                executions = [
+                    candidate
+                    for candidate in self._executions(value, preview["previewId"])
+                    if other["itemId"] in candidate.selected_item_ids
+                ]
+                self.assertEqual(1, len(executions))
+            self.assertEqual([], value.source.mutations)
+
+            # Every disjoint execution still runs exactly once.
+            for _ in range(len(names)):
+                completed = value.worker.run_next()
+                self.assertIsNotNone(completed)
+            self.assertIsNone(value.worker.run_next())
+            self.assertEqual(len(names), len(list(value.target_root.rglob("*.mkv"))))
+
     def test_repeated_same_submission_is_one_exact_execution(self) -> None:
         with self.journey(names=("One.2001.mkv", "Two.2002.mkv")) as value:
             intent = self._reviewed_multi_item(value, ("One", "Two"))
