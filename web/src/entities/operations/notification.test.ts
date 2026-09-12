@@ -8,6 +8,7 @@ import {
   normalizeNotificationActivation,
   normalizeNotificationRecoveryResult,
   normalizeWebhookDefinition,
+  normalizeWebhookDefinitionMutation,
   normalizeWebhookTestResult,
   NotificationNormalizationError,
 } from "./notification";
@@ -847,14 +848,16 @@ describe("notification activation result", () => {
     overrides: Record<string, unknown> = {},
   ): Record<string, unknown> {
     return {
-      activatedRevisionId: "rev-active-2",
-      activatedVersion: 5,
+      // The managed activation preserves the reviewed Draft revision identity
+      // as the new Active identity: same revision id, same version.
+      activatedRevisionId: "rev-draft",
+      activatedVersion: 4,
       revisionSequence: 4,
       publishedFromRevisionId: "rev-draft",
       publishedFromVersion: 4,
       activeConfiguration: {
-        revisionId: "rev-active-2",
-        version: 5,
+        revisionId: "rev-draft",
+        version: 4,
         revisionSequence: 4,
         status: "active",
       },
@@ -868,7 +871,8 @@ describe("notification activation result", () => {
       activationPayload(),
       REQUESTED,
     );
-    expect(model.activatedRevisionId).toBe("rev-active-2");
+    expect(model.activatedRevisionId).toBe("rev-draft");
+    expect(model.activatedVersion).toBe(4);
     expect(model.webhook?.id).toBe("ops");
   });
 
@@ -896,12 +900,38 @@ describe("notification activation result", () => {
     ).toThrow(NotificationNormalizationError);
   });
 
+  it("fails closed when the activated identity is split from the reviewed Draft", () => {
+    // A success document whose Active revision/version differs from the exact
+    // reviewed Draft identity never renders as this activation.
+    expect(() =>
+      normalizeNotificationActivation(
+        activationPayload({
+          activatedRevisionId: "rev-active-2",
+          activatedVersion: 5,
+          activeConfiguration: {
+            revisionId: "rev-active-2",
+            version: 5,
+            revisionSequence: 4,
+            status: "active",
+          },
+        }),
+        REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeNotificationActivation(
+        activationPayload({ activatedVersion: 5 }),
+        REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
   it("fails closed when the reported Active identity is inconsistent", () => {
     expect(() =>
       normalizeNotificationActivation(
         activationPayload({
           activeConfiguration: {
-            revisionId: "rev-active-2",
+            revisionId: "rev-draft",
             version: 6,
             revisionSequence: 4,
             status: "active",
@@ -923,6 +953,325 @@ describe("notification activation result", () => {
       normalizeNotificationActivation(
         activationPayload({ webhook: null }),
         REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+});
+
+describe("webhook definition mutation result", () => {
+  const DRAFT = { revisionId: "rev-draft", expectedVersion: 4 };
+
+  function mutationPayload(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      revisionId: "rev-draft",
+      version: 5,
+      status: "draft",
+      webhook: { id: "created", enabled: false },
+      ...overrides,
+    };
+  }
+
+  it("normalizes a created definition bound to the exact submitted identity", () => {
+    const model = normalizeWebhookDefinitionMutation(mutationPayload(), {
+      ...DRAFT,
+      documentField: "webhook",
+      expectedId: "created",
+      copySourceId: null,
+      copyNewId: null,
+      expectedEnabled: null,
+    });
+    expect(model).toEqual({
+      revisionId: "rev-draft",
+      version: 5,
+      id: "created",
+    });
+  });
+
+  it("normalizes a saved Draft bound to the edited identity and successor version", () => {
+    const model = normalizeWebhookDefinitionMutation(
+      mutationPayload({ webhook: { id: "ops" } }),
+      {
+        ...DRAFT,
+        documentField: "webhook",
+        expectedId: "ops",
+        copySourceId: null,
+        copyNewId: null,
+        expectedEnabled: null,
+      },
+    );
+    expect(model.id).toBe("ops");
+    expect(model.version).toBe(5);
+  });
+
+  it("normalizes an unpinned copy bound to the derived source family", () => {
+    const model = normalizeWebhookDefinitionMutation(
+      mutationPayload({
+        object: { id: "ops-copy-2", enabled: false },
+        webhook: undefined,
+      }),
+      {
+        ...DRAFT,
+        documentField: "object",
+        expectedId: null,
+        copySourceId: "ops",
+        copyNewId: null,
+        expectedEnabled: false,
+      },
+    );
+    expect(model.id).toBe("ops-copy-2");
+  });
+
+  it("normalizes a pinned copy bound to the exact requested new identity", () => {
+    const model = normalizeWebhookDefinitionMutation(
+      mutationPayload({
+        object: { id: "pinned-copy", enabled: false },
+        webhook: undefined,
+      }),
+      {
+        ...DRAFT,
+        documentField: "object",
+        expectedId: null,
+        copySourceId: "ops",
+        copyNewId: "pinned-copy",
+        expectedEnabled: false,
+      },
+    );
+    expect(model.id).toBe("pinned-copy");
+  });
+
+  it("normalizes an exact enable and disable toggle bound to the toggled identity", () => {
+    const enable = normalizeWebhookDefinitionMutation(
+      mutationPayload({
+        object: { id: "ops", enabled: true },
+        webhook: undefined,
+      }),
+      {
+        ...DRAFT,
+        documentField: "object",
+        expectedId: "ops",
+        copySourceId: null,
+        copyNewId: null,
+        expectedEnabled: true,
+      },
+    );
+    expect(enable.id).toBe("ops");
+    const disable = normalizeWebhookDefinitionMutation(
+      mutationPayload({
+        object: { id: "ops", enabled: false },
+        webhook: undefined,
+      }),
+      {
+        ...DRAFT,
+        documentField: "object",
+        expectedId: "ops",
+        copySourceId: null,
+        copyNewId: null,
+        expectedEnabled: false,
+      },
+    );
+    expect(disable.id).toBe("ops");
+  });
+
+  it("fails closed when the response answers another revision", () => {
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({ revisionId: "rev-other" }),
+        {
+          ...DRAFT,
+          documentField: "webhook",
+          expectedId: "created",
+          copySourceId: null,
+          copyNewId: null,
+          expectedEnabled: null,
+        },
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when the version is not the submitted mutation's successor", () => {
+    const binding = {
+      ...DRAFT,
+      documentField: "webhook" as const,
+      expectedId: "created",
+      copySourceId: null,
+      copyNewId: null,
+      expectedEnabled: null,
+    };
+    // The submitted version itself: the mutation never stored.
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({ version: 4 }),
+        binding,
+      ),
+    ).toThrow(NotificationNormalizationError);
+    // A version that skips ahead of the one-shot successor bump.
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({ version: 6 }),
+        binding,
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({ version: null }),
+        binding,
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when the response carries no changed definition", () => {
+    expect(() =>
+      normalizeWebhookDefinitionMutation(mutationPayload({ webhook: null }), {
+        ...DRAFT,
+        documentField: "webhook",
+        expectedId: "created",
+        copySourceId: null,
+        copyNewId: null,
+        expectedEnabled: null,
+      }),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({ webhook: undefined }),
+        {
+          ...DRAFT,
+          documentField: "webhook",
+          expectedId: "created",
+          copySourceId: null,
+          copyNewId: null,
+          expectedEnabled: null,
+        },
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({ webhook: "created-webhook" }),
+        {
+          ...DRAFT,
+          documentField: "webhook",
+          expectedId: "created",
+          copySourceId: null,
+          copyNewId: null,
+          expectedEnabled: null,
+        },
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when the response answers another or unsafe identity", () => {
+    const binding = {
+      ...DRAFT,
+      documentField: "webhook" as const,
+      expectedId: "created",
+      copySourceId: null,
+      copyNewId: null,
+      expectedEnabled: null,
+    };
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({ webhook: { id: "another-webhook" } }),
+        binding,
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({ webhook: { id: "../escape" } }),
+        binding,
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({ webhook: { enabled: false } }),
+        binding,
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when a copy answers for the source or an unrelated definition", () => {
+    const binding = {
+      ...DRAFT,
+      documentField: "object" as const,
+      expectedId: null,
+      copySourceId: "ops",
+      copyNewId: null,
+      expectedEnabled: false,
+    };
+    // The copied-from source itself is not a new definition.
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({
+          object: { id: "ops", enabled: false },
+          webhook: undefined,
+        }),
+        binding,
+      ),
+    ).toThrow(NotificationNormalizationError);
+    // An unrelated identity is not derived from this copy mutation.
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({
+          object: { id: "another-webhook", enabled: false },
+          webhook: undefined,
+        }),
+        binding,
+      ),
+    ).toThrow(NotificationNormalizationError);
+    // A pinned copy must answer for the exact requested new identity.
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({
+          object: { id: "ops-copy", enabled: false },
+          webhook: undefined,
+        }),
+        { ...binding, copyNewId: "pinned-copy" },
+      ),
+    ).toThrow(NotificationNormalizationError);
+    // The managed copy stores a disabled Draft definition.
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({
+          object: { id: "ops-copy", enabled: true },
+          webhook: undefined,
+        }),
+        binding,
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when a toggle contradicts the requested enabled state", () => {
+    const enable = {
+      ...DRAFT,
+      documentField: "object" as const,
+      expectedId: "ops",
+      copySourceId: null,
+      copyNewId: null,
+      expectedEnabled: true,
+    };
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({
+          object: { id: "ops", enabled: false },
+          webhook: undefined,
+        }),
+        enable,
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({ object: { id: "ops" }, webhook: undefined }),
+        enable,
+      ),
+    ).toThrow(NotificationNormalizationError);
+    const disable = { ...enable, expectedEnabled: false };
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({
+          object: { id: "ops", enabled: true },
+          webhook: undefined,
+        }),
+        disable,
       ),
     ).toThrow(NotificationNormalizationError);
   });

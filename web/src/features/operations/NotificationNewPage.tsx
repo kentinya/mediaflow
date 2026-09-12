@@ -82,10 +82,11 @@ export function NotificationNewPage() {
         void queryClient.invalidateQueries({
           queryKey: [notificationListQueryKey],
         });
-        const created = result.model.id ?? webhookId;
+        // The bound model is the exact created identity; it never falls back
+        // to a local value when the response carries no created definition.
         void navigate({
           to: "/operations/notifications/webhooks/$webhookId",
-          params: { webhookId: created },
+          params: { webhookId: result.model.id },
         });
         return;
       }

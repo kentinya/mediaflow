@@ -965,15 +965,113 @@ export function normalizeNotificationActivation(
     model.webhook.id !== requested.webhookId ||
     text(source, "publishedFromRevisionId", 128) !== requested.revisionId ||
     count(source, "publishedFromVersion") !== requested.version ||
+    model.activatedRevisionId !== requested.revisionId ||
+    model.activatedVersion !== requested.version ||
     model.activeConfiguration === null ||
     model.activeConfiguration.revisionId !== model.activatedRevisionId ||
     model.activeConfiguration.version !== model.activatedVersion
   ) {
-    // A success document about another Webhook, another reviewed revision or
-    // an inconsistent Active identity never renders as this activation.
+    // The managed activation preserves the reviewed Draft revision identity as
+    // the new Active identity: the activated pair, the published-from echo,
+    // the request binding and the Active configuration must all describe that
+    // same exact revision and version. A success document that splits these
+    // identities never renders as this activation.
     return fail("webhook");
   }
   return model;
+}
+
+/** The exact definition mutation a success document must answer for. */
+export interface WebhookDefinitionMutationRequestBinding {
+  /** The exact Draft revision the mutation was submitted against. */
+  readonly revisionId: string;
+  /** The Draft version submitted; a stored mutation publishes its successor. */
+  readonly expectedVersion: number;
+  /** The response key carrying the changed definition document. */
+  readonly documentField: "webhook" | "object";
+  /**
+   * The exact definition identity the mutation answers for: the submitted
+   * create id, or the edited/toggled id. `null` only for a copy whose new
+   * identity is derived from the copied-from source.
+   */
+  readonly expectedId: string | null;
+  /** The copied-from source id for a copy; `null` for every other mutation. */
+  readonly copySourceId: string | null;
+  /** The exact copied identity when the request pinned one; otherwise `null`. */
+  readonly copyNewId: string | null;
+  /** The enabled state the mutation must have produced; `null` when untouched. */
+  readonly expectedEnabled: boolean | null;
+}
+
+export interface WebhookDefinitionMutationModel {
+  readonly revisionId: string;
+  readonly version: number;
+  readonly id: string;
+}
+
+function requiredRecord(
+  value: unknown,
+  field: string,
+): Record<string, unknown> {
+  if (value === null || value === undefined) {
+    return fail(field);
+  }
+  try {
+    return readRecord(value, field);
+  } catch {
+    return fail(field);
+  }
+}
+
+export function normalizeWebhookDefinitionMutation(
+  payload: unknown,
+  requested: WebhookDefinitionMutationRequestBinding,
+): WebhookDefinitionMutationModel {
+  const source = requiredRecord(payload, "webhook_definition_mutation");
+  const revisionId = uriSafeSegment(source, "revisionId", 128);
+  const version = count(source, "version");
+  if (
+    revisionId !== requested.revisionId ||
+    version !== requested.expectedVersion + 1
+  ) {
+    // A definition mutation stores the successor Draft version of the exact
+    // submitted revision; a document about another revision, or at any other
+    // version, never renders as this mutation's outcome.
+    return fail("revisionId");
+  }
+  const document = requiredRecord(
+    source[requested.documentField],
+    requested.documentField,
+  );
+  const id = uriSafeSegment(document, "id", 64);
+  if (requested.copySourceId !== null) {
+    // A copied identity is bound to this exact copy mutation: the request
+    // either pinned the new identity, or the server derives it from the
+    // copied-from source (the managed copy allocator stores a
+    // "{source}-copy" id within the 64-character bound). The source's own id
+    // or any unrelated id is wrong-object evidence, never this copy's outcome.
+    if (requested.copyNewId !== null) {
+      if (id !== requested.copyNewId) {
+        return fail(`${requested.documentField}.id`);
+      }
+    } else if (
+      id === requested.copySourceId ||
+      !id.startsWith(requested.copySourceId.slice(0, 58))
+    ) {
+      return fail(`${requested.documentField}.id`);
+    }
+  } else if (requested.expectedId === null || id !== requested.expectedId) {
+    return fail(`${requested.documentField}.id`);
+  }
+  if (
+    requested.expectedEnabled !== null &&
+    flag(document, "enabled") !== requested.expectedEnabled
+  ) {
+    // A copied or toggled document contradicting the requested enabled state
+    // is malformed evidence, never this mutation's outcome.
+    return fail(`${requested.documentField}.enabled`);
+  }
+  return { revisionId, version, id };
 }
 
 /** One durable delivery row as the bounded list/detail operator model. */

@@ -1464,6 +1464,7 @@ import {
   type AutomationPreviewModel,
 } from "../../entities/operations/automation";
 import {
+  NOTIFICATION_URI_SAFE_SEGMENT,
   normalizeNotificationActivation,
   normalizeNotificationDeliveriesPage,
   normalizeNotificationDeliveryDetail,
@@ -1471,6 +1472,7 @@ import {
   normalizeNotificationDraftDocument,
   normalizeNotificationRecoveryResult,
   normalizeWebhookDefinition,
+  normalizeWebhookDefinitionMutation,
   normalizeWebhookTestResult,
   type NotificationActivationModel,
   type NotificationDeliveriesPage,
@@ -1479,6 +1481,7 @@ import {
   type NotificationDraftDocumentModel,
   type NotificationRecoveryResultModel,
   type WebhookDefinitionModel,
+  type WebhookDefinitionMutationModel,
   type WebhookTestResultModel,
 } from "../../entities/operations/notification";
 import { readRecord } from "../../entities/shared/normalize";
@@ -3205,8 +3208,13 @@ export async function createWebhookDefinition(
   token: string | null,
   options: CreateWebhookDefinitionOptions,
   fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<{ readonly id: string | null }>> {
-  if (!isSafeIdentifier(options.revisionId)) {
+): Promise<AutomationMutationResult<WebhookDefinitionMutationModel>> {
+  const created = options.object["id"];
+  if (
+    !isSafeIdentifier(options.revisionId) ||
+    typeof created !== "string" ||
+    !NOTIFICATION_URI_SAFE_SEGMENT.test(created)
+  ) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
   return submitAutomationMutation(
@@ -3214,15 +3222,16 @@ export async function createWebhookDefinition(
     "POST",
     `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks`,
     { object: options.object, expectedVersion: options.expectedVersion },
-    (payload) => {
-      const source = readRecord(payload, "webhook_definition_mutation");
-      const value = source["webhook"];
-      const id =
-        value !== null && typeof value === "object" && !Array.isArray(value)
-          ? (value as Record<string, unknown>)["id"]
-          : null;
-      return { id: typeof id === "string" ? id : null };
-    },
+    (payload) =>
+      normalizeWebhookDefinitionMutation(payload, {
+        revisionId: options.revisionId,
+        expectedVersion: options.expectedVersion,
+        documentField: "webhook",
+        expectedId: created,
+        copySourceId: null,
+        copyNewId: null,
+        expectedEnabled: null,
+      }),
     fetchImpl,
   );
 }
@@ -3238,7 +3247,7 @@ export async function saveWebhookDefinitionDraft(
   token: string | null,
   options: SaveWebhookDefinitionDraftOptions,
   fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<{ readonly id: string | null }>> {
+): Promise<AutomationMutationResult<WebhookDefinitionMutationModel>> {
   if (
     !isSafeIdentifier(options.revisionId) ||
     !isSafeIdentifier(options.webhookId)
@@ -3250,15 +3259,16 @@ export async function saveWebhookDefinitionDraft(
     "PUT",
     `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}`,
     { object: options.object, expectedVersion: options.expectedVersion },
-    (payload) => {
-      const source = readRecord(payload, "webhook_definition_mutation");
-      const value = source["webhook"];
-      const id =
-        value !== null && typeof value === "object" && !Array.isArray(value)
-          ? (value as Record<string, unknown>)["id"]
-          : null;
-      return { id: typeof id === "string" ? id : null };
-    },
+    (payload) =>
+      normalizeWebhookDefinitionMutation(payload, {
+        revisionId: options.revisionId,
+        expectedVersion: options.expectedVersion,
+        documentField: "webhook",
+        expectedId: options.webhookId,
+        copySourceId: null,
+        copyNewId: null,
+        expectedEnabled: null,
+      }),
     fetchImpl,
   );
 }
@@ -3274,7 +3284,7 @@ export async function copyWebhookDefinition(
   token: string | null,
   options: CopyWebhookDefinitionOptions,
   fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<{ readonly id: string | null }>> {
+): Promise<AutomationMutationResult<WebhookDefinitionMutationModel>> {
   if (
     !isSafeIdentifier(options.revisionId) ||
     !isSafeIdentifier(options.webhookId)
@@ -3295,15 +3305,17 @@ export async function copyWebhookDefinition(
     "POST",
     `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}/copy`,
     body,
-    (payload) => {
-      const source = readRecord(payload, "webhook_definition_mutation");
-      const value = source["object"];
-      const id =
-        value !== null && typeof value === "object" && !Array.isArray(value)
-          ? (value as Record<string, unknown>)["id"]
-          : null;
-      return { id: typeof id === "string" ? id : null };
-    },
+    (payload) =>
+      normalizeWebhookDefinitionMutation(payload, {
+        revisionId: options.revisionId,
+        expectedVersion: options.expectedVersion,
+        documentField: "object",
+        expectedId: null,
+        copySourceId: options.webhookId,
+        copyNewId: options.newId ?? null,
+        // The managed copy stores a new, disabled Draft definition.
+        expectedEnabled: false,
+      }),
     fetchImpl,
   );
 }
@@ -3319,7 +3331,7 @@ export async function setWebhookDefinitionEnabled(
   token: string | null,
   options: SetWebhookDefinitionEnabledOptions,
   fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<{ readonly id: string | null }>> {
+): Promise<AutomationMutationResult<WebhookDefinitionMutationModel>> {
   if (
     !isSafeIdentifier(options.revisionId) ||
     !isSafeIdentifier(options.webhookId)
@@ -3331,15 +3343,16 @@ export async function setWebhookDefinitionEnabled(
     "POST",
     `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}/${options.enabled ? "enable" : "disable"}`,
     { expectedVersion: options.expectedVersion },
-    (payload) => {
-      const source = readRecord(payload, "webhook_definition_mutation");
-      const value = source["object"];
-      const id =
-        value !== null && typeof value === "object" && !Array.isArray(value)
-          ? (value as Record<string, unknown>)["id"]
-          : null;
-      return { id: typeof id === "string" ? id : null };
-    },
+    (payload) =>
+      normalizeWebhookDefinitionMutation(payload, {
+        revisionId: options.revisionId,
+        expectedVersion: options.expectedVersion,
+        documentField: "object",
+        expectedId: options.webhookId,
+        copySourceId: null,
+        copyNewId: null,
+        expectedEnabled: options.enabled,
+      }),
     fetchImpl,
   );
 }

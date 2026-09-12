@@ -299,10 +299,54 @@ test("a wrong-object success document never renders as a completed mutation", as
   await page.request.post("/__test__/reset-notifications?hostile=1");
   await connect(page);
   await openNotifications(page);
-  await page.getByRole("link", { name: "Open definition" }).click();
+  // The Draft is staged before the definition detail is ever read, so the
+  // journey reads the exact durable Draft state without a stale cache.
+  await page.getByRole("button", { name: "Start successor Draft" }).click();
+  await page.getByRole("link", { name: "Open definition" }).first().click();
   await page.getByRole("button", { name: "Test this exact revision" }).click();
   await expect(page.getByText(/The test was rejected/)).toBeVisible();
   await expect(page.getByText(/Test succeeded/)).toHaveCount(0);
+
+  // The create success document answers for another revision: the journey
+  // stays on the form and never opens a definition as created.
+  await page.getByRole("link", { name: "Back to Notifications" }).click();
+  await page.getByRole("link", { name: "New Webhook definition" }).click();
+  await page.getByLabel("Identifier").fill("created-webhook");
+  await page
+    .getByLabel("HTTPS endpoint")
+    .fill("https://example.invalid/hooks/created");
+  await page
+    .getByLabel("Secret environment reference")
+    .fill("MEDIAFLOW_WEBHOOK_SECRET");
+  await page.getByLabel("Event job.completed").check();
+  await page
+    .getByRole("button", { name: "Create definition in Draft" })
+    .click();
+  await expect(
+    page.getByText(/Creating the Webhook definition was rejected/),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/webhooks\/new$/);
+  await expect(
+    page.getByRole("heading", { name: "Webhook created-webhook" }),
+  ).toHaveCount(0);
+
+  // The copy success document answers for an unrelated definition: the
+  // detail page refreshes to the durable Draft truth, submits the exact
+  // optimistic fence once, and stays on the reviewed source identity.
+  await page.getByRole("link", { name: "Back to Notifications" }).click();
+  await page.getByRole("link", { name: "Open definition" }).first().click();
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(
+    page.getByRole("button", { name: "Copy into Draft" }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Copy into Draft" }).click();
+  await expect(page.getByText(/The copy action was rejected/)).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: `Webhook ${WEBHOOK_ID}` }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Webhook another-webhook" }),
+  ).toHaveCount(0);
 
   await page.getByRole("link", { name: "Open deliveries" }).click();
   await page.getByRole("link", { name: "Open delivery" }).first().click();
@@ -317,6 +361,42 @@ test("a wrong-object success document never renders as a completed mutation", as
   await expect(
     page.locator("dl").getByText("dead-letter", { exact: true }),
   ).toBeVisible();
+});
+
+test("a split-identity activation success document never renders as success", async ({
+  page,
+}) => {
+  // The hostile fake answers the checked activation with an Active identity
+  // that differs from the exact reviewed Draft identity; the V2 client must
+  // refuse to render it and must never replay the activation.
+  await page.request.post("/__test__/reset-notifications?hostile=1");
+  await connect(page);
+  await openNotifications(page);
+  await page.getByRole("button", { name: "Start successor Draft" }).click();
+  await page.getByRole("link", { name: "Open definition" }).click();
+  await page.getByRole("link", { name: "Open Draft editor" }).click();
+  // The checked activation is only offered for a validated Draft: validate
+  // the freshly staged successor Draft first.
+  await page.getByRole("button", { name: "Validate Draft" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Draft validated" }),
+  ).toBeVisible();
+  await page.getByLabel("Confirm checked activation").check();
+  await page.getByRole("button", { name: "Activate checked Draft" }).click();
+  await expect(page.getByText(/Activation was rejected/)).toBeVisible();
+  // The rejected activation is never replayed and nothing was activated.
+  await expect(page).toHaveURL(
+    new RegExp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}$`),
+  );
+
+  const evidence = await notificationsEvidence(page);
+  const activations = evidence.items.filter(
+    (item) => item.objectType === "notification_webhook_activation",
+  );
+  expect(activations).toHaveLength(1);
+  expect(activations[0].body).toMatchObject({
+    expectedRevisionId: DRAFT_REVISION,
+  });
 });
 
 test("the delivery list filters dead letters and the detail page requeues with explicit confirmation", async ({

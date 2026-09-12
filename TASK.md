@@ -231,221 +231,233 @@ deletion/rename/skip/assertion change, and tracked/private configuration. `confi
 
 ## Developer Completion Report
 
-(Correction round for the B Review Result below; the first checkpoint's report
-remains in Git history at `58d17f6678c6c794a108bff19355c6f7706be30e`.)
+(Second correction round for the B Review Result below; the first correction's
+report remains in Git history at `7cf373541a84e7e66b7f6ac782b23987c551057d`.)
 
 ### Changed Files
 
-- `mediaflow/interfaces/service_api.py` — the operations Webhook test now binds to the exact
-  currently advertised revision before any transport invocation: after the optimistic version
-  check, `_notification_webhook_operator_test` resolves the definition via
-  `_notification_webhook_resolution` and rejects any revision that is neither the Active revision
-  containing this definition nor the eligible open successor Draft containing it (409
-  `configuration_version_conflict`, digest-free, `durableState: "no test request was sent"`). The
-  checked-activation success document now additionally echoes the exact reviewed Draft identity
-  (`publishedFromRevisionId`, `publishedFromVersion`) so the Web client can bind the success
-  document to the submitted mutation.
-- `web/src/features/operations/NotificationNewPage.tsx` — removed the client-side
-  `/(secret|token|authorization|execute)/i` value-substring rejection from both the identifier and
-  the `secretEnv` value (the canonical deployment-owned reference
-  `MEDIAFLOW_WEBHOOK_SECRET` is accepted again). The canonical environment-name shape check, the
-  URI-safe identifier check, the HTTPS endpoint checks and the server-side canonical validator
-  (unknown fields, forbidden literal field names, unsafe schemes, credential-bearing URL
-  components) remain authoritative.
-- `web/src/entities/operations/notification.ts` — fail-closed identity and request-binding
-  boundary: strict URI-safe segment validation (`NOTIFICATION_URI_SAFE_SEGMENT`) for definition,
-  Draft-document, delivery, webhook and event identities; delivery detail now fails closed on a
-  lease window inconsistent with the durable status (lease ⟺ `delivering`), on requeue
-  eligibility without `dead-letter`, on stale-resolution eligibility without `delivering` +
-  expired lease, and on recovery evidence not advertised in `availableActions`;
-  `normalizeWebhookTestResult`, `normalizeNotificationActivation` and
-  `normalizeNotificationRecoveryResult` take a required request binding and fail closed when the
-  success document names another Webhook/revision/version, another delivery/action, an observed
-  fence that differs from the request, an impossible transition, or an inconsistent Active
-  identity.
-- `web/src/shared/api/api-client.ts` — the test, checked-activation and recovery mutations pass
-  their exact request identity into the normalizers, so a misbound response surfaces as a
-  `malformed_response` rejection instead of rendered success.
-- `tests/test_v2_notification_operations.py` — new
-  `test_superseded_revision_is_rejected_before_any_request` regression (activate a successor
-  Draft, then post the superseded predecessor's exact id and version → 409, `no test request was
-  sent`, zero transport requests, while the exact current Active revision still tests with one
-  request) plus `publishedFrom*` echo assertions in the activation journey; 25 tests total.
-- `web/src/entities/operations/notification.test.ts` — binding tests and hostile contract cases:
-  wrong-object test outcomes (other webhook/revision/version, unsafe identity), activation
-  responses answering another webhook or reviewed revision or an inconsistent Active identity or
-  a missing definition, recovery results about another delivery/action/transition, unsafe
-  delivery/webhook/event identities, and status/lease/eligibility contradictions.
-- `web/src/features/operations/NotificationRouter.test.tsx` — real submission journeys for
-  create (canonical body with `MEDIAFLOW_WEBHOOK_SECRET` accepted, exact Draft version), copy,
-  enable and disable with exact optimistic version bodies, a wrong-object test outcome that must
-  not render success, and contradictory delivery documents (requeue transport on a delivered
-  status, transport bound to another delivery) that render the fail-closed boundary with zero
-  mutations; the signed-test fixture now echoes the requested revision.
-- `web/tests/fake-server.mjs` — hostile wrong-object probe (`reset-notifications?hostile=1`)
-  serving test/recovery success documents about another Webhook/delivery, the truthful activation
-  echo fields, and a generalized Webhook detail route so the copied definition's detail journey
-  resolves; the bounded evidence allowlist is unchanged.
-- `web/tests/e2e/notifications.spec.ts` — the editor journey now really clicks Save (and asserts
-  the `notification_webhook_save` evidence), plus three new built-artifact journeys: create
-  inside the open Draft, copy + enable + disable toggles with exact version fences, and the
-  hostile wrong-object contract probe (test and requeue success documents never render success;
-  the delivery keeps its truthful state).
+- `web/src/entities/operations/notification.ts` — new fail-closed
+  `normalizeWebhookDefinitionMutation` for the four definition mutations: the
+  success document must name the exact submitted Draft `revisionId` and the
+  one-shot successor `version` (`expectedVersion + 1`), must carry a
+  definition document under the mutation's own response key (`webhook` for
+  create/save, `object` for copy/enable/disable), and its `id` must be a
+  strict URI-safe segment (`NOTIFICATION_URI_SAFE_SEGMENT`) equal to the exact
+  created/edited/toggled identity. A copy is bound to its derived source
+  family (a `{source}-copy…` id inside the managed 64-character allocator
+  bound) or, when the request pinned `newId`, to that exact identity; the
+  copied/toggled `enabled` state must match the requested outcome. A missing
+  definition, a missing version, another revision, any other or unsafe
+  identity, or a contradictory toggle throws `NotificationNormalizationError`
+  and never renders as success.
+- `web/src/entities/operations/notification.ts` —
+  `normalizeNotificationActivation` now also requires
+  `activatedRevisionId`/`activatedVersion` to equal the request binding: the
+  activated pair, the `publishedFrom*` echo, the request and the
+  `activeConfiguration` block must all describe the same exact Draft
+  revision/version (the managed activation preserves the Draft identity as the
+  new Active identity). A split-identity activation document fails closed.
+- `web/src/shared/api/api-client.ts` — `createWebhookDefinition`,
+  `saveWebhookDefinitionDraft`, `copyWebhookDefinition` and
+  `setWebhookDefinitionEnabled` pass operation-specific request bindings into
+  the new normalizer and return the bound `WebhookDefinitionMutationModel`;
+  the create request additionally pre-validates the submitted id as a strict
+  URI-safe segment so the server cannot accept an identity the client could
+  never render. A malformed/missing/wrong-object/wrong-revision success
+  document surfaces as a `malformed_response` rejection, never as success.
+- `web/src/features/operations/NotificationNewPage.tsx` — removed the
+  `result.model.id ?? webhookId` fallback: navigation uses only the exact
+  bound created identity, so a response without the created definition can
+  never render navigation as success.
+- `web/src/features/operations/NotificationDetailPage.tsx` — the copy
+  navigation uses only the exact bound copied identity (no nullable id
+  fallback).
+- `web/src/entities/operations/notification.test.ts` — the activation happy
+  path now submits the truthful managed contract (the Draft identity is the
+  new Active identity) and a new hostile case proves a split-identity
+  activation (`rev-active-2`/5 vs the reviewed `rev-draft`/4) fails closed;
+  the new `webhook definition mutation result` describe covers create/save/
+  unpinned copy/pinned copy/enable/disable success bindings plus
+  wrong-revision, non-successor version, missing/non-object/wrong/unsafe
+  identity, source-or-unrelated copy answers and contradictory toggles
+  (29 tests in the file, 55 focused total).
+- `web/src/features/operations/NotificationRouter.test.tsx` — the editor
+  fixtures now mirror the real managed semantics (the save response carries
+  the successor version; the activation preserves the Draft identity), and the
+  copy/enable/disable journey advances the exact optimistic fence per stored
+  mutation (enable submits v5, disable v6). New
+  `Notification definition mutation binding` describe with five built-journey
+  hostile cases: a wrong-revision create, a save without the saved
+  definition, a wrong-object copy, a contradictory enable toggle and a
+  split-identity activation each render rejection with exactly one submitted
+  mutation, no follow-up mutation and no false success (25 tests in the file).
+- `web/tests/fake-server.mjs` — the `?hostile=1` wrong-object probe now also
+  answers the four definition mutations with a wrong-revision create, a save
+  without a definition, a wrong-object copy and a contradictory toggle, and
+  the activation with a split identity; the truthful responses now mirror the
+  real managed contract (copy stores disabled, enable/disable store the
+  submitted toggle).
+- `web/tests/e2e/notifications.spec.ts` — the hostile built-artifact journey
+  now really submits create (wrong-revision create document rejected, no
+  navigation as success), copy (wrong-object copy document rejected, the
+  detail page stays on the reviewed source) and the split-identity activation
+  (rejected once, never replayed, exactly one activation recorded with the
+  exact Draft binding) alongside the existing test/recovery probes.
 - `TASK.md` — this correction report.
 
 ### Implemented
 
-- B blocker 1 (unresolvable checkpoint): the correction checkpoint below is created without
-  amending reviewed history, and its exact full SHA is recorded by a follow-up `docs(task)`
-  checkpoint generated from `git rev-parse HEAD` (never hand-transcribed) and verified with
-  `git cat-file -e`.
-- B blocker 2 (create journey rejected the canonical secret reference): removed the
-  value-substring rejection; the component create journey and a browser create journey now
-  actually submit the canonical form with `MEDIAFLOW_WEBHOOK_SECRET`, and the editor journey
-  really saves; component and browser suites exercise create, edit/save, copy and enable/disable
-  end to end with exact revision/version bodies.
-- B blocker 3 (superseded revision testable): the operations test route now rejects any revision
-  that is not the exact advertised Active revision (for a definition it contains) or the eligible
-  open successor Draft before transport invocation, with a same-version/superseded regression
-  proving zero requests; the Web success normalizers are bound to the requested
-  Webhook/revision/version.
-- B blocker 4 (typed identity/contradiction boundary): strict URI-safe identities, delivery
-  detail eligibility/lease contradiction fail-closed enforcement, and cross-field/request binding
-  for test, activation and recovery responses, each covered by hostile typed, component and
-  browser contract cases.
+- B blocker 1 (definition-mutation responses not fail-closed): all four
+  mutations (`createWebhookDefinition`, `saveWebhookDefinitionDraft`,
+  `copyWebhookDefinition`, `setWebhookDefinitionEnabled`) are now bound to the
+  exact submitted Draft revision, the expected successor version and the exact
+  created/edited/toggled/copied identity with strict URI-safe response
+  identities; create no longer falls back to the request id. Hostile typed,
+  component and built-artifact evidence proves malformed/missing/wrong-object/
+  wrong-revision success documents render rejection with no follow-up
+  mutation and no false success.
+- B blocker 2 (checked-activation success binding accepted a different Active
+  identity): the normalizer now requires `activatedRevisionId`/
+  `activatedVersion`, `publishedFromRevisionId`/`publishedFromVersion`, the
+  request binding and `activeConfiguration` to describe that same exact
+  revision/version; typed, component and built-artifact hostile evidence
+  proves a split-identity activation response cannot render success and is
+  never replayed.
 
 ### Tests and Results
 
-All commands run from the repository root; every gate below was executed for this correction
-checkpoint.
+All commands run from the repository root; every gate below was executed for
+this correction checkpoint.
 
 - `python3 scripts/check_governance.py` — PASS.
 - `env -u NODE_ENV npm --prefix web ci` — PASS (0 vulnerabilities).
 - `npm --prefix web run format:check` — PASS.
 - `npm --prefix web run typecheck` — PASS.
 - `npm --prefix web run lint` — PASS.
-- `npm --prefix web run test -- --run` — PASS: 422/422 (34 files), 0 skipped.
+- `npm --prefix web run test -- --run` — PASS: 439/439 (34 files), 0 skipped.
 - `npm --prefix web run build` — PASS.
 - `npm --prefix web run test:e2e -- notifications.spec.ts operations.spec.ts deep-link.spec.ts`
-  — PASS: 55 passed.
-- `npm --prefix web run test:e2e` — PASS: 117 passed.
-- `.venv/bin/python -m unittest tests.test_v2_notification_operations` — PASS: 25 tests.
+  — PASS: 56 passed.
+- `npm --prefix web run test:e2e` — PASS: 118 passed.
+- `.venv/bin/python -m unittest tests.test_v2_notification_operations` —
+  PASS: 25 tests.
 - `.venv/bin/python -m unittest tests.test_webhook_management
   tests.test_notification_delivery_management tests.test_notifications
   tests.test_webhook_url_security tests.test_restart_fault_boundary
-  tests.test_configuration_objects tests.test_configuration_management tests.test_dashboard
-  tests.test_operations_workspace tests.test_api_security tests.test_v2_ui` — PASS: 171 tests
-  (the first checkpoint's report listed 195 for this command; the actual total of the eleven
-  named modules is 171, and 195 equals 171 plus the 24 focused tests counted in the adjacent
-  line — reported here as measured).
-- `.venv/bin/python -m unittest discover -s tests` (repository-root CWD) — 1539 tests,
-  6 failures, 7 skipped: `FAIL / PRE-EXISTING / UNRELATED` (details under Risks).
-- Isolated clean checkout of committed HEAD `8ef7d3b` with this correction's working diff
-  applied (`git worktree`): full `unittest discover` — PASS, 1539 tests, 7 skipped, 0 failures.
+  tests.test_configuration_objects tests.test_configuration_management
+  tests.test_dashboard tests.test_operations_workspace tests.test_api_security
+  tests.test_v2_ui` — PASS: 171 tests.
+- `.venv/bin/python -m unittest discover -s tests` (repository-root CWD) —
+  1539 tests, 6 failures, 7 skipped: `FAIL / PRE-EXISTING / UNRELATED`
+  (details under Risks).
+- Isolated clean checkout of committed HEAD `7cf3735` with this correction's
+  exact working diff applied (`git worktree`): full `unittest discover` —
+  PASS, 1539 tests, 0 failures, 7 skipped.
 - `.venv/bin/ruff format --check .` — PASS (309 files).
 - `.venv/bin/ruff check .` — PASS.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `.venv/bin/python -m pip check` — PASS.
-- `.venv/bin/mediaflow --config config/strategy.example.json config validate` — PASS.
-- `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
+- `.venv/bin/mediaflow --config config/strategy.example.json config validate`
+  — PASS.
+- `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json
+  config validate` — PASS.
 - `git diff --check` — PASS.
-- `python3 scripts/docker_release_security_smoke_test.py` — PASS (Docker available; release-
-  security smoke acceptance passed).
-- No test was deleted, renamed or weakened; existing fixtures were strengthened (the signed-test
-  fixture now echoes the requested revision) and every added case is fail-closed evidence.
-  `node_modules/`, build reports and private configuration remain excluded.
+- `python3 scripts/docker_release_security_smoke_test.py` — PASS (Docker
+  available; release-security smoke acceptance passed).
+- No test was deleted, renamed or weakened; the activation fixture was
+  corrected to the truthful managed contract (the passing pre-correction
+  happy path encoded the split identity B rejected), fixtures were
+  strengthened to the real optimistic-fence semantics, and every added case
+  is fail-closed evidence. `node_modules/`, build reports and private
+  configuration remain excluded.
 
 ### Decisions
 
-- The advertised-revision set for testing is computed as: the Active configuration revision when
-  it contains this exact definition, plus the open successor Draft when
-  `latest_open_draft_containing` returns one. A Draft-only definition is testable at its Draft
-  revision; a definition removed from an open Draft is only testable at Active, mirroring exactly
-  what the detail/draft reads advertise.
-- The checked-activation response gained the additive `publishedFromRevisionId`/
-  `publishedFromVersion` echo so the client can bind the success document to the submitted
-  mutation; the response shape change is additive and V1/CLI clients are untouched. The client
-  also cross-checks `activeConfiguration` against the activated identity and requires the
-  activated definition to be present (a removal activation is unreachable from V2, whose
-  activate action requires an open Draft containing the definition).
-- Mutation normalizers take the request binding as a required parameter (not an optional
-  override) so a future caller cannot forget it; violations throw
-  `NotificationNormalizationError`, which `submitAutomationMutation` maps to a truthful
-  `malformed_response` rejection rendered as a rejection — never as success.
-- Both value-substring checks (identifier and `secretEnv`) were removed as one root cause: the
-  canonical validator rejects forbidden field names, not values, so the identifier check was the
-  same false rejection against an id like a secret-free word while the env-name shape check
-  remains the real contract for the reference.
-- The hostile fake injects wrong-object success documents via `reset-notifications?hostile=1`
-  and the evidence body allowlist is unchanged; the create journey asserts the created identity
-  through the bounded `objectId` evidence field.
+- The definition-mutation binding treats the stored mutation as the one-shot
+  successor of the submitted Draft version (`expectedVersion + 1`): the real
+  managed `edit_draft` publishes exactly `revision.version + 1`, so a document
+  at the submitted version, or any version beyond the one-shot successor, is
+  wrong-object evidence. The component and browser fakes now advance their
+  Draft fence per stored mutation, so every journey submits the exact
+  refetched optimistic fence like the real API requires.
+- Copy binding uses the managed copy allocator's derived identity family
+  (`{source}-copy` within the 64-character bound) when the request did not
+  pin `newId`, and the exact pinned identity when it did; the copied-from
+  source id and any unrelated id fail closed. The copied document must also
+  be disabled, matching the managed copy semantics.
+- The activation normalizer now requires the four identity pairs (activated,
+  published-from echo, request, activeConfiguration) to be the same exact
+  revision/version, matching the real `activate()` path that preserves the
+  Draft identity; the pre-correction typed happy path had encoded the
+  rejected split identity and was corrected to the truthful contract rather
+  than preserved.
+- The create request pre-validates the submitted id with
+  `NOTIFICATION_URI_SAFE_SEGMENT` (the same rule the response normalizer
+  enforces) so the server cannot accept an identity the client would
+  immediately have to reject as unrenderable; the canonical server validator
+  remains the authority.
+- The hostile fake serves wrong-object documents for all six mutation routes
+  via the existing `?hostile=1` probe; the evidence body allowlist and all
+  truthful fixtures are unchanged apart from aligning copy/enable/disable
+  `enabled` semantics with the real managed service.
 
 ### Remaining In-Slice Work
 
-- None known to me for RO-6 itself. Slice 33 closure still needs B's Required-Outcome sweep over
-  RO-1..RO-8, and Slice 34/35 own the media review/recovery and general Configuration journeys
-  this Task only links to.
+- None known to me for RO-6 itself. Slice 33 closure still needs B's
+  Required-Outcome sweep over RO-1..RO-8, and Slice 34/35 own the media
+  review/recovery and general Configuration journeys this Task only links to.
 
 ### Risks / Deviations
 
-- `FAIL / PRE-EXISTING / UNRELATED`: full `unittest discover` at the repository-root CWD fails
-  the same 6 tests documented in the first checkpoint (`test_api_credentials` ×2,
-  `test_final_integration` ×1, `test_resource_library_pipeline` ×1,
-  `test_runtime_storage_configuration` ×2) — root CWD private runtime state (untracked
-  `.mediaflow/` runtime plus the CLI resolving the relative `persistence.databasePath` against
-  the CWD). Fresh proof for this correction: an isolated worktree at committed HEAD `8ef7d3b`
-  with this correction's exact working diff applied passes full discovery (1539 tests, 0
-  failures, 7 skipped). My diff touches no CLI/config-loading code path, and the private state
-  was not deleted or altered.
-- Docker was available and the release-security smoke passed; nothing was inferred.
-- The module-list regression total is reported as measured (171); see Tests and Results for the
-  reconciliation note against the first checkpoint's 195.
+- `FAIL / PRE-EXISTING / UNRELATED`: full `unittest discover` at the
+  repository-root CWD fails the same 6 tests documented in both previous
+  checkpoints (`test_api_credentials` ×2, `test_final_integration` ×1,
+  `test_resource_library_pipeline` ×1, `test_runtime_storage_configuration`
+  ×2) — root CWD private runtime state (untracked `.mediaflow/` runtime plus
+  the CLI resolving the relative `persistence.databasePath` against the CWD).
+  Fresh proof for this correction: an isolated worktree at committed HEAD
+  `7cf3735` with this correction's exact working diff applied passes full
+  discovery (1539 tests, 0 failures, 7 skipped). My diff touches no
+  CLI/config-loading code path, and the private state was not deleted or
+  altered.
+- Docker was available and the release-security smoke passed; nothing was
+  inferred.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 1305d0790632c5b28029c80cfda7bfa80e9a42a1
+Head SHA: PENDING_COMMIT
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 86ad42ff26721ca62f61653e1f0ed9129732cbeb..58d17f6678c6c794a108bff19355c6f7706be30e
+Reviewed: 86ad42ff26721ca62f61653e1f0ed9129732cbeb..1305d0790632c5b28029c80cfda7bfa80e9a42a1
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The reported checkpoint cannot be resolved: `git cat-file -e
-  58d17f68695d1ae0d8cbfd60950ce1d7ee148e53^{commit}` exits 128, while the actual implementation
-  commit after Task Base is `58d17f6678c6c794a108bff19355c6f7706be30e`. Create a correction checkpoint without amending
-  reviewed history and report its exact full committed SHA so the next review has one truthful,
-  resolvable Head.
-- The authorized create journey rejects the canonical deployment-owned secret reference used by
-  this Task's own fixtures. `NotificationNewPage.tsx` applies
-  `/(secret|token|authorization|execute)/i` to the `secretEnv` value, so
-  `MEDIAFLOW_WEBHOOK_SECRET` always produces a form issue even though
-  `WebhookDefinition.from_document` accepts that environment-variable name. Remove this
-  value-substring rejection while retaining the canonical environment-name and server-side
-  literal-field validation. Add component/router and built-artifact journeys that actually submit
-  create, edit/save, copy and enable/disable with exact revision/version bodies; the current 39
-  focused Web tests and 52 browser tests pass, but the browser "editor journey saves" test never
-  clicks Save and neither suite exercises create/copy/enable/disable end to end.
-- Exact displayed-revision test binding fails closed only on a missing revision or wrong version,
-  not on a valid historical revision. A real API probe activated a successor, then posted the
-  superseded predecessor's exact id/version to
-  `POST /api/v1/operations/notifications/webhooks/operations-webhook/test`; it returned `200`,
-  reported revision status `superseded`, and sent one signed request. Reject any revision that is
-  not the exact currently advertised Active revision or eligible open successor Draft for that
-  definition before transport invocation, and add a same-version/different-or-superseded revision
-  regression proving zero requests. Also bind the Web client success normalizers to the requested
-  Webhook/revision/version so a misbound response cannot render success.
-- Typed delivery/test/activation/recovery normalization does not meet the required fail-closed
-  identity and contradiction boundary. Delivery identities use bounded text rather than strict
-  URI-safe segments; delivery detail accepts recovery eligibility/transport inconsistent with the
-  durable status or lease; and test, activation and recovery mutation responses are not checked
-  against the requested Webhook, revision, delivery and action/transition. Enforce those
-  cross-field/request bindings before any control or success state is rendered, and add hostile
-  typed/component/browser contract cases for unsafe identities, wrong-object responses and
-  status/lease/action contradictions.
+- Definition-mutation success responses are still not fail-closed or bound to the exact submitted
+  Draft/object. Inspection of `createWebhookDefinition`, `saveWebhookDefinitionDraft`,
+  `copyWebhookDefinition` and `setWebhookDefinitionEnabled` shows that each normalizer ignores the
+  response `revisionId`/`version`, accepts a missing object, and returns any unvalidated string id;
+  create even falls back to the request id and renders navigation as success when the response
+  carries no created definition. The independently run focused Web suite passes 63/63 and browser
+  suite passes 55/55, but their hostile wrong-object journey covers only test/recovery, not these
+  four mutations. Add operation-specific normalization bound to the requested Draft revision,
+  expected successor version and exact created/edited/toggled/copied identity (including strict
+  URI-safe response identities), and prove malformed/missing/wrong-object/wrong-revision success
+  documents render rejection with no follow-up mutation or false success.
+- Checked-activation success binding still accepts a different Active revision/version from the
+  submitted Draft. The passing `notification activation result` test explicitly submits
+  `{revisionId: "rev-draft", version: 4}` while treating activated revision `rev-active-2`
+  version 5 as a valid success; the normalizer checks the new
+  `publishedFrom*` echo against the request and checks Active against `activated*`, but never
+  requires those two identity pairs to be equal. The real managed activation and the Python
+  integration test preserve the Draft revision id/version as the new Active identity. Require
+  `activatedRevisionId`/`activatedVersion`, `publishedFromRevisionId`/`publishedFromVersion`, the
+  request binding and `activeConfiguration` to describe that same exact revision/version, and add
+  typed plus built-artifact hostile evidence proving a split-identity activation response cannot
+  render success.
