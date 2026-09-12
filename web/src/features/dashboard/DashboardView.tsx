@@ -53,9 +53,22 @@ function FailureTarget({
     );
   }
   if (failure.kind === "notification") {
-    // Per-delivery Notification recovery belongs to a later Slice 33 Task, so
-    // the Dashboard links the Operations workspace instead of imitating it.
-    return <Link to="/operations">Open Operations</Link>;
+    // The Dashboard links the exact durable delivery state when the backend
+    // supplied a bounded identity; anything else stays plain text so an
+    // unsafe identifier can never become a route.
+    if (safeIdentifier(failure.identifier)) {
+      return (
+        <Link
+          to="/operations/notifications/deliveries/$deliveryId"
+          params={{ deliveryId: failure.identifier }}
+        >
+          Open this delivery
+        </Link>
+      );
+    }
+    return (
+      <Link to="/operations/notifications/deliveries">Open deliveries</Link>
+    );
   }
   return null;
 }
@@ -104,7 +117,10 @@ function LinkedCounts({
   counts,
 }: {
   readonly title: string;
-  readonly to: "/operations/tasks" | "/operations/jobs";
+  readonly to:
+    | "/operations/tasks"
+    | "/operations/jobs"
+    | "/operations/notifications/deliveries";
   readonly counts: readonly CountLink[];
 }) {
   return (
@@ -210,7 +226,7 @@ export function DashboardView({
         ]}
       />
       <CountGrid
-        title="Reviews and notifications"
+        title="Reviews"
         counts={[
           { label: "Pending confirmations", value: model.pendingConfirmations },
           {
@@ -221,9 +237,16 @@ export function DashboardView({
             label: "Pending classification reviews",
             value: model.pendingClassificationReviews,
           },
+        ]}
+      />
+      <LinkedCounts
+        title="Notifications"
+        to="/operations/notifications/deliveries"
+        counts={[
           {
             label: "Dead-letter notifications",
             value: model.deadLetterNotifications,
+            status: "dead-letter",
           },
         ]}
       />

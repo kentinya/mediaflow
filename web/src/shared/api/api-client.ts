@@ -1463,6 +1463,24 @@ import {
   type AutomationPreviewItemsPage,
   type AutomationPreviewModel,
 } from "../../entities/operations/automation";
+import {
+  normalizeNotificationActivation,
+  normalizeNotificationDeliveriesPage,
+  normalizeNotificationDeliveryDetail,
+  normalizeNotificationDefinitionsPage,
+  normalizeNotificationDraftDocument,
+  normalizeNotificationRecoveryResult,
+  normalizeWebhookDefinition,
+  normalizeWebhookTestResult,
+  type NotificationActivationModel,
+  type NotificationDeliveriesPage,
+  type NotificationDeliveryDetailModel,
+  type NotificationDefinitionsPage,
+  type NotificationDraftDocumentModel,
+  type NotificationRecoveryResultModel,
+  type WebhookDefinitionModel,
+  type WebhookTestResultModel,
+} from "../../entities/operations/notification";
 import { readRecord } from "../../entities/shared/normalize";
 
 // --- Manual action matrix ---
@@ -2928,6 +2946,533 @@ export async function revokeAutomationAuthority(
         readRecord(value, "revoke_result")["grant"],
         "grant",
       ),
+    fetchImpl,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// V2 Notification journey (Webhook definitions, signed tests, deliveries).
+//
+// The definition reads use the bounded operations projections; definition
+// mutations reuse the existing managed configuration object routes whose
+// optimistic versions remain authoritative; delivery list/recovery reuse the
+// existing notification routes whose exact status/update fences remain
+// authoritative. Nothing here submits or accepts a revision digest, a secret
+// value or a delivery body.
+
+export type NotificationDefinitionsRead =
+  | { readonly ok: true; readonly model: NotificationDefinitionsPage }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchNotificationDefinitions(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<NotificationDefinitionsRead> {
+  let response: Response;
+  try {
+    response = await fetchImpl("/api/v1/operations/notifications/webhooks", {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeNotificationDefinitionsPage(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export type NotificationDefinitionRead =
+  | { readonly ok: true; readonly model: WebhookDefinitionModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchNotificationDefinition(
+  token: string | null,
+  webhookId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<NotificationDefinitionRead> {
+  if (!isSafeIdentifier(webhookId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/notifications/webhooks/${encodeURIComponent(webhookId)}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    const source = payload as { webhook?: unknown };
+    return {
+      ok: true,
+      model: normalizeWebhookDefinition(source?.webhook, "webhook"),
+    };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export type NotificationDraftRead =
+  | { readonly ok: true; readonly model: NotificationDraftDocumentModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchNotificationDefinitionDraft(
+  token: string | null,
+  webhookId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<NotificationDraftRead> {
+  if (!isSafeIdentifier(webhookId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/notifications/webhooks/${encodeURIComponent(webhookId)}/draft`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeNotificationDraftDocument(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export interface NotificationDeliveriesQuery {
+  readonly status?: string | null;
+  readonly limit?: number;
+  readonly cursor?: string | null;
+}
+
+export type NotificationDeliveriesRead =
+  | { readonly ok: true; readonly model: NotificationDeliveriesPage }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchNotificationDeliveries(
+  token: string | null,
+  options: NotificationDeliveriesQuery = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<NotificationDeliveriesRead> {
+  const params = new URLSearchParams();
+  params.set("limit", String(options.limit ?? 20));
+  if (options.status !== null && options.status !== undefined) {
+    params.set("status", options.status);
+  }
+  if (options.cursor !== null && options.cursor !== undefined) {
+    params.set("cursor", options.cursor);
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(`/api/v1/notifications?${params.toString()}`, {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeNotificationDeliveriesPage(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export type NotificationDeliveryDetailRead =
+  | { readonly ok: true; readonly model: NotificationDeliveryDetailModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchNotificationDeliveryDetail(
+  token: string | null,
+  deliveryId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<NotificationDeliveryDetailRead> {
+  if (!isSafeIdentifier(deliveryId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/notifications/deliveries/${encodeURIComponent(deliveryId)}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeNotificationDeliveryDetail(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export interface CreateWebhookDefinitionOptions {
+  readonly revisionId: string;
+  readonly expectedVersion: number;
+  readonly object: Record<string, unknown>;
+}
+
+export async function createWebhookDefinition(
+  token: string | null,
+  options: CreateWebhookDefinitionOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<{ readonly id: string | null }>> {
+  if (!isSafeIdentifier(options.revisionId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks`,
+    { object: options.object, expectedVersion: options.expectedVersion },
+    (payload) => {
+      const source = readRecord(payload, "webhook_definition_mutation");
+      const value = source["webhook"];
+      const id =
+        value !== null && typeof value === "object" && !Array.isArray(value)
+          ? (value as Record<string, unknown>)["id"]
+          : null;
+      return { id: typeof id === "string" ? id : null };
+    },
+    fetchImpl,
+  );
+}
+
+export interface SaveWebhookDefinitionDraftOptions {
+  readonly revisionId: string;
+  readonly webhookId: string;
+  readonly expectedVersion: number;
+  readonly object: Record<string, unknown>;
+}
+
+export async function saveWebhookDefinitionDraft(
+  token: string | null,
+  options: SaveWebhookDefinitionDraftOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<{ readonly id: string | null }>> {
+  if (
+    !isSafeIdentifier(options.revisionId) ||
+    !isSafeIdentifier(options.webhookId)
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "PUT",
+    `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}`,
+    { object: options.object, expectedVersion: options.expectedVersion },
+    (payload) => {
+      const source = readRecord(payload, "webhook_definition_mutation");
+      const value = source["webhook"];
+      const id =
+        value !== null && typeof value === "object" && !Array.isArray(value)
+          ? (value as Record<string, unknown>)["id"]
+          : null;
+      return { id: typeof id === "string" ? id : null };
+    },
+    fetchImpl,
+  );
+}
+
+export interface CopyWebhookDefinitionOptions {
+  readonly revisionId: string;
+  readonly webhookId: string;
+  readonly expectedVersion: number;
+  readonly newId?: string;
+}
+
+export async function copyWebhookDefinition(
+  token: string | null,
+  options: CopyWebhookDefinitionOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<{ readonly id: string | null }>> {
+  if (
+    !isSafeIdentifier(options.revisionId) ||
+    !isSafeIdentifier(options.webhookId)
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  if (options.newId !== undefined && !isSafeIdentifier(options.newId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const body: Record<string, unknown> = {
+    expectedVersion: options.expectedVersion,
+  };
+  if (options.newId !== undefined) {
+    body.newId = options.newId;
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}/copy`,
+    body,
+    (payload) => {
+      const source = readRecord(payload, "webhook_definition_mutation");
+      const value = source["object"];
+      const id =
+        value !== null && typeof value === "object" && !Array.isArray(value)
+          ? (value as Record<string, unknown>)["id"]
+          : null;
+      return { id: typeof id === "string" ? id : null };
+    },
+    fetchImpl,
+  );
+}
+
+export interface SetWebhookDefinitionEnabledOptions {
+  readonly revisionId: string;
+  readonly webhookId: string;
+  readonly expectedVersion: number;
+  readonly enabled: boolean;
+}
+
+export async function setWebhookDefinitionEnabled(
+  token: string | null,
+  options: SetWebhookDefinitionEnabledOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<{ readonly id: string | null }>> {
+  if (
+    !isSafeIdentifier(options.revisionId) ||
+    !isSafeIdentifier(options.webhookId)
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}/${options.enabled ? "enable" : "disable"}`,
+    { expectedVersion: options.expectedVersion },
+    (payload) => {
+      const source = readRecord(payload, "webhook_definition_mutation");
+      const value = source["object"];
+      const id =
+        value !== null && typeof value === "object" && !Array.isArray(value)
+          ? (value as Record<string, unknown>)["id"]
+          : null;
+      return { id: typeof id === "string" ? id : null };
+    },
+    fetchImpl,
+  );
+}
+
+export interface TestWebhookDefinitionOptions {
+  readonly webhookId: string;
+  readonly expectedRevisionId: string;
+  readonly expectedVersion: number;
+}
+
+export async function testWebhookDefinition(
+  token: string | null,
+  options: TestWebhookDefinitionOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<WebhookTestResultModel>> {
+  if (
+    !isSafeIdentifier(options.webhookId) ||
+    !isSafeIdentifier(options.expectedRevisionId)
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/operations/notifications/webhooks/${encodeURIComponent(options.webhookId)}/test`,
+    {
+      expectedRevisionId: options.expectedRevisionId,
+      expectedVersion: options.expectedVersion,
+    },
+    (payload) => normalizeWebhookTestResult(payload),
+    fetchImpl,
+  );
+}
+
+export interface ActivateWebhookDraftOptions {
+  readonly webhookId: string;
+  readonly expectedRevisionId: string;
+  readonly expectedVersion: number;
+}
+
+export async function activateWebhookDraft(
+  token: string | null,
+  options: ActivateWebhookDraftOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<NotificationActivationModel>> {
+  if (
+    !isSafeIdentifier(options.webhookId) ||
+    !isSafeIdentifier(options.expectedRevisionId)
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/operations/notifications/webhooks/${encodeURIComponent(options.webhookId)}/activate-draft`,
+    {
+      expectedRevisionId: options.expectedRevisionId,
+      expectedVersion: options.expectedVersion,
+    },
+    (payload) => normalizeNotificationActivation(payload),
+    fetchImpl,
+  );
+}
+
+export interface RecoverDeliveryOptions {
+  readonly deliveryId: string;
+  readonly expectedStatus: string;
+  readonly expectedUpdatedAt: string;
+}
+
+export async function requeueDeadLetterDelivery(
+  token: string | null,
+  options: RecoverDeliveryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<NotificationRecoveryResultModel>> {
+  if (!isSafeIdentifier(options.deliveryId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/notifications/${encodeURIComponent(options.deliveryId)}/requeue`,
+    {
+      expectedStatus: options.expectedStatus,
+      expectedUpdatedAt: options.expectedUpdatedAt,
+    },
+    (payload) => normalizeNotificationRecoveryResult(payload),
+    fetchImpl,
+  );
+}
+
+export async function resolveStaleDelivery(
+  token: string | null,
+  options: RecoverDeliveryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<NotificationRecoveryResultModel>> {
+  if (!isSafeIdentifier(options.deliveryId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/notifications/${encodeURIComponent(options.deliveryId)}/resolve-stale`,
+    {
+      expectedStatus: options.expectedStatus,
+      expectedUpdatedAt: options.expectedUpdatedAt,
+    },
+    (payload) => normalizeNotificationRecoveryResult(payload),
+    fetchImpl,
+  );
+}
+
+export interface CreateNotificationSuccessorDraftOptions {
+  readonly activeRevisionId: string;
+}
+
+export async function createNotificationSuccessorDraft(
+  token: string | null,
+  options: CreateNotificationSuccessorDraftOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<{ readonly revisionId: string }>> {
+  if (!isSafeIdentifier(options.activeRevisionId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/configuration/revisions/${encodeURIComponent(options.activeRevisionId)}/successor`,
+    { expectedActiveRevisionId: options.activeRevisionId },
+    (payload) => {
+      const source = readRecord(payload, "notification_successor_draft");
+      return { revisionId: String(source["revisionId"] ?? "") };
+    },
     fetchImpl,
   );
 }

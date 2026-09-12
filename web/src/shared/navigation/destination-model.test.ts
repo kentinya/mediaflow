@@ -43,6 +43,12 @@ describe("destination model", () => {
       "Automation Draft editor",
       "Automation Preview",
       "Automation occurrences",
+      "Notifications",
+      "Create Webhook definition",
+      "Webhook definition",
+      "Webhook Draft editor",
+      "Notification deliveries",
+      "Notification delivery detail",
     ]);
   });
 

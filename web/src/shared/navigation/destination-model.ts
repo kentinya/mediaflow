@@ -255,6 +255,61 @@ const childDestinationData = [
       "Bounded occurrence history with pinned snapshots and linked work.",
     dynamicPrefix: "/operations/automation/occurrences/" as const,
   },
+  {
+    id: "operations-notifications",
+    label: "Notifications",
+    path: "/operations/notifications",
+    title: "Notifications | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Webhook Definitions, signed endpoint tests and durable deliveries.",
+  },
+  {
+    id: "operations-notification-new",
+    label: "Create Webhook definition",
+    path: "/operations/notifications/webhooks/new",
+    title: "Create Webhook definition | MediaFlow",
+    availability: "implemented" as const,
+    description: "Bounded successor-Draft form for one Webhook definition.",
+  },
+  {
+    id: "operations-notification-definition",
+    label: "Webhook definition",
+    path: "/operations/notifications/webhooks/$webhookId",
+    title: "Webhook definition | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Active and Draft identity, secret readiness, signed test and actions.",
+    dynamicPrefix: "/operations/notifications/webhooks/" as const,
+  },
+  {
+    id: "operations-notification-editor",
+    label: "Webhook Draft editor",
+    path: "/operations/notifications/editor/$webhookId",
+    title: "Webhook Draft editor | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Bounded Draft form, explicit validation and checked activation.",
+    dynamicPrefix: "/operations/notifications/editor/" as const,
+  },
+  {
+    id: "operations-notification-deliveries",
+    label: "Notification deliveries",
+    path: "/operations/notifications/deliveries",
+    title: "Notification deliveries | MediaFlow",
+    availability: "implemented" as const,
+    description: "Bounded delivery list with status filter and paging.",
+  },
+  {
+    id: "operations-notification-delivery-detail",
+    label: "Notification delivery detail",
+    path: "/operations/notifications/deliveries/$deliveryId",
+    title: "Notification delivery detail | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Exact delivery state, lease evidence and eligible recovery actions.",
+    dynamicPrefix: "/operations/notifications/deliveries/" as const,
+  },
 ] as const;
 
 export type DestinationAvailability = "implemented" | "migration";
@@ -352,6 +407,8 @@ export function isDestinationPath(value: string): value is DestinationPath {
 
 /** A backend-submitted Operations status filter is a bounded lowercase token. */
 const STATUS_FILTER_TOKEN = /^[a-z][a-z0-9_]{0,31}$/;
+/** A backend-submitted delivery status filter is hyphenated (`dead-letter`). */
+const DELIVERY_STATUS_FILTER_TOKEN = /^[a-z][a-z0-9-]{0,31}$/;
 /** A backend-submitted Operations command filter is a bounded work-kind token. */
 const COMMAND_FILTER_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 
@@ -464,6 +521,20 @@ export function allowlistedDestinationSearch(
     }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
+  if (path === "/operations/notifications/deliveries") {
+    // Only the backend-submitted delivery status filter travels in the URL.
+    // Delivery statuses are hyphenated (`dead-letter`), so this route uses its
+    // own bounded token grammar; anything else is dropped before reconnect.
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    setFilterToken(
+      allowed,
+      "status",
+      current.get("status"),
+      DELIVERY_STATUS_FILTER_TOKEN,
+    );
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
   if (path === "/operations/tasks" || path === "/operations/jobs") {
     // Only the backend-submitted filter values travel in the URL, so a
     // reconnect resumes the same bounded collection read and never replays
@@ -533,7 +604,11 @@ export function allowlistedDestinationSearch(
     path === "/operations/automation/definition/$definitionId" ||
     path === "/operations/automation/editor/$definitionId" ||
     path === "/operations/automation/preview/$definitionId/$previewId" ||
-    path === "/operations/automation/occurrences/$definitionId"
+    path === "/operations/automation/occurrences/$definitionId" ||
+    path === "/operations/notifications/webhooks/new" ||
+    path === "/operations/notifications/webhooks/$webhookId" ||
+    path === "/operations/notifications/editor/$webhookId" ||
+    path === "/operations/notifications/deliveries/$deliveryId"
   ) {
     // Detail routes carry no search state.
     return null;
