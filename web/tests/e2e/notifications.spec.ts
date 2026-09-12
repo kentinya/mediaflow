@@ -345,7 +345,9 @@ test("a wrong-object success document never renders as a completed mutation", as
     page.getByRole("heading", { name: `Webhook ${WEBHOOK_ID}` }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Webhook another-webhook" }),
+    page.getByRole("heading", {
+      name: "Webhook operations-webhook-copy-malicious",
+    }),
   ).toHaveCount(0);
 
   await page.getByRole("link", { name: "Open deliveries" }).click();

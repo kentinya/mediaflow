@@ -3280,6 +3280,16 @@ export interface CopyWebhookDefinitionOptions {
   readonly newId?: string;
 }
 
+/**
+ * Pin the copy identity before submission so the response can be bound to
+ * this exact mutation. This mirrors the managed configuration allocator:
+ * "{source}-copy", truncated to leave room for the suffix when necessary.
+ */
+export function webhookCopyId(webhookId: string): string {
+  const base = `${webhookId}-copy`;
+  return base.length > 64 ? `${webhookId.slice(0, 58)}-copy` : base;
+}
+
 export async function copyWebhookDefinition(
   token: string | null,
   options: CopyWebhookDefinitionOptions,
@@ -3294,12 +3304,11 @@ export async function copyWebhookDefinition(
   if (options.newId !== undefined && !isSafeIdentifier(options.newId)) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
+  const requestedNewId = options.newId ?? webhookCopyId(options.webhookId);
   const body: Record<string, unknown> = {
     expectedVersion: options.expectedVersion,
+    newId: requestedNewId,
   };
-  if (options.newId !== undefined) {
-    body.newId = options.newId;
-  }
   return submitAutomationMutation(
     token,
     "POST",
@@ -3312,7 +3321,7 @@ export async function copyWebhookDefinition(
         documentField: "object",
         expectedId: null,
         copySourceId: options.webhookId,
-        copyNewId: options.newId ?? null,
+        copyNewId: requestedNewId,
         // The managed copy stores a new, disabled Draft definition.
         expectedEnabled: false,
       }),
