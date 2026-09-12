@@ -444,7 +444,7 @@ this correction checkpoint.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: pending correction commit
+Head SHA: 8a0048008057beabada1a36c53d5fdc3153e8e7b
 ```
 
 ## B Review Result
