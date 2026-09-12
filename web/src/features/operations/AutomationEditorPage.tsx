@@ -3,10 +3,13 @@
  *
  * The editor reads the backend's Draft document: the exact open Draft with its
  * optimistic version, the bounded definition form, and the backend-advertised
- * save/validate/activate transports. Saving, validation and checked
- * activation are separate explicit actions bound to the exact Draft revision;
- * a stale version is rejected atomically and the page refreshes to durable
- * truth without replaying anything. Activation never starts work.
+ * save/validate/activate transports. Every definition field the journey owns
+ * is editable — ResourceLibrary (from the backend's authoritative options),
+ * run mode, item limit, source scope and exactly one interval or
+ * Cron/timezone schedule. Saving, validation and checked activation are
+ * separate explicit actions bound to the exact Draft revision identity and
+ * version; a stale revision is rejected atomically and the page refreshes to
+ * durable truth without replaying anything. Activation never starts work.
  */
 
 import { useState } from "react";
@@ -23,10 +26,28 @@ import {
   automationDraftQueryKey,
   automationDraftQueryOptions,
 } from "./automation-query";
+import {
+  AUTOMATION_RUN_MODES,
+  type AutomationRunMode,
+} from "../../entities/operations/automation";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
+
+interface DefinitionFormState {
+  readonly revisionId: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly resourceLibraryId: string;
+  readonly mode: AutomationRunMode;
+  readonly sourceScope: string;
+  readonly itemLimit: string;
+  readonly scheduleType: "interval" | "cron";
+  readonly intervalSeconds: string;
+  readonly cron: string;
+  readonly timezone: string;
+}
 
 export function AutomationEditorPage() {
   const { definitionId } = useParams({
@@ -35,13 +56,7 @@ export function AutomationEditorPage() {
   const token = useAuthToken();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<{
-    readonly revisionId: string;
-    readonly name: string;
-    readonly enabled: boolean;
-    readonly sourceScope: string;
-    readonly itemLimit: string;
-  } | null>(null);
+  const [form, setForm] = useState<DefinitionFormState | null>(null);
   const [confirmActivate, setConfirmActivate] = useState(false);
   const [validationErrors, setValidationErrors] = useState<readonly string[]>(
     [],
@@ -56,7 +71,7 @@ export function AutomationEditorPage() {
   // The form state is derived per Draft revision: the first render of a given
   // revision seeds the bounded form from the durable document, and every edit
   // updates that exact revision's form. No effect re-seeds it.
-  const currentForm =
+  const currentForm: DefinitionFormState | null =
     form !== null &&
     loadedDraft !== null &&
     form.revisionId === loadedDraft.revisionId
@@ -66,18 +81,20 @@ export function AutomationEditorPage() {
             revisionId: loadedDraft.revisionId,
             name: loadedDraft.definition.name,
             enabled: loadedDraft.definition.enabled,
+            resourceLibraryId: loadedDraft.definition.resourceLibraryId,
+            mode: loadedDraft.definition.mode,
             sourceScope: loadedDraft.definition.sourceScope ?? "",
             itemLimit: String(loadedDraft.definition.itemLimit),
+            scheduleType: loadedDraft.definition.scheduleType,
+            intervalSeconds:
+              loadedDraft.definition.intervalSeconds !== null
+                ? String(loadedDraft.definition.intervalSeconds)
+                : "",
+            cron: loadedDraft.definition.cron ?? "",
+            timezone: loadedDraft.definition.timezone ?? "",
           }
         : null;
-  const updateForm = (
-    patch: Partial<{
-      name: string;
-      enabled: boolean;
-      sourceScope: string;
-      itemLimit: string;
-    }>,
-  ) => {
+  const updateForm = (patch: Partial<DefinitionFormState>) => {
     if (currentForm !== null) {
       setForm({ ...currentForm, ...patch });
     }
@@ -157,9 +174,13 @@ export function AutomationEditorPage() {
   });
 
   const activateMutation = useMutation({
-    mutationFn: (input: { expectedVersion: number }) =>
+    mutationFn: (input: {
+      expectedRevisionId: string;
+      expectedVersion: number;
+    }) =>
       activateAutomationDraft(token, {
         definitionId,
+        expectedRevisionId: input.expectedRevisionId,
         expectedVersion: input.expectedVersion,
       }),
     retry: false,
@@ -275,16 +296,41 @@ export function AutomationEditorPage() {
         const formItemLimit = currentForm?.itemLimit ?? "";
         const formEnabled = currentForm?.enabled ?? false;
         const formScope = currentForm?.sourceScope ?? "";
+        const formLibrary = currentForm?.resourceLibraryId ?? "";
+        const formMode = currentForm?.mode ?? draft.definition.mode;
+        const formScheduleType = currentForm?.scheduleType ?? "interval";
+        const formInterval = currentForm?.intervalSeconds ?? "";
+        const formCron = currentForm?.cron ?? "";
+        const formTimezone = currentForm?.timezone ?? "";
         const formValid =
           formName.trim().length > 0 &&
+          formLibrary.length > 0 &&
           /^\d+$/.test(formItemLimit) &&
-          Number(formItemLimit) > 0;
+          Number(formItemLimit) > 0 &&
+          (formScheduleType === "interval"
+            ? /^\d+$/.test(formInterval) && Number(formInterval) > 0
+            : formCron.trim().length > 0 && formTimezone.trim().length > 0);
         const buildObject = (): Record<string, unknown> => ({
           ...draft.definition,
           name: formName.trim(),
           enabled: formEnabled,
+          resourceLibraryId: formLibrary,
+          mode: formMode,
           ...(formScope ? { sourceScope: formScope } : { sourceScope: null }),
           itemLimit: Number(formItemLimit),
+          // Exactly one schedule form is stored: the unused form is cleared
+          // so the optimistic save can never carry a contradictory pair.
+          ...(formScheduleType === "interval"
+            ? {
+                intervalSeconds: Number(formInterval),
+                cron: null,
+                timezone: null,
+              }
+            : {
+                intervalSeconds: null,
+                cron: formCron.trim(),
+                timezone: formTimezone.trim(),
+              }),
         });
         return (
           <div className="mf-dashboard">
@@ -356,13 +402,108 @@ export function AutomationEditorPage() {
                 }
                 inputMode="numeric"
               />
-              <p className="mf-dashboard-meta">
-                ResourceLibrary {draft.definition.resourceLibraryId} · mode{" "}
-                {draft.definition.mode} · schedule{" "}
-                {draft.definition.scheduleType === "interval"
-                  ? `every ${draft.definition.intervalSeconds} seconds`
-                  : `${draft.definition.cron} (${draft.definition.timezone})`}
+              <p className="mf-label">
+                <label htmlFor="automation-edit-library">ResourceLibrary</label>
               </p>
+              <select
+                id="automation-edit-library"
+                value={formLibrary}
+                onChange={(event) =>
+                  updateForm({ resourceLibraryId: event.target.value })
+                }
+              >
+                <option value="">select one ResourceLibrary</option>
+                {draftDocument.resourceLibraryOptions.map((option) => (
+                  <option
+                    key={option.id}
+                    value={option.id}
+                    disabled={!option.enabled}
+                  >
+                    {option.name ?? option.id}
+                    {option.enabled ? "" : " (disabled)"}
+                  </option>
+                ))}
+              </select>
+              <p className="mf-label">
+                <label htmlFor="automation-edit-mode">Run mode</label>
+              </p>
+              <select
+                id="automation-edit-mode"
+                value={formMode}
+                onChange={(event) =>
+                  updateForm({ mode: event.target.value as AutomationRunMode })
+                }
+              >
+                {" "}
+                {AUTOMATION_RUN_MODES.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {mode}
+                  </option>
+                ))}
+              </select>
+              <p className="mf-label">
+                <label htmlFor="automation-edit-schedule-type">
+                  Schedule type
+                </label>
+              </p>
+              <select
+                id="automation-edit-schedule-type"
+                value={formScheduleType}
+                onChange={(event) =>
+                  updateForm({
+                    scheduleType:
+                      event.target.value === "cron" ? "cron" : "interval",
+                  })
+                }
+              >
+                <option value="interval">interval (seconds)</option>
+                <option value="cron">Cron with timezone</option>
+              </select>
+              {formScheduleType === "interval" ? (
+                <>
+                  <p className="mf-label">
+                    <label htmlFor="automation-edit-interval">
+                      Interval seconds
+                    </label>
+                  </p>
+                  <input
+                    id="automation-edit-interval"
+                    value={formInterval}
+                    onChange={(event) =>
+                      updateForm({ intervalSeconds: event.target.value })
+                    }
+                    inputMode="numeric"
+                  />
+                </>
+              ) : (
+                <>
+                  <p className="mf-label">
+                    <label htmlFor="automation-edit-cron">
+                      Cron expression
+                    </label>
+                  </p>
+                  <input
+                    id="automation-edit-cron"
+                    value={formCron}
+                    onChange={(event) =>
+                      updateForm({ cron: event.target.value })
+                    }
+                    placeholder="0 8 * * *"
+                    maxLength={64}
+                  />
+                  <p className="mf-label">
+                    <label htmlFor="automation-edit-timezone">Timezone</label>
+                  </p>
+                  <input
+                    id="automation-edit-timezone"
+                    value={formTimezone}
+                    onChange={(event) =>
+                      updateForm({ timezone: event.target.value })
+                    }
+                    maxLength={64}
+                  />
+                </>
+              )}
             </section>
             <div className="mf-actions">
               <Button
@@ -436,6 +577,7 @@ export function AutomationEditorPage() {
                     }
                     onClick={() =>
                       activateMutation.mutate({
+                        expectedRevisionId: draft.revisionId,
                         expectedVersion: draft.revisionVersion,
                       })
                     }

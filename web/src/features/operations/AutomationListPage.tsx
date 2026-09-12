@@ -119,7 +119,7 @@ export function AutomationListPage() {
               {page.items.length === 0 && (
                 <p className="mf-dashboard-meta">
                   No Automation Task Definition exists in the Active
-                  configuration.
+                  configuration or in an open successor Draft.
                 </p>
               )}
               {page.items.map((definition) => {
@@ -142,6 +142,9 @@ export function AutomationListPage() {
                       <span className="mf-status-badge">
                         {definition.document.enabled ? "enabled" : "disabled"}
                       </span>
+                      {definition.definitionState === "draft-only" && (
+                        <span className="mf-status-badge">draft-only</span>
+                      )}
                       {definition.grant.status === "active" && (
                         <span className="mf-status-badge">granted</span>
                       )}

@@ -2810,6 +2810,7 @@ export async function validateAutomationDraft(
 
 export interface ActivateAutomationDraftOptions {
   readonly definitionId: string;
+  readonly expectedRevisionId: string;
   readonly expectedVersion: number;
 }
 
@@ -2818,14 +2819,20 @@ export async function activateAutomationDraft(
   options: ActivateAutomationDraftOptions,
   fetchImpl: FetchLike = fetch,
 ): Promise<AutomationMutationResult<AutomationActivationModel>> {
-  if (!isSafeIdentifier(options.definitionId)) {
+  if (
+    !isSafeIdentifier(options.definitionId) ||
+    !isSafeIdentifier(options.expectedRevisionId)
+  ) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
   return submitAutomationMutation(
     token,
     "POST",
     `/api/v1/operations/automation/task-definitions/${encodeURIComponent(options.definitionId)}/activate-draft`,
-    { expectedVersion: options.expectedVersion },
+    {
+      expectedRevisionId: options.expectedRevisionId,
+      expectedVersion: options.expectedVersion,
+    },
     normalizeAutomationActivation,
     fetchImpl,
   );

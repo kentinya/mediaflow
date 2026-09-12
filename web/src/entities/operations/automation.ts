@@ -41,6 +41,14 @@ export type AutomationRunMode = (typeof AUTOMATION_RUN_MODES)[number];
 
 export const AUTOMATION_OPEN_DRAFT_STATUSES = ["draft", "validated"] as const;
 
+/**
+ * Where the definition durably lives: in the immutable Active configuration,
+ * or only inside an open successor Draft (newly created or copied). A
+ * document without this exact state marker is malformed so no Draft can ever
+ * be rendered as Active.
+ */
+export const AUTOMATION_DEFINITION_STATES = ["active", "draft-only"] as const;
+
 export const AUTOMATION_GRANT_STATUSES = ["none", "active", "revoked"] as const;
 
 export const AUTOMATION_PERMISSION_STATUSES = [
@@ -833,6 +841,7 @@ export function normalizeAutomationDefinitionDocument(
 
 export interface AutomationDefinitionModel {
   readonly document: AutomationDefinitionDocumentModel;
+  readonly definitionState: (typeof AUTOMATION_DEFINITION_STATES)[number];
   readonly nextRunAt: string | null;
   readonly lastOccurrenceAt: string | null;
   readonly lastJobId: string | null;
@@ -877,6 +886,11 @@ export function normalizeAutomationDefinition(
   const identity = document.id;
   return {
     document,
+    definitionState: enumOrFail(
+      source["definitionState"],
+      `${field}.definitionState`,
+      AUTOMATION_DEFINITION_STATES,
+    ),
     nextRunAt: optionalText(occurrence, "nextRunAt"),
     lastOccurrenceAt: optionalText(occurrence, "lastOccurrenceAt"),
     lastJobId: optionalText(occurrence, "lastJobId"),
