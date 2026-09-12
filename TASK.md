@@ -405,7 +405,7 @@ checkpoint.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: recorded by the follow-up docs(task) commit and verified with git cat-file -e
+Head SHA: 1305d0790632c5b28029c80cfda7bfa80e9a42a1
 ```
 
 ## B Review Result
