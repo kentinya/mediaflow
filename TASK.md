@@ -407,7 +407,7 @@ python3 scripts/docker_release_security_smoke_test.py                           
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: PENDING_COMMIT
+Head SHA: df0b101ca2de033c87bb9e097bc3655678bbbb47
 ```
 
 ## B Review Result
