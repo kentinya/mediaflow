@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   normalizeAutomationAction,
+  normalizeAutomationDefinition,
   normalizeAutomationDefinitionsPage,
   normalizeAutomationDraftState,
   normalizeAutomationEligibility,
@@ -510,5 +511,162 @@ describe("normalizeAutomationDefinitionsPage", () => {
         ...({ items: "many" } as unknown as Record<string, unknown>),
       }),
     ).toThrow(AutomationNormalizationError);
+  });
+
+  it("fails closed on a definition without an exact durable state marker", () => {
+    const actions = {
+      detail: {
+        available: true,
+        reason: null,
+        method: "GET",
+        path: "/api/v1/operations/automation/task-definitions/auto-task",
+        sideEffects: "none",
+        durableOutcome: null,
+        nextAction: "inspect the durable definition state",
+      },
+      occurrences: {
+        available: true,
+        reason: null,
+        method: "GET",
+        path: "/api/v1/operations/automation/task-definitions/auto-task/occurrences",
+        sideEffects: "none",
+        durableOutcome: null,
+        nextAction: "inspect the bounded occurrence history",
+      },
+      preview: {
+        available: false,
+        reason: "not Active yet",
+        method: "POST",
+        path: "/api/v1/automation/task-definitions/auto-task/preview",
+        sideEffects: "none",
+        durableOutcome: "a durable zero-mutation Preview is stored",
+        nextAction: "activate the Draft, then create the exact Preview",
+      },
+      grantState: {
+        available: true,
+        reason: null,
+        method: "GET",
+        path: "/api/v1/automation/task-definitions/auto-task/grant-state",
+        sideEffects: "none",
+        durableOutcome: null,
+        nextAction: "read the current grant state",
+      },
+      grant: {
+        available: false,
+        reason: "not Active yet",
+        method: "POST",
+        path: "/api/v1/automation/task-definitions/auto-task/grant",
+        requiresConfirmation: true,
+        sideEffects: "none",
+        durableOutcome:
+          "a persistent scoped unattended execution grant is stored",
+        nextAction: "activate the Draft before granting unattended authority",
+      },
+      revoke: {
+        available: false,
+        reason: "not Active yet",
+        method: "POST",
+        path: "/api/v1/automation/task-definitions/auto-task/revoke",
+        sideEffects: "none",
+        durableOutcome: "the grant is revoked",
+        nextAction: "activate the Draft before granting unattended authority",
+      },
+      copy: {
+        available: true,
+        reason: null,
+        method: "POST",
+        path: "/api/v1/automation/task-definitions/auto-task/copy",
+        sideEffects: "none",
+        durableOutcome: "a copied definition is stored inside the Draft",
+        nextAction: "copy the definition inside the open successor Draft",
+      },
+      draftCreate: {
+        available: true,
+        reason: null,
+        method: "POST",
+        path: "/api/v1/configuration/revisions/rev-1/successor",
+        sideEffects: "none",
+        durableOutcome: "a successor Draft is stored",
+        nextAction: "create or open the successor Draft",
+      },
+    };
+    const activeDefinition = {
+      id: "auto-task",
+      name: "Nightly automation",
+      definitionState: "active",
+      enabled: true,
+      resourceLibraryId: "source",
+      mode: "scan-only",
+      itemLimit: 5,
+      sourceScope: null,
+      intervalSeconds: 3600,
+      activeConfiguration: {
+        revisionId: "rev-1",
+        version: 3,
+        revisionSequence: 2,
+        status: "active",
+      },
+      occurrenceState: {
+        nextRunAt: null,
+        lastOccurrenceAt: null,
+        lastJobId: null,
+        lastTaskId: null,
+        lastOutcome: null,
+        lastReason: null,
+        nextAction: null,
+        lastFailureCategory: null,
+        outcomeSummary: null,
+      },
+      unattendedExecutionGrant: {
+        status: "none",
+        active: false,
+        grantId: null,
+        definitionId: "auto-task",
+        definitionChangedSinceGrant: false,
+        nextAction: "review the exact bounds and explicitly grant",
+      },
+      draftState: {
+        present: false,
+        reason: "no open successor Draft contains this definition",
+        revisionId: null,
+        revisionVersion: null,
+        revisionStatus: null,
+        baseActiveRevisionId: null,
+        updatedAt: null,
+        validatedAt: null,
+        validationErrors: [],
+      },
+      actions,
+    };
+    // A definition whose state marker is missing, hostile or claims Active
+    // while it only lives in a Draft is malformed evidence: the UI renders
+    // no control instead of guessing.
+    expect(() =>
+      normalizeAutomationDefinition(
+        { ...activeDefinition, definitionState: undefined },
+        "definition",
+      ),
+    ).toThrow(AutomationNormalizationError);
+    for (const stateValue of ["published", 1, null]) {
+      expect(() =>
+        normalizeAutomationDefinition(
+          { ...activeDefinition, definitionState: stateValue },
+          "definition",
+        ),
+      ).toThrow(AutomationNormalizationError);
+    }
+    expect(
+      normalizeAutomationDefinition(
+        {
+          ...activeDefinition,
+          definitionState: "draft-only",
+        },
+        "definition",
+      ).definitionState,
+    ).toBe("draft-only");
+    expect(
+      normalizeAutomationDefinition(activeDefinition, "definition")
+        .definitionState,
+    ).toBe("active");
   });
 });

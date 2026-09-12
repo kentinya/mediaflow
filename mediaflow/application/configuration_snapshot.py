@@ -560,13 +560,12 @@ class ManagedConfigurationService:
         Only ``draft`` and ``validated`` revisions are open editing authority.
         The immutable Active revision and superseded history are excluded, so
         an eligible Draft is always one that can still be edited, validated
-        and explicitly activated.
+        and explicitly activated. Repository failures propagate to the caller:
+        an unavailable Draft read must never be presented as a legitimate
+        empty-Draft state.
         """
 
-        try:
-            values = self._repository.list_revisions(limit=limit)
-        except Exception:
-            return ()
+        values = self._repository.list_revisions(limit=limit)
         return tuple(
             revision
             for revision in values

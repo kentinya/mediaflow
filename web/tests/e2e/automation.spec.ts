@@ -199,6 +199,12 @@ test("the Draft journey composes successor Draft, bounded save, validation and c
 
   const name = page.getByLabel("Name");
   await name.fill("Renamed nightly automation");
+  // Every owned definition field is editable: run mode and the exact
+  // schedule form transition from interval to Cron/timezone.
+  await page.getByLabel("Run mode").selectOption("scan-and-plan");
+  await page.getByLabel("Schedule type").selectOption("cron");
+  await page.getByLabel("Cron expression").fill("0 8 * * *");
+  await page.getByLabel("Timezone").fill("Asia/Shanghai");
   await page.getByRole("button", { name: "Save into Draft" }).click();
   await expect(page.getByText(/Draft validation findings/)).toBeHidden();
 
@@ -226,16 +232,110 @@ test("the Draft journey composes successor Draft, bounded save, validation and c
   );
   expect(save?.body).toMatchObject({
     expectedVersion: 2,
-    object: { name: "Renamed nightly automation", id: DEFINITION_ID },
+    object: {
+      name: "Renamed nightly automation",
+      id: DEFINITION_ID,
+      mode: "scan-and-plan",
+      intervalSeconds: null,
+      cron: "0 8 * * *",
+      timezone: "Asia/Shanghai",
+    },
   });
   const activations = evidence.items.filter(
     (item) => item.method === "POST" && item.path.endsWith("/activate-draft"),
   );
   expect(activations).toHaveLength(1);
-  expect(activations[0]?.body).toMatchObject({ expectedVersion: 3 });
+  expect(activations[0]?.body).toMatchObject({
+    expectedRevisionId: DRAFT_REVISION,
+    expectedVersion: 3,
+  });
   expect(JSON.stringify(evidence.items)).not.toMatch(
     /expectedDigest|"digest"/i,
   );
+});
+
+test("a created definition stays reachable as a draft-only detail until activation", async ({
+  page,
+}) => {
+  await connect(page);
+  await openAutomation(page);
+  await page
+    .getByRole("link", { name: "Create Automation definition" })
+    .click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\/new$/);
+  // No Draft exists yet in this fresh session: start one explicitly.
+  await page.getByRole("button", { name: "Start successor Draft" }).click();
+  await page.getByLabel("Name").fill("Created automation");
+  await page.getByLabel("ResourceLibrary").selectOption("source");
+  await page.getByLabel("Run mode").selectOption("scan-and-plan");
+  await page.getByLabel("Schedule type").selectOption("cron");
+  await page.getByLabel("Cron expression").fill("0 8 * * *");
+  await page.getByLabel("Timezone").fill("UTC");
+  await page
+    .getByRole("button", { name: "Create definition in Draft" })
+    .click();
+
+  // The create journey lands on the exact created definition: reachable,
+  // truthfully marked draft-only, never presented as Active.
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\/definition\/automation-\d+$/,
+  );
+  await expect(
+    page.getByRole("heading", {
+      name: "Automation definition Created automation",
+    }),
+  ).toBeVisible();
+  await expect(page.getByText(/draft-only/).first()).toBeVisible();
+  await expect(page.getByText(/Open successor Draft/)).toBeVisible();
+
+  // The draft-only definition stays editable through its open Draft.
+  await page
+    .getByRole("link", { name: "Edit successor Draft" })
+    .first()
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Edit Automation definition" }),
+  ).toBeVisible();
+  const nameInput = page.getByLabel("Name");
+  await expect(nameInput).toHaveValue("Created automation");
+  await nameInput.fill("Renamed created automation");
+  await page.getByRole("button", { name: "Save into Draft" }).click();
+
+  const evidence = await automationEvidence(page);
+  const saves = evidence.items.filter(
+    (item) =>
+      item.method === "PUT" &&
+      item.path.includes("/objects/automationTaskDefinitions/"),
+  );
+  expect(saves).toHaveLength(1);
+  const savedId = (saves[0]?.body as { object?: { id?: string } })?.object?.id;
+  expect(savedId).toMatch(/^automation-\d+$/);
+  expect(saves[0]?.body).toMatchObject({
+    object: { name: "Renamed created automation" },
+  });
+});
+
+test("copy completes into a reachable draft-only definition", async ({
+  page,
+}) => {
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
+  );
+  await page.getByRole("button", { name: "Start successor Draft" }).click();
+  await expect(page.getByText(/Open successor Draft/)).toBeVisible();
+  await page.getByRole("button", { name: "Copy into Draft" }).click();
+
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\/definition\/automation-def-e2e-copy$/,
+  );
+  await expect(
+    page.getByRole("heading", {
+      name: "Automation definition Nightly automation copy",
+    }),
+  ).toBeVisible();
+  await expect(page.getByText(/draft-only/).first()).toBeVisible();
+  await expect(page.getByText(/Open successor Draft/)).toBeVisible();
 });
 
 test("occurrence history links the exact Job and Task without emitting work", async ({

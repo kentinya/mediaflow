@@ -189,6 +189,9 @@ export function AutomationDetailPage() {
                 <h2>Automation definition {doc.name}</h2>
                 <p className="mf-dashboard-meta">
                   {doc.id} ·{" "}
+                  {definition.definitionState === "draft-only" && (
+                    <>draft-only · </>
+                  )}
                   {definition.activeConfiguration
                     ? `Active revision ${definition.activeConfiguration.revisionId} · version ${definition.activeConfiguration.version}`
                     : "no Active configuration"}

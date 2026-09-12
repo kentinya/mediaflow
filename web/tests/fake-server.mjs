@@ -1667,6 +1667,7 @@ const MANUAL_REQUEST_BODY_FIELDS = [
   "confirmation",
   "expectedIntentVersion",
   "expectedItemVersion",
+  "expectedRevisionId",
   "expectedVersion",
   "fileId",
   "itemIds",
@@ -2977,6 +2978,8 @@ function automationState(session) {
       previewStale: false,
       granted: false,
       activated: false,
+      createdDefinition: null,
+      copiedDefinition: null,
     };
     AUTOMATION_STATES.set(key, value);
   }
@@ -3153,6 +3156,7 @@ function automationDefinitionDocument(state, token) {
   return {
     id: AUTOMATION_DEFINITION_ID,
     name: "Nightly automation",
+    definitionState: "active",
     enabled: true,
     resourceLibraryId: "source",
     mode: "automatic-organization",
@@ -3231,8 +3235,159 @@ function automationDefinitionDocument(state, token) {
   };
 }
 
+/**
+ * A definition that exists only inside the open successor Draft (newly
+ * created or copied): truthful draft-only state, empty occurrence history,
+ * no grant and no Active-definition actions until checked activation.
+ */
+function automationDraftOnlyDefinitionDocument(state, token, definition) {
+  const { manage } = automationPermissions(token);
+  const notActiveReason =
+    "this definition exists only inside an open successor Draft; " +
+    "activate the Draft to make it the Active definition";
+  return {
+    id: definition.id,
+    name: definition.name,
+    definitionState: "draft-only",
+    enabled: definition.enabled === true,
+    resourceLibraryId: definition.resourceLibraryId,
+    mode: definition.mode,
+    itemLimit: definition.itemLimit,
+    sourceScope: null,
+    intervalSeconds: definition.intervalSeconds ?? null,
+    cron: definition.cron ?? null,
+    timezone: definition.timezone ?? null,
+    occurrence: {
+      enabled: definition.enabled === true,
+      nextRunAt: null,
+      lastOccurrenceAt: null,
+      lastJobId: null,
+      lastTaskId: null,
+      lastOutcome: null,
+      lastReason: null,
+      nextAction: null,
+      lastFailureCategory: null,
+      outcomeSummary: null,
+    },
+    unattendedExecutionGrant: {
+      status: "none",
+      active: false,
+      grantId: null,
+      definitionId: definition.id,
+      definitionChangedSinceGrant: false,
+      nextAction:
+        "review the exact definition bounds and explicitly grant unattended execution",
+    },
+    activeConfiguration: {
+      revisionId: state.activated
+        ? AUTOMATION_DRAFT_REVISION
+        : AUTOMATION_ACTIVE_REVISION,
+      version: state.activated ? 4 : 3,
+      revisionSequence: state.activated ? 3 : 2,
+      status: "active",
+    },
+    draftState: {
+      present: true,
+      reason: null,
+      revisionId: AUTOMATION_DRAFT_REVISION,
+      revisionVersion: state.draftVersion,
+      revisionStatus: state.draftStatus,
+      baseActiveRevisionId: AUTOMATION_ACTIVE_REVISION,
+      updatedAt: MANUAL_RECORDED_AT,
+      validatedAt:
+        state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
+      validationErrors: [],
+    },
+    actions: {
+      detail: automationAction({
+        available: true,
+        method: "GET",
+        path: `/api/v1/operations/automation/task-definitions/${definition.id}`,
+        durableOutcome: null,
+        nextAction:
+          "inspect the durable definition, schedule and occurrence state",
+      }),
+      occurrences: automationAction({
+        available: true,
+        method: "GET",
+        path: `/api/v1/operations/automation/task-definitions/${definition.id}/occurrences`,
+        durableOutcome: null,
+        nextAction:
+          "inspect the bounded occurrence history and its linked work",
+      }),
+      preview: automationAction({
+        available: false,
+        reason: notActiveReason,
+        path: `/api/v1/automation/task-definitions/${definition.id}/preview`,
+        durableOutcome:
+          "a durable zero-mutation Preview of the exact Active definition is stored",
+        nextAction: "activate the Draft, then create the exact Preview",
+      }),
+      grantState: automationAction({
+        available: true,
+        method: "GET",
+        path: `/api/v1/automation/task-definitions/${definition.id}/grant-state`,
+        durableOutcome: null,
+        nextAction:
+          "read the current unattended grant state and its eligibility",
+      }),
+      grant: automationAction({
+        available: false,
+        reason: notActiveReason,
+        path: `/api/v1/automation/task-definitions/${definition.id}/grant`,
+        requiresConfirmation: true,
+        durableOutcome:
+          "a persistent scoped unattended execution grant is stored and audited",
+        nextAction: "activate the Draft before granting unattended authority",
+      }),
+      revoke: automationAction({
+        available: false,
+        reason: notActiveReason,
+        path: `/api/v1/automation/task-definitions/${definition.id}/revoke`,
+        durableOutcome:
+          "the grant is revoked; future unattended mutation is prevented without rewriting completed effects",
+        nextAction: "activate the Draft before granting unattended authority",
+      }),
+      copy: automationAction({
+        available: manage && state.draftCreated,
+        reason: manage
+          ? state.draftCreated
+            ? null
+            : "an open successor Draft is required to copy this definition"
+          : "the connected API principal cannot copy Automation Task Definitions",
+        path: `/api/v1/automation/task-definitions/${definition.id}/copy`,
+        durableOutcome:
+          "a copied definition is stored inside the open successor Draft",
+        nextAction: "copy the definition inside the open successor Draft",
+      }),
+      draftCreate: automationAction({
+        available: manage,
+        reason: manage
+          ? null
+          : "the connected API principal cannot create a successor Draft",
+        path: `/api/v1/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
+        durableOutcome:
+          "a successor Draft seeded from the immutable Active configuration is stored",
+        nextAction:
+          "create or open the successor Draft, then edit this definition inside it",
+      }),
+    },
+  };
+}
+
 function automationListDocument(state, token) {
   const { manage } = automationPermissions(token);
+  const items = [automationDefinitionDocument(state, token)];
+  // Newly created or copied definitions live only inside the open Draft
+  // until activation; the list mirrors the real backend projection by
+  // serving them as draft-only items.
+  for (const definition of [state.createdDefinition, state.copiedDefinition]) {
+    if (definition !== null && definition !== undefined) {
+      items.push(
+        automationDraftOnlyDefinitionDocument(state, token, definition),
+      );
+    }
+  }
   return {
     activeConfiguration: {
       revisionId: state.activated
@@ -3242,8 +3397,8 @@ function automationListDocument(state, token) {
       revisionSequence: state.activated ? 3 : 2,
       status: "active",
     },
-    items: [automationDefinitionDocument(state, token)],
-    total: 1,
+    items,
+    total: items.length,
     truncated: false,
     draftState: state.draftCreated
       ? {
@@ -3298,8 +3453,12 @@ function automationListDocument(state, token) {
   };
 }
 
-function automationDraftDocument(state, token) {
+function automationDraftDocument(state, token, definitionOverride = null) {
   const { manage, activate } = automationPermissions(token);
+  const definitionId =
+    definitionOverride !== null
+      ? definitionOverride.id
+      : AUTOMATION_DEFINITION_ID;
   const draft = state.draftCreated
     ? {
         revisionId: AUTOMATION_DRAFT_REVISION,
@@ -3310,22 +3469,36 @@ function automationDraftDocument(state, token) {
         validatedAt:
           state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
         validationErrors: [],
-        definition: {
-          id: AUTOMATION_DEFINITION_ID,
-          name: "Nightly automation",
-          enabled: true,
-          resourceLibraryId: "source",
-          mode: "automatic-organization",
-          itemLimit: 12,
-          sourceScope: null,
-          intervalSeconds: 3600,
-          cron: null,
-          timezone: null,
-        },
+        definition:
+          definitionOverride !== null
+            ? {
+                id: definitionOverride.id,
+                name: definitionOverride.name,
+                enabled: definitionOverride.enabled === true,
+                resourceLibraryId: definitionOverride.resourceLibraryId,
+                mode: definitionOverride.mode,
+                itemLimit: definitionOverride.itemLimit,
+                sourceScope: null,
+                intervalSeconds: definitionOverride.intervalSeconds ?? null,
+                cron: definitionOverride.cron ?? null,
+                timezone: definitionOverride.timezone ?? null,
+              }
+            : {
+                id: AUTOMATION_DEFINITION_ID,
+                name: "Nightly automation",
+                enabled: true,
+                resourceLibraryId: "source",
+                mode: "automatic-organization",
+                itemLimit: 12,
+                sourceScope: null,
+                intervalSeconds: 3600,
+                cron: null,
+                timezone: null,
+              },
       }
     : null;
   return {
-    definitionId: AUTOMATION_DEFINITION_ID,
+    definitionId,
     activeConfiguration: {
       revisionId: state.activated
         ? AUTOMATION_DRAFT_REVISION
@@ -3356,7 +3529,7 @@ function automationDraftDocument(state, token) {
             : "an open successor Draft is required to edit this definition"
           : "the connected API principal cannot edit Automation Task Definitions",
         method: "PUT",
-        path: `/api/v1/configuration/revisions/${AUTOMATION_DRAFT_REVISION}/objects/automationTaskDefinitions/${AUTOMATION_DEFINITION_ID}`,
+        path: `/api/v1/configuration/revisions/${AUTOMATION_DRAFT_REVISION}/objects/automationTaskDefinitions/${definitionId}`,
         durableOutcome:
           "the bounded definition form is stored in the open successor Draft at a new optimistic revision version",
         nextAction:
@@ -3381,10 +3554,10 @@ function automationDraftDocument(state, token) {
             ? null
             : "an open successor Draft is required before activation"
           : "the connected API principal cannot activate configuration",
-        path: `/api/v1/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/activate-draft`,
+        path: `/api/v1/operations/automation/task-definitions/${definitionId}/activate-draft`,
         requiresConfirmation: true,
         durableOutcome:
-          "the exact Draft becomes the immutable Active configuration after the server-side read-only checks; no Scan, Job, Task or occurrence is started",
+          "the exact Draft becomes the immutable Active configuration after the exact-revision binding and Automation-only boundary checks; no Scan, Job, Task or occurrence is started",
         nextAction: "confirm one explicit activation of the validated Draft",
       }),
     },
@@ -3654,6 +3827,7 @@ function automationActivationDocument(state) {
 const AUTOMATION_MUTATION_BODY_FIELDS = [
   "confirmation",
   "expectedVersion",
+  "expectedRevisionId",
   "previewId",
   "reason",
 ];
@@ -3675,6 +3849,16 @@ function boundedAutomationBody(fields) {
       itemLimit: typeof object.itemLimit === "number" ? object.itemLimit : null,
       mode: typeof object.mode === "string" ? object.mode : null,
       name: typeof object.name === "string" ? object.name : null,
+      resourceLibraryId:
+        typeof object.resourceLibraryId === "string"
+          ? object.resourceLibraryId
+          : null,
+      intervalSeconds:
+        typeof object.intervalSeconds === "number"
+          ? object.intervalSeconds
+          : null,
+      cron: typeof object.cron === "string" ? object.cron : null,
+      timezone: typeof object.timezone === "string" ? object.timezone : null,
     };
   }
   return body;
@@ -3688,6 +3872,51 @@ const server = createServer(async (req, res) => {
   const session = manualSession(req);
   const recordManualRequestForSession = (entry) =>
     recordManualRequest({ ...entry, session });
+  // The checked activation is served ONLY on the exact dedicated operations
+  // route the real backend publishes, before the generic operations alias
+  // rewrite: a non-operations spelling or a mismatched Draft revision must
+  // never activate anything.
+  const activateDraftMatch = url.pathname.match(
+    /^\/api\/v1\/operations\/automation\/task-definitions\/([^/]+)\/activate-draft$/,
+  );
+  if (activateDraftMatch && req.method === "POST") {
+    // Inline the operations guard: this handler runs before the server
+    // callback's const declarations, so the hoisted guard is not usable yet.
+    if (EXPIRED_TOKENS.has(token) || !KNOWN_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const fields = parsed.document;
+    const state = automationState(session);
+    if (
+      !state.draftCreated ||
+      state.draftStatus !== "validated" ||
+      fields.expectedRevisionId !== AUTOMATION_DRAFT_REVISION ||
+      fields.expectedVersion !== state.draftVersion
+    ) {
+      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
+      return;
+    }
+    state.activated = true;
+    state.draftCreated = false;
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: activateDraftMatch[1],
+      objectType: "automation_activate_draft",
+      path: "/api/v1/operations/automation/task-definitions/:definitionId/activate-draft",
+      body: boundedAutomationBody(fields),
+    });
+    sendJson(res, 200, automationActivationDocument(state));
+    return;
+  }
   // The V2 Operations workspace reads the bounded /api/v1/operations/* alias;
   // the fake mirrors the authoritative Python contract by serving the same
   // bounded documents for both spellings.
@@ -5075,9 +5304,34 @@ const server = createServer(async (req, res) => {
       sendJson(res, 409, { error: { code: "configuration_conflict" } });
       return;
     }
+    const object = parsed.document.object ?? {};
+    const created = {
+      id:
+        typeof object.id === "string" && object.id
+          ? object.id
+          : "automation-def-e2e-created",
+      name:
+        typeof object.name === "string" && object.name
+          ? object.name
+          : "Created automation",
+      enabled: object.enabled === true,
+      resourceLibraryId:
+        typeof object.resourceLibraryId === "string" && object.resourceLibraryId
+          ? object.resourceLibraryId
+          : "source",
+      mode: typeof object.mode === "string" ? object.mode : "scan-only",
+      itemLimit: typeof object.itemLimit === "number" ? object.itemLimit : 100,
+      intervalSeconds:
+        typeof object.intervalSeconds === "number"
+          ? object.intervalSeconds
+          : null,
+      cron: typeof object.cron === "string" ? object.cron : null,
+      timezone: typeof object.timezone === "string" ? object.timezone : null,
+    };
+    state.createdDefinition = created;
     recordManualRequestForSession({
       method: "POST",
-      objectId: state.draftCreated ? AUTOMATION_DRAFT_REVISION : null,
+      objectId: AUTOMATION_DRAFT_REVISION,
       objectType: "automation_definition_create",
       path: "/api/v1/automation/task-definitions",
       body: boundedAutomationBody(parsed.document),
@@ -5095,27 +5349,44 @@ const server = createServer(async (req, res) => {
       activatedAt: null,
       validationErrors: [],
       configurationRevisionId: AUTOMATION_DRAFT_REVISION,
-      automationTaskDefinition: {
-        id: "automation-def-e2e-copy",
-        name: "Copied automation",
-        enabled: false,
-        resourceLibraryId: "source",
-        mode: "scan-only",
-        itemLimit: 100,
-        intervalSeconds: 3600,
-      },
+      automationTaskDefinition: created,
     });
     return;
   }
-  if (
-    url.pathname ===
-      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}` &&
-    req.method === "GET"
-  ) {
+  const automationDefinitionMatch = url.pathname.match(
+    /^\/api\/v1\/automation\/task-definitions\/([^/]+)$/,
+  );
+  if (automationDefinitionMatch && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
     const state = automationState(session);
+    const requestedId = decodeURIComponent(automationDefinitionMatch[1]);
+    const createdOrCopied = [
+      state.createdDefinition,
+      state.copiedDefinition,
+    ].find((definition) => definition && definition.id === requestedId);
+    if (createdOrCopied) {
+      recordManualRequestForSession({
+        method: "GET",
+        objectId: requestedId,
+        objectType: "automation_definition",
+        path: "/api/v1/automation/task-definitions/:definitionId",
+        body: null,
+      });
+      sendJson(res, 200, {
+        definition: automationDraftOnlyDefinitionDocument(
+          state,
+          token,
+          createdOrCopied,
+        ),
+      });
+      return;
+    }
+    if (requestedId !== AUTOMATION_DEFINITION_ID) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
     recordManualRequestForSession({
       method: "GET",
       objectId: AUTOMATION_DEFINITION_ID,
@@ -5128,23 +5399,31 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
-  if (
-    url.pathname ===
-      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/draft` &&
-    req.method === "GET"
-  ) {
+  const automationDraftMatch = url.pathname.match(
+    /^\/api\/v1\/automation\/task-definitions\/([^/]+)\/draft$/,
+  );
+  if (automationDraftMatch && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
     const state = automationState(session);
+    const requestedId = decodeURIComponent(automationDraftMatch[1]);
+    const createdOrCopied = [
+      state.createdDefinition,
+      state.copiedDefinition,
+    ].find((definition) => definition && definition.id === requestedId);
+    if (requestedId !== AUTOMATION_DEFINITION_ID && !createdOrCopied) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
     recordManualRequestForSession({
       method: "GET",
-      objectId: AUTOMATION_DEFINITION_ID,
+      objectId: requestedId,
       objectType: "automation_draft",
       path: "/api/v1/automation/task-definitions/:definitionId/draft",
       body: null,
     });
-    sendJson(res, 200, automationDraftDocument(state, token));
+    sendJson(res, 200, automationDraftDocument(state, token, createdOrCopied));
     return;
   }
   if (
@@ -5429,13 +5708,22 @@ const server = createServer(async (req, res) => {
       path: "/api/v1/automation/task-definitions/:definitionId/copy",
       body: boundedAutomationBody(parsed.document),
     });
+    const copied = {
+      id: "automation-def-e2e-copy",
+      name: "Nightly automation copy",
+      enabled: true,
+      resourceLibraryId: "source",
+      mode: "automatic-organization",
+      itemLimit: 12,
+      intervalSeconds: 3600,
+      cron: null,
+      timezone: null,
+    };
+    state.copiedDefinition = copied;
     sendJson(res, 200, {
       revisionId: AUTOMATION_DRAFT_REVISION,
       version: state.draftVersion,
-      automationTaskDefinition: {
-        id: "automation-def-e2e-copy",
-        name: "Nightly automation copy",
-      },
+      automationTaskDefinition: copied,
     });
     return;
   }
@@ -5444,33 +5732,9 @@ const server = createServer(async (req, res) => {
       `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/activate-draft` &&
     req.method === "POST"
   ) {
-    if (!operationsGuard(res)) {
-      return;
-    }
-    const parsed = await readBoundedJsonBody(req, res);
-    if (!parsed.ok) {
-      return;
-    }
-    const fields = parsed.document;
-    const state = automationState(session);
-    if (
-      !state.draftCreated ||
-      state.draftStatus !== "validated" ||
-      fields.expectedVersion !== state.draftVersion
-    ) {
-      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
-      return;
-    }
-    state.activated = true;
-    state.draftCreated = false;
-    recordManualRequestForSession({
-      method: "POST",
-      objectId: AUTOMATION_DEFINITION_ID,
-      objectType: "automation_activate_draft",
-      path: "/api/v1/operations/automation/task-definitions/:definitionId/activate-draft",
-      body: boundedAutomationBody(fields),
-    });
-    sendJson(res, 200, automationActivationDocument(state));
+    // The real backend serves the checked activation only on the dedicated
+    // /api/v1/operations/automation route; mirror that 404 exactly.
+    sendJson(res, 404, { error: { code: "not_found" } });
     return;
   }
   if (
@@ -5536,9 +5800,12 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
+  const automationSaveMatch = url.pathname.match(
+    /^\/api\/v1\/configuration\/revisions\/([^/]+)\/objects\/automationTaskDefinitions\/([^/]+)$/,
+  );
   if (
-    url.pathname ===
-      `/api/v1/configuration/revisions/${AUTOMATION_DRAFT_REVISION}/objects/automationTaskDefinitions/${AUTOMATION_DEFINITION_ID}` &&
+    automationSaveMatch &&
+    automationSaveMatch[1] === AUTOMATION_DRAFT_REVISION &&
     req.method === "PUT"
   ) {
     if (!operationsGuard(res)) {
@@ -5550,6 +5817,7 @@ const server = createServer(async (req, res) => {
     }
     const fields = parsed.document;
     const state = automationState(session);
+    const savedId = decodeURIComponent(automationSaveMatch[2]);
     if (!state.draftCreated || fields.expectedVersion !== state.draftVersion) {
       sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
       return;
@@ -5558,7 +5826,7 @@ const server = createServer(async (req, res) => {
     state.draftStatus = "draft";
     recordManualRequestForSession({
       method: "PUT",
-      objectId: AUTOMATION_DEFINITION_ID,
+      objectId: savedId,
       objectType: "automation_draft_save",
       path: "/api/v1/configuration/revisions/:revisionId/objects/automationTaskDefinitions/:definitionId",
       body: boundedAutomationBody(fields),
@@ -5566,7 +5834,7 @@ const server = createServer(async (req, res) => {
     sendJson(res, 200, {
       revisionId: AUTOMATION_DRAFT_REVISION,
       version: state.draftVersion,
-      automationTaskDefinition: { id: AUTOMATION_DEFINITION_ID },
+      automationTaskDefinition: { id: savedId },
     });
     return;
   }
@@ -6052,6 +6320,8 @@ const server = createServer(async (req, res) => {
       previewStale: false,
       granted: false,
       activated: false,
+      createdDefinition: null,
+      copiedDefinition: null,
     });
     res.setHeader(
       "Set-Cookie",
