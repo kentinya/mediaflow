@@ -853,6 +853,10 @@ describe("NotificationDetailPage draft actions", () => {
         `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}/copy`
       ) {
         draftVersion += 1;
+        expect(call.body).toMatchObject({
+          expectedVersion: 4,
+          newId: "ops-webhook-copy",
+        });
         return jsonResponse({
           revisionId: DRAFT_REVISION,
           version: draftVersion,
@@ -1085,13 +1089,17 @@ describe("Notification definition mutation binding", () => {
         call.url ===
         `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}/copy`
       ) {
-        // An unrelated definition is not derived from this copy mutation; the
+        expect(call.body).toMatchObject({
+          expectedVersion: 4,
+          newId: "ops-webhook-copy",
+        });
+        // A same-prefix identity is not the exact requested copy; the
         // journey must never navigate to it as the copied identity.
         return jsonResponse({
           revisionId: DRAFT_REVISION,
           version: 5,
           status: "draft",
-          object: { id: "another-webhook", enabled: false },
+          object: { id: "ops-webhook-copy-malicious", enabled: false },
         });
       }
       return undefined;
@@ -1108,7 +1116,7 @@ describe("Notification definition mutation binding", () => {
     expect(
       await screen.findByRole("heading", { name: `Webhook ${WEBHOOK_ID}` }),
     ).toBeVisible();
-    expect(screen.queryByText(/Webhook another-webhook/)).toBeNull();
+    expect(screen.queryByText(/Webhook ops-webhook-copy-malicious/)).toBeNull();
     expect(calls.filter((call) => call.url.endsWith("/copy"))).toHaveLength(1);
   });
 

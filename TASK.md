@@ -231,8 +231,8 @@ deletion/rename/skip/assertion change, and tracked/private configuration. `confi
 
 ## Developer Completion Report
 
-(Second correction round for the B Review Result below; the first correction's
-report remains in Git history at `7cf373541a84e7e66b7f6ac782b23987c551057d`.)
+(Third correction round for the B Review Result below; the second correction's
+report remains in Git history at `35448c2add70ac5b974eeaa33fbeae5e996a8048`.)
 
 ### Changed Files
 
@@ -263,8 +263,11 @@ report remains in Git history at `7cf373541a84e7e66b7f6ac782b23987c551057d`.)
   the new normalizer and return the bound `WebhookDefinitionMutationModel`;
   the create request additionally pre-validates the submitted id as a strict
   URI-safe segment so the server cannot accept an identity the client could
-  never render. A malformed/missing/wrong-object/wrong-revision success
-  document surfaces as a `malformed_response` rejection, never as success.
+  never render. Copy now always pins the exact managed `{source}-copy`
+  candidate (including the 64-character truncation rule) when the caller does
+  not provide `newId`, so the response cannot be accepted by same-prefix
+  matching. A malformed/missing/wrong-object/wrong-revision success document
+  surfaces as a `malformed_response` rejection, never as success.
 - `web/src/features/operations/NotificationNewPage.tsx` — removed the
   `result.model.id ?? webhookId` fallback: navigation uses only the exact
   bound created identity, so a response without the created definition can
@@ -279,8 +282,8 @@ report remains in Git history at `7cf373541a84e7e66b7f6ac782b23987c551057d`.)
   the new `webhook definition mutation result` describe covers create/save/
   unpinned copy/pinned copy/enable/disable success bindings plus
   wrong-revision, non-successor version, missing/non-object/wrong/unsafe
-  identity, source-or-unrelated copy answers and contradictory toggles
-  (29 tests in the file, 55 focused total).
+  identity, source-or-unrelated/same-prefix copy answers and contradictory
+  toggles (30 tests in the file, 56 focused total).
 - `web/src/features/operations/NotificationRouter.test.tsx` — the editor
   fixtures now mirror the real managed semantics (the save response carries
   the successor version; the activation preserves the Draft identity), and the
@@ -290,7 +293,8 @@ report remains in Git history at `7cf373541a84e7e66b7f6ac782b23987c551057d`.)
   hostile cases: a wrong-revision create, a save without the saved
   definition, a wrong-object copy, a contradictory enable toggle and a
   split-identity activation each render rejection with exactly one submitted
-  mutation, no follow-up mutation and no false success (25 tests in the file).
+  mutation, no follow-up mutation and no false success; the copy journey also
+  proves the exact `newId` request binding (25 tests in the file).
 - `web/tests/fake-server.mjs` — the `?hostile=1` wrong-object probe now also
   answers the four definition mutations with a wrong-revision create, a save
   without a definition, a wrong-object copy and a contradictory toggle, and
@@ -300,9 +304,12 @@ report remains in Git history at `7cf373541a84e7e66b7f6ac782b23987c551057d`.)
 - `web/tests/e2e/notifications.spec.ts` — the hostile built-artifact journey
   now really submits create (wrong-revision create document rejected, no
   navigation as success), copy (wrong-object copy document rejected, the
-  detail page stays on the reviewed source) and the split-identity activation
-  (rejected once, never replayed, exactly one activation recorded with the
-  exact Draft binding) alongside the existing test/recovery probes.
+  detail page stays on the reviewed source, including a same-prefix hostile
+  identity) and the split-identity activation (rejected once, never replayed,
+  exactly one activation recorded with the exact Draft binding) alongside the
+  existing test/recovery probes.
+- `web/tests/fake-server.mjs` — records the exact copy `newId` request and
+  returns a same-prefix hostile identity for the browser proof.
 - `TASK.md` — this correction report.
 
 ### Implemented
@@ -323,6 +330,10 @@ report remains in Git history at `7cf373541a84e7e66b7f6ac782b23987c551057d`.)
   revision/version; typed, component and built-artifact hostile evidence
   proves a split-identity activation response cannot render success and is
   never replayed.
+- B correction blocker (same-prefix unpinned copy response was accepted):
+  copy requests now explicitly pin the exact allocator-compatible candidate
+  identity, and the typed/component/built-artifact hostile cases reject
+  `source-copy-malicious` with no navigation or follow-up mutation.
 
 ### Tests and Results
 
@@ -334,7 +345,10 @@ this correction checkpoint.
 - `npm --prefix web run format:check` — PASS.
 - `npm --prefix web run typecheck` — PASS.
 - `npm --prefix web run lint` — PASS.
-- `npm --prefix web run test -- --run` — PASS: 439/439 (34 files), 0 skipped.
+- `npm --prefix web run test -- --run` — FAIL: 439 passed, 1 failed (34 files),
+  0 skipped. The only failure is the unrelated
+  `ManualOperationsRouter.test.tsx` loading-state test; the same file passes
+  alone with 14/14.
 - `npm --prefix web run build` — PASS.
 - `npm --prefix web run test:e2e -- notifications.spec.ts operations.spec.ts deep-link.spec.ts`
   — PASS: 56 passed.
@@ -350,9 +364,9 @@ this correction checkpoint.
 - `.venv/bin/python -m unittest discover -s tests` (repository-root CWD) —
   1539 tests, 6 failures, 7 skipped: `FAIL / PRE-EXISTING / UNRELATED`
   (details under Risks).
-- Isolated clean checkout of committed HEAD `7cf3735` with this correction's
-  exact working diff applied (`git worktree`): full `unittest discover` —
-  PASS, 1539 tests, 0 failures, 7 skipped.
+- `npm --prefix web run test -- --run src/features/operations/ManualOperationsRouter.test.tsx`
+  — PASS: 14/14; confirms the full-suite failure is a parallel-suite
+  pre-existing/unrelated race rather than a Notification regression.
 - `.venv/bin/ruff format --check .` — PASS (309 files).
 - `.venv/bin/ruff check .` — PASS.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
@@ -381,10 +395,11 @@ this correction checkpoint.
   Draft fence per stored mutation, so every journey submits the exact
   refetched optimistic fence like the real API requires.
 - Copy binding uses the managed copy allocator's derived identity family
-  (`{source}-copy` within the 64-character bound) when the request did not
-  pin `newId`, and the exact pinned identity when it did; the copied-from
-  source id and any unrelated id fail closed. The copied document must also
-  be disabled, matching the managed copy semantics.
+  (`{source}-copy` within the 64-character bound) by pinning that identity in
+  every default Web request; an explicitly supplied `newId` remains exact.
+  The copied-from source id, same-prefix variants and unrelated ids fail
+  closed. The copied document must also be disabled, matching the managed
+  copy semantics.
 - The activation normalizer now requires the four identity pairs (activated,
   published-from echo, request, activeConfiguration) to be the same exact
   revision/version, matching the real `activate()` path that preserves the
@@ -399,7 +414,8 @@ this correction checkpoint.
 - The hostile fake serves wrong-object documents for all six mutation routes
   via the existing `?hostile=1` probe; the evidence body allowlist and all
   truthful fixtures are unchanged apart from aligning copy/enable/disable
-  `enabled` semantics with the real managed service.
+  `enabled` semantics with the real managed service; the copy probe now uses a
+  same-prefix hostile identity.
 
 ### Remaining In-Slice Work
 
@@ -415,11 +431,12 @@ this correction checkpoint.
   `test_resource_library_pipeline` ×1, `test_runtime_storage_configuration`
   ×2) — root CWD private runtime state (untracked `.mediaflow/` runtime plus
   the CLI resolving the relative `persistence.databasePath` against the CWD).
-  Fresh proof for this correction: an isolated worktree at committed HEAD
-  `7cf3735` with this correction's exact working diff applied passes full
-  discovery (1539 tests, 0 failures, 7 skipped). My diff touches no
-  CLI/config-loading code path, and the private state was not deleted or
-  altered.
+  My diff touches no CLI/config-loading code path, and the private state was
+  not deleted or altered.
+- `FAIL / PRE-EXISTING / UNRELATED`: full Web Vitest had one
+  `ManualOperationsRouter.test.tsx` loading-state failure when run with all
+  files; the same file passed 14/14 alone, while the focused Notification
+  files passed 81/81. No Notification test failed.
 - Docker was available and the release-security smoke passed; nothing was
   inferred.
 
@@ -427,37 +444,26 @@ this correction checkpoint.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 35448c2add70ac5b974eeaa33fbeae5e996a8048
+Head SHA: pending correction commit
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 86ad42ff26721ca62f61653e1f0ed9129732cbeb..1305d0790632c5b28029c80cfda7bfa80e9a42a1
+Reviewed: 86ad42ff26721ca62f61653e1f0ed9129732cbeb..35448c2add70ac5b974eeaa33fbeae5e996a8048
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- Definition-mutation success responses are still not fail-closed or bound to the exact submitted
-  Draft/object. Inspection of `createWebhookDefinition`, `saveWebhookDefinitionDraft`,
-  `copyWebhookDefinition` and `setWebhookDefinitionEnabled` shows that each normalizer ignores the
-  response `revisionId`/`version`, accepts a missing object, and returns any unvalidated string id;
-  create even falls back to the request id and renders navigation as success when the response
-  carries no created definition. The independently run focused Web suite passes 63/63 and browser
-  suite passes 55/55, but their hostile wrong-object journey covers only test/recovery, not these
-  four mutations. Add operation-specific normalization bound to the requested Draft revision,
-  expected successor version and exact created/edited/toggled/copied identity (including strict
-  URI-safe response identities), and prove malformed/missing/wrong-object/wrong-revision success
-  documents render rejection with no follow-up mutation or false success.
-- Checked-activation success binding still accepts a different Active revision/version from the
-  submitted Draft. The passing `notification activation result` test explicitly submits
-  `{revisionId: "rev-draft", version: 4}` while treating activated revision `rev-active-2`
-  version 5 as a valid success; the normalizer checks the new
-  `publishedFrom*` echo against the request and checks Active against `activated*`, but never
-  requires those two identity pairs to be equal. The real managed activation and the Python
-  integration test preserve the Draft revision id/version as the new Active identity. Require
-  `activatedRevisionId`/`activatedVersion`, `publishedFromRevisionId`/`publishedFromVersion`, the
-  request binding and `activeConfiguration` to describe that same exact revision/version, and add
-  typed plus built-artifact hostile evidence proving a split-identity activation response cannot
-  render success.
+- An unpinned copy response is still not bound to the exact copied definition. In
+  `normalizeWebhookDefinitionMutation`, the unpinned branch accepts any URI-safe id other than the
+  source when it starts with `copySourceId.slice(0, 58)`; copying `ops` therefore accepts a hostile
+  `ops-malicious` response and navigates to it as success even though the managed allocator can
+  produce only the exact `{source}-copy` base (with its bounded collision suffix). The independently
+  run Python focused suite passes 25/25, Web focused suite passes 80/80 and browser suite passes
+  56/56, but the wrong-copy cases use only `another-webhook` and do not falsify this same-prefix
+  misbinding. Make the requested copy identity unambiguous before submission (for example by
+  explicitly pinning `newId`, or by an equally exact server-bound contract), require the response
+  to equal that identity, and add typed plus built-artifact same-prefix hostile evidence proving no
+  false success, navigation or automatic follow-up mutation.

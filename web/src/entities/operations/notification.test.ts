@@ -1023,6 +1023,25 @@ describe("webhook definition mutation result", () => {
     expect(model.id).toBe("ops-copy-2");
   });
 
+  it("rejects a same-prefix identity that is not the exact derived copy", () => {
+    expect(() =>
+      normalizeWebhookDefinitionMutation(
+        mutationPayload({
+          object: { id: "ops-malicious", enabled: false },
+          webhook: undefined,
+        }),
+        {
+          ...DRAFT,
+          documentField: "object",
+          expectedId: null,
+          copySourceId: "ops",
+          copyNewId: "ops-copy",
+          expectedEnabled: false,
+        },
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
   it("normalizes a pinned copy bound to the exact requested new identity", () => {
     const model = normalizeWebhookDefinitionMutation(
       mutationPayload({

@@ -7237,17 +7237,18 @@ const server = createServer(async (req, res) => {
         webhookId: notificationObjectActionMatch[2],
         action,
         expectedVersion: document.expectedVersion,
+        ...(action === "copy" ? { newId: document.newId } : {}),
       },
     });
     if (state.hostile) {
       if (action === "copy") {
-        // Wrong-object contract probe: an unrelated definition is not derived
-        // from this copy mutation and must never render as its outcome.
+        // Same-prefix wrong-object contract probe: only the exact requested
+        // newId is bound to this copy mutation.
         sendJson(res, 200, {
           revisionId: NOTIFICATION_DRAFT_REVISION,
           version: state.draftVersion,
           status: state.draftStatus,
-          object: { id: "another-webhook", enabled: false },
+          object: { id: "operations-webhook-copy-malicious", enabled: false },
         });
       } else {
         // Contradictory-toggle contract probe: a success document whose
