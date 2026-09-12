@@ -252,6 +252,11 @@ class _ApiRuntimeBinding:
 class MediaFlowApi:
     """Small WSGI transport over persistence and queue application boundaries."""
 
+    #: Deterministic combined page limit for the Operations Automation list:
+    #: Active and Draft-only definitions share one bounded page that matches
+    #: the frontend normalizer contract (more than 100 items fails closed).
+    AUTOMATION_DEFINITIONS_PAGE_LIMIT = 100
+
     def __init__(
         self,
         repository,
@@ -9734,7 +9739,15 @@ class MediaFlowApi:
         draft_by_id: dict[str, object] = {}
         draft_only: list[tuple[object, dict]] = []
         seen_draft_only: set[str] = set()
-        draft_only_truncated = False
+        draft_only_total = 0
+        # One deterministic combined page limit for Active and Draft-only
+        # definitions: the Active document order fills the page first and
+        # draft-only definitions take the remaining capacity. The frontend
+        # normalizer fails closed on any page above this limit, so the merged
+        # response must never exceed it; dropped definitions stay counted in
+        # the truthful total and the truncated flag.
+        active_page = all_items[: self.AUTOMATION_DEFINITIONS_PAGE_LIMIT]
+        draft_capacity = self.AUTOMATION_DEFINITIONS_PAGE_LIMIT - len(active_page)
         for draft in drafts:
             document = draft.document if isinstance(draft.document, dict) else {}
             section = document.get("automationTaskDefinitions")
@@ -9747,13 +9760,13 @@ class MediaFlowApi:
                     draft_by_id[candidate["id"]] = draft
                 if candidate["id"] in active_ids or candidate["id"] in seen_draft_only:
                     continue
-                if len(draft_only) >= 100:
-                    draft_only_truncated = True
-                    continue
                 seen_draft_only.add(candidate["id"])
+                draft_only_total += 1
+                if len(draft_only) >= draft_capacity:
+                    continue
                 draft_only.append((draft, candidate))
         projected = self._automation_occurrences.project_definitions(
-            all_items[:100],
+            active_page,
             configuration=active.summary(),
         )
         items = [
@@ -9788,8 +9801,10 @@ class MediaFlowApi:
             {
                 "activeConfiguration": self._automation_active_configuration(active),
                 "items": items,
-                "total": len(all_items) + len(draft_only) + (1 if draft_only_truncated else 0),
-                "truncated": len(all_items) > 100 or draft_only_truncated,
+                "total": len(all_items) + draft_only_total,
+                "truncated": (
+                    len(all_items) > len(active_page) or draft_only_total > len(draft_only)
+                ),
                 "draftState": self._automation_draft_state(
                     drafts[0] if drafts else None,
                     empty_reason=(
@@ -10147,9 +10162,12 @@ class MediaFlowApi:
         Draft revision, the Active base is pinned, and the Draft's changes are
         compared with the Active document so a revision that touches anything
         outside the Automation Task Definition boundary is rejected before any
-        activation. Because the confinement comparison proves every other
-        section is byte-identical to the live Active configuration, the
-        published configuration carries no new Storage, strategy or destination
+        activation, and so the section changes only at the reviewed
+        definition's exact identity — a sibling definition can never be added,
+        removed or modified while riding along. Because the confinement
+        comparison proves every other section and every other definition is
+        byte-identical to the live Active configuration, the published
+        configuration carries no new Storage, strategy or destination
         semantics. No Scan, Job, Task or occurrence is started by activation,
         and a Draft-only definition (newly created or copied) is activatable
         exactly like an edited Active definition.
@@ -10245,12 +10263,16 @@ class MediaFlowApi:
                     "managed configuration activation journey with explicit review"
                 ),
             )
+        self._require_automation_definition_only_change(
+            active.document, draft.document, definition_id
+        )
         # The exact-revision binding, Active-base pin and Automation-only
-        # confinement above prove every non-Automation section is byte-identical
-        # to the live Active configuration, so no new Storage, strategy or
-        # destination semantics are published by this activation. The managed
-        # activation revalidates the exact revision digest, optimistic version
-        # and document loader atomically before publishing.
+        # confinement above prove every non-Automation section and every other
+        # Automation definition is byte-identical to the live Active
+        # configuration, so no new Storage, strategy or destination semantics
+        # are published by this activation. The managed activation revalidates
+        # the exact revision digest, optimistic version and document loader
+        # atomically before publishing.
         activated = self._configuration_service.activate(
             draft.revision_id,
             expected_version=draft.version,
@@ -10281,6 +10303,86 @@ class MediaFlowApi:
                 ),
             },
         )
+
+    def _require_automation_definition_only_change(
+        self,
+        active_document: object,
+        draft_document: object,
+        definition_id: str,
+    ) -> None:
+        """Fail closed unless the Draft's only Automation change is this definition.
+
+        The section-level confinement proves no other configuration section
+        changed; this comparison proves the ``automationTaskDefinitions``
+        section changed only at the reviewed definition's exact identity. Every
+        other definition must be present in both documents and byte-identical,
+        so a sibling definition cannot be added, removed or modified while
+        riding along with the reviewed activation — including the create/copy
+        case, where the new or copied definition must be the sole Automation
+        change. Malformed sections fail closed: an unverifiable boundary is
+        never activated.
+        """
+
+        active_definitions = self._automation_definition_identity_map(active_document)
+        draft_definitions = self._automation_definition_identity_map(draft_document)
+        if active_definitions is None or draft_definitions is None:
+            raise UnattendedExecutionGrantError(
+                "the Automation Task Definition section is malformed; activation "
+                "cannot verify its exact boundary",
+                code="automation_activation_out_of_scope",
+                status=409,
+                durable_state="active configuration preserved",
+                next_action=(
+                    "create a fresh successor Draft from the current Active "
+                    "configuration, then edit, validate and activate it"
+                ),
+            )
+        unexpected = sorted(
+            candidate_id
+            for candidate_id in set(active_definitions) | set(draft_definitions)
+            if candidate_id != definition_id
+            and (
+                candidate_id not in active_definitions
+                or candidate_id not in draft_definitions
+                or draft_definitions[candidate_id] != active_definitions[candidate_id]
+            )
+        )
+        if unexpected:
+            raise UnattendedExecutionGrantError(
+                "this Draft changes other Automation Task Definitions beyond the "
+                "reviewed definition",
+                code="automation_activation_definition_scope",
+                status=409,
+                durable_state="active configuration preserved",
+                next_action=(
+                    "remove the other definition changes from this Draft, then edit, "
+                    "validate and activate one definition per Draft"
+                ),
+            )
+
+    @staticmethod
+    def _automation_definition_identity_map(document: object) -> dict[str, object] | None:
+        """Definition id → entry map for the automationTaskDefinitions section.
+
+        Returns ``None`` when the section is missing or any entry is malformed
+        (not an object, a non-string id, or a duplicated id), so the caller can
+        fail closed instead of activating an unverifiable boundary.
+        """
+
+        if not isinstance(document, dict):
+            return None
+        section = document.get("automationTaskDefinitions")
+        if not isinstance(section, list):
+            return None
+        definitions: dict[str, object] = {}
+        for entry in section:
+            if not (isinstance(entry, dict) and isinstance(entry.get("id"), str)):
+                return None
+            entry_id = entry["id"]
+            if entry_id in definitions:
+                return None
+            definitions[entry_id] = entry
+        return definitions
 
     @staticmethod
     def _automation_draft_changed_sections(

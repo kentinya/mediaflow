@@ -234,85 +234,62 @@ reports, credentials and unrelated files must not enter the checkpoint.
 
 ### Changed Files
 
-- `mediaflow/interfaces/service_api.py` — the Operations Automation projection now connects the
-  checked activation across the real API and Web and enforces the Automation-only activation
-  boundary: the outer dispatch routes `POST /api/v1/operations/automation/task-definitions/…` into
-  the projection (previously GET-only, so the real POST hit 404); the Draft document advertises the
-  exact owned `…/activate-draft` POST transport instead of the generic configuration activation
-  route; `_automation_definition_activate_checked_draft` now requires `expectedRevisionId` plus
-  `expectedVersion`, binds the action to the exact advertised Draft revision, pins the Active base,
-  and fails closed (409 `automation_activation_out_of_scope`) unless the Draft's changes versus the
-  Active document are confined to the `automationTaskDefinitions` section — with no revision digest
-  in any request, response or error detail; new `_automation_definition_resolution` resolves a
-  definition Active-first then Draft-only (keeping newly created/copied definitions reachable and
-  editable) and converts repository failures into the bounded 503 unavailable response;
-  draft-only definitions appear in the list/detail/occurrences projections with a new
-  backend-authoritative `definitionState` field (`active` | `draft-only`), empty occurrence state,
-  no grant and Preview/grant/revoke actions unavailable with an explicit not-Active reason; the
-  Draft-editor document sources ResourceLibrary options from the exact open Draft; failing Draft
-  discovery never renders as a legitimate empty state.
-- `mediaflow/application/configuration_snapshot.py` — `open_draft_revisions()` no longer swallows
-  every repository failure into `()`; failures propagate so callers can report bounded
-  unavailability instead of offering successor-Draft recovery on false evidence.
-- `web/src/entities/operations/automation.ts` + `automation.test.ts` — `definitionState` is a
-  required fail-closed enum on the definition model (a document without the exact state marker is
-  malformed, so no Draft can ever be rendered as Active); new normalization regressions.
-- `web/src/shared/api/api-client.ts` — `activateAutomationDraft` sends the exact
-  `expectedRevisionId` (with `isSafeIdentifier` guard) alongside `expectedVersion`.
-- `web/src/features/operations/AutomationEditorPage.tsx` — every owned definition field is now
-  editable: ResourceLibrary (authoritative backend options), run mode, schedule type with bounded
-  interval↔Cron/timezone transitions and exactly one schedule form stored (the unused form is
-  cleared on save); activation submits the exact Draft revision identity.
-- `web/src/features/operations/AutomationListPage.tsx`, `AutomationDetailPage.tsx` — draft-only
-  definitions are visibly marked and never presented as Active.
-- `web/tests/fake-server.mjs` — mirrors the real contract: `definitionState` on every document, the
-  checked activation served ONLY on the dedicated operations route (the non-operations spelling now
-  404s, so the alias rewrite can no longer mask a real routing gap), exact `expectedRevisionId`
-  binding enforced, and a full create/copy Draft-only lifecycle (created/copied definitions are
-  served as draft-only detail/draft/list documents with editable saves).
-- `web/tests/e2e/automation.spec.ts` — the Draft journey edits run mode and the interval→Cron/
-  timezone transition in the built artifact and asserts the saved body and the
-  `expectedRevisionId` binding; new create-completion and copy-completion regressions land on
-  reachable draft-only details and complete their editor save.
-- `web/src/features/operations/AutomationRouter.test.tsx` — component coverage that completes
-  create and copy into reachable draft-only definitions, edits every owned field (library, mode,
-  Cron/timezone) with exactly-one-schedule storage, proves the stale-save 409 message without
-  replay, and asserts the activation body carries the exact Draft revision.
-- `tests/test_v2_automation_operations.py` — journey tests updated to the dedicated advertised
-  activation transport and exact revision binding; five new regressions: real Draft document ↔
-  frontend action-contract agreement, same-version/different-revision concurrent binding (neither
-  Draft activated), unrelated-object change rejection without activation plus clean re-activation,
-  the complete draft-only create/copy/edit/validate/activate lifecycle, and failing-repository
-  reads reported as 503 with no create/edit/activate control.
+- `mediaflow/interfaces/service_api.py` — checked activation now enforces the exact
+  definition-identity boundary and the Operations list applies one deterministic combined page
+  limit. `_automation_definition_activate_checked_draft` calls the new
+  `_require_automation_definition_only_change`, which compares the Active and Draft
+  `automationTaskDefinitions` sections as exact id → entry maps and fails closed
+  (409 `automation_activation_definition_scope`, digest-free) when any definition other than the
+  reviewed one is added, removed or modified; malformed sections (non-object entry, non-string id,
+  duplicated id) fail closed under `automation_activation_out_of_scope` because an unverifiable
+  boundary is never activated. Creating or copying a definition therefore activates only when that
+  exact new/copied definition is the sole Automation change. The Operations list
+  (`AUTOMATION_DEFINITIONS_PAGE_LIMIT = 100`) fills the page with Active definitions in document
+  order first, lets Draft-only definitions take the remaining capacity, and reports truthful
+  `total` (all Active + all distinct Draft-only) and `truncated` semantics after the merge, so the
+  merged response can never exceed the frontend normalizer contract again.
+- `web/src/features/operations/AutomationListPage.tsx` — the list renders the truthful
+  combined-page bound ("Showing the first N of M definitions; the bounded list excludes the rest.")
+  whenever the backend reports a truncated merged page.
+- `tests/test_v2_automation_operations.py` — four new real-API regressions:
+  `test_activation_rejects_sibling_definition_riding_in_same_draft` (edited target plus a sibling
+  added, removed, or modified in the same Draft → 409 `automation_activation_definition_scope` with
+  Active preserved, sibling never published, Drafts still open, and the same reviewed edit alone
+  still activating exactly), `test_created_definition_activates_only_as_sole_automation_change`
+  (created definition plus a sibling Active edit → 409; the sole-change Draft activates),
+  `test_copied_definition_activates_only_as_sole_automation_change` (copied definition plus its
+  source edit → 409; the sole-change copy activates), and
+  `test_operator_list_boundary_stays_bounded_with_draft_only_definitions` (100 Active definitions
+  built through the real one-definition-per-Draft journey plus one Draft-only definition → exactly
+  100 items, `total: 101`, `truncated: true`, the Draft-only definition dropped from the page yet
+  still reachable and honestly marked via its detail route). The existing
+  create/copy journey now activates the created definition while it is the Draft's sole Automation
+  change and copies into a fresh successor Draft.
+- `web/src/entities/operations/automation.test.ts` — combined-boundary normalization coverage: a
+  100-item page (99 Active + 1 draft-only) with `total: 101, truncated: true` normalizes, and 101
+  items still fail closed.
+- `web/src/features/operations/AutomationRouter.test.tsx` — component coverage that the list
+  renders the truthful bound when the backend reports a truncated combined page.
 - `TASK.md` — this report.
 
 ### Implemented
 
-1. **Checked-activation transport connected end-to-end.** The real POST to
-   `/api/v1/operations/automation/task-definitions/<id>/activate-draft` is routed to the dedicated
-   handler, the Draft document advertises exactly that owned route, and a real-API journey drives
-   it to success and to its failures — closing the browser-fake/API split that previously let the
-   Python journey use the generic route while the fake rewrote `/api/v1/operations/` before
-   matching.
-2. **Exact Draft binding and Automation-only activation boundary.** Activation requires the
-   submitted `expectedRevisionId` to be the currently advertised open Draft revision and the
-   expected optimistic version to match; the Draft must be seeded from the current Active; and the
-   Draft's document is diffed against the Active document so any change outside
-   `automationTaskDefinitions` (same-version concurrent Draft, unrelated-object edit) is rejected
-   409 before any activation, with Active preserved and neither Draft activated. All failures are
-   digest-free. Because the confinement comparison proves every non-Automation section is
-   byte-identical to the live Active configuration, the published configuration introduces no new
-   Storage, strategy or destination semantics.
-3. **Usable Draft-only lifecycle.** Create and copy land on reachable, editable draft-only detail
-   surfaces (Active-first then open-Draft resolution) until checked activation; the list keeps them
-   discoverable and `definitionState: "draft-only"` keeps them visibly distinct from Active
-   definitions, with Preview/grant/revoke unavailable until activation.
-4. **Bounded editor completed.** Every owned field (ResourceLibrary, run mode, interval vs
-   Cron/timezone) is editable from authoritative options with bounded schedule transitions, proven
-   at component and built-artifact level including optimistic stale-save rejection.
-5. **Honest Draft discovery.** `open_draft_revisions()` propagates repository failures; the list,
-   detail, Draft and activation reads report the existing bounded 503 unavailable response without
-   leaking the exception and without advertising create/edit/activate controls on false evidence.
+1. **Exact-object checked activation (blocker 1).** The section-level confinement could not see a
+   second definition riding inside `automationTaskDefinitions`; the new exact-identity comparison
+   can. For every definition id in either document, the reviewed definition is the only allowed
+   difference: any other id that is added, removed, or byte-modified rejects activation with 409
+   before any publication, preserving the Active configuration and the open Drafts. The
+   create/copy case is covered by the same rule — the new or copied definition must be the sole
+   Automation change in its Draft. Malformed sections fail closed.
+2. **One deterministic combined list limit (blocker 2).** The merged Active + Draft-only page was
+   previously bounded per source (100 + 100), so 100 Active + 1 Draft-only produced a 101-item page
+   the frontend normalizer rejects. The page is now bounded by the one combined limit: Active
+   definitions fill it first, Draft-only definitions take the remaining capacity, dropped
+   definitions stay counted in a truthful `total` and flip `truncated`, and the response never
+   exceeds the exact contract the frontend enforces.
+3. **Truthful bounded list surface.** The V2 list states exactly what it shows and what it
+   excludes when the merged page is truncated, and a dropped Draft-only definition remains
+   reachable and visibly draft-only through its exact detail route.
 
 ### Tests and Results
 
@@ -322,15 +299,15 @@ env -u NODE_ENV npm --prefix web ci                                             
 npm --prefix web run format:check                                                  — PASS
 npm --prefix web run typecheck                                                     — PASS
 npm --prefix web run lint                                                          — PASS
-npm --prefix web run test -- --run                                                 — PASS (356/356, 32 files)
+npm --prefix web run test -- --run                                                 — PASS (359/359, 32 files)
 npm --prefix web run build                                                         — PASS
 npm --prefix web run test:e2e -- automation.spec.ts operations.spec.ts deep-link.spec.ts
                                                                                    — PASS (55/55)
 npm --prefix web run test:e2e                                                      — PASS (106/106)
-.venv/bin/python -m unittest tests.test_v2_automation_operations                   — PASS (13/13)
+.venv/bin/python -m unittest tests.test_v2_automation_operations                   — PASS (17/17)
 .venv/bin/python -m unittest tests.test_automation_task_definition tests.test_automation_task_definition_preview tests.test_automation_unattended_grant tests.test_automation_preview_grant_gate tests.test_automation_definition_occurrence tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix tests.test_automation_admission tests.test_automation_job_fencing tests.test_automation_api tests.test_cron_scheduler tests.test_configuration_objects tests.test_operations_workspace tests.test_api_security tests.test_v2_ui
                                                                                    — PASS (267/267)
-.venv/bin/python -m unittest discover -s tests                                     — 1510 tests, 6 FAIL / PRE-EXISTING / UNRELATED, 7 SKIP
+.venv/bin/python -m unittest discover -s tests                                     — 1514 tests, 6 FAIL / PRE-EXISTING / UNRELATED, 7 SKIP
 .venv/bin/ruff format --check .                                                    — PASS (308 files)
 .venv/bin/ruff check .                                                             — PASS
 .venv/bin/python -m compileall -q mediaflow tests scripts                          — PASS
@@ -343,27 +320,30 @@ python3 scripts/docker_release_security_smoke_test.py                           
 
 ### Decisions
 
-- **Confinement replaces the per-revision evidence chain for this activation.** The previous
-  checkpoint called `activate_checked`, whose Storage/strategy/destination evidence can never be
-  satisfied through the V2 surface (the check routes require operator-chosen parameters such as a
-  synthetic recognition path, and the browser must never handle the revision digest) — which is
-  why the real dedicated POST could not succeed. The dedicated handler now proves safety by exact
-  means: bind the action to the exact advertised Draft revision, pin the Draft's Active base to the
-  current Active, and diff the Draft document against the Active document; a confining pass means
-  every other section is byte-identical to the live Active, so activation publishes no new
-  Storage/strategy/destination semantics. `managed.activate` still revalidates digest, version and
-  the full document loader atomically. The Python contract regression pins the advertised transport
-  so the backend document cannot drift from the frontend normalizer again.
-- **`definitionState` is a required closed enum.** Rather than inferring Active/Draft state on the
-  client, the backend stamps every definition operator document (`active` | `draft-only`) and the
-  normalizer fails closed on a missing or unknown marker, so a Draft can never be rendered as
-  Active.
-- **Fake server honesty.** The alias rewrite no longer covers the activation mutation: the fake
-  serves the dedicated operations route only and 404s the non-operations spelling, so a future
-  routing gap fails the browser proof instead of being masked.
-- **Draft-only reachability.** New/copied definitions resolve through Active-first-then-open-Draft
-  lookup in the detail, Draft, occurrences and list projections; the list marks them draft-only and
-  the action projection withholds Active-definition actions until activation.
+- **Exact identity maps over section equality.** The section-level check proves no other
+  configuration section changed; the new guard proves the `automationTaskDefinitions` section
+  changed only at the reviewed definition's identity (id → entry byte equality). Together they
+  prove every other section and every other definition is byte-identical to the live Active
+  configuration before publication, so activation still publishes no new Storage, strategy or
+  destination semantics. The managed activation still revalidates digest, version and document
+  loader atomically.
+- **`automation_activation_definition_scope` is a distinct code** from the section-level
+  `automation_activation_out_of_scope`, so diagnosis can distinguish "changes outside the
+  Automation section" from "another definition changed inside it". Both are digest-free, expose no
+  sibling identities, and the frontend already renders 409 generically with a refresh action.
+- **One definition per Draft is the activatable boundary.** Because a created or copied definition
+  activates only as the sole Automation change, a Draft holding both a created and a copied
+  definition can activate neither. The existing create/copy journey test was restructured to
+  activate the created definition first and copy into a fresh successor Draft — the boundary B
+  required is kept rather than weakening the test.
+- **Removal staged through the replacement-Draft import path.** Definition deletion is not part of
+  this slice's object routes ("Automation Task Definition deletion is not part of this slice"), so
+  the removed-sibling state is staged via `import_draft` — a real managed service path seeded from
+  the current Active document, pinned to it as base — instead of a synthetic repository write.
+  The guard's removal branch is thereby proven against a legitimately reachable state.
+- **Active-first deterministic page order.** The combined page keeps the existing Active document
+  order and lets Draft-only definitions fill the remaining capacity, so behavior below the limit is
+  unchanged and the page remains deterministic.
 
 ### Remaining In-Slice Work
 
@@ -384,70 +364,48 @@ python3 scripts/docker_release_security_smoke_test.py                           
   `test_runtime_configuration_and_final_analyze_cli`,
   `test_scan_cli_needs_no_path_or_metadata_token`. They are caused by this workspace's ignored
   local `.mediaflow/` runtime state (e.g. a local `HDD_2` Storage) being resolved instead of the
-  tests' temporary bootstrap documents, not by this Task. The focused suites that bind to the
-  changed code (267 + 13 Python tests, 356 frontend unit tests, 106 built-artifact tests) pass.
+  tests' temporary bootstrap documents, not by this correction. The focused suites that bind to
+  the changed code (267 + 17 Python tests, 359 frontend unit tests, 106 built-artifact tests)
+  pass.
 - Running the T4 suite touches the ignored local `.mediaflow/` runtime state only. No tracked
   file, media file or credential was touched; `config/alist.json` does not exist in this
   workspace and nothing private entered the checkpoint. `node_modules/` remains untracked and
   outside the checkpoint.
 - The correction diff is additive or strengthening (no test deleted, renamed, skipped or weakened);
-  existing journey tests were updated to the corrected dedicated activation transport and now also
-  prove the exact-revision binding, digest-free conflicts and the Automation-only boundary.
+  the one existing journey restructure (activate the created definition before copying) follows
+  directly from the now-enforced one-definition-per-Draft activation boundary.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 2576323857d896c96b6ecb3f80a3648a7e084ec0
+Head SHA: PENDING_COMMIT
 ```
 
 
 ## B Review Result
 
 ```text
-Reviewed: 2be1eb0b99d64720aeba81f86eab052788121dea..df0b101ca2de033c87bb9e097bc3655678bbbb47
+Reviewed: 2be1eb0b99d64720aeba81f86eab052788121dea..2576323857d896c96b6ecb3f80a3648a7e084ec0
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The checked-activation transport is not connected across the real API and Web. A real
-  `MediaFlowApi` probe created and validated a successor Draft, then
-  `POST /api/v1/operations/automation/task-definitions/auto-task/activate-draft` returned
-  `404 not_found`; routing in `service_api.py` dispatches the Operations Automation projection only
-  when `method == "GET"`. The real Draft document also advertises
-  `/api/v1/configuration/revisions/<draft>/activate`, while the frontend normalizer accepts only the
-  dedicated `/api/v1/operations/automation/task-definitions/<id>/activate-draft` transport, so the
-  real editor document fails closed before activation. The focused suites still passed (Python
-  8/8, frontend 17/17, Automation E2E 9/9) because the Python journey invokes the generic
-  activation route and the browser fake rewrites `/api/v1/operations/` before matching. Route the
-  real POST to the dedicated handler, advertise that exact owned route, and add an actual
-  backend-document/frontend-contract regression plus a real dedicated-handler success/failure test.
-- The dedicated activation handler is not bound to the exact Draft identity and does not enforce
-  the Task's Automation-only activation boundary. It re-resolves whichever newest open Draft
-  contains the definition, compares only its numeric version, and passes that whole revision to
-  `activate_checked`; a concurrently created different Draft at the same version can replace the
-  reviewed object, and unrelated Configuration changes in that Draft are not rejected. Bind the
-  submitted action to the exact advertised Draft revision as well as its expected version, compare
-  its changes with the Active base, and fail closed unless activation is confined to the intended
-  Automation definition boundary. Cover same-version/different-revision concurrency and an
-  unrelated-object change without activating either Draft.
-- Create/copy does not provide a usable Draft lifecycle. A real API probe successfully created
-  `new-draft-only` (`200`) and then the V2 detail route used by `AutomationNewPage` returned
-  `404 not_found`, because operator detail/draft lookup begins from the Active definition only;
-  `AutomationNewPage` and the copy action both navigate directly to that Active-only detail route.
-  Keep newly created/copied Draft-only definitions reachable and editable until activation (or keep
-  the operator on an equivalent truthful Draft surface), and add real API plus component/browser
-  coverage that completes create and copy instead of testing only their advertised buttons.
-- The edit form does not satisfy the bounded definition editor acceptance. It edits only name,
-  enabled, source scope and item limit; ResourceLibrary, run mode and interval versus Cron/timezone
-  are rendered as read-only text and copied unchanged into the PUT body. Make every owned definition
-  field required by this Task editable with authoritative ResourceLibrary options and bounded
-  interval/Cron/timezone transitions, then prove their optimistic save, validation and stale-state
-  behavior in component and built-artifact tests.
-- Draft discovery silently converts every repository failure into “no open Draft”:
-  `open_draft_revisions()` catches `Exception` and returns `()`. This makes an unavailable/corrupt
-  persistence read indistinguishable from a legitimate empty state and can offer successor-Draft
-  recovery on false evidence. Propagate the failure into the existing bounded unavailable response
-  (without leaking the exception) and add a failing-repository regression proving no create/edit/
-  activate control is advertised.
+- Exact-object checked activation is still not enforced. A real API probe edited `auto-task`, added
+  an `unexpected-sibling` definition to the same Draft, validated it, and then called
+  `POST /api/v1/operations/automation/task-definitions/auto-task/activate-draft`; the response was
+  `200`, `unexpected_sibling_published` was `True`, and the Active definition IDs became
+  `['auto-task', 'unexpected-sibling']`. The handler currently rejects changes outside the entire
+  `automationTaskDefinitions` section, but does not reject a second definition riding along with
+  the reviewed object. Compare Active and Draft at exact definition identity scope and fail closed
+  when any other definition is added, removed, or modified; preserve Active and Draft on rejection,
+  and add a real regression covering an edited target plus a sibling change. Creating or copying a
+  definition may activate only when that exact new/copied definition is the sole Automation change.
+- The bounded list contract breaks at the Active/Draft merge boundary. A real API probe with 100
+  valid Active definitions plus one Draft-only definition returned `200` with `101` items,
+  `total: 101`, and `truncated: false`, while the frontend normalizer rejects any page containing
+  more than 100 items. Apply one deterministic combined response limit that matches the frontend
+  contract, report truthful `total`/`truncated` semantics after merging Active and Draft-only
+  definitions, and add real API plus frontend normalization coverage for the 100-Active +
+  1-Draft-only boundary so the page remains usable and truthfully bounded.

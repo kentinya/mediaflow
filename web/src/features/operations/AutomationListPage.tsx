@@ -122,6 +122,12 @@ export function AutomationListPage() {
                   configuration or in an open successor Draft.
                 </p>
               )}
+              {page.truncated && (
+                <p className="mf-dashboard-meta">
+                  Showing the first {page.items.length} of {page.total}{" "}
+                  definitions; the bounded list excludes the rest.
+                </p>
+              )}
               {page.items.map((definition) => {
                 const schedule =
                   definition.document.scheduleType === "interval"
